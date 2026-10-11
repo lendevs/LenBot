@@ -71,6 +71,7 @@ node_modules/
 
 # 设计文档与工作记录只留在本机
 /docs/
+/research/
 
 # Local business state, personal role packages and evaluation runs
 /state/

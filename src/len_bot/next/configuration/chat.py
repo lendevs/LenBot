@@ -145,6 +145,27 @@ class Proactive(BaseModel):
         return self
 
 
+class AttentionDeclarations(BaseModel):
+    """Persistent intents; absent means the tool and runtime are disabled."""
+    model_config = STRICT
+
+    mode: Literal['enforce', 'record', 'context'] = 'enforce'
+    max_minutes: float = Field(default=240.0, gt=0, allow_inf_nan=False)
+    max_intents: int = Field(default=5, ge=1, strict=True)
+    max_conditions: int = Field(default=4, ge=1, strict=True)
+    max_people: int = Field(default=5, ge=1, strict=True)
+    max_keywords: int = Field(default=5, ge=1, strict=True)
+
+
+class TurnDisposition(BaseModel):
+    """Optional local participation state, independent of persistent intents."""
+    model_config = STRICT
+
+    mode: Literal['enforce', 'record'] = 'enforce'
+    max_minutes: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    max_people: int = Field(default=5, ge=1, strict=True)
+
+
 class Attention(BaseModel):
     model_config = STRICT
 
@@ -166,6 +187,8 @@ class Attention(BaseModel):
     ambient_max_interval_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
     max_extensions: int = Field(default=2, ge=0)
     quiet_hours: QuietHours | None = None
+    declarations: AttentionDeclarations | None = None
+    disposition: TurnDisposition | None = None
 
     @field_validator("keywords")
     @classmethod

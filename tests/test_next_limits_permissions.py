@@ -239,7 +239,7 @@ async def test_runner_holds_other_wakes_and_sends_only_the_operator_notice(tmp_p
         runner.state.pending=PendingWake('direct',store.now())
         assert runner.speech_hold() is None
         runner.chat.check_limits(direct=True)
-        runner.chat.turn_channel='system';runner.chat.check_limits()
+        runner.chat.turn_channel='schedule';runner.chat.check_limits()
         runner.chat.turn_channel='proactive'
         with pytest.raises(SpeechLimitReached):runner.chat.check_limits()
         record_speech(store,config.scene)

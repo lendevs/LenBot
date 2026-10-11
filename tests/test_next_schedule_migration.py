@@ -18,6 +18,7 @@ def test_schedule_target_upgrade_preserves_reminders_and_is_repeatable(tmp_path)
                                     limit=50, interval_seconds=3600)
         records.block_schedule('onebot:private:70002', 2, '原有权限阻止原因')
         before = store.db.execute('SELECT * FROM schedules ORDER BY id').fetchall()
+        store.db.execute('ALTER TABLE turns DROP COLUMN wake_channel')
         store.db.execute('PRAGMA user_version=2')
 
     migrate(path)

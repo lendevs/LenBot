@@ -331,6 +331,10 @@ class Chat:
                                 if reaction:
                                     expressions.append(content)
                                     end_turn = end_turn or call.arguments.get('end_turn', True)
+                                elif call.name == 'attention':
+                                    end_turn = end_turn or call.arguments.get('end_turn', False)
+                                elif call.name == 'end_turn':
+                                    end_turn = True
                             else:
                                 content, delivery_status = await self.expression.deliver_expression(
                                     call.id, expression, turn_id=turn_id, channels=self.turn_channels,

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from ..media.audio_store import AudioStore
 from ..config import LabConfig
+from .declarations import Declared
 from .recap import project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
@@ -179,7 +180,7 @@ def turn_state(config: LabConfig, store: Store, *, now: float,
 
 def current_attention(config: LabConfig, store: Store) -> str:
     attention = store.load_attention(config.scene)
-    last = None if attention is None else attention['last_contact_at']
+    last = None if attention is None else attention.get('last_contact_at')
     closed = None if attention is None else attention.get('focus_closed_at')
     until = None if last is None else last + config.attention.focus_seconds
     active = (not config.attention.only_direct and until is not None and until > store.now()
@@ -188,7 +189,17 @@ def current_attention(config: LabConfig, store: Store) -> str:
     text = ('至 ' + datetime.fromtimestamp(until, zone).strftime('%H:%M:%S') if active else '已关闭')
     if config.attention.close_focus_on_silence and closed is not None:
         text += '（' + datetime.fromtimestamp(closed, zone).strftime('%H:%M:%S') + ' 沉默后关闭）'
-    return '<当前关注>\n对话继续：' + text + '\n</当前关注>'
+    text = '对话继续：' + text
+    if attention is not None:
+        disposition = attention.get('disposition')
+        if disposition is not None and disposition['until'] > store.now():
+            text += '\n上次局部收尾：' + encode(disposition)
+        settings = config.attention.declarations
+        if settings is not None and settings.mode != 'context' and attention.get('declared') is not None:
+            declared = Declared.load(attention['declared'])
+            text += '\n持续关注：' + encode(declared.view(store.now()))
+            text += '\n本轮候选（不表示完成）：' + encode(declared.turn_matches)
+    return '<当前关注>\n' + text + '\n</当前关注>'
 
 
 class ChatContext:

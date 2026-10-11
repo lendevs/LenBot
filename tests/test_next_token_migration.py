@@ -31,6 +31,7 @@ def _business_format1(path: Path) -> None:
     with Store(path):
         pass
     with sqlite3.connect(path) as db:
+        db.execute('ALTER TABLE turns DROP COLUMN wake_channel')
         for table in CALL_TABLES:
             db.execute(f"ALTER TABLE {table} RENAME COLUMN tokens TO cost")
         db.execute("INSERT INTO model_calls(id,turn_id,role,started,ended,request,response,usage,error,cost,scene) "
