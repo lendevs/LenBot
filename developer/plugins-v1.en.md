@@ -43,6 +43,8 @@ class Example(Plugin):
 
 Methods are async and use one decorator each. Command, exact-text, then regex matching takes precedence; regex priority sorts descending. At most one handler consumes a message, without waking the chat model. Returning text records a result; sending requires `ctx.reply`. A model selecting a plugin tool and the tool itself calling a model are separate actions.
 
+A deployment can switch off single rules while the rest of a plugin keeps working: list them under `plugins.disabled_rules` by plugin name, as `/command`, the exact text, or the regex pattern string, for example `"disabled_rules": {"asoul": ["今日直播"]}`. Switched-off text is handled as ordinary chat. A rule the plugin does not have is reported as a log warning.
+
 `start()` acquires resources and `stop()` releases them. Register background coroutines through `self.ctx.start_task(name, coroutine)`. The host cancels and waits for owned calls before stop. Keep blocking operations out of the event loop.
 
 Time limits:

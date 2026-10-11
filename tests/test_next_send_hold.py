@@ -87,3 +87,40 @@ async def test_panel_switches_all_scenes_and_send_hold(tmp_path):
             await client.put('/api/host/control/chat', json={'enabled': True})
             assert not any(runner.state.paused for runner in runtime.runners.values())
         assert SendHold(tmp_path).enabled is True
+
+
+@pytest.mark.asyncio
+async def test_scene_simulated_delivery_holds_only_that_scene(tmp_path):
+    first = recorded_response()
+    first['choices'][0]['message']['tool_calls'][0]['function'] = {'name': 'say', 'arguments': json.dumps({'content': '好'})}
+    server = await peer_server([(200, 'application/json', json.dumps(body).encode())
+                                for body in [first, recorded_text_response()]], [])
+    async with server:
+        source = instance(tmp_path)
+        source['delivery'] = 'onebot'
+        source['scenes'][SCENE]['simulated_delivery'] = True
+        source['compaction']['input_tokens'] = 6000
+        source['models']['providers']['fixture']['base_url'] = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        (tmp_path / 'lenbot.config.json').write_text(json.dumps(source))
+        async with running(tmp_path) as runtime:
+            other = next(scene for scene in runtime.chats if scene != SCENE)
+            assert runtime.send_hold.enabled is False
+            assert runtime.held(SCENE) and not runtime.held(other)
+            store, chat = runtime.store, runtime.chats[SCENE]
+            raw = incoming()
+            seq = store.enqueue(parse_message(raw, own_message_ids=set()), raw, store.now())
+
+            async def append_new(called, turn):
+                return False
+
+            async def wait_for_messages(seconds):
+                return '没有新消息'
+
+            result = await chat.run_turn(batch=(seq, ['接个梗']), append_new=append_new,
+                                         wait_for_messages=wait_for_messages, attention_state={})
+            assert result['status'] == 'settled', result
+            own = [message for message in store.recent(SCENE, 20) if message.is_self]
+            assert own and {message.send_status for message in own} == {'simulated'}
+            reaction = await chat.toolset.platform_call('set_msg_emoji_like', {'message_id': 1, 'emoji_id': '66', 'set': True})
+            assert reaction == {'status': 'ok', 'retcode': 0, 'data': None}
+            assert (await runtime.upload_file(SCENE, 'file', 'name')).status == 'failed'

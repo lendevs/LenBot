@@ -280,6 +280,8 @@ class SceneSettings(ScenePersona):
     learning: LearningSettings | None = None
     proactive: Proactive | None = None
     transcribe_audio: bool = False
+    # This scene only: turns run and are recorded, sends, uploads and reactions never reach QQ.
+    simulated_delivery: bool = False
     # Plugins enabled in this scene; each must be loaded by root ``plugins``.
     plugins: list[str] = Field(default_factory=list)
 

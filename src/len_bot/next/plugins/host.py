@@ -196,14 +196,15 @@ class PluginHost:
                 record.status = "stopped"
                 continue
             try:
-                self._load(record, found.get(name, []), values, settings.data_directory / name, core_tools)
+                self._load(record, found.get(name, []), values, settings.data_directory / name, core_tools,
+                           settings.disabled_rules.get(name, []))
             except Exception as error:
                 record.status, record.error = "failed", self.redact(name, f"{type(error).__name__}: {error}")
                 self._remove_entries(record)
                 logger.error("插件 %s 加载失败：%s", name, record.error)
 
     def _load(self, record: Loaded, directories: list[Path], values: dict, data_dir: Path,
-              core_tools: set[str]) -> None:
+              core_tools: set[str], disabled_rules: list[str] = ()) -> None:
         if len(directories) != 1:
             raise ValueError("未在 plugins.paths 中找到" if not directories else
                              "多个目录提供同名插件：" + "、".join(map(str, directories)))
@@ -240,12 +241,18 @@ class PluginHost:
         if len(classes) != 1:
             raise ValueError(f"插件模块必须恰好定义一个 Plugin 子类，实际 {len(classes)} 个")
         cls = classes[0]
+        unused = set(disabled_rules)
         for attribute in dir(cls):
             mark = getattr(getattr(cls, attribute), MARK, None)
             if mark is None:
                 continue
             if not inspect.iscoroutinefunction(getattr(cls, attribute)):
                 raise ValueError(f"{attribute} 必须是 async 函数")
+            rule = ("/" + mark[1] if mark[0] == "command" else mark[1] if mark[0] == "fullmatch"
+                    else mark[1].pattern if mark[0] == "regex" else None)
+            if rule is not None and rule in unused:
+                unused.discard(rule)
+                continue
             if mark[0] == "command":
                 if mark[1] in self.commands or mark[1] in record.commands:
                     raise ValueError(f"命令 /{mark[1]} 已由插件 {self.commands.get(mark[1], record.name)} 注册")
@@ -270,6 +277,9 @@ class PluginHost:
                     _arguments(mark[1], getattr(cls, attribute), needs_source=mark[4]), attribute, mark[4])
             else:
                 record.backgrounds.append(Background(attribute, mark[1]))
+        if unused:
+            logger.warning("插件 %s 没有这些规则，plugins.disabled_rules 里的条目未起作用：%s",
+                           record.name, "、".join(sorted(unused)))
         data_dir.mkdir(parents=True, exist_ok=True)
         record.context = PluginContext(name=record.name, config=parsed.model_dump(), data_dir=data_dir,
                                        enabled_scenes=record.scenes, host=self)
@@ -790,7 +800,8 @@ class PluginHost:
                             for tool in self.runtime.mcp.tools_for(scene))
         try:
             directories = found.get(name, [])
-            self._load(record, directories, record.values, settings.data_directory / name, reserved)
+            self._load(record, directories, record.values, settings.data_directory / name, reserved,
+                       settings.disabled_rules.get(name, []))
             if self.started or (self.runtime is not None and self.runtime.accepting):
                 await self.start_plugin(record)
         except Exception as error:
