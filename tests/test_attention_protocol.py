@@ -263,3 +263,70 @@ async def test_context_timer_does_not_schedule_execution_and_expiry_cancels_queu
         now[0] = START + 120
         assert await live.ready_messages(wait=False) is None
         assert live.state.pending is None
+
+
+class Draws:
+    def __init__(self, *values):
+        self.values = list(values)
+
+    def random(self):
+        return self.values.pop(0)
+
+
+def test_exploration_draws_only_outside_rules_and_yields_to_ambient(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.attention.focus_seconds = 0
+    config.attention.explore_probability = 0.25
+    now = [START]
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda event: None)
+        live.random = Draws(0.5, 0.1)
+        live.receive(message(70001, 1, '哈哈'))
+        assert live.state.pending is None
+        live.receive(message(70002, 2, '哈哈'))
+        assert (live.state.pending.channel, live.state.pending.score) == ('explore', 0.0)
+        assert live.wake_reason() == '[群里在聊]'
+        assert live.deadline() == START + config.attention.focus_idle_seconds
+        live.receive(message(70003, 3, '你们觉得怎么办？'))
+        assert live.state.pending.channel == 'ambient'
+        assert live.random.values == []
+        live.receive(message(70001, 4, '下雨了', direct=True))
+        assert live.state.pending.channel == 'direct'
+
+
+def test_exploration_off_keeps_rule_wakes(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.attention.focus_seconds = 0
+    with Store(config.database, now=lambda: START) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: START), lambda event: None)
+        live.random = Draws()
+        live.receive(message(70001, 1, '哈哈'))
+        assert live.state.pending is None
+
+
+@pytest.mark.asyncio
+async def test_silent_exploration_turn_keeps_ambient_backoff(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.attention.focus_seconds = 0
+    config.attention.activity = 0
+    config.attention.explore_probability = 1
+    config.compaction.input_tokens = 20000
+    config.models.roles.mind.context_window_tokens = 64000
+    body = json.dumps({'choices': [{'message': {'role': 'assistant', 'content': '不接话'}, 'finish_reason': 'stop'}],
+                       'usage': {'prompt_tokens': 100, 'completion_tokens': 4}}).encode()
+    requests, events, now = [], [], [START]
+    server = await peer_server([(200, 'application/json', body)], requests)
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database, now=lambda: now[0]) as store:
+            async with ChatModel(config.model_settings('mind')) as model:
+                live = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), events.append)
+                live.closing = True
+                live.receive(message(70001, 1, '今天吃什么'))
+                assert live.state.pending.channel == 'explore'
+                now[0] += config.attention.focus_max_seconds
+                await asyncio.wait_for(live.run(), 5)
+    [turn] = [event for event in events if 'turn_id' in event]
+    assert (turn['channel'], turn['status'], turn['silence_level']) == ('explore', 'settled', 0)
+    assert '[群里在聊]' in json.dumps(requests[0][2], ensure_ascii=False)
+    assert '参与分' not in json.dumps(requests[0][2], ensure_ascii=False)

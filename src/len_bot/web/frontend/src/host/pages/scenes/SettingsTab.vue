@@ -40,6 +40,7 @@ const timing = [
   ['ambient_threshold', '插话门槛'],
   ['ambient_min_interval_seconds', '两次插话最短间隔（秒）'],
   ['ambient_max_interval_seconds', '两次插话最长间隔（秒）'],
+  ['explore_probability', '每条消息随机叫醒概率'],
   ['max_extensions', '最多延长等待次数'],
 ]
 

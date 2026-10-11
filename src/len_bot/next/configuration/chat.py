@@ -185,6 +185,8 @@ class Attention(BaseModel):
     ambient_threshold: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     ambient_min_interval_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     ambient_max_interval_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
+    # Per message outside focus that the participation rule does not admit; batches like focus.
+    explore_probability: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
     max_extensions: int = Field(default=2, ge=0)
     quiet_hours: QuietHours | None = None
     declarations: AttentionDeclarations | None = None

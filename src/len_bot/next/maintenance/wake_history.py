@@ -12,7 +12,7 @@ def request_wake(request: dict) -> tuple[str, str]:
             continue
         for marker, channel in (
             ('[直接唤醒：', 'direct'), ('[点名：', 'named'), ('[对话继续]', 'focus'),
-            ('[群里在聊；', 'ambient'), ('[恢复未结束的对话]', 'resume'),
+            ('[群里在聊；', 'ambient'), ('[群里在聊]', 'explore'), ('[恢复未结束的对话]', 'resume'),
             ('[定时唤醒]', 'schedule'), ('[插件 ', 'plugin'),
         ):
             if content.startswith(marker):

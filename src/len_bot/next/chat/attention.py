@@ -4,6 +4,7 @@ import asyncio
 import copy
 import logging
 import math
+import random
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -34,8 +35,8 @@ from ..prompt_files import read_prompt
 
 logger = logging.getLogger(__name__)
 
-Channel = Literal["direct", "named", "attention", "focus", "ambient"]
-PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4}
+Channel = Literal["direct", "named", "attention", "focus", "ambient", "explore"]
+PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
 HELP = re.compile(r"(?<!不)怎么|如何|为什么|有没有|帮我|帮忙|你们觉得")
 
@@ -97,6 +98,11 @@ def addressed_to_others(message: ChatMessage, bot_id: str) -> bool:
         segment.type == "mention" and segment.data["user"] not in {"all", bot_id} for segment in message.segments)
 
 
+def open_for_ambient(state: AttentionState) -> bool:
+    """A random exploration wake still yields to the participation rule."""
+    return state.pending is None or state.pending.channel == 'explore'
+
+
 def participation_score(pending: list[tuple[ChatMessage, float]],
                         recent: list[tuple[ChatMessage, float]], config: Attention, bot_id: str) -> float:
     humans = [(message, at) for message, at in pending
@@ -146,6 +152,7 @@ class SceneRunner:
         self.store, self.config = chat.store, chat.config
         self.settings = self.config.attention
         self.emit = emit
+        self.random = random.Random()
         self.changed = asyncio.Event()
         self.closing = False
         self.ready_for_turn = ready_for_turn
@@ -178,6 +185,7 @@ class SceneRunner:
             channel = restored.pending.channel
             disabled = (self.settings.only_direct and channel != "direct"
                         or channel == "ambient" and self.settings.activity == 0
+                        or channel == 'explore' and self.settings.explore_probability == 0
                         or channel == "focus" and self.settings.focus_seconds == 0
                         or channel == 'attention' and not self.enforcing)
             eligible = (channel == 'attention' and bool(restored.declared and restored.declared.matches)
@@ -358,10 +366,18 @@ class SceneRunner:
               and not addressed_to_others(message, self.config.bot_id)
               and self.local_allows(state, 'focus', message, at)):
             state.offer(PendingWake("focus", at))
-        elif state.pending is None and self.settings.activity > 0:
-            score = participation_score(pending, recent, self.settings, self.config.bot_id)
-            if score > self.settings.ambient_threshold and self.local_allows(state, 'ambient', message, at):
+        elif open_for_ambient(state):
+            score = (participation_score(pending, recent, self.settings, self.config.bot_id)
+                     if self.settings.activity > 0 else None)
+            if (score is not None and score > self.settings.ambient_threshold
+                    and self.local_allows(state, 'ambient', message, at)):
                 state.offer(PendingWake("ambient", at, score=score))
+            elif state.pending is None and self.settings.explore_probability > 0:
+                woke = self.random.random() < self.settings.explore_probability
+                log_event(logger, 'attention_explore', woke=woke, probability=self.settings.explore_probability,
+                          score=score, message_id=message.platform_message_id)
+                if woke:
+                    state.offer(PendingWake('explore', at, score=score))
 
     def receive(self, raw: dict, *, ignore_other_scenes: bool = False) -> dict:
         message = parse_message(raw, own_message_ids=set())
@@ -404,7 +420,7 @@ class SceneRunner:
         # Batch statistics are only needed for a new, non-direct ambient opportunity.
         pending, recent = [], []
         if (wake and not is_direct(message) and not message.is_self and not self.settings.only_direct
-                and message.sender.uid not in self.settings.other_bot_ids and state.pending is None
+                and message.sender.uid not in self.settings.other_bot_ids and open_for_ambient(state)
                 and self.settings.activity > 0 and period is None):
             pending = self.store.pending_attention_sample(self.config.scene, self.settings.other_bot_ids, limit=19)
             pending.append((message, now))
@@ -492,7 +508,7 @@ class SceneRunner:
             return max(wake.first_at, wake.first_at if self.state.ambient_last_at is None else
                        self.state.ambient_last_at + self.ambient_interval())
         latest = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids)
-        timing = 'focus' if wake.channel == 'attention' else wake.channel
+        timing = 'focus' if wake.channel in {'attention', 'explore'} else wake.channel
         idle = getattr(self.settings, timing + "_idle_seconds")
         maximum = getattr(self.settings, timing + "_max_seconds")
         return min((wake.first_at if latest is None else latest) + idle, wake.first_at + maximum)
@@ -709,6 +725,8 @@ class SceneRunner:
             return "[对话继续]"
         if wake.channel == "ambient":
             return f"[群里在聊；参与分 {wake.score:.3f}]"
+        if wake.channel == 'explore':
+            return '[群里在聊]'
         if wake.channel == 'attention':
             return '[持续关注条件命中：请判断是否已完成，未完成则继续保留]'
         return "[直接唤醒：被 @、被回复或私聊]"
