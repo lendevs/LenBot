@@ -119,6 +119,24 @@ def register_host_operations(app, *, runtime, user):
         async with runner.execution:
             return runner.set_paused(not change.enabled)
 
+    @app.put('/api/host/control/chat')
+    async def all_chat(change: ChatSwitch, _: str = Depends(user)):
+        """Every scene at once, e.g. when model quota runs out; messages are still stored."""
+        if not runtime.accepting:
+            raise HTTPException(409, '宿主没有在运行，聊天开关未改变')
+        async def switch(runner):
+            async with runner.execution:
+                return runner.set_paused(not change.enabled)
+        states = await asyncio.gather(*(switch(runner) for runner in runtime.runners.values()))
+        log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
+        return {'enabled': change.enabled, 'scenes': len(states)}
+
+    @app.put('/api/host/control/send-hold')
+    async def send_hold(change: ChatSwitch, _: str = Depends(user)):
+        """enabled=true: turns run and are recorded as simulated sends; nothing reaches QQ."""
+        runtime.send_hold.set(change.enabled, at=store.now())
+        return {'enabled': runtime.send_hold.enabled}
+
     @app.get('/api/host/scenes/{scene}/notices')
     async def notices(scene: str, before: int | None = Query(None, ge=1),
                       limit: int = Query(50, ge=1, le=200), _: str = Depends(user)):

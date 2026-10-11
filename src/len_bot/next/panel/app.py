@@ -151,6 +151,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                  "chat_enabled": not runtime.runners[scene].state.paused}
                 for scene, settings in config.scenes.items()
             ],
+            "send_hold": runtime.send_hold.enabled,
             "memory_backend": None if config.memory is None else config.memory.backend,
             # Only what needs attention on the home page; details live on the capabilities page.
             "plugins": None if runtime.plugins is None else [

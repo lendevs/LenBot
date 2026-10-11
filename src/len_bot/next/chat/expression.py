@@ -215,10 +215,11 @@ class ChatExpression:
                                                         turn_id=turn_id)
                     if result.status == "sent":
                         confirmed.append((kept, self.now()))
-                    if index == 0 and not fixed_notice and result.status in {"sent", "unconfirmed"}:
+                    # The host send hold returns simulated; speech still counts so limits behave as when sending.
+                    if index == 0 and not fixed_notice and result.status in {"sent", "unconfirmed", "simulated"}:
                         record_speech(self.store, self.config.scene)
                     self.notify()
-                    if result.status != "sent":
+                    if result.status not in {"sent", "simulated"}:
                         break
         finally:
             if (confirmed and self.config.learning is not None and self.config.learning.reply_effects):
@@ -268,7 +269,7 @@ class ChatExpression:
                     log_sent(seq, part, result.error, index=index, parts=len(parts), plugin=plugin)
                     self.store.finish_expression((seq, None), part, "")
                     self.notify()
-                    if result.status != "sent":
+                    if result.status not in {"sent", "simulated"}:
                         break
             except BaseException as error:
                 interruption = f"{type(error).__name__}: {error}"
@@ -287,7 +288,7 @@ class ChatExpression:
         states = {part.send_status for part in parts[:len(errors)]}
         status = "partial" if len(states) > 1 else parts[len(errors) - 1].send_status
         return Sent(status, report, tuple(part.platform_message_id for part in parts[:len(errors)]
-                                         if part.send_status == "sent"))
+                                         if part.send_status in {"sent", "simulated"}))
 
     def simulated_message(self, segments: list[Segment], *, reply_to: str | None = None) -> ChatMessage:
         return ChatMessage(

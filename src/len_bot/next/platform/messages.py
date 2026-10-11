@@ -58,7 +58,7 @@ class Notice:
 
 @dataclass(slots=True)
 class SendResult:
-    status: Literal["sent", "failed", "unconfirmed"]
+    status: Literal["sent", "failed", "unconfirmed", "simulated"]
     platform_message_id: str | None
     error: str | None
 

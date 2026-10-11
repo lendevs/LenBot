@@ -57,6 +57,18 @@ async function setChat(scene, enabled) {
     switching[scene] = false
   }
 }
+const allChat = useAction()
+const anyChat = computed(() => state.value?.scenes.some(item => item.chat_enabled))
+async function setAllChat(enabled) {
+  await allChat.run(() => api('/api/host/control/chat', { method: 'PUT', body: JSON.stringify({ enabled }) }))
+  await readHostState()
+}
+
+const hold = useAction()
+async function setHold(enabled) {
+  await hold.run(() => api('/api/host/control/send-hold', { method: 'PUT', body: JSON.stringify({ enabled }) }))
+  await readHostState()
+}
 const search = ref('')
 const scenes = computed(() => {
   const words = search.value.trim().toLowerCase()
@@ -121,19 +133,25 @@ const connectionNotes = {
         <span class="status-mark" :class="{ ok: online }"><img :src="markUrl" alt="" /><span class="status-dot" /></span>
         <div class="status-text">
           <h2>{{ online ? 'Bot 在线' : connectionLabel(state.connection) }}</h2>
-          <p>{{ state.bot_id }} · {{ state.delivery === 'onebot' ? '真实发送到 QQ' : '模拟发送' }} · {{ state.scenes.length }} 个群聊</p>
+          <p>{{ state.bot_id }} · {{ state.delivery !== 'onebot' ? '模拟发送' : state.send_hold ? '模拟发送，不发到 QQ' : '真实发送到 QQ' }} · {{ state.scenes.length }} 个群聊</p>
           <LiveStatus :status="events.status.value" @reconnect="events.reconnect" />
         </div>
       </div>
       <div class="status-actions">
         <v-btn v-if="state.connection.can_connect || connect.busy.value" color="primary" :prepend-icon="mdiLanConnect" :loading="connect.busy.value" @click="connectQQ">手动连接 QQ</v-btn>
         <v-btn v-if="state.connection.can_disconnect || disconnect.busy.value" variant="outlined" class="text-error" :prepend-icon="mdiLanDisconnect" :loading="disconnect.busy.value" @click="disconnectQQ">断开 QQ</v-btn>
+        <v-btn v-if="state.scenes.length" variant="outlined" :loading="allChat.busy.value" :disabled="!state.connection.accepting"
+          @click="setAllChat(!anyChat)">{{ anyChat ? '全部暂停' : '全部恢复' }}</v-btn>
+        <v-btn v-if="state.delivery === 'onebot'" variant="outlined" :class="{ 'text-warning': state.send_hold }" :loading="hold.busy.value"
+          @click="setHold(!state.send_hold)">{{ state.send_hold ? '恢复真实发送' : '改为模拟发送' }}</v-btn>
         <v-btn :to="{ name: 'host-system', query: { tab: 'connection' } }" variant="text">连接设置</v-btn>
       </div>
       <p v-if="connectionNote" class="status-note">{{ connectionNote }}</p>
     </section>
     <ErrorNote v-if="connect.error.value" title="手动连接没有成功" :error="connect.error.value" />
     <ErrorNote v-if="disconnect.error.value" title="断开 QQ 没有成功" :error="disconnect.error.value" />
+    <ErrorNote v-if="allChat.error.value" title="全部群聊开关没有改成" :error="allChat.error.value" />
+    <ErrorNote v-if="hold.error.value" title="发送方式没有改成" :error="hold.error.value" />
     <ErrorNote v-if="state?.connection.last_error" title="最近一次连接或运行失败" :error="state.connection.last_error" />
 
     <StatGrid v-if="day" :items="stats" />

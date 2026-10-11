@@ -708,8 +708,8 @@ class Store:
                     "UPDATE mind_entries SET message=json_set(message,'$.content',?) WHERE seq=?",
                     (content, entry_seq),
                 )
-            if turn_id is not None and expression.send_status == "sent":
-                self._first_expression(turn_id, "sent")
+            if turn_id is not None and expression.send_status in {"sent", "simulated"}:
+                self._first_expression(turn_id, expression.send_status)
         return kept
 
     def attach_echo(self, message: ChatMessage, raw: dict, received_at: float) -> None:

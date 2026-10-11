@@ -9,8 +9,10 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from .scene_titles import SceneTitles
+from .send_hold import SendHold
 from ..chat.attention import SceneRunner
 from ..media.audio import AudioService
 from ..chat.session import Chat
@@ -19,7 +21,7 @@ from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
 from .logs import credentials, log_context, log_event
 from .lifecycle import HostLifecycle
-from ..platform.messages import Notice
+from ..platform.messages import ChatMessage, Notice, SendResult, UploadResult
 from ..platform.onebot_messages import parse_event
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
@@ -106,6 +108,7 @@ class NetworkRuntime:
         self.config_write_lock = asyncio.Lock()
         self.management: HostManagement | None = None
         self.scene_titles = SceneTitles(self)
+        self.send_hold = SendHold(config._instance_root)
         self.accepting = config.onebot is None
         self.storage_error: sqlite3.Error | None = None
         self.platform = (None if config.onebot is None else OneBot(
@@ -127,9 +130,9 @@ class NetworkRuntime:
                 on_compaction=lambda scene=scene: self.compacted(scene),
                 on_reply_sample=(None if reply_effects is None else
                                  lambda scene=scene: reply_effects.wake(scene)),
-                send_message=self.platform.send_message if config.delivery == "onebot" else None,
-                upload_file=self.platform.upload_file if config.delivery == "onebot" else None,
-                platform_call=self.platform.call if config.delivery == "onebot" else None,
+                send_message=self.send_message if config.delivery == "onebot" else None,
+                upload_file=self.upload_file if config.delivery == "onebot" else None,
+                platform_call=self.platform_call if config.delivery == "onebot" else None,
                 external_tools=(([] if plugins is None else plugins.tools_for(scene, preparing=True))
                                 + ([] if mcp is None else mcp.tools_for(scene))),
                 audio_service=self.audio,
@@ -148,6 +151,22 @@ class NetworkRuntime:
             plugins.bind(self)
         if mcp is not None:
             mcp.on_update = self.refresh_external_tools
+
+    # Scene outlets go through these, so the send hold also covers plugin sends and notices.
+    async def send_message(self, message: ChatMessage, *, image_bytes: bytes | None = None) -> SendResult:
+        if self.send_hold.enabled:
+            return SendResult("simulated", f"simulated:{uuid4()}", None)
+        return await self.platform.send_message(message, image_bytes=image_bytes)
+
+    async def upload_file(self, scene: str, file: str, name: str) -> UploadResult:
+        if self.send_hold.enabled:
+            return UploadResult("failed", None, "宿主处于模拟发送，文件没有上传", None)
+        return await self.platform.upload_file(scene, file, name)
+
+    async def platform_call(self, action: str, params: dict):
+        if self.send_hold.enabled and action == "set_msg_emoji_like":
+            return {"status": "ok", "retcode": 0, "data": None}
+        return await self.platform.call(action, params)
 
     def bind_management(self, root: Path, lifecycle: HostLifecycle) -> None:
         from .management import HostManagement
