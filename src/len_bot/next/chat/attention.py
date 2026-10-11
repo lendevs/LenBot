@@ -47,6 +47,8 @@ class PendingWake:
     first_at: float
     keywords: list[str] = field(default_factory=list)
     score: float | None = None
+    # A random exploration draw stays on the wake when a rule later takes over its channel.
+    explored: bool = False
 
 
 @dataclass
@@ -79,11 +81,13 @@ class AttentionState:
             self.pending = wake
             return
         words = sorted(set(self.pending.keywords + wake.keywords))
+        explored = self.pending.explored or wake.explored
         if PRIORITY[wake.channel] < PRIORITY[self.pending.channel]:
             self.pending = wake
         elif wake.channel == self.pending.channel:
             self.pending.first_at = min(self.pending.first_at, wake.first_at)
         self.pending.keywords = words
+        self.pending.explored = explored
 
 
 def is_direct(message: ChatMessage) -> bool:
@@ -377,7 +381,7 @@ class SceneRunner:
                 log_event(logger, 'attention_explore', woke=woke, probability=self.settings.explore_probability,
                           score=score, message_id=message.platform_message_id)
                 if woke:
-                    state.offer(PendingWake('explore', at, score=score))
+                    state.offer(PendingWake('explore', at, score=score, explored=True))
 
     def receive(self, raw: dict, *, ignore_other_scenes: bool = False) -> dict:
         message = parse_message(raw, own_message_ids=set())
@@ -748,6 +752,8 @@ class SceneRunner:
         state = self.consumed_state()
         if pending:
             self.chat.turn_channels.add(self.state.pending.channel if self.state.pending is not None else "in_turn")
+            if self.state.pending is not None and self.state.pending.explored:
+                self.chat.turn_channels.add('explore')
             through, contents = self.batch(pending, self.wake_reason())
             self.store.append_batch(self.config.scene, through, contents, turn_id=turn_id,
                                     attention_state=persisted(state))
@@ -991,6 +997,8 @@ class SceneRunner:
                         if present}
                     if self.state.pending is not None:
                         channels.add(self.state.pending.channel)
+                        if self.state.pending.explored:
+                            channels.add('explore')
                     reason = ("[恢复未结束的对话]" if self.resume
                               else "[此前未触发唤醒的消息]" if channel in {"schedule", "task", "plugin", "audio"} and self.state.pending is None
                               else self.wake_reason())

@@ -288,10 +288,10 @@ def test_exploration_draws_only_outside_rules_and_yields_to_ambient(tmp_path):
         assert live.wake_reason() == '[群里在聊]'
         assert live.deadline() == START + config.attention.focus_idle_seconds
         live.receive(message(70003, 3, '你们觉得怎么办？'))
-        assert live.state.pending.channel == 'ambient'
+        assert (live.state.pending.channel, live.state.pending.explored) == ('ambient', True)
         assert live.random.values == []
         live.receive(message(70001, 4, '下雨了', direct=True))
-        assert live.state.pending.channel == 'direct'
+        assert (live.state.pending.channel, live.state.pending.explored) == ('direct', True)
 
 
 def test_exploration_off_keeps_rule_wakes(tmp_path):
@@ -302,6 +302,31 @@ def test_exploration_off_keeps_rule_wakes(tmp_path):
         live.random = Draws()
         live.receive(message(70001, 1, '哈哈'))
         assert live.state.pending is None
+        live.receive(message(70002, 2, '你们觉得怎么办？'))
+        assert (live.state.pending.channel, live.state.pending.explored) == ('ambient', False)
+
+
+@pytest.mark.asyncio
+async def test_exploration_draw_stays_on_turn_after_ambient_takes_over(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.attention.focus_seconds = 0
+    config.attention.explore_probability = 0.25
+    now, turns = [START], []
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda event: None)
+        live.random = Draws(0.1)
+        live.closing = True
+
+        async def turn(channel, **kwargs):
+            turns.append((channel, kwargs['channels']))
+            live.state.pending = None
+
+        live._turn = turn
+        live.receive(message(70001, 1, '哈哈'))
+        live.receive(message(70002, 2, '你们觉得怎么办？'))
+        now[0] += config.attention.focus_max_seconds
+        await asyncio.wait_for(live.run(), 5)
+    assert turns == [('ambient', {'ambient', 'explore'})]
 
 
 @pytest.mark.asyncio
