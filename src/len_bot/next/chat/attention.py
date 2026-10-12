@@ -375,6 +375,8 @@ class SceneRunner:
                      if self.settings.activity > 0 else None)
             if (score is not None and score > self.settings.ambient_threshold
                     and self.local_allows(state, 'ambient', message, at)):
+                log_event(logger, 'attention_ambient', score=score, threshold=self.settings.ambient_threshold,
+                          message_id=message.platform_message_id)
                 state.offer(PendingWake("ambient", at, score=score))
             elif state.pending is None and self.settings.explore_probability > 0:
                 woke = self.random.random() < self.settings.explore_probability
@@ -728,7 +730,7 @@ class SceneRunner:
         if wake.channel == "focus":
             return "[对话继续]"
         if wake.channel == "ambient":
-            return f"[群里在聊；参与分 {wake.score:.3f}]"
+            return f"[群里在聊；参与分 {wake.score:.3f}]" if self.settings.ambient_score_in_reason else "[群里在聊]"
         if wake.channel == 'explore':
             return '[群里在聊]'
         if wake.channel == 'attention':

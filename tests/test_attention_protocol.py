@@ -294,6 +294,20 @@ def test_exploration_draws_only_outside_rules_and_yields_to_ambient(tmp_path):
         assert (live.state.pending.channel, live.state.pending.explored) == ('direct', True)
 
 
+def test_participation_wake_can_hide_its_score(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.attention.focus_seconds = 0
+    now = [START]
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda event: None)
+        for seq, text in enumerate(('哈哈', '哈哈', '你们觉得怎么办？'), 1):
+            live.receive(message(70001 + seq, seq, text))
+        assert live.state.pending.channel == 'ambient'
+        assert live.wake_reason() == f'[群里在聊；参与分 {live.state.pending.score:.3f}]'
+        config.attention.ambient_score_in_reason = False
+        assert live.wake_reason() == '[群里在聊]'
+
+
 def test_exploration_off_keeps_rule_wakes(tmp_path):
     config, persona = _instance(tmp_path)
     config.attention.focus_seconds = 0
