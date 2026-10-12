@@ -5,14 +5,19 @@ from __future__ import annotations
 import copy
 import asyncio
 import json
+import logging
 import math
 from dataclasses import dataclass
 from typing import Any, Literal
 from .providers import ChatAPI, http_client, valid_url
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from len_bot.next.models.tokens import TokenUsage
+
+
+logger = logging.getLogger(__name__)
 
 
 class ModelSettings(BaseModel):
@@ -29,6 +34,7 @@ class ModelSettings(BaseModel):
     temperature: float | None = Field(default=0.6, ge=0, le=2, allow_inf_nan=False)
     max_output_tokens: int = Field(default=1024, gt=0)
     timeout_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
+    retry_delays_seconds: tuple[float, ...] = ()
 
     @classmethod
     def from_binding(cls, provider, binding) -> ModelSettings:
@@ -232,9 +238,20 @@ class ChatModel:
                        max_output_tokens: int | None = None, session_id: str | None = None) -> ModelReply:
         from .protocols import build_request, parse_reply
         path, payload = build_request(self.settings, messages, tools, max_output_tokens=max_output_tokens)
-        async with asyncio.timeout(self.settings.timeout_seconds):
-            response = await self._client.post(path, json=payload,
-                                               headers={} if session_id is None else {"Session-Id": session_id})
+        for delay in (*self.settings.retry_delays_seconds, None):
+            try:
+                async with asyncio.timeout(self.settings.timeout_seconds):
+                    response = await self._client.post(path, json=payload,
+                                                       headers={} if session_id is None else {"Session-Id": session_id})
+            except httpx.TransportError as error:
+                if delay is None:
+                    raise
+                logger.warning("model request retry in %ss after %s", delay, type(error).__name__)
+            else:
+                if delay is None or (response.status_code != 429 and response.status_code < 500):
+                    break
+                logger.warning("model request retry in %ss after HTTP %s", delay, response.status_code)
+            await asyncio.sleep(delay)
         if not response.is_success:
             fragment = response.text.replace(self.settings.api_key, '[hidden]')[:2000]
             raise ModelHTTPError(f"Model HTTP {response.status_code}: {fragment}")

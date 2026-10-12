@@ -155,6 +155,18 @@ def test_rebinding_projects_completed_foreign_tools_without_reusing_signatures(t
         build_request(settings, [first.message], [TOOL])
 
 
+def test_openai_chat_omits_null_tool_calls_only_outside_its_own_replies():
+    settings = ModelSettings(api='openai-chat', base_url='http://127.0.0.1/v1', api_key='fixture', model='new')
+    reply = {'choices': [{'message': {'role': 'assistant', 'content': '嗨', 'tool_calls': None}, 'finish_reason': 'stop'}],
+             'usage': {'prompt_tokens': 1, 'completion_tokens': 1}}
+    own = parse_reply(settings, reply).message
+    foreign = parse_reply(settings.model_copy(update={'model': 'old'}), reply).message
+    unbound = {'role': 'assistant', 'content': '嗨', 'tool_calls': None}
+    _, payload = build_request(settings, [{'role': 'user', 'content': '你好'}, own, foreign, unbound], [TOOL])
+    assert payload['messages'][1] == {'role': 'assistant', 'content': '嗨', 'tool_calls': None}
+    assert payload['messages'][2] == payload['messages'][3] == {'role': 'assistant', 'content': '嗨'}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('api', ['openai-responses', 'anthropic', 'gemini'])
 @pytest.mark.parametrize('broken', [False, True])

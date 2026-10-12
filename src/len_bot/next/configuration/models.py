@@ -51,6 +51,8 @@ class Binding(BaseModel):
     thinking_budget_tokens: int | None = Field(default=None, ge=0)
     output_token_field: Literal["max_completion_tokens", "max_tokens"] = "max_completion_tokens"
     history_policy: Literal["native", "omit-reasoning"] = "native"
+    # Waits before resending the same request after HTTP 429, 5xx or a dropped connection; empty means no retry.
+    retry_delays_seconds: list[float] = Field(default_factory=list, max_length=20)
 
     @field_validator("provider", "model")
     @classmethod
