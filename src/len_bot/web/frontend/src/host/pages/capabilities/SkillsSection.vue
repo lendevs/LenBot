@@ -1,6 +1,7 @@
 <script setup>
+import { sharedRoleNote } from '../../labels.js'
 import { computed, ref, watch } from 'vue'
-import { api, sceneName } from '../../../api.js'
+import { api } from '../../../api.js'
 import { useAction, useResource } from '../../../composables/useResource.js'
 import { notify, readPendingRestart } from '../../store.js'
 import { clone, same } from '../../forms.js'
@@ -23,7 +24,7 @@ watch(dirty, value => emit('dirty', value), { immediate: true })
 
 const sources = { builtin: '内置', plugin: '插件附带', shared: '共享', scene: '本群' }
 const items = computed(() => (skills.data.value?.catalog || []).map(skill => ({
-  name: skill.name, label: `${skill.name} · ${sources[skill.source]}`, note: skill.description, skill,
+  name: skill.name, label: `${skill.name} · ${sources[skill.source]}`, description: skill.description, skill,
 })))
 const shared = computed(() => (skills.data.value?.role_skills.affected_scenes || []).filter(item => item !== props.scene))
 const inspecting = computed({ get: () => inspected.value !== null, set: value => { if (!value) inspected.value = null } })
@@ -47,7 +48,7 @@ function changed() {
 <template>
   <ResourceState :resource="skills" error-title="读取技能失败">
   <SettingSection v-if="draft !== null" title="技能"
-    :description="shared.length ? `这个角色也用在 ${shared.map(sceneName).join('、')}，修改会一起生效。` : ''"
+    :description="shared.length ? sharedRoleNote(shared) : ''"
     :dirty="dirty" :saving="save.busy.value" :error="save.error.value" @save="submit">
     <p v-if="skills.data.value.directory === null && !items.length" class="muted">还没有可用技能，可启用附带技能的插件或在任务环境设置技能目录。</p>
     <template v-else>
@@ -68,5 +69,5 @@ function changed() {
 </template>
 
 <style scoped>
-.skill-open{margin-left:var(--sp-6)}
+.skill-open{flex:none}
 </style>

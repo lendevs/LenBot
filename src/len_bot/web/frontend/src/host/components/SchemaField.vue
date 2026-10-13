@@ -1,9 +1,9 @@
 <script setup>
-import { computed } from 'vue'
-import { mdiPlus } from '@mdi/js'
-import { sceneName } from '../../api.js'
-import { initialField } from '../pluginConfig.js'
+import { computed, ref, useId } from 'vue'
+import { mdiEyeOffOutline, mdiEyeOutline } from '@mdi/js'
+import { wideField } from '../pluginConfig.js'
 import FieldInfo from '../ui/FieldInfo.vue'
+import ScenePicker from './ScenePicker.vue'
 
 const props = defineProps({
   field: { type: Object, required: true },
@@ -11,63 +11,78 @@ const props = defineProps({
   configured: Boolean,
 })
 const model = defineModel({ required: true })
+const id = useId(), reveal = ref(false)
 const title = computed(() => props.field.label || props.field.key)
 const secretKept = computed(() => props.field.type === 'secret' && props.configured)
-const scenes = computed(() => props.sceneChoices.map(scene => ({ title: sceneName(scene), value: scene })))
-const inputType = computed(() => props.field.type === 'secret' ? 'password'
+// A handful of short choices reads better as a segmented control than as a dropdown.
+const segmented = computed(() => props.field.options?.length <= 3 && props.field.options.every(option => String(option.label).length <= 8))
+const inputType = computed(() => props.field.type === 'secret' ? (reveal.value ? 'text' : 'password')
   : ['integer', 'number'].includes(props.field.type) ? 'number' : props.field.type === 'url' ? 'url' : 'text')
-
-function addRow() {
-  model.value = [...model.value, Object.fromEntries(props.field.fields.map(child => [child.key, initialField(child)]))]
-}
-const removeRow = index => { model.value = model.value.filter((_, i) => i !== index) }
-function summary(row) {
-  const parts = props.field.fields.map(child => {
-    const value = row[child.key]
-    if (child.type === 'scene_list') return value.length ? value.map(sceneName).join('、') : ''
-    if (child.type === 'scene') return value ? sceneName(value) : ''
-    if (child.options) return child.options.find(option => option.value === value)?.label ?? ''
-    return typeof value === 'boolean' ? '' : String(value ?? '').split('\n')[0]
-  }).filter(Boolean)
-  return parts.slice(0, 3).join(' · ')
-}
+const range = computed(() => {
+  const { minimum: low, maximum: high } = props.field
+  if (low !== null && high !== null) return `${low}–${high}`
+  // A lone lower bound of 0 or 1 only says the number is not negative, which goes without saying.
+  if (low !== null) return low > 1 ? `≥ ${low}` : undefined
+  return high !== null ? `≤ ${high}` : undefined
+})
+const placeholder = computed(() => secretKept.value ? '已保存，留空不修改' : props.field.placeholder ?? undefined)
 </script>
 
 <template>
-  <v-select v-if="field.options" v-model="model" :items="field.options" item-title="label" item-value="value"
-    :label="title"><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-select>
-  <v-switch v-else-if="field.type === 'boolean'" v-model="model" :label="title"><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-switch>
-  <v-select v-else-if="field.type === 'scene'" v-model="model" :items="scenes" :label="title"><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-select>
-  <v-select v-else-if="field.type === 'scene_list'" v-model="model" :items="scenes" :label="title" multiple chips closable-chips><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-select>
-  <v-textarea v-else-if="field.type === 'string_list'" v-model="model" rows="2" auto-grow :label="title"
-    placeholder="每行一项"><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-textarea>
-  <v-textarea v-else-if="field.type === 'string' && field.multiline" v-model="model" rows="3" auto-grow :label="title"
-    :placeholder="field.placeholder ?? undefined"><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-textarea>
-  <fieldset v-else-if="field.type === 'object_list' && field.fields.length" class="rows">
-    <legend>{{ title }} <FieldInfo v-if="field.description" :text="field.description" /></legend>
-    <v-card v-for="(row, index) in model" :key="index" variant="outlined" class="row-card">
-      <div class="row-heading">
-        <strong>{{ summary(row) || `第 ${index + 1} 项` }}</strong>
-        <v-btn size="small" variant="text" color="error" :aria-label="`删除 ${title} 第 ${index + 1} 项`" @click="removeRow(index)">删除</v-btn>
+  <div class="schema-field" :class="{ wide: wideField(field) }">
+    <div v-if="field.type === 'boolean'" class="toggle-row">
+      <label :for="id" class="toggle-label">{{ title }}</label>
+      <FieldInfo v-if="field.description" :text="field.description" :size="15" />
+      <v-switch :id="id" v-model="model" class="toggle-switch" />
+    </div>
+    <template v-else>
+      <div class="field-label">
+        <label :for="id">{{ title }}</label>
+        <span v-if="field.required" class="required" aria-hidden="true">*</span>
+        <FieldInfo v-if="field.description" :text="field.description" :size="15" />
+        <span v-if="secretKept" class="saved-tag">已保存</span>
       </div>
-      <div class="row-fields">
-        <SchemaField v-for="child in field.fields" :key="child.key" v-model="row[child.key]" :field="child" :scene-choices="sceneChoices" />
-      </div>
-    </v-card>
-    <v-btn variant="text" color="primary" size="small" :prepend-icon="mdiPlus" @click="addRow">添加{{ title }}</v-btn>
-  </fieldset>
-  <v-textarea v-else-if="field.type === 'object_list'" v-model="model" rows="5" auto-grow class="mono"
-    :label="`${title}（JSON 对象列表）`"><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-textarea>
-  <v-text-field v-else v-model="model" :label="title" :type="inputType" :placeholder="secretKept ? '已保存，留空不修改' : field.placeholder ?? undefined"
-    :min="field.minimum ?? undefined" :max="field.maximum ?? undefined" :step="field.type === 'integer' ? 1 : 'any'"
-    :autocomplete="field.type === 'secret' ? 'off' : undefined"><template v-if="field.description" #append><FieldInfo :text="field.description" /></template></v-text-field>
+      <v-btn-toggle v-if="field.options && segmented" v-model="model" mandatory class="segments" :aria-label="title">
+        <v-btn v-for="option in field.options" :key="String(option.value)" :value="option.value">{{ option.label }}</v-btn>
+      </v-btn-toggle>
+      <v-select v-else-if="field.options" :id="id" v-model="model" :items="field.options" item-title="label" item-value="value" density="compact" />
+      <ScenePicker v-else-if="field.type === 'scene'" :id="id" v-model="model" :choices="sceneChoices" single />
+      <ScenePicker v-else-if="field.type === 'scene_list'" :id="id" v-model="model" :choices="sceneChoices" />
+      <v-combobox v-else-if="field.type === 'string_list'" :id="id" v-model="model" multiple chips closable-chips hide-no-data
+        :delimiters="['\n']" density="compact" placeholder="输入后回车添加" class="list-input" />
+      <v-textarea v-else-if="field.type === 'string' && field.multiline" :id="id" v-model="model" rows="3" auto-grow density="compact"
+        :placeholder="placeholder" />
+      <v-textarea v-else-if="field.type === 'object_list'" :id="id" v-model="model" rows="5" auto-grow density="compact" class="mono"
+        placeholder="JSON 对象列表" />
+      <v-text-field v-else :id="id" v-model="model" :type="inputType" :placeholder="placeholder" density="compact"
+        :class="{ mono: field.type === 'path' }" :suffix="range"
+        :min="field.minimum ?? undefined" :max="field.maximum ?? undefined" :step="field.type === 'integer' ? 1 : 'any'"
+        :autocomplete="field.type === 'secret' ? 'off' : undefined">
+        <template v-if="field.type === 'secret'" #append-inner>
+          <v-btn :icon="reveal ? mdiEyeOffOutline : mdiEyeOutline" variant="text" size="x-small" :aria-label="reveal ? '隐藏' : '显示'" @click="reveal = !reveal" />
+        </template>
+      </v-text-field>
+    </template>
+  </div>
 </template>
 
 <style scoped>
-.rows{border:0;padding:0;margin:0;display:grid;gap:var(--sp-3);min-width:0}
-.rows legend{font-size:var(--fs-md);font-weight:600;padding:0}
-.row-card{padding:var(--sp-3);display:grid;gap:var(--sp-3)}
-.row-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2);min-width:0}
-.row-heading strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row-fields{display:grid;gap:var(--sp-4)}
+.schema-field{display:grid;gap:6px;min-width:0;align-content:end}
+.schema-field.wide{grid-column:1 / -1}
+.field-label{display:flex;align-items:center;gap:4px;min-height:20px;font-size:var(--fs-sm);font-weight:600;line-height:1.4}
+.field-label label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.required{color:var(--error);font-weight:600}
+.saved-tag{margin-left:auto;padding:0 6px;border-radius:4px;background:var(--success-bg);color:var(--success);font-size:var(--fs-xs);font-weight:600;line-height:18px}
+.toggle-row{display:flex;align-items:center;gap:4px;min-height:40px;padding:0 var(--sp-2) 0 var(--sp-3);border-radius:var(--radius);background:var(--fill)}
+.toggle-label{font-size:var(--fs-md);cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toggle-switch{flex:none;margin-left:auto}
+.toggle-switch :deep(.v-selection-control){min-height:36px}
+.segments.v-btn-toggle{justify-self:start;height:40px;padding:3px}
+.segments.v-btn-toggle :deep(.v-btn){height:34px !important;min-width:72px;padding:0 var(--sp-4)}
+.list-input :deep(.v-field__input){padding-top:6px;padding-bottom:6px;gap:4px}
+.list-input :deep(.v-chip){margin:0;background:var(--surface);border:1px solid var(--line-strong);color:var(--ink)}
+.list-input :deep(.v-chip .v-chip__underlay){opacity:0}
+.list-input :deep(.v-chip__close){opacity:.45;font-size:14px}
+.list-input :deep(.v-chip__close:hover){opacity:.8}
+.schema-field :deep(.v-text-field__suffix){color:var(--muted);font-size:var(--fs-sm);opacity:1}
 </style>

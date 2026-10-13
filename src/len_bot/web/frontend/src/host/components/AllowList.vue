@@ -23,9 +23,12 @@ function toggle(name, on) {
   </v-radio-group>
   <ul class="allow-list" :class="{ all: modelValue === 'all' }">
     <li v-for="item in items" :key="item.name">
-      <v-checkbox :model-value="modelValue === 'all' || modelValue.includes(item.name)" :disabled="modelValue === 'all'"
-        :label="item.label" hide-details density="compact" @update:model-value="value => toggle(item.name, value)" />
-      <slot name="item" :item="item" />
+      <div class="item-head">
+        <v-checkbox :model-value="modelValue === 'all' || modelValue.includes(item.name)" :disabled="modelValue === 'all'"
+          :label="item.label" hide-details density="compact" @update:model-value="value => toggle(item.name, value)" />
+        <slot name="item" :item="item" />
+      </div>
+      <p v-if="item.description" class="description">{{ item.description }}</p>
       <p v-if="item.note" class="note">{{ item.note }}</p>
     </li>
     <li v-for="name in missing" :key="name">
@@ -38,6 +41,9 @@ function toggle(name, on) {
 .allow-list li{min-width:0;padding:var(--sp-1) 0 var(--sp-3);border-bottom:1px solid var(--line)}
 .allow-list.all :deep(.v-selection-control--disabled){opacity:1}
 .allow-list.all :deep(.v-selection-control--disabled .v-label){color:var(--ink)}
-.allow-list .note{margin:var(--sp-1) 0 0 40px;font-size:var(--fs-sm);color:var(--warning)}
+.allow-list .note,.allow-list .description{margin:var(--sp-1) 0 0 40px;font-size:var(--fs-sm);color:var(--warning)}
+.allow-list .description{color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .allow-list :deep(.v-label){font-weight:600;opacity:1}
+.item-head{display:flex;align-items:center;gap:var(--sp-2);min-width:0}
+.item-head :deep(.v-checkbox){flex:1;min-width:0}
 </style>

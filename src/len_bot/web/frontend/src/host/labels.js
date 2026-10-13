@@ -1,3 +1,4 @@
+import { sceneName } from '../api.js'
 import { statusText } from './status.js'
 
 export const roleOptions = [
@@ -49,3 +50,10 @@ export const noticeLabel = kind => notices[kind] || kind
 export const wakeLabel = channel => ({ direct: '被 @ 或回复', named: '点名', focus: '对话继续', ambient: '群里在聊', explore: '随机叫醒',
   proactive: '主动开话题', schedule: '提醒', task: '任务', plugin: '插件', audio: '语音就绪', resume: '恢复对话',
   manual: '手动操作', unknown: '历史未记录' }[channel] || channel)
+
+// Other groups sharing the same role; long lists keep the first two names and a count.
+export function sharedRoleNote(scenes) {
+  const names = scenes.map(sceneName)
+  const list = names.length > 2 ? `${names.slice(0, 2).join('、')} 等 ${names.length} 个群` : names.join('、')
+  return `这个角色还用在 ${list}，修改会一起生效。`
+}

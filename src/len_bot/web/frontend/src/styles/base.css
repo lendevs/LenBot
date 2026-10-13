@@ -22,6 +22,16 @@ code { font-family:var(--mono);font-size:.92em }
 .plain-list { list-style:none;margin:0;padding:0 }
 .v-application { font-family:inherit;background:var(--page) }
 
+/* Vuetify sizes buttons and chips in rem against a 16px root; this panel's root is 14px, so pin them to the type scale. */
+/* Component styles load on demand after this file, so these carry an extra type selector to win regardless of order. */
+html .v-btn--size-x-small { --v-btn-size:var(--fs-xs) }
+html .v-btn--size-small { --v-btn-size:var(--fs-sm) }
+html .v-btn--size-default { --v-btn-size:var(--fs-md) }
+html .v-btn--size-large, html .v-btn--size-x-large { --v-btn-size:var(--fs-lg) }
+html .v-chip.v-chip--size-small { font-size:var(--fs-xs) }
+html .v-chip.v-chip--size-default { font-size:var(--fs-sm) }
+html .v-field { font-size:var(--fs-md) }
+html .v-field-label--floating { --v-field-label-scale:var(--fs-xs) }
 .v-btn { letter-spacing:0;text-transform:none;font-weight:600;transition:background-color var(--dur-1),border-color var(--dur-1),color var(--dur-1) }
 .v-btn--variant-outlined, .v-btn--variant-tonal { background:var(--surface);border:1px solid var(--line-strong) }
 .v-btn--variant-outlined:not(.text-error), .v-btn--variant-tonal:not(.text-error) { color:var(--ink) }
@@ -56,6 +66,8 @@ code { font-family:var(--mono);font-size:.92em }
 * { scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent }
 @media(max-width:600px){
   .v-btn{min-height:44px}
+  /* iOS zooms into inputs below 16px on focus. */
+  html .v-field{font-size:16px}
 }
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms !important;animation-delay:0ms !important;animation-iteration-count:1 !important;

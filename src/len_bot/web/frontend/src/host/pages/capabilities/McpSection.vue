@@ -117,7 +117,7 @@ const runtimeOf = name => running.value[name]
           </ObjectList>
         </Panel>
       </template>
-      <template #placeholder>接入外部工具服务，Bot 需要时会自己查找并使用这些工具。从左边选一个服务，或添加新的。</template>
+      <template #placeholder>选择或添加一个服务</template>
 
       <Panel v-if="selected && runtimeOf(selected)" :title="selected">
         <template #actions>

@@ -92,7 +92,7 @@ const accepting = computed(() => state.data.value?.configured && state.data.valu
           </div>
         </Panel>
       </template>
-      <template #placeholder>从左边选一个任务查看详情。</template>
+      <template #placeholder>选择一个任务</template>
       <TaskDetail v-if="selected" :key="selected" :id="selected" :scene="scene" :version="version"
         :service="data" :settings="settings" @dirty="value => detailDirty = value" @changed="list.reload()" @created="created" />
     </MasterDetail>

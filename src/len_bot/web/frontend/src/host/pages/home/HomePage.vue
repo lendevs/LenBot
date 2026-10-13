@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, reactive, ref } from 'vue'
 import { mdiMessageTextOutline, mdiSendOutline, mdiChatProcessingOutline, mdiAlarm, mdiCounter, mdiRefresh, mdiLanConnect,
-  mdiLanDisconnect, mdiCheckCircleOutline, mdiArrowRight, mdiMagnify } from '@mdi/js'
+  mdiLanDisconnect, mdiCheckCircleOutline, mdiArrowRight, mdiMagnify, mdiChevronDown, mdiDotsHorizontal, mdiCogOutline } from '@mdi/js'
 import { api, sceneName, sceneNumber, sceneSubtitle } from '../../../api.js'
 import { useAction } from '../../../composables/useResource.js'
 import { confirm } from '../../../composables/useConfirm.js'
@@ -140,12 +140,20 @@ const connectionNotes = {
       </div>
       <div class="status-actions">
         <v-btn v-if="state.connection.can_connect || connect.busy.value" color="primary" :prepend-icon="mdiLanConnect" :loading="connect.busy.value" @click="connectQQ">手动连接 QQ</v-btn>
-        <v-btn v-if="state.connection.can_disconnect || disconnect.busy.value" variant="outlined" class="text-error" :prepend-icon="mdiLanDisconnect" :loading="disconnect.busy.value" @click="disconnectQQ">断开 QQ</v-btn>
+        <v-btn-toggle v-if="state.delivery === 'onebot'" :model-value="state.send_hold ? 'hold' : 'send'" mandatory class="send-mode"
+          :class="{ held: state.send_hold }" :disabled="hold.busy.value" aria-label="发送方式" @update:model-value="value => setHold(value === 'hold')">
+          <v-btn value="send">发到 QQ</v-btn><v-btn value="hold">模拟发送</v-btn>
+        </v-btn-toggle>
         <v-btn v-if="state.scenes.length" variant="outlined" :loading="allChat.busy.value" :disabled="!state.connection.accepting"
           @click="setAllChat(!anyChat)">{{ anyChat ? '全部暂停' : '全部恢复' }}</v-btn>
-        <v-btn v-if="state.delivery === 'onebot'" variant="outlined" :class="{ 'text-warning': state.send_hold }" :loading="hold.busy.value"
-          @click="setHold(!state.send_hold)">{{ state.send_hold ? '恢复真实发送' : '改为模拟发送' }}</v-btn>
-        <v-btn :to="{ name: 'host-system', query: { tab: 'connection' } }" variant="text">连接设置</v-btn>
+        <v-menu location="bottom end">
+          <template #activator="{ props: menu }"><v-btn v-bind="menu" :icon="mdiDotsHorizontal" variant="outlined" size="36" aria-label="更多连接操作" /></template>
+          <v-list density="compact" min-width="180">
+            <v-list-item :prepend-icon="mdiCogOutline" title="连接设置" :to="{ name: 'host-system', query: { tab: 'connection' } }" />
+            <v-list-item v-if="state.connection.can_disconnect" :prepend-icon="mdiLanDisconnect" title="断开 QQ" base-color="error"
+              :disabled="disconnect.busy.value" @click="disconnectQQ" />
+          </v-list>
+        </v-menu>
       </div>
       <p v-if="connectionNote" class="status-note">{{ connectionNote }}</p>
     </section>
@@ -163,10 +171,21 @@ const connectionNotes = {
           <p v-if="!state || !day" class="muted pad">读取中…</p>
           <div v-else-if="!todo.length" class="all-good pad"><v-icon :icon="mdiCheckCircleOutline" size="20" />一切正常，没有需要处理的事</div>
           <ul v-else class="plain-list rows">
-            <li v-for="item in todo" :key="item.key" class="row">
-              <div class="row-text"><span>{{ item.text }}</span>
-                <Fold v-if="item.error" label="错误原文" code>{{ item.error }}</Fold></div>
-              <v-btn :to="item.to" size="small" variant="outlined">{{ item.action }}</v-btn>
+            <li v-for="item in todo" :key="item.key" class="row" :class="{ grouped: item.children }">
+              <details v-if="item.children" class="todo-group">
+                <summary><span class="row-text">{{ item.text }}</span><span class="muted small">{{ item.children.length }} 项</span><v-icon :icon="mdiChevronDown" size="18" class="chevron" /></summary>
+                <ul class="plain-list sub-rows">
+                  <li v-for="child in item.children" :key="child.key" class="sub-row">
+                    <div class="row-text"><span>{{ child.text }}</span><Fold v-if="child.error" label="错误原文" code>{{ child.error }}</Fold></div>
+                    <v-btn :to="child.to" size="small" variant="text">{{ child.action }}</v-btn>
+                  </li>
+                </ul>
+              </details>
+              <template v-else>
+                <div class="row-text"><span>{{ item.text }}</span>
+                  <Fold v-if="item.error" label="错误原文" code>{{ item.error }}</Fold></div>
+                <v-btn :to="item.to" size="small" variant="outlined">{{ item.action }}</v-btn>
+              </template>
             </li>
           </ul>
           <template v-if="effects.length" #footer><span class="muted small">群友对 Bot 发言的反应：{{ effects.join(' · ') }}</span></template>
@@ -232,6 +251,17 @@ const connectionNotes = {
 .status-text p{margin:0;color:var(--muted);overflow-wrap:anywhere}
 .status-actions{display:flex;gap:var(--sp-2);flex-wrap:wrap;justify-content:flex-end}
 .status-note{grid-column:1/-1;margin:0}
+.send-mode.v-btn-toggle{height:36px}
+.send-mode.v-btn-toggle :deep(.v-btn){height:30px !important;padding:0 var(--sp-3)}
+.send-mode.held :deep(.v-btn--active){color:var(--warning)}
+.row.grouped{display:block}
+.todo-group summary{display:flex;align-items:center;gap:var(--sp-3);cursor:pointer;list-style:none}
+.todo-group summary::-webkit-details-marker{display:none}
+.todo-group summary:hover .row-text{text-decoration:underline;text-underline-offset:3px}
+.todo-group .chevron{color:var(--muted);transition:transform var(--dur-2) var(--ease-out)}
+.todo-group[open] .chevron{transform:rotate(180deg)}
+.sub-rows{margin-top:var(--sp-2);padding-left:var(--sp-3);border-left:2px solid var(--line)}
+.sub-row{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-1) 0;min-width:0}
 .columns{display:grid;grid-template-columns:minmax(0,3fr) minmax(320px,2fr);grid-template-areas:'todo scenes' 'activity health';grid-template-rows:auto 1fr;gap:var(--sp-6) var(--sp-6);align-items:start;margin-top:var(--sp-3)}
 .area-todo{grid-area:todo}
 .area-activity{grid-area:activity}

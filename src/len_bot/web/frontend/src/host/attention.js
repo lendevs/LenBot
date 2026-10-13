@@ -21,39 +21,41 @@ export function attentionItems(state, day) {
     }
   }
   if (!day) return items
-  for (const [scene, total] of Object.entries(day.undelivered)) {
-    items.push({ key: `send:${scene}`, text: `${sceneName(scene)} 今天有 ${total} 条消息没发出去`,
-      to: { name: 'host-scenes', query: { scene } }, action: '查看' })
-  }
+  perScene(items, 'send', Object.entries(day.undelivered), (scene, total) => ({ text: `${sceneName(scene)} 今天有 ${total} 条消息没发出去`,
+    count: total, to: { name: 'host-scenes', query: { scene } }, action: '查看' }), (groups, total) => `${groups} 个群今天有 ${total} 条消息没发出去`)
   const failures = {}
   for (const turn of day.recent_errors) {
     if (turn.started >= day.since && turnFailed(turn.status)) failures[turn.scene] = (failures[turn.scene] || 0) + 1
   }
-  for (const [scene, total] of Object.entries(failures)) {
-    items.push({ key: `turn:${scene}`, text: `${sceneName(scene)} 今天有 ${total} 次回复出错`,
-      to: { name: 'host-logs', query: { scene } }, action: '查看' })
-  }
-  for (const [scene, total] of Object.entries(day.failed_tasks)) {
-    items.push({ key: `task:${scene}`, text: `${sceneName(scene)} 今天有 ${total} 个任务失败`,
-      to: { name: 'host-tasks', query: { scene } }, action: '查看' })
-  }
+  perScene(items, 'turn', Object.entries(failures), (scene, total) => ({ text: `${sceneName(scene)} 今天有 ${total} 次回复出错`,
+    count: total, to: { name: 'host-logs', query: { scene } }, action: '查看' }), (groups, total) => `${groups} 个群今天共有 ${total} 次回复出错`)
+  perScene(items, 'task', Object.entries(day.failed_tasks), (scene, total) => ({ text: `${sceneName(scene)} 今天有 ${total} 个任务失败`,
+    count: total, to: { name: 'host-tasks', query: { scene } }, action: '查看' }), (groups, total) => `${groups} 个群今天共有 ${total} 个任务失败`)
   if (day.memory_stuck.length) {
-    const jobs = day.memory_stuck
-    items.push({ key: 'memory', to: { name: 'host-memory', query: { scene: jobs[0].scene, tab: 'ingest' } }, action: '去重试',
-      text: jobs.length === 1
-        ? `${sceneName(jobs[0].scene)} 的记忆整理${jobs[0].status === 'failed' ? '失败' : '被中断'}，停在这里等你重试`
-        : `${jobs.length} 个群的记忆整理停住了，需要逐个重试：${jobs.map(job => sceneName(job.scene)).join('、')}`,
-      error: jobs.map(job => `${sceneName(job.scene)}（${job.status === 'failed' ? '失败' : '中断'}）：${job.error}`).join('\n\n') })
+    const rows = day.memory_stuck.map(job => ({ key: `memory:${job.scene}`, error: job.error, action: '去重试',
+      text: `${sceneName(job.scene)} 的记忆整理${job.status === 'failed' ? '失败' : '被中断'}，停在这里等你重试`,
+      to: { name: 'host-memory', query: { scene: job.scene, tab: 'ingest' } } }))
+    items.push(rows.length === 1 ? rows[0] : { key: 'memory', text: `${rows.length} 个群的记忆整理停住了，需要逐个重试`, children: rows })
   }
   for (const [scene, until] of Object.entries(day.speech_held || {})) {
     items.push({ key: `speech:${scene}`, text: `${sceneName(scene)} 本小时发言已到上限，${formatTime(until, null, { date: false })} 恢复`,
       to: { name: 'host-scenes', query: { scene, tab: 'settings' } }, action: '查看' })
   }
-  for (const [scene, reviews] of Object.entries(day.pending_reviews)) {
+  perScene(items, 'review', Object.entries(day.pending_reviews), (scene, reviews) => {
     const parts = [['expressions', '条表达'], ['stickers', '张表情']]
       .filter(([key]) => reviews[key]).map(([key, unit]) => `${reviews[key]} ${unit}`)
-    items.push({ key: `review:${scene}`, text: `${sceneName(scene)} 新学到 ${parts.join('、')}，等你审核`,
-      to: { name: 'host-scenes', query: { scene, tab: 'learning' } }, action: '去审核' })
-  }
+    return { text: `${sceneName(scene)} 新学到 ${parts.join('、')}，等你审核`, count: 1,
+      to: { name: 'host-scenes', query: { scene, tab: 'learning' } }, action: '去审核' }
+  }, groups => `${groups} 个群新学到的表达或表情等你审核`)
   return items
+}
+
+// The same kind of trouble in many groups reads as one item; each group stays one click away inside it.
+function perScene(items, kind, entries, describe, summary) {
+  const rows = entries.map(([scene, value]) => ({ key: `${kind}:${scene}`, ...describe(scene, value) }))
+  if (rows.length < 3) {
+    items.push(...rows)
+    return
+  }
+  items.push({ key: kind, text: summary(rows.length, rows.reduce((sum, row) => sum + row.count, 0)), children: rows })
 }

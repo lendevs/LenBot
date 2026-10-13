@@ -19,7 +19,7 @@ defineEmits(['back'])
 .md-detail{display:grid;gap:var(--sp-4);min-width:0}
 .selected .md-detail{animation:rise var(--dur-3) var(--ease-out)}
 .md-back{display:none;justify-self:start}
-.md-placeholder{padding:var(--sp-2) 0;color:var(--muted);max-width:520px}
+.md-placeholder{display:grid;place-items:center;min-height:320px;padding:var(--sp-6);border:1px dashed var(--line-strong);border-radius:var(--radius-lg);color:var(--muted);text-align:center}
 .md-placeholder:empty{display:none}
 .master-detail.empty{grid-template-columns:minmax(0,640px)}
 .master-detail.empty .md-list{position:static;max-height:none;border-right:0;padding-right:0}

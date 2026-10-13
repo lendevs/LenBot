@@ -46,7 +46,8 @@ const restartItems = computed(() => {
   return [...new Set([...value.sections.map(sectionLabel), ...value.scenes.map(sceneName),
     ...value.plugins.map(item => `插件 ${item.name}`), ...value.personas.map(item => `角色 ${item.name}`)])]
 })
-const attention = computed(() => attentionItems(host.state, host.overview).length)
+// Counting before today's overview arrives would show a smaller number that then jumps.
+const attention = computed(() => host.overview || host.overviewError ? attentionItems(host.state, host.overview).length : 0)
 const newer = computed(() => host.updates?.check?.update_available ? host.updates.check.latest : '')
 const account = computed(() => auth.user?.username || '')
 const toast = computed({ get: () => Boolean(host.toast), set: value => { if (!value) host.toast = '' } })

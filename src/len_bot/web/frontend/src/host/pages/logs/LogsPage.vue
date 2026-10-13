@@ -129,7 +129,7 @@ function exportShown() {
           </div>
         </Panel>
       </template>
-      <template #placeholder>从左边选一次回复，看看 Bot 当时怎么想的。</template>
+      <template #placeholder>选择一次回复</template>
       <Panel title="经过">
         <template #actions>
           <v-btn size="small" variant="text" @click="trace(selected)">这一轮的运行日志</v-btn>
