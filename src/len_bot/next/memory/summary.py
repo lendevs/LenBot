@@ -74,6 +74,9 @@ class MemorySummarizer:
                         scope: Literal["scene", "public"] = "scene") -> dict:
         """Summarize one directory; the caller holds the partition's memory write lock."""
         inputs = await self.backend.summary_inputs(scene, path, scope=scope)
+        if not path and scope == "scene":
+            # The group profile reaches every role of the scene; each role's own records stay under bot/.
+            inputs["directories"] = [item for item in inputs["directories"] if item["name"] != "bot"]
         if not inputs["files"] and not inputs["directories"]:
             await self.backend.clear_summary(scene, path, scope=scope)
             return {"path": path, "cleared": True, "skipped": "目录为空，已清除派生摘要"}

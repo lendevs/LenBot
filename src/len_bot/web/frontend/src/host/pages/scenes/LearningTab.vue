@@ -224,7 +224,7 @@ async function learnNow() {
 
   <FormDialog :model-value="example !== null" title="加到角色样例" :busy="addExample.busy.value" @update:model-value="value => { if (!value) example = null }">
     <template v-if="example">
-      <p class="muted">会写进这个群所用角色包的人工样例，用同一个角色包的群都会受影响。重启后生效。</p>
+      <p class="muted">会写进这个群所用角色的样例，用同一个角色的群都会受影响。</p>
       <v-textarea v-model="example.context" label="情境" rows="2" auto-grow />
       <v-textarea v-model="example.line" label="台词" rows="2" auto-grow />
       <v-combobox v-model="example.tags" label="标签" multiple chips closable-chips />

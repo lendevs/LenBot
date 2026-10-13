@@ -14,6 +14,8 @@ import AdvancedFields from '../../ui/AdvancedFields.vue'
 import RowEditor from '../../ui/RowEditor.vue'
 import SaveBar from '../../ui/SaveBar.vue'
 import QuietControl from './QuietControl.vue'
+import RoleAvatar from '../persona/RoleAvatar.vue'
+import { applyRole, roleLabel, roleUsage } from '../persona/roles.js'
 
 const props = defineProps({ scene: { type: String, required: true } })
 const emit = defineEmits(['dirty'])
@@ -23,7 +25,7 @@ const saved = computed(() => settings.data.value?.saved.scenes[props.scene] || n
 const group = computed(() => props.scene.split(':', 3)[1] === 'group')
 const draft = ref(null), relationships = ref([])
 const save = useAction(), binding = useAction()
-const persona = ref('')
+const library = useResource(() => api('/api/host/personas'))
 const speech = ref(null)
 const usage = useResource(() => api('/api/host/limits'))
 const release = useAction()
@@ -95,7 +97,6 @@ const savedRows = value => Object.entries(value.scene_persona.relationships).map
 function adopt() {
   draft.value = clone(saved.value)
   relationships.value = savedRows(saved.value)
-  persona.value = saved.value.persona
   speech.value = clone(speechSaved.value)
 }
 watch(saved, value => { if (value && !draft.value) adopt() }, { immediate: true })
@@ -106,9 +107,10 @@ const speechDirty = computed(() => Boolean(speech.value && !same(speech.value, s
 const dirty = computed(() => sceneDirty.value || tasksDirty.value || speechDirty.value)
 const problem = computed(() => duplicateAccount.value ? '和群友的关系里有重复的账号'
   : speech.value?.mode === 'custom' && !(Number.isInteger(speech.value.value) && speech.value.value >= 1) ? '每小时发言条数至少 1 条' : '')
-watch(() => dirty.value || Boolean(saved.value && persona.value !== saved.value.persona),
-  value => emit('dirty', value), { immediate: true })
-const personaOptions = computed(() => [...new Set(Object.values(settings.data.value?.saved.scenes || {}).map(item => item.persona))])
+watch(dirty, value => emit('dirty', value), { immediate: true })
+const roles = computed(() => library.data.value?.roles || [])
+const currentRole = computed(() => roles.value.find(role => saved.value && role.path === saved.value.persona) || null)
+const roleChoices = computed(() => roles.value.filter(role => !role.error && (!role.duplicate_id || role === currentRole.value)))
 const duplicateAccount = computed(() => new Set(relationships.value.map(row => row.qq)).size !== relationships.value.length)
 
 function toggleQuiet(value) {
@@ -138,12 +140,18 @@ async function submit() {
     notify('已保存')
   }
 }
-async function rebind() {
-  if (!await confirm({ title: `把 ${sceneName(props.scene)} 换成角色 ${persona.value}？`, text: '重启后生效。', confirmLabel: '换角色' })) return
-  const result = await binding.run(() => api(`/api/host/settings/scenes/${encodeURIComponent(props.scene)}/persona`, {
-    method: 'PUT', body: JSON.stringify({ persona: persona.value }),
-  }))
-  if (result) { settings.data.value = result; readPendingRestart(); notify('已保存') }
+// Aliases, relationships and the addendum belong to the role, so the form reloads after a switch.
+async function rebind(key) {
+  const role = roles.value.find(item => item.key === key)
+  if (!role || role === currentRole.value) return
+  if (sceneDirty.value && !await confirm({ title: '本群设置还没保存，放弃这些修改？', confirmLabel: '放弃', danger: true })) return
+  if (!await confirm({ title: `把 ${sceneName(props.scene)} 换成 ${roleLabel(role)}？`, confirmLabel: '换角色' })) return
+  const result = await binding.run(() => applyRole(role, [props.scene]))
+  if (!result) return
+  notify(result.message)
+  await Promise.all([settings.reload(), library.reload()])
+  adopt()
+  readHostState()
 }
 async function removeScene() {
   if (!await confirm({ title: `移除 ${sceneName(props.scene)}？`, text: '重启后 Bot 不再处理这个群。聊天记录、记忆和提醒都会保留。', confirmLabel: '移除', danger: true })) return
@@ -159,6 +167,25 @@ async function removeScene() {
       <QuietControl :scene="scene" />
 
       <form class="stack" @submit.prevent="submit">
+        <Panel title="角色">
+          <ErrorNote v-if="library.error.value" title="读取角色失败" :error="library.error.value" @retry="library.reload()" />
+          <ErrorNote v-if="binding.error.value" title="没有换成" :error="binding.error.value" />
+          <div class="role-row">
+            <v-select :model-value="currentRole?.key ?? null" :items="roleChoices" item-value="key" :item-title="roleLabel" label="这个群用的角色"
+              :loading="binding.busy.value || library.loading.value" :disabled="binding.busy.value" class="role-select" @update:model-value="rebind">
+              <template #selection="{ item }">
+                <span class="role-choice"><RoleAvatar :role="item.raw" :size="24" />{{ roleLabel(item.raw) }}</span>
+              </template>
+              <template #item="{ item, props: row }">
+                <v-list-item v-bind="row" :title="roleLabel(item.raw)" :subtitle="roleUsage(item.raw)">
+                  <template #prepend><RoleAvatar :role="item.raw" :size="32" class="mr-3" /></template>
+                </v-list-item>
+              </template>
+            </v-select>
+            <v-btn v-if="currentRole" variant="text" :to="{ name: 'host-persona', query: { persona: currentRole.key } }">编辑这个角色</v-btn>
+          </div>
+        </Panel>
+
         <Panel title="回复方式">
           <div class="form-grid">
             <v-text-field :model-value="draft.timezone ?? ''" label="本群时区" placeholder="和全局一致"
@@ -215,7 +242,7 @@ async function removeScene() {
           </div>
         </Panel>
 
-        <Panel title="在本群的称呼与关系">
+        <Panel :title="currentRole ? `${roleLabel(currentRole)} 在本群的称呼与关系` : '在本群的称呼与关系'">
           <v-combobox v-model="draft.scene_persona.persona_aliases" label="群友对 Bot 的其他称呼" multiple chips closable-chips
             />
           <h3>和群友的关系</h3>
@@ -256,12 +283,7 @@ async function removeScene() {
           :problem="problem" @discard="adopt" />
       </form>
 
-      <Panel title="角色与移除">
-        <ErrorNote v-if="binding.error.value" title="没有保存成功" :error="binding.error.value" />
-        <div class="bind-row">
-          <v-combobox v-model="persona" :items="personaOptions" label="角色包目录" />
-          <v-btn variant="outlined" :loading="binding.busy.value" :disabled="!persona || persona === saved.persona" @click="rebind">换角色</v-btn>
-        </div>
+      <Panel title="移除">
         <template #footer>
           <span class="muted small grow">移除后聊天记录、记忆和提醒都保留。</span>
           <v-btn color="error" variant="text" :loading="binding.busy.value" @click="removeScene">从配置移除这个群</v-btn>
@@ -272,8 +294,9 @@ async function removeScene() {
 </template>
 
 <style scoped>
-.bind-row{display:flex;gap:var(--sp-3);align-items:flex-start;flex-wrap:wrap}
-.bind-row .v-input{flex:1 1 320px}
+.role-row{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
+.role-select{flex:0 1 420px}
+.role-choice{display:inline-flex;align-items:center;gap:var(--sp-2)}
 .grow{flex:1}
 .speech-usage{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
 </style>

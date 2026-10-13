@@ -67,7 +67,7 @@ const router = createRouter({
       path:'/host/persona',
       name:'host-persona',
       component:()=>import('../host/pages/persona/PersonaPage.vue'),
-      meta:{title:'角色',scene:true,sceneMode:'role'}
+      meta:{title:'角色'}
     },
     {
       path:'/login',

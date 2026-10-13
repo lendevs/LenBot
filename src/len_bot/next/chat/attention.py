@@ -31,6 +31,9 @@ from ..plugins.store import PluginStore
 from ..runtime.logs import log_context, log_event
 from .schedule_store import ScheduleStore
 from ..prompt_files import read_prompt
+from ..persona.profile import Persona
+from ..tools.external_tools import ExternalTool
+from ..tools.skills import Skill
 
 
 logger = logging.getLogger(__name__)
@@ -176,8 +179,7 @@ class SceneRunner:
         self.ready_for_turn = ready_for_turn
         self.own_ids = self.store.own_ids(self.config.scene)
         self.proactive = None if self.config.proactive is None else ProactiveStore(self.store)
-        self.keywords = tuple(dict.fromkeys(word.strip().casefold() for word in
-            [chat.persona.name, *chat.persona.aliases, *self.config.persona_aliases, *self.settings.keywords]))
+        self.keywords = self.wake_words()
         saved = self.store.load_attention(self.config.scene)
         if saved is None:
             self.state = AttentionState()
@@ -192,8 +194,7 @@ class SceneRunner:
                 saved['disposition'] = Disposition(**saved['disposition'])
             self.state = AttentionState(**saved)
         restored = copy.deepcopy(self.state)
-        attention_enabled = (self.settings.declarations is not None
-                             and (chat.persona.tools == 'all' or 'attention' in chat.persona.tools))
+        attention_enabled = self.attention_enabled(chat.persona)
         self.enforcing = attention_enabled and self.settings.declarations.mode == 'enforce'
         restored.declared = restored.declared or Declared() if attention_enabled else None
         if self.settings.disposition is None:
@@ -231,6 +232,34 @@ class SceneRunner:
             self.chat.toolset.attention = self.declare
         self.chat.set_external_tools(list(self.chat.toolset.external.values()))
         self.resume = self.chat.restore()
+
+    def wake_words(self) -> tuple[str, ...]:
+        persona = self.chat.persona
+        return tuple(dict.fromkeys(word.strip().casefold() for word in
+            [persona.name, *persona.aliases, *self.config.persona_aliases, *self.settings.keywords]))
+
+    def attention_enabled(self, persona: Persona) -> bool:
+        return (self.settings.declarations is not None
+                and (persona.tools == 'all' or 'attention' in persona.tools))
+
+    def adopt_persona(self, persona: Persona, skills: tuple[Skill, ...], external_tools: list[ExternalTool]) -> None:
+        """Run the next turn as ``persona``; caller owns ``execution`` and has updated the scene config."""
+        attention_enabled = self.attention_enabled(persona)
+        previous = self.chat.toolset.attention
+        self.chat.toolset.attention = self.declare if attention_enabled else None
+        try:
+            self.chat.adopt_persona(persona, skills, external_tools)
+        except Exception:
+            self.chat.toolset.attention = previous
+            raise
+        self.enforcing = attention_enabled and self.settings.declarations.mode == 'enforce'
+        state = copy.deepcopy(self.state)
+        state.declared = (state.declared or Declared()) if attention_enabled else None
+        if state.pending is not None and state.pending.channel == 'attention' and not self.enforcing:
+            state.pending = None
+        self.save_state(state)
+        self.keywords = self.wake_words()
+        self.changed.set()
 
     def quiet_period(self, now: float) -> tuple[float, float] | None:
         if self.state.paused:

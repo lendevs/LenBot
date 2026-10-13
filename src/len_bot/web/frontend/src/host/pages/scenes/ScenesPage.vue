@@ -1,8 +1,8 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, sceneName, sceneSubtitle } from '../../../api.js'
-import { useAction } from '../../../composables/useResource.js'
+import { useAction, useResource } from '../../../composables/useResource.js'
 import { sceneTarget, useCurrentScene } from '../../../composables/useCurrentScene.js'
 import { useUnsavedChanges } from '../../../composables/useUnsavedChanges.js'
 import { host, notify, readPendingRestart } from '../../store.js'
@@ -29,7 +29,10 @@ const open = value => router.push(sceneTarget(route, value))
 
 const adding = ref(false), kind = ref('group'), qq = ref(''), persona = ref('')
 const create = useAction()
-const personas = computed(() => [...new Set((host.state?.scenes || []).map(item => item.persona_path))].filter(Boolean))
+const library = useResource(() => api('/api/host/personas'), { immediate: false })
+const personas = computed(() => (library.data.value?.roles || []).filter(role => !role.error)
+  .map(role => ({ title: role.name || role.key, subtitle: role.config_path, value: role.config_path })))
+watch(adding, value => { if (value) library.reload() })
 async function addScene() {
   const body = { scene: `onebot:${kind.value}:${qq.value.trim()}`, persona: persona.value }
   const result = await create.run(() => api('/api/host/settings/scenes', { method: 'POST', body: JSON.stringify(body) }))
@@ -74,7 +77,7 @@ async function addScene() {
       <v-btn-toggle v-model="kind" mandatory>
         <v-btn value="group">群聊</v-btn><v-btn value="private">私聊</v-btn></v-btn-toggle>
       <v-text-field v-model="qq" :label="kind === 'group' ? '群号' : '对方 QQ 号'" />
-      <v-combobox v-model="persona" :items="personas" label="角色包目录" placeholder="personas/my-bot" />
+      <v-select v-model="persona" :items="personas" label="角色" :loading="library.loading.value" />
       <ErrorNote v-if="create.error.value" title="没有添加成功" :error="create.error.value" />
       <template #actions>
         <v-btn color="primary" :loading="create.busy.value" :disabled="!qq.trim() || !persona" @click="addScene">添加</v-btn>

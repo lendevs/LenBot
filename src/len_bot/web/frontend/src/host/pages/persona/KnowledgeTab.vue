@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { api, sceneName } from '../../../api.js'
 import { useAction, useResource } from '../../../composables/useResource.js'
 import { useRequestGuard } from '../../../composables/useRequestGuard.js'
-import { notify, readPendingRestart } from '../../store.js'
+import { notify } from '../../store.js'
 import { confirm } from '../../../composables/useConfirm.js'
 import ResourceState from '../../ui/ResourceState.vue'
 import MasterDetail from '../../ui/MasterDetail.vue'
@@ -11,13 +11,14 @@ import Panel from '../../ui/Panel.vue'
 import ObjectList from '../../ui/ObjectList.vue'
 import ObjectRow from '../../ui/ObjectRow.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
+import { roleBase, savedNotice } from './roles.js'
 
-const props = defineProps({ scene: { type: String, required: true } })
+const props = defineProps({ persona: { type: String, required: true } })
 const emit = defineEmits(['dirty'])
-const base = computed(() => `/api/host/scenes/${encodeURIComponent(props.scene)}/persona-knowledge`)
+const base = computed(() => `${roleBase(props.persona)}/knowledge`)
 const listing = useResource(() => api(base.value))
 const files = computed(() => listing.data.value?.files || [])
-const shared = computed(() => (listing.data.value?.affected_scenes || []).filter(item => item !== props.scene))
+const shared = computed(() => listing.data.value?.affected_scenes || [])
 
 const open = ref(null), name = ref(''), text = ref('')
 const dirty = computed(() => open.value?.creating ? Boolean(name.value || text.value) : Boolean(open.value && text.value !== open.value.content))
@@ -25,7 +26,7 @@ watch(dirty, value => emit('dirty', value), { immediate: true })
 const confirmDiscard = async () => !dirty.value || confirm({ title: '这份资料还没保存，放弃修改？', confirmLabel: '放弃', danger: true })
 
 const reading = useAction()
-const beginRead = useRequestGuard(() => props.scene)
+const beginRead = useRequestGuard(() => props.persona)
 async function pick(filename) {
   const current = beginRead()
   if (open.value?.filename === filename || !await confirmDiscard()) return
@@ -52,18 +53,17 @@ async function send(method, body, message) {
     body: JSON.stringify({ directory: listing.data.value.saved_path, filename: filename.value, ...body }) }))
   if (!result) return null
   listing.data.value = result
-  readPendingRestart()
-  notify(message)
+  notify(message === '已保存' ? savedNotice(result) : result.apply_error || message)
   return result
 }
 async function save() {
-  const result = await send(open.value.creating ? 'POST' : 'PUT', { content: text.value }, '已保存，重启后生效')
+  const result = await send(open.value.creating ? 'POST' : 'PUT', { content: text.value }, '已保存')
   if (result) open.value = { filename: result.document.filename, content: result.document.content }
 }
 async function remove() {
   const others = shared.value.length ? `用这个角色的 ${shared.value.map(sceneName).join('、')} 也会少了它。` : ''
-  if (!await confirm({ title: `删除资料 ${open.value.filename}？`, text: `重启后生效。${others}`, confirmLabel: '删除', danger: true })) return
-  if (await send('DELETE', {}, '已删除，重启后生效')) { open.value = null; text.value = '' }
+  if (!await confirm({ title: `删除资料 ${open.value.filename}？`, text: others, confirmLabel: '删除', danger: true })) return
+  if (await send('DELETE', {}, '已删除')) { open.value = null; text.value = '' }
 }
 async function close() {
   if (!await confirmDiscard()) return
@@ -89,7 +89,7 @@ async function close() {
           </div>
         </Panel>
       </template>
-      <template #placeholder>选择一份资料，或者新建一份。</template>
+      <template #placeholder>选择或新建一份资料</template>
       <Panel v-if="open" tag="form" :title="open.creating ? '新资料' : open.filename.replace(/\.md$/, '')" @submit.prevent="save">
         <template v-if="!open.creating" #actions><v-btn variant="text" color="error" size="small" :disabled="write.busy.value" @click="remove">删除</v-btn></template>
         <v-text-field v-if="open.creating" v-model="name" label="文件名" suffix=".md" placeholder="人物/小明" />

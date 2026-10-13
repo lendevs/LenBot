@@ -286,6 +286,8 @@ class SceneSettings(ScenePersona):
     simulated_delivery: bool = False
     # Plugins enabled in this scene; each must be loaded by root ``plugins``.
     plugins: list[str] = Field(default_factory=list)
+    # Scene aliases, relationships and addendum of roles not in use here, by role id; switching back restores them.
+    inactive_personas: dict[str, ScenePersona] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def proactive_requirements(self) -> SceneSettings:

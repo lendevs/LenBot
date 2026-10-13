@@ -22,6 +22,7 @@ from ...runtime.network import NetworkRuntime
 from ...persona.profile import PersonaTarget, load_persona, require_persona_target, select_examples
 from ...tools.skills import Skill, select_skills
 from ...plugins.manifest import scene_skill_catalog
+from .persona import apply_saved
 
 
 logger = logging.getLogger(__name__)
@@ -212,29 +213,36 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             temporary.replace(path / "persona.yaml")
         finally:
             temporary.unlink(missing_ok=True)
-        chat = chat_for(scene)
-        current = getattr(chat.persona, field)
         return {"directory": str(path), "persona": {"id": persona.id, "name": persona.name},
-                "saved": value, "running": current,
-                "restart_required": value != current or path != chat.config.persona, "affected_scenes": affected}
+                "saved": value, "affected_scenes": affected}
+
+    async def applied(scene: str, field: Literal["tools", "skills"], result: dict) -> dict:
+        """Hand the saved permission to the scenes running the role, then report what this scene runs."""
+        chat = chat_for(scene)
+        result = {**result, **await apply_saved(runtime, Path(result["directory"]))}
+        current = getattr(chat.persona, field)
+        return {**result, "running": current,
+                "restart_required": result["saved"] != current or Path(result["directory"]) != chat.config.persona}
 
     @app.put("/api/host/scenes/{scene}/role-tools")
     async def save(scene: str, changes: RoleTools, _: str = Depends(user)):
         chat_for(scene)
         try:
             async with write_lock:
-                return await asyncio.to_thread(save_role, scene, changes.directory, "tools", changes.tools)
+                result = await asyncio.to_thread(save_role, scene, changes.directory, "tools", changes.tools)
         except (ValueError, OSError) as error:
             logger.exception("保存角色工具设置失败：%s", error)
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error
+        return await applied(scene, "tools", result)
 
     @app.put("/api/host/scenes/{scene}/role-skills")
     async def save_skills(scene: str, changes: RoleSkills, _: str = Depends(user)):
         chat_for(scene)
         try:
             async with write_lock:
-                return await asyncio.to_thread(save_role, scene, changes.directory, "skills", changes.skills)
+                result = await asyncio.to_thread(save_role, scene, changes.directory, "skills", changes.skills)
         except (ValueError, OSError) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error
+        return await applied(scene, "skills", result)

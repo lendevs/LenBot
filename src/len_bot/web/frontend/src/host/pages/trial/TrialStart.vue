@@ -8,7 +8,7 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 
 const props = defineProps({ scene: { type: String, default: null }, draft: { type: Function, default: null } })
 const emit = defineEmits(['started'])
-const chosen = ref(props.scene), context = ref(0)
+const chosen = ref(props.scene || host.state?.scenes[0]?.scene || null), context = ref(0)
 const options = computed(() => (host.state?.scenes || []).map(item => ({ title: `${sceneName(item.scene)} · ${item.persona.name}`, value: item.scene })))
 const start = useAction()
 async function submit() {
@@ -23,7 +23,7 @@ async function submit() {
 <template>
   <Panel tag="form" :title="draft ? '先试聊看看' : '开始测试'" @submit.prevent="submit">
     <div class="fields">
-      <v-select v-if="!draft" v-model="chosen" :items="options" label="用哪个群的设置" />
+      <v-select v-if="!draft || options.length > 1" v-model="chosen" :items="options" :label="draft ? '在哪个群试' : '用哪个群的设置'" />
       <v-select v-model="context" label="开头"
         :items="[{ title: '从空白开始', value: 0 }, { title: '复制群里最近 20 条消息', value: 20 }, { title: '复制最近 50 条', value: 50 }, { title: '复制最近 100 条', value: 100 }]" />
     </div>

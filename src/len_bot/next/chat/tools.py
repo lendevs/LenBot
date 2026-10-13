@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -176,6 +177,18 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
     if name in {"member_info", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
         reasons.append("只能在群里用")
     return reasons
+
+
+def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
+                    memory: MemoryService | None) -> list[dict]:
+    """Chat-data tools a task worker may call for the scene, as far as the role allows."""
+    selected = [deepcopy(tool["function"]) for tool in build_tools(config, persona, platform=platform)
+                if tool["function"]["name"] in {"recall_chat", "memory", "transcribe"}]
+    for tool in selected:
+        if tool["name"] == "memory":
+            tool["parameters"]["properties"]["action"]["enum"] = memory.actions
+            tool["description"] += "\n" + read_prompt(f"next_memory_{memory.settings.backend}.md")
+    return selected
 
 
 def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_management: bool = False) -> list[dict]:

@@ -19,6 +19,9 @@ Replies to ``member`` commands, which anyone may send, count as speech: a reply 
 scene's hourly limit is used up (the direct reserve is kept for real turns), and the same sender gets
 the same member command answered at most once per ``MEMBER_COOLDOWN_SECONDS``. Replies to higher
 levels do not count, so an administrator can still quiet a scene that ran out of speech.
+
+``/角色`` lists or switches the scene's role. Its reply is not reported to the mind: a switch tells the
+mind through host state instead.
 """
 
 from __future__ import annotations
@@ -64,6 +67,8 @@ class Command:
     summary: str
     level: Level
     run: Callable[[CommandCall], Awaitable[str]]
+    # Off: the reply is sent but not reported back to the mind.
+    report: bool = True
 
 
 @dataclass(frozen=True)
@@ -102,7 +107,7 @@ def command_text(message: ChatMessage, bot_id: str) -> str | None:
 
 
 def parse(text: str) -> tuple[str, list[str]] | None:
-    match = re.fullmatch(r"/([A-Za-z][A-Za-z0-9_-]*)(?:\s+(.*))?", text, re.DOTALL)
+    match = re.fullmatch(r"/([A-Za-z][A-Za-z0-9_-]*|角色)(?:\s+(.*))?", text, re.DOTALL)
     if match is None:
         return None
     return match[1].lower(), (match[2] or "").split()
@@ -310,6 +315,12 @@ async def _limit(call: CommandCall) -> str:
     return "已保存到根配置并立即生效。" + _speech_line(call)
 
 
+async def _role(call: CommandCall) -> str:
+    if call.runtime.personas is None:
+        raise CommandError("角色库还没准备好")
+    return await call.runtime.personas.command_reply(call.scene, " ".join(call.arguments))
+
+
 BUILTIN: list[Command] = [
     Command("help", "/help", "列出你可以使用的命令", "member", _help),
     Command("id", "/id", "显示本场景、你和机器人的账号，用于填写权限", "member", _id),
@@ -320,6 +331,7 @@ BUILTIN: list[Command] = [
     Command("reset", "/reset", "开始新的对话上下文，原记录和记忆保留", "switch", _reset),
     Command("model", "/model", "查看主脑服务", "manage", _model),
     Command("limit", "/limit [<条数>|off|global|reset]", "查看或修改本群每小时发言上限", "manage", _limit),
+    Command("角色", "/角色 [名字]", "查看或切换本群的角色", "manage", _role, report=False),
 ]
 
 
@@ -393,7 +405,8 @@ class Commands:
             chat = call.runtime.chats[call.scene]
             sent = await chat.expression.send_plugin_content("/" + call.command.name, [Text(reply)],
                                                              reply_to=call.message.platform_message_id,
-                                                             reply_prompt="next_command_reply.md")
+                                                             reply_prompt="next_command_reply.md",
+                                                             report_to_mind=call.command.report)
             if call.command.level == "member" and sent.status != "failed":
                 await store.call(record_speech, store, call.scene)
 

@@ -193,10 +193,18 @@ class MemoryService:
         return ["browse", "read", "search", "write", "delete", "history", "forget"]
 
     async def search(self, scene: str, query: str, limit: int, *, automatic: bool = False,
-                     text_query: str | None = None) -> list[dict]:
+                     text_query: str | None = None, persona: str | None = None) -> list[dict]:
+        """``persona`` hides other roles' Bot records; the panel searches without it."""
         hits = await self.backend.search(scene, query, limit, exclude_pending=automatic,
-                                         automatic=automatic, text_query=text_query)
+                                         automatic=automatic, text_query=text_query, bot_persona=persona)
         return [{**asdict(hit), "score": None} for hit in hits]
+
+    def own_bot_path(self, scene: str, path: str) -> None:
+        """The current role reads and writes only its own ``bot/<id>/`` records."""
+        persona = self.active_personas.get(scene)
+        parts = path.strip('/').split('/')
+        if persona is not None and parts[0] == 'bot' and len(parts) > 1 and parts[1] != persona:
+            raise ValueError(f'{path!r} 是另一个角色的记录；当前角色只读写 bot/{persona}/ 下的文件')
 
     async def write(self, scene: str, path: str, content: str, reason: str, *,
                     scope: Scope = "scene") -> dict:
@@ -262,13 +270,16 @@ class MemoryService:
             item = MEMORY_ARGUMENTS.validate_python(arguments)
         except ValidationError as error:
             raise ValueError(f"Invalid memory arguments: {repr(arguments)[:500]}; {error}") from error
+        persona = self.active_personas.get(scene)
+        if not isinstance(item, SearchMemory):
+            self.own_bot_path(scene, item.path)
         if isinstance(item, BrowseMemory):
             result = asdict(await self.backend.browse(scene, item.path, scope=item.scope,
-                                                     offset=item.offset, limit=item.limit))
+                                                     offset=item.offset, limit=item.limit, bot_persona=persona))
         elif isinstance(item, ReadMemory):
             result = asdict(await self.backend.read(scene, item.path, scope=item.scope))
         elif isinstance(item, SearchMemory):
-            result = {"hits": await self.search(scene, item.query, item.limit)}
+            result = {"hits": await self.search(scene, item.query, item.limit, persona=persona)}
         elif isinstance(item, WriteMemory):
             result = await self.write(scene, item.path, item.content, item.reason)
         elif isinstance(item, (DeleteMemory, ForgetMemory)):
@@ -312,7 +323,8 @@ class MemoryService:
         text_query = "\n".join(plain_text(message) for message in messages
                                if plain_text(message).strip() and message.send_status in {"received", "sent", "simulated"})[-1200:]
         if query and budget > 0:
-            for hit in await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query):
+            for hit in await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query,
+                                         persona=self.active_personas.get(scene)):
                 append(hit["scope"], hit["path"], hit["preview"], budget,
                        kind="excerpt",
                        source_chars=hit["total_chars"])

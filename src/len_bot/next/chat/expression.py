@@ -236,10 +236,11 @@ class ChatExpression:
         return content, status
 
     async def send_plugin_content(self, plugin: str, content: Sequence[Content], *, reply_to: str | None,
-                                  reply_prompt: str = "next_plugin_reply.md") -> Sent:
+                                  reply_prompt: str = "next_plugin_reply.md", report_to_mind: bool = True) -> Sent:
         """Send ordered plugin content through one scene outlet and retain actual results.
 
         Host commands use the same outlet with their own ``reply_prompt``; ``plugin`` is then the command.
+        A command whose effect the mind learns from host state passes ``report_to_mind=False``.
         """
         if reply_to is not None and self.store.find_message(self.config.scene, reply_to) is None:
             raise ValueError(f"当前场景没有平台消息 {reply_to}")
@@ -285,6 +286,7 @@ class ChatExpression:
                     report = report_parts(parts, errors, self.context.render)
                     if interruption is not None:
                         report += "\n" + interruption
+                if errors and report_to_mind:
                     moment = datetime.fromtimestamp(self.now(), ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
                     PluginStore(self.store).add_plugin_event(self.config.scene, plugin, "reply", Template(
                         read_prompt(reply_prompt)).substitute(

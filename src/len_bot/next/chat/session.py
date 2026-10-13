@@ -18,9 +18,11 @@ from .context import ChatContext, turn_state
 from .expression import ChatExpression, MessageSender
 from .tools import SceneTools
 from ..config import LabConfig
-from .recap import CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction
+from .recap import (CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction,
+                    recap_source)
 from ..learning.expression_selection import ExpressionService
 from ..tools.external_tools import ExternalTool
+from ..tools.skills import Skill
 from ..models.limits import LimitReached, ModelBudget, SpeechLimitReached, check_speech
 
 # Turn channels that may use the direct reserve besides direct wakes themselves.
@@ -198,6 +200,68 @@ class Chat:
             self.on_compaction()
         self.notify()
         return {"turn_id": turn_id, "compact_through": plan.through, "recap": reply.text}
+
+    async def hand_over(self, previous: str, current: str) -> str:
+        """Fold the whole active session into a third-person handover; caller owns the scene lock.
+
+        The next role starts from this recap instead of reading the previous role's lines as its own.
+        """
+        scene = self.config.scene
+        if self.store.db.execute("SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1", (scene,)).fetchone():
+            raise ValueError("场景还有未结束或等待恢复的轮次，没有写交接")
+        recap, entries = self.store.active_history(scene)
+        if recap is None and not entries:
+            return "skipped"
+        template = Template(read_prompt("next_persona_handover.md")).safe_substitute(previous=previous, current=current)
+        binding = self.config.models.roles.mind
+        turn_id = self.store.start_turn(scene)
+        try:
+            async with asyncio.timeout(self.config.turn_timeout_seconds):
+                if entries:
+                    state = turn_state(self.config, self.store, now=self.now())
+                    projection = await self.context.project(recap, entries, state)
+                    plan = plan_compaction(
+                        self.context.project_entries(entries), system=projection[0], state=projection[-1],
+                        tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
+                        trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
+                        summary_output_tokens=self.config.compaction.max_output_tokens, recap=recap,
+                        summary_template=template, window_tokens=binding.context_window_tokens,
+                        source_entries=self.context.conversation_entries(entries), include_latest=True,
+                    )
+                else:
+                    # Only an earlier recap is active; rewrite it in place.
+                    through = self.store.db.execute("SELECT compact_through FROM mind_sessions WHERE scene=?",
+                                                    (scene,)).fetchone()[0]
+                    budget = self.config.compaction.max_output_tokens
+                    plan = CompactionPlan(through, budget, [
+                        {"role": "system", "content": Template(template).substitute(summary_budget_tokens=budget)},
+                        {"role": "user", "content": recap_source(recap, [])}])
+                await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)
+        except BaseException as error:
+            self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
+            self.notify()
+            raise
+        self.store.end_turn(turn_id, "persona_handover")
+        if self.on_compaction is not None:
+            self.on_compaction()
+        self.notify()
+        return "done"
+
+    def adopt_persona(self, persona: Persona, skills: tuple[Skill, ...], external_tools: list[ExternalTool]) -> None:
+        """Run the next turn as ``persona``; caller owns the scene lock and has updated ``config``.
+
+        A role whose tools cannot be assembled leaves the previous role in place.
+        """
+        previous = self.persona, self.skills
+        self.persona = self.context.persona = self.expression.persona = self.toolset.persona = persona
+        self.skills = skills
+        try:
+            self.set_external_tools(external_tools)
+        except Exception:
+            self.persona = self.context.persona = self.expression.persona = self.toolset.persona = previous[0]
+            self.skills = previous[1]
+            self.set_external_tools(external_tools)
+            raise
 
     async def prepare_context(self, turn_id: str, *, observed_at: float, expression_style: str | None = None,
                               recalled: str | None = None) -> PreparedContext:

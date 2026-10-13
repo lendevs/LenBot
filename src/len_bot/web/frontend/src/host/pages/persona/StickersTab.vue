@@ -3,16 +3,17 @@ import { computed, ref, watch } from 'vue'
 import { mdiPlus } from '@mdi/js'
 import { api } from '../../../api.js'
 import { useAction, useResource } from '../../../composables/useResource.js'
-import { notify, readPendingRestart } from '../../store.js'
+import { notify } from '../../store.js'
 import { confirm } from '../../../composables/useConfirm.js'
 import Panel from '../../ui/Panel.vue'
 import ResourceState from '../../ui/ResourceState.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import StickerDialog from './StickerDialog.vue'
+import { roleBase, savedNotice } from './roles.js'
 
-const props = defineProps({ scene: { type: String, required: true } })
+const props = defineProps({ persona: { type: String, required: true } })
 const emit = defineEmits(['dirty'])
-const base = computed(() => `/api/host/scenes/${encodeURIComponent(props.scene)}/persona-sticker-files`)
+const base = computed(() => `${roleBase(props.persona)}/sticker-files`)
 const listing = useResource(() => api(base.value))
 const entries = computed(() => listing.data.value?.entries || [])
 const loose = computed(() => (listing.data.value?.files || []).filter(file => !entries.value.some(entry => entry.file === file.file)))
@@ -30,7 +31,6 @@ const putEntries = list => api(`${base.value}/entries`, { method: 'PUT',
   body: JSON.stringify({ directory: listing.data.value.saved_path, entries: list }) })
 function done(result, text) {
   listing.data.value = result
-  readPendingRestart()
   notify(text)
 }
 async function save({ file, description, emotions, tags }) {
@@ -53,19 +53,19 @@ async function save({ file, description, emotions, tags }) {
   })
   if (!result) { listing.reload(); return }
   dialog.value = false
-  done(result, '已保存，重启后生效')
+  done(result, savedNotice(result))
 }
 
 const removing = useAction()
 async function remove(file) {
-  if (!await confirm({ title: '删除这个表情？', text: '图片也会一起删掉，重启后生效。', confirmLabel: '删除', danger: true })) return
+  if (!await confirm({ title: '删除这个表情？', text: '图片也会一起删掉。', confirmLabel: '删除', danger: true })) return
   const result = await removing.run(async () => {
     const current = listing.data.value.entries || []
     if (current.some(item => item.file === file)) await putEntries(current.filter(item => item.file !== file))
     await api(`${base.value}/image`, { method: 'DELETE', body: JSON.stringify({ file, directory: listing.data.value.saved_path }) })
     return api(base.value)
   })
-  if (result) done(result, '已删除，重启后生效')
+  if (result) done(result, '已删除')
   else listing.reload()
 }
 </script>

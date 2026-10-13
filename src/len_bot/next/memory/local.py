@@ -195,6 +195,18 @@ def scope_directory(scene: str) -> str:
     return quote(scene, safe='') if sys.platform == 'win32' else scene
 
 
+def _eligible(exclude_pending: bool, bot_persona: str | None) -> str:
+    """Extra retrieval conditions on ``path``; the role id becomes a quoted SQL literal."""
+    conditions = []
+    if exclude_pending:
+        conditions.append("substr(path,1,14)!='legacy-import/'")
+    if bot_persona is not None:
+        prefix = f'bot/{bot_persona}/'
+        literal = prefix.replace("'", "''")
+        conditions.append(f"(substr(path,1,4)!='bot/' OR substr(path,1,{len(prefix)})='{literal}')")
+    return ''.join(' AND ' + condition for condition in conditions)
+
+
 def _parts(path: str, *, file: bool) -> tuple[str, ...]:
     if not path:
         if file:
@@ -658,7 +670,8 @@ class LocalMemory:
                     self._put_vector(db, rowid, scope, vectors[scope, path], remove_existing=False)
         return len(ordered)
 
-    def _browse_sync(self, scope: str, path: str, offset: int, limit: int) -> MemoryPage:
+    def _browse_sync(self, scope: str, path: str, offset: int, limit: int,
+                     bot_persona: str | None = None) -> MemoryPage:
         directory = self._target(scope, path, file=False)
         if not directory.exists() and not path:
             return MemoryPage(nodes=(), has_more=False)
@@ -669,6 +682,8 @@ class LocalMemory:
         entries = sorted((entry for entry in directory.iterdir()
                           if entry.is_dir() or (entry.suffix == ".md" and entry.name not in SUMMARY_FILES)),
                          key=lambda entry: (not entry.is_dir(), entry.name))
+        if bot_persona is not None and path.strip('/') == 'bot':
+            entries = [entry for entry in entries if entry.name == bot_persona]
         shown = entries[offset:offset + limit]
         nodes = tuple(MemoryNode(path=f"{path}/{entry.name}" if path else entry.name,
                                  name=entry.name, is_dir=entry.is_dir())
@@ -678,12 +693,13 @@ class LocalMemory:
         return MemoryPage(nodes=nodes, has_more=offset + limit < len(entries))
 
     async def browse(self, scene: str, path: str = "", *, scope: Literal["scene", "public"] = "scene",
-                     offset: int = 0, limit: int = 20) -> MemoryPage:
+                     offset: int = 0, limit: int = 20, bot_persona: str | None = None) -> MemoryPage:
+        """``bot_persona`` lists only that role's directory under ``bot/``."""
         if offset < 0 or not 1 <= limit <= 100:
             raise ValueError("browse requires offset >= 0 and limit 1..100")
         source = self._source(scene, scope)
         async with self._lock(source):
-            return await asyncio.to_thread(self._browse_sync, source, path, offset, limit)
+            return await asyncio.to_thread(self._browse_sync, source, path, offset, limit, bot_persona)
 
     def _tree_sync(self, scope: str) -> list[dict]:
         root = self._target(scope, "", file=False)
@@ -797,11 +813,12 @@ class LocalMemory:
 
     @staticmethod
     def _lexical_rows(db: sqlite3.Connection, scene: str, query: str,
-                      limit: int, include_public: bool, exclude_pending: bool) -> list[sqlite3.Row]:
+                      limit: int, include_public: bool, exclude_pending: bool,
+                      bot_persona: str | None = None) -> list[sqlite3.Row]:
         folded = query.casefold()
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
-        eligible = " AND substr(path,1,14)!='legacy-import/'" if exclude_pending else ""
+        eligible = _eligible(exclude_pending, bot_persona)
         if len(folded) >= 3:
             expression = '"' + folded.replace('"', '""') + '"'
             return db.execute(f"""
@@ -819,16 +836,17 @@ class LocalMemory:
 
     @staticmethod
     def _automatic_rows(db: sqlite3.Connection, scene: str, query: str,
-                        limit: int, include_public: bool, exclude_pending: bool) -> list[sqlite3.Row]:
+                        limit: int, include_public: bool, exclude_pending: bool,
+                        bot_persona: str | None = None) -> list[sqlite3.Row]:
         # The existing recall budget also bounds the number of literal query fragments.
         folded = query.casefold()[-1200:]
         if len(folded) < 3:
-            return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, exclude_pending)
+            return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, exclude_pending, bot_persona)
         terms = dict.fromkeys(folded[index:index + 3] for index in range(len(folded) - 2))
         expression = ' OR '.join('"' + term.replace('"', '""') + '"' for term in terms)
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
-        eligible = " AND substr(path,1,14)!='legacy-import/'" if exclude_pending else ""
+        eligible = _eligible(exclude_pending, bot_persona)
         # A short message remains searchable when a following reply adds another line.
         short = list(dict.fromkeys(line.strip() for line in folded.splitlines() if 0 < len(line.strip()) < 3))
         short_rows = ""
@@ -850,10 +868,11 @@ class LocalMemory:
         """, (*parameters, scene, limit)).fetchall()
 
     def _search_sync(self, scene: str, query: str, limit: int,
-                     include_public: bool, exclude_pending: bool, automatic: bool) -> list[LocalMemoryHit]:
+                     include_public: bool, exclude_pending: bool, automatic: bool,
+                     bot_persona: str | None = None) -> list[LocalMemoryHit]:
         with self._db() as db:
             search = self._automatic_rows if automatic else self._lexical_rows
-            rows = search(db, scene, query, limit, include_public, exclude_pending)
+            rows = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
         hits: list[LocalMemoryHit] = []
         for row in rows:
             content = self._read_sync(row["scope"], row["path"]).content
@@ -891,15 +910,16 @@ class LocalMemory:
 
     def _search_hybrid_sync(self, scene: str, query: str,
                             vector: tuple[float, ...], limit: int,
-                            include_public: bool, exclude_pending: bool, automatic: bool) -> list[LocalMemoryHit]:
+                            include_public: bool, exclude_pending: bool, automatic: bool,
+                            bot_persona: str | None = None) -> list[LocalMemoryHit]:
         with self._db() as db:
             dimensions = self._vector_binding(db)
             if dimensions is None or len(vector) != dimensions:
                 raise ValueError(f"memory query vector dimension {len(vector)} differs from index {dimensions}")
             search = self._automatic_rows if automatic else self._lexical_rows
-            lexical = search(db, scene, query, limit, include_public, exclude_pending)
-            eligible = (" AND rowid IN (SELECT id FROM memory_files WHERE substr(path,1,14)!='legacy-import/')"
-                        if exclude_pending else "")
+            lexical = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
+            conditions = _eligible(exclude_pending, bot_persona)
+            eligible = f" AND rowid IN (SELECT id FROM memory_files WHERE 1{conditions})" if conditions else ""
             vector_rows: list[tuple[str, str, float]] = []
             query_bytes = self._vector_bytes(vector)
             for scope in ((scene, "public") if include_public else (scene,)):
@@ -931,7 +951,9 @@ class LocalMemory:
 
     async def search(self, scene: str, query: str, limit: int = 10, *,
                      include_public: bool = True, exclude_pending: bool = False,
-                     automatic: bool = False, text_query: str | None = None) -> list[LocalMemoryHit]:
+                     automatic: bool = False, text_query: str | None = None,
+                     bot_persona: str | None = None) -> list[LocalMemoryHit]:
+        """``bot_persona`` keeps other roles' ``bot/<id>/`` records out of the results."""
         if not query.strip() or not 1 <= limit <= 100:
             raise ValueError("search requires a nonblank query and limit 1..100")
         source = _scene_scope(scene)
@@ -942,16 +964,16 @@ class LocalMemory:
                 await locks.enter_async_context(self._lock("public"))
             if self.embedding is None:
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic)
+                                               include_public, exclude_pending, automatic, bot_persona)
             try:
                 dimensions = await asyncio.to_thread(self._vector_preflight)
             except VectorIndexNeedsRebuild as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic)
+                                               include_public, exclude_pending, automatic, bot_persona)
             if dimensions is None:
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic)
+                                               include_public, exclude_pending, automatic, bot_persona)
             try:
                 batch = await self._embedding(source, [query], "query")
                 if batch.dimensions != dimensions:
@@ -959,9 +981,9 @@ class LocalMemory:
             except (ValueError, TimeoutError) as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic)
+                                               include_public, exclude_pending, automatic, bot_persona)
             return await asyncio.to_thread(self._search_hybrid_sync, source, literal,
-                                           batch.vectors[0], limit, include_public, exclude_pending, automatic)
+                                           batch.vectors[0], limit, include_public, exclude_pending, automatic, bot_persona)
 
     def _history_sync(self, scope: str, path: str) -> list[LocalMemoryChange]:
         self._target(scope, path, file=True)

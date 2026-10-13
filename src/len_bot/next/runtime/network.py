@@ -42,6 +42,7 @@ from ..storage.store import Store
 from ..work.service import WorkTasks
 
 if TYPE_CHECKING:
+    from .personas import PersonaService
     from .management import HostManagement
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,7 @@ class NetworkRuntime:
         self.retention = Retention(self)
         self.config_write_lock = asyncio.Lock()
         self.management: HostManagement | None = None
+        self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
         self.accepting = config.onebot is None and config.telegram is None
@@ -177,7 +179,9 @@ class NetworkRuntime:
 
     def bind_management(self, root: Path, lifecycle: HostLifecycle) -> None:
         from .management import HostManagement
+        from .personas import PersonaService
 
+        self.personas = PersonaService(root, self)
         self.management = HostManagement(root, self, lifecycle)
         for chat in self.chats.values():
             chat.toolset.host_management = self.management

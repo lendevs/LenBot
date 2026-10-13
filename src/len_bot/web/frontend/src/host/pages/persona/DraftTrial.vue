@@ -8,7 +8,7 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 import ChatPanel from '../../components/ChatPanel.vue'
 import TrialStart from '../trial/TrialStart.vue'
 
-const props = defineProps({ scene: { type: String, required: true }, draft: { type: Function, required: true }, disabled: Boolean })
+const props = defineProps({ scene: { type: String, default: null }, draft: { type: Function, required: true }, disabled: Boolean })
 const trial = ref(null), stop = useAction()
 async function stopTrial() {
   if (!await confirm({ title: '结束这次试聊？', text: '聊天记录会保留在对话测试页。', confirmLabel: '结束' })) return

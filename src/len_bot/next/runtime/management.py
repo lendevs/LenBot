@@ -25,6 +25,7 @@ from ..plugins.manifest import Manifest, config_model, redact_values
 from ..tools.discovery import model_schema
 from ..tools.web_search import WebSearchSettings
 from .lifecycle import HostLifecycle
+from .personas import roles
 from .retention import RetentionSettings
 
 if TYPE_CHECKING:
@@ -157,7 +158,9 @@ class HostManagement:
                   'restart_required': current != recorded,
                   'applies': 'speech_now_tokens_restart' if args.section == 'limits' else 'restart'}
         if args.section == 'scene':
-            result['personas'] = sorted({str(settings.persona) for settings in saved.scenes.values()})
+            result['personas'] = [{'persona': role.config_path, 'name': role.name}
+                                  for role in roles(self.root, saved) if role.error is None]
+            result['persona_applies'] = 'after_current_turn'
         if args.section in {'memory', 'worker', 'models'}:
             result['setup'] = '只调整已有配置的参数；目录、凭据及模型改绑由面板或离线维护处理'
         return result
@@ -225,7 +228,28 @@ class HostManagement:
                 return await self._update(scene, args)
         return await self._update(scene, args)
 
+    async def _switch_persona(self, scene: str, args: HostManageArguments) -> dict:
+        """Queue the role switch; it waits for the target scene's turn, possibly this one."""
+        target = scene if args.scene is None else args.scene
+        if set(args.changes) != {'persona'}:
+            raise ValueError('换角色请单独提交 persona，不和其他场景字段一起改')
+        value = args.changes['persona']
+        if not isinstance(value, str) or not value:
+            raise ValueError('persona 须为角色库里的角色包路径')
+        if target not in self.running.scenes:
+            raise ValueError(f'运行配置中没有场景 {target}')
+        library = [role for role in await asyncio.to_thread(self.runtime.personas.library) if role.error is None]
+        wanted = Path(value) if Path(value).is_absolute() else (self.root / value).resolve()
+        role = next((item for item in library if value in {item.config_path, item.key} or item.path == wanted), None)
+        if role is None:
+            raise ValueError(f'角色库里没有 {value!r}；可选：{[item.config_path for item in library]}')
+        self.runtime.personas.spawn(self.runtime.personas.switch(target, role.key, source='host_manage'))
+        return {'section': 'scene', 'target': ['scenes', target], 'persona': role.config_path, 'name': role.name,
+                'accepted': True, 'applies': 'after_current_turn', 'saved_to': 'lenbot.config.json'}
+
     async def _update(self, scene: str, args: HostManageArguments) -> dict:
+        if args.section == 'scene' and args.changes is not None and 'persona' in args.changes:
+            return await self._switch_persona(scene, args)
         changes, names = args.changes, []
         before = None
         path = ()

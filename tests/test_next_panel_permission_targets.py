@@ -59,21 +59,26 @@ def test_permission_write_uses_selected_persona(tmp_path: Path, field: str) -> N
                         selected = (await client.get(read_url)).json()[f'role_{field}']
                         assert selected['persona']['name'] == 'first'
                         assert selected['restart_required'] is False
-                        assert (await client.put('/api/host/settings/scenes/onebot:group:80001/persona',
-                                                 json={'persona': 'second'})).status_code == 200
+                        library = (await client.get('/api/host/personas')).json()['roles']
+                        second = next(role['key'] for role in library if role['path'].endswith('/second'))
+                        switched = await client.post(f'/api/host/personas/{second}/scenes',
+                                                     json={'scenes': ['onebot:group:80001']})
+                        assert switched.json()['results'][0]['status'] == 'switched', switched.text
                         before = {name: (tmp_path / name / 'persona.yaml').read_bytes() for name in ('first', 'second')}
                         stale = await client.put(write_url, json={'directory': selected['directory'], field: 'all'})
                         assert stale.status_code == 422
                         assert {name: (tmp_path / name / 'persona.yaml').read_bytes() for name in before} == before
                         current = (await client.get(read_url)).json()[f'role_{field}']
                         assert current['persona']['name'] == 'second'
-                        assert current['restart_required'] is True
+                        assert current['restart_required'] is False
                         saved = await client.put(write_url, json={'directory': current['directory'], field: 'all'})
                         assert saved.status_code == 200, saved.text
                         assert saved.json()['persona']['name'] == 'second'
                         assert saved.json()['affected_scenes'] == ['onebot:group:80001', 'onebot:group:80002']
                         assert getattr(load_persona(tmp_path / 'first'), field) == []
                         assert getattr(load_persona(tmp_path / 'second'), field) == 'all'
+                        assert saved.json()['running'] == 'all' and saved.json()['restart_required'] is False
+                        assert getattr(runtime.chats['onebot:group:80002'].persona, field) == 'all'
                 finally:
                     await app.state.trials.close()
                     await runtime.platform.close()

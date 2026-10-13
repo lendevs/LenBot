@@ -2,24 +2,26 @@
 import { computed, ref } from 'vue'
 import { api } from '../../../api.js'
 import { useAction, useResource } from '../../../composables/useResource.js'
-import { notify, readPendingRestart } from '../../store.js'
+import { notify } from '../../store.js'
 import { confirm } from '../../../composables/useConfirm.js'
 import ErrorNote from '../../ui/ErrorNote.vue'
+import { roleBase } from './roles.js'
 
-const props = defineProps({ scene: { type: String, required: true }, directory: { type: String, required: true }, name: { type: String, default: '' } })
-const endpoint = computed(() => `/api/host/scenes/${encodeURIComponent(props.scene)}/persona-avatar`)
+const props = defineProps({ persona: { type: String, required: true }, directory: { type: String, required: true }, name: { type: String, default: '' } })
+const emit = defineEmits(['changed'])
+const endpoint = computed(() => `${roleBase(props.persona)}/avatar`)
 const avatar = useResource(() => api(endpoint.value))
 const version = ref(0)
 const image = computed(() => avatar.data.value?.saved.image
-  ? `${endpoint.value}/image?view=saved&directory=${encodeURIComponent(props.directory)}&v=${version.value}` : null)
+  ? `${endpoint.value}/image?directory=${encodeURIComponent(props.directory)}&v=${version.value}` : null)
 const input = ref(null), change = useAction()
 
 async function done(result, text) {
   avatar.data.value = result
   avatar.error.value = null
   version.value++
-  readPendingRestart()
-  notify(text)
+  notify(result.apply_error || text)
+  emit('changed')
 }
 async function upload(event) {
   const file = event.target.files[0]
@@ -29,12 +31,12 @@ async function upload(event) {
   form.append('file', file)
   form.append('directory', props.directory)
   const result = await change.run(() => api(endpoint.value, { method: 'PUT', body: form }))
-  if (result) done(result, '头像已换好，重启后生效')
+  if (result) done(result, '头像已换好')
 }
 async function remove() {
   if (!await confirm({ title: '删掉这个头像？', confirmLabel: '删除', danger: true })) return
   const result = await change.run(() => api(endpoint.value, { method: 'DELETE', body: JSON.stringify({ directory: props.directory }) }))
-  if (result) done(result, '头像已删除，重启后生效')
+  if (result) done(result, '头像已删除')
 }
 </script>
 

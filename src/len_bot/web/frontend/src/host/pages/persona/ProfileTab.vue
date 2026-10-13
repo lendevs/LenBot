@@ -1,9 +1,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { api, sceneName } from '../../../api.js'
+import { api } from '../../../api.js'
 import { useAction, useResource } from '../../../composables/useResource.js'
 import { clone, same } from '../../forms.js'
-import { notify, readPendingRestart } from '../../store.js'
+import { notify } from '../../store.js'
 import Panel from '../../ui/Panel.vue'
 import ResourceState from '../../ui/ResourceState.vue'
 import SaveBar from '../../ui/SaveBar.vue'
@@ -12,16 +12,16 @@ import StylesEditor from './StylesEditor.vue'
 import ExamplesEditor from './ExamplesEditor.vue'
 import DraftTrial from './DraftTrial.vue'
 import ProfileDraftFile from './ProfileDraftFile.vue'
+import { roleBase, savedNotice } from './roles.js'
 
-const props = defineProps({ scene: { type: String, required: true } })
-const emit = defineEmits(['dirty'])
-const base = computed(() => `/api/host/scenes/${encodeURIComponent(props.scene)}/persona-profile`)
+const props = defineProps({ persona: { type: String, required: true }, trialScene: { type: String, default: null } })
+const emit = defineEmits(['dirty', 'saved', 'avatar'])
+const base = computed(() => `${roleBase(props.persona)}/profile`)
 const saved = useResource(() => api(base.value))
 const draft = ref(null)
 watch(saved.data, value => { draft.value = value ? clone(value.profile) : null })
 const dirty = computed(() => Boolean(draft.value && saved.data.value && !same(draft.value, saved.data.value.profile)))
 watch(dirty, value => emit('dirty', value), { immediate: true })
-const shared = computed(() => (saved.data.value?.affected_scenes || []).filter(item => item !== props.scene))
 
 const problem = computed(() => {
   const value = draft.value
@@ -42,8 +42,8 @@ async function submit() {
     body: JSON.stringify({ directory: saved.data.value.directory, profile: draft.value }) }))
   if (!result) return
   saved.data.value = result
-  readPendingRestart()
-  notify('已保存，重启后生效')
+  notify(savedNotice(result))
+  emit('saved')
 }
 const discard = () => { draft.value = clone(saved.data.value.profile) }
 const previewProfile = profile => api(`${base.value}/draft`, { method: 'POST',
@@ -57,12 +57,11 @@ async function draftFiles() {
 <template>
   <ResourceState :resource="saved" error-title="读取角色失败">
   <template v-if="draft">
-    <v-alert v-if="shared.length" type="info">这个角色也用在 {{ shared.map(sceneName).join('、') }}，改动会一起生效。</v-alert>
     <ProfileDraftFile :profile="draft" :preview="previewProfile" :disabled="save.busy.value" @imported="value => draft = value" />
     <form class="stack profile" @submit.prevent="submit">
       <Panel title="它是谁">
         <div class="who">
-          <AvatarCard :scene="scene" :directory="saved.data.value.directory" :name="draft.name" />
+          <AvatarCard :persona="persona" :directory="saved.data.value.directory" :name="draft.name" @changed="emit('avatar')" />
           <div class="stack">
             <v-text-field v-model="draft.name" label="名字" />
             <div class="form-grid">
@@ -84,7 +83,7 @@ async function draftFiles() {
       <ExamplesEditor v-model:examples="draft.examples" v-model:tags="draft.example_tags" />
       <SaveBar :on-save="submit" :dirty="dirty" :saving="save.busy.value" :error="save.error.value" :problem="problem" @discard="discard" />
     </form>
-    <DraftTrial :scene="scene" :disabled="Boolean(problem)" :draft="draftFiles" />
+    <DraftTrial :scene="trialScene" :disabled="Boolean(problem)" :draft="draftFiles" />
   </template>
   </ResourceState>
 </template>

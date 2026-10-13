@@ -65,11 +65,6 @@ class ModelsChange(BaseModel):
     learning_embeddings: dict[str, EmbeddingBinding | None] = Field(default_factory=dict)
 
 
-class SceneBindingChange(BaseModel):
-    model_config = STRICT
-    persona: str = Field(min_length=1)
-
-
 class ScheduleSwitches(BaseModel):
     """Reminder switches edited with the scene; who may use them is edited on the permissions page."""
     model_config = STRICT
@@ -117,7 +112,9 @@ class LocalMemoryChange(RecallSettings):
     summaries: bool
 
 
-class SceneCreate(SceneBindingChange):
+class SceneCreate(BaseModel):
+    model_config = STRICT
+    persona: str = Field(min_length=1)
     scene: str
 
 
@@ -560,15 +557,6 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if change.scene in saved.scenes:
                 raise ValueError(f"场景已存在：{change.scene}")
             source["scenes"][change.scene] = {"persona": change.persona, "attention": {"only_direct": True}}
-        return await save(edit)
-
-    @app.put("/api/host/settings/scenes/{scene}/persona")
-    async def bind_scene_persona(scene: str, request: Request, _: str = Depends(user)):
-        change: SceneBindingChange = await _body(request, SceneBindingChange)
-        def edit(source: dict, saved: HostConfig) -> None:
-            if scene not in saved.scenes:
-                raise ValueError(f"保存配置没有场景：{scene}")
-            source["scenes"][scene]["persona"] = change.persona
         return await save(edit)
 
     @app.delete("/api/host/settings/scenes/{scene}")

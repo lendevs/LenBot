@@ -22,9 +22,10 @@ from ...memory.service import LocalMemoryConfig, open_memory
 from ...models.client import ChatModel
 from ...runtime.identity import IdentitySettings
 from ...runtime.network import NetworkRuntime
+from ...runtime.personas import roles
 from ...trials.panel import PanelSession, TestMessage, stored_image
 from ..auth import changes_socket, cookie_name
-from ...persona.profile import PERSONA_FILES, Persona, PersonaTarget, parse_persona_files, require_persona_target
+from ...persona.profile import PERSONA_FILES, Persona, PersonaTarget, parse_persona_files
 from ...storage.store import Store
 from len_bot.web.auth import session_user
 from ...prompt_files import read_prompt
@@ -135,11 +136,14 @@ def write_trial_files(config: LabConfig, persona: Persona, draft: PersonaDraft |
 
 
 def load_draft_persona(root: Path, scene: str, draft: PersonaDraft) -> Persona:
+    """A draft of any role in the library may be tried against this scene's recent chat."""
     saved = load_host_config(root)
     if scene not in saved.scenes:
         raise ValueError('场景已从保存配置移除，不能读取其角色资料用于新草稿试聊')
-    require_persona_target(saved.scenes[scene].persona, draft.directory)
-    return parse_persona_files(saved.scenes[scene].persona, draft.files)
+    path = next((role.path for role in roles(root, saved) if str(role.path) == draft.directory), None)
+    if path is None:
+        raise ValueError(f'试聊草稿须来自角色库里的角色；directory={draft.directory!r}')
+    return parse_persona_files(path, draft.files)
 
 
 class HostTrials:

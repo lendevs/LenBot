@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .types import STRICT
 
-CommandName = Literal["help", "id", "status", "chat", "quiet", "resume", "reset", "model", "limit"]
+CommandName = Literal["help", "id", "status", "chat", "quiet", "resume", "reset", "model", "limit", "角色"]
 
 
 class CommandSettings(BaseModel):

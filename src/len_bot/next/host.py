@@ -2,7 +2,6 @@
 
 import asyncio
 from contextlib import contextmanager, nullcontext
-from copy import deepcopy
 from pathlib import Path
 from .runtime.loop_monitor import MONITOR
 from .runtime.signals import install_stop
@@ -14,7 +13,7 @@ from .config import load_host_config
 from .instance_lock import instance_lock
 from .runtime.lifecycle import HostLifecycle, RESTART_EXIT
 from .runtime.logs import configure_logging, credentials, redact
-from .chat.tools import build_tools, tool_catalog
+from .chat.tools import task_data_tools, tool_catalog
 from .panel.app import create_app
 from .models.client import ChatModel
 from .models.slots import ModelSlots
@@ -36,7 +35,7 @@ from .work.service import WorkTasks
 from .work.store import TaskStore
 from .tools.skills import load_catalog, select_skills
 from .plugins.store import PluginStore
-from .prompt_files import activate as activate_prompts, read_prompt
+from .prompt_files import activate as activate_prompts
 
 
 class HostPanelServer(uvicorn.Server):
@@ -150,16 +149,9 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                     runner.changed.set()
                 runtime.notify()
 
-            data_tools = {}
-            for settings, persona in scenes:
-                selected = [deepcopy(tool["function"]) for tool in build_tools(
-                    settings, persona, platform=config.delivery == "onebot",
-                ) if tool["function"]["name"] in {"recall_chat", "memory", "transcribe"}]
-                for tool in selected:
-                    if tool["name"] == "memory":
-                        tool["parameters"]["properties"]["action"]["enum"] = memory.actions
-                        tool["description"] += "\n" + read_prompt(f"next_memory_{memory.settings.backend}.md")
-                data_tools[settings.scene] = selected
+            data_tools = {settings.scene: task_data_tools(settings, persona, platform=config.delivery == "onebot",
+                                                          memory=memory)
+                          for settings, persona in scenes}
             tasks = (WorkTasks(config, store, slots, task_update, skills=skills,
                               memory=memory, data_tools=data_tools,
                               skill_permissions={settings.scene: persona.skills
