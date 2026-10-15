@@ -110,3 +110,17 @@ def test_panel_sections_send_only_their_fields_with_the_version():
         source = (pages / name).read_text(encoding='utf-8')
         assert '...props.snapshot.saved.limits' not in source, name
         assert 'version: props.snapshot.versions?.limits' in source and "emit('reload'" in source, name
+
+
+def test_panel_sections_show_the_conflict_and_reload_the_form():
+    from pathlib import Path
+    root = Path(__file__).parents[1] / 'src' / 'len_bot' / 'web' / 'frontend' / 'src' / 'host'
+    for name in ('pages/models/LimitsSection.vue', 'pages/settings/SpeechSection.vue'):
+        source = (root / name).read_text(encoding='utf-8')
+        # The 409 is handled (not rethrown as the generic error), the draft is replaced from the
+        # returned snapshot, and the server's conflict message is passed to the section.
+        assert 'draft.value = clone(pick(error.details.snapshot.saved.limits))' in source, name
+        assert 'conflict.value = error.details.message' in source, name
+        assert ':notice="conflict"' in source, name
+    section = (root / 'ui' / 'SettingSection.vue').read_text(encoding='utf-8')
+    assert 'notice' in section and '{{ notice }}' in section
