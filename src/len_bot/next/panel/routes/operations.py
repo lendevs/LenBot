@@ -21,7 +21,7 @@ from ...work.store import TaskStore
 from ...models.usage import usage
 from ...storage.store import Store
 from ...chat.usage import wake_usage
-from ...models.limits import LimitReached, clear_speech, speech_quota
+from ...models.limits import BUDGET_CACHE_SECONDS, LimitReached, check_speech, clear_speech, speech_quota
 from ...models.client import ModelHTTPError, ModelProtocolError
 from ...memory.jobs import processing_records
 
@@ -204,21 +204,31 @@ def register_host_operations(app, *, runtime, user):
             runtime.notify()
             return result
 
-    def limit_state(scene, chat):
-        quota = speech_quota(chat.store, chat.config)
+    def limit_state(scene, chat, source):
+        """One scene's speech window and admission, read from ``source`` (a read-only Store)."""
+        quota = speech_quota(source, chat.config)
         speech = {'source': quota.source, 'limit': quota.limit, 'used': quota.used, 'remaining': quota.remaining,
                   'reserve': quota.reserve, 'reserve_left': quota.reserve_left,
                   'held_until': quota.until(direct=False), 'blocked_until': quota.until(direct=True)}
         try:
-            chat.check_limits(model=True, direct=True)
+            check_speech(source, chat.config, direct=True)
+            if chat.slots is not None and chat.slots.admit is not None:
+                runtime.budget.check(scene, max_age=BUDGET_CACHE_SECONDS, store=source)
         except LimitReached as error:
             return {'scene': scene, 'blocked': True, 'reason': str(error), 'until': error.until, 'speech': speech}
         return {'scene': scene, 'blocked': False, 'reason': None, 'until': None, 'speech': speech}
 
+    async def limit_states(chats):
+        # Token totals aggregate every model call of the day (and retained trials): off the event loop.
+        def read():
+            with Store(config.database, readonly=True) as source:
+                return [limit_state(scene, chat, source) for scene, chat in chats]
+        return await asyncio.to_thread(read)
+
     @app.get('/api/host/limits')
     async def limits_state(_: str = Depends(user)):
         return {'limits': config.limits.model_dump(mode='json'),
-                'scenes': [limit_state(scene, chat) for scene, chat in runtime.chats.items()],
+                'scenes': await limit_states(list(runtime.chats.items())),
                 'scope': '宿主代理的模型请求，含保留试聊及已移除场景；不含远端服务内部调用'}
 
     @app.post('/api/host/scenes/{scene}/speech/reset')
@@ -229,7 +239,7 @@ def register_host_operations(app, *, runtime, user):
         log_event(logger, 'speech_limit_reset', scene=scene, operator=operator)
         runtime.runners[scene].changed.set()
         runtime.notify()
-        return limit_state(scene, chat)
+        return (await limit_states([(scene, chat)]))[0]
 
     @app.get('/api/host/usage')
     async def costs(period: Literal['day', 'month'] = 'day', scene: str | None = None,

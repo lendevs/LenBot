@@ -21,7 +21,7 @@ from ..config import LabConfig
 from .recap import CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction
 from ..learning.expression_selection import ExpressionService
 from ..tools.external_tools import ExternalTool
-from ..models.limits import LimitReached, SpeechLimitReached, check_speech
+from ..models.limits import LimitReached, ModelBudget, SpeechLimitReached, check_speech
 
 # Turn channels that may use the direct reserve besides direct wakes themselves.
 RESERVE_CHANNELS = frozenset({"schedule", "task"})
@@ -242,10 +242,15 @@ class Chat:
             return False
         return self.direct_request or self.turn_channel in RESERVE_CHANNELS
 
-    def check_limits(self, *, model: bool = False, direct: bool | None = None) -> None:
+    def check_limits(self, *, model: bool = False, direct: bool | None = None, max_age: float = 0.0) -> None:
+        """``max_age`` lets a polling caller reuse token totals a few seconds old."""
         check_speech(self.store, self.config, direct=self.speech_reserve if direct is None else direct)
         if model and self.slots is not None and self.slots.admit is not None:
-            self.slots.admit(self.config.scene)
+            budget = getattr(self.slots.admit, '__self__', None)
+            if max_age > 0 and isinstance(budget, ModelBudget):
+                budget.check(self.config.scene, max_age=max_age)
+            else:
+                self.slots.admit(self.config.scene)
 
     async def run_turn(self, *, batch: tuple[int, list[str]] | None,
                        append_new: Callable[[bool, str], Awaitable[bool]],

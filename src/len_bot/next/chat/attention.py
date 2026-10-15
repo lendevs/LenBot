@@ -19,7 +19,7 @@ from .declarations import AttentionArguments, Declared, declare, match_message, 
 from .disposition import Disposition, allows
 from .recap import estimate_content, estimate_request
 from .scene_control import SceneControlArguments, TemporaryQuiet, require_control
-from ..models.limits import LimitReached, SpeechLimitReached, speech_quota
+from ..models.limits import BUDGET_CACHE_SECONDS, LimitReached, SpeechLimitReached, speech_quota
 from ..configuration.chat import Attention
 from ..platform.delivery import report_parts, split_expression
 from ..platform.messages import ChatMessage, Segment, plain_text
@@ -582,7 +582,9 @@ class SceneRunner:
             now = self.now()
             try:
                 # Only the direct reserve stops every wake; other wakes are held below at the normal limit.
-                self.chat.check_limits(model=True, direct=True)
+                # Re-run on every wake-up and, after a settings save, by every runner at once:
+                # recent token totals are shared instead of re-aggregated each time.
+                self.chat.check_limits(model=True, direct=True, max_age=BUDGET_CACHE_SECONDS)
             except LimitReached as error:
                 if in_turn or self.closing or not wait:
                     return None
