@@ -14,9 +14,11 @@ def wake_usage(store, scenes: list[str] | None, since: float, until: float, time
         f'SELECT id,scene,started,wake_channel,first_expression_at FROM turns WHERE started>=? AND started<? {condition}',
         (since, until, *(scenes or []))))
     tokens = defaultdict(list)
+    # The same scene filter as above: a one-group view must not read every group's mind calls.
     for turn_id, body in store.db.execute(
         'SELECT c.turn_id,c.tokens FROM model_calls c JOIN turns t ON t.id=c.turn_id '
-        "WHERE t.started>=? AND t.started<? AND c.role='mind'", (since, until)):
+        f"WHERE t.started>=? AND t.started<? AND c.role='mind' {condition.replace('scene', 't.scene')}",
+        (since, until, *(scenes or []))):
         tokens[turn_id].append(None if body is None else json.loads(body))
     grouped = {}
     zone = ZoneInfo(timezone)
