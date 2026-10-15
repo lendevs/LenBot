@@ -66,11 +66,36 @@ def run(*, container: bool = False) -> int:
             signal.signal(sig, handler)
 
 
-def main() -> None:
+def parse_arguments(argv: list[str] | None, *, container: bool = False) -> None:
+    """Only --help and --version; everything else lives in the root file. Exits for those and bad options."""
+    import argparse
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        current = version('len-bot')
+    except PackageNotFoundError:
+        current = 'unknown'
+    parser = argparse.ArgumentParser(
+        prog='lenbot-container' if container else 'len-bot',
+        description='启动 LenBot 宿主。当前目录就是实例根目录：读取其中的 lenbot.config.json；'
+                    '还没有配置时，在当前目录开始首次配置向导。所有设置都写在根配置里，没有其他命令行参数。')
+    parser.add_argument('--version', action='version', version=f'LenBot {current}')
+    parser.parse_args(argv)
+
+
+def announce_root(root: Path) -> None:
+    if not (root / 'lenbot.config.json').exists():
+        print(f'LenBot：实例根目录是 {root}，这里还没有 lenbot.config.json，将在此目录开始首次配置。'
+              '如果目录不对，请按 Ctrl+C 停止，换到实例目录后再启动。', flush=True)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parse_arguments(argv)
+    announce_root(Path.cwd())
     raise SystemExit(run())
 
 
-def container_main() -> None:
+def container_main(argv: list[str] | None = None) -> None:
+    parse_arguments(argv, container=True)
     raise SystemExit(run(container=True))
 
 
