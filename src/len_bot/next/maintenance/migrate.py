@@ -51,11 +51,23 @@ def _turn_wake_channels(db: sqlite3.Connection) -> None:
     db.execute("UPDATE turns SET wake_channel='proactive' WHERE id IN (SELECT turn_id FROM proactive_wakes)")
 
 
+def _overview_indexes(db: sqlite3.Connection) -> None:
+    """Format 5 to 6: statistics read small indexes instead of model request bodies."""
+    db.execute('DROP INDEX model_call_usage')
+    db.execute('CREATE INDEX model_call_usage ON model_calls(started,scene,role,plugin,ended,tokens,error)')
+    db.execute("CREATE INDEX message_overview ON messages(scene, "
+               "CASE WHEN raw IS NULL THEN json_extract(body,'$.time') ELSE received_at END, "
+               "json_extract(body,'$.send_status'),raw IS NULL)")
+    db.execute("CREATE INDEX message_failed_sends ON messages(scene,json_extract(body,'$.time'),json_extract(body,'$.send_status')) "
+               "WHERE raw IS NULL AND json_extract(body,'$.send_status') IN ('failed','unconfirmed')")
+
+
 BUSINESS = Format('业务数据库', APPLICATION_ID, FORMAT_VERSION, 1, {
     1: _tokens_instead_of_prices,
     2: _qualified_schedule_targets,
     3: _speech_records,
     4: _turn_wake_channels,
+    5: _overview_indexes,
 })
 
 

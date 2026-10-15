@@ -287,11 +287,10 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     @app.get('/api/host/trials/{trial_id}/turns/{turn_id}')
     async def turn(trial_id: str, turn_id: str, _: str = Depends(user)):
         trial = trials.get(trial_id)
-        if trial.stopped is None:
-            result = trial.session.store.turn_detail(trial.scene, turn_id)
-        else:
-            with Store(trial.config.database) as store:
-                result = store.turn_detail(trial.scene, turn_id)
+        def read():
+            with Store(trial.config.database, readonly=True) as store:
+                return store.turn_detail(trial.scene, turn_id)
+        result = await asyncio.to_thread(read)
         if result is None:
             raise HTTPException(404, '这一轮不属于当前试聊')
         return result

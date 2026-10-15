@@ -92,6 +92,23 @@ def _speaker(message: ChatMessage) -> str:
     return f"{name}({message.sender.uid})" if name else f"{message.sender.uid}"
 
 
+def card_text(data: str) -> str:
+    """Readable QQ card fields; malformed or textless payloads keep their placeholder."""
+    try:
+        card = json.loads(data)
+    except json.JSONDecodeError:
+        return '[json]'
+    if not isinstance(card, dict):
+        return '[json]'
+    fields = [card.get('prompt')]
+    meta = card.get('meta')
+    if isinstance(meta, dict):
+        detail = next((item for item in meta.values() if isinstance(item, dict)), {})
+        fields.extend((detail.get('title'), detail.get('desc')))
+    texts = list(dict.fromkeys(value.strip()[:80] for value in fields if isinstance(value, str) and value.strip()))
+    return '[卡片：' + '｜'.join(texts) + ']' if texts else '[json]'
+
+
 def _body(segments: list[Segment], audio: dict[int, str] | None = None) -> str:
     parts: list[str] = []
     image_index = 0
@@ -101,6 +118,8 @@ def _body(segments: list[Segment], audio: dict[int, str] | None = None) -> str:
             continue
         if segment.type == "text":
             parts.append(segment.data["text"])
+        elif segment.type == "json":
+            parts.append(card_text(segment.data["data"]))
         elif segment.type == "mention":
             user = segment.data["user"]
             parts.append("[提及全体成员]" if user == "all" else f"[提及 {user}]")

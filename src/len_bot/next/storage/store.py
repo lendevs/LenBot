@@ -25,7 +25,7 @@ from .schema import create_database
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -59,10 +59,11 @@ class ImageAsset:
 
 
 class Store:
-    def __init__(self, path: Path, *, now: Callable[[], float] = time.time):
+    def __init__(self, path: Path, *, now: Callable[[], float] = time.time, readonly: bool = False):
         self.now = now
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = connect(path)
+        if not readonly:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = connect(path, readonly=readonly)
         self.db.row_factory = sqlite3.Row
         try:
             tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -77,6 +78,8 @@ class Store:
                 if application_id != 0x4C424E31 or version != FORMAT_VERSION:
                     raise ValueError(f"Not a supported next-core database: {path}")
             else:
+                if readonly:
+                    raise ValueError(f'Existing business database is not initialized: {path}')
                 create_database(self.db, FORMAT_VERSION)
         except BaseException:
             self.db.close()
@@ -307,13 +310,17 @@ class Store:
                 values[hour] = count
             return values
 
-        received = series(
-            "SELECT CAST((received_at-?)/3600 AS INTEGER),COUNT(*) FROM messages "
-            f"WHERE scene IN ({placeholders}) AND raw IS NOT NULL AND received_at>=? AND received_at<? GROUP BY 1")
-        spoke = series(
-            "SELECT CAST((json_extract(body,'$.time')-?)/3600 AS INTEGER),COUNT(*) FROM messages "
-            f"WHERE scene IN ({placeholders}) AND raw IS NULL AND json_extract(body,'$.send_status') IN ('sent','simulated') "
-            "AND json_extract(body,'$.time')>=? AND json_extract(body,'$.time')<? GROUP BY 1")
+        received, spoke = [0] * hours, [0] * hours
+        for hour, outgoing, count in self.db.execute(
+            "SELECT CAST(((CASE WHEN raw IS NULL THEN json_extract(body,'$.time') ELSE received_at END)-?)/3600 AS INTEGER),"
+            "raw IS NULL,COUNT(*) FROM messages "
+            f"WHERE scene IN ({placeholders}) "
+            "AND CASE WHEN raw IS NULL THEN json_extract(body,'$.time') ELSE received_at END>=? "
+            "AND CASE WHEN raw IS NULL THEN json_extract(body,'$.time') ELSE received_at END<? "
+            "AND ((raw IS NULL)=0 OR json_extract(body,'$.send_status') IN ('sent','simulated')) GROUP BY 1,2",
+            (since, *scenes, since, until),
+        ):
+            (spoke if outgoing else received)[hour] = count
         turns = series(
             "SELECT CAST((started-?)/3600 AS INTEGER),COUNT(*) FROM turns "
             f"WHERE scene IN ({placeholders}) AND started>=? AND started<? GROUP BY 1")
@@ -335,7 +342,7 @@ class Store:
                       f"SELECT scene,ended,id,status,goal FROM tasks WHERE scene IN ({placeholders}) AND ended IS NOT NULL "
                       "ORDER BY ended DESC LIMIT ?", (*scenes, limit))]
         items += [{"kind": "send", "scene": row[0], "at": row[1], "id": row[2], "status": row[3]} for row in self.db.execute(
-            "SELECT scene,json_extract(body,'$.time'),seq,json_extract(body,'$.send_status') FROM messages "
+            "SELECT scene,json_extract(body,'$.time'),seq,json_extract(body,'$.send_status') FROM messages INDEXED BY message_failed_sends "
             f"WHERE scene IN ({placeholders}) AND raw IS NULL AND json_extract(body,'$.send_status') IN ('failed','unconfirmed') "
             "ORDER BY json_extract(body,'$.time') DESC LIMIT ?", (*scenes, limit))]
         return sorted(items, key=lambda item: item["at"], reverse=True)[:limit]

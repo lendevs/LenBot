@@ -21,7 +21,7 @@
 |---|---|---|
 | 插件接口 | 1 | `plugin.py` 的 `INTERFACE` |
 | 根配置格式 | 3 | `config.py` 的 `CONFIG_VERSION` |
-| 业务数据库 | 3 | `storage/store.py` 的 `FORMAT_VERSION` |
+| 业务数据库 | 6 | `storage/store.py` 的 `FORMAT_VERSION` |
 | 记忆处理库 | 6 | `memory/jobs.py` 的 `FORMAT_VERSION` |
 | 本地记忆索引 | 3 | `memory/local.py` 的 `FORMAT_VERSION` |
 | 更新器协议 | 1 | `deploy/updater/common.py` 的 `PROTOCOL` |

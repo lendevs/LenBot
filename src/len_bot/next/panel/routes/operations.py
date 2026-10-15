@@ -19,6 +19,7 @@ from ...work.storage import temporary_paths
 from ...runtime.operations import diagnostic_zip
 from ...work.store import TaskStore
 from ...models.usage import usage
+from ...storage.store import Store
 from ...chat.usage import wake_usage
 from ...models.limits import LimitReached, clear_speech, speech_quota
 from ...models.client import ModelHTTPError, ModelProtocolError
@@ -146,7 +147,10 @@ def register_host_operations(app, *, runtime, user):
     @app.get('/api/host/scenes/{scene}/turns/{turn_id}/export')
     async def turn_export(scene: str, turn_id: str, _: str = Depends(user)):
         scene_exists(scene)
-        detail = store.turn_detail(scene, turn_id)
+        def read():
+            with Store(config.database, readonly=True) as records:
+                return records.turn_detail(scene, turn_id)
+        detail = await asyncio.to_thread(read)
         if detail is None:
             raise HTTPException(404, '当前场景没有这一轮')
         logs = await asyncio.to_thread(read_records, config.logging.directory, limit=2000, match={'turn_id': turn_id})
@@ -240,16 +244,18 @@ def register_host_operations(app, *, runtime, user):
             end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
         else:
             end = start + timedelta(days=1)
-        try:
-            with processing_records(config.database, None if runtime.memory is None else runtime.memory.jobs) as records:
-                result = usage(store, None if scene is None else [scene],
-                               start.timestamp(), end.timestamp(), memory=runtime.memory,
+        def read():
+            with Store(config.database, readonly=True) as source, processing_records(config.database, None) as records:
+                result = usage(source, None if scene is None else [scene],
+                               start.timestamp(), end.timestamp(),
                                memory_db=None if records is None else records.db)
                 return {"timezone": zone, "period": period, **result,
-                        'wakes': wake_usage(store, None if scene is None else [scene], start.timestamp(), end.timestamp(), zone),
+                        'wakes': wake_usage(source, None if scene is None else [scene], start.timestamp(), end.timestamp(), zone),
                         'scope': '当前实例业务及记忆计量；全部范围含public与已移除场景，不含独立保留试聊（预算另含）',
                         'memory_record_source':
-                        'not_present' if records is None else 'running_connection' if runtime.memory is not None else 'read_only_existing'}
+                        'not_present' if records is None else 'read_only_existing'}
+        try:
+            return await asyncio.to_thread(read)
         except (OSError, ValueError, sqlite3.Error) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f'{type(error).__name__}: {error}') from error

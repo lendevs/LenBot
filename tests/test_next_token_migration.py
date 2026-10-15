@@ -31,6 +31,10 @@ def _business_format1(path: Path) -> None:
     with Store(path):
         pass
     with sqlite3.connect(path) as db:
+        db.execute('DROP INDEX message_overview')
+        db.execute('DROP INDEX message_failed_sends')
+        db.execute('DROP INDEX model_call_usage')
+        db.execute('CREATE INDEX model_call_usage ON model_calls(started,turn_id)')
         db.execute('ALTER TABLE turns DROP COLUMN wake_channel')
         for table in CALL_TABLES:
             db.execute(f"ALTER TABLE {table} RENAME COLUMN tokens TO cost")
