@@ -120,7 +120,7 @@ def test_panel_sections_show_the_conflict_and_reload_the_form():
         # The 409 is handled (not rethrown as the generic error), the draft is replaced from the
         # returned snapshot, and the server's conflict message is passed to the section.
         assert 'draft.value = clone(pick(error.details.snapshot.saved.limits))' in source, name
-        assert 'conflict.value = error.details.message' in source, name
+        assert "conflict.value = '没有保存：" in source and '请重新填写后再保存' in source, name
         assert ':notice="conflict"' in source, name
     section = (root / 'ui' / 'SettingSection.vue').read_text(encoding='utf-8')
     assert 'notice' in section and '{{ notice }}' in section

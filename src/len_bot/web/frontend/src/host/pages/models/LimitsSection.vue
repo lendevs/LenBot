@@ -39,7 +39,8 @@ async function submit() {
       // Load the latest settings (and version) into the form so the next save works, and say why.
       emit('reload', error.details.snapshot)
       draft.value = clone(pick(error.details.snapshot.saved.limits))
-      conflict.value = error.details.message || '已在其他页面或标签页修改，已重新载入最新设置，请确认后再保存。'
+      // The form now shows the server's values, so say plainly that what was typed is gone.
+      conflict.value = '没有保存：上限设置已在其他页面或标签页修改。你刚填的内容已被替换为最新的设置，请重新填写后再保存。'
       return undefined
     }
   })
