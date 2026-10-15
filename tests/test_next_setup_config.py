@@ -267,3 +267,15 @@ def test_local_setup_keeps_the_chosen_port_and_page_says_plugins_start_disabled(
             html = (await client.get('/')).text
             assert '默认是关闭的' in html and "readOnly=true" in html
     asyncio.run(exercise())
+
+
+def test_docker_smoke_goes_through_the_wizard_port_and_docs_name_the_container_port():
+    """B-1 follow-up: the smoke test must not hardcode the port, docs must not promise 8088 for Docker."""
+    repo = Path(__file__).parents[1]
+    smoke = (repo / 'scripts' / 'smoke_docker_update.py').read_text(encoding='utf-8')
+    assert "'panel_port': 11307" not in smoke and "'panel_port': wizard_port" in smoke
+    readme = (repo / 'deploy' / 'current' / 'README.md').read_text(encoding='utf-8')
+    assert 'Docker 部署固定为 `http://127.0.0.1:11307`' in readme
+    for path in [*(repo / 'deploy').rglob('*docker*.md'), repo / 'website' / 'guide' / 'install-docker.md']:
+        if path.exists():
+            assert '8088' not in path.read_text(encoding='utf-8'), path

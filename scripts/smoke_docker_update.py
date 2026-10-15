@@ -68,6 +68,15 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         import re
         match = re.search(r'/#token=(\S+)', logs)
         assert match, logs
+        # Submit what the wizard would: the page's default port, replaced by the container port the
+        # wizard reports (it locks the field). A hardcoded 11307 here could not catch a wrong default.
+        code, page = request(opener, panel + '/')
+        assert code == 200, page
+        wizard_port = int(re.search(r'id="port"[^>]*value="(\d+)"', page)[1])
+        code, text = request(opener, panel + '/api/setup/protocols', headers={'X-Setup-Token': match[1]})
+        assert code == 200, text
+        if json.loads(text).get('container'):
+            wizard_port = json.loads(text)['panel_port']
         code, body = request(opener, panel + '/api/setup', headers={'X-Setup-Token': match[1]}, body={
             'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': 'simulated',
             'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:19999', 'access_token': 'fixture'},
@@ -75,8 +84,12 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
             'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
             'compaction': {'input_tokens': 6000}, 'scene': 'onebot:group:80001', 'persona_id': 'smoke',
             'persona_name': 'Docker 检查角色', 'brief': '临时实例', 'voice_text': '简短', 'boundaries': '',
-            'panel_port': 11307, 'username': 'smoke', 'password': 'smoke-password'})
+            'panel_port': wizard_port, 'username': 'smoke', 'password': 'smoke-password'})
         assert code == 200, body
+        # The container side of the port Compose publishes (host side is remapped for this run).
+        published = int(re.search(r"127\.0\.0\.1:\d+:(\d+)",
+                                  (Path(__file__).parents[1] / 'deploy/current/host.compose.yaml').read_text())[1])
+        assert json.loads(body)['panel_port'] == published, (body, 'compose publishes container port', published)
         check_panel(panel_port, 'smoke', 'smoke-password', lambda: True)
         import http.cookiejar
         auth = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
