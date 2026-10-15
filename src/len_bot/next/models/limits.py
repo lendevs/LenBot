@@ -1,5 +1,7 @@
 """Admission from actual reported tokens and recorded scene expressions, without reservations."""
 from __future__ import annotations
+import threading
+import time
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -150,9 +152,18 @@ def apply_speech_limits(running, saved) -> None:
         setattr(running.limits, name, getattr(saved.limits, name))
 
 
+# Polling checks (a runner's admission loop, the panel's limit page) may reuse totals this old.
+# Tokens are reported after each call anyway; the check at the actual model request is exact.
+BUDGET_CACHE_SECONDS = 2.0
+
+
 class ModelBudget:
-    def __init__(self, config, store, memory, *, root: Path | None = None):
+    def __init__(self, config, store, memory, *, root: Path | None = None,
+                 clock=time.monotonic):
         self.config, self.store, self.memory = config, store, memory
+        self.clock = clock
+        self._cache: dict[tuple, tuple[float, dict]] = {}
+        self._cache_lock = threading.Lock()
         self.trials_root: Path | None = None if root is None else root / '.runtime' / 'chat-tests'
         if config.limits.daily_tokens is not None or config.limits.scene_daily_tokens:
             self.validate_sources()
@@ -181,17 +192,30 @@ class ModelBudget:
         if outdated:
             raise ValueError('预算计量源需要停机离线迁移；运行 python -m len_bot.next.maintenance.migrate_memory_jobs：' + '; '.join(outdated))
 
-    def totals(self, scene: str | None, since: float, until: float) -> dict:
+    def totals(self, scene: str | None, since: float, until: float, *, max_age: float = 0.0,
+               store=None) -> dict:
+        """Budgeted totals; ``max_age`` > 0 may reuse a recent result, ``store`` reads another connection
+        (a read-only one off the event loop; the memory sidecar is then opened read-only too)."""
+        key = (scene, since, until)
+        if max_age > 0:
+            with self._cache_lock:
+                cached = self._cache.get(key)
+            if cached is not None and self.clock() - cached[0] <= max_age:
+                return cached[1]
         selected = None if scene is None else [scene]
-        calls = instance_calls(self.store, self.config.database, selected, since, until,
-                               memory=self.memory, trials_root=self.trials_root)
+        calls = instance_calls(self.store if store is None else store, self.config.database, selected, since, until,
+                               memory=self.memory if store is None else None, trials_root=self.trials_root)
         result = summarize_calls(calls, since, until)
-        return {'tokens': result['budgeted']['input'] + result['budgeted']['output'],
-                'settled_unknown_calls': result['settled_unknown_calls'],
-                'successful_unknown_calls': result['successful_unknown_calls'],
-                'unfinished_calls': result['unfinished_calls']}
+        totals = {'tokens': result['budgeted']['input'] + result['budgeted']['output'],
+                  'settled_unknown_calls': result['settled_unknown_calls'],
+                  'successful_unknown_calls': result['successful_unknown_calls'],
+                  'unfinished_calls': result['unfinished_calls']}
+        with self._cache_lock:
+            self._cache = {k: v for k, v in self._cache.items() if k[1:] == key[1:]}
+            self._cache[key] = (self.clock(), totals)
+        return totals
 
-    def check(self, scene: str | None) -> None:
+    def check(self, scene: str | None, *, max_age: float = 0.0, store=None) -> None:
         limits = self.config.limits
         checks = [(None, limits.daily_tokens, self.config.timezone)]
         if scene in limits.scene_daily_tokens:
@@ -200,7 +224,7 @@ class ModelBudget:
             if cap is None:
                 continue
             since, until = day_window(self.store.now(), timezone)
-            result = self.totals(scope, since, until)
+            result = self.totals(scope, since, until, max_age=max_age, store=store)
             label = '全局' if scope is None else '本场景'
             if result['successful_unknown_calls']:
                 raise LimitReached(f'{label}今日有成功模型调用没有报告 token，暂停模型请求；请核对计量。', until)

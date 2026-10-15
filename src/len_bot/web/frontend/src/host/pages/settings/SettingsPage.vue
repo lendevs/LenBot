@@ -37,7 +37,7 @@ function saved(value) {
     <PageTabs :tabs="tabs" :model-value="tab" label="设置分类" />
     <ResourceState :resource="settings" error-title="读取设置失败" v-slot="{ data }">
       <ConnectionSection v-if="tab === 'connection'" :snapshot="data" @saved="saved" @dirty="value => dirty.connection = value" />
-      <SpeechSection v-else-if="tab === 'chat'" :snapshot="data" @saved="saved" @dirty="value => dirty.chat = value" />
+      <SpeechSection v-else-if="tab === 'chat'" :snapshot="data" @saved="saved" @reload="value => settings.data.value = value" @dirty="value => dirty.chat = value" />
       <AccountSection v-else-if="tab === 'account'" :snapshot="data" @saved="saved" @dirty="value => dirty.account = value" />
       <RetentionSection v-else-if="tab === 'retention'" :snapshot="data" @saved="saved" @dirty="value => dirty.retention = value" />
       <UpdatesSection v-else-if="tab === 'updates'" />

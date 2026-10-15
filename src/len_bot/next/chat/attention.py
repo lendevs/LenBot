@@ -19,7 +19,7 @@ from .declarations import AttentionArguments, Declared, declare, match_message, 
 from .disposition import Disposition, allows
 from .recap import estimate_content, estimate_request
 from .scene_control import SceneControlArguments, TemporaryQuiet, require_control
-from ..models.limits import LimitReached, SpeechLimitReached, speech_quota
+from ..models.limits import BUDGET_CACHE_SECONDS, LimitReached, SpeechLimitReached, speech_quota
 from ..configuration.chat import Attention
 from ..platform.delivery import report_parts, split_expression
 from ..platform.messages import ChatMessage, Segment, plain_text
@@ -39,6 +39,17 @@ Channel = Literal["direct", "named", "attention", "focus", "ambient", "explore"]
 PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
 HELP = re.compile(r"(?<!不)怎么|如何|为什么|有没有|帮我|帮忙|你们觉得")
+
+
+def wake_channel(*, scheduled: bool, notices: bool, events: bool, audio: bool, pending: str | None) -> str:
+    """The channel a turn is recorded under. An @ that also carries task results, plugin events or
+    audio is still a direct turn, so usage stats count it as @ (the other sources stay in channels)."""
+    if scheduled:
+        return "schedule"
+    if pending == "direct":
+        return "direct"
+    return ("task" if notices else "plugin" if events else "audio" if audio
+            else pending if pending else "resume")
 
 
 @dataclass
@@ -67,6 +78,9 @@ class AttentionState:
     paused: bool = False
     declared: Declared | None = None
     disposition: Disposition | None = None
+    # A turn allowed to use the direct reserve (an @, reply, reminder or task result) was cut
+    # off by the speech limit; its resume keeps that right instead of queuing as ambient talk.
+    resume_reserve: bool = False
 
     def contact(self, at: float, duration: float) -> None:
         if self.last_contact_at is None or at > self.last_contact_at:
@@ -579,7 +593,9 @@ class SceneRunner:
             now = self.now()
             try:
                 # Only the direct reserve stops every wake; other wakes are held below at the normal limit.
-                self.chat.check_limits(model=True, direct=True)
+                # Re-run on every wake-up and, after a settings save, by every runner at once:
+                # recent token totals are shared instead of re-aggregated each time.
+                self.chat.check_limits(model=True, direct=True, max_age=BUDGET_CACHE_SECONDS)
             except LimitReached as error:
                 if in_turn or self.closing or not wait:
                     return None
@@ -603,8 +619,17 @@ class SceneRunner:
             task_notice = (period is None and self.chat.tasks is not None
                            and self.chat.tasks.records.pending_notices(self.config.scene))
             plugin_event = period is None and PluginStore(self.store).plugin_wake_pending(self.config.scene)
-            if scheduled or task_notice or plugin_event or (period is None and self.audio_ready()):
+            if scheduled or task_notice:
                 return self.store.pending_messages(self.config.scene), None, scheduled
+            if plugin_event or (period is None and self.audio_ready()):
+                # Audio transcripts and plugin events are not direct: they wait for the normal limit.
+                held = None if in_turn else self.speech_hold()
+                if held is None:
+                    return self.store.pending_messages(self.config.scene), None, scheduled
+                if self.closing or not wait:
+                    return None
+                await self.wait_speech(held, now)
+                continue
             notice_until = None
             resuming = self.resume and not in_turn
             if period is not None:
@@ -677,6 +702,8 @@ class SceneRunner:
         """Until when a wake that is not direct waits for the normal hourly speech limit."""
         if self.state.pending is not None and self.state.pending.channel == "direct":
             return None
+        if self.resume and self.state.resume_reserve:
+            return None  # The admission check above already waits for the reserve.
         return speech_quota(self.store, self.config).until(direct=False)
 
     async def wait_speech(self, until: float, now: float) -> None:
@@ -719,6 +746,8 @@ class SceneRunner:
             if state.pending.channel == "ambient":
                 state.ambient_last_at = self.now()
             state.pending = None
+        if new_turn:
+            state.resume_reserve = False
         return state
 
     def wake_reason(self) -> str:
@@ -753,6 +782,12 @@ class SceneRunner:
         pending, _, scheduled = ready
         state = self.consumed_state()
         if pending:
+            if self.state.pending is not None and self.state.pending.channel == "direct":
+                self.chat.reserve_revoked = False
+                self.chat.turn_messages = 0
+            elif self.chat.turn_messages:
+                # A reaction alone is not an answer. The turn already answered what woke it; ordinary follow-ups use the normal limit.
+                self.chat.reserve_revoked = True
             self.chat.turn_channels.add(self.state.pending.channel if self.state.pending is not None else "in_turn")
             if self.state.pending is not None and self.state.pending.explored:
                 self.chat.turn_channels.add('explore')
@@ -895,6 +930,7 @@ class SceneRunner:
                 if not any(allows(state.disposition, channel_pending, message.sender.uid, self.now())
                            for message, _ in pending_messages):
                     state.pending = None
+        state.resume_reserve = result["status"] == "limited" and self.chat.speech_reserve
         # Preserve restart eligibility without treating a timeout as new input.
         pending_wake = self.store.end_turn(result["turn_id"], result["status"], result["error"],
                                            attention_state=persisted(state))
@@ -992,8 +1028,8 @@ class SceneRunner:
                                if self.chat.tasks is not None and not quiet else [])
                     events = PluginStore(self.store).pending_plugin_events(self.config.scene, include_events=not quiet)
                     audio = not quiet and self.audio_ready()
-                    channel = ("schedule" if scheduled else "task" if notices else "plugin" if events else "audio" if audio
-                               else self.state.pending.channel if self.state.pending else "resume")
+                    channel = wake_channel(scheduled=bool(scheduled), notices=bool(notices), events=bool(events),
+                                           audio=bool(audio), pending=self.state.pending.channel if self.state.pending else None)
                     channels = {name for name, present in (
                         ("schedule", scheduled), ("task", notices), ("plugin", events), ("audio", audio), ("resume", self.resume))
                         if present}
@@ -1005,7 +1041,8 @@ class SceneRunner:
                               else "[此前未触发唤醒的消息]" if channel in {"schedule", "task", "plugin", "audio"} and self.state.pending is None
                               else self.wake_reason())
                     batch = self.batch(pending, reason) if pending else None
-                    direct = self.state.pending is not None and self.state.pending.channel == "direct"
+                    direct = ((self.state.pending is not None and self.state.pending.channel == "direct")
+                              or (self.resume and self.state.resume_reserve))
                     wake_received_at = (self.state.pending.first_at
                                         if not scheduled and self.state.pending is not None else None)
                     await self._turn(channel, batch=batch, scheduled=scheduled, task_notices=notices,

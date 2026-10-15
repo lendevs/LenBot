@@ -109,7 +109,7 @@ def test_local_index_starts_only_from_an_empty_file_or_its_own_format(tmp_path):
 
 def test_wake_migration_keeps_expired_requests_as_unknown(tmp_path):
     root = tmp_path / 'instance'
-    shutil.copytree(HISTORY / 'config2-business4-jobs6-index3', root)
+    shutil.copytree(HISTORY / 'config0-business4-jobs6-index3', root)
     with closing(sqlite3.connect(root / 'state.db')) as db:
         call_id, request = db.execute("SELECT id,request FROM model_calls WHERE role='mind'").fetchone()
         expired = expire_request(json.loads(request), 1_790_000_100)
@@ -118,3 +118,24 @@ def test_wake_migration_keeps_expired_requests_as_unknown(tmp_path):
     migrate_instance(root)
     with Store(root / 'state.db') as store:
         assert store.recent_turns(SCENE)[0]['wake_channel'] == 'unknown'
+
+
+@pytest.mark.parametrize('fixture', FIXTURES)
+def test_fixture_names_match_the_formats_they_contain(fixture):
+    """Audit D-3: a fixture called configN must carry config_version N (missing means 0)."""
+    config, business = re.match(r'config(\d+)-business(\d+)-', fixture).groups()
+    saved = json.loads((HISTORY / fixture / 'lenbot.config.json').read_text(encoding='utf-8'))
+    assert saved.get('config_version', 0) == int(config)
+    with sqlite3.connect(HISTORY / fixture / 'state.db') as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == int(business)
+
+
+def test_documented_business_format_matches_the_code():
+    """Audit F-1: changelog and operations guide name the current business format."""
+    from len_bot.next.storage.store import FORMAT_VERSION
+    repo = Path(__file__).parents[1]
+    changelog = (repo / 'changelogs' / 'v0.2.0.md').read_text(encoding='utf-8')
+    operations = (repo / 'deploy' / 'current' / 'operations.md').read_text(encoding='utf-8')
+    assert f'业务数据库格式 {FORMAT_VERSION}' in changelog
+    assert f'目前是格式 {FORMAT_VERSION}。' in operations
+    assert f'业务数据库从格式 {FORMAT_VERSION - 1} 升级到 {FORMAT_VERSION} 时' in operations
