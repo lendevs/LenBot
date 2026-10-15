@@ -227,3 +227,43 @@ description = "本机安装边界样本"
         assert (await client.get('/api/setup/plugins')).status_code == 409
         assert (await client.post('/api/setup', json=body)).status_code == 409
         assert (tmp_path/'lenbot.config.json').read_bytes() == before
+
+
+def test_container_setup_always_uses_the_published_panel_port(tmp_path: Path):
+    """Compose publishes only 11307; the wizard's default 8088 must not reach the saved config (audit B-1)."""
+    from len_bot.next.panel.setup import CONTAINER_PANEL_PORT
+    compose = (Path(__file__).parents[1] / 'deploy' / 'current' / 'host.compose.yaml').read_text(encoding='utf-8')
+    assert f'{CONTAINER_PANEL_PORT}:{CONTAINER_PANEL_PORT}' in compose
+    body = {
+        'bot_id':'onebot:90001','owners':['onebot:70001'],'timezone':'Asia/Shanghai','delivery':'simulated',
+        'onebot':{'mode':'forward_ws','ws_url':'ws://127.0.0.1:9','access_token':'synthetic-token'},
+        'provider':{'api':'openai-chat','base_url':'http://127.0.0.1:9/v1','api_key':'synthetic-secret'},
+        'mind':{'provider':'primary','model':'fixture','context_window_tokens':8192},
+        'voice_mode':'direct','compaction':{'input_tokens':6000},'embedding':None,
+        'scene':'onebot:group:80001','panel_port':8088,'username':'fixture','password':'synthetic-password',
+    }
+
+    async def exercise():
+        app = create_setup_app(tmp_path, 'fixture-token', asyncio.Event(), container=True)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://lenbot.example',
+                                     headers={'X-Setup-Token': 'fixture-token'}) as client:
+            page = (await client.get('/api/setup/protocols')).json()
+            assert page['container'] is True and page['panel_port'] == CONTAINER_PANEL_PORT
+            response = await client.post('/api/setup', json=body)
+            assert response.status_code == 200, response.text
+            assert response.json()['panel_url'] == '/' and response.json()['panel_port'] == CONTAINER_PANEL_PORT
+        cfg = load_host_config(tmp_path)
+        assert (cfg.panel.host, cfg.panel.port) == ('0.0.0.0', CONTAINER_PANEL_PORT)
+    asyncio.run(exercise())
+
+
+def test_local_setup_keeps_the_chosen_port_and_page_says_plugins_start_disabled(tmp_path: Path):
+    async def exercise():
+        app = create_setup_app(tmp_path, 'fixture-token', asyncio.Event())
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://127.0.0.1',
+                                     headers={'X-Setup-Token': 'fixture-token'}) as client:
+            page = (await client.get('/api/setup/protocols')).json()
+            assert page['container'] is False and page['panel_port'] is None
+            html = (await client.get('/')).text
+            assert '默认是关闭的' in html and "readOnly=true" in html
+    asyncio.run(exercise())
