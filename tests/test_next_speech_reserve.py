@@ -73,7 +73,7 @@ async def test_non_direct_follow_ups_after_an_answer_do_not_drain_the_reserve(tm
         # Before the @ is answered, queued chatter rides along with the direct reserve.
         assert await runner.append_during_turn(False, 'turn')
         assert chat.speech_reserve
-        chat.turn_expressions = 1
+        chat.turn_expressions = chat.turn_messages = 1
         assert await runner.append_during_turn(False, 'turn')
         assert not chat.speech_reserve
         # A new @ in the same turn grants it again.
@@ -130,3 +130,42 @@ async def test_resume_of_a_direct_turn_starts_as_direct(tmp_path, monkeypatch):
         with pytest.raises(RuntimeError, match='stop'):
             await runner._run()
         assert calls == [('resume', True)]
+
+
+@pytest.mark.parametrize('extra', [{'events': True}, {'notices': True}, {'audio': True}])
+def test_direct_turn_with_other_sources_is_recorded_as_direct(extra):
+    from len_bot.next.chat.attention import wake_channel
+    base = dict(scheduled=False, notices=False, events=False, audio=False)
+    assert wake_channel(**{**base, **extra}, pending='direct') == 'direct'
+    assert wake_channel(**{**base, **extra}, pending='ambient') != 'direct'
+    assert wake_channel(**{**base, 'events': True}, pending=None) == 'plugin'
+    assert wake_channel(**{**base, 'scheduled': True}, pending='direct') == 'schedule'
+
+
+@pytest.mark.asyncio
+async def test_a_reaction_alone_does_not_count_as_having_spoken(tmp_path, monkeypatch):
+    runner, store, config = _runner(tmp_path)
+    with store:
+        chat = runner.chat
+        chat.direct_request, chat.turn_channel = True, 'direct'
+
+        async def ready_messages(**_):
+            return ([(1, object(), 0.0)], None, [])
+        monkeypatch.setattr(runner, 'ready_messages', ready_messages)
+        monkeypatch.setattr(runner, 'batch', lambda pending, reason: (1, ['x']))
+        monkeypatch.setattr(store, 'append_batch', lambda *args, **kwargs: None)
+        chat.turn_expressions = 1  # only a reaction so far
+        assert await runner.append_during_turn(False, 'turn')
+        assert chat.speech_reserve
+        chat.turn_messages = 1
+        assert await runner.append_during_turn(False, 'turn')
+        assert not chat.speech_reserve
+
+
+def test_quota_hint_names_private_chats_and_task_results(tmp_path):
+    from len_bot.next.chat.context import turn_state
+    runner, store, config = _runner(tmp_path)
+    with store:
+        record_speech(store, config.scene); record_speech(store, config.scene)
+        content = turn_state(config, store, now=store.now())['content']
+        assert '私聊' in content and '任务结果' in content and '还能说 1 条' in content

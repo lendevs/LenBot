@@ -41,6 +41,17 @@ REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", "
 HELP = re.compile(r"(?<!不)怎么|如何|为什么|有没有|帮我|帮忙|你们觉得")
 
 
+def wake_channel(*, scheduled: bool, notices: bool, events: bool, audio: bool, pending: str | None) -> str:
+    """The channel a turn is recorded under. An @ that also carries task results, plugin events or
+    audio is still a direct turn, so usage stats count it as @ (the other sources stay in channels)."""
+    if scheduled:
+        return "schedule"
+    if pending == "direct":
+        return "direct"
+    return ("task" if notices else "plugin" if events else "audio" if audio
+            else pending if pending else "resume")
+
+
 @dataclass
 class PendingWake:
     channel: Channel
@@ -773,8 +784,8 @@ class SceneRunner:
         if pending:
             if self.state.pending is not None and self.state.pending.channel == "direct":
                 self.chat.reserve_revoked = False
-            elif self.chat.turn_expressions:
-                # The turn already answered what woke it; ordinary follow-ups use the normal limit.
+            elif self.chat.turn_messages:
+                # A reaction alone is not an answer. The turn already answered what woke it; ordinary follow-ups use the normal limit.
                 self.chat.reserve_revoked = True
             self.chat.turn_channels.add(self.state.pending.channel if self.state.pending is not None else "in_turn")
             if self.state.pending is not None and self.state.pending.explored:
@@ -1016,8 +1027,8 @@ class SceneRunner:
                                if self.chat.tasks is not None and not quiet else [])
                     events = PluginStore(self.store).pending_plugin_events(self.config.scene, include_events=not quiet)
                     audio = not quiet and self.audio_ready()
-                    channel = ("schedule" if scheduled else "task" if notices else "plugin" if events else "audio" if audio
-                               else self.state.pending.channel if self.state.pending else "resume")
+                    channel = wake_channel(scheduled=bool(scheduled), notices=bool(notices), events=bool(events),
+                                           audio=bool(audio), pending=self.state.pending.channel if self.state.pending else None)
                     channels = {name for name, present in (
                         ("schedule", scheduled), ("task", notices), ("plugin", events), ("audio", audio), ("resume", self.resume))
                         if present}
