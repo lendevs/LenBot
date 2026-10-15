@@ -36,3 +36,11 @@ def test_container_entry_parses_help_too(monkeypatch, capsys):
     with pytest.raises(SystemExit) as stopped:
         launcher.container_main(['--help'])
     assert stopped.value.code == 0 and 'lenbot-container' in capsys.readouterr().out
+
+
+def test_container_entry_also_warns_in_an_empty_directory(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(launcher, 'run', lambda **_: 0)
+    with pytest.raises(SystemExit):
+        launcher.container_main([])
+    assert str(tmp_path) in capsys.readouterr().out

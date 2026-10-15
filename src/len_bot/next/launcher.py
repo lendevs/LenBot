@@ -96,6 +96,7 @@ def main(argv: list[str] | None = None) -> None:
 
 def container_main(argv: list[str] | None = None) -> None:
     parse_arguments(argv, container=True)
+    announce_root(Path.cwd())
     raise SystemExit(run(container=True))
 
 
