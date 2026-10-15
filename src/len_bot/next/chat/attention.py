@@ -784,6 +784,7 @@ class SceneRunner:
         if pending:
             if self.state.pending is not None and self.state.pending.channel == "direct":
                 self.chat.reserve_revoked = False
+                self.chat.turn_messages = 0
             elif self.chat.turn_messages:
                 # A reaction alone is not an answer. The turn already answered what woke it; ordinary follow-ups use the normal limit.
                 self.chat.reserve_revoked = True

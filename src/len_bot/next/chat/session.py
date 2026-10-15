@@ -83,7 +83,7 @@ class Chat:
         # traffic answers at the normal hourly limit, not from the direct reserve.
         self.reserve_revoked = False
         self.turn_expressions = 0
-        # Messages actually sent this turn; reactions do not count as having spoken.
+        # Delivered messages since the latest direct input; reactions do not count as an answer.
         self.turn_messages = 0
         # Actual wake channels seen by the current turn, snapshotted per expression.
         self.turn_channels: set[str] = set()
@@ -363,7 +363,8 @@ class Chat:
                                 )
                                 expressions.append(content)
                                 self.turn_expressions += 1
-                                self.turn_messages += 1
+                                if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
+                                    self.turn_messages += 1
                                 if delivery_status in {"sent", "simulated"}:
                                     end_turn = end_turn or expression.end_turn
                                 else:
