@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ...configuration.types import STRICT
 from ...configuration.chat import (
@@ -288,11 +290,41 @@ def _project(config: HostConfig) -> dict:
     }
 
 
+def limits_version(limits: ResourceLimits) -> str:
+    """Opaque tag of the saved limits; a panel tab sends it back so a stale snapshot cannot overwrite."""
+    canonical = json.dumps(limits.model_dump(mode="json"), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+class LimitsConflict(Exception):
+    """The saved limits changed since the client read them."""
+
+
+class LimitsChange(BaseModel):
+    """Some of ResourceLimits; unset fields keep their saved values."""
+    model_config = ConfigDict(strict=True, extra="forbid")
+    version: str | None = None
+    daily_tokens: int | None = Field(default=None, gt=0)
+    scene_daily_tokens: dict[str, int] | None = None
+    messages_per_hour: int | None = Field(default=None, ge=1)
+    scene_messages_per_hour: dict[str, int | None] | None = None
+    direct_reserve: int | None = Field(default=None, ge=0)
+    speech_notice_text: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def maps_are_not_null(self) -> "LimitsChange":
+        for name in ("scene_daily_tokens", "scene_messages_per_hour", "direct_reserve"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
+
+
 def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
     current, recorded = _project(running), _project(saved)
     return {
         "running": current,
         "saved": recorded,
+        "versions": {"limits": limits_version(saved.limits)},
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
@@ -387,8 +419,29 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
     @app.put("/api/host/settings/limits")
     async def limits(request: Request, _: str = Depends(user)):
-        change = await _body(request, ResourceLimits)
-        return await save(lambda source, saved: source.update(limits=change.model_dump(mode="json")), speech=True)
+        # Partial update: only the fields in the body change. An optional "version" (from the
+        # snapshot's versions.limits) rejects the save with 409 when the limits changed meanwhile,
+        # so a stale panel tab cannot reset per-group settings it never showed.
+        change = await _body(request, LimitsChange)
+        fields = change.model_dump(mode="json", exclude_unset=True, exclude={"version"})
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            if change.version is not None and change.version != limits_version(saved.limits):
+                raise LimitsConflict
+            merged = saved.limits.model_dump(mode="json") | fields
+            try:
+                ResourceLimits.model_validate(merged)
+            except ValidationError as error:
+                raise ValueError(_validation_detail(error)) from error
+            source["limits"] = merged
+
+        try:
+            return await save(edit, speech=True)
+        except LimitsConflict:
+            async with write_lock:
+                saved = await asyncio.to_thread(_read_saved, root)
+            raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，已重新载入最新设置，请确认后再保存。",
+                                      "snapshot": _snapshot(running, saved)}) from None
 
     @app.put("/api/host/settings/limits/scenes/{scene}")
     async def scene_speech_limit(scene: str, request: Request, _: str = Depends(user)):
