@@ -4,6 +4,7 @@ from contextlib import ExitStack
 from pathlib import Path
 import sqlite3
 import sys
+import time
 import json
 
 from ..config import load_instance_config
@@ -33,10 +34,21 @@ def _qualified_schedule_targets(db: sqlite3.Connection) -> None:
                "WHERE target!='self' AND instr(target,':')=0")
 
 
-def _speech_records(db: sqlite3.Connection) -> None:
-    """Format 3 to 4: hourly speech limits count expressions, not platform message parts."""
+def _speech_records(db: sqlite3.Connection, *, now: float | None = None) -> None:
+    """Format 3 to 4: hourly speech limits count expressions, not platform message parts.
+
+    The last hour is seeded from the own group messages the old format counted (one row per
+    delivered part, as before), so an upgrade does not hand out a second allowance for that hour.
+    """
     db.execute("CREATE TABLE IF NOT EXISTS speech (id INTEGER PRIMARY KEY, scene TEXT NOT NULL, time REAL NOT NULL)")
     db.execute("CREATE INDEX IF NOT EXISTS scene_speech ON speech(scene, time)")
+    since = (time.time() if now is None else now) - 3600
+    db.execute(
+        "INSERT INTO speech(scene,time) SELECT scene,json_extract(body,'$.time') FROM messages "
+        "WHERE raw IS NULL AND json_extract(body,'$.is_self')=1 AND scene LIKE '%:group:%' "
+        "AND json_extract(body,'$.time')>? "
+        "AND json_extract(body,'$.send_status') IN ('sent','unconfirmed','simulated') "
+        "AND NOT EXISTS (SELECT 1 FROM speech) ORDER BY json_extract(body,'$.time')", (since,))
 
 
 def _turn_wake_channels(db: sqlite3.Connection) -> None:
