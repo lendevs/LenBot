@@ -68,6 +68,14 @@ Validated values are in `ctx.config`. Runtime configuration, enabled state and s
 
 The host records `.lenbot-data.json` in the data directory with the `data_version` the data was written with; existing data without it counts as 1, and a new empty directory takes the manifest's current version. When the manifest's `data_version` is higher than the record, before `start()` the host copies the whole data directory to `plugins.data_directory/.backups/<name>-v<old>-<time>`, calls `await plugin.migrate_data(from_version)` (the plugin is loaded and may use `ctx.data_dir` and KV, but has not started), then records the new version. If the migration raises, the data directory is put back as it was and the plugin is marked failed. Raising `data_version` without implementing `migrate_data` fails. A manifest `data_version` lower than the record is refused: an older plugin never reads newer data, so going back also needs the matching data backup.
 
+## Permissions and isolation
+
+Optional `permissions` in `plugin.toml` lists the host capabilities the plugin uses: `send` (including `ctx.reply`), `events`, `history`, `memory`, `generate`, `delegate`, `network` (`fetch_image`) and `schedule` (`ctx.cron`). A plugin that declares the field gets only those; anything else raises `PermissionError`. Its own KV, data directory, commands, rules, tools and notices need no permission. A manifest without the field keeps every capability and is shown as undeclared.
+
+`isolation = "process"` runs the plugin in its own worker process. Commands, full-text and regex rules, notices and `@background` loops are forwarded as JSON lines; every `ctx` capability is answered by the host under the plugin's own name with the same scene and permission checks. If the worker dies, pending calls fail and only that plugin is marked failed; reloading starts a fresh worker. `@tool`, `ctx.cron` and `ctx.start_task` are not supported in a process yet. This isolates crashes; it is not a security sandbox.
+
+Each plugin state carries `health` with `level` (`ok`, `degraded`, `failed`, `stopped`, `starting`), `errors_last_hour`, `failing` and `last_error_at`; `GET /api/host/plugins/health` returns it without reading the disk.
+
 ## Context capabilities
 
 Scene IDs are qualified, for example `onebot:group:80001`; accounts use `onebot:70001`. `Invocation.message` contains the actual triggering sender; a tool or scheduled call may have no message. Never invent a requester.
@@ -85,7 +93,7 @@ Scene IDs are qualified, for example `onebot:group:80001`; accounts use `onebot:
 | Time | `ctx.now()`, `ctx.timezone()` |
 | Owner permission | `ctx.require_owner()` |
 
-`generate` uses an explicitly configured mind or learner binding, without tools, history injection, automatic sending or changing providers on error. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. A returned task record confirms only that the task was submitted; it says nothing about delivery.
+`generate` uses an explicitly configured mind or learner binding, without tools, history injection or automatic sending; when the role has fallback providers it fails over in order like chat does. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. A returned task record confirms only that the task was submitted; it says nothing about delivery.
 
 `self.ctx` is a `PluginContext`; scene-specific capabilities require a scene argument. Calls are limited to enabled scenes. `self.ctx.scenes` lists enabled scenes whose chat is on: when an operator switches a group's chat off in the panel, that group drops out of the list, commands and notices there are not dispatched, and sending or emitting events to it raises an error. Sends return `Sent` with sent, failed, unconfirmed, simulated or partial status. Only sent means platform confirmation.
 
