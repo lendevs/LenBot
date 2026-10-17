@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import json
 import math
 import sqlite3
@@ -14,7 +17,7 @@ from typing import Literal
 from uuid import uuid4
 
 from ..platform.messages import Notice, ChatMessage, plain_text
-from .sqlite import connect
+from .sqlite import SerializedConnection, connect
 from ..persona.stickers import PersonaSticker
 from ..learning.sticker_assets import CollectedSticker
 from ...image_assets import OriginalImage
@@ -63,8 +66,10 @@ class Store:
         self.now = now
         if not readonly:
             path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = connect(path, readonly=readonly)
+        self.db = SerializedConnection(connect(path, readonly=readonly, threaded=True))
         self.db.row_factory = sqlite3.Row
+        # The database thread: chat-path writes fsync there instead of on the event loop.
+        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
         try:
             tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             if tables:
@@ -89,7 +94,31 @@ class Store:
         return self
 
     def __exit__(self, *_: object) -> None:
+        self._worker.shutdown(wait=True)
         self.db.close()
+
+    def _held(self, function: Callable, args: tuple, kwargs: dict):
+        with self.db.hold():
+            return function(*args, **kwargs)
+
+    async def call[T](self, function: Callable[..., T], /, *args, **kwargs) -> T:
+        """Run one store call (a ``Store`` method or a sub-store's) on the database thread.
+
+        The call holds the connection for its whole duration. It always runs to its end: when the
+        awaiting task is cancelled, the write still commits and the cancellation is delivered right
+        after, the same state a synchronous call followed by the next await would leave.
+        """
+        future = asyncio.get_running_loop().run_in_executor(
+            self._worker, partial(self._held, function, args, kwargs))
+        try:
+            return await asyncio.shield(future)
+        except asyncio.CancelledError:
+            while not future.done():
+                try:
+                    await asyncio.wait({future})
+                except asyncio.CancelledError:
+                    continue
+            raise
 
     def save_web_page(self, scene: str, page: WebPage) -> int:
         with self.db:
