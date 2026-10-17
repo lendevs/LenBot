@@ -211,7 +211,7 @@ const receiptText = { stored: '这条没有唤醒 Bot', duplicate: '这条消息
           <li v-for="message in messages" :key="message.seq" :data-seq="message.seq" class="message" :class="{ mine: !message.is_self }">
             <span class="avatar">
               <img v-if="message.is_self && !avatarFailed" :src="`${apiBase}/avatar`" alt="" @error="avatarFailed = true" />
-              <span v-else class="initial" :style="{ background: tint(message.sender.uid)[0], color: tint(message.sender.uid)[1] }">
+              <span v-else class="initial" :style="{ '--tint-bg': tint(message.sender.uid)[0], '--tint-fg': tint(message.sender.uid)[1] }">
                 {{ [...(message.is_self ? botName : nameOf(message.sender.uid))][0] }}</span>
             </span>
             <div class="body">
@@ -245,7 +245,7 @@ const receiptText = { stored: '这条没有唤醒 Bot', duplicate: '这条消息
           <div v-if="!isPrivate" class="member-bar" role="radiogroup" aria-label="以谁的身份发言">
             <button v-for="member in members" :key="member.uid" type="button" class="member" role="radio"
               :class="{ active: member.uid === speaker?.uid }" :aria-checked="member.uid === speaker?.uid" @click="current = member.uid">
-              <span class="initial small-avatar" :style="{ background: tint(member.uid)[0], color: tint(member.uid)[1] }">{{ [...member.nickname][0] }}</span>
+              <span class="initial small-avatar" :style="{ '--tint-bg': tint(member.uid)[0], '--tint-fg': tint(member.uid)[1] }">{{ [...member.nickname][0] }}</span>
               {{ member.nickname }}<span v-if="roleLabel[member.role]" class="role" :class="member.role">{{ roleLabel[member.role] }}</span>
             </button>
             <v-btn v-if="speaker" :icon="mdiPencilOutline" variant="text" size="x-small" aria-label="编辑当前群友" @click="editMember(speaker)" />
@@ -322,6 +322,7 @@ const receiptText = { stored: '这条没有唤醒 Bot', duplicate: '这条消息
 .message.mine{flex-direction:row-reverse;justify-self:end}
 .message.flash{background:var(--selected)}
 .avatar{flex:none;width:36px;height:36px}
+.initial{background:var(--tint-bg);color:var(--tint-fg)}
 .avatar img,.initial{width:36px;height:36px;border-radius:50%;object-fit:cover;display:grid;place-items:center;font-weight:700}
 .body{display:grid;gap:4px;min-width:0}
 .mine .body{justify-items:end}
@@ -329,13 +330,13 @@ const receiptText = { stored: '这条没有唤醒 Bot', duplicate: '这条消息
 .mine .who{flex-direction:row-reverse}
 .time{opacity:.7}
 .role{font-size:11px;line-height:16px;padding:0 4px;border-radius:4px;background:var(--track);color:var(--muted)}
-.role.owner{background:#fdf0d5;color:#9a6a00}
-.role.admin{background:#e3f2ea;color:#2a7457}
+.role.owner{background:var(--warning-bg);color:var(--warning)}
+.role.admin{background:var(--success-bg);color:var(--success)}
 .bubble{background:var(--surface);border-radius:var(--radius-lg);padding:var(--sp-2) var(--sp-3);white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
 .bubble.clickable{cursor:pointer}
 .mine .bubble{background:var(--selected)}
 .bubble.bare{background:none;padding:0}
-.quote{display:block;width:100%;text-align:left;font:inherit;font-size:var(--fs-xs);color:var(--muted);background:rgb(0 0 0 / 4%);border:0;border-left:3px solid var(--line-strong);border-radius:4px;padding:4px 8px;margin-bottom:6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quote{display:block;width:100%;text-align:left;font:inherit;font-size:var(--fs-xs);color:var(--muted);background:var(--hover);border:0;border-left:3px solid var(--line-strong);border-radius:4px;padding:4px 8px;margin-bottom:6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .quote:disabled{cursor:default}
 .mention{color:var(--primary);font-weight:600}
 .picture{display:block;max-width:140px;max-height:140px;border-radius:var(--radius);margin:4px 0}

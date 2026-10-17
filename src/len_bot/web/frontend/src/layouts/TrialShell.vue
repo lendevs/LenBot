@@ -62,5 +62,5 @@ async function exit() {
     </main>
   </v-main>
   <ConfirmHost />
-  <v-snackbar v-model="toast" :timeout="3000" location="bottom" color="#1d1b20" rounded="lg">{{ host.toast }}</v-snackbar>
+  <v-snackbar v-model="toast" :timeout="3000" location="bottom" color="toast" rounded="lg">{{ host.toast }}</v-snackbar>
 </template>

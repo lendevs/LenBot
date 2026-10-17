@@ -36,7 +36,7 @@ code { font-family:var(--mono);font-size:.92em }
 .v-field--variant-filled { border-radius:var(--radius) !important;background:var(--fill);transition:background-color var(--dur-1),box-shadow var(--dur-2) var(--ease-out) }
 .v-field--variant-filled > .v-field__overlay, .v-field--variant-filled > .v-field__outline { display:none }
 .v-field--variant-filled:hover { background:var(--hover) }
-.v-field--variant-filled.v-field--focused { background:var(--surface);box-shadow:0 0 0 1.5px var(--primary),0 0 0 5px rgb(180 71 106 / 12%) }
+.v-field--variant-filled.v-field--focused { background:var(--surface);box-shadow:0 0 0 1.5px var(--primary),0 0 0 5px color-mix(in srgb, var(--primary) 14%, transparent) }
 .v-field--variant-filled.v-field--error { box-shadow:0 0 0 1.5px var(--error) }
 .v-field--variant-filled.v-field--disabled { background:var(--fill) }
 .v-field--variant-filled .v-label.v-field-label { color:var(--muted);opacity:1 }
@@ -61,3 +61,6 @@ code { font-family:var(--mono);font-size:.92em }
   *,*::before,*::after{animation-duration:.01ms !important;animation-delay:0ms !important;animation-iteration-count:1 !important;
     transition-duration:.01ms !important;scroll-behavior:auto !important}
 }
+
+/* Pastel avatar tints read as glare on dark surfaces: keep the hue, sink the background. */
+:root[data-theme='dark'] .scene-avatar, :root[data-theme='dark'] .initial { background:color-mix(in srgb, var(--tint-fg) 32%, var(--surface)) !important;color:var(--tint-bg) !important }

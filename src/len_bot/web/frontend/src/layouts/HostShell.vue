@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { mdiViewDashboardOutline, mdiChatProcessingOutline, mdiForumOutline, mdiAccountOutline, mdiBookOpenPageVariantOutline,
   mdiBriefcaseOutline, mdiFolderOutline, mdiToolboxOutline, mdiChip, mdiTimelineTextOutline, mdiCogOutline, mdiMenu, mdiLogout, mdiRestart,
-  mdiPuzzleOutline, mdiBellOutline } from '@mdi/js'
+  mdiPuzzleOutline, mdiBellOutline, mdiThemeLightDark, mdiCheck } from '@mdi/js'
 import { logout, useAuth } from '../composables/useAuth.js'
 import { confirm } from '../composables/useConfirm.js'
 import { useCurrentScene } from '../composables/useCurrentScene.js'
@@ -21,6 +21,7 @@ import { restartFlow, openRestart } from '../host/restart.js'
 import { useHostEvents } from '../host/events.js'
 import LiveStatus from '../host/ui/LiveStatus.vue'
 import markUrl from '../assets/lenbot-mark.svg'
+import { themeMode, themeModeOptions, setThemeMode } from '../composables/useThemeMode.js'
 
 const route = useRoute(), router = useRouter(), { mobile } = useDisplay(), auth = useAuth()
 const drawer = ref(!mobile.value), leaving = ref(false), logoutError = ref(null)
@@ -113,6 +114,10 @@ async function exit() {
         </template>
         <v-list density="compact" min-width="200">
           <v-list-subheader>{{ account }}</v-list-subheader>
+          <v-list-subheader><v-icon :icon="mdiThemeLightDark" size="16" class="mr-1" />外观</v-list-subheader>
+          <v-list-item v-for="[value, label] in themeModeOptions" :key="value" :title="label" :active="themeMode === value"
+            :append-icon="themeMode === value ? mdiCheck : undefined" @click="setThemeMode(value)" />
+          <v-divider class="my-1" />
           <v-list-item :prepend-icon="mdiRestart" title="重启 LenBot" :disabled="restartFlow.waiting" @click="openRestart" />
           <v-list-item :prepend-icon="mdiLogout" title="退出登录" :disabled="leaving" @click="exit" />
         </v-list>
@@ -130,9 +135,9 @@ async function exit() {
   </v-main>
   <RestartDialog />
   <ConfirmHost />
-  <v-snackbar v-model="toast" :timeout="3000" location="bottom" color="#1d1b20" rounded="lg">{{ host.toast }}</v-snackbar>
+  <v-snackbar v-model="toast" :timeout="3000" location="bottom" color="toast" rounded="lg">{{ host.toast }}</v-snackbar>
 </template>
 
 <style scoped>
-.memory-index-dot{width:7px;height:7px;flex:none;border-radius:50%;background:#c49a27;margin-left:auto}
+.memory-index-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--warning);margin-left:auto}
 </style>
