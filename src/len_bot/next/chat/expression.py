@@ -153,7 +153,8 @@ class ChatExpression:
                                  turn_id: str, channels: set[str]) -> tuple[str, str]:
         parts = ([expression.message] if expression.sticker is not None else
                  split_expression(expression.message, self.config.text_delivery.max_chars))
-        entry_seq = self.store.prepare_expression(
+        entry_seq = await self.store.call(
+            self.store.prepare_expression,
             self.config.scene, call_id, report_parts(parts, [], self.context.render),
         )
         prefix = "模拟表达（未发送到平台）：" if self.send_message is None else ""
@@ -189,35 +190,36 @@ class ChatExpression:
                     try:
                         self.check_speech()
                     except LimitReached as error:
-                        self.store.expression_error(entry_seq, str(error))
+                        await self.store.call(self.store.expression_error, entry_seq, str(error))
                         raise
                 part.time = self.now()
                 simulate(part, self.send_message is None)
                 errors.append(None)
                 content = report_parts(parts, errors, self.context.render)
-                message_seq = self.store.start_expression_part(entry_seq, part, prefix + content,
-                                                              persona_id=self.persona.id, turn_id=turn_id,
-                                                              sticker=(sticker if isinstance(sticker, CollectedSticker)
-                                                                       else None if sticker is None
-                                                                       else (self.persona.id, sticker)))
+                # Committed (and synced) before the platform send: the send intent survives a crash.
+                message_seq = await self.store.call(
+                    self.store.start_expression_part, entry_seq, part, prefix + content,
+                    persona_id=self.persona.id, turn_id=turn_id,
+                    sticker=(sticker if isinstance(sticker, CollectedSticker) else None if sticker is None
+                             else (self.persona.id, sticker)))
                 self.notify()
                 if self.send_message is None:
                     log_sent(message_seq, part, None, index=index, parts=len(parts))
                     if index == 0 and not fixed_notice:
-                        record_speech(self.store, self.config.scene)
+                        await self.store.call(record_speech, self.store, self.config.scene)
                 if self.send_message is not None:
                     result = await self.send_message(part, image_bytes=None if sticker is None else sticker.data)
                     part.send_status, part.platform_message_id = result.status, result.platform_message_id
                     errors[-1] = result.error
                     log_sent(message_seq, part, result.error, index=index, parts=len(parts))
                     content = report_parts(parts, errors, self.context.render)
-                    kept = self.store.finish_expression((message_seq, entry_seq), part, prefix + content,
-                                                        turn_id=turn_id)
+                    kept = await self.store.call(self.store.finish_expression, (message_seq, entry_seq), part,
+                                                 prefix + content, turn_id=turn_id)
                     if result.status == "sent":
                         confirmed.append((kept, self.now()))
                     # The host send hold returns simulated; speech still counts so limits behave as when sending.
                     if index == 0 and not fixed_notice and result.status in {"sent", "unconfirmed", "simulated"}:
-                        record_speech(self.store, self.config.scene)
+                        await self.store.call(record_speech, self.store, self.config.scene)
                     self.notify()
                     if result.status not in {"sent", "simulated"}:
                         break
@@ -255,8 +257,8 @@ class ChatExpression:
                     simulate(part, self.send_message is None)
                     errors.append(None)
                     image = prepared[index].image
-                    seq = self.store.start_outgoing(part, persona_id=self.persona.id, image=(None if image is None else
-                                                    (image, prepared[index].description)))
+                    seq = await self.store.call(self.store.start_outgoing, part, persona_id=self.persona.id,
+                                                image=(None if image is None else (image, prepared[index].description)))
                     if self.exclude_from_memory is not None:
                         self.exclude_from_memory(seq)
                     self.notify()
@@ -267,7 +269,7 @@ class ChatExpression:
                     part.send_status, part.platform_message_id = result.status, result.platform_message_id
                     errors[-1] = result.error
                     log_sent(seq, part, result.error, index=index, parts=len(parts), plugin=plugin)
-                    self.store.finish_expression((seq, None), part, "")
+                    await self.store.call(self.store.finish_expression, (seq, None), part, "")
                     self.notify()
                     if result.status not in {"sent", "simulated"}:
                         break

@@ -89,3 +89,35 @@ def test_store_methods_run_on_the_database_thread(tmp_path):
         turn = asyncio.run(run())
         row = store.db.execute("SELECT status FROM turns WHERE id=?", (turn,)).fetchone()
         assert row[0] == 'settled'
+
+
+@pytest.mark.asyncio
+async def test_send_intent_is_committed_before_the_platform_send(tmp_path):
+    from test_next_persona_permissions import _config, _package
+    from len_bot.next.chat.context import ChatContext
+    from len_bot.next.chat.expression import ChatExpression
+    from len_bot.next.chat.tools import SayArguments
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.platform.messages import SendResult
+    package = _package(tmp_path, 'plain', tools=['say'], documents={})
+    config = _config(tmp_path / 'instance', package)
+    persona = load_persona(package)
+    with Store(config.database) as store:
+        seen = []
+
+        async def send(part, *, image_bytes):
+            # Another connection, as after a crash: the attempted part is already on disk.
+            with Store(config.database, readonly=True) as reader:
+                seen.append(reader.db.execute(
+                    "SELECT COUNT(*) FROM messages WHERE json_extract(body,'$.is_self')").fetchone()[0])
+            return SendResult(status='sent', platform_message_id=f'9{len(seen)}', error=None)
+
+        context = ChatContext(config, persona, store, platform=False, memory=None)
+        expression = ChatExpression(config, persona, store, context=context, send_message=send,
+                                    notify=lambda: None, on_reply_sample=None, now=store.now)
+        said = await expression.express('turn', SayArguments(content='你好'))
+        _, status = await expression.deliver_expression('call', said, turn_id=store.start_turn(config.scene),
+                                                        channels=set())
+        assert status == 'sent'
+        assert seen == [1]
+        assert store.db.execute("SELECT json_extract(body,'$.send_status') FROM messages").fetchone()[0] == 'sent'
