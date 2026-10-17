@@ -28,7 +28,7 @@
 
 ### `models.roles.<role>.fallbacks`
 
-适用于 `mind`、`vision`、`memory`、`worker`、`learner`（`asr` 没有这一项）。按列表顺序尝试，主绑定优先级最高。最多 8 项。
+可写在 `mind`、`vision`、`memory`、`worker`、`learner` 上（`asr` 没有这一项；`worker` 目前只校验、不生效，见文末）。按列表顺序尝试，主绑定优先级最高。最多 8 项。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
