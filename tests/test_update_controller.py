@@ -1,4 +1,4 @@
-"""Every update failure leaves the user one concrete next action, and nothing is undone automatically."""
+"""Every update failure leaves the user one concrete next action; a failure after the snapshot is rolled back."""
 
 import json
 import os
@@ -26,17 +26,24 @@ RELEASES = [{'tag_name': 'v0.2.0', 'draft': False, 'prerelease': False, 'body': 
 
 
 class Backend:
-    """Records each step; ``fail`` names the step that raises."""
+    """Records each step; ``fail`` names the steps that raise.
 
-    def __init__(self, fail: str | None = None, blocked: list[str] | None = None):
+    Starting and readiness of the previous program are recorded as ``start_previous`` and
+    ``ready_previous``, so a test can break the new version and its rollback separately.
+    """
+
+    def __init__(self, fail: str | tuple[str, ...] | None = None, blocked: list[str] | None = None):
         self.fail, self.blocked = fail, blocked or []
         self.current = {'version': '0.1.0'}
         self.running, self.calls, self.discarded = True, [], []
 
     def step(self, name: str) -> None:
         self.calls.append(name)
-        if self.fail == name:
+        if name in ((self.fail,) if isinstance(self.fail, str) else self.fail or ()):
             raise RuntimeError(f'synthetic {name} failure')
+
+    def previous(self, name: str, version: str) -> str:
+        return name + ('_previous' if version == '0.1.0' else '')
 
     def metadata(self):
         return self.current
@@ -67,11 +74,11 @@ class Backend:
         self.current = target
 
     def start(self):
-        self.step('start')
+        self.step(self.previous('start', self.current['version']))
         self.running = True
 
     def ready(self, target):
-        self.step('ready')
+        self.step(self.previous('ready', target['version']))
 
     def restore(self, old, snapshot):
         self.step('restore')
@@ -169,22 +176,59 @@ def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fai
 
 
 @pytest.mark.parametrize('fail', ['migrate', 'select', 'start', 'ready'])
-def test_failure_after_snapshot_requires_restore_first(make, fail):
+def test_failure_after_snapshot_rolls_back_and_starts_the_previous_program(make, fail):
     backend = Backend(fail=fail)
     controller = make(backend)
     run(controller, 'prepare', {'tag': 'v0.2.0'})
     state = run(controller, 'apply')
-    assert state['status'] == 'failed' and state['snapshot_complete'] and state['actions'] == ['restore']
+    assert state['status'] == 'rolled_back' and state['current_version'] == '0.1.0' and backend.running
+    assert not state['stopped'] and not state['snapshot_complete'] and state['actions'] == ['prepare']
+    stage = 'start' if fail == 'ready' else fail  # readiness is waited for in the start stage
+    assert state['failed_stage'] == stage and state['rolled_back_from'] == '0.2.0'
+    assert state['error'] == f'更新到 0.2.0 失败，已自动恢复到 0.1.0：RuntimeError: synthetic {fail} failure'
+    assert backend.calls[backend.calls.index('restore'):] == ['restore', 'start_previous', 'ready_previous']
+    records = [json.loads(line) for line in (controller.root / 'updates/updater.jsonl').read_text().splitlines()]
+    assert [entry['stage'] for entry in records if entry['event'] == 'stage'][-3:] == [
+        'rollback', 'rollback_start', 'rolled_back']
+    assert any(entry['event'] == 'update_failed' and entry['stage'] == stage for entry in records)
+    # The failed candidate is discarded when an update is prepared again.
+    backend.fail = None
+    assert run(controller, 'prepare', {'tag': 'v0.2.0'})['status'] == 'prepared' and backend.discarded == ['0.2.0']
+
+
+def test_rollback_that_cannot_restore_keeps_the_manual_restore(make):
+    backend = Backend(fail=('ready', 'restore'))
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'failed' and state['stage'] == 'rollback' and state['actions'] == ['restore']
+    assert state['snapshot_complete'] and state['stopped']
+    assert '自动恢复快照也失败' in state['error'] and 'synthetic ready failure' in state['error']
     with pytest.raises(ValueError, match='现在不能启动程序'):
         controller.submit('start', {})
+    backend.fail = None
     restored = run(controller, 'restore')
     assert restored['current_version'] == '0.1.0' and restored['actions'] == ['start']
+    assert run(controller, 'start')['status'] == 'complete' and backend.running
+
+
+def test_rollback_whose_previous_program_does_not_start_offers_start(make):
+    backend = Backend(fail=('start', 'ready_previous'))
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'failed' and state['stage'] == 'rollback_start' and state['actions'] == ['start']
+    assert state['current_version'] == '0.1.0' and '已恢复快照，但旧版本没有启动' in state['error']
+    backend.fail = None
+    assert run(controller, 'start')['status'] == 'complete'
 
 
 @pytest.mark.parametrize(('stage', 'stopped', 'snapshot', 'actions'), [
     ('download', False, False, ['prepare']),
     ('backup', True, False, ['start']),
     ('migrate', True, True, ['restore']),
+    ('rollback', True, True, ['restore']),
+    ('rollback_start', True, False, ['start']),
 ])
 def test_controller_restart_mid_operation_keeps_a_way_out(make, stage, stopped, snapshot, actions):
     controller = make(Backend())

@@ -1,4 +1,10 @@
-"""One instance's explicit update, downtime progress, and snapshot recovery."""
+"""One instance's explicit update, downtime progress, and snapshot recovery.
+
+A failure after the snapshot (migration, version switch, start or readiness) is undone at once: the
+snapshot is restored, the previous program is started again, and the state becomes ``rolled_back``
+with the reason. Only when that recovery itself fails does the update stop at ``failed`` with the
+manual restore or start action.
+"""
 
 import argparse
 import json
@@ -144,7 +150,7 @@ class Controller:
                 version_key(tag.removeprefix('v'))
                 if not tag.startswith('v'):
                     raise ValueError('更新目标必须是发行标签')
-                previous = self.state.get('target') if self.state['status'] in ('prepared', 'failed') else None
+                previous = self.state.get('target') if self.state['status'] in ('prepared', 'failed', 'rolled_back') else None
                 self.stage('download', status='preparing', error=None, stopped=False, snapshot_complete=False)
                 operation = lambda: self.prepare(tag, previous)
             elif action == 'apply':
@@ -237,18 +243,38 @@ class Controller:
         self.stage('backup', snapshot=str(snapshot))
         self.backend.backup(snapshot)
         self.stage('migrate', snapshot_complete=True)
-        self.backend.migrate(target)
-        self.stage('select')
-        self.backend.select(target)
-        self.publish_reference()
-        self.stage('start')
         try:
+            self.backend.migrate(target)
+            self.stage('select')
+            self.backend.select(target)
+            self.publish_reference()
+            self.stage('start')
             self.backend.start()
             self.backend.ready(target)
-        except Exception:
-            self.backend.stop()
-            raise
+        except Exception as error:
+            self.record('update_failed', level='ERROR', error=error, stage=self.state['stage'])
+            self.roll_back(f'{type(error).__name__}: {error}')
+            return
         self.stage('complete', status='complete', stopped=False)
+
+    def roll_back(self, reason: str) -> None:
+        """Restore the snapshot and start the previous program; a failure here leaves the manual action."""
+        failed_stage, target = self.state['stage'], self.state['target']
+        self.stage('rollback', status='restoring', failed_stage=failed_stage, error=reason)
+        try:
+            self.backend.restore(self.state['old'], Path(self.state['snapshot']))
+        except Exception as error:
+            raise RuntimeError(f'更新失败（{reason}），自动恢复快照也失败：{type(error).__name__}: {error}') from error
+        self.publish_reference()
+        # The data is back; what remains is starting the previous program, which the start action repeats.
+        self.stage('rollback_start', snapshot_complete=False)
+        try:
+            self.backend.start()
+            self.backend.ready(self.backend.metadata())
+        except Exception as error:
+            raise RuntimeError(f'更新失败（{reason}），已恢复快照，但旧版本没有启动：{type(error).__name__}: {error}') from error
+        self.stage('rolled_back', status='rolled_back', stopped=False, rolled_back_from=target['version'],
+                   error=f'更新到 {target["version"]} 失败，已自动恢复到 {self.backend.metadata()["version"]}：{reason}')
 
     def restore(self) -> None:
         self.backend.restore(self.state['old'], Path(self.state['snapshot']))
