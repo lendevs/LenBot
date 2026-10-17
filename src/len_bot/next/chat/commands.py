@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -261,6 +262,69 @@ async def _reset(call: CommandCall) -> str:
     return "已开始新的对话上下文；聊天记录、记忆和未读消息都保留"
 
 
+STATE_TITLES = {"closed": "正常", "open": "熔断冷却中", "half_open": "冷却结束待试"}
+
+
+async def _model(call: CommandCall) -> str:
+    """The mind's binding and its fallbacks with each circuit; switching is a configuration change."""
+    if call.arguments:
+        raise CommandError("用法：/model。调整顺序或备用服务请在面板的模型页修改")
+    candidates = call.runtime.config.models.roles.mind.candidates()
+    health = _mind_health(call)
+    rows = {(row["provider"], row["model"]): row for row in ([] if health is None else health["candidates"])}
+    lines = ["主脑服务（按顺序尝试）：" if len(candidates) > 1 else "主脑服务："]
+    for index, candidate in enumerate(candidates, 1):
+        row = rows.get((candidate.provider, candidate.model))
+        state = "" if row is None else f"，{STATE_TITLES[row['state']]}"
+        if row is not None and row["state"] == "open" and row["reopens_in_seconds"] is not None:
+            state += f"，{math.ceil(row['reopens_in_seconds'])} 秒后再试"
+        lines.append(f"{index}. {candidate.provider} / {candidate.model}{state}")
+    served = None if health is None else health["last_served"]
+    if served is not None:
+        lines.append(f"最近一次由 {served['provider']} / {served['model']} 回复")
+    if len(candidates) == 1:
+        lines.append("没有配置备用服务；出错时不会切换")
+    return "\n".join(lines)
+
+
+async def _limit(call: CommandCall) -> str:
+    from ..configuration.editing import save_config
+    from ..models.limits import apply_speech_limits, clear_speech
+
+    scene, runtime = call.scene, call.runtime
+    if scene.split(":", 2)[1] != "group":
+        raise CommandError("发言上限只用于群聊")
+    arguments = call.arguments
+    if arguments == []:
+        return _speech_line(call)
+    if arguments == ["reset"]:
+        clear_speech(call.runner.store, scene)
+        call.runner.changed.set()
+        log_event(logger, "command_limit", scene=scene, change="reset", requester=call.requester)
+        return "已清空本群最近一小时的发言计数"
+    if len(arguments) != 1 or not (arguments[0] in ("off", "global") or arguments[0].isdecimal()):
+        raise CommandError("用法：/limit、/limit <每小时条数>、/limit off、/limit global 或 /limit reset")
+    change = arguments[0]
+    if change.isdecimal() and not 1 <= int(change) <= 1000:
+        raise CommandError("每小时条数为 1 到 1000")
+
+    def edit(source: dict, saved) -> None:
+        per_scene = source.setdefault("limits", {}).setdefault("scene_messages_per_hour", {})
+        if change == "global":
+            per_scene.pop(scene, None)
+        else:
+            per_scene[scene] = None if change == "off" else int(change)
+
+    async with runtime.config_write_lock:
+        saved = await asyncio.to_thread(save_config, runtime.config._instance_root, runtime.config, edit)
+        apply_speech_limits(runtime.config, saved)
+        for runner in runtime.runners.values():
+            runner.changed.set()
+    log_event(logger, "command_limit", scene=scene, change=change, requester=call.requester)
+    runtime.notify()
+    return "已保存到根配置并立即生效。" + _speech_line(call)
+
+
 BUILTIN: list[Command] = [
     Command("help", "/help", "列出你可以使用的命令", "member", _help),
     Command("id", "/id", "显示本场景、你和机器人的账号，用于填写权限", "member", _id),
@@ -269,6 +333,8 @@ BUILTIN: list[Command] = [
     Command("quiet", "/quiet <分钟> [defer]", "本群临时安静；defer 时被叫到也延后", "control", _quiet),
     Command("resume", "/resume", "提前结束本群的临时安静", "control", _resume),
     Command("reset", "/reset", "开始新的对话上下文，原记录和记忆保留", "control", _reset),
+    Command("model", "/model", "查看主脑服务、备用服务和熔断状态", "manage", _model),
+    Command("limit", "/limit [<条数>|off|global|reset]", "查看或修改本群每小时发言上限", "manage", _limit),
 ]
 
 
