@@ -203,16 +203,17 @@ class Chat:
         token_scale = 1.0
         compacted = False
         while True:
-            AudioStore(self.store).append_late(self.config.scene)
-            recap, entries = self.store.active_history(self.config.scene)
+            await self.store.call(AudioStore(self.store).append_late, self.config.scene)
+            recap, entries = await self.store.call(self.store.active_history, self.config.scene)
             # Refresh only between model requests, never midway through a tool group.
-            self.toolset.discovered_tools = set(self.store.load_discovered_tools(self.config.scene))
-            state = turn_state(self.config, self.store, now=observed_at,
-                               expression_style=expression_style, recalled=recalled)
+            self.toolset.discovered_tools = set(await self.store.call(self.store.load_discovered_tools,
+                                                                      self.config.scene))
+            state = await self.store.call(turn_state, self.config, self.store, now=observed_at,
+                                          expression_style=expression_style, recalled=recalled)
             messages = await self.context.project(recap, entries, state)
-            estimated, method = request_estimate(self.config, self.store, self.mind, scene=self.config.scene,
-                                            role='mind', messages=messages, tools=self.toolset.tools,
-                                            output_tokens=0)
+            estimated, method = await self.store.call(
+                request_estimate, self.config, self.store, self.mind, scene=self.config.scene,
+                role='mind', messages=messages, tools=self.toolset.tools, output_tokens=0)
             if method == "usage_assisted":
                 token_scale = estimated / estimate_text_request(messages, self.toolset.tools, 0)
             elif compacted:
@@ -271,6 +272,7 @@ class Chat:
         observed_at = self.now()
         self.turn_channels = set() if channels is None else set(channels)
         scene = self.config.scene
+        # Synchronous: a cancellation between this write and the try below would leave the turn open.
         turn_id = self.store.start_turn(scene, batch=batch, attention_state=attention_state,
                                        scheduled=scheduled, task_notices=task_notices,
                                        plugin_events=plugin_events,
@@ -294,14 +296,15 @@ class Chat:
                 recalled = None
                 if self.memory is not None and self.memory.settings.auto_recall:
                     phase = '记忆自动召回'
-                    recall = await self.memory.recall(scene, self.store.recent_context_messages(scene, limit=8))
+                    recall = await self.memory.recall(
+                        scene, await self.store.call(self.store.recent_context_messages, scene, limit=8))
                     if recall["items"]:
                         recalled = encode({"backend": recall["backend"], "items": recall["items"]})
                 phase = None
                 self.expression_ids = None
                 learned = None
                 if self.expression_service is not None and scene in self.expression_service.scenes:
-                    recent = self.store.recent_context_messages(scene, limit=8)
+                    recent = await self.store.call(self.store.recent_context_messages, scene, limit=8)
                     query = "\n".join(self.context.render(message) for message in recent
                                       if not message.is_self and message.sender.uid not in self.config.attention.other_bot_ids)
                     if query:
@@ -341,14 +344,16 @@ class Chat:
                         except Exception as error:
                             group_failed = True
                             failed_tools += 1
-                            self.store.complete_tool(scene, call.id, f"{call.name} 失败：{type(error).__name__}: {error}")
+                            await self.store.call(self.store.complete_tool, scene, call.id,
+                                                  f"{call.name} 失败：{type(error).__name__}: {error}")
                             if isinstance(error, LimitReached):
                                 raise
                         else:
                             if expression is None:
                                 reaction = call.name == 'message_reaction'
-                                self.store.complete_tool(scene, call.id, content, discovered_tools=discovered,
-                                                         response_turn_id=turn_id if reaction else None)
+                                await self.store.call(self.store.complete_tool, scene, call.id, content,
+                                                      discovered_tools=discovered,
+                                                      response_turn_id=turn_id if reaction else None)
                                 if reaction:
                                     expressions.append(content)
                                     self.turn_expressions += 1
