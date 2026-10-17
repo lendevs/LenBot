@@ -19,6 +19,7 @@ import markUrl from '../../../assets/lenbot-mark-tile.svg'
 import EmptyState from '../../ui/EmptyState.vue'
 import Fold from '../../ui/Fold.vue'
 import DevOnly from '../../ui/DevOnly.vue'
+import RuntimeHealth from '../../components/RuntimeHealth.vue'
 
 const day = computed(() => host.overview)
 const state = computed(() => host.state)
@@ -185,6 +186,7 @@ const connectionNotes = {
           </ul>
         </Panel>
 
+      <RuntimeHealth class="area-health" />
       <Panel v-if="state" title="群聊" flush class="area-scenes">
         <template #actions><v-btn variant="text" size="small" :append-icon="mdiArrowRight" :to="{ name: 'host-scenes' }">管理</v-btn></template>
         <div v-if="state.scenes.length > 4" class="pad search">
@@ -230,10 +232,11 @@ const connectionNotes = {
 .status-text p{margin:0;color:var(--muted);overflow-wrap:anywhere}
 .status-actions{display:flex;gap:var(--sp-2);flex-wrap:wrap;justify-content:flex-end}
 .status-note{grid-column:1/-1;margin:0}
-.columns{display:grid;grid-template-columns:minmax(0,3fr) minmax(320px,2fr);grid-template-areas:'todo scenes' 'activity scenes';grid-template-rows:auto 1fr;gap:var(--sp-6) var(--sp-6);align-items:start;margin-top:var(--sp-3)}
+.columns{display:grid;grid-template-columns:minmax(0,3fr) minmax(320px,2fr);grid-template-areas:'todo scenes' 'activity health';grid-template-rows:auto 1fr;gap:var(--sp-6) var(--sp-6);align-items:start;margin-top:var(--sp-3)}
 .area-todo{grid-area:todo}
 .area-activity{grid-area:activity}
 .area-scenes{grid-area:scenes}
+.area-health{grid-area:health}
 .pad{padding:var(--sp-2) 0 var(--sp-3);margin:0}
 .columns :deep(.panel.flush .panel-head){padding-left:0;padding-right:0}
 .columns :deep(.panel.flush .panel-foot){padding-left:0;padding-right:0}
@@ -259,6 +262,6 @@ const connectionNotes = {
 .scene-text strong,.scene-text span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .scene-text strong{font-weight:600}
 .scene-text span{font-size:var(--fs-sm);color:var(--muted)}
-@media(max-width:1100px){.columns{grid-template-columns:minmax(0,1fr);grid-template-areas:'todo' 'scenes' 'activity';grid-template-rows:none}}
+@media(max-width:1100px){.columns{grid-template-columns:minmax(0,1fr);grid-template-areas:'todo' 'scenes' 'health' 'activity';grid-template-rows:none}}
 @media(max-width:700px){.status-card{grid-template-columns:minmax(0,1fr)}.status-actions{justify-content:flex-start}}
 </style>
