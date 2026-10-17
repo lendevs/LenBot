@@ -1,16 +1,20 @@
 """One-task, byte-transparent native model stream boundary.
 
-The caller owns the task record and the HTTP route. This object owns only one
-configured upstream binding, its task token, and actual model-call limits.
+The caller owns the task record and the HTTP route. This object owns the
+configured upstream binding (plus its fallbacks), its task token, and actual
+model-call limits. The container always speaks to the primary binding; a
+fallback is tried only when the current candidate fails before any response
+byte reaches the container.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 import hmac
+import httpx
 import json
 import math
 from typing import Any
@@ -18,6 +22,7 @@ from typing import Any
 
 from ..chat.recap import estimate_text_request
 from ..models.client import ModelProtocolError, ModelSettings
+from ..models.failover import FAILOVER_STATUS, ProviderHealth
 from ..models.slots import ModelSlots
 from ..models.tokens import token_record
 from .worker_stream import ChatCompletionStream
@@ -31,6 +36,10 @@ REJECTED_HTTP_STATUSES = frozenset({400, 401, 403, 404, 405, 409, 413, 415, 422,
 
 class WorkerModelError(RuntimeError):
     """One worker model call was refused or did not complete."""
+
+
+class _FailedOver(Exception):
+    """One candidate failed before streaming; the proxy tries the next one."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +90,9 @@ class WorkerModelProxy:
         scene: str | None = None,
         start_call: Callable[[dict[str, Any]], int],
         finish_call: Callable[[int, dict[str, Any]], None],
+        fallbacks: Sequence[tuple[str, ModelSettings]] = (),
+        health: ProviderHealth | None = None,
+        role: str = "worker",
     ):
         if not provider.strip() or not token:
             raise ValueError("provider and task token must not be empty")
@@ -102,8 +114,18 @@ class WorkerModelProxy:
         self._spent = 0
         self._tokens_unknown = False
         self._active_task: asyncio.Task[Any] | None = None
-        self._client = http_client(base_url=settings.base_url, api_key=settings.api_key, api=settings.api,
-                                   timeout_seconds=settings.timeout_seconds, proxy=settings.proxy)
+        for _, candidate in fallbacks:
+            if candidate.api != settings.api:
+                raise ValueError("worker fallbacks must use the primary binding's API protocol")
+        self.role = role
+        self.candidates = [(provider, settings), *fallbacks]
+        self.health = health if fallbacks else None
+        if self.health is not None:
+            self.health.register(role, [(name, candidate.model) for name, candidate in self.candidates])
+        self._clients = [http_client(base_url=candidate.base_url, api_key=candidate.api_key, api=candidate.api,
+                                     timeout_seconds=candidate.timeout_seconds, proxy=candidate.proxy)
+                         for _, candidate in self.candidates]
+        self._client = self._clients[0]
 
     @property
     def path(self) -> str:
@@ -112,10 +134,14 @@ class WorkerModelProxy:
 
     @property
     def upstream_path(self) -> str:
-        return {'openai-chat': 'chat/completions', 'openai-responses': 'responses',
-                'anthropic': 'messages', 'gemini': 'models/' + quote(self.settings.model.removeprefix('models/'), safe='') + ':streamGenerateContent?alt=sse'}[self.settings.api]
+        return self._upstream_path(self.settings)
 
-    def _native_request(self, inbound: dict, payload_bytes: bytes):
+    @staticmethod
+    def _upstream_path(settings: ModelSettings) -> str:
+        return {'openai-chat': 'chat/completions', 'openai-responses': 'responses',
+                'anthropic': 'messages', 'gemini': 'models/' + quote(settings.model.removeprefix('models/'), safe='') + ':streamGenerateContent?alt=sse'}[settings.api]
+
+    def _native_request(self, inbound: dict, payload_bytes: bytes, settings: ModelSettings):
         api = self.settings.api
         if api != 'gemini' and inbound.get('model') != self.settings.model:
             raise WorkerModelError('worker model does not match the configured binding')
@@ -131,6 +157,8 @@ class WorkerModelProxy:
         if not isinstance(inbound.get(key), list):
             raise WorkerModelError(f'worker {key} must be an array')
         outgoing = inbound.copy()
+        if api != 'gemini':
+            outgoing['model'] = settings.model
         for tool in outgoing.get('tools', []):
             if api == 'openai-responses':
                 valid = isinstance(tool, dict) and tool.get('type') == 'function'
@@ -145,31 +173,33 @@ class WorkerModelProxy:
         output_tokens = options.get(output_field, self.settings.max_output_tokens)
         if type(output_tokens) is not int or not 0 < output_tokens <= self.settings.max_output_tokens:
             raise WorkerModelError('worker output tokens exceed configured binding')
+        # Validated against the binding the container sees, then capped by the serving candidate.
+        output_tokens = min(output_tokens, settings.max_output_tokens)
         options[output_field] = output_tokens
-        if self.settings.temperature is None:
+        if settings.temperature is None:
             options.pop('temperature', None)
         else:
-            options['temperature'] = self.settings.temperature
+            options['temperature'] = settings.temperature
         if api == 'openai-responses':
             if outgoing.get('store') is True:
                 raise WorkerModelError('worker store may only be false')
             outgoing.update(store=False, include=['reasoning.encrypted_content'])
             outgoing.pop('reasoning', None)
-            if self.settings.reasoning_effort is not None:
-                outgoing['reasoning'] = {'effort': self.settings.reasoning_effort}
+            if settings.reasoning_effort is not None:
+                outgoing['reasoning'] = {'effort': settings.reasoning_effort}
         elif api == 'anthropic':
             outgoing.pop('thinking', None)
             outgoing.pop('output_config', None)
-            if self.settings.thinking_budget_tokens is not None:
-                outgoing['thinking'] = {'type': 'enabled', 'budget_tokens': self.settings.thinking_budget_tokens}
-            elif self.settings.reasoning_effort is not None:
-                outgoing.update(thinking={'type': 'adaptive'}, output_config={'effort': self.settings.reasoning_effort})
+            if settings.thinking_budget_tokens is not None:
+                outgoing['thinking'] = {'type': 'enabled', 'budget_tokens': settings.thinking_budget_tokens}
+            elif settings.reasoning_effort is not None:
+                outgoing.update(thinking={'type': 'adaptive'}, output_config={'effort': settings.reasoning_effort})
         else:
             options.pop('thinkingConfig', None)
-            if self.settings.thinking_budget_tokens is not None:
-                options['thinkingConfig'] = {'thinkingBudget': self.settings.thinking_budget_tokens}
-            elif self.settings.reasoning_effort is not None:
-                options['thinkingConfig'] = {'thinkingLevel': self.settings.reasoning_effort}
+            if settings.thinking_budget_tokens is not None:
+                options['thinkingConfig'] = {'thinkingBudget': settings.thinking_budget_tokens}
+            elif settings.reasoning_effort is not None:
+                options['thinkingConfig'] = {'thinkingLevel': settings.reasoning_effort}
             outgoing['generationConfig'] = options
         # Count readable JSON, retaining signed continuation in the estimate; image token cost is unknown.
         image_unknown = False
@@ -203,7 +233,8 @@ class WorkerModelProxy:
         active = self._active_task
         if active is not None and active is not asyncio.current_task():
             active.cancel()
-        await self._client.aclose()
+        for client in self._clients:
+            await client.aclose()
 
     @asynccontextmanager
     async def _slot(self) -> AsyncIterator[None]:
@@ -219,7 +250,8 @@ class WorkerModelProxy:
             return
         self._spent += tokens["input"] + tokens["output"]
 
-    def _request(self, payload_bytes: bytes) -> tuple[dict[str, Any], bytes, int, bool]:
+    def _request(self, payload_bytes: bytes, settings: ModelSettings | None = None) -> tuple[dict[str, Any], bytes, int, bool]:
+        settings = self.settings if settings is None else settings
         if len(payload_bytes) > self.limits.max_request_bytes:
             raise WorkerModelError("worker model request exceeds max_request_bytes")
         try:
@@ -234,7 +266,7 @@ class WorkerModelProxy:
                 f"worker Chat Completions request must be an object: {payload_bytes[:500]!r}"
             )
         if self.settings.api != "openai-chat":
-            return self._native_request(inbound, payload_bytes)
+            return self._native_request(inbound, payload_bytes, settings)
         allowed = {
             "model", "messages", "tools", "tool_choice", "stream", "stream_options",
             "temperature", "max_completion_tokens", "max_tokens", "reasoning_effort", "store",
@@ -278,23 +310,24 @@ class WorkerModelProxy:
             raise WorkerModelError(
                 f"worker max_completion_tokens must be a positive integer <= "
                 f"{self.settings.max_output_tokens}; actual={output_tokens!r}")
+        output_tokens = min(output_tokens, settings.max_output_tokens)
         outgoing: dict[str, Any] = {
-            "model": self.settings.model,
+            "model": settings.model,
             "messages": messages,
-            self.settings.output_token_field: output_tokens,
+            settings.output_token_field: output_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-        if self.settings.temperature is not None:
-            outgoing["temperature"] = self.settings.temperature
+        if settings.temperature is not None:
+            outgoing["temperature"] = settings.temperature
         if tools or "tools" in inbound:
             outgoing["tools"] = tools
         if "tool_choice" in inbound:
             outgoing["tool_choice"] = inbound["tool_choice"]
         if store is False:
             outgoing["store"] = False
-        if self.settings.reasoning_effort is not None:
-            outgoing["reasoning_effort"] = self.settings.reasoning_effort
+        if settings.reasoning_effort is not None:
+            outgoing["reasoning_effort"] = settings.reasoning_effort
         image_tokens_unknown = any(
             isinstance(message.get("content"), list)
             and any(isinstance(block, dict) and block.get("type") == "image_url"
@@ -331,12 +364,16 @@ class WorkerModelProxy:
 
     def recorded(self, value: Any) -> Any:
         """Project records, not executed requests, using credentials owned by this proxy."""
-        secrets = tuple(sorted((self._token, self.settings.api_key), key=len, reverse=True))
+        secrets = tuple(sorted({self._token, *(candidate.api_key for _, candidate in self.candidates)},
+                               key=len, reverse=True))
         return redact_record(value, lambda text: redact(text, secrets))
 
     def _finish_record(self, call_id: int, facts: dict[str, Any]) -> None:
         recorded = {**facts, **{name: self.recorded(facts[name]) for name in ('error', 'error_body', 'usage')}}
         self.finish_call(call_id, recorded)
+
+    def _order(self) -> list[int]:
+        return [0] if self.health is None else self.health.order(self.role)
 
     @asynccontextmanager
     async def open(self, token: str, payload_bytes: bytes, *, headers: dict | None = None) -> AsyncIterator[WorkerResponse]:
@@ -355,114 +392,176 @@ class WorkerModelProxy:
             raise WorkerModelError("worker model token limit reached, or an earlier call reported no tokens")
         self._busy = True
         self._active_task = asyncio.current_task()
+        try:
+            # Validate against the binding the container was configured with before any upstream work.
+            self._request(payload_bytes)
+            order = self._order()
+            failed_before: list[dict[str, Any]] = []
+            async with self._slot():
+                for position, index in enumerate(order):
+                    if self._closed:
+                        raise WorkerModelError("worker model task token has expired")
+                    try:
+                        async with self._attempt(index, payload_bytes, headers,
+                                                 final=position == len(order) - 1,
+                                                 failed_before=failed_before) as response:
+                            yield response
+                        return
+                    except _FailedOver as failure:
+                        provider, settings = self.candidates[index]
+                        failed_before.append({"provider": provider, "model": settings.model,
+                                              "error": str(failure)})
+                        continue
+        finally:
+            self._active_task = None
+            self._busy = False
+            if self._closed:
+                for client in self._clients:
+                    if not client.is_closed:
+                        await client.aclose()
+
+    def _served(self, index: int, failed_before: list[dict[str, Any]]) -> None:
+        if self.health is None:
+            return
+        provider, settings = self.candidates[index]
+        self.health.succeeded(self.role, provider, settings.model)
+        self.health.record_served(self.role, {"provider": provider, "model": settings.model, "priority": index,
+                                              "failed_before": list(failed_before)})
+
+    @asynccontextmanager
+    async def _attempt(self, index: int, payload_bytes: bytes, headers: dict, *, final: bool,
+                       failed_before: list[dict[str, Any]]) -> AsyncIterator[WorkerResponse]:
+        """One upstream call, recorded on its own; raises ``_FailedOver`` only before the container sees bytes."""
+        provider, settings = self.candidates[index]
+        client = self._clients[index]
+        upstream_path = self._upstream_path(settings)
         call_id: int | None = None
         settled = False
+        streaming = False
         status: int | None = None
         response_bytes = 0
         error_body = bytearray()
         deadline: asyncio.Timeout | None = None
+        wire = b""
         try:
-            outgoing, wire, text_estimate, image_unknown = self._request(payload_bytes)
-            async with self._slot():
-                if self._closed:
-                    raise WorkerModelError("worker model task token has expired")
-                call_id = self.start_call({
-                    "provider": self.provider,
-                    "model": self.settings.model,
-                    "request": self.recorded(outgoing),
-                    "request_bytes": len(wire),
-                    "incoming_bytes": len(payload_bytes),
-                    "text_request_estimate_tokens": text_estimate,
-                    "image_tokens_unknown": image_unknown,
-                })
+            outgoing, wire, text_estimate, image_unknown = self._request(payload_bytes, settings)
+            call_id = self.start_call({
+                "provider": provider,
+                "model": settings.model,
+                "request": self.recorded(outgoing),
+                "request_bytes": len(wire),
+                "incoming_bytes": len(payload_bytes),
+                "text_request_estimate_tokens": text_estimate,
+                "image_tokens_unknown": image_unknown,
+                **({"failover_priority": index} if self.health is not None else {}),
+            })
+            if not failed_before:
+                # One container request is one call against the task's limit, however many candidates it took.
                 self._calls += 1
-                deadline = asyncio.timeout(self.settings.timeout_seconds)
-                async with deadline:
-                    request = self._client.build_request(
-                        "POST", self.upstream_path, content=wire,
-                        headers={
-                            **auth_headers(self.settings.api, self.settings.api_key),
-                            **headers,
-                            "Content-Type": "application/json",
-                            "Accept": "text/event-stream",
-                            "Accept-Encoding": "identity",
-                        },
-                    )
-                    upstream = await self._client.send(request, stream=True)
-                    try:
-                        status = upstream.status_code
-                        encoding = upstream.headers.get("content-encoding", "identity")
-                        if encoding != "identity":
-                            raise WorkerModelError(f"unsupported upstream content-encoding: {encoding}")
-                        parser = ((ChatCompletionStream(self.limits.max_response_bytes) if self.settings.api == "openai-chat"
-                                   else NativeStream(self.settings, self.limits.max_response_bytes))
-                                  if upstream.is_success else None)
+            deadline = asyncio.timeout(settings.timeout_seconds)
+            async with deadline:
+                request = client.build_request(
+                    "POST", upstream_path, content=wire,
+                    headers={
+                        **auth_headers(settings.api, settings.api_key),
+                        **headers,
+                        "Content-Type": "application/json",
+                        "Accept": "text/event-stream",
+                        "Accept-Encoding": "identity",
+                    },
+                )
+                upstream = await client.send(request, stream=True)
+                try:
+                    status = upstream.status_code
+                    if (not final and not upstream.is_success
+                            and (status in FAILOVER_STATUS or status >= 500)):
+                        async for chunk in upstream.aiter_raw():
+                            response_bytes += len(chunk)
+                            if response_bytes > self.limits.max_response_bytes:
+                                break
+                            error_body.extend(chunk)
+                        raise _FailedOver(f"upstream model HTTP {status}")
+                    encoding = upstream.headers.get("content-encoding", "identity")
+                    if encoding != "identity":
+                        raise WorkerModelError(f"unsupported upstream content-encoding: {encoding}")
+                    parser = ((ChatCompletionStream(self.limits.max_response_bytes) if settings.api == "openai-chat"
+                               else NativeStream(settings, self.limits.max_response_bytes))
+                              if upstream.is_success else None)
+                    if upstream.is_success:
+                        self._served(index, failed_before)
+                    elif self.health is not None and (status in FAILOVER_STATUS or status >= 500):
+                        self.health.failed(self.role, provider, settings.model,
+                                           WorkerModelError(f"upstream model HTTP {status}"))
 
-                        def settle(*, result: Any = None, error: str | None = None) -> None:
-                            nonlocal settled
-                            tokens = token_record(None if result is None else result.token_usage)
-                            facts = {
-                                "http_status": status,
-                                "request_bytes": len(wire),
-                                "response_bytes": response_bytes,
-                                "finish_reason": None if result is None else result.finish_reason,
-                                "usage": None if result is None else result.usage,
-                                "token_usage": None if result is None or result.token_usage is None
-                                else asdict(result.token_usage),
-                                "tokens": tokens,
-                                "error": error,
-                                "error_body": error_body.decode("utf-8", errors="backslashreplace")
-                                if error_body else None,
-                            }
-                            settled = True
-                            try:
-                                self._finish_record(call_id, facts)
-                            except BaseException:
-                                self._closed = True
-                                raise
-                            if tokens is not None or status not in REJECTED_HTTP_STATUSES:
-                                self._add_tokens(tokens)
-
-                        async def body() -> AsyncIterator[bytes]:
-                            nonlocal response_bytes
-                            async for chunk in upstream.aiter_raw():
-                                response_bytes += len(chunk)
-                                if response_bytes > self.limits.max_response_bytes:
-                                    raise WorkerModelError("worker model response exceeds max_response_bytes")
-                                if parser is not None:
-                                    parser.feed(chunk)
-                                    if parser.done:
-                                        settle(result=parser.finish())
-                                        yield chunk
-                                        return
-                                else:
-                                    error_body.extend(chunk)
-                                yield chunk
-                            if parser is not None:
-                                settle(result=parser.finish())
-                            else:
-                                settle(error=f"upstream model HTTP {status}")
-
-                        stream = body()
-                        headers = {
-                            "content-type": upstream.headers.get("content-type", "application/octet-stream")
+                    def settle(*, result: Any = None, error: str | None = None) -> None:
+                        nonlocal settled
+                        tokens = token_record(None if result is None else result.token_usage)
+                        facts = {
+                            "http_status": status,
+                            "request_bytes": len(wire),
+                            "response_bytes": response_bytes,
+                            "finish_reason": None if result is None else result.finish_reason,
+                            "usage": None if result is None else result.usage,
+                            "token_usage": None if result is None or result.token_usage is None
+                            else asdict(result.token_usage),
+                            "tokens": tokens,
+                            "error": error,
+                            "error_body": error_body.decode("utf-8", errors="backslashreplace")
+                            if error_body else None,
                         }
-                        yield WorkerResponse(status, headers, stream)
-                        if not settled:
-                            await stream.aclose()
-                            raise WorkerModelError("worker model response was not fully consumed")
-                    finally:
-                        await upstream.aclose()
+                        settled = True
+                        try:
+                            self._finish_record(call_id, facts)
+                        except BaseException:
+                            self._closed = True
+                            raise
+                        if tokens is not None or status not in REJECTED_HTTP_STATUSES:
+                            self._add_tokens(tokens)
+
+                    async def body() -> AsyncIterator[bytes]:
+                        nonlocal response_bytes
+                        async for chunk in upstream.aiter_raw():
+                            response_bytes += len(chunk)
+                            if response_bytes > self.limits.max_response_bytes:
+                                raise WorkerModelError("worker model response exceeds max_response_bytes")
+                            if parser is not None:
+                                parser.feed(chunk)
+                                if parser.done:
+                                    settle(result=parser.finish())
+                                    yield chunk
+                                    return
+                            else:
+                                error_body.extend(chunk)
+                            yield chunk
+                        if parser is not None:
+                            settle(result=parser.finish())
+                        else:
+                            settle(error=f"upstream model HTTP {status}")
+
+                    stream = body()
+                    response_headers = {
+                        "content-type": upstream.headers.get("content-type", "application/octet-stream")
+                    }
+                    streaming = True
+                    yield WorkerResponse(status, response_headers, stream)
+                    if not settled:
+                        await stream.aclose()
+                        raise WorkerModelError("worker model response was not fully consumed")
+                finally:
+                    await upstream.aclose()
         except BaseException as error:
             original_error = error
             if isinstance(error, TimeoutError) and deadline is not None and deadline.expired():
                 error = TimeoutError(
-                    f"worker model {self.provider}/{self.settings.model} POST {self.upstream_path} "
-                    f"exceeded {self.settings.timeout_seconds:g} seconds; "
+                    f"worker model {provider}/{settings.model} POST {upstream_path} "
+                    f"exceeded {settings.timeout_seconds:g} seconds; "
                     f"HTTP status={status}, received_bytes={response_bytes}; request did not finish"
                 )
             if isinstance(error, asyncio.CancelledError):
                 self._closed = True
+            # Only an unreachable or failing upstream moves on; a refused request or a broken stream does not.
+            fail_over = (call_id is not None and not streaming and not final and not self._closed
+                         and isinstance(error, (_FailedOver, TimeoutError, httpx.TransportError)))
             if call_id is not None and not settled:
                 settled = True
                 known_usage = error.usage if isinstance(error, ModelProtocolError) else None
@@ -476,7 +575,7 @@ class WorkerModelProxy:
                     "usage": known_usage,
                     "token_usage": None if known_tokens is None else asdict(known_tokens),
                     "tokens": tokens,
-                    "error": f"{type(error).__name__}: {error}",
+                    "error": str(error) if isinstance(error, _FailedOver) else f"{type(error).__name__}: {error}",
                     "error_body": error_body.decode("utf-8", errors="backslashreplace")
                     if error_body else None,
                 }
@@ -484,14 +583,22 @@ class WorkerModelProxy:
                     self._finish_record(call_id, facts)
                 except BaseException as finish_error:
                     self._closed = True
+                    fail_over = False
                     error.add_note(f"model-call recording also failed: {finish_error}")
-                if tokens is not None or status not in REJECTED_HTTP_STATUSES:
+                # A candidate that answered with an error status or was never reached produced no output.
+                uncharged = fail_over and (isinstance(error, (_FailedOver, httpx.ConnectError, httpx.ConnectTimeout)))
+                if tokens is not None or (status not in REJECTED_HTTP_STATUSES and not uncharged):
                     self._add_tokens(tokens)
+            if (self.health is not None and call_id is not None and not streaming
+                    and isinstance(error, (_FailedOver, TimeoutError, httpx.TransportError))):
+                self.health.failed(self.role, provider, settings.model, error)
+            if fail_over:
+                if isinstance(error, _FailedOver):
+                    raise
+                raise _FailedOver(f"{type(error).__name__}: {error}") from error
+            if isinstance(error, _FailedOver):
+                # Recording failed after a failover-worthy status; surface it as a worker error.
+                raise WorkerModelError(str(error)) from error
             if error is not original_error:
                 raise error from original_error
             raise
-        finally:
-            self._active_task = None
-            self._busy = False
-            if self._closed and not self._client.is_closed:
-                await self._client.aclose()
