@@ -66,4 +66,8 @@ def open_platform(config: SharedConfig, *, on_event: Callable[[dict], None], on_
         from .onebot import OneBot
         return OneBot(config.onebot, bot_id=config.bot_id, on_event=on_event, on_error=on_error,
                       on_connection_change=on_connection_change)
+    if config.telegram is not None:
+        from .telegram import Telegram
+        return Telegram(config.telegram, bot_id=config.bot_id, on_event=on_event, on_error=on_error,
+                        on_connection_change=on_connection_change)
     return None

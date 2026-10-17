@@ -138,7 +138,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "connection": {
-                "mode": "simulated" if config.onebot is None else config.onebot.mode,
+                "mode": ("telegram" if config.telegram is not None else "simulated" if config.onebot is None
+                         else config.onebot.mode),
                 "connected": False if runtime.platform is None else runtime.platform.connected,
                 "status": runtime.status,
                 "addresses": [] if runtime.platform is None else runtime.platform.addresses,

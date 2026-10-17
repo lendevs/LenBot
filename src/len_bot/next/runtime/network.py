@@ -109,7 +109,7 @@ class NetworkRuntime:
         self.management: HostManagement | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
-        self.accepting = config.onebot is None
+        self.accepting = config.onebot is None and config.telegram is None
         self.storage_error: sqlite3.Error | None = None
         # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.
         self.commands = Commands()
@@ -131,8 +131,8 @@ class NetworkRuntime:
                 on_compaction=lambda scene=scene: self.compacted(scene),
                 on_reply_sample=(None if reply_effects is None else
                                  lambda scene=scene: reply_effects.wake(scene)),
-                send_message=self.send_message if config.delivery == "onebot" else None,
-                upload_file=self.upload_file if config.delivery == "onebot" else None,
+                send_message=self.send_message if config.delivery != "simulated" else None,
+                upload_file=self.upload_file if config.delivery != "simulated" else None,
                 platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
                                if config.delivery == "onebot" else None),
                 external_tools=(([] if plugins is None else plugins.tools_for(scene, preparing=True))

@@ -28,6 +28,7 @@ from .configuration.tasks import WorkerSettings
 from .tools.web_search import WebSearchSettings
 from .configuration.types import STRICT, _valid_timezone, _valid_scene
 from .configuration.onebot import OneBotSettings
+from .configuration.telegram import TelegramSettings
 from .configuration.models import Models
 from .configuration.chat import (
     Compaction,
@@ -71,7 +72,10 @@ class SharedConfig(BaseModel):
     timezone: str
     database: Path
     onebot: OneBotSettings | None = None
-    delivery: Literal["simulated", "onebot"] = "simulated"
+    # A second platform adapter; one host connects to one platform.
+    telegram: TelegramSettings | None = None
+    # "onebot" and "telegram" send through that platform; OneBot also enables its platform tools.
+    delivery: Literal["simulated", "onebot", "telegram"] = "simulated"
     max_steps: int = Field(default=8, gt=0)
     turn_timeout_seconds: float = Field(default=90.0, gt=0, allow_inf_nan=False)
     compaction: Compaction = Field(default_factory=Compaction)
@@ -159,6 +163,12 @@ class SharedConfig(BaseModel):
     def valid_delivery(self) -> SharedConfig:
         if self.delivery == "onebot" and self.onebot is None:
             raise ValueError("delivery=onebot requires onebot transport")
+        if self.delivery == "telegram" and self.telegram is None:
+            raise ValueError("delivery=telegram requires telegram transport")
+        if self.onebot is not None and self.telegram is not None:
+            raise ValueError("one host connects to one platform: configure onebot or telegram, not both")
+        if self.telegram is not None and re.fullmatch(r"telegram:[1-9][0-9]*", self.bot_id) is None:
+            raise ValueError("a Telegram host needs bot_id telegram:<bot user id>")
         return self
 
     @model_validator(mode="after")
@@ -284,7 +294,7 @@ class HostConfig(SharedConfig):
                     if settings.replay_web is not None or settings.replay_images is not None]
         if recorded and self.onebot is not None:
             raise ValueError(f'Per-scene replay materials require the explicit stdin host, not platform input: {recorded!r}')
-        if self.onebot is None:
+        if self.onebot is None and self.telegram is None:
             incompatible = [name for name, enabled in (
                 ('delivery', self.delivery != 'simulated'),
             ) if enabled]
@@ -562,7 +572,7 @@ def _load_host_source(path: Path, source: dict) -> HostConfig:
     try:
         config = HostConfig.model_validate(source)
         object.__setattr__(config, '_source_root', root)
-        if config.onebot is None and config.worker is not None:
+        if config.onebot is None and config.telegram is None and config.worker is not None:
             for name in ('workspace_root', 'runtime_root', 'delivery_root'):
                 location = getattr(config.worker, name)
                 if location == root.resolve():
