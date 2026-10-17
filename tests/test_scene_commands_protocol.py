@@ -45,11 +45,11 @@ class Peer:
                     else {'message_id': 900000 + self.sequence})
             await websocket.send(json.dumps({'status': 'ok', 'retcode': 0, 'data': data, 'echo': request['echo']}))
 
-    async def say(self, text: str, *, user: int = MEMBER, role: str = 'member', message_id: int = -1) -> None:
+    async def say(self, text: str, *, user: int = MEMBER, role: str = 'member', before: list | None = None) -> None:
         raw = copy.deepcopy(MESSAGE)
         self.sequence += 1
-        raw.update(message_id=message_id if message_id != -1 else -20000 - self.sequence, user_id=user,
-                   message=[{'type': 'text', 'data': {'text': text}}], raw_message=text)
+        raw.update(message_id=-20000 - self.sequence, user_id=user,
+                   message=[*(before or []), {'type': 'text', 'data': {'text': text}}], raw_message=text)
         raw['sender'].update(user_id=user, role=role)
         await self.socket.send(json.dumps(raw))
 
@@ -123,6 +123,18 @@ async def test_id_names_the_scene_the_sender_and_the_bot(tmp_path):
         await peer.say('/id')
         await until(lambda: peer.sends)
     assert peer.texts()[0] == f'场景：{SCENE}\n你的账号：onebot:{MEMBER}\n机器人账号：onebot:90001'
+
+
+@pytest.mark.asyncio
+async def test_command_may_follow_a_reply_and_a_mention_of_the_bot(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        await peer.say(' /id', before=[{'type': 'reply', 'data': {'id': '-10001'}},
+                                       {'type': 'at', 'data': {'qq': '90001'}}])
+        await until(lambda: peer.sends)
+        await peer.say('/id', before=[{'type': 'at', 'data': {'qq': '70003'}}])
+        await until(lambda: store.pending_messages(SCENE))
+        await asyncio.sleep(.1)
+        assert len(peer.sends) == 1 and peer.texts()[0].startswith(f'场景：{SCENE}')
 
 
 @pytest.mark.asyncio
