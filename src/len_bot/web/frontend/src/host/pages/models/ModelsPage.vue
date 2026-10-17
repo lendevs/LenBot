@@ -23,6 +23,7 @@ import AdvancedFields from '../../ui/AdvancedFields.vue'
 import SaveBar from '../../ui/SaveBar.vue'
 import DevOnly from '../../ui/DevOnly.vue'
 import LimitsSection from './LimitsSection.vue'
+import ProviderHealth from './ProviderHealth.vue'
 import ProviderTools from './ProviderTools.vue'
 import EmbeddingBindingEditor from './EmbeddingBindingEditor.vue'
 import { credentialBinding, modelChoices, normalizedUrl, providerRows } from '../../providerModels.js'
@@ -62,7 +63,7 @@ function changeProtocol(row, api) {
   }
 }
 const route = useRoute(), router = useRouter()
-const tabs = [['providers', '服务商'], ['roles', '用途'], ['vectors', '向量模型'], ['usage', '用量与上限']]
+const tabs = [['providers', '服务商'], ['roles', '用途'], ['vectors', '向量模型'], ['usage', '用量与上限'], ['health', '可用性']]
 const tab = computed(() => tabs.some(([key]) => key === route.query.tab) ? route.query.tab : 'providers')
 const selected = computed(() => typeof route.query.item === 'string' && draft.value?.providers[Number(route.query.item)] ? Number(route.query.item) : null)
 const select = index => router.push({ query: { ...route.query, item: index === null ? undefined : String(index) } })
@@ -307,6 +308,7 @@ const count = value => value.toLocaleString('zh-CN')
         </Panel>
         <LimitsSection v-if="settings.data.value" :snapshot="settings.data.value" @reload="value => settings.data.value = value" @dirty="value => limitsDirty = value" @saved="value => { settings.data.value = value; readPendingRestart(); notify('已保存') }" />
       </div>
+      <ProviderHealth v-if="tab === 'health'" :role-titles="roleTitles" />
     </ResourceState>
   </HostPage>
 </template>
