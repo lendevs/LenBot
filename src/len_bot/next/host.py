@@ -16,7 +16,7 @@ from .runtime.lifecycle import HostLifecycle, RESTART_EXIT
 from .runtime.logs import configure_logging, credentials, redact
 from .chat.tools import build_tools, tool_catalog
 from .panel.app import create_app
-from .models.client import ChatModel
+from .models.failover import open_model
 from .models.slots import ModelSlots
 from .models.limits import ModelBudget
 from .memory.service import open_memory
@@ -131,10 +131,10 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
         if config.worker is None and TaskStore(store).containers():
             raise ValueError("仍有未清理的任务容器；保留原 worker 配置完成清理后再停用任务执行器")
         async with (
-            ChatModel(config.model_settings("mind")) as mind,
-            (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
+            open_model(config.models, "mind") as mind,
+            (open_model(config.models, "vision") if config.models.roles.vision is not None
              else nullcontext(None)) as vision,
-            (ChatModel(config.model_settings("learner"))
+            (open_model(config.models, "learner")
              if any(settings.learning is not None and (settings.learning.extract or settings.learning.jargon_extract
                                                        or settings.learning.reply_effects)
                     for settings in config.scenes.values())

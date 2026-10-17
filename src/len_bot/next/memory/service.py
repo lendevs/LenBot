@@ -15,7 +15,7 @@ from .jobs import MemoryJobs
 from .summary import MemorySummarizer
 from .role_paths import require_bot_path
 from ..platform.messages import ChatMessage, plain_text, render_message
-from ..models.client import ChatModel
+from ..models.failover import open_model
 from ..models.slots import ModelSlots
 from ..storage.store import Store, encode
 from ..models.tokens import token_record
@@ -379,6 +379,6 @@ async def open_memory(config: SharedConfig, store: Store, *, active_personas: di
             if not config.memory.summaries:
                 yield service
                 return
-            async with ChatModel(config.model_settings("memory")) as model:
+            async with open_model(config.models, "memory") as model:
                 service.summarizer = MemorySummarizer(config, backend, jobs, model, slots=slots)
                 yield service

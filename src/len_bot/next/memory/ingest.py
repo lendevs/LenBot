@@ -18,6 +18,7 @@ from .service import MemoryService
 from .extract import extract_local
 from .local import LocalMemoryChange
 from ..models.client import ChatModel
+from ..models.failover import FailoverModel, open_model
 from ..models.slots import ModelSlots
 from ..platform.messages import ChatMessage
 from ..storage.store import Store
@@ -39,7 +40,7 @@ class MemoryIngestor:
     """One worker per configured scene; request/retry only signal work."""
 
     def __init__(self, config: SharedConfig, store: Store, memory: MemoryService,
-                 scenes: Sequence[str], *, model: ChatModel,
+                 scenes: Sequence[str], *, model: ChatModel | FailoverModel,
                  slots: ModelSlots | None = None):
         settings = memory.settings.ingest
         if settings is None:
@@ -264,7 +265,7 @@ async def open_memory_ingestor(config: SharedConfig, store: Store,
     if memory is None or memory.settings.ingest is None:
         yield None
         return
-    async with ChatModel(config.model_settings("memory")) as model:
+    async with open_model(config.models, "memory") as model:
         ingestor = MemoryIngestor(config, store, memory, scenes, model=model, slots=slots)
         ingestor.start()
         try:

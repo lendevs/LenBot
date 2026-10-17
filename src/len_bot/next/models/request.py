@@ -122,8 +122,12 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                          {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response},
                          reply.usage, tokens=token_record(reply.token_usage),
                          append_to_scene=scene if append_to_scene else None, recap_for=recap_for)
+        served = ({} if reply.served_by is None else
+                  {'served_provider': reply.served_by['provider'], 'served_model': reply.served_by['model'],
+                   'served_priority': reply.served_by['priority'], 'failed_before': reply.served_by['failed_before']})
         log_event(logger, 'model_call', call_id=call_id, role=role, model=binding.model, provider=binding.provider,
-                  **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage))
+                  **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason,
+                  tokens=token_record(reply.token_usage), **served)
         if notify is not None:
             notify()
         return reply
