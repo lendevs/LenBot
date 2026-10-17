@@ -183,6 +183,17 @@ class FailoverModel:
         raise failure
 
 
+def fallback_settings(models: Models, role: str, health: ProviderHealth = HEALTH) -> list[tuple[str, ModelSettings]]:
+    """One role's fallbacks, in priority order, for callers that drive the HTTP themselves."""
+    binding: Binding = getattr(models.roles, role)
+    if binding is None:
+        raise ValueError(f"models.roles.{role} is not configured")
+    if binding.fallbacks:
+        health.configure(models.failover)
+    return [(candidate.provider, ModelSettings.from_binding(models.providers[candidate.provider], candidate))
+            for candidate in binding.candidates()[1:]]
+
+
 def open_model(models: Models, role: str, health: ProviderHealth = HEALTH) -> ChatModel | FailoverModel:
     """One role's model: a plain ``ChatModel`` unless its binding lists fallbacks."""
     binding: Binding = getattr(models.roles, role)
