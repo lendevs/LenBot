@@ -185,8 +185,19 @@ def _speech_line(call: CommandCall) -> str:
 
 
 def _mind_health(call: CommandCall) -> dict | None:
-    """The mind's circuits in the host's provider health; None unless the mind lists fallbacks."""
-    return call.runtime.commands.health.state()["roles"].get("mind")
+    """The mind's circuits in the host's provider health, for the configured candidates only.
+
+    None unless the mind lists fallbacks. Rows and the last served model that do not belong to the
+    running configuration (another model opened under the same role) are left out.
+    """
+    candidates = [(item.provider, item.model) for item in call.runtime.config.models.roles.mind.candidates()]
+    state = call.runtime.commands.health.state()["roles"].get("mind")
+    if len(candidates) < 2 or state is None:
+        return None
+    served = state["last_served"]
+    return {"candidates": [row for row in state["candidates"] if (row["provider"], row["model"]) in candidates],
+            "last_served": served if served is not None and (served["provider"], served["model"]) in candidates
+            else None}
 
 
 def _model_line(call: CommandCall) -> str:
