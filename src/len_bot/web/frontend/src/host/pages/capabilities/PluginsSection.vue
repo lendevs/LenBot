@@ -1,7 +1,7 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { mdiCheck, mdiDotsVertical, mdiPlus, mdiPuzzleOutline } from '@mdi/js'
+import { mdiCheck, mdiDotsVertical, mdiPlus, mdiPuzzleOutline, mdiMagnify, mdiShieldCheckOutline, mdiShieldAlertOutline, mdiCubeOutline } from '@mdi/js'
 import { api, sceneName } from '../../../api.js'
 import { useAction, useResource } from '../../../composables/useResource.js'
 import { confirm } from '../../../composables/useConfirm.js'
@@ -177,6 +177,43 @@ async function remove(name, kind) {
     : `/api/host/plugin-data/${encodeURIComponent(name)}`, { method: 'DELETE' }))
   if (result && kind === 'source') back()
 }
+// Health is cheap to read (no disk access), so poll it while the page is open and overlay it on the full snapshot.
+const healthByName = ref({})
+async function readHealth() {
+  try { healthByName.value = Object.fromEntries((await pluginsApi.health()).plugins.map(item => [item.name, item])) } catch { /* the full snapshot still has health */ }
+}
+let healthTimer = 0
+onMounted(() => { readHealth(); healthTimer = setInterval(() => { if (document.visibilityState === 'visible') readHealth() }, 10000) })
+onBeforeUnmount(() => clearInterval(healthTimer))
+watch(() => plugins.data.value, readHealth)
+const health = name => healthByName.value[name]?.health || running.value[name]?.health || null
+const healthNote = name => {
+  const value = health(name)
+  if (!value || value.level !== 'degraded') return ''
+  return value.errors_last_hour ? `近 1 小时报错 ${value.errors_last_hour} 次` : `${value.failing.join('、')} 失败`
+}
+const permissions = name => running.value[name]?.permissions ?? manifest(name)?.permissions ?? null
+const isolation = name => running.value[name]?.isolation || manifest(name)?.isolation || 'inline'
+
+const query = ref(''), filter = ref('all')
+const bucket = name => {
+  if (snapshot.value.saved.disabled.includes(name)) return 'disabled'
+  if (!snapshot.value.saved.plugins[name]) return 'idle'
+  const level = health(name)?.level
+  return running.value[name]?.status === 'failed' || level === 'failed' || level === 'degraded' ? 'attention' : 'on'
+}
+const filters = computed(() => {
+  const counts = { all: names.value.length, on: 0, attention: 0, disabled: 0, idle: 0 }
+  for (const name of names.value) counts[bucket(name)]++
+  return [['all', '全部'], ['on', '已启用'], ['attention', '需要注意'], ['disabled', '已停用'], ['idle', '未启用']]
+    .filter(([key]) => key === 'all' || counts[key]).map(([key, label]) => ({ key, label, count: counts[key] }))
+})
+watch(filters, list => { if (!list.some(item => item.key === filter.value)) filter.value = 'all' })
+const shownNames = computed(() => {
+  const words = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  return names.value.filter(name => (filter.value === 'all' || bucket(name) === filter.value)
+    && words.every(word => `${name} ${manifest(name)?.description || ''} ${(manifest(name)?.authors || []).join(' ')}`.toLowerCase().includes(word)))
+})
 const errorOf = part => active.value === part ? save.error.value : null
 const facts = name => {
   const source = manifest(name)?.source
@@ -203,18 +240,31 @@ const facts = name => {
     <div v-else class="stack">
       <div class="inline toolbar">
         <strong>{{ names.length }} 个插件</strong>
+        <v-text-field v-if="names.length > 3" v-model="query" class="search" density="compact" hide-details clearable :prepend-inner-icon="mdiMagnify"
+          placeholder="搜索名称、说明或作者" aria-label="搜索插件" />
         <v-btn class="ml-auto" size="small" variant="outlined" :prepend-icon="mdiPlus" @click="installing = true">从 Git 安装</v-btn>
         <v-btn size="small" variant="outlined" :prepend-icon="mdiPlus" @click="zipImport = true">导入 ZIP</v-btn>
       </div>
+      <div v-if="filters.length > 2" class="filter-chips" role="group" aria-label="按状态筛选">
+        <v-chip v-for="item in filters" :key="item.key" size="small" :variant="filter === item.key ? 'flat' : 'outlined'"
+          :color="filter === item.key ? (item.key === 'attention' ? 'error' : 'primary') : undefined" @click="filter = item.key">{{ item.label }} {{ item.count }}</v-chip>
+      </div>
+      <p v-if="names.length && !shownNames.length" class="muted">没有符合条件的插件。</p>
       <div v-if="names.length" class="plugin-grid">
-        <button v-for="name in names" :key="name" type="button" class="plugin-card" @click="open(name)">
+        <button v-for="name in shownNames" :key="name" type="button" class="plugin-card" @click="open(name)">
           <span class="card-head">
             <span class="plugin-icon" :class="status(name).tone || status(name).value"><v-icon :icon="mdiPuzzleOutline" size="18" /></span>
             <span class="card-title"><strong>{{ name }}</strong><span v-if="version(name)" class="muted small">v{{ version(name) }}</span></span>
             <StatusBadge dot v-bind="status(name)" />
           </span>
           <span class="card-description muted">{{ manifest(name)?.description || '' }}</span>
-          <span class="small muted">{{ usedIn(name).length ? `${usedIn(name).length} 个群` : '没有群在用' }}</span>
+          <span class="card-foot small muted">
+            <span>{{ usedIn(name).length ? `${usedIn(name).length} 个群` : '没有群在用' }}</span>
+            <span v-if="healthNote(name)" class="tag warn">{{ healthNote(name) }}</span>
+            <span v-if="isolation(name) === 'process'" class="tag" title="跑在独立进程里，崩溃不影响主程序">独立进程</span>
+            <span v-if="permissions(name) === null" class="tag dim" title="没有在 plugin.toml 里声明 permissions，保留全部能力">未声明权限</span>
+            <span v-else class="tag" :title="permissions(name).map(item => item.title).join('、') || '不需要额外权限'">{{ permissions(name).length }} 项权限</span>
+          </span>
         </button>
       </div>
       <p v-else class="muted">还没有插件。<RouterLink :to="{ query: { ...route.query, view: 'discover' } }">去发现插件里看看</RouterLink></p>
@@ -255,6 +305,28 @@ const facts = name => {
         </v-menu>
       </div>
       <p v-if="manifest(selected)?.description" class="muted">{{ manifest(selected).description }}</p>
+      <p v-if="healthNote(selected)" class="health-warn small">最近不太稳定：{{ healthNote(selected) }}<template v-if="health(selected)?.failing?.length">，失败的后台任务：{{ health(selected).failing.join('、') }}</template>。详细原因见下方报错或日志页。</p>
+      <div class="trust">
+        <div class="trust-row">
+          <v-icon :icon="permissions(selected) === null ? mdiShieldAlertOutline : mdiShieldCheckOutline" size="18"
+            :class="permissions(selected) === null ? 'text-warning' : 'text-success'" />
+          <div>
+            <strong>权限</strong>
+            <p v-if="permissions(selected) === null" class="muted small">这个插件没有在 plugin.toml 里声明 permissions，按旧插件处理，可以使用全部宿主能力。</p>
+            <p v-else-if="!permissions(selected).length" class="muted small">只用不需要权限的能力（自己的数据、命令、日志等），不能发消息、读历史或调模型。</p>
+            <div v-else class="inline perm-chips"><v-chip v-for="item in permissions(selected)" :key="item.name" size="small" variant="tonal">{{ item.title }}</v-chip></div>
+          </div>
+        </div>
+        <div class="trust-row">
+          <v-icon :icon="mdiCubeOutline" size="18" class="text-medium-emphasis" />
+          <div>
+            <strong>{{ isolation(selected) === 'process' ? '独立进程' : '和主程序同进程' }}</strong>
+            <p class="muted small">{{ isolation(selected) === 'process'
+              ? '插件崩溃只影响它自己，重载就是重启它的进程。这不是安全沙箱，插件仍能访问本机文件和网络。'
+              : '插件和 LenBot 跑在同一个进程里，响应最快，但插件卡住或崩溃会影响主程序。' }}</p>
+          </div>
+        </div>
+      </div>
       <div v-if="manifest(selected)?.source?.candidate" class="inline">
         <v-btn color="primary" :loading="save.busy.value" :disabled="pluginDirty(selected)" @click="manage(selected, 'apply')">{{ manifest(selected).source.application === 'host' ? '应用并等待重启' : '应用候选版本' }}</v-btn>
         <v-btn variant="text" :disabled="save.busy.value" @click="manage(selected, 'cancel')">取消候选</v-btn>
@@ -363,6 +435,17 @@ const facts = name => {
 .card-title strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card-description{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}
 .justify-self-start{justify-self:start}
+.search{max-width:280px}
+.filter-chips{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.card-foot{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2)}
+.tag{font-size:11px;line-height:18px;padding:0 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.tag.warn{border-color:transparent;background:var(--warning-bg);color:var(--warning)}
+.tag.dim{border-style:dashed}
+.health-warn{margin:0;padding:var(--sp-2) var(--sp-3);border-radius:var(--radius);background:var(--warning-bg);color:var(--warning)}
+.trust{display:grid;gap:var(--sp-3);padding:var(--sp-3);border:1px solid var(--line);border-radius:var(--radius);background:var(--fill)}
+.trust-row{display:flex;gap:var(--sp-3);align-items:flex-start}
+.trust-row > div{display:grid;gap:var(--sp-1);min-width:0}
+.perm-chips{flex-wrap:wrap}
 .commands li{margin:var(--sp-1) 0;overflow-wrap:anywhere}
 .entry{display:grid;gap:var(--sp-1)}
 .scene-picks{display:grid;gap:var(--sp-2)}

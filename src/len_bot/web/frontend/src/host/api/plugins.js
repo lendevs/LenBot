@@ -6,6 +6,8 @@ import { api } from '../../api.js'
  */
 export const pluginsApi = {
   read: () => api('/api/host/plugins'),
+  /** Light poll: name, status, error, version and health for every loaded plugin. */
+  health: () => api('/api/host/plugins/health'),
   install: (url, ref = null, switch_source = false) => api('/api/host/plugins/install', { method: 'POST', body: JSON.stringify({ url, ref, switch_source }) }),
   importZip: (file, switchSource = false) => {
     const body = new FormData()
