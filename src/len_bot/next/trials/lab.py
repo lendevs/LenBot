@@ -15,7 +15,7 @@ from ..chat.attention import SceneRunner
 from ..config import load_config
 from ..instance_lock import instance_lock
 from ..prompt_files import activate as activate_prompts
-from ..models.client import ChatModel
+from ..models.failover import open_model
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
 from ..memory.service import open_memory
@@ -43,8 +43,8 @@ async def run() -> None:
         budget = ModelBudget(config, store, None, root=config._instance_root)
         slots.admit = budget.check
         async with (
-            ChatModel(config.model_settings("mind")) as mind,
-            (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
+            open_model(config.models, "mind") as mind,
+            (open_model(config.models, "vision") if config.models.roles.vision is not None
              else nullcontext(None)) as vision,
             open_expression_service(config, store, slots=slots) as expression_service,
             open_memory(config, store, active_personas={config.scene: persona.id}, slots=slots) as memory,

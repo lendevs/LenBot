@@ -26,6 +26,7 @@ from ..configuration.types import STRICT
 from ..instance_lock import instance_lock
 from ..prompt_files import activate as activate_prompts
 from ..models.client import ChatModel
+from ..models.failover import FailoverModel, open_model
 from ..memory.service import MemoryService, open_memory
 from ..memory.ingest import MemoryIngestor, open_memory_ingestor
 from ..panel.auth import changes_socket, install_panel_auth
@@ -65,8 +66,8 @@ def stored_image(store: Store, scene: str, seq: int, image_index: int) -> Respon
 
 
 class PanelSession:
-    def __init__(self, config: LabConfig, store: Store, mind: ChatModel,
-                 *, vision: ChatModel | None = None, memory: MemoryService | None = None,
+    def __init__(self, config: LabConfig, store: Store, mind: ChatModel | FailoverModel,
+                 *, vision: ChatModel | FailoverModel | None = None, memory: MemoryService | None = None,
                  ingestor: MemoryIngestor | None = None, persona: Persona | None = None,
                  slots: ModelSlots | None = None):
         self.config, self.store = config, store
@@ -156,8 +157,8 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
             budget = ModelBudget(config, store, None, root=config._instance_root)
             slots.admit = budget.check
             async with (
-                ChatModel(config.model_settings("mind")) as mind,
-                (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
+                open_model(config.models, "mind") as mind,
+                (open_model(config.models, "vision") if config.models.roles.vision is not None
                  else nullcontext(None)) as vision,
                 open_memory(config, store, active_personas={config.scene: persona.id}, slots=slots) as memory,
                 open_memory_ingestor(config, store, memory, [config.scene], slots=slots) as ingestor,
