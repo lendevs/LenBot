@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { mdiMagnify, mdiContentCopy, mdiDownload, mdiPause, mdiPlay } from '@mdi/js'
 import { useRoute, useRouter } from 'vue-router'
 import { api, sceneName } from '../../../api.js'
 import { useResource } from '../../../composables/useResource.js'
@@ -66,6 +67,45 @@ const idFields = [['turn_id', '轮'], ['tool', '工具'], ['plugin', '插件'], 
 const logItems = computed(() => system.data.value?.[0].items || [])
 const errorText = error => error.type ? `${error.type}: ${error.message}` : error.message
 const seconds = ts => Date.parse(ts) / 1000
+
+// Client-side narrowing over what the server already returned: free text plus one event kind.
+const search = ref(''), kind = ref('')
+const eventKey = item => item.event || '_other'
+const haystack = item => [item.event, logLabels[item.event], item.message, item.source, item.scene, item.plugin, item.tool, item.task_id,
+  item.turn_id, item.error?.type, item.error?.message].filter(Boolean).join(' ').toLowerCase()
+const kinds = computed(() => {
+  const counts = new Map()
+  for (const item of logItems.value) { const key = eventKey(item); counts.set(key, (counts.get(key) || 0) + 1) }
+  return [...counts].sort((a, b) => b[1] - a[1])
+})
+const shown = computed(() => {
+  const words = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  return logItems.value.filter(item => (!kind.value || eventKey(item) === kind.value)
+    && (!words.length || words.every(word => haystack(item).includes(word))))
+})
+watch(logItems, items => { if (kind.value && !items.some(item => eventKey(item) === kind.value)) kind.value = '' })
+const severity = item => item.error || item.level === 'ERROR' || item.level === 'CRITICAL' ? 'error' : item.level === 'WARNING' ? 'warning' : ''
+
+// Live follow: re-read every few seconds while the system tab is open and the page is visible.
+const follow = ref(false)
+let timer = 0
+function tick() { if (tab.value === 'system' && document.visibilityState === 'visible' && !system.loading.value) system.reload() }
+watch([follow, tab], ([on, value]) => {
+  clearInterval(timer)
+  timer = on && value === 'system' ? setInterval(tick, 4000) : 0
+})
+onBeforeUnmount(() => clearInterval(timer))
+
+async function copyRow(item) {
+  try { await navigator.clipboard.writeText(JSON.stringify(item, null, 2)); host.toast = '已复制这条记录' }
+  catch { host.toast = '浏览器不允许复制' }
+}
+function exportShown() {
+  const blob = new Blob([shown.value.map(item => JSON.stringify(item)).join('\n') + '\n'], { type: 'application/x-ndjson' })
+  const link = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `lenbot-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jsonl` })
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000)
+}
 </script>
 
 <template>
@@ -107,17 +147,29 @@ const seconds = ts => Date.parse(ts) / 1000
             <v-btn value="all">全部</v-btn><v-btn value="WARNING">警告以上</v-btn><v-btn value="ERROR">只看错误</v-btn>
           </v-btn-toggle>
           <v-btn v-if="traceTurn" variant="text" size="small" @click="trace(null)">取消只看这一轮</v-btn>
-          <v-btn variant="text" size="small" :loading="system.loading.value" @click="system.reload()">刷新</v-btn>
+          <v-btn variant="text" size="small" :prepend-icon="follow ? mdiPause : mdiPlay" :color="follow ? 'primary' : undefined"
+            :aria-pressed="follow" @click="follow = !follow">{{ follow ? '暂停跟随' : '实时跟随' }}</v-btn>
+          <v-btn variant="text" size="small" :loading="system.loading.value && !follow" @click="system.reload()">刷新</v-btn>
         </template>
         <div class="filters">
           <v-switch v-model="onlyScene" density="compact" hide-details :label="scene ? `只看${sceneName(scene)}` : '只看当前群'" />
           <v-text-field v-model="plugin" density="compact" hide-details label="插件名" @keyup.enter="system.reload()" />
           <v-text-field v-model="task" density="compact" hide-details label="任务编号" @keyup.enter="system.reload()" />
         </div>
-        <ResourceState :resource="system" error-title="读取运行日志失败" :empty="!logItems.length" empty-text="没有符合条件的记录" compact>
+        <div class="search-row">
+          <v-text-field v-model="search" density="compact" hide-details clearable :prepend-inner-icon="mdiMagnify"
+            label="在结果里搜索：事件、消息、错误、编号…" />
+          <v-btn variant="text" size="small" :prepend-icon="mdiDownload" :disabled="!shown.length" @click="exportShown">导出 {{ shown.length }} 条</v-btn>
+        </div>
+        <div v-if="kinds.length > 1" class="kinds" role="group" aria-label="按事件筛选">
+          <v-chip size="small" :variant="kind ? 'outlined' : 'flat'" :color="kind ? undefined : 'primary'" @click="kind = ''">全部 {{ logItems.length }}</v-chip>
+          <v-chip v-for="[key, count] in kinds" :key="key" size="small" :variant="kind === key ? 'flat' : 'outlined'"
+            :color="kind === key ? 'primary' : undefined" @click="kind = kind === key ? '' : key">{{ key === '_other' ? '其他' : logLabels[key] || key }} {{ count }}</v-chip>
+        </div>
+        <ResourceState :resource="system" error-title="读取运行日志失败" :empty="!shown.length" empty-text="没有符合条件的记录" compact>
           <ObjectList divided>
-            <li v-for="(item, index) in logItems" :key="index" class="log-row">
-              <div class="inline"><strong>{{ logLabels[item.event] || item.event || item.message }}</strong>
+            <li v-for="(item, index) in shown" :key="index" class="log-row" :class="severity(item)">
+              <div class="inline"><v-btn class="copy" :icon="mdiContentCopy" size="x-small" variant="text" aria-label="复制这条记录" @click="copyRow(item)" /><strong>{{ logLabels[item.event] || item.event || item.message }}</strong>
                 <span class="muted small">{{ formatTime(seconds(item.ts), host.state?.timezone) }} · {{ item.source }}<template v-if="item.scene"> · {{ sceneName(item.scene) }}</template></span></div>
               <div class="ids small muted">
                 <template v-for="[key, label] in idFields" :key="key">
@@ -144,7 +196,13 @@ const seconds = ts => Date.parse(ts) / 1000
 
 <style scoped>
 .list{padding:0 var(--sp-2) var(--sp-2)}
-.log-row{padding:var(--sp-3) 0;display:grid;gap:var(--sp-2)}
+.log-row{padding:var(--sp-3) 0 var(--sp-3) var(--sp-3);display:grid;gap:var(--sp-2);border-left:3px solid transparent;position:relative}
+.log-row.error{border-left-color:var(--error);background:linear-gradient(90deg,var(--error-bg),transparent 40%)}
+.log-row.warning{border-left-color:var(--warning)}
+.log-row .copy{position:absolute;right:0;top:var(--sp-2);opacity:0;transition:opacity .15s}
+.log-row:hover .copy,.log-row .copy:focus-visible{opacity:1}
+.search-row{display:flex;gap:var(--sp-3);align-items:center;margin-bottom:var(--sp-3)}
+.kinds{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-3)}
 .filters{display:grid;grid-template-columns:auto 1fr 1fr;gap:var(--sp-3);align-items:center;margin-bottom:var(--sp-3)}
 .ids{display:flex;flex-wrap:wrap;gap:var(--sp-3)}
 </style>
