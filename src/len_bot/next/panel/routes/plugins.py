@@ -214,6 +214,14 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
         except (ValueError, OSError) as error:
             raise HTTPException(422, str(error)) from error
 
+    @app.get('/api/host/plugins/health')
+    async def plugins_health(_: str = Depends(user)):
+        if runtime.plugins is None:
+            return {'plugins': []}
+        return {'plugins': [{'name': item['name'], 'status': item['status'], 'error': item['error'],
+                             'version': item['version'], 'health': item['health']}
+                            for item in runtime.plugins.state()['plugins']]}
+
     @app.put('/api/host/plugin-catalog', response_model=CatalogView)
     async def choose_catalog(request: Request, _: str = Depends(user)):
         change = await _body(request, PluginCatalogSettings)

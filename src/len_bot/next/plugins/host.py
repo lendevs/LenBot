@@ -827,11 +827,30 @@ class PluginHost:
         if errors:
             raise ExceptionGroup("插件停止失败", errors)
 
+    def health(self, record: Loaded) -> dict:
+        """A summary the panel can colour without reading the error list.
+
+        failed and stopped follow the status; a running plugin is degraded while a background
+        loop or cron job is failing or it recorded an error within the last hour."""
+        now = self.now()
+        recent = [item for item in record.errors if now - item["at"] < 3600]
+        failing = ([f"后台 {item.method}" for item in record.backgrounds if item.last_error is not None]
+                   + [f"定点 {job.scene}/{job.name}" for job in record.crons.values() if job.last_error is not None])
+        if record.status in ("failed", "stopped"):
+            level = record.status
+        elif record.status == "loaded":
+            level = "starting"
+        else:
+            level = "degraded" if failing or recent else "ok"
+        return {"level": level, "errors_last_hour": len(recent), "failing": failing,
+                "last_error_at": record.errors[-1]["at"] if record.errors else None}
+
     def state(self) -> dict:
         plugins = []
         for record in self.plugins.values():
             plugins.append({
                 "name": record.name, "status": record.status, "error": record.error,
+                "health": self.health(record),
                 "directory": None if record.directory is None else str(record.directory),
                 "version": record.manifest.version if record.status == "running" else None,
                 "description": None if record.manifest is None else record.manifest.description,
