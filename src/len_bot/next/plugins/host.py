@@ -35,7 +35,7 @@ from ..chat.schedule_time import Cron, next_cron, parse_cron
 from ..chat.request_source import SOURCE_DESCRIPTION, source_message
 from ..runtime.logs import SECRETS, error_text, log_context, log_event, recorded_errors
 from ..tools.skills import Skill, load_plugin_skills
-from .manifest import Manifest, discover, read_manifest, redact_values, secret_values
+from .manifest import PERMISSION_TITLES, Manifest, discover, read_manifest, redact_values, secret_values
 from ..storage.store import encode
 from ...image_assets import MAX_IMAGE_BYTES, inspect_image
 from ..tools.http_read import fetch_public
@@ -353,6 +353,13 @@ class PluginHost:
             raise RuntimeError(f"插件 {plugin} 未处于可运行状态：{record.status}")
         return record
 
+    def _permit(self, record: Loaded, permission: str) -> Loaded:
+        """A capability the manifest's ``permissions`` must list; manifests without the field keep all."""
+        if record.manifest is not None and not record.manifest.granted(permission):
+            raise PermissionError(f"插件 {record.name} 没有在 plugin.toml 的 permissions 中声明 {permission}"
+                                  f"（{PERMISSION_TITLES[permission]}）")
+        return record
+
     # KV runs in a worker thread: a lock wait in one plugin's file must not stall the event loop.
     async def get_kv(self, plugin: str, key: str, default: JsonValue) -> JsonValue:
         return await asyncio.to_thread(PluginKV(self._active(plugin).context.data_dir).get, key, default)
@@ -364,7 +371,7 @@ class PluginHost:
         return await asyncio.to_thread(PluginKV(self._active(plugin).context.data_dir).delete, key)
 
     async def fetch_image(self, plugin: str, url: str, timeout_seconds: float) -> bytes:
-        self._active(plugin)
+        self._permit(self._active(plugin), "network")
         async with asyncio.timeout(timeout_seconds):
             _, _, data = await fetch_public(url, timeout_seconds, lambda _type, _prefix: MAX_IMAGE_BYTES,
                                            fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url)
@@ -378,7 +385,7 @@ class PluginHost:
         return await self.send_parts(plugin, scene, [Text(text)], reply_to)
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
-        self._speaking(plugin, scene)
+        self._permit(self._speaking(plugin, scene), "send")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         safe_parts = [Text(self.redact(plugin, part.text)) if isinstance(part, Text)
@@ -387,7 +394,7 @@ class PluginHost:
         return await self.runtime.chats[scene].expression.send_plugin_content(plugin, safe_parts, reply_to=reply_to)
 
     def emit_event(self, plugin: str, scene: str, text: str) -> None:
-        self._speaking(plugin, scene)
+        self._permit(self._speaking(plugin, scene), "events")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         now = datetime.fromtimestamp(self.now(), ZoneInfo(self.scene_timezone(scene)))
@@ -398,14 +405,14 @@ class PluginHost:
         self._notify()
 
     def recent_messages(self, plugin: str, scene: str, limit: int) -> list[ChatMessage]:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "history")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         return self.runtime.store.recent(scene, limit)
 
     def messages_between(self, plugin: str, scene: str, after: float, before: float,
                          offset: int, limit: int) -> list[ChatMessage]:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "history")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         store = self.runtime.store
@@ -414,7 +421,7 @@ class PluginHost:
             offset=offset, limit=limit)]
 
     async def memory(self, plugin: str, scene: str, arguments: dict) -> str:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "memory")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         chat = self.runtime.chats[scene]
@@ -426,7 +433,7 @@ class PluginHost:
 
     async def generate(self, plugin: str, scene: str, prompt: str, role: GenerationRole,
                        system: str | None) -> str:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "generate")
         messages = ([] if system is None else [{"role": "system", "content": system}])
         messages.append({"role": "user", "content": prompt})
 
@@ -443,7 +450,7 @@ class PluginHost:
 
     async def delegate(self, plugin: str, scene: str, requester: str, goal: str, deliverable: str,
                        context: str, materials: Sequence[str]) -> dict:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "delegate")
         if self.runtime.tasks is None:
             raise ValueError("当前宿主未启用独立工作任务")
         from ..work.tools import DelegateArguments
@@ -453,7 +460,7 @@ class PluginHost:
 
     def cron(self, plugin: str, name: str, scene: str, expression: str, timezone: str,
              handler: Callable[[Invocation], Awaitable[None]]) -> asyncio.Task:
-        record = self._active(plugin, scene)
+        record = self._permit(self._active(plugin, scene), "schedule")
         key = (scene, name)
         if key in record.crons:
             raise ValueError(f"插件 {plugin} 在 {scene} 已登记定点任务 {name}")
@@ -828,6 +835,10 @@ class PluginHost:
                 "directory": None if record.directory is None else str(record.directory),
                 "version": record.manifest.version if record.status == "running" else None,
                 "description": None if record.manifest is None else record.manifest.description,
+                # None: the manifest does not declare permissions and keeps every capability.
+                "permissions": (None if record.manifest is None or record.manifest.permissions is None else
+                                [{"name": name, "title": PERMISSION_TITLES[name]}
+                                 for name in record.manifest.permissions]),
                 "scenes": list(record.scenes),
                 "commands": [{"name": name, "description": description}
                              for name, (description, _) in record.commands.items()],
