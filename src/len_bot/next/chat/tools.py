@@ -380,8 +380,9 @@ class SceneTools:
                 self.pause_after_turn = True
             return tool_result(result), None, None
         if call.name == "recall_chat":
-            return recall_chat(self.store, self.config.scene, self.config.timezone,
-                               RecallArguments.model_validate(call.arguments)), None, None
+            # A history search may scan many rows; it runs on the database thread.
+            return await self.store.call(recall_chat, self.store, self.config.scene, self.config.timezone,
+                                         RecallArguments.model_validate(call.arguments)), None, None
         if call.name == "persona_knowledge":
             arguments = PersonaKnowledgeArguments.model_validate(call.arguments)
             return persona_knowledge(self.persona.id, self.persona.name, self.persona.knowledge,
