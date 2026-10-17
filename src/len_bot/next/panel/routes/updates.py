@@ -11,6 +11,14 @@ from ...runtime.releases import CHECK_TIMEOUT_SECONDS, GITHUB_RELEASES, ReleaseC
 
 ERRORS = (OSError, ValueError, KeyError, TimeoutError, httpx.HTTPError)
 
+# Shown in the update confirmation of a managed installation, before the user applies an update.
+UPDATE_NOTICE = [
+    '更新期间聊天、提醒和后台任务暂停，直到新版本启动、就绪并重新连上 QQ，通常几分钟。',
+    '新版本启动、就绪或重新连上 QQ 失败时，会自动恢复更新前的程序和数据快照并启动旧版本。',
+    '自动回滚或之后手动恢复快照，都会丢掉更新开始后写入的数据，包括新消息、记忆、设置修改和任务记录。',
+    '快照保存在部署目录的 backups/ 下，按时间命名，不会自动删除。',
+]
+
 
 def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request], str],
                           check_enabled: bool = True) -> ReleaseCheck:
@@ -55,7 +63,10 @@ def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request],
             reference = control()
             return {'version': releases.current, 'managed': reference is not None,
                     'status': None if reference is None else await request_control('status'),
-                    'check': releases.state()}
+                    'check': releases.state(),
+                    # The panel shows these before an update; rolling back loses data written after it.
+                    'notice': None if reference is None else UPDATE_NOTICE,
+                    'rollback_loses_data': reference is not None}
         except ERRORS as error:
             raise HTTPException(422, str(error)) from error
 
