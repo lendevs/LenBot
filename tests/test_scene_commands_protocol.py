@@ -108,7 +108,7 @@ async def test_member_help_lists_only_member_commands_without_waking_the_mind(tm
         await until(lambda: peer.sends)
         await until(lambda: len(claims(store)) == 2)
         reply = peer.texts()[0]
-        assert '/help' in reply and '/id' in reply
+        assert '/help' in reply and '/id' in reply and '/status' not in reply and '/reset' not in reply
         assert peer.sends[0]['group_id'] == 80001
         assert peer.sends[0]['message'][0]['type'] == 'reply'
         assert claims(store) == [('/help', 'reply'), ('/help', 'reply')]
@@ -151,6 +151,86 @@ async def test_blacklisted_sender_gets_no_command(tmp_path):
         await until(lambda: store.pending_messages(SCENE) or store.db.execute('SELECT 1 FROM messages').fetchone())
         await asyncio.sleep(.1)
         assert peer.sends == [] and claims(store) == []
+
+
+async def ask(peer: Peer, text: str, *, user: int = MANAGER, role: str = 'admin') -> str:
+    count = len(peer.sends)
+    await peer.say(text, user=user, role=role)
+    await until(lambda: len(peer.sends) > count)
+    return peer.texts()[count]
+
+
+@pytest.mark.asyncio
+async def test_group_manager_sees_and_uses_scene_commands(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        listed = await ask(peer, '/help')
+        assert all(f'/{name}' in listed for name in ('status', 'chat', 'quiet', 'resume', 'reset'))
+        status = await ask(peer, '/status')
+    assert status.splitlines() == [f'场景：{SCENE}', '聊天：开启',
+                                   '发言：最近一小时 0/60 条（全局设置），被叫到时另有余量 5/5 条',
+                                   '主脑模型：fixture / synthetic-unused']
+
+
+@pytest.mark.asyncio
+async def test_member_cannot_change_the_scene_and_is_not_answered(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        await peer.say('/chat off')
+        await until(lambda: store.pending_messages(SCENE))
+        await asyncio.sleep(.1)
+        assert peer.sends == [] and runtime.runners[SCENE].state.paused is False
+
+
+@pytest.mark.asyncio
+async def test_chat_off_keeps_recording_and_chat_on_still_works(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        assert '已关闭本群聊天' in await ask(peer, '/chat off', user=OWNER, role='member')
+        runner = runtime.runners[SCENE]
+        assert runner.state.paused is True
+        assert '聊天：已关闭' in await ask(peer, '/status')
+        assert await ask(peer, '/chat off') == '本群聊天本来就是关闭的'
+        assert '已打开本群聊天' in await ask(peer, '/chat on')
+        assert runner.state.paused is False
+        assert await ask(peer, '/chat maybe') == '用法：/chat on 或 /chat off'
+
+
+@pytest.mark.asyncio
+async def test_quiet_and_resume(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        runner = runtime.runners[SCENE]
+        reply = await ask(peer, '/quiet 30')
+        quiet = runner.state.temporary_quiet
+        assert quiet.direct == 'allow' and quiet.requester == f'onebot:{MANAGER}'
+        assert quiet.until - quiet.started == 1800 and reply.endswith('被@或回复时仍会回应，/resume 提前恢复')
+        assert '被叫到时仍回应' in await ask(peer, '/status')
+        await ask(peer, '/quiet 5 defer')
+        assert runner.state.temporary_quiet.direct == 'defer'
+        assert runner.quiet_direct(store.now()) == 'defer'
+        assert await ask(peer, '/resume') == '已结束临时安静'
+        assert runner.quiet_period(store.now()) is None
+        assert await ask(peer, '/resume') == '本群没有临时安静'
+        for wrong in ('/quiet', '/quiet ten', '/quiet 5 later', '/quiet 0', '/quiet 10081'):
+            assert (await ask(peer, wrong)).startswith(('用法：/quiet', '安静时长为 1 到 10080 分钟'))
+        assert runner.state.temporary_quiet is None
+
+
+@pytest.mark.asyncio
+async def test_reset_moves_the_context_boundary_but_keeps_history(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        store.append(SCENE, {'role': 'user', 'content': '旧话'})
+        reply = await ask(peer, '/reset')
+        assert reply == '已开始新的对话上下文；聊天记录、记忆和未读消息都保留'
+        assert store.entries(SCENE) == []
+        assert store.db.execute('SELECT COUNT(*) FROM mind_entries WHERE scene=?', (SCENE,)).fetchone()[0] == 1
+        assert await ask(peer, '/reset now') == '用法：/reset'
+
+
+@pytest.mark.asyncio
+async def test_reset_refuses_while_a_turn_is_unfinished(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        store.append(SCENE, {'role': 'user', 'content': '旧话'})
+        store.start_turn(SCENE)
+        assert await ask(peer, '/reset') == '本群还有没结束或等待恢复的一轮，没有重置'
+        assert store.entries(SCENE) == [{'role': 'user', 'content': '旧话'}]
 
 
 def test_unknown_command_name_in_configuration_is_refused(tmp_path):

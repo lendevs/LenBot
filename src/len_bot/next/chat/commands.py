@@ -20,6 +20,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from string import Template
@@ -27,10 +28,12 @@ from typing import TYPE_CHECKING, Literal
 from zoneinfo import ZoneInfo
 
 from ...plugin import Text
+from ..models.failover import HEALTH, ProviderHealth
+from ..models.limits import speech_quota
 from ..platform.messages import ChatMessage
 from ..prompt_files import read_prompt
 from ..runtime.logs import log_context, log_event
-from .scene_control import require_control
+from ..runtime.identity import roles_for
 
 if TYPE_CHECKING:
     from ..runtime.network import NetworkRuntime
@@ -95,27 +98,33 @@ def parse(text: str) -> tuple[str, list[str]] | None:
     return match[1].lower(), (match[2] or "").split()
 
 
-def allowed(level: Level, runtime: NetworkRuntime, runner: SceneRunner, requester: str) -> bool:
-    config = runner.config
+def allowed(level: Level, runtime: NetworkRuntime, runner: SceneRunner, message: ChatMessage) -> bool:
+    """The scene_control and host_manage checks, with the group role this message carries.
+
+    The message is checked before it is stored, so its own sender role counts, not only an older one.
+    """
+    config, requester = runner.config, message.sender.uid
     if requester == config.bot_id or requester in config.permissions.blacklist:
         return False
     if level == "member":
         return True
     if level == "manage":
         from ..runtime.management import require_management
-        check = lambda: require_management(runtime.config, config.scene, requester)  # noqa: E731
-    else:
-        check = lambda: require_control(runner.store, config, requester)  # noqa: E731
-    try:
-        check()
-    except PermissionError:
-        return False
-    return True
+        try:
+            require_management(runtime.config, config.scene, requester)
+        except PermissionError:
+            return False
+        return True
+    group = config.scene.split(":", 2)[1] == "group"
+    role = (message.sender.role or runner.store.latest_sender_role(config.scene, requester)) if group else None
+    identities = roles_for(requester, owners=config.owners, scoped_owner=None, admins=config.permissions.admins,
+                           whitelist=config.permissions.whitelist, group_role=role)
+    return bool(identities.intersection(config.chat_control_roles))
 
 
 async def _help(call: CommandCall) -> str:
     lines = ["可用的宿主命令："]
-    for command in call.runtime.commands.available(call.runtime, call.runner, call.requester):
+    for command in call.runtime.commands.available(call.runtime, call.runner, call.message):
         lines.append(f"{command.usage} — {command.summary}")
     lines.append("其他消息照常交给我。")
     return "\n".join(lines)
@@ -125,16 +134,150 @@ async def _id(call: CommandCall) -> str:
     return f"场景：{call.scene}\n你的账号：{call.requester}\n机器人账号：{call.runner.config.bot_id}"
 
 
+# A command that changes the scene waits this long for the running turn, so the turn cannot overwrite it.
+EXECUTION_WAIT_SECONDS = 30
+MAX_QUIET_MINUTES = 7 * 24 * 60
+
+
+def _clock(call: CommandCall, timestamp: float) -> str:
+    moment = datetime.fromtimestamp(timestamp, ZoneInfo(call.runner.config.timezone))
+    today = datetime.fromtimestamp(call.runner.store.now(), ZoneInfo(call.runner.config.timezone)).date()
+    return moment.strftime("%H:%M" if moment.date() == today else "%m-%d %H:%M")
+
+
+@asynccontextmanager
+async def _between_turns(call: CommandCall):
+    """Hold the scene between turns, as the panel does, so a turn ending later keeps the change."""
+    if not call.runtime.accepting:
+        raise CommandError("宿主正在停止，没有改变")
+    try:
+        async with asyncio.timeout(EXECUTION_WAIT_SECONDS):
+            await call.runner.execution.acquire()
+    except TimeoutError:
+        raise CommandError("我正在处理上一轮，稍后再试；这次没有改变") from None
+    try:
+        yield
+    finally:
+        call.runner.execution.release()
+
+
+def _chat_line(call: CommandCall) -> str:
+    runner, now = call.runner, call.runner.store.now()
+    if runner.state.paused:
+        return "聊天：已关闭（消息照常记录，/chat on 打开）"
+    period = runner.quiet_period(now)
+    if period is None or not period[0] <= now < period[1]:
+        return "聊天：开启"
+    direct = "被叫到时仍回应" if runner.quiet_direct(now) == "allow" else "被叫到也延后"
+    return f"聊天：安静到 {_clock(call, period[1])}，{direct}"
+
+
+def _speech_line(call: CommandCall) -> str:
+    quota = speech_quota(call.runner.store, call.runner.config)
+    if quota.source == "private":
+        return "发言上限：私聊不限"
+    if quota.limit is None:
+        return f"发言上限：不限（最近一小时 {quota.used} 条）"
+    source = "本群单独设置" if quota.source == "scene" else "全局设置"
+    return (f"发言：最近一小时 {quota.used}/{quota.limit} 条（{source}），"
+            f"被叫到时另有余量 {quota.reserve_left}/{quota.reserve} 条")
+
+
+def _mind_health(call: CommandCall) -> dict | None:
+    """The mind's circuits in the host's provider health; None unless the mind lists fallbacks."""
+    return call.runtime.commands.health.state()["roles"].get("mind")
+
+
+def _model_line(call: CommandCall) -> str:
+    candidates = call.runtime.config.models.roles.mind.candidates()
+    text = f"主脑模型：{candidates[0].provider} / {candidates[0].model}"
+    if len(candidates) > 1:
+        health = _mind_health(call)
+        served = None if health is None else health["last_served"]
+        text += f"（另有 {len(candidates) - 1} 个备用"
+        if served is not None and served["priority"] > 0:
+            text += f"，最近一次由备用 {served['provider']} / {served['model']} 回复"
+        text += "）"
+    return text
+
+
+async def _status(call: CommandCall) -> str:
+    lines = [f"场景：{call.scene}", _chat_line(call), _speech_line(call), _model_line(call)]
+    if call.runtime.held(call.scene):
+        lines.append("发送：已暂停，消息只记录不发出")
+    return "\n".join(lines)
+
+
+async def _chat(call: CommandCall) -> str:
+    if call.arguments not in (["on"], ["off"]):
+        raise CommandError("用法：/chat on 或 /chat off")
+    enabled = call.arguments == ["on"]
+    async with _between_turns(call):
+        before = call.runner.state.paused
+        call.runner.set_paused(not enabled)
+    log_event(logger, "command_chat", scene=call.scene, enabled=enabled, requester=call.requester)
+    if before != enabled:
+        return "本群聊天本来就是开启的" if enabled else "本群聊天本来就是关闭的"
+    return ("已打开本群聊天；关闭期间的消息只作为背景，不逐条回复" if enabled
+            else "已关闭本群聊天；消息照常记录，/chat on 重新打开")
+
+
+async def _quiet(call: CommandCall) -> str:
+    arguments = call.arguments
+    if not 1 <= len(arguments) <= 2 or not arguments[0].isdecimal() or arguments[1:] not in ([], ["defer"]):
+        raise CommandError(f"用法：/quiet <分钟> [defer]，分钟为 1 到 {MAX_QUIET_MINUTES}")
+    minutes = int(arguments[0])
+    if not 1 <= minutes <= MAX_QUIET_MINUTES:
+        raise CommandError(f"安静时长为 1 到 {MAX_QUIET_MINUTES} 分钟")
+    direct = "defer" if arguments[1:] else "allow"
+    async with _between_turns(call):
+        state = call.runner.set_temporary_quiet(minutes * 60, direct, call.requester)
+    return (f"本群安静到 {_clock(call, state['temporary_quiet']['until'])}；"
+            + ("被叫到也延后，/resume 提前恢复" if direct == "defer" else "被@或回复时仍会回应，/resume 提前恢复"))
+
+
+async def _resume(call: CommandCall) -> str:
+    async with _between_turns(call):
+        before = call.runner.state.temporary_quiet
+        call.runner.set_temporary_quiet(None, "allow", call.requester)
+    text = "已结束临时安静" if before is not None and before.until > call.runner.store.now() else "本群没有临时安静"
+    configured = call.runner.quiet_period(call.runner.store.now())
+    if not call.runner.state.paused and configured is not None and configured[0] <= call.runner.store.now() < configured[1]:
+        text += f"；根配置的安静时段到 {_clock(call, configured[1])} 结束"
+    return text
+
+
+async def _reset(call: CommandCall) -> str:
+    if call.arguments:
+        raise CommandError("用法：/reset")
+    store, scene = call.runner.store, call.scene
+    async with _between_turns(call):
+        if store.db.execute("SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1", (scene,)).fetchone():
+            raise CommandError("本群还有没结束或等待恢复的一轮，没有重置")
+        through = store.new_context(scene)
+        call.runner.chat.toolset.discovered_tools = set()
+    log_event(logger, "command_reset", scene=scene, compact_through=through, requester=call.requester)
+    call.runtime.notify()
+    return "已开始新的对话上下文；聊天记录、记忆和未读消息都保留"
+
+
 BUILTIN: list[Command] = [
     Command("help", "/help", "列出你可以使用的命令", "member", _help),
     Command("id", "/id", "显示本场景、你和机器人的账号，用于填写权限", "member", _id),
+    Command("status", "/status", "查看本群聊天开关、安静、发言余量和主脑模型", "control", _status),
+    Command("chat", "/chat on|off", "打开或关闭本群聊天，关闭时消息照常记录", "control", _chat),
+    Command("quiet", "/quiet <分钟> [defer]", "本群临时安静；defer 时被叫到也延后", "control", _quiet),
+    Command("resume", "/resume", "提前结束本群的临时安静", "control", _resume),
+    Command("reset", "/reset", "开始新的对话上下文，原记录和记忆保留", "control", _reset),
 ]
 
 
 class Commands:
     """The scene command layer of one runtime."""
 
-    def __init__(self, commands: list[Command] | None = None):
+    def __init__(self, commands: list[Command] | None = None, *, health: ProviderHealth = HEALTH):
+        # The provider health the host's role models report to (the same instance the panel reads).
+        self.health = health
         self.table = {command.name: command for command in (BUILTIN if commands is None else commands)}
         self.tasks: set[asyncio.Task] = set()
 
@@ -144,8 +287,8 @@ class Commands:
             return []
         return [command for name, command in self.table.items() if name not in settings.disabled]
 
-    def available(self, runtime: NetworkRuntime, runner: SceneRunner, requester: str) -> list[Command]:
-        return [command for command in self.enabled(runtime) if allowed(command.level, runtime, runner, requester)]
+    def available(self, runtime: NetworkRuntime, runner: SceneRunner, message: ChatMessage) -> list[Command]:
+        return [command for command in self.enabled(runtime) if allowed(command.level, runtime, runner, message)]
 
     def match(self, runtime: NetworkRuntime, runner: SceneRunner, message: ChatMessage) -> CommandCall | None:
         if message.is_self or message.sender.uid in runner.settings.other_bot_ids:
@@ -156,7 +299,7 @@ class Commands:
             return None
         name, arguments = parsed
         command = next((item for item in self.enabled(runtime) if item.name == name), None)
-        if command is None or not allowed(command.level, runtime, runner, message.sender.uid):
+        if command is None or not allowed(command.level, runtime, runner, message):
             return None
         return CommandCall(command, arguments, message, runner, runtime)
 
