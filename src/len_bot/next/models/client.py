@@ -39,7 +39,7 @@ class ModelSettings(BaseModel):
     @classmethod
     def from_binding(cls, provider, binding) -> ModelSettings:
         return cls(api=provider.api, base_url=provider.base_url, api_key=provider.api_key, proxy=provider.proxy,
-                   **binding.model_dump(exclude={'provider', 'context_window_tokens', 'history_policy'}))
+                   **binding.model_dump(exclude={'provider', 'context_window_tokens', 'history_policy', 'fallbacks'}))
 
     @field_validator("base_url")
     @classmethod
