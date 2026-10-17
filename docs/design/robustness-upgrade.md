@@ -77,3 +77,59 @@
 - 不把 `Store` 全部方法改成 async；不改平台回调的同步入库。
 - 不为故障转移改写请求参数（温度、输出额度等沿用备用条目里的值），不跨协议转换历史。
 - 不改面板界面；新接口的使用由面板负责人决定。
+
+## 附录 A：面板接口（只读，均需面板登录，未登录返回 401）
+
+### `GET /api/host/event-loop`
+
+```json
+{
+  "running": true,
+  "started_at": 1792252800.0,
+  "interval_ms": 500,
+  "threshold_ms": 500,
+  "probes": 7200,
+  "stalls": 3,
+  "stalled_ms_total": 2140,
+  "max_lag_ms": 1210,
+  "recent": [
+    {"at": 1792256400.5, "lag_ms": 1210, "task": "Task-42",
+     "stack": "  File \".../chat/attention.py\", line 452, in receive_message\n    ..."}
+  ]
+}
+```
+
+`recent` 最多 20 条，新的在前。`task`、`stack` 是卡顿期间看门狗抓到的现场；卡顿短于看门狗检查间隔时为 `null`。
+时间为 Unix 秒。
+
+### `GET /api/host/model-providers/health`
+
+```json
+{
+  "failure_threshold": 3,
+  "cooldown_seconds": 60.0,
+  "roles": {
+    "mind": {
+      "candidates": [
+        {"priority": 0, "provider": "main", "model": "model-a", "state": "open",
+         "consecutive_failures": 3, "reopens_in_seconds": 42.5, "successes": 120, "failures": 3,
+         "last_error": "ModelHTTPError: Model HTTP 503: ...", "last_error_at": 1792256400.0,
+         "last_success_at": 1792256300.0},
+        {"priority": 1, "provider": "spare", "model": "model-b", "state": "closed",
+         "consecutive_failures": 0, "reopens_in_seconds": null, "successes": 4, "failures": 0,
+         "last_error": null, "last_error_at": null, "last_success_at": 1792256401.0}
+      ],
+      "last_served": {"provider": "spare", "model": "model-b", "priority": 1,
+                      "failed_before": [{"provider": "main", "model": "model-a", "error": "..."}],
+                      "at": 1792256401.0}
+    }
+  }
+}
+```
+
+`state` 取值 `closed`（正常）、`open`（冷却中，跳过）、`half_open`（冷却结束，下一次请求试探）。
+只有配置了 `fallbacks` 并已打开过模型的角色出现在 `roles` 中。
+
+## 附录 B：配置
+
+见 [developer/model-fallback.md](../../developer/model-fallback.md)。
