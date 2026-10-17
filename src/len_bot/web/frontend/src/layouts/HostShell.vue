@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { mdiViewDashboardOutline, mdiChatProcessingOutline, mdiForumOutline, mdiAccountOutline, mdiBookOpenPageVariantOutline,
   mdiBriefcaseOutline, mdiFolderOutline, mdiToolboxOutline, mdiChip, mdiTimelineTextOutline, mdiCogOutline, mdiMenu, mdiLogout, mdiRestart,
-  mdiPuzzleOutline, mdiBellOutline, mdiThemeLightDark, mdiCheck } from '@mdi/js'
+  mdiPuzzleOutline, mdiBellOutline, mdiThemeLightDark, mdiCheck, mdiMagnify } from '@mdi/js'
 import { logout, useAuth } from '../composables/useAuth.js'
 import { confirm } from '../composables/useConfirm.js'
 import { useCurrentScene } from '../composables/useCurrentScene.js'
@@ -20,11 +20,12 @@ import RestartDialog from '../host/components/RestartDialog.vue'
 import { restartFlow, openRestart } from '../host/restart.js'
 import { useHostEvents } from '../host/events.js'
 import LiveStatus from '../host/ui/LiveStatus.vue'
+import CommandPalette from '../host/components/CommandPalette.vue'
 import markUrl from '../assets/lenbot-mark.svg'
 import { themeMode, themeModeOptions, setThemeMode } from '../composables/useThemeMode.js'
 
 const route = useRoute(), router = useRouter(), { mobile } = useDisplay(), auth = useAuth()
-const drawer = ref(!mobile.value), leaving = ref(false), logoutError = ref(null)
+const drawer = ref(!mobile.value), palette = ref(false), leaving = ref(false), logoutError = ref(null)
 const events = useHostEvents(() => Promise.all([readHostState(), readOverview()]))
 provide('host-events', events)
 const icons = { home: mdiViewDashboardOutline, trial: mdiChatProcessingOutline, scenes: mdiForumOutline, persona: mdiAccountOutline,
@@ -99,6 +100,8 @@ async function exit() {
         <strong>{{ area?.title || route.meta.title }}</strong>
       </nav>
       <v-spacer />
+      <button type="button" class="shell-search" aria-label="快速跳转 (Ctrl+K)" aria-keyshortcuts="Control+K" @click="palette = true">
+        <v-icon :icon="mdiMagnify" size="16" /><span v-if="!mobile">搜索或跳转</span><kbd v-if="!mobile">Ctrl K</kbd></button>
       <RouterLink v-if="newer" :to="{ name: 'host-system', query: { tab: 'updates' } }" class="shell-pill shell-update">
         <span class="shell-update-dot" />新版本 {{ newer }}</RouterLink>
       <span v-if="host.state?.delivery === 'simulated'" class="shell-pill muted">模拟发送</span>
@@ -133,6 +136,7 @@ async function exit() {
       <slot v-if="!restartFlow.waiting" />
     </main>
   </v-main>
+  <CommandPalette v-model="palette" :scene="scene || ''" />
   <RestartDialog />
   <ConfirmHost />
   <v-snackbar v-model="toast" :timeout="3000" location="bottom" color="toast" rounded="lg">{{ host.toast }}</v-snackbar>
@@ -140,4 +144,7 @@ async function exit() {
 
 <style scoped>
 .memory-index-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--warning);margin-left:auto}
+.shell-search{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 8px 0 10px;margin-right:4px;border:1px solid var(--line);border-radius:8px;background:var(--fill);color:var(--muted);font-size:12px;cursor:pointer}
+.shell-search:hover{border-color:var(--line-strong);color:var(--ink)}
+.shell-search kbd{font:inherit;font-size:11px;padding:0 5px;border:1px solid var(--line);border-radius:4px;background:var(--surface)}
 </style>
