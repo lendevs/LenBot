@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ...configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings
-from ...plugins.catalog import CatalogView, PluginCatalog
+from ...plugins.catalog import CatalogView, MarketEntry, MarketView, PluginCatalog, market
 from ...config import HostConfig, _read_root
 from .settings import _body
 from ...configuration.editing import _read_saved
@@ -213,6 +213,41 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             return catalog.view(saved.plugin_catalog)
         except (ValueError, OSError) as error:
             raise HTTPException(422, str(error)) from error
+
+    def installed_versions(saved: HostConfig) -> dict[str, str | None]:
+        available, _ = _available(saved)
+        return {name: (entries[0].get('version') if len(entries) == 1 else None)
+                for name, entries in available.items()}
+
+    async def market_view(query: str, category: str | None) -> MarketView:
+        try:
+            saved = await asyncio.to_thread(_read_saved, root)
+            installed = await asyncio.to_thread(installed_versions, saved)
+            return market(catalog.view(saved.plugin_catalog), installed, query=query, category=category)
+        except (ValueError, OSError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get('/api/host/plugin-market', response_model=MarketView)
+    async def read_market(query: str = '', category: str | None = None, _: str = Depends(user)):
+        return await market_view(query, category)
+
+    @app.get('/api/host/plugin-market/{name}', response_model=MarketEntry)
+    async def read_market_entry(name: str, _: str = Depends(user)):
+        require_name(name)
+        found = [entry for entry in (await market_view('', None)).entries if entry.name == name]
+        if not found:
+            raise HTTPException(404, f'插件目录里没有 {name}')
+        return found[0]
+
+    @app.post('/api/host/plugin-market/{name}/install')
+    async def install_from_market(name: str, _: str = Depends(user)):
+        require_name(name)
+        entry = await read_market_entry(name)
+        if entry.installed:
+            raise HTTPException(409, f'插件 {name} 已经安装，请用更新')
+        if not entry.compatible:
+            raise HTTPException(422, f'插件 {name} 不能在本机加载：{entry.incompatible_reason}')
+        return await operate(lambda: manager.install(entry.repository, ref=entry.ref))
 
     @app.get('/api/host/plugins/health')
     async def plugins_health(_: str = Depends(user)):
