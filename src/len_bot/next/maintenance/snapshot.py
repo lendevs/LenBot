@@ -7,6 +7,7 @@ import shutil
 import os
 import errno
 from ..storage.files import sync_directory
+from ..storage.sqlite import checkpoint_logs
 
 LOCK = '.lenbot-instance.lock'
 STAGING = '.lenbot-restoring'
@@ -110,6 +111,8 @@ def check_space(paths: list[str], destination: Path) -> None:
 
 
 def create(paths: list[str], destination: Path) -> None:
+    # Databases use WAL: fold each log into its file first, so a copied database is complete by itself.
+    checkpoint_logs(Path(name) for name in paths)
     check_space(paths, destination)
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     entries = []

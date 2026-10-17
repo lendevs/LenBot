@@ -1,4 +1,4 @@
-"""Panel reads must leave the message loop available while SQLite is locked."""
+"""Panel reads must leave the message loop available while another connection writes."""
 
 import asyncio
 import sqlite3
@@ -20,16 +20,15 @@ def test_panel_database_reads_do_not_block_the_loop(tmp_path, path, status):
 
     async def check(client):
         with sqlite3.connect(tmp_path / 'host.sqlite3') as blocker:
-            blocker.execute('BEGIN EXCLUSIVE')
+            # WAL: an open write transaction elsewhere no longer holds panel reads back at all.
+            blocker.execute('BEGIN IMMEDIATE')
             request = asyncio.create_task(client.get(path))
             started = time.perf_counter()
             await asyncio.sleep(0.03)
             delay = time.perf_counter() - started
-            pending = not request.done()
+            response = await asyncio.wait_for(request, 2)
             blocker.rollback()
-        response = await request
         assert delay < 0.1
-        assert pending
         assert response.status_code == status, response.text
         if path == '/api/host/overview':
             cached = await client.get(path)

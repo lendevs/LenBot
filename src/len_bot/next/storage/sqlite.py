@@ -1,15 +1,18 @@
 """The one connection convention for LenBot's own SQLite files.
 
-Rollback journal with synchronous=FULL: the business database keeps send intents and
-consumer cursors, so a committed write must survive power loss, and stopped-instance
-snapshots copy single database files without WAL side files. Store calls that still run
-on the event loop keep a lock wait bounded instead of blocking it for long; the chat path
-runs its calls on the store's database thread through ``SerializedConnection``.
+WAL with synchronous=FULL: the business database keeps send intents and consumer cursors,
+so a committed write must survive power loss; in WAL mode FULL syncs the log at every commit.
+Readers (the panel's budget and limit reads in a thread) no longer wait for a writer.
+Stopped-instance snapshots first fold each log into its database with ``checkpoint`` so
+the main file alone is complete. Store calls that still run on the event loop keep a lock
+wait bounded instead of blocking it for long; the chat path runs its calls on the store's
+database thread through ``SerializedConnection``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import threading
@@ -34,13 +37,45 @@ def connect(path: Path, *, readonly: bool = False, immutable: bool = False, crea
     else:
         db = sqlite3.connect(path.resolve().as_uri() + '?mode=rw', uri=True, **options)
     try:
-        db.execute('PRAGMA journal_mode=DELETE')
+        mode = db.execute('PRAGMA journal_mode=WAL').fetchone()[0]
+        if mode != 'wal':
+            raise sqlite3.OperationalError(f'SQLite 无法为 {path} 启用 WAL 日志，返回 journal_mode={mode!r}；'
+                                           '数据库需要放在支持共享内存映射的本地文件系统上')
         db.execute('PRAGMA synchronous=FULL')
         db.execute('PRAGMA foreign_keys=ON')
     except BaseException:
         db.close()
         raise
     return db
+
+
+def checkpoint(path: Path) -> None:
+    """Fold a stopped database's WAL into the main file and empty the log.
+
+    Only for a database nothing else has open (a stopped instance under its lock); a reader or
+    writer elsewhere would keep frames in the log, which is reported instead of copied around.
+    """
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=rw', uri=True,
+                                 timeout=BUSY_TIMEOUT_SECONDS)) as db:
+        busy, frames, moved = db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+        if busy or frames != moved:
+            raise sqlite3.OperationalError(f'{path} 的 WAL 未能完整写回（busy={busy}, frames={frames}, '
+                                           f'checkpointed={moved}）；确认实例已停止后重试')
+
+
+def checkpoint_logs(paths: Iterable[Path]) -> list[Path]:
+    """Checkpoint every SQLite file under ``paths`` that has a WAL beside it; return those files."""
+    done = []
+    for root in paths:
+        if root.is_symlink() or not root.exists():
+            continue
+        candidates = [root] if root.is_file() else sorted(root.rglob('*'))
+        for candidate in candidates:
+            log = candidate.with_name(candidate.name + '-wal')
+            if candidate.is_file() and not candidate.is_symlink() and log.is_file():
+                checkpoint(candidate)
+                done.append(candidate)
+    return done
 
 
 class SerializedConnection:
