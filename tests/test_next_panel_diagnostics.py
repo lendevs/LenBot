@@ -30,3 +30,27 @@ def test_event_loop_metrics_require_login_and_report_stalls(tmp_path):
         assert (await client.get('/api/host/event-loop')).status_code == 401
 
     exercise(tmp_path, check)
+
+
+def test_provider_health_lists_roles_with_fallbacks(tmp_path):
+    from len_bot.next.models.failover import HEALTH, FailoverModel
+    from len_bot.next.models.client import ModelSettings
+    write_instance(tmp_path, ['onebot:70001'])
+
+    async def check(client: httpx.AsyncClient):
+        candidates = [(name, ModelSettings(api='openai-chat', base_url=f'https://{name}.example/v1',
+                                           api_key='synthetic-key', model=f'{name}-model'))
+                      for name in ('primary', 'spare')]
+        async with FailoverModel('learner', candidates, HEALTH):
+            HEALTH.failed('learner', 'primary', 'primary-model', TimeoutError('slow'))
+            state = (await client.get('/api/host/model-providers/health')).json()
+        role = state['roles']['learner']
+        assert [(row['priority'], row['provider'], row['model']) for row in role['candidates']] == [
+            (0, 'primary', 'primary-model'), (1, 'spare', 'spare-model')]
+        assert role['candidates'][0]['consecutive_failures'] == 1
+        assert role['candidates'][0]['last_error'] == 'TimeoutError: slow'
+        assert {'failure_threshold', 'cooldown_seconds', 'roles'} <= set(state)
+        await client.post('/api/auth/logout')
+        assert (await client.get('/api/host/model-providers/health')).status_code == 401
+
+    exercise(tmp_path, check)
