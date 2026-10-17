@@ -35,6 +35,7 @@ from ..chat.schedule_time import Cron, next_cron, parse_cron
 from ..chat.request_source import SOURCE_DESCRIPTION, source_message
 from ..runtime.logs import SECRETS, error_text, log_context, log_event, recorded_errors
 from ..tools.skills import Skill, load_plugin_skills
+from .process import proxy_class
 from .manifest import PERMISSION_TITLES, Manifest, discover, read_manifest, redact_values, secret_values
 from ..storage.store import encode
 from ...image_assets import MAX_IMAGE_BYTES, inspect_image
@@ -224,24 +225,10 @@ class PluginHost:
             parsed = manifest.values_model(self.config.scenes).model_validate(values)
         except ValidationError as error:
             raise ValueError(f"plugins.{record.name} 配置不合法：{error}") from error
-        module_name = f"lenbot_plugin_{record.name}"
-        spec = importlib.util.spec_from_file_location(module_name, directory / "__init__.py",
-                                                      submodule_search_locations=[str(directory)])
-        if spec is None or spec.loader is None:
-            raise ValueError(f"{directory} 缺少可导入的 __init__.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException:
-            del sys.modules[module_name]
-            raise
-        classes = [value for value in vars(module).values()
-                   if isinstance(value, type) and issubclass(value, Plugin) and value is not Plugin
-                   and (value.__module__ == module_name or value.__module__.startswith(module_name + "."))]
-        if len(classes) != 1:
-            raise ValueError(f"插件模块必须恰好定义一个 Plugin 子类，实际 {len(classes)} 个")
-        cls = classes[0]
+        if manifest.isolation == "process":
+            cls = proxy_class(directory, record.name)
+        else:
+            cls = self._import(directory, record.name)
         unused = set(disabled_rules)
         for attribute in dir(cls):
             mark = getattr(getattr(cls, attribute), MARK, None)
@@ -290,6 +277,35 @@ class PluginHost:
         self.fullmatches.update(dict.fromkeys(record.fullmatches, record.name))
         self.patterns.update(dict.fromkeys((item.expression.pattern for item in record.patterns), record.name))
         self.tool_owner.update(dict.fromkeys(record.tools, record.name))
+
+    @staticmethod
+    def _import(directory: Path, name: str) -> type[Plugin]:
+        module_name = f"lenbot_plugin_{name}"
+        spec = importlib.util.spec_from_file_location(module_name, directory / "__init__.py",
+                                                      submodule_search_locations=[str(directory)])
+        if spec is None or spec.loader is None:
+            raise ValueError(f"{directory} 缺少可导入的 __init__.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[module_name]
+            raise
+        classes = [value for value in vars(module).values()
+                   if isinstance(value, type) and issubclass(value, Plugin) and value is not Plugin
+                   and (value.__module__ == module_name or value.__module__.startswith(module_name + "."))]
+        if len(classes) != 1:
+            raise ValueError(f"插件模块必须恰好定义一个 Plugin 子类，实际 {len(classes)} 个")
+        return classes[0]
+
+    def worker_exited(self, name: str, text: str) -> None:
+        """An isolated plugin's process died: fail that plugin only and keep its error."""
+        record = self.plugins.get(name)
+        if record is None or record.status not in ("loaded", "running"):
+            return
+        record.status, record.error = "failed", self._record(record, "插件进程", RuntimeError(text))
+        self._notify()
 
     def _remove_entries(self, record: Loaded) -> None:
         for name in record.commands:
@@ -854,6 +870,7 @@ class PluginHost:
                 "directory": None if record.directory is None else str(record.directory),
                 "version": record.manifest.version if record.status == "running" else None,
                 "description": None if record.manifest is None else record.manifest.description,
+                "isolation": None if record.manifest is None else record.manifest.isolation,
                 # None: the manifest does not declare permissions and keeps every capability.
                 "permissions": (None if record.manifest is None or record.manifest.permissions is None else
                                 [{"name": name, "title": PERMISSION_TITLES[name]}

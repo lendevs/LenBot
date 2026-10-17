@@ -202,6 +202,8 @@ class Manifest(BaseModel):
     config: dict[str, ConfigField] = Field(default_factory=dict)
     # None: an older manifest without the field, which keeps every capability (shown as undeclared).
     permissions: list[PluginPermission] | None = None
+    # process: run in a separate worker so a crash or hang cannot take the host down.
+    isolation: Literal["inline", "process"] = "inline"
 
     @field_validator("permissions")
     @classmethod
