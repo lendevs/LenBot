@@ -16,6 +16,7 @@ from .send_hold import SendHold
 from ..chat.attention import SceneRunner
 from ..media.audio import AudioService
 from ..chat.session import Chat
+from ..chat.commands import Commands
 from ..chat.tools import tool_catalog
 from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
@@ -111,6 +112,8 @@ class NetworkRuntime:
         self.send_hold = SendHold(config._instance_root)
         self.accepting = config.onebot is None
         self.storage_error: sqlite3.Error | None = None
+        # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.
+        self.commands = Commands()
         self.platform = (None if config.onebot is None else OneBot(
             config.onebot, bot_id=config.bot_id, on_event=self._receive,
             on_error=self._platform_error, on_connection_change=self._connection_changed))
@@ -293,8 +296,11 @@ class NetworkRuntime:
                    self.plugins.match_message(message, tuple(runner.settings.other_bot_ids)))
         claim = (None if matched is None else
                  (matched.record.name, self.plugins.message_report(message, matched, "已接管，处理尚未结束。")))
+        command = None if matched is not None or blocked else self.commands.match(self, runner, message)
+        if command is not None:
+            claim = ("/" + command.command.name, self.commands.report(command))
         try:
-            receipt = runner.receive_message(message, raw, wake=matched is None, plugin_claim=claim)
+            receipt = runner.receive_message(message, raw, wake=matched is None and command is None, plugin_claim=claim)
         except sqlite3.Error as error:
             self.storage_error = error
             self.stop()
@@ -309,6 +315,9 @@ class NetworkRuntime:
         if matched is not None and receipt["status"] != "duplicate":
             self.plugins.dispatch_message(message, matched)
             receipt["plugin_handler"] = f"{matched.record.name} {matched.label}"
+        if command is not None and receipt["status"] != "duplicate":
+            self.commands.dispatch(command)
+            receipt["command"] = "/" + command.command.name
         if receipt["status"] != "duplicate":
             self.audio.request(message.scene)
         self._emit({"type": "receipt", **receipt, "scene": message.scene})

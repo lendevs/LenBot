@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from .work.egress_policy import NetworkSettings
 from .browser.client import AccountBrowserSettings
+from .configuration.commands import CommandSettings
 from .models.asr import AudioSettings
 from .storage.files import sync_directory
 from .runtime.identity import IdentitySettings, combine_identities
@@ -83,6 +84,7 @@ class SharedConfig(BaseModel):
     images: ImageSettings = Field(default_factory=ImageSettings)
     audio: AudioSettings = Field(default_factory=AudioSettings)
     task_archive: TaskArchiveSettings | None = None
+    commands: CommandSettings = Field(default_factory=CommandSettings)
     models: Models
 
 

@@ -235,8 +235,12 @@ class ChatExpression:
         status = "partial" if len(states) > 1 else parts[len(errors) - 1].send_status
         return content, status
 
-    async def send_plugin_content(self, plugin: str, content: Sequence[Content], *, reply_to: str | None) -> Sent:
-        """Send ordered plugin content through one scene outlet and retain actual results."""
+    async def send_plugin_content(self, plugin: str, content: Sequence[Content], *, reply_to: str | None,
+                                  reply_prompt: str = "next_plugin_reply.md") -> Sent:
+        """Send ordered plugin content through one scene outlet and retain actual results.
+
+        Host commands use the same outlet with their own ``reply_prompt``; ``plugin`` is then the command.
+        """
         if reply_to is not None and self.store.find_message(self.config.scene, reply_to) is None:
             raise ValueError(f"当前场景没有平台消息 {reply_to}")
         self.check_send_available()
@@ -283,7 +287,7 @@ class ChatExpression:
                         report += "\n" + interruption
                     moment = datetime.fromtimestamp(self.now(), ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
                     PluginStore(self.store).add_plugin_event(self.config.scene, plugin, "reply", Template(
-                        read_prompt("next_plugin_reply.md")).substitute(
+                        read_prompt(reply_prompt)).substitute(
                         plugin=plugin, time=moment,
                         report=("模拟表达（未发送到平台）：" if self.send_message is None else "") + report).strip())
                     self.notify()
