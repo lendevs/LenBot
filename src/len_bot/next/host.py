@@ -4,7 +4,7 @@ import asyncio
 from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from pathlib import Path
-from .runtime.loop_monitor import watch_event_loop
+from .runtime.loop_monitor import MONITOR
 from .runtime.signals import install_stop
 import traceback
 
@@ -76,7 +76,7 @@ async def run_with_panel(runtime: NetworkRuntime, server: HostPanelServer, lifec
 
     remove_signals = install_stop(lifecycle.stop)
     tasks = [asyncio.create_task(run_runtime()), asyncio.create_task(serve())]
-    monitor = asyncio.create_task(watch_event_loop())
+    monitor = asyncio.create_task(MONITOR.run())
     errors: list[BaseException] = []
     try:
         try:
