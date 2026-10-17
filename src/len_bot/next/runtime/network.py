@@ -1,4 +1,4 @@
-"""Shared scene execution behind one OneBot connection or explicit simulated stdin."""
+"""Shared scene execution behind one chat platform adapter or explicit simulated stdin."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from ..config import LabConfig, SharedConfig
 from .logs import credentials, log_context, log_event
 from .lifecycle import HostLifecycle
 from ..platform.messages import ChatMessage, Notice, SendResult, UploadResult
-from ..platform.onebot_messages import parse_event
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
@@ -35,7 +34,7 @@ from ..learning.jargon import JargonLearner
 from ..learning.sticker_collection import StickerCollector
 from ..learning.reply_effects import ReplyEffectTracker
 from ..learning.expression_selection import ExpressionService
-from ..platform.onebot import OneBot, OneBotCallError
+from ..platform.adapter import PlatformCallError, open_platform
 from ..persona.profile import Persona
 from ..plugins.host import PluginHost
 from ..tools.mcp_host import MCPHost
@@ -114,9 +113,8 @@ class NetworkRuntime:
         self.storage_error: sqlite3.Error | None = None
         # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.
         self.commands = Commands()
-        self.platform = (None if config.onebot is None else OneBot(
-            config.onebot, bot_id=config.bot_id, on_event=self._receive,
-            on_error=self._platform_error, on_connection_change=self._connection_changed))
+        self.platform = open_platform(config, on_event=self._receive, on_error=self._platform_error,
+                                      on_connection_change=self._connection_changed)
         self.audio = AudioService(store, {cfg.scene: cfg for cfg, _ in scene_configs},
                                   self.platform.call if config.delivery == "onebot" else None, slots,
                                   self.audio_updated)
@@ -259,7 +257,7 @@ class NetworkRuntime:
             self._status("stopping")
 
     def _receive(self, raw: dict) -> None:
-        message = parse_event(raw)
+        message = self.platform.parse(raw)
         if message is None:
             return
         if isinstance(message, Notice):
@@ -341,7 +339,7 @@ class NetworkRuntime:
             stopping.cancel()
             # wait_connected reports a transport closed by the panel or by shutdown; that ends admission.
             for result in await asyncio.gather(connected, stopping, return_exceptions=True):
-                if isinstance(result, BaseException) and not isinstance(result, (OneBotCallError, asyncio.CancelledError)):
+                if isinstance(result, BaseException) and not isinstance(result, (PlatformCallError, asyncio.CancelledError)):
                     raise result
         return self.platform.connected and not self.stopped.is_set()
 
@@ -382,7 +380,7 @@ class NetworkRuntime:
                 try:
                     observed = True
                     await starting
-                except OneBotCallError as error:
+                except PlatformCallError as error:
                     self._platform_error(f"{type(error).__name__}: {error}")
                     if not manual_connection:
                         raise
@@ -429,7 +427,7 @@ class NetworkRuntime:
                     stopping = group.create_task(self.stopped.wait())
                     pending.append(stopping)
                     self._status("waiting_connection")
-                    self._emit({"type": "runtime", "status": "started", "input": "onebot",
+                    self._emit({"type": "runtime", "status": "started", "input": self.platform.name,
                                 "delivery": self.config.delivery, "addresses": self.platform.addresses})
                     terminated = group.create_task(self.platform.wait_terminated())
                     connected = group.create_task(self.platform.wait_connected(None))
@@ -455,7 +453,7 @@ class NetworkRuntime:
                     self.refresh_external_tools()
                     self.accepting = self.platform.connected
                     self._status("running")
-                    self._emit({"type": "runtime", "status": "ready", "input": "onebot",
+                    self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
                                 "delivery": self.config.delivery})
                     pending.append(group.create_task(self.retention.run()))
                     running = [group.create_task(runner.run()) for runner in self.runners.values()]

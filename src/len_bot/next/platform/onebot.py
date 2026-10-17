@@ -20,6 +20,8 @@ from websockets.http11 import Request, Response
 from ..configuration.onebot import OneBotForward, OneBotReverse
 from ..runtime.logs import REDACTED
 from ...image_assets import sticker_bytes
+from .adapter import PlatformCallError
+from .onebot_messages import parse_event
 from .messages import ChatMessage, SendResult, UploadResult
 from .onebot_messages import parse_send_result, parse_upload_result
 
@@ -34,15 +36,16 @@ def _non_json_number(value: str) -> None:
     raise ValueError(f"non-standard JSON constant: {value}")
 
 
-class OneBotCallError(RuntimeError):
+class OneBotCallError(PlatformCallError):
     """Whether an unsuccessful call had entered the actual send phase."""
-
-    def __init__(self, message: str, *, submitted: bool):
-        super().__init__(message)
-        self.submitted = submitted
 
 
 class OneBot:
+    """The OneBot v11 adapter (forward or reverse WebSocket, optional HTTP actions)."""
+
+    name = "onebot"
+    parse = staticmethod(parse_event)
+
     def __init__(self, settings: OneBotForward | OneBotReverse, *, bot_id: str | None,
                  on_event: Callable[[dict], None], on_error: Callable[[str], None],
                  on_connection_change: Callable[[], None] | None = None):
