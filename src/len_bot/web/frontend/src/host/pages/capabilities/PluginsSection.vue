@@ -153,6 +153,7 @@ const install = () => operate('install', () => pluginsApi.install(repository.val
 const importZip = () => operate('install', () => pluginsApi.importZip(zipFile.value, switchSource.value))
 const manage = (name, action) => operate(name, () => api(`/api/host/plugins/${encodeURIComponent(name)}/${action}`, { method: 'POST' }))
 function installEntry(entry) {
+  if ('compatible' in entry) return operate('install', () => pluginsApi.marketInstall(entry.name))
   repository.value = entry.repository
   repositoryRef.value = entry.ref || ''
   installing.value = true
