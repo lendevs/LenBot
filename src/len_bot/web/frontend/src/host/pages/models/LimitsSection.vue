@@ -6,6 +6,7 @@ import { host } from '../../store.js'
 import { formatTime } from '../../time.js'
 import { clone, numberOrNull, same } from '../../forms.js'
 import SettingSection from '../../ui/SettingSection.vue'
+import { useConflictNotice } from '../../conflictNotice.js'
 import AdvancedFields from '../../ui/AdvancedFields.vue'
 import SceneRows from '../../components/SceneRows.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
@@ -20,17 +21,18 @@ const status = useResource(() => api('/api/host/limits'))
 const blocked = computed(() => (status.data.value?.scenes || []).filter(item => item.blocked && item.speech.blocked_until === null))
 const draft = ref(null)
 const save = useAction()
-// Shown instead of the generic save error when another tab changed the limits first (409).
-const conflict = ref('')
 watch(() => JSON.stringify(saved.value), () => { draft.value = clone(saved.value) }, { immediate: true })
 const dirty = computed(() => !same(draft.value, saved.value))
+// Shown instead of the generic save error when another tab changed the limits first (409);
+// cleared again once the user discards or undoes their edits to the reloaded form.
+const { conflict, show: showConflict, clear: clearConflict } = useConflictNotice(dirty)
 watch(dirty, value => emit('dirty', value), { immediate: true })
 
 async function submit() {
   // Only this section's fields, plus the version this tab read: a stale tab gets 409 instead of
   // overwriting per-group settings saved elsewhere.
   const body = { ...draft.value, version: props.snapshot.versions?.limits }
-  conflict.value = ''
+  clearConflict()
   const result = await save.run(async () => {
     try {
       return await api('/api/host/settings/limits', { method: 'PUT', body: JSON.stringify(body) })
@@ -40,7 +42,7 @@ async function submit() {
       emit('reload', error.details.snapshot)
       draft.value = clone(pick(error.details.snapshot.saved.limits))
       // The form now shows the server's values, so say plainly that what was typed is gone.
-      conflict.value = '没有保存：上限设置已在其他页面或标签页修改。你刚填的内容已被替换为最新的设置，请重新填写后再保存。'
+      await showConflict('没有保存：上限设置已在其他页面或标签页修改。你刚填的内容已被替换为最新的设置，请重新填写后再保存。')
       return undefined
     }
   })
