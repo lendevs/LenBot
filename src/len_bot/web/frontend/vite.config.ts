@@ -34,7 +34,12 @@ function frontendNotices(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss(), vuetify({ autoImport: true }), frontendNotices()],
+  plugins: [
+    vue(),
+    tailwindcss(),
+    vuetify({ autoImport: true, styles: { configFile: 'src/styles/vuetify-settings.scss' } }),
+    frontendNotices(),
+  ],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

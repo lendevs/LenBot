@@ -64,3 +64,7 @@ code { font-family:var(--mono);font-size:.92em }
 
 /* Pastel avatar tints read as glare on dark surfaces: keep the hue, sink the background. */
 :root[data-theme='dark'] .scene-avatar, :root[data-theme='dark'] .initial { background:color-mix(in srgb, var(--tint-fg) 32%, var(--surface)) !important;color:var(--tint-bg) !important }
+
+/* Vuetify props that resolve to its utility classes, which vuetify-settings.scss switches off; same values as before. */
+.v-btn.rounded-lg, .v-card.rounded-lg, .v-alert.rounded-lg, .v-btn-group.rounded-lg, .v-snackbar__wrapper.rounded-lg { border-radius:8px !important }
+.v-card.border { border-width:thin !important;border-style:solid !important;border-color:rgba(var(--v-border-color),var(--v-border-opacity)) !important }

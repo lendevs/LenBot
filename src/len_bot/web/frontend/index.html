@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/src/assets/lenbot-favicon.svg" />
     <title>LenBot 控制台</title>
+    <script>
+      // First paint in the saved theme, before the app loads (keys match composables/useThemeMode).
+      try {
+        var mode = localStorage.getItem('lenbot.theme')
+        var dark = mode === 'dark' || (mode !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+      } catch (_) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>
