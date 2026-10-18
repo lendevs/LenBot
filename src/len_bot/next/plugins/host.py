@@ -74,6 +74,7 @@ class Background:
     last_started: float | None = None
     last_finished: float | None = None
     last_error: str | None = None
+    task: asyncio.Task | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -304,6 +305,10 @@ class PluginHost:
         if record is None or record.status not in ("loaded", "running"):
             return
         record.status, record.error = "failed", self._record(record, "插件进程", RuntimeError(text))
+        # Its background loops would only fail against the dead worker every period until a reload.
+        for item in record.backgrounds:
+            if item.task is not None:
+                item.task.cancel()
         self._notify()
 
     def _remove_entries(self, record: Loaded) -> None:
@@ -733,7 +738,8 @@ class PluginHost:
             record.error = None
             record.ready.set()
             for item in record.backgrounds:
-                task = asyncio.create_task(self._background(record, item))
+                task = item.task = asyncio.create_task(self._background(record, item),
+                                                       name=f"{record.name}:background:{item.method}")
                 self.tasks[task] = record.name
                 task.add_done_callback(lambda done: self.tasks.pop(done, None))
             self._notify()

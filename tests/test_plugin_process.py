@@ -22,10 +22,28 @@ BOXED = '''
 import asyncio
 import os
 from len_bot.next.plugins.worker import INVOCATION
-from len_bot.plugin import Invocation, Plugin, command, regex
+from len_bot.plugin import Invocation, Plugin, background, command, regex
 
 
 class Boxed(Plugin):
+    @background("10s")
+    async def tick(self, ctx) -> None:
+        pass
+
+    @command("坏结果", "宿主的回答不能编码时得到错误")
+    async def unencodable(self, ctx: Invocation, args: str) -> None:
+        try:
+            await ctx.delegate("不可编码", "原文")
+        except Exception as error:
+            await ctx.reply("委派失败 " + type(error).__name__)
+
+    @command("坏行", "在协议输出里写一行不是 JSON 的内容")
+    async def garbage(self, ctx: Invocation, args: str) -> None:
+        import gc
+        channel = next(item for item in gc.get_objects() if type(item).__name__ == "Channel")
+        channel.output.write("不是 JSON\\n")
+        channel.output.flush()
+        await asyncio.sleep(30)
     @command("回声", "原样回复")
     async def echo(self, ctx: Invocation, args: str) -> None:
         count = await ctx.get_kv("count", 0) + 1
@@ -128,10 +146,15 @@ async def test_isolated_plugin_answers_crashes_alone_and_reloads(tmp_path):
         await peer.say('/历史')
         await until(lambda: any('PermissionError' in item and 'history' in item for item in reports(store)), 10)
 
+        tick = plugins.plugins['boxed'].backgrounds[0].task
+        assert not tick.done()
         await peer.say('/崩溃')
         await until(lambda: state(plugins, 'boxed')['status'] == 'failed', 10)
         boxed = state(plugins, 'boxed')
         assert '退出码 3' in boxed['error'] and boxed['health']['level'] == 'failed'
+        # The background loop stops with the worker instead of failing every period until a reload.
+        await until(tick.done, 5)
+        assert tick.cancelled()
         await peer.say('/示例')
         await until(lambda: '详细' in peer.texts(), 10)
         assert state(plugins, 'sample')['status'] == 'running'
@@ -151,6 +174,8 @@ class Tasks:
         self.requests = []
 
     async def delegate(self, scene, **arguments):
+        if arguments['goal'] == '不可编码':
+            return {'id': {1}}
         self.requests.append((scene, arguments['requester'], arguments['goal']))
         return {'id': len(self.requests)}
 
@@ -178,6 +203,23 @@ async def delegate_and_replay(plugins, peer, tasks):
             await asyncio.sleep(.05)
     assert len(refused) == 3 and all('不能伪造请求人' in text for text in refused)
     assert len(tasks.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_unencodable_host_answer_is_an_error_and_a_broken_line_ends_the_worker(tmp_path):
+    async with running(tmp_path) as (plugins, peer, store):
+        plugins.runtime.tasks = Tasks()
+        try:
+            await peer.say('/坏结果')
+            await until(lambda: '委派失败 TypeError' in peer.texts(), 10)
+        finally:
+            plugins.runtime.tasks = None
+        assert state(plugins, 'boxed')['status'] == 'running'
+        await peer.say('/坏行')
+        await until(lambda: state(plugins, 'boxed')['status'] == 'failed', 10)
+        assert '进程协议出错' in state(plugins, 'boxed')['error']
+        # The pending invocation fails instead of waiting forever.
+        await until(lambda: any('本次调用没有完成' in item['error'] for item in state(plugins, 'boxed')['errors']), 10)
 
 
 def test_unsupported_entry_points_refuse_to_load_in_a_process(tmp_path):

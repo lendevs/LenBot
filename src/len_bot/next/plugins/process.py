@@ -85,6 +85,10 @@ def _forwarder(attribute: str, mark: tuple):
     return forward
 
 
+def _line(value: dict) -> bytes:
+    return (json.dumps(value, ensure_ascii=False) + "\n").encode()
+
+
 class ProcessPlugin(Plugin):
     directory: Path
 
@@ -140,7 +144,7 @@ class Worker:
             return self.process
 
     def _write(self, value: dict) -> None:
-        self.process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
+        self.process.stdin.write(_line(value))
 
     async def request(self, value: dict):
         await self._ensure()
@@ -157,18 +161,28 @@ class Worker:
         return reply.get("value")
 
     async def _read(self, process: asyncio.subprocess.Process) -> None:
-        while line := await process.stdout.readline():
-            message = json.loads(line)
-            if message["type"] == "result":
-                future = self.pending.get(message["id"])
-                if future is not None and not future.done():
-                    future.set_result(message)
-            elif message["type"] == "call":
-                task = asyncio.create_task(self._answer(message))
-                self.calls.add(task)
-                task.add_done_callback(self.calls.discard)
+        failure = None
+        try:
+            while line := await process.stdout.readline():
+                message = json.loads(line)
+                if message["type"] == "result":
+                    future = self.pending.get(message["id"])
+                    if future is not None and not future.done():
+                        future.set_result(message)
+                elif message["type"] == "call":
+                    task = asyncio.create_task(self._answer(message))
+                    self.calls.add(task)
+                    task.add_done_callback(self.calls.discard)
+                else:
+                    raise ValueError(f"未知的消息类型：{line[:200]!r}")
+        except Exception as error:
+            # A broken or oversized line ends this worker: nothing after it can be matched to a call.
+            failure = f"{type(error).__name__}: {str(error)[:500]}"
+            if process.returncode is None:
+                process.kill()
         code = await process.wait()
-        text = f"插件 {self.ctx.name} 的进程退出（退出码 {code}）"
+        text = (f"插件 {self.ctx.name} 的进程退出（退出码 {code}）" if failure is None
+                else f"插件 {self.ctx.name} 的进程协议出错，已结束进程：{failure}")
         for future in self.pending.values():
             if not future.done():
                 future.set_exception(RuntimeError(text + "，本次调用没有完成"))
@@ -179,12 +193,12 @@ class Worker:
     async def _answer(self, message: dict) -> None:
         try:
             value = await self._call(message["method"], message["args"])
-            reply = {"type": "reply", "id": message["id"], "value": value}
+            line = _line({"type": "reply", "id": message["id"], "value": value})
         except Exception as error:
-            reply = {"type": "reply", "id": message["id"], "error": error_value(error)}
+            line = _line({"type": "reply", "id": message["id"], "error": error_value(error)})
         if self.process is not None and self.process.returncode is None:
             try:
-                self._write(reply)
+                self.process.stdin.write(line)
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
