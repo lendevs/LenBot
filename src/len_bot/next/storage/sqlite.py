@@ -63,6 +63,19 @@ def checkpoint(path: Path) -> None:
                                            f'checkpointed={moved}）；确认实例已停止后重试')
 
 
+def fold_log(path: Path) -> bool:
+    """Fold a stopped database's leftover WAL (after a kill or power loss) into the main file.
+
+    Only committed transactions are in the log, so this changes no data; it is what a stopped
+    snapshot does first. Call it only under the instance lock. Returns whether there was a log.
+    """
+    log = Path(str(path) + '-wal')
+    if not path.is_file() or path.is_symlink() or not log.is_file() or not log.stat().st_size:
+        return False
+    checkpoint(path)
+    return True
+
+
 def checkpoint_logs(paths: Iterable[Path]) -> list[Path]:
     """Checkpoint every SQLite file under ``paths`` that has a WAL beside it; return those files."""
     done = []
