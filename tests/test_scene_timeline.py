@@ -90,4 +90,3 @@ async def test_timeline_first_page_with_5000_messages(tmp_path):
         assert len(page['items']) == 50 and page['next_before'] is not None
         assert elapsed < .1, elapsed
         print(f'5000 messages timeline first HTTP page: {elapsed * 1000:.1f} ms')
-
