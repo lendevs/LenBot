@@ -141,7 +141,6 @@ uv run --no-sync python scripts/prepare_component.py browserskill /tmp/browsersk
 - 标签与版本号一致。
 - 版本说明存在，并且不是草稿。
 - Docker Hub 命名空间已经设置。
-- 这个版本的 Release 尚不存在。
 
 预发布版本的 Release 会标记为预发布，不更新 `latest`。正式版本的 Release 完整创建后，才把两个 registry 上三种镜像的 `latest` 指向这个版本。
 
@@ -149,6 +148,7 @@ uv run --no-sync python scripts/prepare_component.py browserskill /tmp/browsersk
 
 - **上传之前失败**（构建、测试、安装检查）。此时没有发布任何内容。偶发的失败可以在同一次运行中使用 Re-run failed jobs。需要修改代码时，发布下一个补丁版本，已推送的标签不移动。
 - **部分镜像已经上传后失败**。只能在**同一次运行**中使用 Re-run failed jobs。成功作业的产物会沿用，已上传的同一镜像会保留。另外开始一次运行会重新构建镜像，摘要与已上传的不同，推送脚本会拒绝。
+- **Release 附件上传中断**。在**同一次运行**中使用 Re-run failed jobs，沿用成功构建的同一批附件与镜像。发布脚本先核对清单与全部已有附件的长度和 SHA-256，再补齐缺失项；已有附件不覆盖，清单最后上传。任一已有附件、发布渠道或草稿状态不一致都会拒绝继续，不能把重新构建出的不同内容混进旧版本。Release 页面在补齐前可能不完整。
 - **Release 已创建，`latest` 更新失败**。同样使用 Re-run failed jobs。已上传的附件内容一致时会保留，然后重新创建别名。也可以手动对两个 registry 执行 `docker buildx imagetools create -t <镜像>:latest <镜像>:<版本>`。
 - **已发布的版本发现问题**。发布下一个补丁版本，已发布的标签和附件不做修改，镜像也不修改。
 
