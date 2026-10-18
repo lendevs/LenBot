@@ -1,12 +1,16 @@
 /*
- * Tailwind for the new panel. Only the theme and utility layers load while Vuetify is present: preflight
- * would reset Vuetify's base styles, so it joins when Vuetify is removed (work.md M4.9). Until then a
- * component that wants a border writes the style too (`border border-solid border-line`), and new markup
- * avoids the bare `inline` utility, which base.css still defines as a flex row.
+ * Tailwind for the new panel, while Vuetify is still loaded (both go when Vuetify is removed, work.md M4.9):
+ * - No preflight: Vuetify's own reset (ress) already zeroes margins and paddings and strips button and
+ *   input borders, and preflight would change Vuetify's base styles.
+ * - Utilities are imported without a layer. Vuetify's reset is unlayered, and unlayered rules beat every
+ *   layered rule regardless of specificity, so layered utilities would lose to `* { padding: 0 }`.
+ *   Unlayered, a utility's class selector outranks the reset's element selectors.
+ * - base.css loads after this file and still defines `.inline` as a flex row; new markup uses
+ *   `inline-flex` or `inline-block` instead of the bare `inline` utility.
  */
-@layer theme, base, components, utilities;
+@layer theme;
 @import 'tailwindcss/theme.css' layer(theme);
-@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tailwindcss/utilities.css';
 
 @theme inline {
   --color-*: initial;
