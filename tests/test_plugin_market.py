@@ -155,3 +155,34 @@ def test_market_install_requires_the_manifest_to_be_the_catalog_entry(tmp_path, 
 
     with catalog_server() as server:
         asyncio.run(run(server))
+
+
+def declared_package(version: str, permissions: str) -> bytes:
+    from io import BytesIO
+    import zipfile
+    manifest = (SAMPLE / 'plugin.toml').read_text(encoding='utf-8').replace('version = "1.0.0"', f'version = "{version}"')
+    manifest = manifest.replace('[config', f'permissions = {permissions}\nisolation = "process"\n\n[config', 1)
+    content = BytesIO()
+    with zipfile.ZipFile(content, 'w') as archive:
+        archive.writestr('plugin.toml', manifest)
+        archive.writestr('__init__.py', (SAMPLE / '__init__.py').read_bytes())
+    return content.getvalue()
+
+
+def test_plugin_details_show_a_candidates_own_permissions_before_it_is_applied(tmp_path):
+    async def run(server):
+        async with market_client(tmp_path, server) as client:
+            uploaded = await client.post('/api/host/plugins/zip',
+                                         files={'file': ('sample.zip', declared_package('2.0.0', '["send", "history"]'))})
+            assert uploaded.status_code == 200, uploaded.text
+            listing = (await client.get('/api/host/plugins')).json()
+            [candidate] = listing['available']['sample']
+            assert candidate['version'] == '2.0.0' and candidate['isolation'] == 'process'
+            assert [item['name'] for item in candidate['permissions']] == ['send', 'history']
+            assert all(item['title'] for item in candidate['permissions'])
+            # The loaded plugin keeps no declaration until the candidate is applied.
+            running = next(item for item in listing['running']['plugins'] if item['name'] == 'sample')
+            assert running['permissions'] is None
+
+    with catalog_server() as server:
+        asyncio.run(run(server))

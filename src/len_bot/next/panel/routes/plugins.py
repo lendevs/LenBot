@@ -17,7 +17,8 @@ from ...config import HostConfig, _read_root
 from .settings import _body
 from ...configuration.editing import _read_saved
 from ...runtime.network import NetworkRuntime
-from ...plugins.manifest import ConfigField, ConfigItem, Manifest, discover, read_manifest, redact_values
+from ...plugins.manifest import (PERMISSION_TITLES, ConfigField, ConfigItem, Manifest, discover, read_manifest,
+                                 redact_values)
 from ...plugins.manager import plugin_manifest
 from ...plugins.install import repository_url, revision_ref
 from ...plugins.store import PluginStore
@@ -105,7 +106,12 @@ def _entry(directory: Path) -> dict:
                 "homepage": manifest.homepage, "dependencies": manifest.dependencies,
                 "requires_lenbot": manifest.requires_lenbot, "requires_python": manifest.requires_python,
                 "platforms": manifest.platforms, "reload": manifest.reload,
-                "fields": _field_info(manifest)}
+                "fields": _field_info(manifest),
+                # This directory's own declaration, so a candidate shows its permissions before it is applied;
+                # None: undeclared, every capability (the same shape as the running plugin's state).
+                "permissions": (None if manifest.permissions is None else
+                                [{"name": name, "title": PERMISSION_TITLES[name]} for name in manifest.permissions]),
+                "isolation": manifest.isolation}
     except (OSError, ValueError) as error:
         return {"directory": str(directory), "error": f"{type(error).__name__}: {error}"}
 
