@@ -19,7 +19,7 @@ from .persona import finish_role_write
 from ...instance_lock import InstanceBusyError, instance_lock
 from ...runtime.logs import LoggingSettings
 from ...memory.service import LocalMemoryConfig, open_memory
-from ...models.failover import open_model
+from ...models.client import ChatModel
 from ...runtime.identity import IdentitySettings
 from ...runtime.network import NetworkRuntime
 from ...trials.panel import PanelSession, TestMessage, stored_image
@@ -213,9 +213,9 @@ class HostTrials:
                 if context:
                     intro = read_prompt('next_trial_context.md')
                     store.append(scene, {'role': 'user', 'content': intro + '\n\n' + '\n'.join(context)})
-                mind = await stack.enter_async_context(open_model(config.models, 'mind'))
+                mind = await stack.enter_async_context(ChatModel(config.model_settings('mind')))
                 vision = (None if config.models.roles.vision is None else
-                          await stack.enter_async_context(open_model(config.models, 'vision')))
+                          await stack.enter_async_context(ChatModel(config.model_settings('vision'))))
                 local_memory = await stack.enter_async_context(open_memory(config, store,
                     active_personas={scene: persona.id}, slots=self.runtime.chats[scene].slots))
                 session = PanelSession(config, store, mind, vision=vision, memory=local_memory,
