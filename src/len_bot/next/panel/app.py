@@ -38,6 +38,7 @@ from .routes.updates import register_host_updates
 from .routes.prompts import register_host_prompts
 from .routes.operations import register_host_operations
 from .routes.diagnostics import register_host_diagnostics
+from .routes.timeline import register_host_timeline
 from .routes.memory import register_host_memory
 from .routes.tasks import register_host_tasks
 from .routes.task_storage import register_host_task_storage
@@ -96,6 +97,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                           user=user, write_lock=write_lock)
     register_host_operations(app, runtime=runtime, user=user)
     register_host_diagnostics(app, user=user)
+    register_host_timeline(app, runtime=runtime, user=user)
     register_host_trials(app, trials, user)
     register_host_browser(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
@@ -282,17 +284,6 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                                 headers={"Cache-Control": "no-store"})
         mime_type, data = image
         return Response(data, media_type=mime_type, headers={"Cache-Control": "no-store"})
-
-    @app.get("/api/host/scenes/{scene}/turns/{turn_id}")
-    async def turn(scene: str, turn_id: str, _: str = Depends(user)):
-        configured_scene(scene)
-        def read():
-            with Store(config.database, readonly=True) as store:
-                return store.turn_detail(scene, turn_id)
-        result = await asyncio.to_thread(read)
-        if result is None:
-            raise HTTPException(404, "当前场景没有这一轮")
-        return result
 
     @app.get("/api/host/scenes/{scene}/history")
     async def history(scene: str, before: int | None = Query(default=None, ge=1),

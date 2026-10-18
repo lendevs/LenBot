@@ -70,7 +70,8 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         expression_ids: list[int] | None = None,
                         input_estimate: tuple[int, str] | None = None,
                         notify: Callable[[], None] | None = None,
-                        trace: Callable[[dict], None] | None = None) -> ModelReply:
+                        trace: Callable[[dict], None] | None = None,
+                        recall_items: list[dict] | None = None) -> ModelReply:
     binding = getattr(config.models.roles, "mind" if role == "recap" else role)
     messages = project_messages(messages, binding.history_policy)
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
@@ -90,6 +91,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
     settings = {**model.settings.model_dump(exclude={"api_key"}), "max_output_tokens": tokens}
     async with (slots.slot(direct=direct, scene=scene) if slots is not None else nullcontext()):
         request = {"settings": settings, "messages": messages, "tools": tools, "provider": binding.provider,
+                   **({"recall_items": recall_items} if recall_items is not None else {}),
                    "estimate_method": method,
                    **({"expression_ids": expression_ids} if expression_ids is not None else {}),
                    **({"estimated_text_tokens": estimated, "estimated_total_tokens": None} if role == "vision"

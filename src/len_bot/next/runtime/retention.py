@@ -26,7 +26,7 @@ class RetentionSettings(BaseModel):
 
 
 def expire_request(request: dict, now: float) -> dict:
-    return {**{key: value for key, value in request.items() if key not in {'messages','tools','texts','request'}},
+    return {**{key: value for key, value in request.items() if key not in {'messages','tools','texts','request','recall_items'}},
             'snapshot_expired_at': now}
 
 
