@@ -1,6 +1,7 @@
 # 运行稳健性升级设计
 
-范围：聊天路径上的 SQLite 访问、数据库日志模式与快照、事件循环卡顿监测、模型提供商故障转移。
+范围：聊天路径上的 SQLite 访问、数据库日志模式与快照、事件循环卡顿监测。模型提供商故障转移曾在本设计中实现，
+已按仓库所有者的决定移除（见 2.4）。
 插件系统、平台适配器和面板界面不在本文范围内；本文只给面板提供只读接口。
 
 ## 1. 现状与问题
@@ -11,7 +12,6 @@
 | S2 | 回滚日志（`journal_mode=DELETE`）。 | 写事务持有排他锁时，面板另开的只读连接（`ModelBudget` 在线程里读）只能等待 `busy_timeout`；读写不能并行。 |
 | S3 | 停机快照逐文件复制实例目录；文档假定数据库没有 `-wal` 旁路文件。 | 若改用 WAL，单独复制 `.db` 会丢掉尚未检查点（checkpoint）的提交。 |
 | S4 | `runtime/loop_monitor.py` 只在卡顿后记录一次延迟毫秒数。 | 不知道是谁卡住了循环；面板看不到累计情况。 |
-| S5 | 每个角色只绑定一个提供商/模型；`retry_delays_seconds` 只重发同一请求。 | 提供商宕机、限流或超时时，整轮对话直接失败。 |
 
 ## 2. 设计
 
@@ -59,31 +59,20 @@
 - 指标保存在内存：卡顿次数、累计卡顿时长、最大延迟、最近 20 次卡顿（时间、延迟、任务名、栈），
   通过 `GET /api/host/event-loop` 给面板。
 
-### 2.4 模型提供商故障转移（S5）
+### 2.4 模型提供商故障转移：已移除
 
-参考 AstrBot 的 `fallback_chat_models`（主模型报错后按顺序尝试备用提供商），针对 LenBot 做以下不同设计：
+本设计曾实现按角色配置同协议备用模型和断路器（参考 AstrBot 的 `fallback_chat_models`）。它与
+[CONTRIBUTING](../../CONTRIBUTING.md) 中“失败时不自动更换模型或服务”的规则冲突，仓库所有者决定保留这条规则，
+所以整套功能已删除：`FailoverModel`、断路器、`models.roles.<role>.fallbacks` 与 `models.failover` 配置、宿主各角色 /
+试聊 / 任务容器 / 插件单次生成的接入、`model_failover` 日志事件与 `served_*` 字段，以及面板接口
+`GET /api/host/model-providers/health`。
 
-- 配置挂在角色绑定上：`models.roles.<role>.fallbacks = [{provider, model, ...可选覆盖}]`，列表顺序即优先级，主绑定
-  优先级最高。默认空列表，即与现在完全一致（不切换）。
-- **只允许同一协议（`api`）的提供商互为备用**。LenBot 保存并续接原生助手消息（Anthropic 思考签名、Gemini
-  thoughtSignature、Responses 加密推理），跨协议切换会让历史无法续接，所以在配置校验阶段拒绝。
-- 只在“换一家可能成功”的错误上切换：传输错误、超时、HTTP 408/409/425/429/5xx，以及 401/403（单家密钥失效）。
-  请求本身不合法（其他 4xx）、协议解析失败、上下文超窗等错误直接抛出，不切换，避免把问题掩盖成“换个模型”。
-- 断路器：每个“提供商/模型”一个状态。连续失败达到 `failure_threshold`（默认 3）后打开，冷却 `cooldown_seconds`
-  （默认 60 s）内跳过；冷却后半开，放行一次试探，成功即关闭、失败重新打开。所有候选都处于打开状态时，仍按优先级尝试
-  冷却最早结束的那个，而不是直接拒绝服务。
-- 记录：每次调用实际服务的提供商与模型写入 `model_call` 日志事件（`served_provider`、`served_model`、`fallback_from`），
-  并保存在内存状态中；`GET /api/host/model-providers/health` 给面板显示每个候选的断路器状态、成功/失败计数、最近错误
-  和最近一次服务时间。
-- 适用范围：宿主各角色、面板试聊与隔离实验（共用同一组断路器）、后台任务容器（`worker`）。任务容器的切换发生在
-  宿主侧模型代理里，且只在容器收到任何响应字节之前；流开始转发后不再切换。插件的单次生成仍只用主绑定。
-- 这与 [CONTRIBUTING](../../CONTRIBUTING.md) 中“失败时不自动更换模型或服务”的原则冲突。本设计把它做成显式开关：
-  只有运维在配置中写了 `fallbacks` 才会切换，并且每次切换都会记录。是否接受需要仓库所有者确认。
+配置里仍写着非空的 `fallbacks` 或任何 `failover` 时，加载会失败，并在错误里写出具体键名，避免有人以为它们仍然生效；
+从未写过这两项的配置照常加载，中间版本面板保存出的空 `fallbacks: []` 会被丢弃。
 
 ## 3. 不做的事
 
 - 不把 `Store` 全部方法改成 async；不改平台回调的同步入库。
-- 不为故障转移改写请求参数（温度、输出额度等沿用备用条目里的值），不跨协议转换历史。
 - 不改面板界面；新接口的使用由面板负责人决定。
 
 ## 附录 A：面板接口（只读，均需面板登录，未登录返回 401）
@@ -109,35 +98,3 @@
 
 `recent` 最多 20 条，新的在前。`task`、`stack` 是卡顿期间看门狗抓到的现场；卡顿短于看门狗检查间隔时为 `null`。
 时间为 Unix 秒。
-
-### `GET /api/host/model-providers/health`
-
-```json
-{
-  "failure_threshold": 3,
-  "cooldown_seconds": 60.0,
-  "roles": {
-    "mind": {
-      "candidates": [
-        {"priority": 0, "provider": "main", "model": "model-a", "state": "open",
-         "consecutive_failures": 3, "reopens_in_seconds": 42.5, "successes": 120, "failures": 3,
-         "last_error": "ModelHTTPError: Model HTTP 503: ...", "last_error_at": 1792256400.0,
-         "last_success_at": 1792256300.0},
-        {"priority": 1, "provider": "spare", "model": "model-b", "state": "closed",
-         "consecutive_failures": 0, "reopens_in_seconds": null, "successes": 4, "failures": 0,
-         "last_error": null, "last_error_at": null, "last_success_at": 1792256401.0}
-      ],
-      "last_served": {"provider": "spare", "model": "model-b", "priority": 1,
-                      "failed_before": [{"provider": "main", "model": "model-a", "error": "..."}],
-                      "at": 1792256401.0}
-    }
-  }
-}
-```
-
-`state` 取值 `closed`（正常）、`open`（冷却中，跳过）、`half_open`（冷却结束，下一次请求试探）。
-只有配置了 `fallbacks` 并已打开过模型的角色出现在 `roles` 中。
-
-## 附录 B：配置
-
-见 [developer/model-fallback.md](../../developer/model-fallback.md)。

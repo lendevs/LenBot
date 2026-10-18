@@ -93,7 +93,7 @@ Scene IDs are qualified, for example `onebot:group:80001`; accounts use `onebot:
 | Time | `ctx.now()`, `ctx.timezone()` |
 | Owner permission | `ctx.require_owner()` |
 
-`generate` uses an explicitly configured mind or learner binding, without tools, history injection or automatic sending; when the role has fallback providers it fails over in order like chat does. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. A returned task record confirms only that the task was submitted; it says nothing about delivery.
+`generate` uses an explicitly configured mind or learner binding, without tools, history injection or automatic sending; the request goes only to that binding's provider and model and never switches on failure. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. A returned task record confirms only that the task was submitted; it says nothing about delivery.
 
 `self.ctx` is a `PluginContext`; scene-specific capabilities require a scene argument. Calls are limited to enabled scenes. `self.ctx.scenes` lists enabled scenes whose chat is on: when an operator switches a group's chat off in the panel, that group drops out of the list, commands and notices there are not dispatched, and sending or emitting events to it raises an error. Sends return `Sent` with sent, failed, unconfirmed, simulated or partial status. Only sent means platform confirmation.
 
