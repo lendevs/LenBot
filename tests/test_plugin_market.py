@@ -9,6 +9,7 @@ import subprocess
 import threading
 
 import httpx
+import pytest
 
 from len_bot.next.config import load_host_config
 from len_bot.next.memory.service import open_memory
@@ -32,7 +33,7 @@ ENTRIES = [
      'install': 'git', 'repository': 'https://example.invalid/weather.git'},
     {'name': 'notes', 'title': '群笔记', 'description': '记录群里的约定', 'authors': ['fixture'],
      'license': 'MIT', 'version': '0.3.0', 'interface': 1, 'category': '工具',
-     'install': 'git', 'repository': 'https://example.invalid/notes.git'},
+     'install': 'git', 'repository': 'https://example.invalid/notes.git', 'permissions': ['send']},
 ]
 
 
@@ -100,7 +101,9 @@ def test_market_lists_filters_and_guards_installation(tmp_path):
 
             tools = (await client.get('/api/host/plugin-market', params={'category': '工具', 'query': '约定'})).json()
             assert [item['name'] for item in tools['entries']] == ['notes'] and tools['total'] == 3
-            assert (await client.get('/api/host/plugin-market/notes')).json()['version'] == '0.3.0'
+            notes = (await client.get('/api/host/plugin-market/notes')).json()
+            assert notes['version'] == '0.3.0' and notes['permissions'] == ['send']
+            assert view['weather']['permissions'] is None
             assert (await client.get('/api/host/plugin-market/missing')).status_code == 404
 
             installed = await client.post('/api/host/plugin-market/sample/install')
@@ -127,6 +130,22 @@ def git_repository(path, name):
         subprocess.run(['git', *command], cwd=path, check=True)
 
 
+def commit(repository, manifest: str) -> None:
+    (repository / 'plugin.toml').write_text(manifest, encoding='utf-8')
+    subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+                    'commit', '-q', '-am', 'manifest'], cwd=repository, check=True)
+
+
+def test_catalog_permissions_are_known_and_distinct():
+    from pydantic import ValidationError
+    from len_bot.next.plugins.catalog import CatalogEntry, PluginCatalog
+    for permissions in (['send', 'send'], ['root']):
+        with pytest.raises(ValidationError, match='permissions'):
+            CatalogEntry.model_validate({**ENTRIES[2], 'permissions': permissions})
+    # Every official entry states what its plugin uses, so the market shows it before installation.
+    assert all(entry.permissions for entry in PluginCatalog().builtin.entries)
+
+
 def test_market_install_requires_the_manifest_to_be_the_catalog_entry(tmp_path, monkeypatch):
     repositories = tmp_path / 'repositories'
     git_repository(repositories / 'notes.git', 'sample_other')
@@ -143,12 +162,15 @@ def test_market_install_requires_the_manifest_to_be_the_catalog_entry(tmp_path, 
             assert '仓库清单的插件名是 sample_other，不是 notes' in refused.json()['detail']
             assert not (root / 'plugins/.candidates/sample_other').exists()
             assert not list((root / 'plugins').glob('**/sample_other.json'))
-            # The same entry installs once its repository holds the plugin it names.
+            # A manifest that declares other permissions than the entry shows is refused the same way.
             fixed = repositories / 'notes.git'
-            (fixed / 'plugin.toml').write_text((fixed / 'plugin.toml').read_text(encoding='utf-8')
-                                               .replace('sample_other', 'notes'), encoding='utf-8')
-            subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
-                            'commit', '-q', '-am', 'notes'], cwd=fixed, check=True)
+            manifest = (fixed / 'plugin.toml').read_text(encoding='utf-8').replace('sample_other', 'notes')
+            commit(fixed, manifest.replace('[config', 'permissions = ["send", "history"]\n\n[config', 1))
+            refused = await client.post('/api/host/plugin-market/notes/install')
+            assert refused.status_code == 422 and '声明的权限' in refused.json()['detail']
+            assert not (root / 'plugins/.candidates/notes').exists()
+            # The entry installs once its repository holds the plugin it names, as it describes it.
+            commit(fixed, manifest.replace('[config', 'permissions = ["send"]\n\n[config', 1))
             installed = await client.post('/api/host/plugin-market/notes/install')
             assert installed.status_code == 200, installed.text
             assert installed.json()['operation']['name'] == 'notes'

@@ -43,7 +43,8 @@
     "install": "git",
     "repository": "https://example.com/author/example_feed.git",
     "homepage": "https://example.com/author/example_feed",
-    "ref": "v1.0.0"
+    "ref": "v1.0.0",
+    "permissions": ["send", "schedule"]
   }]
 }
 ```
@@ -54,6 +55,7 @@
 - Git 条目需要一个独立的插件仓库，`ref` 支持标签、分支或提交。
 - 所有条目都使用 `install: "git"`，业务插件独立安装和更新。
 - 接口版本只是目录中的说明，实际的安装清单仍然按宿主的 v1 接口解析。
+- `permissions` 写插件实际使用的宿主权限，名称与 `plugin.toml` 的 `permissions` 相同，可以省略。它只在安装前展示，装上后的能力仍以插件自己的清单为准。从目录安装时，仓库清单也声明了权限的，两边必须一致，否则不准备候选版本。
 
 ## 版本与发布
 
@@ -82,7 +84,9 @@
 uv run --no-sync python scripts/sync_plugin_catalog.py ../lenbot-plugin-asoul ../lenbot-plugin-bilibili@v1.1.0
 ```
 
-参数是插件仓库在本机的检出目录，`@ref` 可选，默认为当前的 `HEAD`。脚本会核对条目与该提交中 `plugin.toml` 的名称、版本和接口是否一致，并要求这个提交已经推送到远端分支。
+参数是插件仓库在本机的检出目录，`@ref` 可选，默认为当前的 `HEAD`。脚本会核对条目与该提交中 `plugin.toml` 的名称、版本和接口是否一致，并要求这个提交已经推送到远端分支。`plugin.toml` 声明了 `permissions` 时，脚本把它写进条目；`catalog-entry.json` 写了不同的权限时拒绝同步。
+
+四个官方插件在固定提交中的 `plugin.toml` 还没有声明 `permissions`，随附目录中的 `permissions` 按各插件实际调用的宿主能力写明。插件仓库补上声明后，同步脚本会沿用清单里的值；在此之前重新同步会去掉这一项，需要同时在 `catalog-entry.json` 中写上。
 
 宿主 CI 中的 `official-plugins` 作业按目录中固定的提交检出每个 lendevs 插件，用当前的宿主运行这些插件的测试和打包检查。因此，如果宿主的改动导致目录中的插件无法运行，CI 会直接失败。
 

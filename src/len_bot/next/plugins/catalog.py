@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ..configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings, catalog_url
 from ...plugin import INTERFACE
 from .install import repository_url, revision_ref
+from .manifest import PluginPermission
 
 CATALOG = Path(__file__).with_name('plugin_catalog.json')
 
@@ -34,6 +35,16 @@ class CatalogEntry(BaseModel):
     repository: str
     homepage: str | None = None
     ref: str | None = None
+    # The host capabilities the plugin uses, as its plugin.toml declares them (or will); None: not stated.
+    # Shown before installation; what the installed plugin may do is still its own manifest.
+    permissions: list[PluginPermission] | None = None
+
+    @field_validator('permissions')
+    @classmethod
+    def distinct_permissions(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError('permissions 不能重复')
+        return value
 
     @field_validator('name')
     @classmethod
