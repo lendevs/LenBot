@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import json
@@ -14,7 +14,6 @@ import tempfile
 from typing import Any, Literal
 
 from ..models.client import ModelSettings
-from ..models.failover import ProviderHealth
 from ..models.slots import ModelSlots
 from .pi_rpc import PiRpc
 from .sandbox import DockerSandbox, SandboxHandle
@@ -176,8 +175,6 @@ async def worker_session(
     task_request: Callable[[str, bytes], Awaitable[dict]] | None = None,
     input_names: tuple[str, ...] = (),
     public_dns_url: str | None = None,
-    fallbacks: Sequence[tuple[str, ModelSettings]] = (),
-    health: ProviderHealth | None = None,
 ) -> AsyncIterator[WorkerSession]:
     """Start one network-isolated task with host-mediated model access.
 
@@ -189,7 +186,6 @@ async def worker_session(
     proxy = WorkerModelProxy(
         settings, provider, context_window_tokens, token, limits,
         slots=slots, scene=scene, start_call=start_call, finish_call=finish_call,
-        fallbacks=fallbacks, health=health,
     )
     handle: SandboxHandle | None = None
     bridge: WorkerTransport | None = None

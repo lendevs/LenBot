@@ -17,7 +17,6 @@ from ..media.audio import AudioService, TranscribeArguments
 from ..config import HostConfig
 from .egress_usage import EgressUsage
 from ..memory.service import MemoryService
-from ..models.failover import HEALTH, fallback_settings
 from ..models.slots import ModelSlots
 from ..chat.recall import RecallArguments, recall_chat
 from .sandbox import DockerSandbox
@@ -152,7 +151,6 @@ class TaskExecution:
                     task_timeout_seconds=self.active_limit,
                     public_browser=self.settings.public_browser,
                     settings=self.config.model_settings("worker"), provider=binding.provider,
-                    fallbacks=fallback_settings(self.config.models, "worker"), health=HEALTH,
                     context_window_tokens=binding.context_window_tokens,
                     limits=self._limits(item), model_reasoning=self.settings.model_reasoning,
                     input_support=self.settings.input_support, slots=self.slots,
