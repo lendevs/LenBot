@@ -21,6 +21,7 @@ from len_bot.web.auth import (
 )
 from ..configuration.maintenance import PanelSettings
 from ..configuration.types import STRICT
+from ..runtime.events import EventHub
 
 
 class Login(BaseModel):
@@ -140,6 +141,43 @@ async def changes_socket(websocket: WebSocket, listeners: set[asyncio.Event]) ->
         pass
     finally:
         listeners.remove(changed)
+        pushing.cancel()
+        receiving.cancel()
+        await asyncio.gather(pushing, receiving, return_exceptions=True)
+
+
+async def event_socket(websocket: WebSocket, hub: EventHub) -> None:
+    token = websocket.cookies.get(cookie_name(websocket))
+    try:
+        require_panel_origin(websocket)
+        session_user(token)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    reader, hello = hub.subscribe()
+
+    async def push():
+        await websocket.send_json(hello)
+        while True:
+            event = await reader.get()
+            session_user(token)
+            await websocket.send_json(event)
+
+    pushing = asyncio.create_task(push())
+    receiving = asyncio.create_task(websocket.receive())
+    try:
+        done, _ = await asyncio.wait({pushing, receiving}, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            result = await task
+            if task is receiving and result["type"] != "websocket.disconnect":
+                await websocket.close(code=1003, reason="This stream only reports events")
+    except HTTPException:
+        await websocket.close(code=1008)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        reader.close()
         pushing.cancel()
         receiving.cancel()
         await asyncio.gather(pushing, receiving, return_exceptions=True)

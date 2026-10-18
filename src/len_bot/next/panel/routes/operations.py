@@ -99,7 +99,9 @@ def register_host_operations(app, *, runtime, user):
         if runner.execution.locked() or not runtime.accepting:
             raise HTTPException(409, '场景正在执行或宿主正在停止，临时状态未改变')
         async with runner.execution:
-            return runner.set_temporary_quiet(change.seconds, change.direct, None)
+            result = runner.set_temporary_quiet(change.seconds, change.direct, None)
+            runtime.events.publish("host.state", scene=scene)
+            return result
 
     @app.post('/api/host/scenes/{scene}/control/resume')
     async def scene_resume(scene: str, _: str = Depends(user)):
@@ -108,7 +110,9 @@ def register_host_operations(app, *, runtime, user):
         if runner.execution.locked() or not runtime.accepting:
             raise HTTPException(409, '场景正在执行或宿主正在停止，临时状态未改变')
         async with runner.execution:
-            return runner.set_temporary_quiet(None, 'allow', None)
+            result = runner.set_temporary_quiet(None, 'allow', None)
+            runtime.events.publish("host.state", scene=scene)
+            return result
 
     @app.put('/api/host/scenes/{scene}/control/chat')
     async def scene_chat(scene: str, change: ChatSwitch, _: str = Depends(user)):
@@ -118,7 +122,9 @@ def register_host_operations(app, *, runtime, user):
             raise HTTPException(409, '宿主没有在运行，聊天开关未改变')
         # Waits for a running turn to finish so its saved attention state cannot overwrite the switch.
         async with runner.execution:
-            return runner.set_paused(not change.enabled)
+            result = runner.set_paused(not change.enabled)
+            runtime.events.publish("host.state", scene=scene)
+            return result
 
     @app.put('/api/host/control/chat')
     async def all_chat(change: ChatSwitch, _: str = Depends(user)):
@@ -129,6 +135,7 @@ def register_host_operations(app, *, runtime, user):
             async with runner.execution:
                 return runner.set_paused(not change.enabled)
         states = await asyncio.gather(*(switch(runner) for runner in runtime.runners.values()))
+        runtime.events.publish("host.state")
         log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
         return {'enabled': change.enabled, 'scenes': len(states)}
 
@@ -136,6 +143,7 @@ def register_host_operations(app, *, runtime, user):
     async def send_hold(change: ChatSwitch, _: str = Depends(user)):
         """enabled=true: turns run and are recorded as simulated sends; nothing reaches QQ."""
         runtime.send_hold.set(change.enabled, at=store.now())
+        runtime.events.publish("host.state")
         return {'enabled': runtime.send_hold.enabled}
 
     @app.get('/api/host/scenes/{scene}/notices')

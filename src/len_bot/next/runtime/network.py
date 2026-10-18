@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from .signals import install_stop
+from .events import EventHub
 import logging
 import sqlite3
 from collections.abc import Callable
@@ -66,6 +67,7 @@ class NetworkRuntime:
                  lifecycle: HostLifecycle | None = None,
                  on_update: Callable[[], None] | None = None):
         self.config, self.store = config, store
+        self.events = EventHub()
         self.log_secrets = credentials(config)
         self.memory = memory
         self.budget = ModelBudget(config, store, memory, root=config._instance_root) if budget is None else budget
@@ -222,17 +224,20 @@ class NetworkRuntime:
                 self.jargon.request(scene)
 
     def notify(self) -> None:
+        self.events.publish("host.changed")
         if self.on_update is not None:
             self.on_update()
 
     def _connection_changed(self) -> None:
         self.connected_since = self.store.now() if self.platform.connected else None
         self.accepting = self.status == "running" and self.platform.connected
+        self.events.publish("host.state")
         self.notify()
 
     def _status(self, status: str) -> None:
         if self.status != status:
             self.status = status
+            self.events.publish("host.state")
             self.notify()
 
     def _emit(self, result: dict, *, error: BaseException | None = None) -> None:
@@ -245,6 +250,7 @@ class NetworkRuntime:
         fields = {key: value for key, value in result.items() if key not in {'type', 'error'}}
         failed = error if error is not None else result.get('error')
         log_event(logger, result['type'], level=logging.ERROR if failed else logging.INFO, error=failed, **fields)
+        self.events.publish(result['type'], **fields, error=None if failed is None else str(failed))
         self.notify()
 
     def _platform_error(self, error: str) -> None:

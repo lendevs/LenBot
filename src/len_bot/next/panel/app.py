@@ -50,7 +50,7 @@ from .routes.jargon import register_host_jargon
 from .routes.stickers import register_host_stickers
 from .routes.reply_effects import register_host_reply_effects
 from ..runtime.network import NetworkRuntime
-from .auth import changes_socket, install_panel_auth
+from .auth import changes_socket, event_socket, install_panel_auth
 
 
 def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
@@ -86,6 +86,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
 
     runtime.on_update = notify
     def logged_out() -> None:
+        runtime.events.publish("host.state")
         notify()
         trials.notify()
 
@@ -305,6 +306,10 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     @app.websocket("/api/host/events")
     async def events(websocket: WebSocket):
         await changes_socket(websocket, listeners)
+
+    @app.websocket("/api/host/stream")
+    async def stream(websocket: WebSocket):
+        await event_socket(websocket, runtime.events)
 
     mount_panel(app, mode="isolated-multi", home="/host/overview", assets_dir=config.panel.assets_dir)
     return app
