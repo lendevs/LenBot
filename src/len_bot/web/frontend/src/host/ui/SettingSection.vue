@@ -13,6 +13,7 @@ const props = defineProps({
   error: { type: [Object, String], default: null },
   saveLabel: { type: String, default: '保存' },
   problem: { type: String, default: '' },
+  notice: { type: String, default: '' },
 })
 async function submit(restart = false) {
   await props.onSave()
@@ -24,6 +25,7 @@ async function submit(restart = false) {
   <Panel tag="form" class="setting-section" :class="{ dirty }" :title="title" :description="description" @submit.prevent="submit(false)">
     <template v-if="$slots.actions" #actions><slot name="actions" /></template>
     <fieldset :disabled="saving" class="setting-fields"><slot /></fieldset>
+    <v-alert v-if="notice && !error" type="warning" role="status" class="conflict-notice">{{ notice }}</v-alert>
     <ErrorNote v-if="error" title="没有保存成功" :error="error" />
     <template v-if="dirty || error" #footer>
       <span v-if="dirty && problem" class="problem hint">{{ problem }}</span>

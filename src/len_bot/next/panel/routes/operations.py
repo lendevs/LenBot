@@ -3,6 +3,7 @@ import asyncio
 from dataclasses import asdict
 from datetime import datetime, timedelta
 import json
+import logging
 import sqlite3
 import os
 import stat
@@ -13,12 +14,14 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...runtime.logs import log_files, read_records
+from ...runtime.logs import log_event, log_files, read_records
 from ...work.storage import temporary_paths
 from ...runtime.operations import diagnostic_zip
 from ...work.store import TaskStore
 from ...models.usage import usage
-from ...models.limits import LimitReached
+from ...storage.store import Store
+from ...chat.usage import wake_usage
+from ...models.limits import BUDGET_CACHE_SECONDS, LimitReached, check_speech, clear_speech, speech_quota
 from ...models.client import ModelHTTPError, ModelProtocolError
 from ...memory.jobs import processing_records
 
@@ -42,6 +45,8 @@ def stderr_tail(path):
         source.seek(0, os.SEEK_END)
         source.seek(max(0, source.tell() - 65536))
         return source.read(65536).decode('utf-8', 'replace')
+
+logger = logging.getLogger(__name__)
 
 
 def register_host_operations(app, *, runtime, user):
@@ -115,6 +120,24 @@ def register_host_operations(app, *, runtime, user):
         async with runner.execution:
             return runner.set_paused(not change.enabled)
 
+    @app.put('/api/host/control/chat')
+    async def all_chat(change: ChatSwitch, _: str = Depends(user)):
+        """Every scene at once, e.g. when model quota runs out; messages are still stored."""
+        if not runtime.accepting:
+            raise HTTPException(409, '宿主没有在运行，聊天开关未改变')
+        async def switch(runner):
+            async with runner.execution:
+                return runner.set_paused(not change.enabled)
+        states = await asyncio.gather(*(switch(runner) for runner in runtime.runners.values()))
+        log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
+        return {'enabled': change.enabled, 'scenes': len(states)}
+
+    @app.put('/api/host/control/send-hold')
+    async def send_hold(change: ChatSwitch, _: str = Depends(user)):
+        """enabled=true: turns run and are recorded as simulated sends; nothing reaches QQ."""
+        runtime.send_hold.set(change.enabled, at=store.now())
+        return {'enabled': runtime.send_hold.enabled}
+
     @app.get('/api/host/scenes/{scene}/notices')
     async def notices(scene: str, before: int | None = Query(None, ge=1),
                       limit: int = Query(50, ge=1, le=200), _: str = Depends(user)):
@@ -124,7 +147,10 @@ def register_host_operations(app, *, runtime, user):
     @app.get('/api/host/scenes/{scene}/turns/{turn_id}/export')
     async def turn_export(scene: str, turn_id: str, _: str = Depends(user)):
         scene_exists(scene)
-        detail = store.turn_detail(scene, turn_id)
+        def read():
+            with Store(config.database, readonly=True) as records:
+                return records.turn_detail(scene, turn_id)
+        detail = await asyncio.to_thread(read)
         if detail is None:
             raise HTTPException(404, '当前场景没有这一轮')
         logs = await asyncio.to_thread(read_records, config.logging.directory, limit=2000, match={'turn_id': turn_id})
@@ -178,18 +204,42 @@ def register_host_operations(app, *, runtime, user):
             runtime.notify()
             return result
 
+    def limit_state(scene, chat, source):
+        """One scene's speech window and admission, read from ``source`` (a read-only Store)."""
+        quota = speech_quota(source, chat.config)
+        speech = {'source': quota.source, 'limit': quota.limit, 'used': quota.used, 'remaining': quota.remaining,
+                  'reserve': quota.reserve, 'reserve_left': quota.reserve_left,
+                  'held_until': quota.until(direct=False), 'blocked_until': quota.until(direct=True)}
+        try:
+            check_speech(source, chat.config, direct=True)
+            if chat.slots is not None and chat.slots.admit is not None:
+                runtime.budget.check(scene, max_age=BUDGET_CACHE_SECONDS, store=source)
+        except LimitReached as error:
+            return {'scene': scene, 'blocked': True, 'reason': str(error), 'until': error.until, 'speech': speech}
+        return {'scene': scene, 'blocked': False, 'reason': None, 'until': None, 'speech': speech}
+
+    async def limit_states(chats):
+        # Token totals aggregate every model call of the day (and retained trials): off the event loop.
+        def read():
+            with Store(config.database, readonly=True) as source:
+                return [limit_state(scene, chat, source) for scene, chat in chats]
+        return await asyncio.to_thread(read)
+
     @app.get('/api/host/limits')
     async def limits_state(_: str = Depends(user)):
-        items = []
-        for scene, chat in runtime.chats.items():
-            try:
-                chat.check_limits(model=True)
-            except LimitReached as error:
-                items.append({'scene': scene, 'blocked': True, 'reason': str(error), 'until': error.until})
-            else:
-                items.append({'scene': scene, 'blocked': False, 'reason': None, 'until': None})
-        return {'limits': config.limits.model_dump(mode='json'), 'scenes': items,
+        return {'limits': config.limits.model_dump(mode='json'),
+                'scenes': await limit_states(list(runtime.chats.items())),
                 'scope': '宿主代理的模型请求，含保留试聊及已移除场景；不含远端服务内部调用'}
+
+    @app.post('/api/host/scenes/{scene}/speech/reset')
+    async def speech_reset(scene: str, operator: str = Depends(user)):
+        scene_exists(scene)
+        chat = runtime.chats[scene]
+        clear_speech(chat.store, scene)
+        log_event(logger, 'speech_limit_reset', scene=scene, operator=operator)
+        runtime.runners[scene].changed.set()
+        runtime.notify()
+        return (await limit_states([(scene, chat)]))[0]
 
     @app.get('/api/host/usage')
     async def costs(period: Literal['day', 'month'] = 'day', scene: str | None = None,
@@ -204,15 +254,18 @@ def register_host_operations(app, *, runtime, user):
             end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
         else:
             end = start + timedelta(days=1)
-        try:
-            with processing_records(config.database, None if runtime.memory is None else runtime.memory.jobs) as records:
-                result = usage(store, None if scene is None else [scene],
-                               start.timestamp(), end.timestamp(), memory=runtime.memory,
+        def read():
+            with Store(config.database, readonly=True) as source, processing_records(config.database, None) as records:
+                result = usage(source, None if scene is None else [scene],
+                               start.timestamp(), end.timestamp(),
                                memory_db=None if records is None else records.db)
                 return {"timezone": zone, "period": period, **result,
+                        'wakes': wake_usage(source, None if scene is None else [scene], start.timestamp(), end.timestamp(), zone),
                         'scope': '当前实例业务及记忆计量；全部范围含public与已移除场景，不含独立保留试聊（预算另含）',
                         'memory_record_source':
-                        'not_present' if records is None else 'running_connection' if runtime.memory is not None else 'read_only_existing'}
+                        'not_present' if records is None else 'read_only_existing'}
+        try:
+            return await asyncio.to_thread(read)
         except (OSError, ValueError, sqlite3.Error) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f'{type(error).__name__}: {error}') from error

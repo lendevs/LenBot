@@ -27,7 +27,9 @@ OUTPUT = ROOT / 'tests/fixtures/history'
 FIXTURES = {
     'config0-business1-jobs5-index2': 'a572456',
     'config0-business2-jobs6-index2': 'c9ff238',
-    'config2-business3-jobs6-index3': '02fb0ff',
+    'config0-business3-jobs6-index3': '02fb0ff',
+    'config0-business4-jobs6-index3': '082646db',
+    'config0-business5-jobs6-index3': 'e727b9c2',
 }
 
 WRITER = r'''

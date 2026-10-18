@@ -12,12 +12,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ...configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings
-from ...plugins.catalog import CatalogView, PluginCatalog
+from ...plugins.catalog import CatalogView, MarketEntry, MarketView, PluginCatalog, market
 from ...config import HostConfig, _read_root
 from .settings import _body
 from ...configuration.editing import _read_saved
 from ...runtime.network import NetworkRuntime
-from ...plugins.manifest import ConfigField, ConfigItem, Manifest, discover, read_manifest, redact_values
+from ...plugins.manifest import (PERMISSION_TITLES, ConfigField, ConfigItem, Manifest, discover, read_manifest,
+                                 redact_values)
 from ...plugins.manager import plugin_manifest
 from ...plugins.install import repository_url, revision_ref
 from ...plugins.store import PluginStore
@@ -105,7 +106,12 @@ def _entry(directory: Path) -> dict:
                 "homepage": manifest.homepage, "dependencies": manifest.dependencies,
                 "requires_lenbot": manifest.requires_lenbot, "requires_python": manifest.requires_python,
                 "platforms": manifest.platforms, "reload": manifest.reload,
-                "fields": _field_info(manifest)}
+                "fields": _field_info(manifest),
+                # This directory's own declaration, so a candidate shows its permissions before it is applied;
+                # None: undeclared, every capability (the same shape as the running plugin's state).
+                "permissions": (None if manifest.permissions is None else
+                                [{"name": name, "title": PERMISSION_TITLES[name]} for name in manifest.permissions]),
+                "isolation": manifest.isolation}
     except (OSError, ValueError) as error:
         return {"directory": str(directory), "error": f"{type(error).__name__}: {error}"}
 
@@ -213,6 +219,51 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             return catalog.view(saved.plugin_catalog)
         except (ValueError, OSError) as error:
             raise HTTPException(422, str(error)) from error
+
+    def installed_versions(saved: HostConfig) -> dict[str, str | None]:
+        available, _ = _available(saved)
+        return {name: (entries[0].get('version') if len(entries) == 1 else None)
+                for name, entries in available.items()}
+
+    async def market_view(query: str, category: str | None) -> MarketView:
+        try:
+            saved = await asyncio.to_thread(_read_saved, root)
+            installed = await asyncio.to_thread(installed_versions, saved)
+            return market(catalog.view(saved.plugin_catalog), installed, query=query, category=category)
+        except (ValueError, OSError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get('/api/host/plugin-market', response_model=MarketView)
+    async def read_market(query: str = '', category: str | None = None, _: str = Depends(user)):
+        return await market_view(query, category)
+
+    @app.get('/api/host/plugin-market/{name}', response_model=MarketEntry)
+    async def read_market_entry(name: str, _: str = Depends(user)):
+        require_name(name)
+        found = [entry for entry in (await market_view('', None)).entries if entry.name == name]
+        if not found:
+            raise HTTPException(404, f'插件目录里没有 {name}')
+        return found[0]
+
+    @app.post('/api/host/plugin-market/{name}/install')
+    async def install_from_market(name: str, _: str = Depends(user)):
+        require_name(name)
+        entry = await read_market_entry(name)
+        if entry.installed:
+            raise HTTPException(409, f'插件 {name} 已经安装，请用更新')
+        if not entry.compatible:
+            raise HTTPException(422, f'插件 {name} 不能在本机加载：{entry.incompatible_reason}')
+        # The repository's own manifest must be the plugin the catalog entry names, with the permissions it shows.
+        return await operate(lambda: manager.install(entry.repository, ref=entry.ref, expected_name=entry.name,
+                                                     expected_permissions=entry.permissions))
+
+    @app.get('/api/host/plugins/health')
+    async def plugins_health(_: str = Depends(user)):
+        if runtime.plugins is None:
+            return {'plugins': []}
+        return {'plugins': [{'name': item['name'], 'status': item['status'], 'error': item['error'],
+                             'version': item['version'], 'health': item['health']}
+                            for item in runtime.plugins.state()['plugins']]}
 
     @app.put('/api/host/plugin-catalog', response_model=CatalogView)
     async def choose_catalog(request: Request, _: str = Depends(user)):

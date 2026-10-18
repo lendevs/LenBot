@@ -30,7 +30,14 @@
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-group-digest",
-      "ref": "0b2c3cf78677de77f5bc85b7d4675e852f0bcd59"
+      "ref": "0b2c3cf78677de77f5bc85b7d4675e852f0bcd59",
+      "permissions": [
+        "send",
+        "history",
+        "generate",
+        "delegate",
+        "schedule"
+      ]
     },
     {
       "name": "gscore_adapter",
@@ -56,7 +63,11 @@
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-gscore-adapter",
-      "ref": "d5c2a0268795d248a2304cd5629c31fce3dc0a92"
+      "ref": "d5c2a0268795d248a2304cd5629c31fce3dc0a92",
+      "permissions": [
+        "send",
+        "network"
+      ]
     },
     {
       "name": "asoul",
@@ -83,7 +94,11 @@
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-asoul",
-      "ref": "b7e8bc6a0eb32669c03921ad9994be2599e109bf"
+      "ref": "b7e8bc6a0eb32669c03921ad9994be2599e109bf",
+      "permissions": [
+        "send",
+        "events"
+      ]
     },
     {
       "name": "bilibili",
@@ -110,7 +125,11 @@
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-bilibili",
-      "ref": "8f714dd5e58aff0e9cba96cb222aa02aac1804f6"
+      "ref": "8f714dd5e58aff0e9cba96cb222aa02aac1804f6",
+      "permissions": [
+        "send",
+        "events"
+      ]
     }
   ]
 }

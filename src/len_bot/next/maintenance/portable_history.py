@@ -17,7 +17,7 @@ from ..tools.discovery import DEFERRED_NAMES
 from ..memory.service import LocalMemoryConfig
 from ..memory.local import scene_overview
 from ..persona.profile import Persona, load_persona
-from ..storage.sqlite import connect
+from ..storage.sqlite import connect, fold_log
 from ..storage.store import FORMAT_VERSION, Store, encode
 from ..prompt_files import read_prompt
 
@@ -162,6 +162,8 @@ def main() -> None:
         raise SystemExit("Portable history conversion takes no arguments; run from the stopped host root")
     with instance_lock(Path.cwd()):
         config = load_host_config(Path.cwd())
+        # A crash leaves committed writes in the WAL; fold them in rather than refuse a stopped host.
+        fold_log(config.database)
         print(encode(convert(config)), flush=True)
 
 

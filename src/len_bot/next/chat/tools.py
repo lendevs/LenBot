@@ -31,6 +31,8 @@ from .recall import RECALL_TOOL, RecallArguments, recall_chat
 from ..trials.replay_images import RecordedImages
 from ..trials.replay_web import RecordedWeb
 from .scene_control import SCENE_CONTROL_TOOL, SceneControlArguments
+from .declarations import ATTENTION_TOOL, AttentionArguments
+from .disposition import ENDING_TOOLS, Disposition, end_turn_tool, parse_disposition, with_disposition
 from .host_manage import HOST_MANAGE_TOOL, HostManageArguments
 from .request_source import with_requester
 from ..runtime.logs import log_context, log_event
@@ -69,7 +71,9 @@ class SayArguments(BaseModel):
     content: str = Field(min_length=1)
     end_turn: bool = Field(default=False, description="这是本轮最后一次表达，成功后本轮即可结束；还需查看工具结果或继续行动时保持 false。")
     reply_to: str | None = Field(default=None, description="默认不填，直接接话。群里同时有几个话头、不引用会让人认错你在回哪句时，才填该平台消息 ID。")
-    mention: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$",
+    # Individual accounts of the platforms with an adapter; express() also requires the scene's platform,
+    # and build_tools narrows the schema the model sees to it.
+    mention: str | None = Field(default=None, pattern=r"^(?:onebot|telegram):[1-9][0-9]*$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
         description="与正文一起发送在同一条消息里的表情；file、emotion、query 三选一，素材目录见 react。")
@@ -120,7 +124,8 @@ def tool_catalog(*, platform: bool) -> list[dict]:
     }}
     catalog = [say, REACT_TOOL, WAIT_TOOL, RECALL_TOOL, WEB_SEARCH_TOOL, WEB_READ_TOOL, LOOK_TOOL,
             *SCHEDULE_TOOLS, PERSONA_KNOWLEDGE_TOOL, MEMORY_TOOL, DELEGATE_TOOL, TASK_TOOL,
-            SEND_FILE_TOOL, OPEN_FORWARD_TOOL, MEMBER_INFO_TOOL, MESSAGE_REACTION_TOOL, TRANSCRIBE_TOOL, SCENE_CONTROL_TOOL, HOST_MANAGE_TOOL, TOOL_SEARCH]
+            SEND_FILE_TOOL, OPEN_FORWARD_TOOL, MEMBER_INFO_TOOL, MESSAGE_REACTION_TOOL, TRANSCRIBE_TOOL, SCENE_CONTROL_TOOL, HOST_MANAGE_TOOL, TOOL_SEARCH,
+            ATTENTION_TOOL]
     return [{**tool, "function": {**tool["function"],
              "parameters": model_schema(tool["function"]["parameters"])}} for tool in catalog]
 
@@ -145,6 +150,8 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
         reasons.append("还没有开启搜索网页")
     if name == "memory" and config.memory is None:
         reasons.append("还没有设置记忆")
+    if name == 'attention' and config.attention.declarations is None:
+        reasons.append('本群没有开启持续关注')
     if name == "look" and config.models.roles.vision is None:
         reasons.append("还没有设置看图模型")
     if name == "transcribe" and config.models.roles.asr is None:
@@ -193,6 +200,12 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
             parameters = SayArguments.model_json_schema()
             mode = "next_direct.md"
             parameters["properties"]["content"]["description"] = read_prompt(mode).strip()
+            scene_platform = config.scene.partition(":")[0]
+            mention = parameters["properties"]["mention"]["anyOf"][0]
+            mention["pattern"] = f"^{scene_platform}:[1-9][0-9]*$"
+            parameters["properties"]["mention"]["description"] = (
+                "默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，"
+                f"例如 {scene_platform}:70001。")
             description = function['description']
             if 'react' in names:
                 description += ' 同时需要说话和表情时，优先设置 sticker 合成一条消息；只用图像回应时使用 react。'
@@ -210,6 +223,9 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
                               + " query 是字面检索，不理解近义词；emotion 只填写已知的实际标签。"
                               + " 素材描述说明图片内容，不预设文字态度。\n当前角色真实素材：\n" + catalog,
                               "parameters": model_schema(parameters)}}
+    if config.attention.disposition is not None:
+        allowed = [with_disposition(tool, config.attention.disposition) for tool in allowed]
+        allowed.append(end_turn_tool(config.attention.disposition))
     return allowed
 
 
@@ -231,6 +247,8 @@ class SceneTools:
         self.upload_file, self.platform_call = upload_file, platform_call
         self.notify, self.now = notify, now
         self.scene_control: Callable[[SceneControlArguments], dict] | None = None
+        self.attention: Callable[[AttentionArguments, str, str], dict] | None = None
+        self.turn_disposition: Disposition | None = None
         self.host_management: HostManagement | None = None
         # Only an accepted restart in this live turn waits for its final store write.
         self.restart_after_turn = False
@@ -247,10 +265,12 @@ class SceneTools:
                               host_management=self.host_management is not None)
         if self.scene_control is None:
             allowed = [tool for tool in allowed if tool["function"]["name"] != "scene_control"]
+        if self.attention is None:
+            allowed = [tool for tool in allowed if tool['function']['name'] != 'attention']
         # Plugin and MCP tools are always low-frequency and still need the role's permission.
         self.external = {tool.name: tool for tool in sorted(external_tools, key=lambda tool: tool.name)
                          if persona.tools == "all" or tool.name in persona.tools}
-        clashes = sorted({tool["function"]["name"] for tool in tool_catalog(platform=True)} & set(self.external))
+        clashes = sorted(({tool["function"]["name"] for tool in tool_catalog(platform=True)} | {'end_turn'}) & set(self.external))
         if clashes:
             raise ValueError(f"插件或 MCP 工具与核心工具重名：{clashes}")
         if self.external and "tool_search" not in {tool["function"]["name"] for tool in allowed}:
@@ -302,11 +322,20 @@ class SceneTools:
         """One tool call; records written below carry its turn, call ID and tool name."""
         with log_context(turn_id=turn_id, tool_call_id=call.id, tool=call.name):
             try:
+                disposition = None
+                has_disposition = self.config.attention.disposition is not None and call.name in ENDING_TOOLS
+                if has_disposition:
+                    disposition = parse_disposition(call.arguments.get('disposition'), self.config.attention.disposition,
+                                                    self.now(), turn_id)
+                    arguments = {key: value for key, value in call.arguments.items() if key != 'disposition'}
+                    call = ToolCall(call.id, call.name, arguments)
                 result = await self._execute(turn_id, call, wait_for_messages,
                                              expression_style=expression_style, direct=direct)
             except Exception as error:
                 log_event(logger, 'tool_failed', level=logging.WARNING, error=error)
                 raise
+            if has_disposition:
+                self.turn_disposition = disposition
             log_event(logger, 'tool_call', result_chars=len(result[0]))
             return result
 
@@ -340,6 +369,13 @@ class SceneTools:
             return self.expression.context.render(expression.message), expression, None
         if call.name == "scene_control":
             return tool_result(self.scene_control(SceneControlArguments.model_validate(call.arguments))), None, None
+        if call.name == 'attention':
+            arguments = AttentionArguments.model_validate(call.arguments)
+            return tool_result(self.attention(arguments, turn_id, call.id)), None, None
+        if call.name == 'end_turn':
+            if call.arguments:
+                raise ValueError(f'end_turn 不接受额外参数：{call.arguments!r}')
+            return tool_result({'ended': True}), None, None
         if call.name == 'host_manage':
             try:
                 arguments = HostManageArguments.model_validate(call.arguments)
@@ -352,8 +388,9 @@ class SceneTools:
                 self.pause_after_turn = True
             return tool_result(result), None, None
         if call.name == "recall_chat":
-            return recall_chat(self.store, self.config.scene, self.config.timezone,
-                               RecallArguments.model_validate(call.arguments)), None, None
+            # A history search may scan many rows; it reads on the database thread without the write lock.
+            return await self.store.read(recall_chat, self.store, self.config.scene, self.config.timezone,
+                                         RecallArguments.model_validate(call.arguments)), None, None
         if call.name == "persona_knowledge":
             arguments = PersonaKnowledgeArguments.model_validate(call.arguments)
             return persona_knowledge(self.persona.id, self.persona.name, self.persona.knowledge,

@@ -83,7 +83,7 @@ def credentials(config) -> tuple[str, ...]:
     def visit(value):
         if isinstance(value, dict):
             for key, item in value.items():
-                if key in {'api_key', 'access_token', 'password', 'password_hash'} and isinstance(item, str) and item:
+                if key in {'api_key', 'access_token', 'bot_token', 'password', 'password_hash'} and isinstance(item, str) and item:
                     found.add(item)
                 elif key in {'headers', 'env'} and isinstance(item, dict):
                     found.update(v for v in item.values() if isinstance(v, str) and v)

@@ -67,6 +67,17 @@ def _image(url: str, api: str) -> dict:
     raise ValueError('Gemini 图片需要内联 data URL；不能把普通网页图片地址当成 Files API 地址')
 
 
+def _chat_message(message: dict, settings: ModelSettings) -> dict:
+    internal = {'_continuation', '_binding'}
+    if internal & message.keys() and _native(message, settings) is not None:
+        return {k: v for k, v in message.items() if k not in internal}
+    if internal & message.keys():
+        message = {k: v for k, v in message.items() if k in {'role', 'content', 'tool_calls', 'tool_call_id'}}
+    # History from another binding, or stored before bindings were recorded, may carry `"tool_calls": null`, which
+    # stricter gateways reject; an absent key means the same. Replies from this binding stay byte-transparent.
+    return {k: v for k, v in message.items() if k not in internal and not (k == 'tool_calls' and v is None)}
+
+
 def build_request(settings: ModelSettings, messages: list[dict], tools: list[dict], *,
                   max_output_tokens: int | None = None) -> tuple[str, dict]:
     messages = _history(settings, messages)
@@ -74,11 +85,7 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
     api = settings.api
     payload = {'model': settings.model}
     if api == 'openai-chat':
-        payload.update(messages=[(
-            {k: v for k, v in m.items() if k not in {'_continuation', '_binding'}}
-            if not ({'_continuation', '_binding'} & m.keys()) or _native(m, settings) is not None
-            else {k: v for k, v in m.items() if k in {'role', 'content', 'tool_calls', 'tool_call_id'}}
-        ) for m in messages],
+        payload.update(messages=[_chat_message(m, settings) for m in messages],
                        stream=False, **{settings.output_token_field: output})
         if tools:
             payload['tools'] = tools

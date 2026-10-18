@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 
 from ..media.audio_store import AudioStore
 from ..config import LabConfig
+from .declarations import Declared
 from .recap import project_history
+from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
 from ..tools.discovery import DEFERRED_NAMES, discovery_view
 from ..learning.jargon_store import JargonStore
@@ -142,6 +144,15 @@ def turn_state(config: LabConfig, store: Store, *, now: float,
     if muted_until is not None:
         state["content"] += "\n平台通知：当前 Bot 禁言至 " + datetime.fromtimestamp(
             muted_until, ZoneInfo(config.timezone)).isoformat(timespec="seconds")
+    quota = speech_quota(store, config)
+    if quota.limit is not None and quota.remaining * 5 <= quota.limit:
+        state["content"] += f"\n本群最近一小时已发言 {quota.used} 条，上限 {quota.limit} 条"
+        if quota.remaining:
+            state["content"] += f"，还剩 {quota.remaining} 条。"
+        else:
+            back = datetime.fromtimestamp(quota.until(direct=False), ZoneInfo(config.timezone)).strftime("%H:%M")
+            state["content"] += (f"，已用完，{back} 起恢复；被 @、被回复、私聊、处理提醒或任务结果时还能说 {quota.reserve_left} 条。"
+                                 if quota.reserve_left else f"，已用完，{back} 起恢复。")
     schedules = ScheduleStore(store).list_schedules(config.scene, limit=21)
     if schedules:
         state["content"] += "\n<未完成安排>\n" + "\n\n".join(
@@ -165,6 +176,30 @@ def turn_state(config: LabConfig, store: Store, *, now: float,
         state["content"] += "\n" + jargon
     state["content"] = Template(read_prompt("next_turn_state.md")).substitute(state=state["content"])
     return state
+
+
+def current_attention(config: LabConfig, store: Store) -> str:
+    attention = store.load_attention(config.scene)
+    last = None if attention is None else attention.get('last_contact_at')
+    closed = None if attention is None else attention.get('focus_closed_at')
+    until = None if last is None else last + config.attention.focus_seconds
+    active = (not config.attention.only_direct and until is not None and until > store.now()
+              and (not config.attention.close_focus_on_silence or closed is None))
+    zone = ZoneInfo(config.timezone)
+    text = ('至 ' + datetime.fromtimestamp(until, zone).strftime('%H:%M:%S') if active else '已关闭')
+    if config.attention.close_focus_on_silence and closed is not None:
+        text += '（' + datetime.fromtimestamp(closed, zone).strftime('%H:%M:%S') + ' 沉默后关闭）'
+    text = '对话继续：' + text
+    if attention is not None:
+        disposition = attention.get('disposition')
+        if disposition is not None and disposition['until'] > store.now():
+            text += '\n上次局部收尾：' + encode(disposition)
+        settings = config.attention.declarations
+        if settings is not None and settings.mode != 'context' and attention.get('declared') is not None:
+            declared = Declared.load(attention['declared'])
+            text += '\n持续关注：' + encode(declared.view(store.now()))
+            text += '\n本轮候选（不表示完成）：' + encode(declared.turn_matches)
+    return '<当前关注>\n' + text + '\n</当前关注>'
 
 
 class ChatContext:
@@ -229,4 +264,5 @@ class ChatContext:
         if profile is not None:
             state = {**state, "content": state["content"] + "\n" + Template(
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
+        state = {**state, 'content': state['content'] + '\n' + current_attention(self.config, self.store)}
         return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]

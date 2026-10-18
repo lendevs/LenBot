@@ -7,9 +7,9 @@ const tint = computed(() => avatarTints[[...props.scene].reduce((sum, char) => s
 const letter = computed(() => [...(sceneTitles[props.scene] || '')][0] || (props.scene.split(':')[1] === 'private' ? '私' : '群'))
 </script>
 <template>
-  <span class="scene-avatar" :style="{ width: `${size}px`, height: `${size}px`, background: tint[0], color: tint[1], fontSize: `${Math.round(size * 0.42)}px` }"
+  <span class="scene-avatar" :style="{ width: `${size}px`, height: `${size}px`, '--tint-bg': tint[0], '--tint-fg': tint[1], fontSize: `${Math.round(size * 0.42)}px` }"
     aria-hidden="true">{{ letter }}</span>
 </template>
 <style scoped>
-.scene-avatar{display:inline-grid;place-items:center;flex:none;border-radius:32%;font-weight:700;line-height:1}
+.scene-avatar{background:var(--tint-bg);color:var(--tint-fg);display:inline-grid;place-items:center;flex:none;border-radius:32%;font-weight:700;line-height:1}
 </style>

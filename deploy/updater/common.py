@@ -1,6 +1,7 @@
 """Shared release protocol for the native and container update controller."""
 
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,15 @@ def repository(reference: str) -> str:
     name = reference.split('@', 1)[0]
     head, slash, last = name.rpartition('/')
     return head + slash + last.split(':', 1)[0]
+
+
+def host_status(url: str) -> dict | None:
+    """One read of the host's public readiness answer, or None while the host does not answer."""
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return json.load(response)
+    except (OSError, http.client.HTTPException, ValueError):
+        return None
 
 
 def read_json(path: Path):

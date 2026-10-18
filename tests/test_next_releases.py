@@ -75,5 +75,46 @@ def test_update_status_reports_version_and_check_without_network(tmp_path):
         body = client.get('/api/host/updates').json()
     assert check.enabled is False
     assert body['version'] == current_version() and body['managed'] is False and body['status'] is None
+    assert body['notice'] is None and body['rollback_loses_data'] is False
     assert body['check'] == {'enabled': False, 'current': current_version(), 'checked_at': None, 'error': None,
                              'latest': None, 'update_available': None, 'latest_prerelease': None}
+
+
+def test_managed_update_status_warns_that_rolling_back_loses_later_data(tmp_path):
+    """A real updater controller over HTTP; its status and the confirmation notice reach the panel."""
+    import sys
+    import threading
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'deploy/updater'))
+    import controller as updater
+    from common import write_json
+
+    write_json(tmp_path / 'deployment.json', {'mode': 'native', 'platform': 'linux', 'uv': 'uv', 'release_api': 'x'})
+    write_json(tmp_path / 'current.json', {'version': '0.1.0'})
+    (tmp_path / 'instance').mkdir()
+    control = updater.Controller(tmp_path)
+    write_json(control.state_file, {'status': 'rolled_back', 'stage': 'rolled_back', 'rolled_back_from': '0.2.0',
+                                    'error': '更新到 0.2.0 失败，已自动恢复到 0.1.0：TimeoutError: x'})
+    control.state = updater.read_json(control.state_file)
+    http = updater.server(control)
+    thread = threading.Thread(target=http.serve_forever)
+    thread.start()
+    def operator(request: Request) -> str:
+        return 'operator'
+
+    try:
+        app = FastAPI()
+        register_host_updates(app, root=tmp_path / 'instance', user=operator, check_enabled=False)
+        with TestClient(app) as client:
+            body = client.get('/api/host/updates').json()
+    finally:
+        http.shutdown()
+        http.server_close()
+        thread.join()
+        control.log.close()
+        control.records.close()
+    assert body['managed'] is True and body['rollback_loses_data'] is True
+    assert body['status']['status'] == 'rolled_back' and body['status']['actions'] == ['prepare']
+    assert body['status']['rolled_back_from'] == '0.2.0'
+    assert any('丢掉更新开始后写入的数据' in line for line in body['notice'])
+    assert any('backups/' in line for line in body['notice'])

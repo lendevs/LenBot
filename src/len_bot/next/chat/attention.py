@@ -2,7 +2,9 @@
 
 import asyncio
 import copy
+import logging
 import math
+import random
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -13,9 +15,11 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from .session import Chat
+from .declarations import AttentionArguments, Declared, declare, match_message, next_due, persisted, tick
+from .disposition import Disposition, allows
 from .recap import estimate_content, estimate_request
 from .scene_control import SceneControlArguments, TemporaryQuiet, require_control
-from ..models.limits import LimitReached
+from ..models.limits import BUDGET_CACHE_SECONDS, LimitReached, SpeechLimitReached, speech_quota
 from ..configuration.chat import Attention
 from ..platform.delivery import report_parts, split_expression
 from ..platform.messages import ChatMessage, Segment, plain_text
@@ -24,15 +28,28 @@ from .proactive import ProactiveStore, idle_text
 from .quiet import next_quiet_start, quiet_period
 from .schedule import effective_settings, check_creation, platform_role, wake_text
 from ..plugins.store import PluginStore
-from ..runtime.logs import log_context
+from ..runtime.logs import log_context, log_event
 from .schedule_store import ScheduleStore
 from ..prompt_files import read_prompt
 
 
-Channel = Literal["direct", "named", "focus", "ambient"]
-PRIORITY = {"direct": 0, "named": 1, "focus": 2, "ambient": 3}
+logger = logging.getLogger(__name__)
+
+Channel = Literal["direct", "named", "attention", "focus", "ambient", "explore"]
+PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
 HELP = re.compile(r"(?<!不)怎么|如何|为什么|有没有|帮我|帮忙|你们觉得")
+
+
+def wake_channel(*, scheduled: bool, notices: bool, events: bool, audio: bool, pending: str | None) -> str:
+    """The channel a turn is recorded under. An @ that also carries task results, plugin events or
+    audio is still a direct turn, so usage stats count it as @ (the other sources stay in channels)."""
+    if scheduled:
+        return "schedule"
+    if pending == "direct":
+        return "direct"
+    return ("task" if notices else "plugin" if events else "audio" if audio
+            else pending if pending else "resume")
 
 
 @dataclass
@@ -41,11 +58,14 @@ class PendingWake:
     first_at: float
     keywords: list[str] = field(default_factory=list)
     score: float | None = None
+    # A random exploration draw stays on the wake when a rule later takes over its channel.
+    explored: bool = False
 
 
 @dataclass
 class AttentionState:
     focus_started_at: float | None = None
+    focus_closed_at: float | None = None
     last_contact_at: float | None = None
     ambient_last_at: float | None = None
     silence_level: int = 0
@@ -56,12 +76,18 @@ class AttentionState:
     temporary_quiet: TemporaryQuiet | None = None
     # Operator switch from the panel: no turns until turned back on, without an end time.
     paused: bool = False
+    declared: Declared | None = None
+    disposition: Disposition | None = None
+    # A turn allowed to use the direct reserve (an @, reply, reminder or task result) was cut
+    # off by the speech limit; its resume keeps that right instead of queuing as ambient talk.
+    resume_reserve: bool = False
 
     def contact(self, at: float, duration: float) -> None:
         if self.last_contact_at is None or at > self.last_contact_at:
-            if self.last_contact_at is None or at > self.last_contact_at + duration:
+            if self.focus_closed_at is not None or self.last_contact_at is None or at > self.last_contact_at + duration:
                 self.focus_started_at = at
             self.last_contact_at = at
+            self.focus_closed_at = None
             self.silence_level = 0
 
     def offer(self, wake: PendingWake) -> None:
@@ -69,11 +95,13 @@ class AttentionState:
             self.pending = wake
             return
         words = sorted(set(self.pending.keywords + wake.keywords))
+        explored = self.pending.explored or wake.explored
         if PRIORITY[wake.channel] < PRIORITY[self.pending.channel]:
             self.pending = wake
         elif wake.channel == self.pending.channel:
             self.pending.first_at = min(self.pending.first_at, wake.first_at)
         self.pending.keywords = words
+        self.pending.explored = explored
 
 
 def is_direct(message: ChatMessage) -> bool:
@@ -86,6 +114,11 @@ def addressed_to_others(message: ChatMessage, bot_id: str) -> bool:
         return False
     return message.reply_to is not None or any(
         segment.type == "mention" and segment.data["user"] not in {"all", bot_id} for segment in message.segments)
+
+
+def open_for_ambient(state: AttentionState) -> bool:
+    """A random exploration wake still yields to the participation rule."""
+    return state.pending is None or state.pending.channel == 'explore'
 
 
 def participation_score(pending: list[tuple[ChatMessage, float]],
@@ -137,6 +170,7 @@ class SceneRunner:
         self.store, self.config = chat.store, chat.config
         self.settings = self.config.attention
         self.emit = emit
+        self.random = random.Random()
         self.changed = asyncio.Event()
         self.closing = False
         self.ready_for_turn = ready_for_turn
@@ -152,14 +186,28 @@ class SceneRunner:
                 saved["pending"] = PendingWake(**saved["pending"])
             if saved.get("temporary_quiet") is not None:
                 saved["temporary_quiet"] = TemporaryQuiet(**saved["temporary_quiet"])
+            if saved.get('declared') is not None:
+                saved['declared'] = Declared.load(saved['declared'])
+            if saved.get('disposition') is not None:
+                saved['disposition'] = Disposition(**saved['disposition'])
             self.state = AttentionState(**saved)
         restored = copy.deepcopy(self.state)
+        attention_enabled = (self.settings.declarations is not None
+                             and (chat.persona.tools == 'all' or 'attention' in chat.persona.tools))
+        self.enforcing = attention_enabled and self.settings.declarations.mode == 'enforce'
+        restored.declared = restored.declared or Declared() if attention_enabled else None
+        if self.settings.disposition is None:
+            restored.disposition = None
+        self.expire_attention(restored, self.now())
         if restored.pending is not None:
             channel = restored.pending.channel
             disabled = (self.settings.only_direct and channel != "direct"
                         or channel == "ambient" and self.settings.activity == 0
-                        or channel == "focus" and self.settings.focus_seconds == 0)
-            eligible = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids) is not None
+                        or channel == 'explore' and self.settings.explore_probability == 0
+                        or channel == "focus" and self.settings.focus_seconds == 0
+                        or channel == 'attention' and not self.enforcing)
+            eligible = (channel == 'attention' and bool(restored.declared and restored.declared.matches)
+                        or self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids) is not None)
             if disabled or not eligible:
                 restored.pending = None
         own_at = self.store.last_self_time(self.config.scene)
@@ -173,12 +221,14 @@ class SceneRunner:
                     seen = (seen + [(message, at)])[-20:]
                 self.offer_message(restored, message, at, seen, recent)
             # An empty state also records that older input was already considered.
-            self.store.save_attention(self.config.scene, asdict(restored))
+            self.store.save_attention(self.config.scene, persisted(restored))
             self.state = restored
         else:
             self.save_state(restored)
 
         self.chat.toolset.scene_control = self.control
+        if self.state.declared is not None:
+            self.chat.toolset.attention = self.declare
         self.chat.set_external_tools(list(self.chat.toolset.external.values()))
         self.resume = self.chat.restore()
 
@@ -245,8 +295,50 @@ class SceneRunner:
 
     def save_state(self, state: AttentionState) -> None:
         if state != self.state:
-            self.store.save_attention(self.config.scene, asdict(state))
+            self.store.save_attention(self.config.scene, persisted(state))
             self.state = state
+
+    def expire_attention(self, state: AttentionState, now: float) -> None:
+        if state.declared is not None:
+            for identifier in state.declared.expire(now):
+                log_event(logger, 'attention_intent', action='expired', id=identifier, at=now)
+            if state.pending is not None and state.pending.channel == 'attention' and not state.declared.matches:
+                state.pending = None
+        if state.disposition is not None and state.disposition.until <= now:
+            state.disposition = None
+
+    def declare(self, args: AttentionArguments, turn_id: str, call_id: str) -> dict:
+        state, now = copy.deepcopy(self.state), self.now()
+        self.expire_attention(state, now)
+        result = declare(state.declared, args, self.settings.declarations, now,
+                         lambda identifier: self.store.find_message(self.config.scene, identifier),
+                         source_turn=turn_id, source_call=call_id)
+        self.expire_attention(state, now)
+        self.save_state(state)
+        self.changed.set()
+        mode = self.settings.declarations.mode
+        log_event(logger, 'attention_intent', **result, mode=mode, turn_id=turn_id, tool_call_id=call_id, at=now)
+        return result if mode == 'context' else {**result, 'intents': state.declared.view(now)}
+
+    def local_allows(self, state: AttentionState, channel: str, message: ChatMessage, at: float) -> bool:
+        settings = self.settings.disposition
+        if settings is None:
+            return True
+        allowed = allows(state.disposition, channel, message.sender.uid, at)
+        log_event(logger, 'attention_local', channel=channel, allowed=allowed, mode=settings.mode,
+                  message_id=message.platform_message_id)
+        return allowed or settings.mode == 'record'
+
+    def attention_tick(self, state: AttentionState, now: float) -> None:
+        self.expire_attention(state, now)
+        settings = self.settings.declarations
+        if state.declared is None or settings.mode == 'context' or self.settings.only_direct:
+            return
+        matches = tick(state.declared, now)
+        for match in matches:
+            log_event(logger, 'attention_candidate', **match, mode=settings.mode)
+        if matches and self.enforcing:
+            state.offer(PendingWake('attention', now))
 
     def clear_quiet_wake(self, state: AttentionState, now: float, period: tuple[float, float] | None) -> None:
         wake = state.pending
@@ -257,6 +349,15 @@ class SceneRunner:
 
     def offer_message(self, state: AttentionState, message: ChatMessage, at: float,
                       pending: list[tuple[ChatMessage, float]], recent: list[tuple[ChatMessage, float]]) -> None:
+        self.expire_attention(state, at)
+        matches = []
+        settings = self.settings.declarations
+        if (state.declared is not None and settings.mode != 'context' and not message.is_self
+                and message.sender.uid not in self.settings.other_bot_ids and not self.settings.only_direct
+                and self.quiet_period(at) is None):
+            matches = match_message(state.declared, message, at)
+            for match in matches:
+                log_event(logger, 'attention_candidate', **match, mode=settings.mode)
         if is_direct(message):
             state.contact(at, self.settings.focus_seconds)
             state.silence_level = 0
@@ -275,14 +376,28 @@ class SceneRunner:
                  (word not in state.keyword_last or at >= state.keyword_last[word] + self.settings.keyword_cooldown_seconds)]
         if words:
             state.offer(PendingWake("named", at, words))
+        elif matches and self.enforcing:
+            state.offer(PendingWake('attention', at))
         elif (self.settings.focus_seconds > 0 and state.last_contact_at is not None
+              and (not self.settings.close_focus_on_silence or state.focus_closed_at is None)
               and state.focus_started_at <= at <= state.last_contact_at + self.settings.focus_seconds
-              and not addressed_to_others(message, self.config.bot_id)):
+              and not addressed_to_others(message, self.config.bot_id)
+              and self.local_allows(state, 'focus', message, at)):
             state.offer(PendingWake("focus", at))
-        elif state.pending is None and self.settings.activity > 0:
-            score = participation_score(pending, recent, self.settings, self.config.bot_id)
-            if score > self.settings.ambient_threshold:
+        elif open_for_ambient(state):
+            score = (participation_score(pending, recent, self.settings, self.config.bot_id)
+                     if self.settings.activity > 0 else None)
+            if (score is not None and score > self.settings.ambient_threshold
+                    and self.local_allows(state, 'ambient', message, at)):
+                log_event(logger, 'attention_ambient', score=score, threshold=self.settings.ambient_threshold,
+                          message_id=message.platform_message_id)
                 state.offer(PendingWake("ambient", at, score=score))
+            elif state.pending is None and self.settings.explore_probability > 0:
+                woke = self.random.random() < self.settings.explore_probability
+                log_event(logger, 'attention_explore', woke=woke, probability=self.settings.explore_probability,
+                          score=score, message_id=message.platform_message_id)
+                if woke:
+                    state.offer(PendingWake('explore', at, score=score, explored=True))
 
     def receive(self, raw: dict, *, ignore_other_scenes: bool = False) -> dict:
         message = parse_message(raw, own_message_ids=set())
@@ -325,7 +440,7 @@ class SceneRunner:
         # Batch statistics are only needed for a new, non-direct ambient opportunity.
         pending, recent = [], []
         if (wake and not is_direct(message) and not message.is_self and not self.settings.only_direct
-                and message.sender.uid not in self.settings.other_bot_ids and state.pending is None
+                and message.sender.uid not in self.settings.other_bot_ids and open_for_ambient(state)
                 and self.settings.activity > 0 and period is None):
             pending = self.store.pending_attention_sample(self.config.scene, self.settings.other_bot_ids, limit=19)
             pending.append((message, now))
@@ -333,7 +448,7 @@ class SceneRunner:
                                                exclude_uids=self.settings.other_bot_ids) + [(message, now)]
         if wake:
             self.offer_message(state, message, now, pending, recent)
-        snapshot = asdict(state) if state != self.state else None
+        snapshot = persisted(state) if state != self.state else None
         seq = self.store.enqueue(
             message, raw, now, attention_state=snapshot,
             plugin_claim=plugin_claim,
@@ -413,8 +528,9 @@ class SceneRunner:
             return max(wake.first_at, wake.first_at if self.state.ambient_last_at is None else
                        self.state.ambient_last_at + self.ambient_interval())
         latest = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids)
-        idle = getattr(self.settings, wake.channel + "_idle_seconds")
-        maximum = getattr(self.settings, wake.channel + "_max_seconds")
+        timing = 'focus' if wake.channel in {'attention', 'explore'} else wake.channel
+        idle = getattr(self.settings, timing + "_idle_seconds")
+        maximum = getattr(self.settings, timing + "_max_seconds")
         return min((wake.first_at if latest is None else latest) + idle, wake.first_at + maximum)
 
     def due_schedules(self, now: float) -> list[tuple[int, str]]:
@@ -438,6 +554,11 @@ class SceneRunner:
 
     def schedule_deadline(self, now: float) -> float | None:
         due_at = ScheduleStore(self.store).next_schedule_at(self.config.scene)
+        if self.state.declared is not None and not self.settings.only_direct:
+            attention_at = (min((intent.until for intent in self.state.declared.intents), default=None)
+                            if self.settings.declarations.mode == 'context' else next_due(self.state.declared))
+            if attention_at is not None:
+                due_at = attention_at if due_at is None else min(due_at, attention_at)
         if ((self.chat.tasks is not None and self.chat.tasks.records.pending_notices(self.config.scene))
                 or PluginStore(self.store).plugin_wake_pending(self.config.scene) or self.audio_ready()):
             due_at = now if due_at is None else min(now, due_at)
@@ -471,7 +592,10 @@ class SceneRunner:
             self.changed.clear()
             now = self.now()
             try:
-                self.chat.check_limits(model=True)
+                # Only the direct reserve stops every wake; other wakes are held below at the normal limit.
+                # Re-run on every wake-up and, after a settings save, by every runner at once:
+                # recent token totals are shared instead of re-aggregated each time.
+                self.chat.check_limits(model=True, direct=True, max_age=BUDGET_CACHE_SECONDS)
             except LimitReached as error:
                 if in_turn or self.closing or not wait:
                     return None
@@ -488,13 +612,24 @@ class SceneRunner:
             period = self.quiet_period(now)
             state = copy.deepcopy(self.state)
             self.clear_quiet_wake(state, now, period)
+            if period is None:
+                self.attention_tick(state, now)
             self.save_state(state)
             scheduled = self.due_schedules(now) if period is None else []
             task_notice = (period is None and self.chat.tasks is not None
                            and self.chat.tasks.records.pending_notices(self.config.scene))
             plugin_event = period is None and PluginStore(self.store).plugin_wake_pending(self.config.scene)
-            if scheduled or task_notice or plugin_event or (period is None and self.audio_ready()):
+            if scheduled or task_notice:
                 return self.store.pending_messages(self.config.scene), None, scheduled
+            if plugin_event or (period is None and self.audio_ready()):
+                # Audio transcripts and plugin events are not direct: they wait for the normal limit.
+                held = None if in_turn else self.speech_hold()
+                if held is None:
+                    return self.store.pending_messages(self.config.scene), None, scheduled
+                if self.closing or not wait:
+                    return None
+                await self.wait_speech(held, now)
+                continue
             notice_until = None
             resuming = self.resume and not in_turn
             if period is not None:
@@ -520,6 +655,12 @@ class SceneRunner:
                     if not wait:
                         return None
                     continue
+                held = None if in_turn else self.speech_hold()
+                if held is not None:
+                    if self.closing or not wait:
+                        return None
+                    await self.wait_speech(held, now)
+                    continue
                 pending = self.store.pending_messages(self.config.scene)
                 return (pending, None, []) if pending or resuming else None
             deadline = self.deadline()
@@ -535,6 +676,12 @@ class SceneRunner:
                 deadline = min(deadline, schedule_at)
             delay = deadline - now
             if delay <= 0:
+                held = None if in_turn else self.speech_hold()
+                if held is not None:
+                    if self.closing or not wait:
+                        return None
+                    await self.wait_speech(held, now)
+                    continue
                 if notice_until is None and await self.wait_audio(wait=wait):
                     if not wait:
                         return None
@@ -550,6 +697,23 @@ class SceneRunner:
                 await asyncio.wait_for(self.changed.wait(), timeout=delay)
             except TimeoutError:
                 pass  # The known burst/cooldown deadline has arrived.
+
+    def speech_hold(self) -> float | None:
+        """Until when a wake that is not direct waits for the normal hourly speech limit."""
+        if self.state.pending is not None and self.state.pending.channel == "direct":
+            return None
+        if self.resume and self.state.resume_reserve:
+            return None  # The admission check above already waits for the reserve.
+        return speech_quota(self.store, self.config).until(direct=False)
+
+    async def wait_speech(self, until: float, now: float) -> None:
+        schedule_at = self.schedule_deadline(now)
+        if schedule_at is not None:
+            until = min(until, schedule_at)
+        try:
+            await asyncio.wait_for(self.changed.wait(), timeout=max(0, until - self.now()))
+        except TimeoutError:
+            pass  # An old expression left the window, or a reminder is due.
 
     def batch(self, pending: list[tuple[int, ChatMessage, float]], reason: str) -> tuple[int, list[str]]:
         available = (self.config.compaction.input_tokens
@@ -572,14 +736,18 @@ class SceneRunner:
             contents.append(text)
         return pending[-1][0], contents
 
-    def consumed_state(self) -> AttentionState:
+    def consumed_state(self, *, new_turn: bool = False) -> AttentionState:
         state = copy.deepcopy(self.state)
+        if state.declared is not None:
+            state.declared.consume(new_turn=new_turn)
         if state.pending is not None:
             if state.pending.keywords:
                 state.keyword_last.update(dict.fromkeys(state.pending.keywords, self.now()))
             if state.pending.channel == "ambient":
                 state.ambient_last_at = self.now()
             state.pending = None
+        if new_turn:
+            state.resume_reserve = False
         return state
 
     def wake_reason(self) -> str:
@@ -591,7 +759,11 @@ class SceneRunner:
         if wake.channel == "focus":
             return "[对话继续]"
         if wake.channel == "ambient":
-            return f"[群里在聊；参与分 {wake.score:.3f}]"
+            return f"[群里在聊；参与分 {wake.score:.3f}]" if self.settings.ambient_score_in_reason else "[群里在聊]"
+        if wake.channel == 'explore':
+            return '[群里在聊]'
+        if wake.channel == 'attention':
+            return '[持续关注条件命中：请判断是否已完成，未完成则继续保留]'
         return "[直接唤醒：被 @、被回复或私聊]"
 
     async def append_during_turn(self, continuing: bool, turn_id: str) -> bool:
@@ -610,30 +782,59 @@ class SceneRunner:
         pending, _, scheduled = ready
         state = self.consumed_state()
         if pending:
+            if self.state.pending is not None and self.state.pending.channel == "direct":
+                self.chat.reserve_revoked = False
+                self.chat.turn_messages = 0
+            else:
+                # A reaction alone is not an answer. The turn already answered what woke it; ordinary follow-ups use the normal limit.
+                self.revoke_after_answer()
             self.chat.turn_channels.add(self.state.pending.channel if self.state.pending is not None else "in_turn")
+            if self.state.pending is not None and self.state.pending.explored:
+                self.chat.turn_channels.add('explore')
             through, contents = self.batch(pending, self.wake_reason())
             self.store.append_batch(self.config.scene, through, contents, turn_id=turn_id,
-                                    attention_state=asdict(state))
+                                    attention_state=persisted(state))
             if self.state.pending is not None and self.state.pending.channel == "direct":
                 self.chat.direct_request = True
+        # A reminder or task result joining now is owed an answer from the reserve; audio and plugin
+        # events joining after the turn answered follow the normal limit, like chat follow-ups.
+        granted = False
         if scheduled:
+            granted = True
+            self.grant_reserve()
             self.chat.turn_channels.add("schedule")
             self.store.append_schedules(self.config.scene, scheduled, turn_id=turn_id)
         if self.chat.tasks is not None and self.quiet_period(self.now()) is None:
             notices = self.chat.tasks.records.pending_notices(self.config.scene)
             if notices:
+                granted = True
+                self.grant_reserve()
                 self.chat.turn_channels.add("task")
                 self.store.append_task_notices(self.config.scene, notices, turn_id=turn_id)
         if self.quiet_period(self.now()) is None:
             if self.audio_ready():
+                if not granted:
+                    self.revoke_after_answer()
                 self.chat.turn_channels.add("audio")
         events = PluginStore(self.store).pending_plugin_events(
             self.config.scene, include_events=self.quiet_period(self.now()) is None)
         if events:
+            if not granted:
+                self.revoke_after_answer()
             self.chat.turn_channels.add("plugin")
             self.store.append_plugin_events(self.config.scene, events, turn_id=turn_id)
-        self.state = state
+        self.save_state(state)
         return True
+
+    def grant_reserve(self) -> None:
+        self.chat.reserve_request = True
+        self.chat.reserve_revoked = False
+        self.chat.turn_messages = 0  # Not answered yet, like a new direct input.
+
+    def revoke_after_answer(self) -> None:
+        if self.chat.turn_messages:
+            self.chat.reserve_revoked = True
+            self.chat.reserve_request = False
 
     async def limit_notice(self, error: LimitReached) -> None:
         """At most one host explanation per blocked window, persisted before delivery."""
@@ -642,16 +843,22 @@ class SceneRunner:
             return
         if self.state.limit_notice_until is not None and self.state.limit_notice_until >= error.until:
             return
+        if isinstance(error, SpeechLimitReached):
+            # The operator's own words, or nothing.
+            text = self.config.limits.speech_notice_text
+            if text is None:
+                return
+        else:
+            until = datetime.fromtimestamp(error.until, ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
+            text = f"[宿主额度说明] {error} 本时段截至 {until}，未读消息保留。"
         state = copy.deepcopy(self.state)
         state.limit_notice_until = error.until
-        until = datetime.fromtimestamp(error.until, ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
-        text = f"[宿主额度说明] {error} 本时段截至 {until}，未读消息保留。"
         parts = [self.chat.expression.simulated_message([Segment("text", {"text": text})])]
-        entry = self.store.prepare_limit_notice(self.config.scene, asdict(state), text + "（尚未发送）")
+        entry = self.store.prepare_limit_notice(self.config.scene, persisted(state), text + "（尚未发送）")
         self.state = state
         try:
             async with asyncio.timeout(self.config.turn_timeout_seconds):
-                await self.chat.expression.send_prepared_expression(entry, parts, channels={"limit_notice"}, quota_notice=True)
+                await self.chat.expression.send_prepared_expression(entry, parts, channels={"limit_notice"}, fixed_notice=True)
         except Exception as failure:
             self.store.expression_error(entry, f"{type(failure).__name__}: {failure}")
             self.emit({"type": "limit_notice", "status": "failed", "error": f"{type(failure).__name__}: {failure}"})
@@ -670,7 +877,7 @@ class SceneRunner:
             state.quiet_notice_until = until
         entry_seq = self.store.append_quiet(
             self.config.scene, self.batch(pending, "[安静时段直接消息；本批未调用模型]"),
-            attention_state=asdict(state), note=note,
+            attention_state=persisted(state), note=note,
         )
         self.state = state
         status, error_text = "stored", None
@@ -678,7 +885,7 @@ class SceneRunner:
             try:
                 async with asyncio.timeout(self.config.turn_timeout_seconds):
                     content, status = await self.chat.expression.send_prepared_expression(
-                        entry_seq, parts, prefix=prefix, channels={"quiet_notice"})
+                        entry_seq, parts, prefix=prefix, channels={"quiet_notice"}, fixed_notice=True)
             except LimitReached as error:
                 status, error_text = "limited", f"{type(error).__name__}: {error}"
             except TimeoutError as error:
@@ -699,14 +906,15 @@ class SceneRunner:
                    "quiet_until": datetime.fromtimestamp(until, ZoneInfo(self.config.timezone)).isoformat()})
 
     async def _turn(self, channel: str, **turn) -> None:
-        state = self.consumed_state()
+        state = self.consumed_state(new_turn=True)
         contact_before = state.last_contact_at
         self.state, self.resume = state, False
+        self.chat.toolset.turn_disposition = None
         # The turn adds its own ID inside; this block drops it again once the turn ends.
         with log_context(scene=self.config.scene):
             result = await self.chat.run_turn(append_new=self.append_during_turn,
                                               wait_for_messages=self.wait_for_messages,
-                                              attention_state=asdict(state), channel=channel, **turn)
+                                              attention_state=persisted(state), channel=channel, **turn)
         state = copy.deepcopy(self.state)
         own_at = self.store.last_self_time(self.config.scene)
         if own_at is not None:
@@ -718,9 +926,37 @@ class SceneRunner:
             cap = math.ceil(math.log2(self.settings.ambient_max_interval_seconds)
                             - math.log2(self.settings.ambient_min_interval_seconds))
             state.silence_level = min(state.silence_level + 1, cap)
+            if channel == 'focus' and self.settings.close_focus_on_silence and 'direct' not in self.chat.turn_channels:
+                state.focus_closed_at = self.now()
+                # Messages arriving during the final request must also leave focus.
+                if state.pending is not None and state.pending.channel == 'focus':
+                    first_at = state.pending.first_at
+                    state.pending = None
+                    if self.settings.activity > 0:
+                        pending = self.store.pending_attention_sample(self.config.scene, self.settings.other_bot_ids)
+                        recent = self.store.attention_sample(self.config.scene, exclude_uids=self.settings.other_bot_ids)
+                        score = participation_score(pending, recent, self.settings, self.config.bot_id)
+                        if score > self.settings.ambient_threshold:
+                            state.offer(PendingWake('ambient', first_at, score=score))
+        if self.settings.disposition is not None and result['status'] == 'settled':
+            state.disposition = self.chat.toolset.turn_disposition
+            log_event(logger, 'attention_disposition', turn_id=result['turn_id'],
+                      mode=self.settings.disposition.mode,
+                      value=None if state.disposition is None else asdict(state.disposition))
+            # A final expression may have received follow-ups before its disposition was adopted.
+            if (self.settings.disposition.mode == 'enforce' and state.pending is not None
+                    and state.pending.channel in {'focus', 'ambient'}):
+                channel_pending = state.pending.channel
+                pending_messages = self.store.pending_attention_sample(self.config.scene, self.settings.other_bot_ids)
+                if not any(allows(state.disposition, channel_pending, message.sender.uid, self.now())
+                           for message, _ in pending_messages):
+                    state.pending = None
+        # Only an unanswered reserve request resumes from the reserve; an answered one goes on at the normal limit.
+        state.resume_reserve = (result["status"] == "limited" and self.chat.speech_reserve
+                                and self.chat.turn_messages == 0)
         # Preserve restart eligibility without treating a timeout as new input.
         pending_wake = self.store.end_turn(result["turn_id"], result["status"], result["error"],
-                                           attention_state=asdict(state))
+                                           attention_state=persisted(state))
         self.state = state
         if result["status"] == "limited":
             self.resume = True
@@ -729,7 +965,9 @@ class SceneRunner:
         result["silence_level"] = state.silence_level
         self.emit(result)
         if result["status"] == "limited" and channel == "direct":
-            await self.limit_notice(LimitReached(result["error"], result["limit_until"]))
+            await self.limit_notice(SpeechLimitReached(result["error"], result["limit_until"], direct=True)
+                                    if result["limit_kind"] == "speech" else
+                                    LimitReached(result["error"], result["limit_until"]))
         if self.chat.toolset.pause_after_turn:
             self.chat.toolset.pause_after_turn = False
             self.set_paused(True)
@@ -755,6 +993,9 @@ class SceneRunner:
         temporary = self.state.temporary_quiet
         if wake_at is not None and temporary is not None and now < temporary.until:
             wake_at = max(wake_at, temporary.until)
+        held = speech_quota(self.store, self.config).until(direct=False)
+        if wake_at is not None and held is not None:
+            wake_at = max(wake_at, held)
         return wake_at, observe_until
 
     async def proactive_turn(self) -> None:
@@ -810,18 +1051,21 @@ class SceneRunner:
                                if self.chat.tasks is not None and not quiet else [])
                     events = PluginStore(self.store).pending_plugin_events(self.config.scene, include_events=not quiet)
                     audio = not quiet and self.audio_ready()
-                    channel = ("system" if scheduled or notices or events or audio
-                               else self.state.pending.channel if self.state.pending else "resume")
+                    channel = wake_channel(scheduled=bool(scheduled), notices=bool(notices), events=bool(events),
+                                           audio=bool(audio), pending=self.state.pending.channel if self.state.pending else None)
                     channels = {name for name, present in (
                         ("schedule", scheduled), ("task", notices), ("plugin", events), ("audio", audio), ("resume", self.resume))
                         if present}
                     if self.state.pending is not None:
                         channels.add(self.state.pending.channel)
+                        if self.state.pending.explored:
+                            channels.add('explore')
                     reason = ("[恢复未结束的对话]" if self.resume
-                              else "[此前未触发唤醒的消息]" if channel == "system" and self.state.pending is None
+                              else "[此前未触发唤醒的消息]" if channel in {"schedule", "task", "plugin", "audio"} and self.state.pending is None
                               else self.wake_reason())
                     batch = self.batch(pending, reason) if pending else None
-                    direct = self.state.pending is not None and self.state.pending.channel == "direct"
+                    direct = ((self.state.pending is not None and self.state.pending.channel == "direct")
+                              or (self.resume and self.state.resume_reserve))
                     wake_received_at = (self.state.pending.first_at
                                         if not scheduled and self.state.pending is not None else None)
                     await self._turn(channel, batch=batch, scheduled=scheduled, task_notices=notices,

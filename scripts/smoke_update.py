@@ -140,17 +140,15 @@ def run(artifacts: Path, work: Path) -> dict:
             action('prepare', {'tag': broken_manifest['tag']})
             finish('prepared')
             action('apply', {})
-            failure = finish('failed')
-            assert failure['snapshot_complete'] and failure['stopped']
-            assert 'exited' in failure['error']
-            action('restore', {})
-            finish('restored')
-            action('start', {})
-            finish('complete')
+            # The broken release does not start; the updater restores the snapshot and starts 0.0.0 by itself.
+            rolled = finish('rolled_back')
+            assert rolled['current_version'] == '0.0.0' and not rolled['stopped'] and rolled['actions'] == ['prepare']
+            assert 'exited' in rolled['error'] and rolled['rolled_back_from'] == broken_manifest['version']
             assert marker.read_text(encoding='utf-8') == 'before upgrade'
+            check_panel(panel_port, 'smoke', 'smoke-password', lambda: process.poll() is None)
             return {'baseline': '0.0.0', 'target': manifest['version'], 'installed': True,
                     'upgrade': 'ready', 'restore': 'data and old program restored', 'restart': 'ready',
-                    'startup_failure': 'reported while recovery remains available', 'failed_update_restore': 'ready'}
+                    'startup_failure': 'rolled back to the previous program automatically', 'failed_update_rollback': 'ready'}
         finally:
             process.send_signal(signal.CTRL_BREAK_EVENT if sys.platform == 'win32' else signal.SIGTERM)
             process.wait(timeout=190)

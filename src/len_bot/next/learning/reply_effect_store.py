@@ -18,7 +18,7 @@ OBSERVE_MESSAGES = 5
 REACTIONS = ("agree", "continue", "correct", "negative", "unrelated", "uncertain")
 # Derived states shown next to model reactions; they are never model output.
 STATES = ("observing", "no_messages", "waiting", "failed")
-CHANNELS = ("direct", "named", "focus", "ambient", "schedule", "task", "resume", "in_turn", "quiet_notice",
+CHANNELS = ("direct", "named", "focus", "ambient", "explore", "schedule", "task", "resume", "in_turn", "quiet_notice",
             "proactive", "plugin", "audio")
 CALL_SUMMARY_COLUMNS = "id,scene,effect_ids,started,ended,status,model_started,usage,tokens,error"
 STATE_SQL = (

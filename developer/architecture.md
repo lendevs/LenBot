@@ -12,7 +12,7 @@ LenBot 是一个单进程的宿主程序，按群聊场景组织。
 - 宿主不替模型判断语境，只负责三件事，即真实身份、会话连续性和执行状态。
 
 ```text
-OneBot ──> 平台适配器 ──> 消息入库 ──┬─> 插件规则直接处理（不经过模型）
+OneBot／Telegram ──> 平台适配器 ──> 消息入库 ──┬─> 插件规则直接处理（不经过模型）
                                     └─> 注意力决定开轮 ──> 主脑工具循环 ──> 表达／工具／任务
                                                               ^
                        插件事件、任务事件、提醒 ───────────────┘
@@ -24,7 +24,10 @@ OneBot ──> 平台适配器 ──> 消息入库 ──┬─> 插件规则�
 
 ## 平台
 
-`platform/` 把平台的原生事件转换为统一的消息和通知。目前只有 OneBot 适配器，QQ 的消息段和接口只出现在 `platform/onebot*.py` 中。
+`platform/` 把平台的原生事件转换为统一的消息和通知。运行时只认 `platform/adapter.py` 中的 `PlatformAdapter` 协议（连接、等待、解析、身份核对、发消息、上传文件、读取场景名称和原生调用），由 `open_platform` 按配置选择 OneBot 或 Telegram 适配器，一个实例只接一个平台。平台调用失败统一抛出 `PlatformCallError`，`submitted` 说明请求是否可能已经送达。QQ 的消息段和接口只出现在 `platform/onebot*.py` 中，Telegram 的只出现在 `platform/telegram.py` 中。
+
+- Telegram 适配器用 Bot API 的 `getUpdates` 长轮询收消息，启动时用 `getMe` 核对 `bot_id`，第一次 `getUpdates` 成功后才标记连上。出错时标记断开并按 1 秒到 30 秒退避重试；401 和 409 不重试，传输结束。
+- 只有 `delivery` 与平台一致（`onebot` 或 `telegram`）时才真正发送；OneBot 专有的平台工具仍只在 `onebot` 下开放。
 
 - 账号写成 `平台:账号`，例如 `onebot:70001`。
 - 场景写成 `平台:group:群号` 或 `平台:private:账号`。
@@ -37,6 +40,7 @@ OneBot ──> 平台适配器 ──> 消息入库 ──┬─> 插件规则�
 | 模块 | 职责 |
 |---|---|
 | `runtime/network.py` | 连接平台，把消息分发给各个场景 |
+| `chat/commands.py` | 群里以 `/` 开头的宿主命令，直接回复，不唤醒主脑 |
 | `chat/attention.py` | 决定什么时候开始一轮回复 |
 | `chat/session.py` | 主脑的工具循环 |
 | `chat/context.py` | 组装模型请求 |
@@ -45,6 +49,24 @@ OneBot ──> 平台适配器 ──> 消息入库 ──┬─> 插件规则�
 ### 会话
 
 `messages` 保存真实的收发记录，`mind_entries` 保存已经交给模型的批次和完整的工具交换。轮次只是执行单位，一轮结束不会清空会话。
+
+`turns.wake_channel` 保存开轮时的唤醒方式；轮次中合并进来的其他唤醒仍保存在表达的渠道记录中，不改开轮归类。用量页按群、开轮日期和方式统计一次轮次是否有成功表达，以及该轮全部主脑请求的输入和缓存 token。
+
+离线核对注意力规则时，运行 `uv run --no-sync python -m len_bot.next.maintenance.replay_attention . --date 2026-10-08 --output state/attention-replay/2026-10-08 --aliases 小然 然然`。它只读数据库，不调用模型，输出 `baseline.json`、`reduced_wakes.json`（关闭 focus 后会减少的叫醒）、`lost_speech.json`（其中实际曾经发言的轮次，带消息批次和表达原文）、`alias_messages.json` 和 `summary.json`。清单保留在实例目录，不提交真实群聊内容。
+
+回放沿用 Bot 的实际发言和直接叫醒来重新开启 focus，不预测 ambient 会不会插话，也不预测移除一轮后模型会如何回复。`--aliases` 只列出字面匹配的消息供检查，不改变角色，也不跳过点名冷却和场景设置。
+
+`Attention.close_focus_on_silence` 默认开启：focus 轮次 settled、没有任何表达且没有工具失败时，保存 `AttentionState.focus_closed_at`；本轮期间有新的直接联系或 Bot 发言时保持开启。关闭后新消息以及轮次尾部尚未消费的 focus 消息照常参加 ambient 打分。直接消息和点名优先级不变，下一次 Bot 发言或直接联系清除关闭时间。该字段保存在原有注意力 JSON 中，旧状态缺少字段时默认未关闭，不增加表或格式编号。
+
+`Attention.explore_probability` 默认 0。大于 0 时，不在 focus 内、参与分没有达到门槛、也没有待处理唤醒的群友消息，按这个概率开启一次 `explore` 唤醒，用来收集主脑在规则不叫醒时会不会做事的样本。它按 focus 的空闲和最长等待合批，标签为 `[群里在聊]`，不显示参与分；之后到达的消息若达到参与分门槛，改为 ambient 唤醒。explore 轮次沉默不提高 ambient 的退避等级。每次抽样写入 `attention_explore` 日志（是否叫醒、概率、参与分、消息 ID），用于事后计算样本权重。
+
+`Attention.ambient_score_in_reason` 默认开启，ambient 唤醒的标签为 `[群里在聊；参与分 x]`。关闭后 ambient 和 explore 一样只显示 `[群里在聊]`：主脑收到的唤醒文本不再提示规则认为该说话，采集到的决定可以和 explore 放在同一条件下比较。不论开关，参与分达到门槛时都写入 `attention_ambient` 日志（参与分、门槛、消息 ID）。
+
+请求的最后一条参考末尾显示 `<当前关注>`，列出对话继续的截止时间或关闭状态。读取当前注意力状态，不将它写入稳定的 system、聊天历史或回想。
+
+### 持续关注与局部收尾
+
+`attention.declarations` 开启后，允许 `attention` 工具的角色可以创建跨回合意图；`attention.disposition` 独立控制本轮收尾的 `open/closed`。两项均默认关闭。当前交互结束不会删除仍在等待的意图，条件命中也不自动视为任务完成。配置、工具和调度语义见[持续关注](attention.md)。
 
 ### 请求顺序
 
@@ -182,6 +204,7 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 - `owners` 是全局主人。
 - 场景管理员、白名单、黑名单和群角色参与各项能力的判断。
 - 群里的管理工具只对主人和全局管理员开放。
+- 群内命令分四级：所有人、本群聊天管理（`chat_control_roles`，与临时安静工具相同）、聊天开关与新上下文（主人和全局管理员；`commands.group_managers_chat_reset` 打开时加上群主和群管理员）、主人和全局管理员（与管理工具相同）。群角色取这条消息自带的身份。没有权限或不认识的命令不由宿主回复，照常交给会话。
 
 宿主、面板和维护命令都必须先获取实例锁 `.lenbot-instance.lock`，防止同一个实例被启动两次。
 

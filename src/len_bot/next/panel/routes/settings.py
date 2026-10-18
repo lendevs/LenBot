@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ...configuration.types import STRICT
 from ...configuration.chat import (
@@ -29,7 +31,7 @@ from ...models.providers import PROTOCOLS, list_models
 from ...persona.profile import Persona
 from ...models.asr import AudioSettings
 from ...runtime.logs import LoggingSettings
-from ...models.limits import ResourceLimits
+from ...models.limits import ResourceLimits, apply_speech_limits
 from ...work.egress_policy import NetworkSettings
 from ...runtime.retention import RetentionSettings
 from ...tools.web_search import WebSearchSettings
@@ -130,6 +132,19 @@ class WorkerChange(BaseModel):
     worker: dict | None
 
 
+class SceneSpeechLimit(BaseModel):
+    """Follow the global hourly speech limit, use this group's own number, or leave the group unlimited."""
+    model_config = STRICT
+    mode: Literal["global", "custom", "unlimited"]
+    value: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def value_only_for_custom(self) -> "SceneSpeechLimit":
+        if (self.mode == "custom") != (self.value is not None):
+            raise ValueError("只有自定义条数需要填写 value")
+        return self
+
+
 class TaskSwitches(BaseModel):
     """Task switches and limits edited with the scene; roles and lists live on the permissions page."""
     model_config = STRICT
@@ -188,11 +203,17 @@ class ConnectionChange(BaseModel):
     access_token: str | None = Field(default=None, repr=False)
     owners: list[str]
     timezone: str
-    delivery: Literal["simulated", "onebot"]
+    delivery: Literal["simulated", "onebot", "telegram"]
     max_steps: int
     turn_timeout_seconds: float
     max_model_requests: int
     text_delivery: TextDelivery
+
+
+class CommandsChange(BaseModel):
+    """Only the scene-command switches the panel edits; the rest of ``commands`` keeps its saved value."""
+    model_config = ConfigDict(strict=True, extra="forbid")
+    group_managers_chat_reset: bool
 
 
 class PanelChange(BaseModel):
@@ -218,6 +239,11 @@ def _project(config: HostConfig) -> dict:
     if config.onebot is not None:
         onebot = config.onebot.model_dump(mode="json", exclude={"access_token"})
         onebot["access_token_configured"] = bool(config.onebot.access_token)
+    telegram = None
+    if config.telegram is not None:
+        # Edited in the config file only; the panel shows it so the connection page knows the platform.
+        telegram = config.telegram.model_dump(mode="json", exclude={"bot_token"})
+        telegram["bot_token_configured"] = bool(config.telegram.bot_token)
     return {
         "limits": config.limits.model_dump(mode="json"),
         "retention": None if config.retention is None else config.retention.model_dump(mode="json"),
@@ -227,6 +253,7 @@ def _project(config: HostConfig) -> dict:
             "bot_id": config.bot_id,
             "owners": config.owners,
             "onebot": onebot,
+            "telegram": telegram,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "max_steps": config.max_steps,
@@ -267,6 +294,7 @@ def _project(config: HostConfig) -> dict:
             }
             for scene, settings in config.scenes.items()
         },
+        "commands": config.commands.model_dump(mode="json"),
         "web_read": None if config.web_read is None else config.web_read.model_dump(mode="json"),
         "web_search": None if config.web_search is None else config.web_search.model_dump(mode="json"),
         "network": config.network.model_dump(mode="json"),
@@ -275,15 +303,45 @@ def _project(config: HostConfig) -> dict:
     }
 
 
+def limits_version(limits: ResourceLimits) -> str:
+    """Opaque tag of the saved limits; a panel tab sends it back so a stale snapshot cannot overwrite."""
+    canonical = json.dumps(limits.model_dump(mode="json"), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+class LimitsConflict(Exception):
+    """The saved limits changed since the client read them."""
+
+
+class LimitsChange(BaseModel):
+    """Some of ResourceLimits; unset fields keep their saved values."""
+    model_config = ConfigDict(strict=True, extra="forbid")
+    version: str | None = None
+    daily_tokens: int | None = Field(default=None, gt=0)
+    scene_daily_tokens: dict[str, int] | None = None
+    messages_per_hour: int | None = Field(default=None, ge=1)
+    scene_messages_per_hour: dict[str, int | None] | None = None
+    direct_reserve: int | None = Field(default=None, ge=0)
+    speech_notice_text: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def maps_are_not_null(self) -> "LimitsChange":
+        for name in ("scene_daily_tokens", "scene_messages_per_hour", "direct_reserve"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
+
+
 def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
     current, recorded = _project(running), _project(saved)
     return {
         "running": current,
         "saved": recorded,
+        "versions": {"limits": limits_version(saved.limits)},
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
-                for name in ("bot_id", "owners", "onebot", "timezone", "delivery", "max_steps",
+                for name in ("bot_id", "owners", "onebot", "telegram", "timezone", "delivery", "max_steps",
                              "turn_timeout_seconds", "max_model_requests", "text_delivery")
             ),
             "limits": running.limits != saved.limits,
@@ -295,6 +353,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
                 scene: current["scenes"].get(scene) != recorded["scenes"].get(scene)
                 for scene in sorted(current["scenes"].keys() | recorded["scenes"].keys())
             },
+            "commands": running.commands != saved.commands,
             "web_read": running.web_read != saved.web_read,
             "web_search": running.web_search != saved.web_search,
             "network": running.network != saved.network,
@@ -326,7 +385,8 @@ async def _body(request: Request, kind: type[BaseModel]) -> BaseModel:
 
 def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                            personas: Callable[[], dict[str, Persona]],
-                           user: Callable[[Request], str], write_lock: asyncio.Lock) -> None:
+                           user: Callable[[Request], str], write_lock: asyncio.Lock,
+                           on_speech_limits: Callable[[], None] = lambda: None) -> None:
     def learning_snapshot(scene: str, snapshot: dict) -> dict:
         if scene not in snapshot["saved"]["scenes"]:
             raise HTTPException(404, "此场景已从保存配置移除，运行学习配置保留到重启")
@@ -335,13 +395,16 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         return {"scene": scene, "running": current, "saved": recorded,
                 "restart_required": current != recorded}
 
-    async def save(edit: Callable[[dict, HostConfig], None]) -> dict:
+    async def save(edit: Callable[[dict, HostConfig], None], *, speech: bool = False) -> dict:
         async with write_lock:
             try:
                 candidate = await asyncio.to_thread(save_config, root, running, edit)
             except (ValueError, OSError) as error:
                 raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                     f"{type(error).__name__}: {error}") from error
+            if speech:
+                apply_speech_limits(running, candidate)
+                on_speech_limits()
             return _snapshot(running, candidate)
 
     @app.get("/api/host/settings")
@@ -370,8 +433,46 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
     @app.put("/api/host/settings/limits")
     async def limits(request: Request, _: str = Depends(user)):
-        change = await _body(request, ResourceLimits)
-        return await save(lambda source, saved: source.update(limits=change.model_dump(mode="json")))
+        # Partial update: only the fields in the body change. An optional "version" (from the
+        # snapshot's versions.limits) rejects the save with 409 when the limits changed meanwhile,
+        # so a stale panel tab cannot reset per-group settings it never showed.
+        change = await _body(request, LimitsChange)
+        fields = change.model_dump(mode="json", exclude_unset=True, exclude={"version"})
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            if change.version is not None and change.version != limits_version(saved.limits):
+                raise LimitsConflict
+            merged = saved.limits.model_dump(mode="json") | fields
+            try:
+                ResourceLimits.model_validate(merged)
+            except ValidationError as error:
+                raise ValueError(_validation_detail(error)) from error
+            source["limits"] = merged
+
+        try:
+            return await save(edit, speech=True)
+        except LimitsConflict:
+            async with write_lock:
+                saved = await asyncio.to_thread(_read_saved, root)
+            raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，这次提交的内容没有保存。请重新载入最新设置，重新填写后再保存。",
+                                      "snapshot": _snapshot(running, saved)}) from None
+
+    @app.put("/api/host/settings/limits/scenes/{scene}")
+    async def scene_speech_limit(scene: str, request: Request, _: str = Depends(user)):
+        change = await _body(request, SceneSpeechLimit)
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            if scene not in saved.scenes:
+                raise ValueError(f"保存配置中没有场景 {scene}")
+            if scene.split(":", 2)[1] != "group":
+                raise ValueError("发言上限只用于群聊")
+            table = source.setdefault("limits", {}).setdefault("scene_messages_per_hour", {})
+            if change.mode == "global":
+                table.pop(scene, None)
+            else:
+                table[scene] = change.value
+
+        return await save(edit, speech=True)
 
     @app.put("/api/host/settings/processing")
     async def processing(request: Request, _: str = Depends(user)):
@@ -585,6 +686,16 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 max_model_requests=change.max_model_requests,
                 text_delivery=change.text_delivery.model_dump(mode="json"),
             )
+
+        return await save(edit)
+
+    @app.put("/api/host/settings/commands")
+    async def put_commands(request: Request, _: str = Depends(user)):
+        change: CommandsChange = await _body(request, CommandsChange)
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            source["commands"] = {**saved.commands.model_dump(mode="json"),
+                                  "group_managers_chat_reset": change.group_managers_chat_reset}
 
         return await save(edit)
 

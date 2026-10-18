@@ -34,7 +34,8 @@ from ..chat.schedule_time import Cron, next_cron, parse_cron
 from ..chat.request_source import SOURCE_DESCRIPTION, source_message
 from ..runtime.logs import SECRETS, error_text, log_context, log_event, recorded_errors
 from ..tools.skills import Skill, load_plugin_skills
-from .manifest import Manifest, discover, read_manifest, redact_values, secret_values
+from .process import describe, proxy_class
+from .manifest import PERMISSION_TITLES, Manifest, discover, read_manifest, redact_values, secret_values
 from ..storage.store import encode
 from ...image_assets import MAX_IMAGE_BYTES, inspect_image
 from ..tools.http_read import fetch_public
@@ -73,6 +74,7 @@ class Background:
     last_started: float | None = None
     last_finished: float | None = None
     last_error: str | None = None
+    task: asyncio.Task | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -196,14 +198,15 @@ class PluginHost:
                 record.status = "stopped"
                 continue
             try:
-                self._load(record, found.get(name, []), values, settings.data_directory / name, core_tools)
+                self._load(record, found.get(name, []), values, settings.data_directory / name, core_tools,
+                           settings.disabled_rules.get(name, []))
             except Exception as error:
                 record.status, record.error = "failed", self.redact(name, f"{type(error).__name__}: {error}")
                 self._remove_entries(record)
                 logger.error("插件 %s 加载失败：%s", name, record.error)
 
     def _load(self, record: Loaded, directories: list[Path], values: dict, data_dir: Path,
-              core_tools: set[str]) -> None:
+              core_tools: set[str], disabled_rules: list[str] = (), described: list[dict] | None = None) -> None:
         if len(directories) != 1:
             raise ValueError("未在 plugins.paths 中找到" if not directories else
                              "多个目录提供同名插件：" + "、".join(map(str, directories)))
@@ -222,30 +225,22 @@ class PluginHost:
             parsed = manifest.values_model(self.config.scenes).model_validate(values)
         except ValidationError as error:
             raise ValueError(f"plugins.{record.name} 配置不合法：{error}") from error
-        module_name = f"lenbot_plugin_{record.name}"
-        spec = importlib.util.spec_from_file_location(module_name, directory / "__init__.py",
-                                                      submodule_search_locations=[str(directory)])
-        if spec is None or spec.loader is None:
-            raise ValueError(f"{directory} 缺少可导入的 __init__.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException:
-            del sys.modules[module_name]
-            raise
-        classes = [value for value in vars(module).values()
-                   if isinstance(value, type) and issubclass(value, Plugin) and value is not Plugin
-                   and (value.__module__ == module_name or value.__module__.startswith(module_name + "."))]
-        if len(classes) != 1:
-            raise ValueError(f"插件模块必须恰好定义一个 Plugin 子类，实际 {len(classes)} 个")
-        cls = classes[0]
+        if manifest.isolation == "process":
+            cls = proxy_class(directory, record.name, described)
+        else:
+            cls = self._import(directory, record.name)
+        unused = set(disabled_rules)
         for attribute in dir(cls):
             mark = getattr(getattr(cls, attribute), MARK, None)
             if mark is None:
                 continue
             if not inspect.iscoroutinefunction(getattr(cls, attribute)):
                 raise ValueError(f"{attribute} 必须是 async 函数")
+            rule = ("/" + mark[1] if mark[0] == "command" else mark[1] if mark[0] == "fullmatch"
+                    else mark[1].pattern if mark[0] == "regex" else None)
+            if rule is not None and rule in unused:
+                unused.discard(rule)
+                continue
             if mark[0] == "command":
                 if mark[1] in self.commands or mark[1] in record.commands:
                     raise ValueError(f"命令 /{mark[1]} 已由插件 {self.commands.get(mark[1], record.name)} 注册")
@@ -270,6 +265,9 @@ class PluginHost:
                     _arguments(mark[1], getattr(cls, attribute), needs_source=mark[4]), attribute, mark[4])
             else:
                 record.backgrounds.append(Background(attribute, mark[1]))
+        if unused:
+            logger.warning("插件 %s 没有这些规则，plugins.disabled_rules 里的条目未起作用：%s",
+                           record.name, "、".join(sorted(unused)))
         data_dir.mkdir(parents=True, exist_ok=True)
         record.context = PluginContext(name=record.name, config=parsed.model_dump(), data_dir=data_dir,
                                        enabled_scenes=record.scenes, host=self)
@@ -279,6 +277,39 @@ class PluginHost:
         self.fullmatches.update(dict.fromkeys(record.fullmatches, record.name))
         self.patterns.update(dict.fromkeys((item.expression.pattern for item in record.patterns), record.name))
         self.tool_owner.update(dict.fromkeys(record.tools, record.name))
+
+    @staticmethod
+    def _import(directory: Path, name: str) -> type[Plugin]:
+        module_name = f"lenbot_plugin_{name}"
+        spec = importlib.util.spec_from_file_location(module_name, directory / "__init__.py",
+                                                      submodule_search_locations=[str(directory)])
+        if spec is None or spec.loader is None:
+            raise ValueError(f"{directory} 缺少可导入的 __init__.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[module_name]
+            raise
+        classes = [value for value in vars(module).values()
+                   if isinstance(value, type) and issubclass(value, Plugin) and value is not Plugin
+                   and (value.__module__ == module_name or value.__module__.startswith(module_name + "."))]
+        if len(classes) != 1:
+            raise ValueError(f"插件模块必须恰好定义一个 Plugin 子类，实际 {len(classes)} 个")
+        return classes[0]
+
+    def worker_exited(self, name: str, text: str) -> None:
+        """An isolated plugin's process died: fail that plugin only and keep its error."""
+        record = self.plugins.get(name)
+        if record is None or record.status not in ("loaded", "running"):
+            return
+        record.status, record.error = "failed", self._record(record, "插件进程", RuntimeError(text))
+        # Its background loops would only fail against the dead worker every period until a reload.
+        for item in record.backgrounds:
+            if item.task is not None:
+                item.task.cancel()
+        self._notify()
 
     def _remove_entries(self, record: Loaded) -> None:
         for name in record.commands:
@@ -342,6 +373,13 @@ class PluginHost:
             raise RuntimeError(f"插件 {plugin} 未处于可运行状态：{record.status}")
         return record
 
+    def _permit(self, record: Loaded, permission: str) -> Loaded:
+        """A capability the manifest's ``permissions`` must list; manifests without the field keep all."""
+        if record.manifest is not None and not record.manifest.granted(permission):
+            raise PermissionError(f"插件 {record.name} 没有在 plugin.toml 的 permissions 中声明 {permission}"
+                                  f"（{PERMISSION_TITLES[permission]}）")
+        return record
+
     # KV runs in a worker thread: a lock wait in one plugin's file must not stall the event loop.
     async def get_kv(self, plugin: str, key: str, default: JsonValue) -> JsonValue:
         return await asyncio.to_thread(PluginKV(self._active(plugin).context.data_dir).get, key, default)
@@ -353,7 +391,7 @@ class PluginHost:
         return await asyncio.to_thread(PluginKV(self._active(plugin).context.data_dir).delete, key)
 
     async def fetch_image(self, plugin: str, url: str, timeout_seconds: float) -> bytes:
-        self._active(plugin)
+        self._permit(self._active(plugin), "network")
         async with asyncio.timeout(timeout_seconds):
             _, _, data = await fetch_public(url, timeout_seconds, lambda _type, _prefix: MAX_IMAGE_BYTES,
                                            fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url)
@@ -367,7 +405,7 @@ class PluginHost:
         return await self.send_parts(plugin, scene, [Text(text)], reply_to)
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
-        self._speaking(plugin, scene)
+        self._permit(self._speaking(plugin, scene), "send")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         safe_parts = [Text(self.redact(plugin, part.text)) if isinstance(part, Text)
@@ -376,7 +414,7 @@ class PluginHost:
         return await self.runtime.chats[scene].expression.send_plugin_content(plugin, safe_parts, reply_to=reply_to)
 
     def emit_event(self, plugin: str, scene: str, text: str) -> None:
-        self._speaking(plugin, scene)
+        self._permit(self._speaking(plugin, scene), "events")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         now = datetime.fromtimestamp(self.now(), ZoneInfo(self.scene_timezone(scene)))
@@ -387,14 +425,14 @@ class PluginHost:
         self._notify()
 
     def recent_messages(self, plugin: str, scene: str, limit: int) -> list[ChatMessage]:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "history")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         return self.runtime.store.recent(scene, limit)
 
     def messages_between(self, plugin: str, scene: str, after: float, before: float,
                          offset: int, limit: int) -> list[ChatMessage]:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "history")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         store = self.runtime.store
@@ -403,7 +441,7 @@ class PluginHost:
             offset=offset, limit=limit)]
 
     async def memory(self, plugin: str, scene: str, arguments: dict) -> str:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "memory")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         chat = self.runtime.chats[scene]
@@ -415,7 +453,7 @@ class PluginHost:
 
     async def generate(self, plugin: str, scene: str, prompt: str, role: GenerationRole,
                        system: str | None) -> str:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "generate")
         messages = ([] if system is None else [{"role": "system", "content": system}])
         messages.append({"role": "user", "content": prompt})
 
@@ -431,7 +469,7 @@ class PluginHost:
 
     async def delegate(self, plugin: str, scene: str, requester: str, goal: str, deliverable: str,
                        context: str, materials: Sequence[str]) -> dict:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), "delegate")
         if self.runtime.tasks is None:
             raise ValueError("当前宿主未启用独立工作任务")
         from ..work.tools import DelegateArguments
@@ -441,7 +479,7 @@ class PluginHost:
 
     def cron(self, plugin: str, name: str, scene: str, expression: str, timezone: str,
              handler: Callable[[Invocation], Awaitable[None]]) -> asyncio.Task:
-        record = self._active(plugin, scene)
+        record = self._permit(self._active(plugin, scene), "schedule")
         key = (scene, name)
         if key in record.crons:
             raise ValueError(f"插件 {plugin} 在 {scene} 已登记定点任务 {name}")
@@ -700,7 +738,8 @@ class PluginHost:
             record.error = None
             record.ready.set()
             for item in record.backgrounds:
-                task = asyncio.create_task(self._background(record, item))
+                task = item.task = asyncio.create_task(self._background(record, item),
+                                                       name=f"{record.name}:background:{item.method}")
                 self.tasks[task] = record.name
                 task.add_done_callback(lambda done: self.tasks.pop(done, None))
             self._notify()
@@ -790,7 +829,12 @@ class PluginHost:
                             for tool in self.runtime.mcp.tools_for(scene))
         try:
             directories = found.get(name, [])
-            self._load(record, directories, record.values, settings.data_directory / name, reserved)
+            described = None
+            if len(directories) == 1 and read_manifest(directories[0]).isolation == "process":
+                # Importing in a fresh interpreter takes up to DESCRIBE_SECONDS; other scenes keep running.
+                described = await asyncio.to_thread(describe, directories[0], name)
+            self._load(record, directories, record.values, settings.data_directory / name, reserved,
+                       settings.disabled_rules.get(name, []), described)
             if self.started or (self.runtime is not None and self.runtime.accepting):
                 await self.start_plugin(record)
         except Exception as error:
@@ -807,14 +851,38 @@ class PluginHost:
         if errors:
             raise ExceptionGroup("插件停止失败", errors)
 
+    def health(self, record: Loaded) -> dict:
+        """A summary the panel can colour without reading the error list.
+
+        failed and stopped follow the status; a running plugin is degraded while a background
+        loop or cron job is failing or it recorded an error within the last hour."""
+        now = self.now()
+        recent = [item for item in record.errors if now - item["at"] < 3600]
+        failing = ([f"后台 {item.method}" for item in record.backgrounds if item.last_error is not None]
+                   + [f"定点 {job.scene}/{job.name}" for job in record.crons.values() if job.last_error is not None])
+        if record.status in ("failed", "stopped"):
+            level = record.status
+        elif record.status == "loaded":
+            level = "starting"
+        else:
+            level = "degraded" if failing or recent else "ok"
+        return {"level": level, "errors_last_hour": len(recent), "failing": failing,
+                "last_error_at": record.errors[-1]["at"] if record.errors else None}
+
     def state(self) -> dict:
         plugins = []
         for record in self.plugins.values():
             plugins.append({
                 "name": record.name, "status": record.status, "error": record.error,
+                "health": self.health(record),
                 "directory": None if record.directory is None else str(record.directory),
                 "version": record.manifest.version if record.status == "running" else None,
                 "description": None if record.manifest is None else record.manifest.description,
+                "isolation": None if record.manifest is None else record.manifest.isolation,
+                # None: the manifest does not declare permissions and keeps every capability.
+                "permissions": (None if record.manifest is None or record.manifest.permissions is None else
+                                [{"name": name, "title": PERMISSION_TITLES[name]}
+                                 for name in record.manifest.permissions]),
                 "scenes": list(record.scenes),
                 "commands": [{"name": name, "description": description}
                              for name, (description, _) in record.commands.items()],

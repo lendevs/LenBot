@@ -13,7 +13,7 @@ import traceback
 
 from ..config import HostConfig, LabConfig, load_instance_config
 from ..instance_lock import instance_lock
-from ..storage.sqlite import connect
+from ..storage.sqlite import connect, fold_log
 from ..storage.store import FORMAT_VERSION, encode
 from ..work.materials import open_regular, require_directory
 from ..work.store import TERMINAL, TaskFile, _task
@@ -187,7 +187,10 @@ def main() -> None:
     if len(sys.argv) != 1:
         raise SystemExit('Task archive takes no arguments; stop the instance and configure its sole root file')
     with instance_lock(Path.cwd()):
-        print(encode(archive_tasks(load_instance_config(Path.cwd()))))
+        config = load_instance_config(Path.cwd())
+        # A crash leaves committed writes in the WAL; fold them in rather than refuse a stopped instance.
+        fold_log(config.database)
+        print(encode(archive_tasks(config)))
 
 
 if __name__ == '__main__':

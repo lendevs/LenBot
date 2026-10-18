@@ -291,6 +291,25 @@ def test_duplicate_message_rules_fail_plugin_configuration(tmp_path, decorator):
     assert "已注册" in host.plugins["duplicate"].error
 
 
+def test_disabled_rules_switch_off_single_message_rules(tmp_path, caplog):
+    extra = tmp_path / "personal"
+    extra.mkdir()
+    directory = _copy_sample(extra, "calendar")
+    (directory / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin, command, fullmatch\n'
+        'class Calendar(Plugin):\n'
+        '    @fullmatch("今日直播", "日历")\n    async def today(self, ctx):\n        pass\n'
+        '    @command("日程", "日程")\n    async def schedule(self, ctx, args):\n        pass\n', encoding="utf-8")
+    root = _root(tmp_path, {"paths": [str(extra)], "calendar": {},
+                            "disabled_rules": {"calendar": ["今日直播", "本周直播"]}}, ["calendar"])
+    host = PluginHost(load_host_config(root), core_tools=CORE)
+    record = host.plugins["calendar"]
+    assert record.status == "loaded"
+    assert "今日直播" not in record.fullmatches and "今日直播" not in host.fullmatches
+    assert "日程" in record.commands
+    assert "本周直播" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_stopped_plugin_context_loses_host_capabilities(tmp_path):
     root = _root(tmp_path, {"sample": {}}, ["sample"])

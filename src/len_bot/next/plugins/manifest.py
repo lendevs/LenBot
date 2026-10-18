@@ -171,6 +171,16 @@ class ModelInstructions(BaseModel):
         return value
 
 
+# Host capabilities a plugin may declare in ``permissions``; its own KV, data directory, commands,
+# message rules, tools and notices need none.
+PluginPermission = Literal["send", "events", "history", "memory", "generate", "delegate", "network", "schedule"]
+PERMISSION_TITLES: dict[str, str] = {
+    "send": "在启用的群里发消息", "events": "把插件事件交给 Bot 作背景", "history": "读取启用的群的聊天记录",
+    "memory": "读写启用的群的长期记忆", "generate": "调用模型做单次生成（计入用量）",
+    "delegate": "以请求人的名义发起后台任务", "network": "从公网获取图片", "schedule": "登记定点任务",
+}
+
+
 class Manifest(BaseModel):
     model_config = STRICT
     name: str
@@ -190,6 +200,20 @@ class Manifest(BaseModel):
     model: ModelInstructions | None = None
     dependencies: list[str] = Field(default_factory=list)
     config: dict[str, ConfigField] = Field(default_factory=dict)
+    # None: an older manifest without the field, which keeps every capability (shown as undeclared).
+    permissions: list[PluginPermission] | None = None
+    # process: run in a separate worker so a crash or hang cannot take the host down.
+    isolation: Literal["inline", "process"] = "inline"
+
+    @field_validator("permissions")
+    @classmethod
+    def distinct_permissions(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("permissions must not repeat")
+        return value
+
+    def granted(self, permission: str) -> bool:
+        return self.permissions is None or permission in self.permissions
 
     @field_validator('version')
     @classmethod

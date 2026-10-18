@@ -117,9 +117,11 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
             if notify is not None:
                 notify()
             raise
-        store.end_call(call_id, {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response}, reply.usage,
-                       tokens=token_record(reply.token_usage),
-                       append_to_scene=scene if append_to_scene else None, recap_for=recap_for)
+        # The reply is saved on the database thread; a cancellation here still leaves the call recorded as ended.
+        await store.call(store.end_call, call_id,
+                         {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response},
+                         reply.usage, tokens=token_record(reply.token_usage),
+                         append_to_scene=scene if append_to_scene else None, recap_for=recap_for)
         log_event(logger, 'model_call', call_id=call_id, role=role, model=binding.model, provider=binding.provider,
                   **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage))
         if notify is not None:

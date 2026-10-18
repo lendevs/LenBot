@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from datetime import datetime, timedelta
+import time
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -15,7 +16,10 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket
 from len_bot.web.shell import mount_panel
 from ..config import HostConfig
 from ..configuration.editing import _read_saved
+from ..models.limits import speech_quota
 from ..models.usage import instance_calls
+from ..memory.jobs import processing_records
+from ..storage.store import Store
 from .routes.capabilities import register_host_capabilities
 from .routes.persona import register_host_persona
 from .routes.persona_stickers import register_host_persona_stickers
@@ -33,6 +37,7 @@ from .routes.restart import register_host_restart
 from .routes.updates import register_host_updates
 from .routes.prompts import register_host_prompts
 from .routes.operations import register_host_operations
+from .routes.diagnostics import register_host_diagnostics
 from .routes.memory import register_host_memory
 from .routes.tasks import register_host_tasks
 from .routes.task_storage import register_host_task_storage
@@ -89,14 +94,21 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                           lifecycle=runtime.management.lifecycle,
                           user=user, write_lock=write_lock)
     register_host_operations(app, runtime=runtime, user=user)
+    register_host_diagnostics(app, user=user)
     register_host_trials(app, trials, user)
     register_host_browser(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_capabilities(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     releases = register_host_updates(app, root=root, user=user, check_enabled=config.panel.update_check)
     register_host_prompts(app, root=root, user=user)
+    def speech_limits_changed() -> None:
+        for runner in runtime.runners.values():
+            runner.changed.set()
+        notify()
+
     register_host_settings(app, root=root, running=config, user=user, write_lock=write_lock,
-                           personas=lambda: {scene: chat.persona for scene, chat in runtime.chats.items()})
+                           personas=lambda: {scene: chat.persona for scene, chat in runtime.chats.items()},
+                           on_speech_limits=speech_limits_changed)
     register_host_persona(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_persona_stickers(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_persona_avatar(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
@@ -126,7 +138,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "connection": {
-                "mode": "simulated" if config.onebot is None else config.onebot.mode,
+                "mode": ("telegram" if config.telegram is not None else "simulated" if config.onebot is None
+                         else config.onebot.mode),
                 "connected": False if runtime.platform is None else runtime.platform.connected,
                 "status": runtime.status,
                 "addresses": [] if runtime.platform is None else runtime.platform.addresses,
@@ -144,6 +157,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                  "chat_enabled": not runtime.runners[scene].state.paused}
                 for scene, settings in config.scenes.items()
             ],
+            "send_hold": runtime.send_hold.enabled,
             "memory_backend": None if config.memory is None else config.memory.backend,
             # Only what needs attention on the home page; details live on the capabilities page.
             "plugins": None if runtime.plugins is None else [
@@ -198,30 +212,45 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         items = await asyncio.to_thread(read_records, config.logging.directory, limit=limit, match=match, level=level)
         return {"items": items, "directory": str(config.logging.directory), "limit": limit}
 
+    overview_lock = asyncio.Lock()
+    overview_cached = None
+    overview_read_at = 0.0
+
+    def read_overview():
+        with Store(config.database, now=runtime.store.now, readonly=True) as store, processing_records(config.database, None) as records:
+            now = datetime.fromtimestamp(runtime.store.now(), ZoneInfo(config.timezone))
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            scenes = list(config.scenes)
+            # The last 24 whole hours, ending with the current one.
+            hour = now.replace(minute=0, second=0, microsecond=0).timestamp()
+            calls = instance_calls(store, config.database, None,
+                                   min(start.timestamp(), hour - 23 * 3600), end.timestamp(),
+                                   trials_root=root / '.runtime' / 'chat-tests')
+            stuck = [] if runtime.ingestor is None or records is None else [
+                {"scene": scene, "status": job["status"], "error": job["error"], "ended": job["ended"]}
+                for scene in scenes if scene in runtime.chats
+                for job in [records.latest(scene)]
+                if job is not None and job["status"] in {"failed", "interrupted"}]
+            return {"timezone": config.timezone, "sampled_at": now.timestamp(),
+                    "since": start.timestamp(), "until": end.timestamp(),
+                    **store.daily_overview(scenes, start.timestamp(), end.timestamp(), calls=calls),
+                    "hourly": store.hourly_overview(scenes, hour - 23 * 3600, 24, calls=calls),
+                    "activity": store.recent_activity(scenes, 12),
+                    "failed_tasks": store.failed_tasks(scenes, start.timestamp()),
+                    "memory_stuck": stuck,
+                    "speech_held": {scene: until for scene, chat in runtime.chats.items()
+                                    for until in [speech_quota(store, chat.config).until(direct=False)] if until is not None},
+                    "memory_index": None if runtime.memory is None else runtime.memory.backend.index_status()}
+
     @app.get("/api/host/overview")
     async def overview(_: str = Depends(user)):
-        now = datetime.now(ZoneInfo(config.timezone))
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1)
-        scenes = list(config.scenes)
-        # The last 24 whole hours, ending with the current one.
-        hour = now.replace(minute=0, second=0, microsecond=0).timestamp()
-        calls = instance_calls(runtime.store, config.database, None,
-                               min(start.timestamp(), hour - 23 * 3600), end.timestamp(),
-                               memory=runtime.memory, trials_root=root / '.runtime' / 'chat-tests')
-        stuck = [] if runtime.ingestor is None else [
-            {"scene": scene, "status": job["status"], "error": job["error"], "ended": job["ended"]}
-            for scene in scenes if scene in runtime.chats
-            for job in [runtime.ingestor.jobs.latest(scene)]
-            if job is not None and job["status"] in {"failed", "interrupted"}]
-        return {"timezone": config.timezone, "sampled_at": now.timestamp(),
-                "since": start.timestamp(), "until": end.timestamp(),
-                **runtime.store.daily_overview(scenes, start.timestamp(), end.timestamp(), calls=calls),
-                "hourly": runtime.store.hourly_overview(scenes, hour - 23 * 3600, 24, calls=calls),
-                "activity": runtime.store.recent_activity(scenes, 12),
-                "failed_tasks": runtime.store.failed_tasks(scenes, start.timestamp()),
-                "memory_stuck": stuck,
-                "memory_index": None if runtime.memory is None else await asyncio.to_thread(runtime.memory.backend.index_status)}
+        nonlocal overview_cached, overview_read_at
+        async with overview_lock:
+            if overview_cached is None or time.monotonic() - overview_read_at >= 5:
+                overview_cached = await asyncio.to_thread(read_overview)
+                overview_read_at = time.monotonic()
+            return overview_cached
 
     @app.get("/api/host/scenes/{scene}")
     async def scene_state(scene: str, _: str = Depends(user)):
@@ -256,7 +285,10 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     @app.get("/api/host/scenes/{scene}/turns/{turn_id}")
     async def turn(scene: str, turn_id: str, _: str = Depends(user)):
         configured_scene(scene)
-        result = runtime.store.turn_detail(scene, turn_id)
+        def read():
+            with Store(config.database, readonly=True) as store:
+                return store.turn_detail(scene, turn_id)
+        result = await asyncio.to_thread(read)
         if result is None:
             raise HTTPException(404, "当前场景没有这一轮")
         return result

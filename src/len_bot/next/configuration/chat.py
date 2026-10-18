@@ -145,6 +145,27 @@ class Proactive(BaseModel):
         return self
 
 
+class AttentionDeclarations(BaseModel):
+    """Persistent intents; absent means the tool and runtime are disabled."""
+    model_config = STRICT
+
+    mode: Literal['enforce', 'record', 'context'] = 'enforce'
+    max_minutes: float = Field(default=240.0, gt=0, allow_inf_nan=False)
+    max_intents: int = Field(default=5, ge=1, strict=True)
+    max_conditions: int = Field(default=4, ge=1, strict=True)
+    max_people: int = Field(default=5, ge=1, strict=True)
+    max_keywords: int = Field(default=5, ge=1, strict=True)
+
+
+class TurnDisposition(BaseModel):
+    """Optional local participation state, independent of persistent intents."""
+    model_config = STRICT
+
+    mode: Literal['enforce', 'record'] = 'enforce'
+    max_minutes: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    max_people: int = Field(default=5, ge=1, strict=True)
+
+
 class Attention(BaseModel):
     model_config = STRICT
 
@@ -157,14 +178,21 @@ class Attention(BaseModel):
     named_max_seconds: float = Field(default=8.0, gt=0, allow_inf_nan=False)
     keyword_cooldown_seconds: float = Field(default=60.0, ge=0, allow_inf_nan=False)
     focus_seconds: float = Field(default=180.0, ge=0, allow_inf_nan=False)
+    close_focus_on_silence: bool = True
     focus_idle_seconds: float = Field(default=4.0, ge=0, allow_inf_nan=False)
     focus_max_seconds: float = Field(default=12.0, gt=0, allow_inf_nan=False)
     activity: float = Field(default=0.3, ge=0, le=1, allow_inf_nan=False)
     ambient_threshold: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     ambient_min_interval_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     ambient_max_interval_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
+    # Off: a participation wake reads [群里在聊] like an exploration draw; the score stays in the log only.
+    ambient_score_in_reason: bool = True
+    # Per message outside focus that the participation rule does not admit; batches like focus.
+    explore_probability: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
     max_extensions: int = Field(default=2, ge=0)
     quiet_hours: QuietHours | None = None
+    declarations: AttentionDeclarations | None = None
+    disposition: TurnDisposition | None = None
 
     @field_validator("keywords")
     @classmethod
@@ -254,6 +282,8 @@ class SceneSettings(ScenePersona):
     learning: LearningSettings | None = None
     proactive: Proactive | None = None
     transcribe_audio: bool = False
+    # This scene only: turns run and are recorded, sends, uploads and reactions never reach QQ.
+    simulated_delivery: bool = False
     # Plugins enabled in this scene; each must be loaded by root ``plugins``.
     plugins: list[str] = Field(default_factory=list)
 

@@ -8,10 +8,10 @@ export const roleOptions = [
 const sections = {
   bot_id: '连接', owners: '连接', timezone: '连接', onebot: '连接', delivery: '连接',
   max_steps: '连接', turn_timeout_seconds: '连接', text_delivery: '连接', max_model_requests: '连接',
-  panel: '面板账号', permissions: '权限', models: '模型', limits: 'token 与发言上限', retention: '数据保留',
+  panel: '面板账号', permissions: '权限', models: '模型', limits: 'token 上限', retention: '数据保留',
   compaction: '上下文与媒体', images: '上下文与媒体', audio: '上下文与媒体', logging: '上下文与媒体',
   web_read: '网页读取', web_search: '网页搜索', network: '代理假 IP 网段', memory: '记忆', worker: '任务执行环境',
-  account_browser: '账号浏览器', plugins: '插件', mcp: 'MCP', prompts: '框架提示词',
+  commands: '群内命令', account_browser: '账号浏览器', plugins: '插件', mcp: 'MCP', prompts: '框架提示词',
 }
 
 export const messageLabel = value => statusText('message', value)
@@ -46,3 +46,6 @@ const toolNotes = {
 export const toolNote = name => toolNotes[name] || ''
 export const callRoleLabel = role => role.startsWith('plugin:') ? `插件 ${role.slice(7)}` : callRoles[role] || role
 export const noticeLabel = kind => notices[kind] || kind
+export const wakeLabel = channel => ({ direct: '被 @ 或回复', named: '点名', focus: '对话继续', ambient: '群里在聊', explore: '随机叫醒',
+  proactive: '主动开话题', schedule: '提醒', task: '任务', plugin: '插件', audio: '语音就绪', resume: '恢复对话',
+  manual: '手动操作', unknown: '历史未记录' }[channel] || channel)

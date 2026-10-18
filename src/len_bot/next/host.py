@@ -4,6 +4,7 @@ import asyncio
 from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from pathlib import Path
+from .runtime.loop_monitor import MONITOR
 from .runtime.signals import install_stop
 import traceback
 
@@ -75,6 +76,7 @@ async def run_with_panel(runtime: NetworkRuntime, server: HostPanelServer, lifec
 
     remove_signals = install_stop(lifecycle.stop)
     tasks = [asyncio.create_task(run_runtime()), asyncio.create_task(serve())]
+    monitor = asyncio.create_task(MONITOR.run())
     errors: list[BaseException] = []
     try:
         try:
@@ -88,6 +90,7 @@ async def run_with_panel(runtime: NetworkRuntime, server: HostPanelServer, lifec
         if errors:
             raise BaseExceptionGroup("Multi-scene host stopped with errors", errors)
     finally:
+        monitor.cancel()
         lifecycle.shutdown = None
         remove_signals()
 
@@ -114,7 +117,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
     with configure_logging(config.logging, credentials(config)), Store(config.database) as store:
         activate_prompts(root)
         PluginStore(store).recover_plugin_calls()
-        if config.onebot is None and (TaskStore(store).containers() or TaskStore(store).browser_in_use()):
+        if config.onebot is None and config.telegram is None and (TaskStore(store).containers() or TaskStore(store).browser_in_use()):
             raise ValueError('stdin模拟宿主不能清理原库中残留的容器或账号浏览会话；先在所属原实例明确处理，不使用导入的定位访问外部实例')
         budget = ModelBudget(config, store, None, root=config._instance_root)
         budget.trials_root = root / ".runtime" / "chat-tests"

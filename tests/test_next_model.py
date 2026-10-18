@@ -324,6 +324,35 @@ async def test_loopback_http_error_propagates_original_body_without_retry():
 
 
 @pytest.mark.asyncio
+async def test_configured_retry_resends_same_request_after_transient_errors():
+    statuses = [b"429 Too Many Requests", b"503 Service Unavailable", b"200 OK"]
+    payloads = []
+
+    async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        headers = await reader.readuntil(b"\r\n\r\n")
+        for line in headers.decode("ascii").split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                payloads.append(json.loads(await reader.readexactly(int(line.split(":", 1)[1]))))
+        status = statuses[len(payloads) - 1]
+        body = json.dumps(recorded_text_response()).encode() if status.startswith(b"200") else b'{"error":"busy"}'
+        writer.write(b"HTTP/1.1 " + status + b"\r\nContent-Type: application/json\r\n"
+                     + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    async with server:
+        port = server.sockets[0].getsockname()[1]
+        settings = ModelSettings(api="openai-chat", base_url=f"http://127.0.0.1:{port}/v1", api_key="replay-only",
+                                 model="recorded-model", retry_delays_seconds=(0, 0, 0))
+        async with ChatModel(settings) as model:
+            reply = await model.complete([{"role": "user", "content": "hello"}], [])
+    assert reply.text
+    assert len(payloads) == 3 and payloads[0] == payloads[1] == payloads[2]
+
+
+@pytest.mark.asyncio
 async def test_loopback_truncated_recorded_json_has_unknown_usage():
     recorded_bytes = RECORDED_RESPONSE.read_bytes()
     truncated = recorded_bytes[:recorded_bytes.index(b'"usage"')]

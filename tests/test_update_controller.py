@@ -1,4 +1,4 @@
-"""Every update failure leaves the user one concrete next action, and nothing is undone automatically."""
+"""Every update failure leaves the user one concrete next action; a failure after the snapshot is rolled back."""
 
 import json
 import os
@@ -26,17 +26,40 @@ RELEASES = [{'tag_name': 'v0.2.0', 'draft': False, 'prerelease': False, 'body': 
 
 
 class Backend:
-    """Records each step; ``fail`` names the step that raises."""
+    """Records each step; ``fail`` names the steps that raise.
 
-    def __init__(self, fail: str | None = None, blocked: list[str] | None = None):
+    Starting and readiness of the previous program are recorded as ``start_previous`` and
+    ``ready_previous``, so a test can break the new version and its rollback separately.
+    """
+
+    def __init__(self, fail: str | tuple[str, ...] | None = None, blocked: list[str] | None = None,
+                 platform: dict | None = None):
         self.fail, self.blocked = fail, blocked or []
         self.current = {'version': '0.1.0'}
         self.running, self.calls, self.discarded = True, [], []
+        # Per version: the QQ connection its readiness answer reports (None: no platform, 'absent': does not say),
+        # or an int n: not connected for the first n reads, then connected.
+        self.platform, self.reads = platform or {}, 0
+
+    def host_status(self):
+        if not self.running:
+            return None
+        value = self.platform.get(self.current['version'])
+        if value == 'absent':
+            return {'version': self.current['version'], 'ready': True}
+        if isinstance(value, int) and not isinstance(value, bool):
+            self.reads += 1
+            value = self.reads > value
+        return {'version': self.current['version'], 'ready': True,
+                'platform': None if value is None else {'connected': value, 'connected_since': None}}
 
     def step(self, name: str) -> None:
         self.calls.append(name)
-        if self.fail == name:
+        if name in ((self.fail,) if isinstance(self.fail, str) else self.fail or ()):
             raise RuntimeError(f'synthetic {name} failure')
+
+    def previous(self, name: str, version: str) -> str:
+        return name + ('_previous' if version == '0.1.0' else '')
 
     def metadata(self):
         return self.current
@@ -67,11 +90,11 @@ class Backend:
         self.current = target
 
     def start(self):
-        self.step('start')
+        self.step(self.previous('start', self.current['version']))
         self.running = True
 
     def ready(self, target):
-        self.step('ready')
+        self.step(self.previous('ready', target['version']))
 
     def restore(self, old, snapshot):
         self.step('restore')
@@ -169,22 +192,132 @@ def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fai
 
 
 @pytest.mark.parametrize('fail', ['migrate', 'select', 'start', 'ready'])
-def test_failure_after_snapshot_requires_restore_first(make, fail):
+def test_failure_after_snapshot_rolls_back_and_starts_the_previous_program(make, fail):
     backend = Backend(fail=fail)
     controller = make(backend)
     run(controller, 'prepare', {'tag': 'v0.2.0'})
     state = run(controller, 'apply')
-    assert state['status'] == 'failed' and state['snapshot_complete'] and state['actions'] == ['restore']
+    assert state['status'] == 'rolled_back' and state['current_version'] == '0.1.0' and backend.running
+    assert not state['stopped'] and not state['snapshot_complete'] and state['actions'] == ['prepare']
+    stage = 'start' if fail == 'ready' else fail  # readiness is waited for in the start stage
+    assert state['failed_stage'] == stage and state['rolled_back_from'] == '0.2.0'
+    assert state['error'] == f'更新到 0.2.0 失败，已自动恢复到 0.1.0：RuntimeError: synthetic {fail} failure'
+    assert backend.calls[backend.calls.index('restore'):] == ['restore', 'start_previous', 'ready_previous']
+    records = [json.loads(line) for line in (controller.root / 'updates/updater.jsonl').read_text().splitlines()]
+    assert [entry['stage'] for entry in records if entry['event'] == 'stage'][-3:] == [
+        'rollback', 'rollback_start', 'rolled_back']
+    assert any(entry['event'] == 'update_failed' and entry['stage'] == stage for entry in records)
+    # The failed candidate is discarded when an update is prepared again.
+    backend.fail = None
+    assert run(controller, 'prepare', {'tag': 'v0.2.0'})['status'] == 'prepared' and backend.discarded == ['0.2.0']
+
+
+def test_rollback_that_cannot_restore_keeps_the_manual_restore(make):
+    backend = Backend(fail=('ready', 'restore'))
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'failed' and state['stage'] == 'rollback' and state['actions'] == ['restore']
+    assert state['snapshot_complete'] and state['stopped']
+    assert '自动恢复快照也失败' in state['error'] and 'synthetic ready failure' in state['error']
     with pytest.raises(ValueError, match='现在不能启动程序'):
         controller.submit('start', {})
+    backend.fail = None
     restored = run(controller, 'restore')
     assert restored['current_version'] == '0.1.0' and restored['actions'] == ['start']
+    assert run(controller, 'start')['status'] == 'complete' and backend.running
+
+
+def test_rollback_whose_previous_program_does_not_start_offers_start(make):
+    backend = Backend(fail=('start', 'ready_previous'))
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'failed' and state['stage'] == 'rollback_start' and state['actions'] == ['start']
+    assert state['current_version'] == '0.1.0' and '已恢复快照，但旧版本没有启动' in state['error']
+    backend.fail = None
+    assert run(controller, 'start')['status'] == 'complete'
+
+
+def test_new_version_must_reconnect_to_qq_when_the_old_one_was_connected(make):
+    backend = Backend(platform={'0.1.0': True, '0.2.0': 3})
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'complete' and state['platform_before'] is True and state['warning'] is None
+    assert backend.reads == 4
+    stages = [json.loads(line).get('stage') for line in (controller.root / 'updates/updater.jsonl').read_text().splitlines()]
+    assert stages[-2:] == ['connect', 'complete']
+    assert run(controller, 'restore')['status'] == 'restored'  # the snapshot stays available after success
+
+
+def test_new_version_that_never_reconnects_to_qq_is_rolled_back(make):
+    backend = Backend(platform={'0.1.0': True, '0.2.0': False})
+    controller = make(backend)
+    controller.connect_seconds = 0.3
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'rolled_back' and state['failed_stage'] == 'connect'
+    assert state['current_version'] == '0.1.0' and backend.running
+    assert state['error'] == ('更新到 0.2.0 失败，已自动恢复到 0.1.0：'
+                              'TimeoutError: 新版本 0.3 秒内没有连上 QQ（更新前是连上的）')
+
+
+@pytest.mark.parametrize(('before', 'warning'), [(False, '更新前后都没有连上 QQ；'),
+                                                 (None, '新版本没有连上 QQ，更新前的程序没有报告连接状态'),
+                                                 ('absent', '新版本没有连上 QQ，更新前的程序没有报告连接状态')])
+def test_qq_offline_before_the_update_only_warns(make, before, warning):
+    backend = Backend(platform={'0.1.0': before, '0.2.0': False})
+    controller = make(backend)
+    controller.connect_seconds = 0.3
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'complete' and state['current_version'] == '0.2.0'
+    assert state['platform_before'] is (False if before is False else None)
+    assert state['warning'].startswith(warning) and state['warning'].endswith('请检查 QQ 端和连接设置。')
+    assert 'connect' not in [json.loads(line).get('stage') for line in
+                             (controller.root / 'updates/updater.jsonl').read_text().splitlines()]
+
+
+def test_native_reads_the_host_readiness_over_http(tmp_path):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Host(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = json.dumps({'version': '0.2.0', 'ready': True,
+                               'platform': {'connected': True, 'connected_since': 1.0}}).encode()
+            self.send_response(200 if self.path == '/api/host/ready' else 404)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Host)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    (tmp_path / 'instance').mkdir()
+    write_json(tmp_path / 'deployment.json', {'mode': 'native', 'platform': 'linux', 'uv': 'uv'})
+    write_json(tmp_path / 'instance/lenbot.config.json', {'panel': {'host': '0.0.0.0', 'port': server.server_port}})
+    with (tmp_path / 'log').open('w') as log:
+        native = Native(tmp_path, log)
+        try:
+            assert native.host_status()['platform'] == {'connected': True, 'connected_since': 1.0}
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+        assert native.host_status() is None
 
 
 @pytest.mark.parametrize(('stage', 'stopped', 'snapshot', 'actions'), [
     ('download', False, False, ['prepare']),
     ('backup', True, False, ['start']),
     ('migrate', True, True, ['restore']),
+    ('rollback', True, True, ['restore']),
+    ('rollback_start', True, False, ['start']),
 ])
 def test_controller_restart_mid_operation_keeps_a_way_out(make, stage, stopped, snapshot, actions):
     controller = make(Backend())

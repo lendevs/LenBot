@@ -140,6 +140,16 @@ def test_catalog_sync_pins_pushed_commits_and_replaces_entries_by_name(tmp_path)
     with pytest.raises(ValueError, match="version 是 '1.0.0'，plugin.toml 是 '1.1.0'"):
         sync.pinned_entry(plugin)
 
+    (plugin / 'plugin.toml').write_text('name = "sample"\nversion = "1.0.0"\ninterface = 1\npermissions = ["send"]\n')
+    run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-am', 'declared')
+    run('push', '-q', 'origin', 'main')
+    assert sync.pinned_entry(plugin)['permissions'] == ['send']
+    (plugin / 'catalog-entry.json').write_text(json.dumps({**entry, 'permissions': ['send', 'history']}))
+    run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-am', 'differs')
+    run('push', '-q', 'origin', 'main')
+    with pytest.raises(ValueError, match='permissions'):
+        sync.pinned_entry(plugin)
+
     catalog = {'version': 1, 'entries': [{'name': 'other'}, {'name': 'sample', 'ref': 'old'}]}
     merged = sync.merge(catalog, [{'name': 'sample', 'ref': 'new'}, {'name': 'added'}])
     assert merged['entries'] == [{'name': 'other'}, {'name': 'sample', 'ref': 'new'}, {'name': 'added'}]

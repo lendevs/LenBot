@@ -21,7 +21,10 @@ from ..config import LabConfig
 from .recap import CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction
 from ..learning.expression_selection import ExpressionService
 from ..tools.external_tools import ExternalTool
-from ..models.limits import LimitReached, check_speech
+from ..models.limits import LimitReached, ModelBudget, SpeechLimitReached, check_speech
+
+# Turn channels that may use the direct reserve besides direct wakes themselves.
+RESERVE_CHANNELS = frozenset({"schedule", "task"})
 from ..memory.service import MemoryService
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
@@ -75,6 +78,16 @@ class Chat:
         self.tasks = tasks
         self.slots = slots
         self.direct_request = False
+        self.turn_channel: str | None = None
+        # Set when non-direct input joins a turn after it already spoke: that follow-up
+        # traffic answers at the normal hourly limit, not from the direct reserve.
+        self.reserve_revoked = False
+        # Set when a reminder or task result joins a running turn: it may answer from the reserve
+        # like one that opened its own turn.
+        self.reserve_request = False
+        self.turn_expressions = 0
+        # Delivered messages since the latest direct input; reactions do not count as an answer.
+        self.turn_messages = 0
         # Actual wake channels seen by the current turn, snapshotted per expression.
         self.turn_channels: set[str] = set()
         self.on_update = on_update
@@ -88,6 +101,7 @@ class Chat:
             send_message=send_message,
             notify=self.notify, on_reply_sample=on_reply_sample, now=now,
             exclude_from_memory=None if memory is None else lambda seq: memory.jobs.exclude_records(config.scene, [seq]))
+        self.expression.reserve = lambda: self.speech_reserve
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
@@ -192,16 +206,17 @@ class Chat:
         token_scale = 1.0
         compacted = False
         while True:
-            AudioStore(self.store).append_late(self.config.scene)
-            recap, entries = self.store.active_history(self.config.scene)
+            await self.store.call(AudioStore(self.store).append_late, self.config.scene)
+            recap, entries = await self.store.read(self.store.active_history, self.config.scene)
             # Refresh only between model requests, never midway through a tool group.
-            self.toolset.discovered_tools = set(self.store.load_discovered_tools(self.config.scene))
-            state = turn_state(self.config, self.store, now=observed_at,
-                               expression_style=expression_style, recalled=recalled)
+            self.toolset.discovered_tools = set(await self.store.call(self.store.load_discovered_tools,
+                                                                      self.config.scene))
+            state = await self.store.call(turn_state, self.config, self.store, now=observed_at,
+                                          expression_style=expression_style, recalled=recalled)
             messages = await self.context.project(recap, entries, state)
-            estimated, method = request_estimate(self.config, self.store, self.mind, scene=self.config.scene,
-                                            role='mind', messages=messages, tools=self.toolset.tools,
-                                            output_tokens=0)
+            estimated, method = await self.store.call(
+                request_estimate, self.config, self.store, self.mind, scene=self.config.scene,
+                role='mind', messages=messages, tools=self.toolset.tools, output_tokens=0)
             if method == "usage_assisted":
                 token_scale = estimated / estimate_text_request(messages, self.toolset.tools, 0)
             elif compacted:
@@ -224,10 +239,24 @@ class Chat:
             if self.on_compaction is not None:
                 self.on_compaction()
 
-    def check_limits(self, *, model: bool = False) -> None:
-        check_speech(self.store, self.config)
+    @property
+    def speech_reserve(self) -> bool:
+        """Direct wakes (@, replies to the bot, private chat), reminders and task results may
+        still speak after the normal hourly limit. Audio transcripts and plugin events follow
+        the normal limit like any other wake."""
+        if self.reserve_revoked:
+            return False
+        return self.direct_request or self.reserve_request or self.turn_channel in RESERVE_CHANNELS
+
+    def check_limits(self, *, model: bool = False, direct: bool | None = None, max_age: float = 0.0) -> None:
+        """``max_age`` lets a polling caller reuse token totals a few seconds old."""
+        check_speech(self.store, self.config, direct=self.speech_reserve if direct is None else direct)
         if model and self.slots is not None and self.slots.admit is not None:
-            self.slots.admit(self.config.scene)
+            budget = getattr(self.slots.admit, '__self__', None)
+            if max_age > 0 and isinstance(budget, ModelBudget):
+                budget.check(self.config.scene, max_age=max_age)
+            else:
+                self.slots.admit(self.config.scene)
 
     async def run_turn(self, *, batch: tuple[int, list[str]] | None,
                        append_new: Callable[[bool, str], Awaitable[bool]],
@@ -239,13 +268,20 @@ class Chat:
                        channels: set[str] | None = None,
                        proactive: tuple[str, str, float] | None = None, channel: str | None = None) -> dict:
         self.direct_request = direct
+        self.turn_channel = channel
+        self.reserve_revoked = False
+        self.reserve_request = False
+        self.turn_expressions = 0
+        self.turn_messages = 0
         observed_at = self.now()
         self.turn_channels = set() if channels is None else set(channels)
         scene = self.config.scene
+        # Synchronous: a cancellation between this write and the try below would leave the turn open.
         turn_id = self.store.start_turn(scene, batch=batch, attention_state=attention_state,
                                        scheduled=scheduled, task_notices=task_notices,
                                        plugin_events=plugin_events,
-                                       wake_received_at=wake_received_at, proactive=proactive)
+                                       wake_received_at=wake_received_at, proactive=proactive,
+                                       wake_channel=channel or 'resume')
         add_context(turn_id=turn_id)
         # The link from waking input to this turn: message seqs, schedules, task notices and plugin events.
         log_event(logger, 'turn_start', channel=channel, channels=sorted(self.turn_channels), direct=direct,
@@ -257,21 +293,22 @@ class Chat:
         extensions = 0
         failed_tools = 0
         status, error_text = "step_limit", None
-        limit_until = None
+        limit_until = limit_kind = None
         phase = None
         try:
             async with asyncio.timeout(self.config.turn_timeout_seconds):
                 recalled = None
                 if self.memory is not None and self.memory.settings.auto_recall:
                     phase = '记忆自动召回'
-                    recall = await self.memory.recall(scene, self.store.recent_context_messages(scene, limit=8))
+                    recall = await self.memory.recall(
+                        scene, await self.store.call(self.store.recent_context_messages, scene, limit=8))
                     if recall["items"]:
                         recalled = encode({"backend": recall["backend"], "items": recall["items"]})
                 phase = None
                 self.expression_ids = None
                 learned = None
                 if self.expression_service is not None and scene in self.expression_service.scenes:
-                    recent = self.store.recent_context_messages(scene, limit=8)
+                    recent = await self.store.call(self.store.recent_context_messages, scene, limit=8)
                     query = "\n".join(self.context.render(message) for message in recent
                                       if not message.is_self and message.sender.uid not in self.config.attention.other_bot_ids)
                     if query:
@@ -311,22 +348,32 @@ class Chat:
                         except Exception as error:
                             group_failed = True
                             failed_tools += 1
-                            self.store.complete_tool(scene, call.id, f"{call.name} 失败：{type(error).__name__}: {error}")
+                            await self.store.call(self.store.complete_tool, scene, call.id,
+                                                  f"{call.name} 失败：{type(error).__name__}: {error}")
                             if isinstance(error, LimitReached):
                                 raise
                         else:
                             if expression is None:
                                 reaction = call.name == 'message_reaction'
-                                self.store.complete_tool(scene, call.id, content, discovered_tools=discovered,
-                                                         response_turn_id=turn_id if reaction else None)
+                                await self.store.call(self.store.complete_tool, scene, call.id, content,
+                                                      discovered_tools=discovered,
+                                                      response_turn_id=turn_id if reaction else None)
                                 if reaction:
                                     expressions.append(content)
+                                    self.turn_expressions += 1
                                     end_turn = end_turn or call.arguments.get('end_turn', True)
+                                elif call.name == 'attention':
+                                    end_turn = end_turn or call.arguments.get('end_turn', False)
+                                elif call.name == 'end_turn':
+                                    end_turn = True
                             else:
                                 content, delivery_status = await self.expression.deliver_expression(
                                     call.id, expression, turn_id=turn_id, channels=self.turn_channels,
                                 )
                                 expressions.append(content)
+                                self.turn_expressions += 1
+                                if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
+                                    self.turn_messages += 1
                                 if delivery_status in {"sent", "simulated"}:
                                     end_turn = end_turn or expression.end_turn
                                 else:
@@ -347,6 +394,8 @@ class Chat:
         except Exception as error:
             status = "limited" if isinstance(error, LimitReached) else "timeout" if isinstance(error, TimeoutError) else "error"
             limit_until = error.until if isinstance(error, LimitReached) else None
+            limit_kind = ("speech" if isinstance(error, SpeechLimitReached) else "tokens"
+                          if isinstance(error, LimitReached) else None)
             error_text = f"{type(error).__name__}: {error}"
             if phase is not None:
                 error_text = f'{phase}失败：{error_text}'
@@ -354,4 +403,4 @@ class Chat:
         return {"turn_id": turn_id, "status": status, "error": error_text,
                 "delivery": "simulated" if self.expression.send_message is None else "onebot",
                 "expressions": expressions, "extensions": extensions,
-                "failed_tools": failed_tools, "limit_until": limit_until}
+                "failed_tools": failed_tools, "limit_until": limit_until, "limit_kind": limit_kind}

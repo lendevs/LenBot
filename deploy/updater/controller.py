@@ -1,4 +1,15 @@
-"""One instance's explicit update, downtime progress, and snapshot recovery."""
+"""One instance's explicit update, downtime progress, and snapshot recovery.
+
+A failure after the snapshot (migration, version switch, start or readiness) is undone at once: the
+snapshot is restored, the previous program is started again, and the state becomes ``rolled_back``
+with the reason. Only when that recovery itself fails does the update stop at ``failed`` with the
+manual restore or start action.
+
+When the previous program was connected to QQ before the update, the new one must connect again
+within ``connect_seconds`` after it is ready, otherwise that is a failure and is rolled back too.
+When it was not connected (QQ side offline, deliberately disconnected, or a host too old to say),
+the update only records a warning, so a problem on the QQ side is not taken for a broken release.
+"""
 
 import argparse
 import json
@@ -29,6 +40,8 @@ def rotate(path: Path) -> None:
 
 
 class Controller:
+    connect_seconds = 120
+
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.root.joinpath('updates').mkdir(exist_ok=True)
@@ -144,7 +157,7 @@ class Controller:
                 version_key(tag.removeprefix('v'))
                 if not tag.startswith('v'):
                     raise ValueError('更新目标必须是发行标签')
-                previous = self.state.get('target') if self.state['status'] in ('prepared', 'failed') else None
+                previous = self.state.get('target') if self.state['status'] in ('prepared', 'failed', 'rolled_back') else None
                 self.stage('download', status='preparing', error=None, stopped=False, snapshot_complete=False)
                 operation = lambda: self.prepare(tag, previous)
             elif action == 'apply':
@@ -231,24 +244,67 @@ class Controller:
         if self.deployment['mode'] == 'docker':
             old = {**old, 'container': self.backend.info(old['container'])['Id']}
         self.state['old'] = old
-        self.stage('stop', stopped=True)
+        self.stage('stop', stopped=True, platform_before=self.platform_connected(), warning=None)
         self.backend.stop()
         snapshot = self.root / 'backups' / (time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
         self.stage('backup', snapshot=str(snapshot))
         self.backend.backup(snapshot)
         self.stage('migrate', snapshot_complete=True)
-        self.backend.migrate(target)
-        self.stage('select')
-        self.backend.select(target)
-        self.publish_reference()
-        self.stage('start')
         try:
+            self.backend.migrate(target)
+            self.stage('select')
+            self.backend.select(target)
+            self.publish_reference()
+            self.stage('start')
             self.backend.start()
             self.backend.ready(target)
-        except Exception:
-            self.backend.stop()
-            raise
+            self.await_platform()
+        except Exception as error:
+            self.record('update_failed', level='ERROR', error=error, stage=self.state['stage'])
+            self.roll_back(f'{type(error).__name__}: {error}')
+            return
         self.stage('complete', status='complete', stopped=False)
+
+    def platform_connected(self) -> bool | None:
+        """Whether the running host is connected to QQ; None when it does not answer or does not say."""
+        status = self.backend.host_status()
+        platform = None if status is None else status.get('platform')
+        return None if platform is None else bool(platform['connected'])
+
+    def await_platform(self) -> None:
+        if self.state.get('platform_before') is not True:
+            connected = self.platform_connected()
+            if connected is False:
+                self.state['warning'] = ('更新前后都没有连上 QQ' if self.state.get('platform_before') is False
+                                         else '新版本没有连上 QQ，更新前的程序没有报告连接状态，不作为更新失败'
+                                         ) + '；版本已经更新，请检查 QQ 端和连接设置。'
+                self.record('platform_not_connected', level='WARNING', before=self.state.get('platform_before'))
+            return
+        self.stage('connect')
+        deadline = time.monotonic() + self.connect_seconds
+        while self.platform_connected() is not True:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f'新版本 {self.connect_seconds} 秒内没有连上 QQ（更新前是连上的）')
+            time.sleep(0.5)
+
+    def roll_back(self, reason: str) -> None:
+        """Restore the snapshot and start the previous program; a failure here leaves the manual action."""
+        failed_stage, target = self.state['stage'], self.state['target']
+        self.stage('rollback', status='restoring', failed_stage=failed_stage, error=reason)
+        try:
+            self.backend.restore(self.state['old'], Path(self.state['snapshot']))
+        except Exception as error:
+            raise RuntimeError(f'更新失败（{reason}），自动恢复快照也失败：{type(error).__name__}: {error}') from error
+        self.publish_reference()
+        # The data is back; what remains is starting the previous program, which the start action repeats.
+        self.stage('rollback_start', snapshot_complete=False)
+        try:
+            self.backend.start()
+            self.backend.ready(self.backend.metadata())
+        except Exception as error:
+            raise RuntimeError(f'更新失败（{reason}），已恢复快照，但旧版本没有启动：{type(error).__name__}: {error}') from error
+        self.stage('rolled_back', status='rolled_back', stopped=False, rolled_back_from=target['version'],
+                   error=f'更新到 {target["version"]} 失败，已自动恢复到 {self.backend.metadata()["version"]}：{reason}')
 
     def restore(self) -> None:
         self.backend.restore(self.state['old'], Path(self.state['snapshot']))

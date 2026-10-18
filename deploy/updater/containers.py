@@ -11,7 +11,7 @@ from urllib.parse import quote
 import urllib.error
 import urllib.request
 
-from common import owned_like_parent, read_json, write_json
+from common import host_status, owned_like_parent, read_json, write_json
 
 
 class Engine(http.client.HTTPConnection):
@@ -194,6 +194,9 @@ class Containers:
         self.command(['run', '--rm', '--volumes-from', current['container'], '--workdir', '/srv/lenbot',
                       '--entrypoint', '/opt/lenbot/.venv/bin/python', current['host_image'], '-c',
                       code.replace('DATA', repr(json.dumps(reference)))])
+
+    def host_status(self) -> dict | None:
+        return host_status(self.deployment['panel_url'] + '/api/host/ready')
 
     def ready(self, target: dict) -> None:
         deadline = time.monotonic() + 90

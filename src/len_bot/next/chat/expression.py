@@ -16,7 +16,7 @@ from .context import ChatContext
 from .tools import ReactArguments, SayArguments
 from ..config import LabConfig
 from ..platform.delivery import Expression, part_length, report_parts, split_expression
-from ..models.limits import LimitReached, check_speech
+from ..models.limits import LimitReached, check_speech, record_speech
 from ..platform.messages import ChatMessage, Segment, Sender, SendResult
 from ..persona.profile import Persona
 from ..persona.stickers import PersonaSticker
@@ -68,16 +68,21 @@ class ChatExpression:
         self.notify, self.on_reply_sample, self.now = notify, on_reply_sample, now
         # Plugin sends never interleave with a multi-part expression.
         self.outlet = asyncio.Lock()
+        # Whether the current turn may use the direct reserve of the hourly speech limit.
+        self.reserve: Callable[[], bool] = lambda: False
 
     def check_send_available(self) -> None:
         until = self.store.bot_muted_until(self.config.scene, self.config.bot_id)
         if until is not None:
             raise ValueError(f"平台 group_ban 通知：当前 Bot 禁言至 {until}，未发送")
 
+    def check_speech(self) -> None:
+        check_speech(self.store, self.config, direct=self.reserve())
+
     async def express(self, turn_id: str, arguments: SayArguments, *,
                       expression_style: str | None = None, direct: bool = False) -> Expression:
         self.check_send_available()
-        check_speech(self.store, self.config)
+        self.check_speech()
         quote = None
         if arguments.reply_to is not None:
             quote = self.store.find_message(self.config.scene, arguments.reply_to)
@@ -148,7 +153,8 @@ class ChatExpression:
                                  turn_id: str, channels: set[str]) -> tuple[str, str]:
         parts = ([expression.message] if expression.sticker is not None else
                  split_expression(expression.message, self.config.text_delivery.max_chars))
-        entry_seq = self.store.prepare_expression(
+        entry_seq = await self.store.call(
+            self.store.prepare_expression,
             self.config.scene, call_id, report_parts(parts, [], self.context.render),
         )
         prefix = "模拟表达（未发送到平台）：" if self.send_message is None else ""
@@ -158,15 +164,16 @@ class ChatExpression:
     async def send_prepared_expression(self, entry_seq: int, parts: list[ChatMessage],
                                        *, prefix: str = "", turn_id: str | None = None,
                                        sticker: PersonaSticker | CollectedSticker | None = None,
-                                       channels: set[str], quota_notice: bool = False) -> tuple[str, str]:
+                                       channels: set[str], fixed_notice: bool = False) -> tuple[str, str]:
+        """A fixed host notice is neither limited by nor counted toward the hourly speech limit."""
         async with self.outlet:
             self.check_send_available()
             return await self._send_prepared(entry_seq, parts, prefix=prefix, turn_id=turn_id,
-                                             sticker=sticker, channels=channels, quota_notice=quota_notice)
+                                             sticker=sticker, channels=channels, fixed_notice=fixed_notice)
 
     async def _send_prepared(self, entry_seq: int, parts: list[ChatMessage], *, prefix: str,
                              turn_id: str | None, sticker: PersonaSticker | CollectedSticker | None,
-                             channels: set[str], quota_notice: bool) -> tuple[str, str]:
+                             channels: set[str], fixed_notice: bool) -> tuple[str, str]:
         errors: list[str | None] = []
         settings = self.config.text_delivery
         # Snapshot now: a later append in this turn does not change why this was said.
@@ -178,38 +185,43 @@ class ChatExpression:
                     delay = min(settings.max_interval_seconds,
                                 max(settings.min_interval_seconds, part_length(part) / settings.chars_per_second))
                     await asyncio.sleep(delay)
-                if not quota_notice:
+                self.check_send_available()
+                if index == 0 and not fixed_notice:
                     try:
-                        self.check_send_available()
-                        check_speech(self.store, self.config)
+                        self.check_speech()
                     except LimitReached as error:
-                        content = prefix + report_parts(parts, errors, self.context.render) + "\n" + str(error)
-                        self.store.expression_error(entry_seq, str(error))
+                        await self.store.call(self.store.expression_error, entry_seq, str(error))
                         raise
                 part.time = self.now()
                 simulate(part, self.send_message is None)
                 errors.append(None)
                 content = report_parts(parts, errors, self.context.render)
-                message_seq = self.store.start_expression_part(entry_seq, part, prefix + content,
-                                                              persona_id=self.persona.id, turn_id=turn_id,
-                                                              sticker=(sticker if isinstance(sticker, CollectedSticker)
-                                                                       else None if sticker is None
-                                                                       else (self.persona.id, sticker)))
+                # Committed (and synced) before the platform send: the send intent survives a crash.
+                message_seq = await self.store.call(
+                    self.store.start_expression_part, entry_seq, part, prefix + content,
+                    persona_id=self.persona.id, turn_id=turn_id,
+                    sticker=(sticker if isinstance(sticker, CollectedSticker) else None if sticker is None
+                             else (self.persona.id, sticker)))
                 self.notify()
                 if self.send_message is None:
                     log_sent(message_seq, part, None, index=index, parts=len(parts))
+                    if index == 0 and not fixed_notice:
+                        await self.store.call(record_speech, self.store, self.config.scene)
                 if self.send_message is not None:
                     result = await self.send_message(part, image_bytes=None if sticker is None else sticker.data)
                     part.send_status, part.platform_message_id = result.status, result.platform_message_id
                     errors[-1] = result.error
                     log_sent(message_seq, part, result.error, index=index, parts=len(parts))
                     content = report_parts(parts, errors, self.context.render)
-                    kept = self.store.finish_expression((message_seq, entry_seq), part, prefix + content,
-                                                        turn_id=turn_id)
+                    kept = await self.store.call(self.store.finish_expression, (message_seq, entry_seq), part,
+                                                 prefix + content, turn_id=turn_id)
                     if result.status == "sent":
                         confirmed.append((kept, self.now()))
+                    # The host send hold returns simulated; speech still counts so limits behave as when sending.
+                    if index == 0 and not fixed_notice and result.status in {"sent", "unconfirmed", "simulated"}:
+                        await self.store.call(record_speech, self.store, self.config.scene)
                     self.notify()
-                    if result.status != "sent":
+                    if result.status not in {"sent", "simulated"}:
                         break
         finally:
             if (confirmed and self.config.learning is not None and self.config.learning.reply_effects):
@@ -223,12 +235,15 @@ class ChatExpression:
         status = "partial" if len(states) > 1 else parts[len(errors) - 1].send_status
         return content, status
 
-    async def send_plugin_content(self, plugin: str, content: Sequence[Content], *, reply_to: str | None) -> Sent:
-        """Send ordered plugin content through one scene outlet and retain actual results."""
+    async def send_plugin_content(self, plugin: str, content: Sequence[Content], *, reply_to: str | None,
+                                  reply_prompt: str = "next_plugin_reply.md") -> Sent:
+        """Send ordered plugin content through one scene outlet and retain actual results.
+
+        Host commands use the same outlet with their own ``reply_prompt``; ``plugin`` is then the command.
+        """
         if reply_to is not None and self.store.find_message(self.config.scene, reply_to) is None:
             raise ValueError(f"当前场景没有平台消息 {reply_to}")
         self.check_send_available()
-        check_speech(self.store, self.config)
         prepared = await prepare_parts(plugin, content, self.config.text_delivery.max_chars, reply_to)
         parts = [self.simulated_message(part.segments, reply_to=reply_to if index == 0 else None)
                  for index, part in enumerate(prepared)]
@@ -242,13 +257,12 @@ class ChatExpression:
                         await asyncio.sleep(min(settings.max_interval_seconds, max(
                             settings.min_interval_seconds, part_length(part) / settings.chars_per_second)))
                     self.check_send_available()
-                    check_speech(self.store, self.config)
                     part.time = self.now()
                     simulate(part, self.send_message is None)
                     errors.append(None)
                     image = prepared[index].image
-                    seq = self.store.start_outgoing(part, persona_id=self.persona.id, image=(None if image is None else
-                                                    (image, prepared[index].description)))
+                    seq = await self.store.call(self.store.start_outgoing, part, persona_id=self.persona.id,
+                                                image=(None if image is None else (image, prepared[index].description)))
                     if self.exclude_from_memory is not None:
                         self.exclude_from_memory(seq)
                     self.notify()
@@ -259,9 +273,9 @@ class ChatExpression:
                     part.send_status, part.platform_message_id = result.status, result.platform_message_id
                     errors[-1] = result.error
                     log_sent(seq, part, result.error, index=index, parts=len(parts), plugin=plugin)
-                    self.store.finish_expression((seq, None), part, "")
+                    await self.store.call(self.store.finish_expression, (seq, None), part, "")
                     self.notify()
-                    if result.status != "sent":
+                    if result.status not in {"sent", "simulated"}:
                         break
             except BaseException as error:
                 interruption = f"{type(error).__name__}: {error}"
@@ -273,14 +287,14 @@ class ChatExpression:
                         report += "\n" + interruption
                     moment = datetime.fromtimestamp(self.now(), ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
                     PluginStore(self.store).add_plugin_event(self.config.scene, plugin, "reply", Template(
-                        read_prompt("next_plugin_reply.md")).substitute(
+                        read_prompt(reply_prompt)).substitute(
                         plugin=plugin, time=moment,
                         report=("模拟表达（未发送到平台）：" if self.send_message is None else "") + report).strip())
                     self.notify()
         states = {part.send_status for part in parts[:len(errors)]}
         status = "partial" if len(states) > 1 else parts[len(errors) - 1].send_status
         return Sent(status, report, tuple(part.platform_message_id for part in parts[:len(errors)]
-                                         if part.send_status == "sent"))
+                                         if part.send_status in {"sent", "simulated"}))
 
     def simulated_message(self, segments: list[Segment], *, reply_to: str | None = None) -> ChatMessage:
         return ChatMessage(

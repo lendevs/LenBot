@@ -34,10 +34,15 @@ CREATE TABLE mind_sessions (
     attention_state TEXT,
     discovered_tools TEXT NOT NULL DEFAULT '[]'
 );
+CREATE TABLE speech (
+    id INTEGER PRIMARY KEY, scene TEXT NOT NULL, time REAL NOT NULL
+);
+CREATE INDEX scene_speech ON speech(scene, time);
 CREATE TABLE turns (
     id TEXT PRIMARY KEY, scene TEXT NOT NULL, started REAL NOT NULL,
     ended REAL, status TEXT NOT NULL, error TEXT,
-    wake_received_at REAL, first_expression_at REAL, first_expression_delivery TEXT
+    wake_received_at REAL, first_expression_at REAL, first_expression_delivery TEXT,
+    wake_channel TEXT NOT NULL DEFAULT 'unknown'
 );
 CREATE TABLE model_calls (
     id INTEGER PRIMARY KEY, turn_id TEXT, role TEXT NOT NULL,
@@ -79,7 +84,12 @@ CREATE INDEX message_media_media ON message_media(media_id,message_seq);
 CREATE INDEX message_send_window ON messages(scene,json_extract(body,'$.time'))
     WHERE json_extract(body,'$.is_self')=1;
 CREATE INDEX message_retention ON messages(scene,COALESCE(received_at,json_extract(body,'$.time')),seq);
-CREATE INDEX model_call_usage ON model_calls(started,turn_id);
+CREATE INDEX model_call_usage ON model_calls(started,scene,role,plugin,ended,tokens,error);
+CREATE INDEX message_overview ON messages(scene,
+    CASE WHEN raw IS NULL THEN json_extract(body,'$.time') ELSE received_at END,
+    json_extract(body,'$.send_status'),raw IS NULL);
+CREATE INDEX message_failed_sends ON messages(scene,json_extract(body,'$.time'),json_extract(body,'$.send_status'))
+    WHERE raw IS NULL AND json_extract(body,'$.send_status') IN ('failed','unconfirmed');
 CREATE INDEX model_call_expiry ON model_calls(ended,id);
 CREATE INDEX turns_scene_time ON turns(scene,started);
 CREATE INDEX turns_expiry ON turns(ended,id);

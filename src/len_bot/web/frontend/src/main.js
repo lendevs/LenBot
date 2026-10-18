@@ -2,10 +2,10 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router/index.js'
 import vuetify from './plugins/vuetify.js'
-import { applyPalette } from './styles/theme.js'
+import { bindThemeMode } from './composables/useThemeMode.js'
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/shell.css'
 
-applyPalette()
+bindThemeMode(vuetify)
 createApp(App).use(vuetify).use(router).mount('#app')
