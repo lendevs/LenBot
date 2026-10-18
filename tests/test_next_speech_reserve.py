@@ -275,3 +275,20 @@ async def test_plugin_event_with_a_reminder_keeps_the_reserve(tmp_path, monkeypa
         assert await runner.append_during_turn(False, 'turn')
         assert chat.speech_reserve
 
+
+
+@pytest.mark.asyncio
+async def test_answered_direct_turn_cut_off_resumes_at_the_normal_limit(tmp_path, monkeypatch):
+    from len_bot.next.chat.attention import PendingWake
+    runner, store, config = _runner(tmp_path)
+    with store:
+        async def run_turn(**turn):
+            runner.chat.direct_request, runner.chat.turn_channel = True, turn['channel']
+            runner.chat.turn_messages = 1  # the @ got its answer before the reserve ran out too
+            return {'turn_id': store.start_turn(config.scene), 'status': 'limited',
+                    'error': 'SpeechLimitReached: 用完', 'expressions': [], 'failed_tools': 0,
+                    'limit_until': store.now() + 60, 'limit_kind': 'speech'}
+        monkeypatch.setattr(runner.chat, 'run_turn', run_turn)
+        runner.state.pending = PendingWake('direct', store.now())
+        await runner._turn('direct', batch=None, direct=True)
+        assert runner.resume and not runner.state.resume_reserve

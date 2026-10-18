@@ -951,7 +951,9 @@ class SceneRunner:
                 if not any(allows(state.disposition, channel_pending, message.sender.uid, self.now())
                            for message, _ in pending_messages):
                     state.pending = None
-        state.resume_reserve = result["status"] == "limited" and self.chat.speech_reserve
+        # Only an unanswered reserve request resumes from the reserve; an answered one goes on at the normal limit.
+        state.resume_reserve = (result["status"] == "limited" and self.chat.speech_reserve
+                                and self.chat.turn_messages == 0)
         # Preserve restart eligibility without treating a timeout as new input.
         pending_wake = self.store.end_turn(result["turn_id"], result["status"], result["error"],
                                            attention_state=persisted(state))
