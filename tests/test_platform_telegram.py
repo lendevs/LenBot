@@ -228,6 +228,13 @@ async def test_send_text_with_reply_and_mention_and_report_refusals():
             assert refused.value.submitted is False
             bad = await telegram.send_message(replace(message, scene='onebot:group:1'))
             assert bad.status == 'failed' and len(api.sent) == 1
+            # Once the account has spoken, the mention shows its name instead of the number.
+            api.push('在吗')
+            telegram.parse(api.updates[-1])
+            await telegram.send_message(message)
+            params = api.sent[-1][1]
+            assert params['text'] == '你好 @脱敏 群友'
+            assert params['entities'] == [{'type': 'text_mention', 'offset': 3, 'length': 6, 'user': {'id': 7001}}]
         finally:
             await telegram.close()
 

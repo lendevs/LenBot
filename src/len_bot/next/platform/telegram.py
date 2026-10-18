@@ -21,6 +21,7 @@ from .messages import ChatMessage, Notice, Segment, Sender, SendResult, UploadRe
 
 RETRY_INITIAL_SECONDS = 1.0
 RETRY_MAX_SECONDS = 30.0
+NAMES_KEPT = 4096
 PLACEHOLDERS = {"photo": "[图片]", "sticker": "[表情]", "voice": "[语音]", "audio": "[音频]", "video": "[视频]",
                 "document": "[文件]", "animation": "[动图]", "location": "[位置]", "contact": "[联系人]"}
 
@@ -50,6 +51,8 @@ class Telegram:
         self.account = bot_id.split(":", 1)[1]
         self.on_event, self.on_error, self.on_connection_change = on_event, on_error, on_connection_change
         self.username: str | None = None
+        # Display names of accounts seen in received messages, newest last; a sent mention shows the name.
+        self.names: dict[str, str] = {}
         self._client: httpx.AsyncClient | None = None
         self._poller: asyncio.Task | None = None
         self._connected = False
@@ -208,6 +211,7 @@ class Telegram:
                 user = self.bot_id
             elif entity["type"] == "text_mention" and "user" in entity:
                 user = "telegram:" + str(entity["user"]["id"])
+                self._remember(user, entity["user"])
             if user is None:
                 continue
             before = pending + units[cursor:start].decode("utf-16-le")
@@ -222,13 +226,22 @@ class Telegram:
             rest = media + (" " + rest if rest else "")
         if rest:
             segments.append(Segment("text", {"text": rest}))
-        name = " ".join(part for part in (sender.get("first_name"), sender.get("last_name")) if part) or None
+        name = self._remember("telegram:" + str(sender["id"]), sender)
         return ChatMessage(
             id=str(uuid4()), platform="telegram", bot_id=self.bot_id, scene=scene,
             platform_message_id=str(message["message_id"]),
             sender=Sender(uid="telegram:" + str(sender["id"]), nickname=name, card=None, role=None),
             time=float(message["date"]), segments=segments, reply_to=reply_to, mentions_bot=mentions_bot,
             is_self=str(sender["id"]) == self.account, send_status="received")
+
+    def _remember(self, account: str, user: dict) -> str | None:
+        name = " ".join(part for part in (user.get("first_name"), user.get("last_name")) if part) or None
+        if name is not None:
+            self.names.pop(account, None)
+            self.names[account] = name
+            if len(self.names) > NAMES_KEPT:
+                del self.names[next(iter(self.names))]
+        return name
 
     async def send_message(self, message: ChatMessage, *, image_bytes: bytes | None = None) -> SendResult:
         platform, _, destination = message.scene.partition(":")
@@ -252,7 +265,7 @@ class Telegram:
                 user = segment.data["user"]
                 if user == "all" or not user.startswith("telegram:"):
                     return SendResult("failed", None, f"Invalid Telegram mention: {user!r}")
-                label = "@" + user.split(":", 1)[1]
+                label = "@" + self.names.get(user, user.split(":", 1)[1])
                 entities.append({"type": "text_mention", "offset": _utf16(text), "length": _utf16(label),
                                  "user": {"id": int(user.split(":", 1)[1])}})
                 text += label
