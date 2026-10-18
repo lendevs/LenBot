@@ -120,7 +120,39 @@ def test_panel_sections_show_the_conflict_and_reload_the_form():
         # The 409 is handled (not rethrown as the generic error), the draft is replaced from the
         # returned snapshot, and the server's conflict message is passed to the section.
         assert 'draft.value = clone(pick(error.details.snapshot.saved.limits))' in source, name
-        assert "conflict.value = '没有保存：" in source and '请重新填写后再保存' in source, name
+        assert "showConflict('没有保存：" in source and '请重新填写后再保存' in source, name
+        # 小然 review 2: discarding the edits made after a conflict clears the notice.
+        assert 'useConflictNotice(dirty)' in source, name
         assert ':notice="conflict"' in source, name
     section = (root / 'ui' / 'SettingSection.vue').read_text(encoding='utf-8')
     assert 'notice' in section and '{{ notice }}' in section
+    notice = (root / 'conflictNotice.js').read_text(encoding='utf-8')
+    assert "else if (edited)" in notice and "conflict.value = ''" in notice and 'await nextTick()' in notice
+
+
+def test_conflict_notice_clears_after_discarding_edits():
+    """小然 review 2: run the composable with Vue's reactivity when the frontend deps are installed."""
+    import shutil
+
+    import pytest
+    import subprocess
+    from pathlib import Path
+    frontend = Path(__file__).parents[1] / 'src' / 'len_bot' / 'web' / 'frontend'
+    if shutil.which('node') is None or not (frontend / 'node_modules' / 'vue').exists():
+        pytest.skip('node or frontend node_modules missing')
+    script = """
+import { computed, nextTick, ref } from 'vue'
+import { useConflictNotice } from './src/host/conflictNotice.js'
+const saved = ref('a'), draft = ref('mine')
+const dirty = computed(() => draft.value !== saved.value)
+const { conflict, show } = useConflictNotice(dirty)
+await nextTick()
+saved.value = 'b'; draft.value = 'b'            // 409: the form is replaced by the server's values
+await show('没有保存')
+if (conflict.value !== '没有保存') throw new Error('notice cleared by the reload itself')
+draft.value = 'retyped'; await nextTick()
+if (conflict.value !== '没有保存') throw new Error('notice cleared while editing')
+draft.value = 'b'; await nextTick()             // discard / undo the edits
+if (conflict.value !== '') throw new Error('notice kept after discarding: ' + conflict.value)
+"""
+    subprocess.run(['node', '--input-type=module', '-e', script], cwd=frontend, check=True)

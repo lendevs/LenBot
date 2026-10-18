@@ -58,10 +58,13 @@ def test_upgrade_seeds_the_last_hour_of_own_group_messages():
               (group, now - 600, True, 'unconfirmed', None),
               (group, now - 300, True, 'failed', None),        # never delivered
               (group, now - 200, False, 'received', '{}'),     # a member's message
+              (group, now - 150, True, 'sent', '{}'),          # own part paired with its echo
+              (group, now - 120, True, 'received', '{}'),      # own part reported by the platform
               (other, now - 100, True, 'sent', None),
               ('onebot:private:70001', now - 100, True, 'sent', None)])
     _speech_records(db, now=now)
     rows = db.execute('SELECT scene,time FROM speech ORDER BY time').fetchall()
-    assert rows == [(group, now - 1800), (group, now - 900), (group, now - 600), (other, now - 100)]
+    assert rows == [(group, now - 1800), (group, now - 900), (group, now - 600),
+                    (group, now - 150), (group, now - 120), (other, now - 100)]
     _speech_records(db, now=now)  # idempotent: a retried step does not seed twice
-    assert db.execute('SELECT COUNT(*) FROM speech').fetchone()[0] == 4
+    assert db.execute('SELECT COUNT(*) FROM speech').fetchone()[0] == 6
