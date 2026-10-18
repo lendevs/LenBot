@@ -114,7 +114,7 @@ a{color:var(--primary);text-decoration:none;font-size:13px}a:hover{text-decorati
   <label for="password">面板密码（至少 8 位）</label><input id="password" type="password" minlength="8" required autocomplete="new-password">
   <label for="password-again">再输入一次密码</label><input id="password-again" type="password" minlength="8" required autocomplete="new-password">
   <label for="port">面板端口</label><input id="port" type="number" min="1" max="65535" value="8088" required>
-  <p class="hint">配置完用这个账号登录面板。面板默认只监听本机，装在服务器上时用 SSH 端口转发访问。</p>
+  <p class="hint" id="port-hint">配置完用这个账号登录面板。面板默认只监听本机，装在服务器上时用 SSH 端口转发访问。</p>
 </fieldset>
 <fieldset><legend>连接 QQ</legend>
   <p class="hint lead">LenBot 通过 OneBot（比如 NapCat）收发 QQ 消息。先把 OneBot 跑起来并登录 QQ，再在这里连上它。</p>
@@ -177,7 +177,7 @@ a{color:var(--primary);text-decoration:none;font-size:13px}a:hover{text-decorati
   <p class="hint">群里先只回 @ 它或回复它的消息，私聊每条都回。更多群之后在面板里加。</p>
 </fieldset>
 <fieldset><legend>官方插件</legend>
-  <p class="hint lead">勾选的插件会在保存时下载安装，装好后到面板的插件页启用。用不上就直接跳过，之后随时能装。</p>
+  <p class="hint lead">勾选的插件会在保存时下载安装。装好后默认是关闭的，要到面板的插件页启用才会生效。用不上就直接跳过，之后随时能装。</p>
   <div id="official-plugins"></div><pre id="plugins-result" role="status" hidden></pre>
 </fieldset>
 <div class="actions"><button id="previous" type="button">上一步</button><span class="spacer"></span><button id="skip-vector" type="button" hidden>跳过向量模型</button><button id="skip-plugins" type="button" disabled hidden>跳过插件，直接保存</button><button id="next" class="primary" type="button">下一步</button><button id="save" class="primary" type="submit" disabled hidden>保存并进入面板</button></div>
@@ -286,7 +286,7 @@ $('setup').onsubmit=async e=>{e.preventDefault();
   sessionStorage.removeItem('lenbot-setup-token');sessionStorage.removeItem('lenbot-setup-draft');for(const id of secretFields)$(id).value='';
   for(const id of ['setup','title','intro','progress'])$(id).hidden=true;$('bar-fill').style.width='100%';markSteps(fields.length);
   const panel=new URL(location.href);panel.hash='';panel.pathname='/';panel.search='';if(result.panel_url!=='/')panel.port=String(result.panel_port);$('panel-address').value=panel.href;
-  installed=result.plugins.length?'\n装好了插件：'+result.plugins.map(item=>item.name).join('、')+'，进面板后到插件页启用。':'';
+  installed=result.plugins.length?'\n装好了插件：'+result.plugins.map(item=>item.name).join('、')+'。插件默认是关闭的，进面板后到插件页启用才会生效。':'';
   $('done').hidden=false;finish('starting');waitForPanel(panel)};
 $('open-panel').onclick=()=>{let panel;try{panel=new URL(value('panel-address'))}catch{return invalid($('panel-address'))}if(['http:','https:'].includes(panel.protocol))location.assign(panel.href)};
 
@@ -297,7 +297,7 @@ $('api').addEventListener('change',()=>{const protocol=protocols.find(p=>p.api==
 $('list-models').onclick=async()=>{busy('list-models',true);note('list-result','正在读取…');try{const provider=models().provider,snapshot=JSON.stringify(provider);const result=await post('/api/setup/models',{provider});if(snapshot!==JSON.stringify(models().provider))throw Error('服务商设置改过了，请重新读取');$('model-options').replaceChildren(...result.models.map(item=>{const option=document.createElement('option');option.value=item.id;return option}));note('list-result',`读到 ${result.models.length} 个模型，在下面的输入框里选。`,'ok');protocols.catalog=result.models}catch(error){note('list-result',error.message+'\n检查一下地址和 Key，或者直接手动填写模型名。','error')}finally{busy('list-models',false)}};
 $('mind').addEventListener('change',()=>{const item=protocols.catalog?.find(row=>row.id===value('mind'));if(item?.context_window_tokens){$('mindwindow').value=item.context_window_tokens;budget()}});
 async function loadPlugins(){try{const response=await fetch('/api/setup/plugins',{headers:{'X-Setup-Token':token}}),result=await response.json();if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:JSON.stringify(result.detail));const selected=new Set([...$('official-plugins').querySelectorAll('input:checked')].map(input=>input.value));if(!$('official-plugins').children.length)for(const name of stored.install_plugins||[])selected.add(name);$('official-plugins').replaceChildren(...result.plugins.map(item=>{const row=document.createElement('div');row.className='plugin-option';const input=document.createElement('input');input.type='checkbox';input.id='plugin-'+item.name;input.value=item.name;input.checked=selected.has(item.name);const content=document.createElement('div'),label=document.createElement('label');label.htmlFor=input.id;label.textContent=item.title+(item.installed?' · 已安装，还没启用':'');const description=document.createElement('p');description.className='hint';description.textContent=item.capabilities.join(' · ');const link=document.createElement('a');link.href=item.repository;link.target='_blank';link.rel='noopener noreferrer';link.textContent='源码 · '+item.version;content.append(label,description,link);if(item.error){const error=document.createElement('p');error.className='hint';error.textContent='上次安装：'+item.error;content.append(error)}row.append(input,content);return row}))}catch(error){note('plugins-result','读取插件列表失败：'+error.message+'。可以先跳过，进面板后再装。','error')}}
-async function initializePage(){if(!token)return;try{const response=await fetch('/api/setup/protocols',{headers:{'X-Setup-Token':token}}),result=await response.json();if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:JSON.stringify(result.detail));protocols=result.protocols;$('api').replaceChildren(...protocols.map(p=>{const option=document.createElement('option');option.value=p.api;option.textContent=p.title;return option}));if(stored.api)$('api').value=stored.api;protocolInfo()}catch(error){$('error').hidden=false;$('error').textContent=error.message}}
+async function initializePage(){if(!token)return;try{const response=await fetch('/api/setup/protocols',{headers:{'X-Setup-Token':token}}),result=await response.json();if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:JSON.stringify(result.detail));protocols=result.protocols;if(result.container){$('port').value=String(result.panel_port);$('port').readOnly=true;$('port-hint').textContent='Docker 部署时面板端口固定为 '+result.panel_port+'（Compose 只发布这个端口），不能修改。配置完用这个账号登录面板。'}$('api').replaceChildren(...protocols.map(p=>{const option=document.createElement('option');option.value=p.api;option.textContent=p.title;return option}));if(stored.api)$('api').value=stored.api;protocolInfo()}catch(error){$('error').hidden=false;$('error').textContent=error.message}}
 $('skip-plugins').onclick=()=>{for(const input of $('official-plugins').querySelectorAll('input'))input.checked=false;remember();$('setup').requestSubmit()};
 initializePage();loadPlugins();
 </script></html>

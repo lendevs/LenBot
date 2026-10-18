@@ -21,7 +21,10 @@ from ..config import LabConfig
 from .recap import CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction
 from ..learning.expression_selection import ExpressionService
 from ..tools.external_tools import ExternalTool
-from ..models.limits import LimitReached, SpeechLimitReached, check_speech
+from ..models.limits import LimitReached, ModelBudget, SpeechLimitReached, check_speech
+
+# Turn channels that may use the direct reserve besides direct wakes themselves.
+RESERVE_CHANNELS = frozenset({"schedule", "task"})
 from ..memory.service import MemoryService
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
@@ -76,6 +79,15 @@ class Chat:
         self.slots = slots
         self.direct_request = False
         self.turn_channel: str | None = None
+        # Set when non-direct input joins a turn after it already spoke: that follow-up
+        # traffic answers at the normal hourly limit, not from the direct reserve.
+        self.reserve_revoked = False
+        # Set when a reminder or task result joins a running turn: it may answer from the reserve
+        # like one that opened its own turn.
+        self.reserve_request = False
+        self.turn_expressions = 0
+        # Delivered messages since the latest direct input; reactions do not count as an answer.
+        self.turn_messages = 0
         # Actual wake channels seen by the current turn, snapshotted per expression.
         self.turn_channels: set[str] = set()
         self.on_update = on_update
@@ -228,13 +240,22 @@ class Chat:
 
     @property
     def speech_reserve(self) -> bool:
-        """Direct wakes, reminders and task results may still speak after the normal hourly limit."""
-        return self.direct_request or self.turn_channel in {"schedule", "task", "plugin", "audio"}
+        """Direct wakes (@, replies to the bot, private chat), reminders and task results may
+        still speak after the normal hourly limit. Audio transcripts and plugin events follow
+        the normal limit like any other wake."""
+        if self.reserve_revoked:
+            return False
+        return self.direct_request or self.reserve_request or self.turn_channel in RESERVE_CHANNELS
 
-    def check_limits(self, *, model: bool = False, direct: bool | None = None) -> None:
+    def check_limits(self, *, model: bool = False, direct: bool | None = None, max_age: float = 0.0) -> None:
+        """``max_age`` lets a polling caller reuse token totals a few seconds old."""
         check_speech(self.store, self.config, direct=self.speech_reserve if direct is None else direct)
         if model and self.slots is not None and self.slots.admit is not None:
-            self.slots.admit(self.config.scene)
+            budget = getattr(self.slots.admit, '__self__', None)
+            if max_age > 0 and isinstance(budget, ModelBudget):
+                budget.check(self.config.scene, max_age=max_age)
+            else:
+                self.slots.admit(self.config.scene)
 
     async def run_turn(self, *, batch: tuple[int, list[str]] | None,
                        append_new: Callable[[bool, str], Awaitable[bool]],
@@ -247,6 +268,10 @@ class Chat:
                        proactive: tuple[str, str, float] | None = None, channel: str | None = None) -> dict:
         self.direct_request = direct
         self.turn_channel = channel
+        self.reserve_revoked = False
+        self.reserve_request = False
+        self.turn_expressions = 0
+        self.turn_messages = 0
         observed_at = self.now()
         self.turn_channels = set() if channels is None else set(channels)
         scene = self.config.scene
@@ -330,6 +355,7 @@ class Chat:
                                                          response_turn_id=turn_id if reaction else None)
                                 if reaction:
                                     expressions.append(content)
+                                    self.turn_expressions += 1
                                     end_turn = end_turn or call.arguments.get('end_turn', True)
                                 elif call.name == 'attention':
                                     end_turn = end_turn or call.arguments.get('end_turn', False)
@@ -340,6 +366,9 @@ class Chat:
                                     call.id, expression, turn_id=turn_id, channels=self.turn_channels,
                                 )
                                 expressions.append(content)
+                                self.turn_expressions += 1
+                                if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
+                                    self.turn_messages += 1
                                 if delivery_status in {"sent", "simulated"}:
                                     end_turn = end_turn or expression.end_turn
                                 else:

@@ -151,7 +151,7 @@ def turn_state(config: LabConfig, store: Store, *, now: float,
             state["content"] += f"，还剩 {quota.remaining} 条。"
         else:
             back = datetime.fromtimestamp(quota.until(direct=False), ZoneInfo(config.timezone)).strftime("%H:%M")
-            state["content"] += (f"，已用完，{back} 起恢复；被 @、被回复或处理提醒时还能说 {quota.reserve_left} 条。"
+            state["content"] += (f"，已用完，{back} 起恢复；被 @、被回复、私聊、处理提醒或任务结果时还能说 {quota.reserve_left} 条。"
                                  if quota.reserve_left else f"，已用完，{back} 起恢复。")
     schedules = ScheduleStore(store).list_schedules(config.scene, limit=21)
     if schedules:

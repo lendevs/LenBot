@@ -197,6 +197,10 @@ def initialize(root: Path, item: FirstSetup) -> dict:
             'next': '配置已保存。首次配置向导将进入面板；离线初始化命令仍需显式启动。'}
 
 
+# The only port deploy/current/host.compose.yaml publishes; the container setup listens here too.
+CONTAINER_PANEL_PORT = 11307
+
+
 def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, container: bool = False) -> FastAPI:
     app = FastAPI(title='LenBot 首次配置')
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['*'] if container else ['127.0.0.1', 'localhost'])
@@ -240,7 +244,8 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
 
     @app.get('/api/setup/protocols', dependencies=[Depends(authorize)])
     async def protocols():
-        return {'protocols': [p for p in PROTOCOLS if 'mind' in p['roles']]}
+        return {'protocols': [p for p in PROTOCOLS if 'mind' in p['roles']], 'container': container,
+                'panel_port': CONTAINER_PANEL_PORT if container else None}
 
     @app.post('/api/setup/embedding', dependencies=[Depends(authorize)])
     async def probe_embedding(item: EmbeddingProbe):
@@ -264,7 +269,8 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
     async def save(item: FirstSetup):
         async with lock:
             if container:
-                item = item.model_copy(update={'panel_host': '0.0.0.0'})
+                # Compose publishes only this port; any other value would leave the panel unreachable.
+                item = item.model_copy(update={'panel_host': '0.0.0.0', 'panel_port': CONTAINER_PANEL_PORT})
             try:
                 if (root / 'lenbot.config.json').exists():
                     raise FileExistsError('根配置已经存在，请进入正常面板登录')
@@ -303,7 +309,7 @@ async def run_setup(root: Path, *, container: bool = False) -> None:
     completed = asyncio.Event()
     with socket.socket() as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(('0.0.0.0', 11307) if container else ('127.0.0.1', 0))
+        listener.bind(('0.0.0.0', CONTAINER_PANEL_PORT) if container else ('127.0.0.1', 0))
         listener.listen()
         port = listener.getsockname()[1]
         app = create_setup_app(root, token, completed, container=container)

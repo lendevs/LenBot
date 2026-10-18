@@ -305,7 +305,7 @@ const count = value => value.toLocaleString('zh-CN')
             <p v-else class="muted">这个时段没有叫醒记录。</p>
           </ResourceState>
         </Panel>
-        <LimitsSection v-if="settings.data.value" :snapshot="settings.data.value" @dirty="value => limitsDirty = value" @saved="value => { settings.data.value = value; readPendingRestart(); notify('已保存') }" />
+        <LimitsSection v-if="settings.data.value" :snapshot="settings.data.value" @reload="value => settings.data.value = value" @dirty="value => limitsDirty = value" @saved="value => { settings.data.value = value; readPendingRestart(); notify('已保存') }" />
       </div>
     </ResourceState>
   </HostPage>
