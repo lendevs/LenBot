@@ -13,8 +13,8 @@ ERRORS = (OSError, ValueError, KeyError, TimeoutError, httpx.HTTPError)
 
 # Shown in the update confirmation of a managed installation, before the user applies an update.
 UPDATE_NOTICE = [
-    '更新期间聊天、提醒和后台任务暂停，直到新版本启动、就绪并重新连上 QQ，通常几分钟。',
-    '新版本启动、就绪或重新连上 QQ 失败时，会自动恢复更新前的程序和数据快照并启动旧版本。',
+    '更新期间聊天、提醒和后台任务暂停，通常几分钟；更新前已连接聊天平台时，还会等待新版本重新连上。',
+    '备份完成后的更新失败时，会自动恢复更新前的程序和数据快照并启动旧版本。',
     '自动回滚或之后手动恢复快照，都会丢掉更新开始后写入的数据，包括新消息、记忆、设置修改和任务记录。',
     '快照保存在部署目录的 backups/ 下，按时间命名，不会自动删除。',
 ]

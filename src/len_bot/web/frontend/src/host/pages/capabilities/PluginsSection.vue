@@ -252,7 +252,7 @@ const facts = name => {
     <div v-else class="stack">
       <div class="inline toolbar">
         <strong>{{ names.length }} 个插件</strong>
-        <v-text-field v-if="names.length > 3" v-model="query" class="search" density="compact" hide-details clearable :prepend-inner-icon="mdiMagnify"
+        <v-text-field v-if="names.length > 3" :model-value="query" @update:model-value="query = $event ?? ''" class="search" density="compact" hide-details clearable :prepend-inner-icon="mdiMagnify"
           placeholder="搜索名称、说明或作者" aria-label="搜索插件" />
         <v-btn class="ml-auto" size="small" variant="outlined" :prepend-icon="mdiPlus" @click="installing = true">从 Git 安装</v-btn>
         <v-btn size="small" variant="outlined" :prepend-icon="mdiPlus" @click="zipImport = true">导入 ZIP</v-btn>

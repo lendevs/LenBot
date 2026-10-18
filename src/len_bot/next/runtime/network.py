@@ -102,6 +102,7 @@ class NetworkRuntime:
         self.last_platform_error: str | None = None
         self.last_runtime_error: str | None = None
         self.stopped = asyncio.Event()
+        self.events_ready = asyncio.Event()
         self.connection_requested = asyncio.Event()
         self.disconnect_requested = False
         self.retention = Retention(self)
@@ -114,7 +115,7 @@ class NetworkRuntime:
         # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.
         self.commands = Commands()
         self.platform = open_platform(config, on_event=self._receive, on_error=self._platform_error,
-                                      on_connection_change=self._connection_changed)
+                                      on_connection_change=self._connection_changed, wait_for_events=self.events_ready.wait)
         self.audio = AudioService(store, {cfg.scene: cfg for cfg, _ in scene_configs},
                                   self.platform.call if config.delivery == "onebot" else None, slots,
                                   self.audio_updated)
@@ -453,6 +454,7 @@ class NetworkRuntime:
                     self.refresh_external_tools()
                     self.accepting = self.platform.connected
                     self._status("running")
+                    self.events_ready.set()
                     self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
                                 "delivery": self.config.delivery})
                     pending.append(group.create_task(self.retention.run()))

@@ -26,6 +26,16 @@ from len_bot.plugin import Invocation, Plugin, background, command, regex
 
 
 class Boxed(Plugin):
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        self.created = ctx.now()
+        self.active_scenes = ctx.scenes
+        self.zone = ctx.timezone(ctx.enabled_scenes[0])
+
+    @command("构造状态", "报告构造函数读取的宿主状态")
+    async def constructed(self, ctx: Invocation, args: str) -> None:
+        await ctx.reply(f"构造完成 {self.zone} {','.join(self.active_scenes)} {self.created > 0}")
+
     @background("10s")
     async def tick(self, ctx) -> None:
         pass
@@ -130,6 +140,14 @@ def state(plugins, name):
 
 def reports(store) -> list[str]:
     return [row[0] for row in store.db.execute("SELECT content FROM plugin_events WHERE plugin = 'boxed' ORDER BY id")]
+
+
+@pytest.mark.asyncio
+async def test_isolated_plugin_constructor_can_read_host_capabilities(tmp_path):
+    async with running(tmp_path) as (plugins, peer, store):
+        await peer.say('/构造状态')
+        await until(lambda: f'构造完成 UTC {SCENE} True' in peer.texts(), 5)
+        assert state(plugins, 'boxed')['status'] == 'running'
 
 
 @pytest.mark.asyncio

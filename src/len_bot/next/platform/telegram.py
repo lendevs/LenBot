@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 import httpx
@@ -46,10 +46,12 @@ class Telegram:
     name = "telegram"
 
     def __init__(self, settings: TelegramSettings, *, bot_id: str, on_event: Callable[[dict], None],
-                 on_error: Callable[[str], None], on_connection_change: Callable[[], None] | None = None):
+                 on_error: Callable[[str], None], on_connection_change: Callable[[], None] | None = None,
+                 wait_for_events: Callable[[], Awaitable[None]] | None = None):
         self.settings, self.bot_id = settings, bot_id
         self.account = bot_id.split(":", 1)[1]
         self.on_event, self.on_error, self.on_connection_change = on_event, on_error, on_connection_change
+        self.wait_for_events = wait_for_events
         self.username: str | None = None
         # Display names of accounts seen in received messages, newest last; a sent mention shows the name.
         self.names: dict[str, str] = {}
@@ -85,6 +87,7 @@ class Telegram:
         if self._client is None:
             raise PlatformCallError("Telegram 适配器没有启动", submitted=False)
         url = f"{self.settings.api_base}/bot{self.settings.bot_token}/{action}"
+        timeout = self.settings.request_timeout_seconds if timeout is None else timeout
         try:
             if files:
                 response = await self._client.post(url, data={key: str(value) for key, value in params.items()},
@@ -145,9 +148,13 @@ class Telegram:
                 continue
             delay = RETRY_INITIAL_SECONDS
             self._set_connected(True)
+            # The first answer establishes the connection before the host starts plugins and scenes.
+            # Keep its updates until the host can store them, before acknowledging their offset.
+            if updates and self.wait_for_events is not None:
+                await self.wait_for_events()
             for update in updates:
-                self._offset = update["update_id"] + 1
                 self.on_event(update)
+                self._offset = update["update_id"] + 1
 
     async def close(self) -> None:
         if self._poller is not None:

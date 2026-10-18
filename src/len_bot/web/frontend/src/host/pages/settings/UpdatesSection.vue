@@ -47,6 +47,9 @@ async function openUpdater() {
       </div>
       <v-alert v-if="check?.error" type="warning" variant="tonal">{{ check.error }}</v-alert>
       <p v-if="!data.managed" class="muted">源码运行</p>
+      <v-alert v-if="data.notice?.length" type="warning" variant="tonal">
+        <ul><li v-for="line in data.notice" :key="line">{{ line }}</li></ul>
+      </v-alert>
       <v-alert v-if="data.status?.error" type="error" variant="tonal">{{ data.status.error }}</v-alert>
       <v-alert v-if="action.error.value" type="error" variant="tonal">{{ action.error.value.message }}</v-alert>
       <div class="actions">

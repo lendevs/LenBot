@@ -136,12 +136,17 @@ class Worker:
             self._write({"directory": str(self.directory), "name": self.ctx.name, "config": dict(self.ctx.config),
                          "data_dir": str(self.ctx.data_dir), "scenes": list(self.ctx.enabled_scenes),
                          "bot_id": self.ctx.bot_id})
-            line = await self.process.stdout.readline()
-            first = json.loads(line) if line else {"type": "failed", "error": {"type": "RuntimeError",
-                                                                            "message": "进程启动后立即退出"}}
-            if first["type"] != "ready":
-                await self.process.wait()
-                raise_error(first["error"])
+            while True:
+                line = await self.process.stdout.readline()
+                first = json.loads(line) if line else {"type": "failed", "error": {"type": "RuntimeError",
+                                                                                "message": "进程启动后立即退出"}}
+                if first["type"] == "call":
+                    await self._answer(first)
+                    continue
+                if first["type"] != "ready":
+                    await self.process.wait()
+                    raise_error(first["error"])
+                break
             self.reader = asyncio.create_task(self._read(self.process), name=f"{self.ctx.name}:worker")
             log_event(logger, "plugin_process_started", plugin=self.ctx.name, pid=self.process.pid)
             return self.process

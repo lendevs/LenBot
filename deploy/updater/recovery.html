@@ -2,7 +2,7 @@
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LenBot 更新与恢复</title>
 <style>body{font:16px/1.65 system-ui;margin:48px auto;padding:0 24px;max-width:840px;background:#f6f7f8;color:#242b34}h1{font-size:28px}button,select{font:inherit;padding:9px 16px;margin:8px 8px 8px 0}pre{white-space:pre-wrap;background:white;padding:20px;border:1px solid #dce0e5}label{display:block}#error{color:#b42318}</style>
-<h1>LenBot 更新与恢复</h1><p>更新期间此页面保持可用。升级失败后不会自动恢复或重试。</p>
+<h1>LenBot 更新与恢复</h1><p>更新期间此页面保持可用，聊天、提醒和后台任务暂停。备份完成后的更新失败会自动恢复更新前的程序和数据快照并启动旧版本；自动回滚也会丢掉更新开始后写入的数据，包括新消息、记忆、设置修改和任务记录。</p>
 <p id="current"></p><p id="error" role="alert"></p>
 <button id="check">检查发行版本</button><label><input id="prerelease" type="checkbox">显示预发布版本</label>
 <select id="versions" aria-label="目标版本"></select><button id="prepare">准备更新</button>
@@ -25,7 +25,7 @@ async function refresh(){try{const s=await request('status');$('current').textCo
 $('check').onclick=async()=>{try{releases=await request('releases');options()}catch(e){$('error').textContent=e.message}};
 $('prerelease').onchange=options;$('versions').onchange=notes;
 $('prepare').onclick=()=>action('prepare',{tag:$('versions').value});
-$('apply').onclick=()=>{if(confirm('将停止聊天和任务，备份实例并迁移到所选版本。继续？'))action('apply')};
+$('apply').onclick=()=>{if(confirm('将暂停聊天、提醒和后台任务，备份实例并升级。备份完成后的更新失败会自动恢复旧版本和数据快照，丢掉更新开始后写入的数据。继续？'))action('apply')};
 $('restore').onclick=()=>{if(confirm('将恢复升级前程序和数据快照，覆盖快照之后的修改。继续？'))action('restore')};
 $('start').onclick=()=>action('start');refresh();setInterval(refresh,2000);
 $('read-log').onclick=async()=>{try{$('log').textContent=(await request('log')).text}catch(e){$('error').textContent=e.message}};

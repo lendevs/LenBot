@@ -158,7 +158,7 @@ function exportShown() {
           <v-text-field v-model="task" density="compact" hide-details label="任务编号" @keyup.enter="system.reload()" />
         </div>
         <div class="search-row">
-          <v-text-field v-model="search" density="compact" hide-details clearable :prepend-inner-icon="mdiMagnify"
+          <v-text-field :model-value="search" @update:model-value="search = $event ?? ''" density="compact" hide-details clearable :prepend-inner-icon="mdiMagnify"
             label="在结果里搜索：事件、消息、错误、编号…" />
           <v-btn variant="text" size="small" :prepend-icon="mdiDownload" :disabled="!shown.length" @click="exportShown">导出 {{ shown.length }} 条</v-btn>
         </div>

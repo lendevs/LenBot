@@ -8,7 +8,7 @@ runtime stores the raw dict next to the parsed message. Scenes are ``<platform>:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .messages import ChatMessage, Notice, SendResult, UploadResult
@@ -63,7 +63,8 @@ class PlatformAdapter(Protocol):
 
 
 def open_platform(config: SharedConfig, *, on_event: Callable[[dict], None], on_error: Callable[[str], None],
-                  on_connection_change: Callable[[], None] | None = None) -> PlatformAdapter | None:
+                  on_connection_change: Callable[[], None] | None = None,
+                  wait_for_events: Callable[[], Awaitable[None]] | None = None) -> PlatformAdapter | None:
     """The adapter of the configured platform, or None for stdin and panel-only hosts."""
     if config.onebot is not None:
         from .onebot import OneBot
@@ -72,5 +73,5 @@ def open_platform(config: SharedConfig, *, on_event: Callable[[dict], None], on_
     if config.telegram is not None:
         from .telegram import Telegram
         return Telegram(config.telegram, bot_id=config.bot_id, on_event=on_event, on_error=on_error,
-                        on_connection_change=on_connection_change)
+                        on_connection_change=on_connection_change, wait_for_events=wait_for_events)
     return None

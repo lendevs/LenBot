@@ -29,7 +29,7 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-命令只复制配置和配置中引用到的实例文件（数据库、记忆、角色、任务目录等），不复制源码。副本改为模拟发送，不连接 OneBot，面板使用指定的端口。指向原实例内部的绝对路径也会改为指向副本。模型、插件和任务服务在副本中照常执行，模型调用照常消耗 token。
+命令只复制配置和配置中引用到的实例文件（数据库、记忆、角色、任务目录等），不复制源码。副本改为模拟发送，不连接 OneBot 或 Telegram，面板使用指定的端口。指向原实例内部的绝对路径也会改为指向副本。模型、插件和任务服务在副本中照常执行，模型调用照常消耗 token。
 
 ## 源码结构
 

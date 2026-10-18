@@ -33,6 +33,7 @@ class BotAPI:
     def __init__(self, *, bot: int = BOT):
         self.bot, self.updates, self.sent, self.failures = bot, [], [], 0
         self.conflict = False
+        self.get_me_delay = 0.0
         self.lock = threading.Lock()
         api = self
 
@@ -50,7 +51,10 @@ class BotAPI:
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # A timeout test has already closed the client connection.
 
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -63,6 +67,7 @@ class BotAPI:
         if token != TOKEN:
             return 401, {'ok': False, 'error_code': 401, 'description': 'Unauthorized'}
         if method == 'getMe':
+            time.sleep(self.get_me_delay)
             return 200, {'ok': True, 'result': {'id': self.bot, 'is_bot': True, 'username': 'lenbot_fixture_bot'}}
         if method == 'getUpdates':
             if self.conflict:
@@ -207,6 +212,18 @@ async def test_a_token_of_another_bot_fails_the_start():
 
 
 @pytest.mark.asyncio
+async def test_start_uses_the_configured_request_timeout():
+    with BotAPI() as api:
+        api.get_me_delay = .5
+        telegram = Telegram(TelegramSettings(bot_token=TOKEN, api_base=api.base,
+                                             request_timeout_seconds=.05),
+                            bot_id=f'telegram:{BOT}', on_event=lambda raw: None, on_error=lambda error: None)
+        with pytest.raises(PlatformCallError, match='ReadTimeout'):
+            await telegram.start()
+        assert not telegram.connected
+
+
+@pytest.mark.asyncio
 async def test_send_text_with_reply_and_mention_and_report_refusals():
     with BotAPI() as api:
         telegram = adapter(api)
@@ -257,6 +274,20 @@ async def telegram_host(tmp_path, api):
             finally:
                 runtime.stop()
                 await asyncio.wait_for(running, 5)
+
+
+@pytest.mark.asyncio
+async def test_a_telegram_host_retains_the_updates_waiting_at_startup(tmp_path):
+    with BotAPI() as api:
+        api.push('/id')
+        api.push('/help')
+        async with telegram_host(tmp_path, api) as (runtime, store):
+            await until(lambda: len(api.sent) == 2, 5)
+            assert runtime.accepting
+            assert store.find_message(SCENE, '300') is not None
+            assert store.find_message(SCENE, '301') is not None
+            await asyncio.sleep(.3)
+            assert len(api.sent) == 2
 
 
 @pytest.mark.asyncio

@@ -189,7 +189,6 @@ async def serve(channel: Channel, init: dict) -> None:
     cls = plugin_class(Path(init["directory"]), init["name"])
     context = PluginContext(name=init["name"], config=init["config"], data_dir=Path(init["data_dir"]),
                             enabled_scenes=tuple(init["scenes"]), host=RemoteHost(channel, init["bot_id"]))
-    instance = cls(context)
     patterns = {entry["attribute"]: re.compile(entry["mark"][1]) for entry in describe(cls)
                 if entry["mark"][0] == "regex"}
     finished = asyncio.Event()
@@ -237,8 +236,11 @@ async def serve(channel: Channel, init: dict) -> None:
                 channel.loop.call_soon_threadsafe(receive, message)
         channel.loop.call_soon_threadsafe(finished.set)
 
-    channel.write({"type": "ready"})
     threading.Thread(target=read, daemon=True).start()
+    # Constructors may synchronously ask for the clock, enabled scenes or a timezone.
+    # Read the host's replies before constructing the plugin, even before the loop can yield.
+    instance = cls(context)
+    channel.write({"type": "ready"})
     await finished.wait()
 
 

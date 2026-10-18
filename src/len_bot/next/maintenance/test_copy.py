@@ -63,6 +63,7 @@ def copy_instance(source: Path, destination: Path, panel_port: int) -> None:
         value = _relocate(value, source, destination)
         value['delivery'] = 'simulated'
         value['onebot'] = None
+        value['telegram'] = None
         if value.get('panel') is None:
             raise ValueError('测试副本面板需要原实例配置面板账号')
         value['panel']['port'] = panel_port
