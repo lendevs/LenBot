@@ -6,6 +6,17 @@ import { api } from '../../api.js'
  */
 export const pluginsApi = {
   read: () => api('/api/host/plugins'),
+  /** Light poll: name, status, error, version and health for every loaded plugin. */
+  health: () => api('/api/host/plugins/health'),
+  /** Catalog annotated with installed version, update and compatibility; filtered on the server. */
+  market: (query = '', category = '') => {
+    const params = new URLSearchParams()
+    if (query) params.set('query', query)
+    if (category) params.set('category', category)
+    return api(`/api/host/plugin-market${params.size ? `?${params}` : ''}`)
+  },
+  /** Install a catalog entry by name; the server resolves repository, ref and compatibility. */
+  marketInstall: name => api(`/api/host/plugin-market/${encodeURIComponent(name)}/install`, { method: 'POST' }),
   install: (url, ref = null, switch_source = false) => api('/api/host/plugins/install', { method: 'POST', body: JSON.stringify({ url, ref, switch_source }) }),
   importZip: (file, switchSource = false) => {
     const body = new FormData()

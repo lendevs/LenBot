@@ -45,7 +45,7 @@ async function submit(){
 <style scoped>
 .login-page{display:grid;place-items:center;min-height:100vh;padding:var(--sp-5);background:var(--sidebar)}
 .login-card{width:400px;max-width:100%;display:grid;gap:var(--sp-4);padding:var(--sp-6);background:var(--surface);
-  border-radius:16px;box-shadow:0 1px 2px rgba(20,16,24,.04),0 12px 32px rgba(20,16,24,.07);animation:rise var(--dur-4) var(--ease-out) both}
+  border-radius:16px;box-shadow:var(--shadow-card),var(--shadow-float);animation:rise var(--dur-4) var(--ease-out) both}
 .login-mark{width:44px;height:44px;border-radius:12px;transition:transform var(--dur-3) var(--ease-out)}
 .login-card:hover .login-mark{transform:rotate(-8deg)}
 @media (prefers-reduced-motion:reduce){.login-card{animation:none}.login-mark{transition:none}}

@@ -17,6 +17,7 @@ import ProcessingSection from './ProcessingSection.vue'
 import UpdatesSection from './UpdatesSection.vue'
 import PromptsSection from './PromptsSection.vue'
 import SpeechSection from './SpeechSection.vue'
+import CommandsSection from './CommandsSection.vue'
 
 const route = useRoute()
 const tabs = [['connection', '连接'], ['chat', '群聊'], ['account', '面板账号'], ['retention', '数据保留'], ['updates', '版本与更新'], ['advanced', '高级']]
@@ -37,7 +38,10 @@ function saved(value) {
     <PageTabs :tabs="tabs" :model-value="tab" label="设置分类" />
     <ResourceState :resource="settings" error-title="读取设置失败" v-slot="{ data }">
       <ConnectionSection v-if="tab === 'connection'" :snapshot="data" @saved="saved" @dirty="value => dirty.connection = value" />
-      <SpeechSection v-else-if="tab === 'chat'" :snapshot="data" @saved="saved" @reload="value => settings.data.value = value" @dirty="value => dirty.chat = value" />
+      <template v-else-if="tab === 'chat'">
+        <SpeechSection :snapshot="data" @saved="saved" @reload="value => settings.data.value = value" @dirty="value => dirty.chat = value" />
+        <CommandsSection :snapshot="data" @saved="saved" @dirty="value => dirty.commands = value" />
+      </template>
       <AccountSection v-else-if="tab === 'account'" :snapshot="data" @saved="saved" @dirty="value => dirty.account = value" />
       <RetentionSection v-else-if="tab === 'retention'" :snapshot="data" @saved="saved" @dirty="value => dirty.retention = value" />
       <UpdatesSection v-else-if="tab === 'updates'" />

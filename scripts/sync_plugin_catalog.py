@@ -4,7 +4,8 @@
 
 Each argument is a local checkout, optionally ``@ref`` (default ``HEAD``). The entry is
 read from that ref, its ``ref`` becomes the resolved commit, and name, version and
-interface must match the ref's plugin.toml. The commit must already be on a remote
+interface must match the ref's plugin.toml; declared ``permissions`` there are copied
+into the entry (an entry that states different ones is refused). The commit must already be on a remote
 branch, otherwise users could not fetch it. Entries are replaced by name; new names
 are appended. Nothing is pushed or committed.
 """
@@ -34,6 +35,12 @@ def pinned_entry(repository: Path, ref: str = 'HEAD') -> dict:
         if entry.get(field) != manifest.get(field):
             raise ValueError(f'{repository} {ref}: catalog-entry.json 的 {field} 是 {entry.get(field)!r}，'
                              f'plugin.toml 是 {manifest.get(field)!r}')
+    if 'permissions' in manifest:
+        # A declared plugin.toml is the source; the entry may repeat it but not differ.
+        if 'permissions' in entry and sorted(entry['permissions']) != sorted(manifest['permissions']):
+            raise ValueError(f'{repository} {ref}: catalog-entry.json 的 permissions 是 {entry["permissions"]!r}，'
+                             f'plugin.toml 是 {manifest["permissions"]!r}')
+        entry = {**entry, 'permissions': manifest['permissions']}
     if not _git(repository, 'branch', '--remotes', '--contains', commit).strip():
         raise ValueError(f'{repository} {ref}: 提交 {commit[:12]} 还不在任何远端分支上，先推送再同步')
     return {**entry, 'ref': commit}

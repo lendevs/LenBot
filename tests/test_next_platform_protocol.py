@@ -171,11 +171,13 @@ async def test_onebot_outlet_encodes_qualified_scene_and_mention_without_changin
         assert image.size == ((320, 320) if image_type == 1 else (1024, 1024))
 
 
-@pytest.mark.parametrize('mention', ['onebot:all', 'qq:12345', 'onebot:abc', 'all', 'onebot:0', 'onebot:007'])
-def test_model_speech_accepts_only_individual_onebot_accounts(mention):
+@pytest.mark.parametrize('mention', ['onebot:all', 'qq:12345', 'onebot:abc', 'all', 'onebot:0', 'onebot:007',
+                                     'telegram:-100500', 'telegram:all'])
+def test_model_speech_accepts_only_individual_platform_accounts(mention):
     from pydantic import ValidationError
     from len_bot.next.chat.tools import SayArguments
 
     with pytest.raises(ValidationError, match='mention'):
         SayArguments(content='合成回复', mention=mention)
     assert SayArguments(content='合成回复', mention='onebot:70001').mention == 'onebot:70001'
+    assert SayArguments(content='合成回复', mention='telegram:7001').mention == 'telegram:7001'

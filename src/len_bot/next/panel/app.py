@@ -37,6 +37,7 @@ from .routes.restart import register_host_restart
 from .routes.updates import register_host_updates
 from .routes.prompts import register_host_prompts
 from .routes.operations import register_host_operations
+from .routes.diagnostics import register_host_diagnostics
 from .routes.memory import register_host_memory
 from .routes.tasks import register_host_tasks
 from .routes.task_storage import register_host_task_storage
@@ -93,6 +94,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                           lifecycle=runtime.management.lifecycle,
                           user=user, write_lock=write_lock)
     register_host_operations(app, runtime=runtime, user=user)
+    register_host_diagnostics(app, user=user)
     register_host_trials(app, trials, user)
     register_host_browser(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
@@ -136,7 +138,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "connection": {
-                "mode": "simulated" if config.onebot is None else config.onebot.mode,
+                "mode": ("telegram" if config.telegram is not None else "simulated" if config.onebot is None
+                         else config.onebot.mode),
                 "connected": False if runtime.platform is None else runtime.platform.connected,
                 "status": runtime.status,
                 "addresses": [] if runtime.platform is None else runtime.platform.addresses,

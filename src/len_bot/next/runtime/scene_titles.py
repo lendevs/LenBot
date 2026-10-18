@@ -1,7 +1,7 @@
 """Group names, member counts and private nicknames read from the platform.
 
 They label scenes for the panel and for host management. The last values read are kept in
-`state/scene-titles.json` so the panel still shows names while QQ is disconnected; each new
+`state/scene-titles.json` so the panel still shows names while the platform is disconnected; each new
 connection reads every scene once more.
 """
 
@@ -14,8 +14,6 @@ import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-from ..platform.platform_tools import scene_title
 
 if TYPE_CHECKING:
     from .network import NetworkRuntime
@@ -66,7 +64,7 @@ class SceneTitles:
         platform = self.runtime.platform
         missing = ([] if platform is None or not platform.connected
                    else [scene for scene in scenes if scene not in self.fresh])
-        results = await asyncio.gather(*(scene_title(scene, platform.call) for scene in missing),
+        results = await asyncio.gather(*(platform.scene_title(scene) for scene in missing),
                                        return_exceptions=True)
         errors = {}
         for scene, result in zip(missing, results):

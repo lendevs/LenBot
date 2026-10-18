@@ -126,10 +126,12 @@ class PluginManager:
                 'needs_config': any('default' not in field.model_fields_set for field in manifest.config.values()),
                 'output': output.strip(), 'source': await self.installer.details(name)}
 
-    async def install(self, url: str, *, ref: str | None = None, switch_source: bool = False) -> dict:
+    async def install(self, url: str, *, ref: str | None = None, switch_source: bool = False,
+                      expected_name: str | None = None, expected_permissions: list[str] | None = None) -> dict:
         saved = await asyncio.to_thread(_read_saved, self.root)
         manifest, _, output = await self.installer.prepare_git(
-            url, [] if saved.plugins is None else saved.plugins.paths, ref=ref, switch_source=switch_source)
+            url, [] if saved.plugins is None else saved.plugins.paths, ref=ref, switch_source=switch_source,
+            expected_name=expected_name, expected_permissions=expected_permissions)
         return await self._register_candidate(manifest, output)
 
     async def import_zip(self, data: bytes, filename: str, *, switch_source: bool = False) -> dict:

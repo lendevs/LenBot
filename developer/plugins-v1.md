@@ -30,6 +30,38 @@ description = "每群独立计数"
 
 `dependencies = ["包名>=版本"]` 声明 Python 依赖，由 uv 解析。当前环境中已有的版本会作为约束，冲突时原样报告，不会自动更换服务或修改版本后重试。对系统软件、外部服务和凭据的要求，请写在插件的 README 中。
 
+### 权限声明
+
+可选的 `permissions` 列出插件需要的宿主能力。声明了这个字段，插件就只能使用列出的能力，其余调用抛出 `PermissionError`，并说明缺少哪一项。
+
+```toml
+permissions = ["send", "history"]
+```
+
+| 名称 | 能力 |
+|---|---|
+| `send` | 在启用的群里发消息，包括 `ctx.reply` 回复自己的命令 |
+| `events` | `emit_event` 唤醒群聊 |
+| `history` | `recent_messages` 和 `messages_between` |
+| `memory` | `ctx.memory` |
+| `generate` | `ctx.generate` 单次模型调用 |
+| `delegate` | `ctx.delegate` 以请求人的名义发起后台任务 |
+| `network` | `fetch_image` 从公网获取图片 |
+| `schedule` | `ctx.cron` 登记定点任务 |
+
+插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的插件保留全部能力，面板显示为「未声明」；新插件建议总是声明。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
+
+### 进程隔离
+
+`isolation = "process"` 让插件运行在自己的子进程中，默认值 `inline` 与宿主同进程。
+
+- 宿主先在子进程中导入插件、读取入口，再按同样的标记登记命令、全文和正则规则、通知和 `@background` 循环。每次调用通过标准输入输出上的 JSON 行转发。
+- 插件中的 `ctx` 能力都回到宿主执行。宿主使用自己记录的插件名，并重新检查场景和 `permissions`，子进程无法冒充其他插件。`ctx.delegate` 的请求人由宿主按触发这次调用的真实消息确定，子进程传来的账号不被采用；后台循环和调用结束后不能委派。
+- 子进程崩溃或退出时，未完成的调用以失败结束，`@background` 循环随之停止，插件标记为失败并记录退出码，宿主和其他插件不受影响。协议输出中出现无法解析的行时，宿主结束这个进程，按同样方式处理。在面板中重新加载插件会启动新的进程。
+- 停止时先请求插件的 `stop()`，超时或被取消时结束进程。插件的 `print` 写入标准错误，不会混入协议。
+- 暂不支持 `@tool`、`ctx.cron` 和 `ctx.start_task`；含有这些入口的插件加载时会说明原因。跨进程传递的值需要能编码为 JSON，图片按 base64 传递。
+- 子进程与宿主使用同一个 Python 环境，这是故障隔离，不是安全沙箱。
+
 公开给插件作者的入口包括以下几项。`len_bot.next` 下的内部模块不承诺兼容。
 
 - `len_bot.plugin`，包括它导出的 `ChatMessage`、`Notice`、`Sender`、`Segment` 消息类型
@@ -392,7 +424,7 @@ task = await ctx.delegate("整理刚才的活动", "CSV 文件", context="实际
 
 ### generate
 
-`generate` 的 role 只能是现有的 `mind` 或 `learner` 用途绑定。用途没有配置时直接报错，不会更换模型。`PluginContext.generate` 需要先传入 scene。
+`generate` 的 role 只能是现有的 `mind` 或 `learner` 用途绑定。用途没有配置时直接报错。请求只发给这个用途绑定的服务商和模型，出错时不会更换模型或服务。`PluginContext.generate` 需要先传入 scene。
 
 调用使用 ModelSlots，以及原有的预算和用量记录。插件来源写入 `model_calls.plugin`，不会产生虚假的聊天轮次。完整的系统提示和输入都由插件提供，宿主不自动注入角色或历史。
 
@@ -449,7 +481,9 @@ async def publish(self, ctx):
 
 插件自己的日志使用 `self.ctx.log`（标准的 `logging.Logger`），写入宿主的 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前的回复轮次和工具调用 ID。面板的日志页可以按插件筛选。需要特殊权限的入口可以使用 `ctx.require_owner()`，普通查询不需要加上主人限制。
 
-插件是同进程的代码，与宿主共享依赖环境，不能声称具备沙箱隔离。不要通过 `ctx.plugin.host` 访问内部运行时。接口扩展随版本发布，安装和生效方式见[安装与维护](#安装与维护)。
+默认的插件是同进程的代码，与宿主共享依赖环境，不能声称具备沙箱隔离；`isolation = "process"` 只隔离崩溃，不限制文件和网络访问。
+
+每个插件的状态带有 `health`：`level` 为 `ok`、`degraded`（运行中，但最近一小时记录过错误，或有后台循环、定点任务最近一次失败）、`failed`、`stopped` 或 `starting`，另有 `errors_last_hour`、`failing` 和 `last_error_at`。面板可以轮询 `GET /api/host/plugins/health`，这个接口不读磁盘。不要通过 `ctx.plugin.host` 访问内部运行时。接口扩展随版本发布，安装和生效方式见[安装与维护](#安装与维护)。
 
 ## 本地测试与发布
 

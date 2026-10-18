@@ -32,8 +32,12 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
         if origin and urlsplit(origin).hostname in LOOPBACK:
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Vary'] = 'Origin'
+        # platform: whether the QQ (OneBot) connection is up now; None when no platform is configured.
+        # The updater compares it before and after an update; ``ready`` itself does not wait for it.
+        platform = None if runtime.platform is None else {
+            'connected': runtime.platform.connected, 'connected_since': runtime.connected_since}
         return {**lifecycle.process(), 'version': version('len-bot'), 'status': runtime.status,
-                'ready': runtime.status not in ('starting', 'failed')}
+                'ready': runtime.status not in ('starting', 'failed'), 'platform': platform}
 
     def preview() -> dict:
         saved = _read_saved(root)

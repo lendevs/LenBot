@@ -44,7 +44,8 @@ def copy_instance(source: Path, destination: Path, panel_port: int) -> None:
         config = source / 'lenbot.config.json'
         value = json.loads(config.read_text(encoding='utf-8'))
         database = source / value['database']
-        # SQLite WAL files and the memory job database sit next to the business database.
+        # SQLite WAL files and the memory job database sit next to the business database; copying a stopped
+        # database together with its -wal and -shm keeps every committed write.
         paths = _referenced(value, source) | {
             path.relative_to(source) for path in database.parent.glob(database.name + '*')}
         destination.mkdir()
@@ -62,6 +63,7 @@ def copy_instance(source: Path, destination: Path, panel_port: int) -> None:
         value = _relocate(value, source, destination)
         value['delivery'] = 'simulated'
         value['onebot'] = None
+        value['telegram'] = None
         if value.get('panel') is None:
             raise ValueError('测试副本面板需要原实例配置面板账号')
         value['panel']['port'] = panel_port

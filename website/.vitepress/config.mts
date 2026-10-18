@@ -38,6 +38,7 @@ export default defineConfig({
         ] },
         { text: '配置', items: [
           { text: '接入 QQ（OneBot）', link: '/guide/onebot' },
+          { text: '接入 Telegram', link: '/guide/telegram' },
           { text: '首次配置', link: '/guide/first-setup' },
           { text: '可选服务', link: '/guide/optional-services' },
         ] },

@@ -106,3 +106,48 @@ def test_event_loop_stall_is_logged(caplog):
     assert stalls and stalls[0] >= 0.1
     assert any('event_loop_stall' in record.getMessage() or getattr(record, 'event', None) == 'event_loop_stall'
                for record in caplog.records)
+
+
+def test_stall_names_the_blocking_task_and_its_stack():
+    from len_bot.next.runtime.loop_monitor import LoopMonitor
+
+    def hold_the_loop():
+        time.sleep(0.3)
+
+    async def blocking_handler():
+        await asyncio.sleep(0.05)
+        hold_the_loop()
+
+    async def run():
+        monitor = LoopMonitor(interval=0.02, threshold=0.08)
+        probe = asyncio.create_task(monitor.run())
+        await asyncio.create_task(blocking_handler(), name='scene:onebot:group:80001')
+        await asyncio.sleep(0.05)
+        probe.cancel()
+        await asyncio.gather(probe, return_exceptions=True)
+        return monitor.state()
+    state = asyncio.run(run())
+    assert state['stalls'] == 1 and not state['running']
+    stall = state['recent'][0]
+    assert stall['lag_ms'] >= 150 and state['max_lag_ms'] == stall['lag_ms']
+    # Captured while the loop was held, not after it was released.
+    assert stall['task'] == 'scene:onebot:group:80001'
+    assert 'hold_the_loop' in stall['stack']
+
+
+def test_a_whole_process_pause_is_not_counted_as_a_stall():
+    from len_bot.next.runtime.loop_monitor import LoopMonitor
+    offset = [0.0]
+
+    async def run():
+        monitor = LoopMonitor(interval=0.02, threshold=0.08, clock=lambda: time.monotonic() + offset[0])
+        probe = asyncio.create_task(monitor.run())
+        await asyncio.sleep(0.1)
+        # System sleep: the clock moves a minute while neither the loop nor the watchdog ran.
+        offset[0] += 60
+        await asyncio.sleep(0.1)
+        probe.cancel()
+        await asyncio.gather(probe, return_exceptions=True)
+        return monitor.state()
+    state = asyncio.run(run())
+    assert state['pauses'] == 1 and state['stalls'] == 0 and state['max_lag_ms'] == 0

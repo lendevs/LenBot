@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-from common import read_json, repository, write_json
+from common import host_status, read_json, repository, write_json
 
 # Task images published with each release; a locally built or other image is left for the owner to update.
 OFFICIAL_WORKERS = {'ghcr.io/lendevs/lenbot-worker', 'docker.io/lendevs/lenbot-worker', 'lendevs/lenbot-worker'}
@@ -195,12 +195,18 @@ class Native:
         self.maintenance('restore', target=old, snapshot=snapshot)
         self.select(old)
 
-    def ready(self, target: dict) -> None:
+    def ready_url(self) -> str:
         config = read_json(self.instance / 'lenbot.config.json')
         host = config['panel']['host']
         if host in ('0.0.0.0', '::'):
             host = '127.0.0.1'
-        url = f'http://{host}:{config["panel"]["port"]}/api/host/ready'
+        return f'http://{host}:{config["panel"]["port"]}/api/host/ready'
+
+    def host_status(self) -> dict | None:
+        return host_status(self.ready_url())
+
+    def ready(self, target: dict) -> None:
+        url = self.ready_url()
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             if self.child.poll() is not None:

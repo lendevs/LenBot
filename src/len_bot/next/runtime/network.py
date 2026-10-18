@@ -1,4 +1,4 @@
-"""Shared scene execution behind one OneBot connection or explicit simulated stdin."""
+"""Shared scene execution behind one chat platform adapter or explicit simulated stdin."""
 
 from __future__ import annotations
 
@@ -16,13 +16,13 @@ from .send_hold import SendHold
 from ..chat.attention import SceneRunner
 from ..media.audio import AudioService
 from ..chat.session import Chat
+from ..chat.commands import Commands
 from ..chat.tools import tool_catalog
 from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
 from .logs import credentials, log_context, log_event
 from .lifecycle import HostLifecycle
 from ..platform.messages import ChatMessage, Notice, SendResult, UploadResult
-from ..platform.onebot_messages import parse_event
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
@@ -34,7 +34,7 @@ from ..learning.jargon import JargonLearner
 from ..learning.sticker_collection import StickerCollector
 from ..learning.reply_effects import ReplyEffectTracker
 from ..learning.expression_selection import ExpressionService
-from ..platform.onebot import OneBot, OneBotCallError
+from ..platform.adapter import PlatformCallError, open_platform
 from ..persona.profile import Persona
 from ..plugins.host import PluginHost
 from ..tools.mcp_host import MCPHost
@@ -102,6 +102,7 @@ class NetworkRuntime:
         self.last_platform_error: str | None = None
         self.last_runtime_error: str | None = None
         self.stopped = asyncio.Event()
+        self.events_ready = asyncio.Event()
         self.connection_requested = asyncio.Event()
         self.disconnect_requested = False
         self.retention = Retention(self)
@@ -109,11 +110,12 @@ class NetworkRuntime:
         self.management: HostManagement | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
-        self.accepting = config.onebot is None
+        self.accepting = config.onebot is None and config.telegram is None
         self.storage_error: sqlite3.Error | None = None
-        self.platform = (None if config.onebot is None else OneBot(
-            config.onebot, bot_id=config.bot_id, on_event=self._receive,
-            on_error=self._platform_error, on_connection_change=self._connection_changed))
+        # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.
+        self.commands = Commands()
+        self.platform = open_platform(config, on_event=self._receive, on_error=self._platform_error,
+                                      on_connection_change=self._connection_changed, wait_for_events=self.events_ready.wait)
         self.audio = AudioService(store, {cfg.scene: cfg for cfg, _ in scene_configs},
                                   self.platform.call if config.delivery == "onebot" else None, slots,
                                   self.audio_updated)
@@ -130,8 +132,8 @@ class NetworkRuntime:
                 on_compaction=lambda scene=scene: self.compacted(scene),
                 on_reply_sample=(None if reply_effects is None else
                                  lambda scene=scene: reply_effects.wake(scene)),
-                send_message=self.send_message if config.delivery == "onebot" else None,
-                upload_file=self.upload_file if config.delivery == "onebot" else None,
+                send_message=self.send_message if config.delivery != "simulated" else None,
+                upload_file=self.upload_file if config.delivery != "simulated" else None,
                 platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
                                if config.delivery == "onebot" else None),
                 external_tools=(([] if plugins is None else plugins.tools_for(scene, preparing=True))
@@ -256,7 +258,7 @@ class NetworkRuntime:
             self._status("stopping")
 
     def _receive(self, raw: dict) -> None:
-        message = parse_event(raw)
+        message = self.platform.parse(raw)
         if message is None:
             return
         if isinstance(message, Notice):
@@ -293,8 +295,11 @@ class NetworkRuntime:
                    self.plugins.match_message(message, tuple(runner.settings.other_bot_ids)))
         claim = (None if matched is None else
                  (matched.record.name, self.plugins.message_report(message, matched, "已接管，处理尚未结束。")))
+        command = None if matched is not None or blocked else self.commands.match(self, runner, message)
+        if command is not None:
+            claim = ("/" + command.command.name, self.commands.report(command))
         try:
-            receipt = runner.receive_message(message, raw, wake=matched is None, plugin_claim=claim)
+            receipt = runner.receive_message(message, raw, wake=matched is None and command is None, plugin_claim=claim)
         except sqlite3.Error as error:
             self.storage_error = error
             self.stop()
@@ -309,6 +314,9 @@ class NetworkRuntime:
         if matched is not None and receipt["status"] != "duplicate":
             self.plugins.dispatch_message(message, matched)
             receipt["plugin_handler"] = f"{matched.record.name} {matched.label}"
+        if command is not None and receipt["status"] != "duplicate":
+            self.commands.dispatch(command)
+            receipt["command"] = "/" + command.command.name
         if receipt["status"] != "duplicate":
             self.audio.request(message.scene)
         self._emit({"type": "receipt", **receipt, "scene": message.scene})
@@ -332,7 +340,7 @@ class NetworkRuntime:
             stopping.cancel()
             # wait_connected reports a transport closed by the panel or by shutdown; that ends admission.
             for result in await asyncio.gather(connected, stopping, return_exceptions=True):
-                if isinstance(result, BaseException) and not isinstance(result, (OneBotCallError, asyncio.CancelledError)):
+                if isinstance(result, BaseException) and not isinstance(result, (PlatformCallError, asyncio.CancelledError)):
                     raise result
         return self.platform.connected and not self.stopped.is_set()
 
@@ -373,7 +381,7 @@ class NetworkRuntime:
                 try:
                     observed = True
                     await starting
-                except OneBotCallError as error:
+                except PlatformCallError as error:
                     self._platform_error(f"{type(error).__name__}: {error}")
                     if not manual_connection:
                         raise
@@ -420,7 +428,7 @@ class NetworkRuntime:
                     stopping = group.create_task(self.stopped.wait())
                     pending.append(stopping)
                     self._status("waiting_connection")
-                    self._emit({"type": "runtime", "status": "started", "input": "onebot",
+                    self._emit({"type": "runtime", "status": "started", "input": self.platform.name,
                                 "delivery": self.config.delivery, "addresses": self.platform.addresses})
                     terminated = group.create_task(self.platform.wait_terminated())
                     connected = group.create_task(self.platform.wait_connected(None))
@@ -446,7 +454,8 @@ class NetworkRuntime:
                     self.refresh_external_tools()
                     self.accepting = self.platform.connected
                     self._status("running")
-                    self._emit({"type": "runtime", "status": "ready", "input": "onebot",
+                    self.events_ready.set()
+                    self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
                                 "delivery": self.config.delivery})
                     pending.append(group.create_task(self.retention.run()))
                     running = [group.create_task(runner.run()) for runner in self.runners.values()]

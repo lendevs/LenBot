@@ -203,11 +203,17 @@ class ConnectionChange(BaseModel):
     access_token: str | None = Field(default=None, repr=False)
     owners: list[str]
     timezone: str
-    delivery: Literal["simulated", "onebot"]
+    delivery: Literal["simulated", "onebot", "telegram"]
     max_steps: int
     turn_timeout_seconds: float
     max_model_requests: int
     text_delivery: TextDelivery
+
+
+class CommandsChange(BaseModel):
+    """Only the scene-command switches the panel edits; the rest of ``commands`` keeps its saved value."""
+    model_config = ConfigDict(strict=True, extra="forbid")
+    group_managers_chat_reset: bool
 
 
 class PanelChange(BaseModel):
@@ -233,6 +239,11 @@ def _project(config: HostConfig) -> dict:
     if config.onebot is not None:
         onebot = config.onebot.model_dump(mode="json", exclude={"access_token"})
         onebot["access_token_configured"] = bool(config.onebot.access_token)
+    telegram = None
+    if config.telegram is not None:
+        # Edited in the config file only; the panel shows it so the connection page knows the platform.
+        telegram = config.telegram.model_dump(mode="json", exclude={"bot_token"})
+        telegram["bot_token_configured"] = bool(config.telegram.bot_token)
     return {
         "limits": config.limits.model_dump(mode="json"),
         "retention": None if config.retention is None else config.retention.model_dump(mode="json"),
@@ -242,6 +253,7 @@ def _project(config: HostConfig) -> dict:
             "bot_id": config.bot_id,
             "owners": config.owners,
             "onebot": onebot,
+            "telegram": telegram,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "max_steps": config.max_steps,
@@ -282,6 +294,7 @@ def _project(config: HostConfig) -> dict:
             }
             for scene, settings in config.scenes.items()
         },
+        "commands": config.commands.model_dump(mode="json"),
         "web_read": None if config.web_read is None else config.web_read.model_dump(mode="json"),
         "web_search": None if config.web_search is None else config.web_search.model_dump(mode="json"),
         "network": config.network.model_dump(mode="json"),
@@ -328,7 +341,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
-                for name in ("bot_id", "owners", "onebot", "timezone", "delivery", "max_steps",
+                for name in ("bot_id", "owners", "onebot", "telegram", "timezone", "delivery", "max_steps",
                              "turn_timeout_seconds", "max_model_requests", "text_delivery")
             ),
             "limits": running.limits != saved.limits,
@@ -340,6 +353,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
                 scene: current["scenes"].get(scene) != recorded["scenes"].get(scene)
                 for scene in sorted(current["scenes"].keys() | recorded["scenes"].keys())
             },
+            "commands": running.commands != saved.commands,
             "web_read": running.web_read != saved.web_read,
             "web_search": running.web_search != saved.web_search,
             "network": running.network != saved.network,
@@ -672,6 +686,16 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 max_model_requests=change.max_model_requests,
                 text_delivery=change.text_delivery.model_dump(mode="json"),
             )
+
+        return await save(edit)
+
+    @app.put("/api/host/settings/commands")
+    async def put_commands(request: Request, _: str = Depends(user)):
+        change: CommandsChange = await _body(request, CommandsChange)
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            source["commands"] = {**saved.commands.model_dump(mode="json"),
+                                  "group_managers_chat_reset": change.group_managers_chat_reset}
 
         return await save(edit)
 

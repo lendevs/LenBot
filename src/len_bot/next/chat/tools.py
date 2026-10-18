@@ -71,7 +71,9 @@ class SayArguments(BaseModel):
     content: str = Field(min_length=1)
     end_turn: bool = Field(default=False, description="这是本轮最后一次表达，成功后本轮即可结束；还需查看工具结果或继续行动时保持 false。")
     reply_to: str | None = Field(default=None, description="默认不填，直接接话。群里同时有几个话头、不引用会让人认错你在回哪句时，才填该平台消息 ID。")
-    mention: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$",
+    # Individual accounts of the platforms with an adapter; express() also requires the scene's platform,
+    # and build_tools narrows the schema the model sees to it.
+    mention: str | None = Field(default=None, pattern=r"^(?:onebot|telegram):[1-9][0-9]*$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
         description="与正文一起发送在同一条消息里的表情；file、emotion、query 三选一，素材目录见 react。")
@@ -198,6 +200,12 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
             parameters = SayArguments.model_json_schema()
             mode = "next_direct.md"
             parameters["properties"]["content"]["description"] = read_prompt(mode).strip()
+            scene_platform = config.scene.partition(":")[0]
+            mention = parameters["properties"]["mention"]["anyOf"][0]
+            mention["pattern"] = f"^{scene_platform}:[1-9][0-9]*$"
+            parameters["properties"]["mention"]["description"] = (
+                "默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，"
+                f"例如 {scene_platform}:70001。")
             description = function['description']
             if 'react' in names:
                 description += ' 同时需要说话和表情时，优先设置 sticker 合成一条消息；只用图像回应时使用 react。'
@@ -380,8 +388,9 @@ class SceneTools:
                 self.pause_after_turn = True
             return tool_result(result), None, None
         if call.name == "recall_chat":
-            return recall_chat(self.store, self.config.scene, self.config.timezone,
-                               RecallArguments.model_validate(call.arguments)), None, None
+            # A history search may scan many rows; it reads on the database thread without the write lock.
+            return await self.store.read(recall_chat, self.store, self.config.scene, self.config.timezone,
+                                         RecallArguments.model_validate(call.arguments)), None, None
         if call.name == "persona_knowledge":
             arguments = PersonaKnowledgeArguments.model_validate(call.arguments)
             return persona_knowledge(self.persona.id, self.persona.name, self.persona.knowledge,

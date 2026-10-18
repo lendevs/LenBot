@@ -23,7 +23,7 @@ class DispositionArguments(BaseModel):
         if self.state == 'closed' and self.people is not None:
             raise ValueError('closed 不接受 people')
         if self.people is not None and any(':' not in person or not person.split(':', 1)[1] for person in self.people):
-            raise ValueError('people 必须是平台账号，例如 onebot:70001')
+            raise ValueError('people 必须是平台账号，例如 onebot:70001 或 telegram:7001')
         return self
 
 

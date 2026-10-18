@@ -14,6 +14,14 @@
 
 远程目录只在明确刷新时读取，启动时和每次打开页面时都不联网。页面显示目录的来源和成功读取的时间。读取失败时显示原始错误，已经读取的同一来源的内容保留原来的时间。更换 URL 后，需要等待读取新的目录。目录快照只保存在当前进程中。
 
+### 市场接口
+
+面板之外的客户端也可以通过管理接口使用目录，接口都需要登录。
+
+- `GET /api/host/plugin-market?query=&category=`：按关键词（名称、标题、描述、分类、能力、作者，多个词需同时出现）和分类筛选，返回全部分类、目录总数和条目。每个条目附带 `installed`、`installed_version`、`update_available`（按版本号比较）、`compatible` 和 `incompatible_reason`（接口版本或宿主版本范围不符）。
+- `GET /api/host/plugin-market/{name}`：单个条目，格式同上。
+- `POST /api/host/plugin-market/{name}/install`：用条目里的仓库和 ref 准备候选版本，之后的配置和应用与手动安装相同。已经安装的返回 409，请改用更新；不兼容的返回 422。仓库 `plugin.toml` 中的插件名与条目的 `name` 不一致时返回 422，不准备候选版本。更新已安装的插件时同样要求清单名称不变。
+
 ## 索引格式
 
 顶层的 `version` 是索引格式的版本，目前为 1。每一项中的 `version` 是用于展示的插件版本。下面示例中的仓库和主页都是占位地址。
@@ -35,7 +43,8 @@
     "install": "git",
     "repository": "https://example.com/author/example_feed.git",
     "homepage": "https://example.com/author/example_feed",
-    "ref": "v1.0.0"
+    "ref": "v1.0.0",
+    "permissions": ["send", "schedule"]
   }]
 }
 ```
@@ -46,6 +55,7 @@
 - Git 条目需要一个独立的插件仓库，`ref` 支持标签、分支或提交。
 - 所有条目都使用 `install: "git"`，业务插件独立安装和更新。
 - 接口版本只是目录中的说明，实际的安装清单仍然按宿主的 v1 接口解析。
+- `permissions` 写插件实际使用的宿主权限，名称与 `plugin.toml` 的 `permissions` 相同，可以省略。它只在安装前展示，装上后的能力仍以插件自己的清单为准。从目录安装时，仓库清单也声明了权限的，两边必须一致，否则不准备候选版本。
 
 ## 版本与发布
 
@@ -74,7 +84,9 @@
 uv run --no-sync python scripts/sync_plugin_catalog.py ../lenbot-plugin-asoul ../lenbot-plugin-bilibili@v1.1.0
 ```
 
-参数是插件仓库在本机的检出目录，`@ref` 可选，默认为当前的 `HEAD`。脚本会核对条目与该提交中 `plugin.toml` 的名称、版本和接口是否一致，并要求这个提交已经推送到远端分支。
+参数是插件仓库在本机的检出目录，`@ref` 可选，默认为当前的 `HEAD`。脚本会核对条目与该提交中 `plugin.toml` 的名称、版本和接口是否一致，并要求这个提交已经推送到远端分支。`plugin.toml` 声明了 `permissions` 时，脚本把它写进条目；`catalog-entry.json` 写了不同的权限时拒绝同步。
+
+四个官方插件在固定提交中的 `plugin.toml` 还没有声明 `permissions`，随附目录中的 `permissions` 按各插件实际调用的宿主能力写明。插件仓库补上声明后，同步脚本会沿用清单里的值；在此之前重新同步会去掉这一项，需要同时在 `catalog-entry.json` 中写上。
 
 宿主 CI 中的 `official-plugins` 作业按目录中固定的提交检出每个 lendevs 插件，用当前的宿主运行这些插件的测试和打包检查。因此，如果宿主的改动导致目录中的插件无法运行，CI 会直接失败。
 
