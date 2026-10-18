@@ -7,10 +7,11 @@ SCHEMA = """
 CREATE TABLE messages (
     seq INTEGER PRIMARY KEY, scene TEXT NOT NULL,
     platform_id TEXT, body TEXT NOT NULL, raw TEXT,
-    received_at REAL, persona_id TEXT
+    received_at REAL, persona_id TEXT, wake_verdict TEXT, expression_entry_seq INTEGER
 );
 CREATE UNIQUE INDEX platform_messages ON messages(scene, platform_id)
     WHERE platform_id IS NOT NULL;
+CREATE INDEX expression_messages ON messages(expression_entry_seq,seq) WHERE expression_entry_seq IS NOT NULL;
 CREATE VIRTUAL TABLE message_search USING fts5(
     search_text, tokenize='trigram case_sensitive 1'
 );

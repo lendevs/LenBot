@@ -76,12 +76,20 @@ def _overview_indexes(db: sqlite3.Connection) -> None:
                "WHERE raw IS NULL AND json_extract(body,'$.send_status') IN ('failed','unconfirmed')")
 
 
+def _message_wake_verdict(db: sqlite3.Connection) -> None:
+    """Format 6 to 7: record decisions and link sent parts to their expression result."""
+    db.execute('ALTER TABLE messages ADD COLUMN wake_verdict TEXT')
+    db.execute('ALTER TABLE messages ADD COLUMN expression_entry_seq INTEGER')
+    db.execute('CREATE INDEX expression_messages ON messages(expression_entry_seq,seq) WHERE expression_entry_seq IS NOT NULL')
+
+
 BUSINESS = Format('业务数据库', APPLICATION_ID, FORMAT_VERSION, 1, {
     1: _tokens_instead_of_prices,
     2: _qualified_schedule_targets,
     3: _speech_records,
     4: _turn_wake_channels,
     5: _overview_indexes,
+    6: _message_wake_verdict,
 })
 
 

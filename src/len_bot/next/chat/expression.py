@@ -224,7 +224,7 @@ class ChatExpression:
                     content = report_parts(parts, errors, self.context.render)
                     kept = await self.store.call(self.store.finish_expression, (message_seq, entry_seq), part,
                                                  prefix + content, turn_id=turn_id)
-                    self.sent(message_seq, part, result.error, turn_id=turn_id)
+                    self.sent(kept, part, result.error, turn_id=turn_id)
                     if result.status == "sent":
                         confirmed.append((kept, self.now()))
                     # The host send hold returns simulated; speech still counts so limits behave as when sending.
@@ -285,8 +285,8 @@ class ChatExpression:
                     part.send_status, part.platform_message_id = result.status, result.platform_message_id
                     errors[-1] = result.error
                     log_sent(seq, part, result.error, index=index, parts=len(parts), plugin=plugin)
-                    await self.store.call(self.store.finish_expression, (seq, None), part, "")
-                    self.sent(seq, part, result.error, plugin=plugin)
+                    kept = await self.store.call(self.store.finish_expression, (seq, None), part, "")
+                    self.sent(kept, part, result.error, plugin=plugin)
                     self.notify()
                     if result.status not in {"sent", "simulated"}:
                         break

@@ -139,3 +139,17 @@ def test_documented_business_format_matches_the_code():
     assert f'业务数据库格式 {FORMAT_VERSION}' in changelog
     assert f'目前是格式 {FORMAT_VERSION}。' in operations
     assert f'业务数据库从格式 {FORMAT_VERSION - 1} 升级到 {FORMAT_VERSION} 时' in operations
+
+
+def test_verdict_migration_keeps_old_messages_unknown_and_replay_unchanged(tmp_path):
+    from len_bot.next.maintenance.replay_attention import replay
+    root = tmp_path / 'instance'
+    shutil.copytree(HISTORY / 'config0-business6-jobs6-index3', root)
+    def replay_fixture():
+        with closing(sqlite3.connect(root / 'state.db')) as db:
+            return replay(db, 1_790_000_000, 1_800_000_000, scene=SCENE, timezone='UTC', aliases=['报告'])
+    before = replay_fixture()
+    migrate_instance(root)
+    assert replay_fixture() == before
+    with Store(root / 'state.db') as store:
+        assert [row[0] for row in store.db.execute('SELECT wake_verdict FROM messages')] == [None, None]

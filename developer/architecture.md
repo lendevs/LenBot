@@ -267,6 +267,8 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 `host.state` 表示运行、连接、暂停和发送方式变化；其他通知使用 `host.changed`，合并到每秒最多四次。
 旧 `/api/host/events` 暂时保留供旧页面使用。
 
+`message.received` 携带 `message_seq` 和 `verdict`（woke、channel、reason、score、threshold）。判定同时保存在消息表的 wake_verdict 中；历史消息为空，表示未记录。判定描述本条消息是否提出新的唤醒，不把前一条待处理唤醒算给后续消息。
+
 `Chat` 可选的 `on_trace` 回调接到同一事件流，不改变没有回调的调用方式：
 
 | 类型 | 字段 |

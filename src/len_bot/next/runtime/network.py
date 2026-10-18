@@ -330,6 +330,8 @@ class NetworkRuntime:
             receipt["command"] = "/" + command.command.name
         if receipt["status"] != "duplicate":
             self.audio.request(message.scene)
+            self.events.publish('message.received', scene=message.scene, message_seq=receipt['message_seq'],
+                                verdict=receipt['wake_verdict'])
         self._emit({"type": "receipt", **receipt, "scene": message.scene})
 
     async def _ready(self, wait: bool) -> bool:

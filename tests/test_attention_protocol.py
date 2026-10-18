@@ -99,7 +99,8 @@ async def test_model_intent_survives_unrelated_closed_turn_and_restart(tmp_path)
                 assert live.state.disposition.state == 'closed'
                 live = runner()
                 now[0] += 10
-                live.receive(message(70001, 3, '先去吃饭'))
+                receipt = live.receive(message(70001, 3, '先去吃饭'))
+                assert receipt['wake_verdict']['woke'] and receipt['wake_verdict']['channel'] == 'attention'
                 assert live.state.pending.channel == 'attention'
                 await asyncio.wait_for(live.run(), 5)
                 assert live.state.declared.find('i1')

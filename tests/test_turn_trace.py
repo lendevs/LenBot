@@ -59,6 +59,11 @@ async def test_turn_trace_includes_model_tools_delivery_and_end(tmp_path, case):
                     await running
             else:
                 await asyncio.wait_for(running, 3)
+            if case in {'success', 'tool-error'}:
+                links = runtime.store.db.execute('SELECT expression_entry_seq FROM messages WHERE expression_entry_seq IS NOT NULL').fetchall()
+                assert len(links) == 1
+                result = runtime.store.db.execute('SELECT message FROM mind_entries WHERE seq=?', (links[0][0],)).fetchone()[0]
+                assert json.loads(result)['tool_call_id'] == 'say1'
     traced = [e for e in events if e['type'] in {'turn.started', 'turn.step', 'turn.ended', 'message.sent'}]
     assert traced[0]['type'] == 'turn.started'
     assert traced[0]['channel'] == 'direct' and traced[0]['direct']

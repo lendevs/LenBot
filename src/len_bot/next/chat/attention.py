@@ -55,6 +55,15 @@ def wake_channel(*, scheduled: bool, notices: bool, events: bool, audio: bool, p
             else pending if pending else "resume")
 
 
+@dataclass(frozen=True)
+class WakeVerdict:
+    woke: bool
+    channel: Channel | None
+    reason: str
+    score: float | None = None
+    threshold: float | None = None
+
+
 @dataclass
 class PendingWake:
     channel: Channel
@@ -377,7 +386,7 @@ class SceneRunner:
                 state.pending = None
 
     def offer_message(self, state: AttentionState, message: ChatMessage, at: float,
-                      pending: list[tuple[ChatMessage, float]], recent: list[tuple[ChatMessage, float]]) -> None:
+                      pending: list[tuple[ChatMessage, float]], recent: list[tuple[ChatMessage, float]]) -> WakeVerdict:
         self.expire_attention(state, at)
         matches = []
         settings = self.settings.declarations
@@ -387,46 +396,76 @@ class SceneRunner:
             matches = match_message(state.declared, message, at)
             for match in matches:
                 log_event(logger, 'attention_candidate', **match, mode=settings.mode)
+
+        def offered(wake: PendingWake, reason: str) -> WakeVerdict:
+            previous = None if state.pending is None else state.pending.channel
+            state.offer(wake)
+            threshold = self.settings.ambient_threshold if wake.channel in {'ambient', 'explore'} else None
+            if state.paused:
+                return WakeVerdict(False, None, '群聊已暂停', wake.score, threshold)
+            if self.quiet_period(at) is not None and self.quiet_direct(at) != 'allow':
+                return WakeVerdict(False, None, '安静时段，不开启对话回合', wake.score, threshold)
+            if previous is not None and PRIORITY[previous] <= PRIORITY[wake.channel]:
+                return WakeVerdict(False, None, '本轮已有待处理唤醒', wake.score, threshold)
+            return WakeVerdict(True, wake.channel, reason, wake.score, threshold)
+
         if is_direct(message):
             state.contact(at, self.settings.focus_seconds)
             state.silence_level = 0
-            state.offer(PendingWake("direct", at))
-            return
+            return offered(PendingWake('direct', at), '直接联系')
         if message.is_self:
-            if message.send_status in {"sent", "received", "simulated"}:
+            if message.send_status in {'sent', 'received', 'simulated'}:
                 state.contact(at, self.settings.focus_seconds)
-            return
-        if self.settings.only_direct or message.sender.uid in self.settings.other_bot_ids:
-            return
+            return WakeVerdict(False, None, '自己的消息')
+        if self.settings.only_direct:
+            return WakeVerdict(False, None, '只回应直接联系')
+        if message.sender.uid in self.settings.other_bot_ids:
+            return WakeVerdict(False, None, '来自其他 Bot')
         if self.quiet_period(at) is not None:
-            return
+            return WakeVerdict(False, None, '群聊已暂停' if state.paused else '安静时段')
         text = plain_text(message).casefold()
         words = [word for word in self.keywords if word in text and
                  (word not in state.keyword_last or at >= state.keyword_last[word] + self.settings.keyword_cooldown_seconds)]
         if words:
-            state.offer(PendingWake("named", at, words))
-        elif matches and self.enforcing:
-            state.offer(PendingWake('attention', at))
-        elif (self.settings.focus_seconds > 0 and state.last_contact_at is not None
-              and (not self.settings.close_focus_on_silence or state.focus_closed_at is None)
-              and state.focus_started_at <= at <= state.last_contact_at + self.settings.focus_seconds
-              and not addressed_to_others(message, self.config.bot_id)
-              and self.local_allows(state, 'focus', message, at)):
-            state.offer(PendingWake("focus", at))
-        elif open_for_ambient(state):
+            return offered(PendingWake('named', at, words), '点名：' + '、'.join(words))
+        if matches and self.enforcing:
+            return offered(PendingWake('attention', at), '持续关注条件命中')
+        local_blocked = False
+        if (self.settings.focus_seconds > 0 and state.last_contact_at is not None
+                and (not self.settings.close_focus_on_silence or state.focus_closed_at is None)
+                and state.focus_started_at <= at <= state.last_contact_at + self.settings.focus_seconds
+                and not addressed_to_others(message, self.config.bot_id)):
+            if self.local_allows(state, 'focus', message, at):
+                return offered(PendingWake('focus', at), '持续对话')
+            local_blocked = True
+        score = None
+        if open_for_ambient(state):
             score = (participation_score(pending, recent, self.settings, self.config.bot_id)
                      if self.settings.activity > 0 else None)
-            if (score is not None and score > self.settings.ambient_threshold
-                    and self.local_allows(state, 'ambient', message, at)):
-                log_event(logger, 'attention_ambient', score=score, threshold=self.settings.ambient_threshold,
-                          message_id=message.platform_message_id)
-                state.offer(PendingWake("ambient", at, score=score))
-            elif state.pending is None and self.settings.explore_probability > 0:
+            if score is not None and score > self.settings.ambient_threshold:
+                if self.local_allows(state, 'ambient', message, at):
+                    log_event(logger, 'attention_ambient', score=score, threshold=self.settings.ambient_threshold,
+                              message_id=message.platform_message_id)
+                    return offered(PendingWake('ambient', at, score=score), '参与分超过门槛')
+                local_blocked = True
+            if state.pending is None and self.settings.explore_probability > 0:
                 woke = self.random.random() < self.settings.explore_probability
                 log_event(logger, 'attention_explore', woke=woke, probability=self.settings.explore_probability,
                           score=score, message_id=message.platform_message_id)
                 if woke:
-                    state.offer(PendingWake('explore', at, score=score, explored=True))
+                    return offered(PendingWake('explore', at, score=score, explored=True), '随机探索命中')
+        if local_blocked:
+            reason = '局部收尾不允许'
+        elif not open_for_ambient(state):
+            reason = '本轮已有待处理唤醒'
+        elif addressed_to_others(message, self.config.bot_id):
+            reason = '发给别人的消息'
+        elif self.settings.activity <= 0:
+            reason = '未开启群聊参与'
+        else:
+            reason = '参与分未达门槛'
+        return WakeVerdict(False, None, reason, score,
+                           self.settings.ambient_threshold if score is not None else None)
 
     def receive(self, raw: dict, *, ignore_other_scenes: bool = False) -> dict:
         message = parse_message(raw, own_message_ids=set())
@@ -475,11 +514,16 @@ class SceneRunner:
             pending.append((message, now))
             recent = self.store.attention_sample(self.config.scene, limit=19,
                                                exclude_uids=self.settings.other_bot_ids) + [(message, now)]
-        if wake:
-            self.offer_message(state, message, now, pending, recent)
+        if blocked:
+            verdict = WakeVerdict(False, None, '黑名单')
+        elif not wake:
+            verdict = WakeVerdict(False, None, '宿主命令' if plugin_claim is not None and plugin_claim[0].startswith('/')
+                                  else '插件接管' if plugin_claim is not None else '本条消息不参与唤醒')
+        else:
+            verdict = self.offer_message(state, message, now, pending, recent)
         snapshot = persisted(state) if state != self.state else None
         seq = self.store.enqueue(
-            message, raw, now, attention_state=snapshot,
+            message, raw, now, attention_state=snapshot, wake_verdict=asdict(verdict),
             plugin_claim=plugin_claim,
             collect_stickers=(not blocked and self.config.learning is not None and self.config.learning.collect_stickers
                               and not message.is_self and message.sender.uid != self.config.bot_id
@@ -493,7 +537,7 @@ class SceneRunner:
         self.changed.set()
         receipt = {"status": "queued" if state.pending else "stored", "message_seq": seq,
                    "platform_message_id": message.platform_message_id,
-                   "wake_channel": state.pending.channel if state.pending else None}
+                   "wake_channel": state.pending.channel if state.pending else None, "wake_verdict": asdict(verdict)}
         if not message.is_self and addressed_to_others(message, self.config.bot_id):
             receipt["addressed_to_others"] = True
         if blocked:
