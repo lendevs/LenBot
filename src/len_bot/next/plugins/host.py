@@ -28,8 +28,7 @@ from ...plugin import (MARK, Content, GenerationRole, Image, Text,
                      Invocation, Notice, Plugin, PluginContext, Sent)
 from .kv import PluginKV
 from .data import prepare_data
-from ..models.client import ModelReply
-from ..models.failover import open_model
+from ..models.client import ChatModel, ModelReply
 from ..models.request import request_model
 from ..chat.schedule_time import Cron, next_cron, parse_cron
 from ..chat.request_source import SOURCE_DESCRIPTION, source_message
@@ -457,8 +456,7 @@ class PluginHost:
             if reply.tool_calls or not reply.text.strip():
                 raise ValueError(f"插件单次生成未返回完整文字：{encode(reply.message)}")
 
-        # The role's fallbacks and circuits apply here too, shared with the host's own requests.
-        async with open_model(self.config.models, role) as model:
+        async with ChatModel(self.config.model_settings(role)) as model:
             reply = await request_model(
                 self.config, self.runtime.store, model, messages, [], scene=scene, role=role,
                 plugin=plugin, slots=self.runtime.slots, validate=text_reply, notify=self._notify)
