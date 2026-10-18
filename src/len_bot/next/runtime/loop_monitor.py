@@ -5,6 +5,11 @@ probe's heartbeat: once the loop has not run the probe for ``threshold`` past it
 captures the event loop thread's stack and the asyncio task running at that moment, which is the
 code holding the loop, not what runs after it lets go. When the probe finally wakes, one
 ``event_loop_stall`` event is logged with that stack and the totals the panel reads are updated.
+
+When the whole process did not run (system sleep, a stopped or paused VM or container), the
+monotonic clock can still advance on some systems and the probe wakes up very late. The watchdog
+thread then missed its own wake-ups for as long; such a gap of ``PAUSE_SECONDS`` or more is logged
+once as ``event_loop_paused`` and not counted as a stall.
 """
 from __future__ import annotations
 
@@ -26,6 +31,8 @@ logger = logging.getLogger(__name__)
 INTERVAL_SECONDS = 0.5
 THRESHOLD_SECONDS = 0.5
 HISTORY = 20
+# A probe this late while the watchdog thread was also not running is a process pause, not a stall.
+PAUSE_SECONDS = 30.0
 STACK_FRAMES = 30
 
 
@@ -57,12 +64,20 @@ class LoopMonitor:
         self.probes = 0
         self.started_at: float | None = None
         self.running = False
+        self.pauses = 0
         self._lock = threading.Lock()
         self._beat = 0.0
         self._capture: _Capture | None = None
+        # Longest gap between two watchdog wake-ups since the probe last woke, and its last wake-up.
+        self._watch_gap = 0.0
+        self._watch_woke = 0.0
 
     def _watch(self, loop: asyncio.AbstractEventLoop, thread_id: int, stop: threading.Event) -> None:
         while not stop.wait(min(self.interval, self.threshold) / 2):
+            now = self.clock()
+            with self._lock:
+                self._watch_gap = max(self._watch_gap, now - self._watch_woke)
+                self._watch_woke = now
             with self._lock:
                 beat = self._beat
                 if self.clock() - beat <= self.threshold or (
@@ -96,6 +111,7 @@ class LoopMonitor:
         stop = threading.Event()
         with self._lock:
             self._beat, self._capture = self.clock(), None
+            self._watch_woke, self._watch_gap = self._beat, 0.0
         watchdog = threading.Thread(target=self._watch, args=(loop, threading.get_ident(), stop),
                                     name='lenbot-loop-watchdog', daemon=True)
         self.running, self.started_at = True, self.wall()
@@ -109,8 +125,16 @@ class LoopMonitor:
                 lag = self.clock() - expected
                 with self._lock:
                     capture, self._capture = self._capture, None
+                    # After a pause the probe may wake before the watchdog does: count its current gap too.
+                    watch_gap = max(self._watch_gap, self.clock() - self._watch_woke)
+                    self._watch_gap = 0.0
                 self.probes += 1
-                if lag > self.threshold:
+                if lag >= PAUSE_SECONDS and watch_gap >= lag - self.interval:
+                    # The watchdog thread did not run either: the process was paused, not the loop held.
+                    self.pauses += 1
+                    log_event(logger, 'event_loop_paused', f'进程约 {lag:.0f} 秒没有运行（例如系统休眠），不计为卡顿',
+                              lag_ms=round(lag * 1000), watchdog_gap_ms=round(watch_gap * 1000))
+                elif lag > self.threshold:
                     self._record(lag, capture)
                     if on_stall is not None:
                         on_stall(lag)
@@ -121,7 +145,7 @@ class LoopMonitor:
     def state(self) -> dict:
         return {'running': self.running, 'started_at': self.started_at,
                 'interval_ms': round(self.interval * 1000), 'threshold_ms': round(self.threshold * 1000),
-                'probes': self.probes, 'stalls': self.count, 'stalled_ms_total': self.total_ms,
+                'probes': self.probes, 'stalls': self.count, 'pauses': self.pauses, 'stalled_ms_total': self.total_ms,
                 'max_lag_ms': self.max_ms, 'recent': [asdict(item) for item in reversed(self.stalls)]}
 
 

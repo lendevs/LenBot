@@ -24,7 +24,7 @@ def test_event_loop_metrics_require_login_and_report_stalls(tmp_path):
         assert state['stalls'] == before['stalls'] + 1
         assert state['recent'][0]['lag_ms'] >= MONITOR.threshold * 1000
         assert 'check' in state['recent'][0]['stack']
-        assert set(state) == {'running', 'started_at', 'interval_ms', 'threshold_ms', 'probes', 'stalls',
+        assert set(state) == {'running', 'started_at', 'interval_ms', 'threshold_ms', 'probes', 'stalls', 'pauses',
                               'stalled_ms_total', 'max_lag_ms', 'recent'}
         await client.post('/api/auth/logout')
         assert (await client.get('/api/host/event-loop')).status_code == 401
