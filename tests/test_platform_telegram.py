@@ -32,6 +32,7 @@ class BotAPI:
 
     def __init__(self, *, bot: int = BOT):
         self.bot, self.updates, self.sent, self.failures = bot, [], [], 0
+        self.conflict = False
         self.lock = threading.Lock()
         api = self
 
@@ -64,6 +65,9 @@ class BotAPI:
         if method == 'getMe':
             return 200, {'ok': True, 'result': {'id': self.bot, 'is_bot': True, 'username': 'lenbot_fixture_bot'}}
         if method == 'getUpdates':
+            if self.conflict:
+                return 409, {'ok': False, 'error_code': 409,
+                             'description': "Conflict: can't use getUpdates method while webhook is active"}
             if self.failures:
                 self.failures -= 1
                 return 502, {'ok': False, 'error_code': 502, 'description': 'Bad Gateway'}
@@ -157,12 +161,14 @@ def test_commands_addressed_to_this_bot_drop_the_username_and_mention_it():
 async def test_polling_delivers_updates_once_and_reconnects_after_a_gateway_error():
     events, errors = [], []
     with BotAPI() as api:
-        api.failures = 1
+        api.failures = 2
         telegram = adapter(api, events, errors)
         await telegram.start()
         try:
             await until(lambda: errors, 3)
             assert 'Bad Gateway' in errors[0] and TOKEN not in errors[0]
+            # getMe alone does not count: connected waits for the first getUpdates answer.
+            assert not telegram.connected
             await until(lambda: telegram.connected, 5)
             api.push('一')
             api.push('二')
@@ -174,6 +180,22 @@ async def test_polling_delivers_updates_once_and_reconnects_after_a_gateway_erro
             await telegram.close()
         await telegram.wait_terminated()
         assert not telegram.connected
+
+
+@pytest.mark.asyncio
+async def test_a_webhook_conflict_ends_polling_without_ever_connecting():
+    events, errors = [], []
+    with BotAPI() as api:
+        api.conflict = True
+        telegram = adapter(api, events, errors)
+        await telegram.start()
+        try:
+            async with asyncio.timeout(3):
+                await telegram.wait_terminated()
+            assert not telegram.connected and len(errors) == 1
+            assert 'webhook is active' in errors[0] and '不再重试' in errors[0]
+        finally:
+            await telegram.close()
 
 
 @pytest.mark.asyncio

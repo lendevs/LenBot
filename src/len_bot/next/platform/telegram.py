@@ -25,6 +25,18 @@ PLACEHOLDERS = {"photo": "[图片]", "sticker": "[表情]", "voice": "[语音]",
                 "document": "[文件]", "animation": "[动图]", "location": "[位置]", "contact": "[联系人]"}
 
 
+# getUpdates answers that retrying cannot fix: a revoked token, or a webhook or another poller on this bot.
+TERMINAL_POLL_ERRORS = {401, 409}
+
+
+class TelegramError(PlatformCallError):
+    """A Bot API answer with ``ok: false``; ``error_code`` is Telegram's (the HTTP status)."""
+
+    def __init__(self, message: str, *, submitted: bool, error_code: int):
+        super().__init__(message, submitted=submitted)
+        self.error_code = error_code
+
+
 def _utf16(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
@@ -90,8 +102,8 @@ class Telegram:
         if not isinstance(body, dict) or body.get("ok") is not True:
             description = body.get("description") if isinstance(body, dict) else body
             # A refused request (bad chat, no rights) was not delivered.
-            raise PlatformCallError(self._safe(f"Telegram {action} 失败：{description}"),
-                                    submitted=response.status_code >= 500)
+            raise TelegramError(self._safe(f"Telegram {action} 失败：{description}"),
+                                submitted=response.status_code >= 500, error_code=response.status_code)
         return body["result"]
 
     async def start(self) -> None:
@@ -105,8 +117,9 @@ class Telegram:
             self._client = None
             raise
         self.username = me.get("username")
+        # Connected only once getUpdates answers: getMe also succeeds while a webhook or another poller
+        # holds the updates, and the updater and the ready check read this flag.
         self._poller = asyncio.create_task(self._poll(), name="telegram-poll")
-        self._set_connected(True)
 
     async def _poll(self) -> None:
         delay = RETRY_INITIAL_SECONDS
@@ -119,6 +132,10 @@ class Telegram:
                 updates = await self.call("getUpdates", params, timeout=timeout + self.settings.request_timeout_seconds)
             except PlatformCallError as error:
                 self._set_connected(False)
+                if isinstance(error, TelegramError) and error.error_code in TERMINAL_POLL_ERRORS:
+                    self.on_error(f"{error}；不再重试，处理后重启")
+                    self._terminated.set()
+                    return
                 self.on_error(str(error))
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, RETRY_MAX_SECONDS)
