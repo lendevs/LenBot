@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from ..chat.tools import task_data_tools
-from ..config import HostConfig
+from ..config import HostConfig, _read_root
 from ..configuration.chat import SceneSettings
 from ..configuration.editing import _read_saved, save_config
 from ..persona.packages import import_package
@@ -278,28 +278,30 @@ class PersonaService:
             for target in targets:
                 for field in _SCENE_ROLE_FIELDS:
                     setattr(target, field, deepcopy(getattr(settings, field)))
-        skills = ()
-        if runtime.tasks is not None:
-            worker = runtime.config.worker
-            catalog = load_catalog(worker.skills_directory, scene, public_browser=worker.public_browser) + (
-                () if runtime.plugins is None else runtime.plugins.skills_for(scene))
-            skills = select_skills(catalog, persona.skills)
-        external = (([] if runtime.plugins is None else
-                     runtime.plugins.tools_for(scene, preparing=runtime.status != "running"))
-                    + ([] if runtime.mcp is None else runtime.mcp.tools_for(scene)))
         try:
+            skills = ()
+            if runtime.tasks is not None:
+                worker = runtime.config.worker
+                catalog = load_catalog(worker.skills_directory, scene, public_browser=worker.public_browser) + (
+                    () if runtime.plugins is None else runtime.plugins.skills_for(scene))
+                skills = select_skills(catalog, persona.skills)
+            external = (([] if runtime.plugins is None else
+                         runtime.plugins.tools_for(scene, preparing=runtime.status != "running"))
+                        + ([] if runtime.mcp is None else runtime.mcp.tools_for(scene)))
+            data_tools = (None if runtime.tasks is None else task_data_tools(
+                chat.config, persona, platform=runtime.config.delivery == "onebot", memory=runtime.memory))
             runtime.runners[scene].adopt_persona(persona, skills, external)
         except Exception:
             for target, values in zip(targets, before):
                 for field, value in values.items():
                     setattr(target, field, value)
+            chat.context.refresh_tools()
             raise
         if runtime.tasks is not None:
             runtime.tasks.skills[scene] = skills
             runtime.tasks.skill_permissions[scene] = persona.skills
             runtime.tasks.tool_permissions[scene] = persona.tools
-            runtime.tasks.data_tools[scene] = task_data_tools(
-                chat.config, persona, platform=runtime.config.delivery == "onebot", memory=runtime.memory)
+            runtime.tasks.data_tools[scene] = data_tools
         if runtime.memory is not None:
             runtime.memory.active_personas[scene] = persona.id
             runtime.memory.jobs.remember_personas(scene, {persona.id})
@@ -319,6 +321,8 @@ class PersonaService:
                 if (role.path == chat.config.persona == saved.scenes[scene].persona
                         and persona.id == previous.id):
                     return {"scene": scene, "status": "unchanged", "persona": {"id": persona.id, "name": persona.name}}
+                original = (await asyncio.to_thread(_read_root, self.root))[1]['scenes'][scene]
+                previous_binding = {field: deepcopy(original[field]) for field in _SCENE_ROLE_FIELDS if field in original}
                 saved = await asyncio.to_thread(save_config, self.root, runtime.config, lambda original, current:
                                                 self._bind(original, current, scene, role, persona, previous_id))
             handover, error = "skipped", None
@@ -331,7 +335,14 @@ class PersonaService:
             try:
                 self._apply(scene, persona, saved.scenes[scene])
             except Exception as failure:
-                raise RuntimeError(f"配置已保存，但运行中的群没换成：{error_text(failure)}") from failure
+                def restore_binding(original: dict, current: HostConfig) -> None:
+                    local = original['scenes'][scene]
+                    for field in _SCENE_ROLE_FIELDS:
+                        local.pop(field, None)
+                    local.update(previous_binding)
+                async with runtime.config_write_lock:
+                    await asyncio.to_thread(save_config, self.root, runtime.config, restore_binding)
+                raise RuntimeError(f"角色装配失败，已恢复原绑定：{error_text(failure)}") from failure
             if previous.id != persona.id:
                 chat.context.host_state = (
                     f"本群角色已从「{previous.name}」换成「{persona.name}」。"

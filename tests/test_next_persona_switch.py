@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+import yaml
 
 import httpx
 import pytest
@@ -17,6 +18,9 @@ from len_bot.next.platform.onebot_messages import parse_event
 from len_bot.next.runtime import personas as persona_service
 from len_bot.next.runtime.network import NetworkRuntime
 from len_bot.next.storage.store import Store
+from len_bot.next.plugins.host import PluginHost
+from len_bot.next.chat.tools import tool_catalog
+from test_next_plugins import _copy_sample
 
 SCENE = 'onebot:group:80001'
 
@@ -127,6 +131,47 @@ def test_switch_waits_for_the_current_turn(tmp_path, monkeypatch):
         await asyncio.gather(*runtime.personas.background)
         assert runner.chat.persona.id == 'second'
 
+    run_host(tmp_path, exercise)
+
+
+def test_failed_tool_assembly_restores_saved_binding_and_running_role(tmp_path):
+    async def exercise(client, runtime, store):
+        await client.post('/api/host/personas', json={'folder': 'second', 'name': '第二角色'})
+        plugin = _copy_sample(tmp_path / 'plugins', 'sample')
+        (plugin / '__init__.py').write_text(
+            'from len_bot.plugin import Plugin, tool\n'
+            'class Sample(Plugin):\n'
+            '    @tool("sample_probe", "合成工具")\n'
+            '    async def probe(self, ctx) -> str:\n'
+            '        return "合成结果"\n')
+        config_path = tmp_path / 'lenbot.config.json'
+        source = json.loads(config_path.read_text())
+        source['plugins'] = {'paths': ['plugins'], 'sample': {}}
+        source['scenes'][SCENE]['plugins'] = ['sample']
+        config_path.write_text(json.dumps(source))
+        plugins = PluginHost(load_host_config(tmp_path), core_tools={tool['function']['name'] for tool in tool_catalog(platform=True)})
+        runtime.plugins = plugins
+        plugins.bind(runtime)
+        try:
+            runtime.refresh_external_tools()
+            assert 'sample_probe' in runtime.chats[SCENE].toolset.external
+            role = tmp_path / 'personas/second/persona.yaml'
+            data = yaml.safe_load(role.read_text())
+            data['tools'] = ['sample_probe']
+            role.write_text(yaml.safe_dump(data, allow_unicode=True))
+            before = json.loads(config_path.read_text())['scenes'][SCENE]
+            result = (await client.post('/api/host/personas/second/scenes', json={'scenes': [SCENE]})).json()['results'][0]
+            assert result['status'] == 'failed' and 'tool_search' in result['error']
+            assert '已恢复原绑定' in result['error']
+            assert json.loads(config_path.read_text())['scenes'][SCENE] == before
+            chat = runtime.chats[SCENE]
+            assert chat.persona.id == chat.context.persona.id == chat.expression.persona.id == chat.toolset.persona.id == 'fixture'
+            assert chat.config.persona == runtime.config.scenes[SCENE].persona == tmp_path / 'personas/fixture'
+            assert chat.config.persona_aliases == runtime.config.scenes[SCENE].persona_aliases == ['老称呼']
+            assert '合成角色' in chat.context.system and '第二角色' not in chat.context.system
+            assert runtime.memory.active_personas[SCENE] == 'fixture'
+        finally:
+            await plugins.close()
     run_host(tmp_path, exercise)
 
 
