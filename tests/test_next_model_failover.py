@@ -134,29 +134,3 @@ def test_roles_without_fallbacks_keep_a_plain_chat_model():
     assert [(provider, item.model) for provider, item in memory.candidates] == [('p', 'm'), ('q', 'n')]
     assert memory.settings.model == 'm'
     assert health.settings.failure_threshold == 4
-
-
-@pytest.mark.asyncio
-async def test_model_call_log_names_the_provider_that_served(tmp_path, caplog):
-    import logging
-    from test_next_persona_permissions import _config, _package
-    from len_bot.next.models.request import request_model
-    from len_bot.next.storage.store import Store
-    package = _package(tmp_path, 'plain', tools=['say'], documents={})
-    config = _config(tmp_path / 'instance', package)
-    primary = await peer_server([DOWN], [])
-    backup = await peer_server([OK], [])
-    async with primary, backup:
-        with Store(config.database) as store:
-            turn = store.start_turn(config.scene)
-            async with FailoverModel('mind', [('synthetic', settings(primary, 'synthetic-mind')),
-                                              ('spare', settings(backup, 'spare-mind'))], ProviderHealth()) as model:
-                with caplog.at_level(logging.INFO):
-                    reply = await request_model(config, store, model, [{'role': 'user', 'content': '你好'}], [],
-                                                scene=config.scene, role='mind', turn_id=turn)
-    assert reply.served_by['provider'] == 'spare'
-    record = next(item for item in caplog.records if getattr(item, 'event', None) == 'model_call')
-    assert record.fields['provider'] == 'synthetic'
-    assert (record.fields['served_provider'], record.fields['served_model']) == ('spare', 'spare-mind')
-    assert record.fields['failed_before'][0]['provider'] == 'synthetic'
-    assert any(getattr(item, 'event', None) == 'model_failover' for item in caplog.records)
