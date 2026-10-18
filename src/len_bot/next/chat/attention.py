@@ -785,9 +785,9 @@ class SceneRunner:
             if self.state.pending is not None and self.state.pending.channel == "direct":
                 self.chat.reserve_revoked = False
                 self.chat.turn_messages = 0
-            elif self.chat.turn_messages:
+            else:
                 # A reaction alone is not an answer. The turn already answered what woke it; ordinary follow-ups use the normal limit.
-                self.chat.reserve_revoked = True
+                self.revoke_after_answer()
             self.chat.turn_channels.add(self.state.pending.channel if self.state.pending is not None else "in_turn")
             if self.state.pending is not None and self.state.pending.explored:
                 self.chat.turn_channels.add('explore')
@@ -796,24 +796,45 @@ class SceneRunner:
                                     attention_state=persisted(state))
             if self.state.pending is not None and self.state.pending.channel == "direct":
                 self.chat.direct_request = True
+        # A reminder or task result joining now is owed an answer from the reserve; audio and plugin
+        # events joining after the turn answered follow the normal limit, like chat follow-ups.
+        granted = False
         if scheduled:
+            granted = True
+            self.grant_reserve()
             self.chat.turn_channels.add("schedule")
             self.store.append_schedules(self.config.scene, scheduled, turn_id=turn_id)
         if self.chat.tasks is not None and self.quiet_period(self.now()) is None:
             notices = self.chat.tasks.records.pending_notices(self.config.scene)
             if notices:
+                granted = True
+                self.grant_reserve()
                 self.chat.turn_channels.add("task")
                 self.store.append_task_notices(self.config.scene, notices, turn_id=turn_id)
         if self.quiet_period(self.now()) is None:
             if self.audio_ready():
+                if not granted:
+                    self.revoke_after_answer()
                 self.chat.turn_channels.add("audio")
         events = PluginStore(self.store).pending_plugin_events(
             self.config.scene, include_events=self.quiet_period(self.now()) is None)
         if events:
+            if not granted:
+                self.revoke_after_answer()
             self.chat.turn_channels.add("plugin")
             self.store.append_plugin_events(self.config.scene, events, turn_id=turn_id)
         self.save_state(state)
         return True
+
+    def grant_reserve(self) -> None:
+        self.chat.reserve_request = True
+        self.chat.reserve_revoked = False
+        self.chat.turn_messages = 0  # Not answered yet, like a new direct input.
+
+    def revoke_after_answer(self) -> None:
+        if self.chat.turn_messages:
+            self.chat.reserve_revoked = True
+            self.chat.reserve_request = False
 
     async def limit_notice(self, error: LimitReached) -> None:
         """At most one host explanation per blocked window, persisted before delivery."""

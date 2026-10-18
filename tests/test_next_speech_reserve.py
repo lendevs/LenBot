@@ -169,3 +169,109 @@ def test_quota_hint_names_private_chats_and_task_results(tmp_path):
         record_speech(store, config.scene); record_speech(store, config.scene)
         content = turn_state(config, store, now=store.now())['content']
         assert '私聊' in content and '任务结果' in content and '还能说 1 条' in content
+
+
+# Review 2 (A-1 incomplete): reserve rules for input joining a running turn.
+
+@pytest.mark.asyncio
+async def test_reminder_joining_an_ambient_turn_gets_the_reserve(tmp_path, monkeypatch):
+    runner, store, config = _runner(tmp_path)
+    with store:
+        chat = runner.chat
+        chat.direct_request, chat.turn_channel = False, 'ambient'
+
+        async def ready_messages(**_):
+            return ([], None, [{'id': 1}])
+        monkeypatch.setattr(runner, 'ready_messages', ready_messages)
+        monkeypatch.setattr(store, 'append_schedules', lambda *a, **k: None)
+        assert await runner.append_during_turn(False, 'turn')
+        assert 'schedule' in chat.turn_channels
+        record_speech(store, config.scene); record_speech(store, config.scene)
+        assert chat.speech_reserve
+        chat.check_limits()  # normal limit used, the reminder still answers from the reserve
+
+
+@pytest.mark.asyncio
+async def test_reminder_after_revocation_gets_the_reserve_back(tmp_path, monkeypatch):
+    runner, store, config = _runner(tmp_path)
+    with store:
+        chat = runner.chat
+        chat.direct_request, chat.turn_channel = True, 'direct'
+        chat.turn_messages = 1
+        seq = [([(1, object(), 0.0)], None, []), ([], None, [{'id': 1}]), ([(2, object(), 0.0)], None, [])]
+
+        async def ready_messages(**_):
+            return seq.pop(0)
+        monkeypatch.setattr(runner, 'ready_messages', ready_messages)
+        monkeypatch.setattr(runner, 'batch', lambda p, r: (1, ['x']))
+        monkeypatch.setattr(store, 'append_batch', lambda *a, **k: None)
+        monkeypatch.setattr(store, 'append_schedules', lambda *a, **k: None)
+        assert await runner.append_during_turn(False, 'turn')
+        assert chat.reserve_revoked and not chat.speech_reserve
+        assert await runner.append_during_turn(False, 'turn')
+        assert chat.speech_reserve and chat.turn_messages == 0
+        # Once the reminder is answered, ordinary follow-ups are back at the normal limit.
+        chat.turn_messages = 1
+        assert await runner.append_during_turn(False, 'turn')
+        assert not chat.speech_reserve
+
+
+@pytest.mark.asyncio
+async def test_task_result_joining_a_turn_gets_the_reserve(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    runner, store, config = _runner(tmp_path)
+    with store:
+        chat = runner.chat
+        chat.direct_request, chat.turn_channel = False, 'ambient'
+        chat.turn_messages = 1
+
+        async def ready_messages(**_):
+            return ([], None, [])
+        monkeypatch.setattr(runner, 'ready_messages', ready_messages)
+        chat.tasks = SimpleNamespace(records=SimpleNamespace(pending_notices=lambda scene: [(1, 'done')]))
+        monkeypatch.setattr(store, 'append_task_notices', lambda *a, **k: None)
+        assert await runner.append_during_turn(False, 'turn')
+        assert 'task' in chat.turn_channels and chat.speech_reserve
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('answered', [True, False])
+async def test_plugin_event_after_the_answer_revokes_the_reserve(tmp_path, monkeypatch, answered):
+    from len_bot.next.chat import attention
+    runner, store, config = _runner(tmp_path)
+    with store:
+        chat = runner.chat
+        chat.direct_request, chat.turn_channel = True, 'direct'
+        chat.turn_messages = int(answered)
+
+        async def ready_messages(**_):
+            return ([], None, [])
+        monkeypatch.setattr(runner, 'ready_messages', ready_messages)
+        monkeypatch.setattr(attention.PluginStore, 'pending_plugin_events',
+                            lambda self, scene, include_events=True: [{'e': 1}])
+        monkeypatch.setattr(store, 'append_plugin_events', lambda *a, **k: None)
+        assert await runner.append_during_turn(False, 'turn')
+        assert 'plugin' in chat.turn_channels
+        # Before the @ is answered the event rides along; after it, it follows the normal limit.
+        assert chat.speech_reserve is (not answered)
+
+
+@pytest.mark.asyncio
+async def test_plugin_event_with_a_reminder_keeps_the_reserve(tmp_path, monkeypatch):
+    from len_bot.next.chat import attention
+    runner, store, config = _runner(tmp_path)
+    with store:
+        chat = runner.chat
+        chat.direct_request, chat.turn_channel = True, 'direct'
+        chat.turn_messages = 1
+
+        async def ready_messages(**_):
+            return ([], None, [{'id': 1}])
+        monkeypatch.setattr(runner, 'ready_messages', ready_messages)
+        monkeypatch.setattr(store, 'append_schedules', lambda *a, **k: None)
+        monkeypatch.setattr(attention.PluginStore, 'pending_plugin_events',
+                            lambda self, scene, include_events=True: [{'e': 1}])
+        monkeypatch.setattr(store, 'append_plugin_events', lambda *a, **k: None)
+        assert await runner.append_during_turn(False, 'turn')
+        assert chat.speech_reserve
+

@@ -82,6 +82,9 @@ class Chat:
         # Set when non-direct input joins a turn after it already spoke: that follow-up
         # traffic answers at the normal hourly limit, not from the direct reserve.
         self.reserve_revoked = False
+        # Set when a reminder or task result joins a running turn: it may answer from the reserve
+        # like one that opened its own turn.
+        self.reserve_request = False
         self.turn_expressions = 0
         # Delivered messages since the latest direct input; reactions do not count as an answer.
         self.turn_messages = 0
@@ -242,7 +245,7 @@ class Chat:
         the normal limit like any other wake."""
         if self.reserve_revoked:
             return False
-        return self.direct_request or self.turn_channel in RESERVE_CHANNELS
+        return self.direct_request or self.reserve_request or self.turn_channel in RESERVE_CHANNELS
 
     def check_limits(self, *, model: bool = False, direct: bool | None = None, max_age: float = 0.0) -> None:
         """``max_age`` lets a polling caller reuse token totals a few seconds old."""
@@ -266,6 +269,7 @@ class Chat:
         self.direct_request = direct
         self.turn_channel = channel
         self.reserve_revoked = False
+        self.reserve_request = False
         self.turn_expressions = 0
         self.turn_messages = 0
         observed_at = self.now()
