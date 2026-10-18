@@ -11,7 +11,8 @@ async function retry() {
 </script>
 <template>
   <v-app>
-    <div v-if="auth.status==='loading'" class="initial-state" role="status">
+    <router-view v-if="route.meta.bare" />
+    <div v-else-if="auth.status==='loading'" class="initial-state" role="status">
       <v-progress-circular indeterminate color="primary" />
       <p>正在确认登录状态…</p>
     </div>

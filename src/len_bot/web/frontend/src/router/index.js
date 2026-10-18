@@ -100,6 +100,10 @@ const router = createRouter({
     return {top:0}
   },
 })
+// Component gallery for development only; the dynamic import is dropped from production builds.
+if (import.meta.env.DEV) {
+  router.addRoute({ path:'/dev/ui', name:'dev-ui', component:()=>import('../dev/UiGallery.vue'), meta:{public:true,bare:true,title:'UI'} })
+}
 router.beforeEach(async to => {
   await ensureAuth()
   const auth = useAuth()

@@ -4,6 +4,9 @@ import { RouterLink, type RouteLocationRaw } from 'vue-router'
 import Spinner from './Spinner.vue'
 import Tooltip from './Tooltip.vue'
 
+// The root is the Tooltip, so attributes from a parent (menu and popover triggers) go to the button itself.
+defineOptions({ inheritAttrs: false })
+
 type Variant = 'ghost' | 'secondary' | 'primary' | 'danger-ghost'
 type Size = 'sm' | 'md' | 'lg'
 
@@ -46,11 +49,18 @@ const classes = computed(() => [
 
 <template>
   <Tooltip :text="label" :shortcut="shortcut" :disabled="!tooltip">
-    <RouterLink v-if="to !== undefined && !inactive" :to="to" :class="classes" :aria-label="label">
+    <RouterLink
+      v-if="to !== undefined && !inactive"
+      v-bind="$attrs"
+      :to="to"
+      :class="classes"
+      :aria-label="label"
+    >
       <component :is="icon" :size="iconSize" aria-hidden="true" />
     </RouterLink>
     <button
       v-else
+      v-bind="$attrs"
       type="button"
       :class="classes"
       :aria-label="label"
