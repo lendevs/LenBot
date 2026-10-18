@@ -68,11 +68,9 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         import re
         match = re.search(r'/#token=(\S+)', logs)
         assert match, logs
-        # The wizard must report the container port (it locks the field); then submit a different
-        # port on purpose: the server has to force the published container port regardless.
-        code, page = request(opener, panel + '/')
-        assert code == 200, page
-        wizard_port = int(re.search(r'id="port"[^>]*value="(\d+)"', page)[1])
+        # The setup API must report the container port (the wizard's script locks the port field
+        # from it; the static HTML always says 8088). Then submit a different port on purpose: the
+        # server has to force the published container port regardless.
         code, text = request(opener, panel + '/api/setup/protocols', headers={'X-Setup-Token': match[1]})
         assert code == 200, text
         assert json.loads(text).get('container'), text
@@ -91,7 +89,7 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         published = int(re.search(r"127\.0\.0\.1:\d+:(\d+)",
                                   (Path(__file__).parents[1] / 'deploy/current/host.compose.yaml').read_text())[1])
         assert json.loads(body)['panel_port'] == published, (body, 'compose publishes container port', published)
-        assert wizard_port == published, (wizard_port, 'wizard shows the container port', published)
+        assert wizard_port == published, (wizard_port, 'setup API reports the container port', published)
         assert submitted != published
         saved = json.loads(subprocess.run([*compose, 'exec', '-T', 'lenbot', 'cat', 'lenbot.config.json'],
                                           capture_output=True, text=True, check=True).stdout)
