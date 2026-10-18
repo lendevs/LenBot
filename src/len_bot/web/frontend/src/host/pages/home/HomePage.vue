@@ -134,7 +134,7 @@ const connectionNotes = {
         <span class="status-mark" :class="{ ok: online }"><img :src="markUrl" alt="" /><span class="status-dot" /></span>
         <div class="status-text">
           <h2>{{ online ? 'Bot 在线' : connectionLabel(state.connection) }}</h2>
-          <p>{{ state.bot_id }} · {{ state.delivery !== 'onebot' ? '模拟发送' : state.send_hold ? '模拟发送，不发到 QQ' : '真实发送到 QQ' }} · {{ state.scenes.length }} 个群聊</p>
+          <p>{{ state.bot_id }} · {{ state.delivery === 'telegram' ? '真实发送到 Telegram' : state.delivery !== 'onebot' ? '模拟发送' : state.send_hold ? '模拟发送，不发到 QQ' : '真实发送到 QQ' }} · {{ state.scenes.length }} 个群聊</p>
           <LiveStatus :status="events.status.value" @reconnect="events.reconnect" />
         </div>
       </div>

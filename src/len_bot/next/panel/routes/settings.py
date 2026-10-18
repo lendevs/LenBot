@@ -203,7 +203,7 @@ class ConnectionChange(BaseModel):
     access_token: str | None = Field(default=None, repr=False)
     owners: list[str]
     timezone: str
-    delivery: Literal["simulated", "onebot"]
+    delivery: Literal["simulated", "onebot", "telegram"]
     max_steps: int
     turn_timeout_seconds: float
     max_model_requests: int
@@ -233,6 +233,11 @@ def _project(config: HostConfig) -> dict:
     if config.onebot is not None:
         onebot = config.onebot.model_dump(mode="json", exclude={"access_token"})
         onebot["access_token_configured"] = bool(config.onebot.access_token)
+    telegram = None
+    if config.telegram is not None:
+        # Edited in the config file only; the panel shows it so the connection page knows the platform.
+        telegram = config.telegram.model_dump(mode="json", exclude={"bot_token"})
+        telegram["bot_token_configured"] = bool(config.telegram.bot_token)
     return {
         "limits": config.limits.model_dump(mode="json"),
         "retention": None if config.retention is None else config.retention.model_dump(mode="json"),
@@ -242,6 +247,7 @@ def _project(config: HostConfig) -> dict:
             "bot_id": config.bot_id,
             "owners": config.owners,
             "onebot": onebot,
+            "telegram": telegram,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "max_steps": config.max_steps,
@@ -328,7 +334,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
-                for name in ("bot_id", "owners", "onebot", "timezone", "delivery", "max_steps",
+                for name in ("bot_id", "owners", "onebot", "telegram", "timezone", "delivery", "max_steps",
                              "turn_timeout_seconds", "max_model_requests", "text_delivery")
             ),
             "limits": running.limits != saved.limits,

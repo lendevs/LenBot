@@ -12,6 +12,11 @@ const emit = defineEmits(['saved', 'dirty'])
 const saved = computed(() => props.snapshot.saved.connection)
 const draft = ref(null), token = ref('')
 const save = useAction()
+// A Telegram host keeps its transport in the config file; here only delivery and the shared fields change.
+const telegram = computed(() => saved.value.telegram != null)
+const deliveryItems = computed(() => telegram.value
+  ? [{ title: '真实发送到 Telegram', value: 'telegram' }, { title: '模拟发送（只在面板里看到回复）', value: 'simulated' }]
+  : [{ title: '真实发送到 QQ', value: 'onebot' }, { title: '模拟发送（只在面板里看到回复）', value: 'simulated' }])
 
 function onebotBody(value) {
   if (value === null) return null
@@ -52,8 +57,9 @@ function changeMode(mode) {
     : { ...onebot, mode, listen_host: onebot.listen_host ?? '127.0.0.1', listen_port: onebot.listen_port ?? 8080 }
 }
 async function submit() {
-  if (draft.value.delivery === 'onebot' && saved.value.delivery !== 'onebot' && !await confirm({
-    title: '改成真实发送？', text: '重启后 Bot 会在 QQ 群里真的发言。', confirmLabel: '保存', danger: true })) return
+  const real = draft.value.delivery !== 'simulated' && saved.value.delivery === 'simulated'
+  if (real && !await confirm({ title: '改成真实发送？',
+    text: `重启后 Bot 会在 ${telegram.value ? 'Telegram' : 'QQ'} 群里真的发言。`, confirmLabel: '保存', danger: true })) return
   const result = await save.run(() => api('/api/host/settings/connection', {
     method: 'PUT', body: JSON.stringify({ ...body(draft.value), access_token: token.value || null }),
   }))
@@ -62,10 +68,11 @@ async function submit() {
 </script>
 
 <template>
-  <SettingSection v-if="draft" title="连接 QQ"
+  <SettingSection v-if="draft" :title="telegram ? '连接 Telegram' : '连接 QQ'"
     :dirty="dirty" :saving="save.busy.value" :error="save.error.value" @save="submit">
     <p class="bot">Bot 账号：<strong>{{ saved.bot_id }}</strong></p>
-    <v-select :model-value="draft.onebot === null ? null : draft.onebot.mode" label="连接方式" :items="[
+    <p v-if="telegram" class="bot">通过 Telegram Bot API 长轮询连接。Bot 令牌和接口地址只能在配置文件里改。</p>
+    <v-select v-else :model-value="draft.onebot === null ? null : draft.onebot.mode" label="连接方式" :items="[
       { title: '不连接 OneBot（模拟面板）', value: null },
       { title: 'LenBot 去连 OneBot（正向 WebSocket）', value: 'forward_ws' },
       { title: '等 OneBot 来连 LenBot（反向 WebSocket）', value: 'reverse_ws' }]" @update:model-value="changeMode" />
@@ -81,12 +88,10 @@ async function submit() {
       :placeholder="saved.onebot !== null && saved.onebot.access_token_configured ? '已设置，留空保持不变' : '未设置'"
       />
     </template>
-    <v-select v-model="draft.delivery" :disabled="draft.onebot === null" label="发送方式" :items="[
-      { title: '真实发送到 QQ', value: 'onebot' }, { title: '模拟发送（只在面板里看到回复）', value: 'simulated' }]"
-      />
+    <v-select v-model="draft.delivery" :disabled="!telegram && draft.onebot === null" label="发送方式" :items="deliveryItems" />
     <div class="form-grid">
       <v-textarea :model-value="draft.owners.join('\n')" label="主人账号（每行一个）" rows="2"
-        placeholder="onebot:QQ号" @update:model-value="value => draft.owners = value.split('\n').map(item => item.trim()).filter(Boolean)" />
+        :placeholder="telegram ? 'telegram:用户ID' : 'onebot:QQ号'" @update:model-value="value => draft.owners = value.split('\n').map(item => item.trim()).filter(Boolean)" />
       <v-text-field v-model="draft.timezone" label="时区" placeholder="Asia/Shanghai" />
     </div>
     <AdvancedFields>

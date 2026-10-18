@@ -58,10 +58,11 @@ watch([tab, level, onlyScene, traceTurn], ([value]) => { if (value === 'system')
 const trace = turn => router.replace({ query: { ...route.query, tab: 'system', trace: turn || undefined } })
 const logLabels = {
   runtime: '运行状态', receipt: '收到消息', turn_start: '开始一轮', turn: '一轮结束', tool_call: '调用工具',
-  tool_failed: '工具出错', model_call: '模型调用', message_sent: '发出消息', platform_error: 'QQ 连接出错',
+  tool_failed: '工具出错', model_call: '模型调用', message_sent: '发出消息', platform_error: '平台连接出错',
   platform_event: '平台事件', schedule: '定时安排', notice: '提醒', limit_notice: '额度提醒', retention: '数据清理',
   plugin_error: '插件出错', mcp_error: 'MCP 出错', task_created: '登记任务', task_started: '任务开始',
   task_input: '任务补充', task_finished: '任务结束', task_service_failed: '任务执行器出错',
+  event_loop_stall: '主循环卡顿', release_check: '检查新版本',
 }
 const idFields = [['turn_id', '轮'], ['tool', '工具'], ['plugin', '插件'], ['task_id', '任务'], ['message_seq', '消息'], ['job', '后台']]
 const logItems = computed(() => system.data.value?.[0].items || [])
@@ -204,5 +205,6 @@ function exportShown() {
 .search-row{display:flex;gap:var(--sp-3);align-items:center;margin-bottom:var(--sp-3)}
 .kinds{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-3)}
 .filters{display:grid;grid-template-columns:auto 1fr 1fr;gap:var(--sp-3);align-items:center;margin-bottom:var(--sp-3)}
+@media(max-width:700px){.filters{grid-template-columns:1fr 1fr}.filters > :first-child{grid-column:1/-1}.search-row{flex-wrap:wrap}}
 .ids{display:flex;flex-wrap:wrap;gap:var(--sp-3)}
 </style>
