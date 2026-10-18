@@ -1,33 +1,39 @@
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount } from 'vue'
+import { reconnectStream, streamStatus, useHostEvent } from '../realtime/stream'
 
-export function useHostEvents(read) {
-  const status = ref('connecting')
-  let socket = null, reading = false, again = false, active = true
+const statuses = { idle: 'connecting', connecting: 'connecting', open: 'connected', closed: 'disconnected' }
 
-  async function changed() {
+/**
+ * Old pages: run `read` after host events, one read at a time. Shares the single /api/host/stream
+ * connection. `types` limits which events count (default: all except per-step turn progress);
+ * `minInterval` spaces reads out in milliseconds.
+ */
+export function useHostEvents(read, { types = null, minInterval = 0 } = {}) {
+  let reading = false, again = false, active = true, last = 0, timer = null
+
+  async function run() {
     if (reading) { again = true; return }
     reading = true
     try {
-      do { again = false; await read() } while (again && active)
+      do { again = false; last = Date.now(); await read() } while (again && active)
     } finally {
       reading = false
     }
   }
-  function connect() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const connection = new WebSocket(`${protocol}//${location.host}/api/host/events`)
-    socket = connection
-    status.value = 'connecting'
-    connection.onopen = () => { if (socket === connection) status.value = 'connected' }
-    connection.onmessage = () => { if (socket === connection && active) changed() }
-    connection.onclose = () => { if (socket === connection && active) status.value = 'disconnected' }
+  function changed() {
+    if (!active || timer) return
+    const wait = last + minInterval - Date.now()
+    if (wait <= 0) run()
+    else timer = setTimeout(() => { timer = null; run() }, wait)
   }
-  function reconnect() {
-    socket?.close()
-    connect()
-    changed()
+  useHostEvent('*', event => {
+    if (event.type === 'hello' || (types ? types.includes(event.type) : event.type !== 'turn.step')) changed()
+  })
+  onBeforeUnmount(() => { active = false; clearTimeout(timer) })
+  // The old socket announced a change on connect; with one shared connection the first read happens here.
+  changed()
+  return {
+    status: computed(() => statuses[streamStatus.value]),
+    reconnect() { reconnectStream(); run() },
   }
-  onMounted(connect)
-  onBeforeUnmount(() => { active = false; socket?.close() })
-  return { status, reconnect }
 }

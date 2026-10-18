@@ -1,3 +1,5 @@
+import { detailMessage } from '../api/client'
+
 /** The readable message and the raw body of an error thrown by an API call or by the browser. */
 export interface DescribedError {
   message: string
@@ -10,24 +12,6 @@ interface HttpLikeError {
   status?: unknown
   detail?: unknown
   details?: unknown
-}
-
-function detailMessage(detail: unknown): string | null {
-  if (typeof detail === 'string') return detail
-  if (Array.isArray(detail)) {
-    const parts = detail.map((item) => {
-      const entry = item as { loc?: unknown[]; msg?: unknown }
-      const where = Array.isArray(entry.loc) ? entry.loc.join('.') : ''
-      return [where, typeof entry.msg === 'string' ? entry.msg : JSON.stringify(item)]
-        .filter(Boolean)
-        .join(': ')
-    })
-    return parts.join('；') || null
-  }
-  if (detail && typeof detail === 'object' && typeof (detail as { message?: unknown }).message === 'string') {
-    return (detail as { message: string }).message
-  }
-  return null
 }
 
 function rawText(value: unknown): string | null {
@@ -46,6 +30,9 @@ function rawText(value: unknown): string | null {
  */
 export function describeError(error: unknown, networkMessage: string): DescribedError {
   if (typeof error === 'string') return { message: error, status: null, raw: null }
+  if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'network') {
+    return { message: networkMessage, status: null, raw: (error as { message?: string }).message ?? null }
+  }
   if (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) {
     return { message: networkMessage, status: null, raw: error.message }
   }

@@ -1,22 +1,24 @@
 import { reactive } from 'vue'
+import { currentSession, onUnauthorized as setClientUnauthorized, resetSession } from './api/client'
 
+// The old client shares the session counter and the 401 handler with src/api/client.ts until it is removed.
 let onUnauthorized = () => {}
-let sessionGeneration = 0
 export function setUnauthorizedHandler(handler) {
   onUnauthorized = handler
+  setClientUnauthorized(handler)
 }
 export function resetApiSession() {
-  ++sessionGeneration
+  resetSession()
 }
 
 export async function api(path, options = {}, responseFormat = 'json') {
-  const session = sessionGeneration
+  const session = currentSession()
   const headers = { ...(options.headers || {}) }
   if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
   const res = await fetch(path, { ...options, headers, credentials: 'same-origin' })
-  if (res.status === 401 && path !== '/api/auth/login' && session === sessionGeneration) onUnauthorized()
+  if (res.status === 401 && path !== '/api/auth/login' && session === currentSession()) onUnauthorized()
   let data
   try {
     data = responseFormat === 'blob' && res.ok ? await res.blob() : await res.json()
@@ -27,7 +29,7 @@ export async function api(path, options = {}, responseFormat = 'json') {
     error.status = res.status
     throw error
   }
-  if (session !== sessionGeneration) {
+  if (session !== currentSession()) {
     const error = new Error('登录状态变了，请刷新页面。')
     error.status = res.status
     throw error

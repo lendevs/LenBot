@@ -26,7 +26,9 @@ import { themeMode, themeModeOptions, setThemeMode } from '../composables/useThe
 
 const route = useRoute(), router = useRouter(), { mobile } = useDisplay(), auth = useAuth()
 const drawer = ref(!mobile.value), palette = ref(false), leaving = ref(false), logoutError = ref(null)
-const events = useHostEvents(() => Promise.all([readHostState(), readOverview()]))
+const events = useHostEvents(readHostState, { types: ['host.state', 'host.changed'] })
+// Today's totals change with every message; the server caches them for five seconds, so reading more often is waste.
+useHostEvents(readOverview, { types: ['host.changed', 'message.received', 'message.sent', 'turn.ended'], minInterval: 10000 })
 provide('host-events', events)
 const icons = { home: mdiViewDashboardOutline, trial: mdiChatProcessingOutline, scenes: mdiForumOutline, persona: mdiAccountOutline,
   memory: mdiBookOpenPageVariantOutline, tasks: mdiBriefcaseOutline, resources: mdiFolderOutline, capabilities: mdiToolboxOutline, models: mdiChip,
