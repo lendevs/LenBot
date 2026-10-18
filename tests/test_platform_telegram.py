@@ -131,6 +131,22 @@ def test_messages_are_parsed_into_scenes_mentions_and_replies():
     assert telegram.parse({'update_id': 1, 'edited_message': {}}) is None
 
 
+def test_commands_addressed_to_this_bot_drop_the_username_and_mention_it():
+    with BotAPI() as api:
+        telegram = adapter(api)
+        telegram.username = 'lenbot_fixture_bot'
+        api.push('/status@LenBot_Fixture_Bot 现在', entities=[{'type': 'bot_command', 'offset': 0, 'length': 26}])
+        api.push('/status@other_bot', entities=[{'type': 'bot_command', 'offset': 0, 'length': 17}])
+        api.push('/status', entities=[{'type': 'bot_command', 'offset': 0, 'length': 7}])
+        ours, other, plain = (telegram.parse(item) for item in api.updates)
+    assert [(segment.type, segment.data) for segment in ours.segments] == [('text', {'text': '/status 现在'})]
+    assert ours.mentions_bot
+    assert [(segment.type, segment.data) for segment in other.segments] == [('text', {'text': '/status@other_bot'})]
+    assert not other.mentions_bot
+    assert [(segment.type, segment.data) for segment in plain.segments] == [('text', {'text': '/status'})]
+    assert not plain.mentions_bot
+
+
 @pytest.mark.asyncio
 async def test_polling_delivers_updates_once_and_reconnects_after_a_gateway_error():
     events, errors = [], []
@@ -222,6 +238,14 @@ async def test_a_telegram_host_stores_group_messages_and_answers_commands(tmp_pa
             api.push('普通的一句话')
             await until(lambda: store.pending_messages(SCENE), 5)
             assert len(api.sent) == 1
+            api.push('/help@lenbot_fixture_bot', entities=[{'type': 'bot_command', 'offset': 0, 'length': 24}])
+            await until(lambda: len(api.sent) == 2, 5)
+            assert '/id' in api.sent[1][1]['text']
+            stored = len(store.pending_messages(SCENE))
+            api.push('/help@other_bot', entities=[{'type': 'bot_command', 'offset': 0, 'length': 15}])
+            await until(lambda: len(store.pending_messages(SCENE)) > stored, 5)
+            await asyncio.sleep(.1)
+            assert len(api.sent) == 2
 
 
 @pytest.mark.parametrize(('changes', 'message'), [

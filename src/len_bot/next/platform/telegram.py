@@ -174,10 +174,18 @@ class Telegram:
         text = message.get("text", message.get("caption", ""))
         entities = message.get("entities", message.get("caption_entities", []))
         units = text.encode("utf-16-le")
-        cursor = 0
+        cursor, pending = 0, ""
         for entity in sorted(entities, key=lambda item: item["offset"]):
             start, end = entity["offset"] * 2, (entity["offset"] + entity["length"]) * 2
             word = units[start:end].decode("utf-16-le")
+            if entity["type"] == "bot_command" and "@" in word:
+                # ``/status@OurBot`` (menus and groups with several bots) is our ``/status`` and addresses us;
+                # a command for another bot stays as typed.
+                name, _, target = word.partition("@")
+                if self.username and target.lower() == self.username.lower():
+                    pending += units[cursor:start].decode("utf-16-le") + name
+                    mentions_bot, cursor = True, end
+                continue
             user = None
             if entity["type"] == "mention" and self.username and word.lower() == "@" + self.username.lower():
                 user = self.bot_id
@@ -185,13 +193,13 @@ class Telegram:
                 user = "telegram:" + str(entity["user"]["id"])
             if user is None:
                 continue
-            before = units[cursor:start].decode("utf-16-le")
+            before = pending + units[cursor:start].decode("utf-16-le")
             if before:
                 segments.append(Segment("text", {"text": before}))
             segments.append(Segment("mention", {"user": user}))
             mentions_bot = mentions_bot or user == self.bot_id
-            cursor = end
-        rest = units[cursor:].decode("utf-16-le")
+            cursor, pending = end, ""
+        rest = pending + units[cursor:].decode("utf-16-le")
         media = next((label for key, label in PLACEHOLDERS.items() if key in message), None)
         if media is not None:
             rest = media + (" " + rest if rest else "")
