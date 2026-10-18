@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import json
@@ -126,8 +127,10 @@ class Store:
         return await self._run(self._held, function, args, kwargs)
 
     async def _run(self, runner: Callable, function: Callable, args: tuple, kwargs: dict):
+        # The caller's log context (scene, turn) follows the call onto the database thread.
+        context = contextvars.copy_context()
         future = asyncio.get_running_loop().run_in_executor(
-            self._worker, partial(runner, function, args, kwargs))
+            self._worker, partial(context.run, runner, function, args, kwargs))
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:

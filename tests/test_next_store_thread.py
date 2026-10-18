@@ -121,3 +121,13 @@ async def test_send_intent_is_committed_before_the_platform_send(tmp_path):
         assert status == 'sent'
         assert seen == [1]
         assert store.db.execute("SELECT json_extract(body,'$.send_status') FROM messages").fetchone()[0] == 'sent'
+
+
+@pytest.mark.asyncio
+async def test_store_calls_keep_the_callers_log_context(tmp_path):
+    from len_bot.next.runtime.logs import current_context, log_context
+    with Store(tmp_path / 'state.db') as store:
+        with log_context(scene='onebot:group:80001', turn_id='synthetic-turn'):
+            assert (await store.call(current_context))['scene'] == 'onebot:group:80001'
+            assert (await store.read(current_context))['turn_id'] == 'synthetic-turn'
+        assert 'scene' not in await store.call(current_context)

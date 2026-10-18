@@ -135,6 +135,7 @@ class SerializedConnection:
     just before that call. Uncontended reads stay on the write connection, as before.
     Inside ``reading()`` every statement of the thread runs on its read connection in one read
     transaction (one consistent snapshot) without the lock; a write there fails.
+    TEMP tables live on the write connection only and are not visible to these reads.
     """
 
     def __init__(self, db: sqlite3.Connection, *, reader: Callable[[], sqlite3.Connection] | None = None):
