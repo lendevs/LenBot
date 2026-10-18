@@ -66,7 +66,10 @@ class Store:
         self.now = now
         if not readonly:
             path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = SerializedConnection(connect(path, readonly=readonly, threaded=True))
+        # Read connections let a read skip the wait while the other thread holds the write connection.
+        self.db = SerializedConnection(
+            connect(path, readonly=readonly, threaded=True),
+            reader=None if readonly else (lambda: connect(path, readonly=True, threaded=True)))
         self.db.row_factory = sqlite3.Row
         # The database thread: chat-path writes fsync there instead of on the event loop.
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
@@ -101,6 +104,18 @@ class Store:
         with self.db.hold():
             return function(*args, **kwargs)
 
+    def _read(self, function: Callable, args: tuple, kwargs: dict):
+        with self.db.reading():
+            return function(*args, **kwargs)
+
+    async def read[T](self, function: Callable[..., T], /, *args, **kwargs) -> T:
+        """Run one read-only store call on the database thread without the write connection.
+
+        It reads one consistent snapshot on a read connection, so a long scan does not hold up
+        writes from the event loop; a write inside it fails.
+        """
+        return await self._run(self._read, function, args, kwargs)
+
     async def call[T](self, function: Callable[..., T], /, *args, **kwargs) -> T:
         """Run one store call (a ``Store`` method or a sub-store's) on the database thread.
 
@@ -108,8 +123,11 @@ class Store:
         awaiting task is cancelled, the write still commits and the cancellation is delivered right
         after, the same state a synchronous call followed by the next await would leave.
         """
+        return await self._run(self._held, function, args, kwargs)
+
+    async def _run(self, runner: Callable, function: Callable, args: tuple, kwargs: dict):
         future = asyncio.get_running_loop().run_in_executor(
-            self._worker, partial(self._held, function, args, kwargs))
+            self._worker, partial(runner, function, args, kwargs))
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:

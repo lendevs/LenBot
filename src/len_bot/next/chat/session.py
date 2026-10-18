@@ -204,7 +204,7 @@ class Chat:
         compacted = False
         while True:
             await self.store.call(AudioStore(self.store).append_late, self.config.scene)
-            recap, entries = await self.store.call(self.store.active_history, self.config.scene)
+            recap, entries = await self.store.read(self.store.active_history, self.config.scene)
             # Refresh only between model requests, never midway through a tool group.
             self.toolset.discovered_tools = set(await self.store.call(self.store.load_discovered_tools,
                                                                       self.config.scene))

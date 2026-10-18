@@ -388,8 +388,8 @@ class SceneTools:
                 self.pause_after_turn = True
             return tool_result(result), None, None
         if call.name == "recall_chat":
-            # A history search may scan many rows; it runs on the database thread.
-            return await self.store.call(recall_chat, self.store, self.config.scene, self.config.timezone,
+            # A history search may scan many rows; it reads on the database thread without the write lock.
+            return await self.store.read(recall_chat, self.store, self.config.scene, self.config.timezone,
                                          RecallArguments.model_validate(call.arguments)), None, None
         if call.name == "persona_knowledge":
             arguments = PersonaKnowledgeArguments.model_validate(call.arguments)
