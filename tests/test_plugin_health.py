@@ -32,5 +32,3 @@ async def test_health_follows_status_and_recent_errors(tmp_path):
                                           'last_error_at': clock[0] - 3601}
     finally:
         await host.close()
-
-
