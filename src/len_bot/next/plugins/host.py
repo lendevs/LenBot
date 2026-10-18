@@ -34,7 +34,7 @@ from ..chat.schedule_time import Cron, next_cron, parse_cron
 from ..chat.request_source import SOURCE_DESCRIPTION, source_message
 from ..runtime.logs import SECRETS, error_text, log_context, log_event, recorded_errors
 from ..tools.skills import Skill, load_plugin_skills
-from .process import proxy_class
+from .process import describe, proxy_class
 from .manifest import PERMISSION_TITLES, Manifest, discover, read_manifest, redact_values, secret_values
 from ..storage.store import encode
 from ...image_assets import MAX_IMAGE_BYTES, inspect_image
@@ -206,7 +206,7 @@ class PluginHost:
                 logger.error("插件 %s 加载失败：%s", name, record.error)
 
     def _load(self, record: Loaded, directories: list[Path], values: dict, data_dir: Path,
-              core_tools: set[str], disabled_rules: list[str] = ()) -> None:
+              core_tools: set[str], disabled_rules: list[str] = (), described: list[dict] | None = None) -> None:
         if len(directories) != 1:
             raise ValueError("未在 plugins.paths 中找到" if not directories else
                              "多个目录提供同名插件：" + "、".join(map(str, directories)))
@@ -226,7 +226,7 @@ class PluginHost:
         except ValidationError as error:
             raise ValueError(f"plugins.{record.name} 配置不合法：{error}") from error
         if manifest.isolation == "process":
-            cls = proxy_class(directory, record.name)
+            cls = proxy_class(directory, record.name, described)
         else:
             cls = self._import(directory, record.name)
         unused = set(disabled_rules)
@@ -829,8 +829,12 @@ class PluginHost:
                             for tool in self.runtime.mcp.tools_for(scene))
         try:
             directories = found.get(name, [])
+            described = None
+            if len(directories) == 1 and read_manifest(directories[0]).isolation == "process":
+                # Importing in a fresh interpreter takes up to DESCRIBE_SECONDS; other scenes keep running.
+                described = await asyncio.to_thread(describe, directories[0], name)
             self._load(record, directories, record.values, settings.data_directory / name, reserved,
-                       settings.disabled_rules.get(name, []))
+                       settings.disabled_rules.get(name, []), described)
             if self.started or (self.runtime is not None and self.runtime.accepting):
                 await self.start_plugin(record)
         except Exception as error:

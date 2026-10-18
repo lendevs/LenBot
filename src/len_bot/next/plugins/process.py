@@ -47,10 +47,13 @@ def describe(directory: Path, name: str) -> list[dict]:
     return result["entries"]
 
 
-def proxy_class(directory: Path, name: str) -> type[Plugin]:
-    """A Plugin subclass whose marked methods forward to the worker process."""
+def proxy_class(directory: Path, name: str, entries: list[dict] | None = None) -> type[Plugin]:
+    """A Plugin subclass whose marked methods forward to the worker process.
+
+    ``entries`` is a ``describe`` result taken off the event loop; None runs ``describe`` here.
+    """
     namespace: dict = {"directory": directory}
-    for entry in describe(directory, name):
+    for entry in describe(directory, name) if entries is None else entries:
         mark = tuple(entry["mark"])
         if mark[0] == "regex":
             mark = ("regex", re.compile(mark[1]), mark[2], mark[3])

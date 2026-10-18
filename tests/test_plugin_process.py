@@ -222,6 +222,33 @@ async def test_unencodable_host_answer_is_an_error_and_a_broken_line_ends_the_wo
         await until(lambda: any('本次调用没有完成' in item['error'] for item in state(plugins, 'boxed')['errors']), 10)
 
 
+@pytest.mark.asyncio
+async def test_reloading_a_slow_importing_plugin_keeps_the_event_loop_running(tmp_path):
+    async with running(tmp_path) as (plugins, peer, store):
+        source = tmp_path / 'plugins/boxed/__init__.py'
+        source.write_text('import time\ntime.sleep(1)\n' + source.read_text(encoding='utf-8'), encoding='utf-8')
+        loop = asyncio.get_running_loop()
+        gaps = []
+
+        async def tick():
+            last = loop.time()
+            while True:
+                await asyncio.sleep(.05)
+                gaps.append(loop.time() - last)
+                last = loop.time()
+
+        ticker = asyncio.create_task(tick())
+        try:
+            started = loop.time()
+            await plugins.reload('boxed', load_host_config(tmp_path))
+            elapsed = loop.time() - started
+        finally:
+            ticker.cancel()
+        # The import sleeps twice (describe, then the worker); the loop never stops for either.
+        assert elapsed >= 2 and max(gaps) < .5
+        await until(lambda: state(plugins, 'boxed')['status'] == 'running', 10)
+
+
 def test_unsupported_entry_points_refuse_to_load_in_a_process(tmp_path):
     from test_next_plugins import _root
     root = _root(tmp_path, {'sample': {}}, ['sample'])
