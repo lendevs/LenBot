@@ -25,6 +25,7 @@ import Fold from '../../ui/Fold.vue'
 import AdvancedFields from '../../ui/AdvancedFields.vue'
 import DevOnly from '../../ui/DevOnly.vue'
 import PluginCatalog from './PluginCatalog.vue'
+import { permissionSummary } from '../../pluginPermissions.js'
 
 const emit = defineEmits(['dirty'])
 const route = useRoute(), router = useRouter()
@@ -195,6 +196,16 @@ const healthNote = name => {
 }
 const permissions = name => running.value[name]?.permissions ?? manifest(name)?.permissions ?? null
 const isolation = name => running.value[name]?.isolation || manifest(name)?.isolation || 'inline'
+// A candidate that is not applied yet may ask for different permissions or isolation than the running one.
+const candidateChange = name => {
+  const now = running.value[name], next = manifest(name)
+  if (!now || !next || !('permissions' in next)) return ''
+  const names = list => list == null ? null : list.map(item => item.name).sort().join(',')
+  const parts = []
+  if (names(now.permissions) !== names(next.permissions)) parts.push(permissionSummary(next.permissions))
+  if ((now.isolation || 'inline') !== (next.isolation || 'inline')) parts.push(next.isolation === 'process' ? '改为独立进程' : '改为和主程序同进程')
+  return parts.join('；')
+}
 
 const query = ref(''), filter = ref('all')
 const bucket = name => {
@@ -318,6 +329,7 @@ const facts = name => {
             <div v-else class="inline perm-chips"><v-chip v-for="item in permissions(selected)" :key="item.name" size="small" variant="tonal">{{ item.title }}</v-chip></div>
           </div>
         </div>
+        <p v-if="candidateChange(selected)" class="health-warn small">目录里的新版本还没生效，生效后：{{ candidateChange(selected) }}。</p>
         <div class="trust-row">
           <v-icon :icon="mdiCubeOutline" size="18" class="text-medium-emphasis" />
           <div>

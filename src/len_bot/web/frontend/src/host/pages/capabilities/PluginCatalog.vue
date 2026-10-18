@@ -8,6 +8,7 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 import EmptyState from '../../ui/EmptyState.vue'
 import FormDialog from '../../ui/FormDialog.vue'
 import Fold from '../../ui/Fold.vue'
+import { permissionSummary } from '../../pluginPermissions.js'
 
 const props = defineProps({ snapshot: Object, busy: Boolean })
 const emit = defineEmits(['dirty', 'install', 'configure', 'update'])
@@ -70,6 +71,7 @@ function update(entry) { selected.value = null; emit('update', entry) }
       <p class="muted small">{{ entry.authors.join('、') }} · v{{ entry.version }} · {{ entry.license }}<template v-if="entry.category"> · {{ entry.category }}</template></p>
       <p v-if="entry.update_available" class="note warn small">已装 v{{ entry.installed_version }}，目录里有 v{{ entry.version }}</p>
       <p v-else-if="!entry.compatible" class="note bad small">{{ entry.incompatible_reason }}</p>
+      <p v-if="'permissions' in entry" class="small" :class="entry.permissions == null ? 'note warn' : 'muted'">{{ permissionSummary(entry.permissions) }}</p>
       <div class="inline"><v-chip v-for="capability in entry.capabilities" :key="capability" variant="outlined">{{ capability }}</v-chip></div>
       <div class="inline actions">
         <v-btn size="small" variant="text" @click="selected = entry">详情与用法</v-btn>

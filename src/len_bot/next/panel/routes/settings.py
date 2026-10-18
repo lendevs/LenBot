@@ -210,6 +210,12 @@ class ConnectionChange(BaseModel):
     text_delivery: TextDelivery
 
 
+class CommandsChange(BaseModel):
+    """Only the scene-command switches the panel edits; the rest of ``commands`` keeps its saved value."""
+    model_config = ConfigDict(strict=True, extra="forbid")
+    group_managers_chat_reset: bool
+
+
 class PanelChange(BaseModel):
     model_config = STRICT
 
@@ -288,6 +294,7 @@ def _project(config: HostConfig) -> dict:
             }
             for scene, settings in config.scenes.items()
         },
+        "commands": config.commands.model_dump(mode="json"),
         "web_read": None if config.web_read is None else config.web_read.model_dump(mode="json"),
         "web_search": None if config.web_search is None else config.web_search.model_dump(mode="json"),
         "network": config.network.model_dump(mode="json"),
@@ -346,6 +353,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
                 scene: current["scenes"].get(scene) != recorded["scenes"].get(scene)
                 for scene in sorted(current["scenes"].keys() | recorded["scenes"].keys())
             },
+            "commands": running.commands != saved.commands,
             "web_read": running.web_read != saved.web_read,
             "web_search": running.web_search != saved.web_search,
             "network": running.network != saved.network,
@@ -678,6 +686,16 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 max_model_requests=change.max_model_requests,
                 text_delivery=change.text_delivery.model_dump(mode="json"),
             )
+
+        return await save(edit)
+
+    @app.put("/api/host/settings/commands")
+    async def put_commands(request: Request, _: str = Depends(user)):
+        change: CommandsChange = await _body(request, CommandsChange)
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            source["commands"] = {**saved.commands.model_dump(mode="json"),
+                                  "group_managers_chat_reset": change.group_managers_chat_reset}
 
         return await save(edit)
 
