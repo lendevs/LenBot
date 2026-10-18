@@ -4,6 +4,10 @@ The proxy class carries the same entry-point marks as the real plugin, so the ho
 commands, rules, notices and background loops exactly as for an in-process plugin. Every call
 goes to a worker process; if that process dies, pending calls fail and the plugin is marked
 failed while the host and other plugins keep running. Reload starts a fresh worker.
+
+Identity stays on this side: an invocation triggered by a real message gets an unguessable token
+for its duration, and a capability that acts for a person (``delegate``) takes the requester from
+the message behind the token, never from the worker.
 """
 
 import asyncio
@@ -13,11 +17,12 @@ import json
 import logging
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
 
 from ...plugin import MARK, Invocation, Plugin, PluginContext
-from ..platform.messages import Notice
+from ..platform.messages import ChatMessage, Notice
 from ..runtime.logs import log_event
 from .codec import (error_value, message_value, notice_value, part_from, raise_error, sent_value)
 
@@ -64,8 +69,17 @@ def _forwarder(attribute: str, mark: tuple):
             notice, arguments = notice_value(arguments[0]), ()
         elif arguments and isinstance(arguments[0], re.Match):
             arguments = (arguments[0].string,)
-        return await self.worker.request({"type": "invoke", "attribute": attribute, "scene": scene,
-                                          "message": message, "args": list(arguments), "notice": notice})
+        token = None
+        if isinstance(target, Invocation) and target.message is not None and not target.message.is_self:
+            token = secrets.token_hex(16)
+            self.worker.invocations[token] = (target.scene, target.message)
+        try:
+            return await self.worker.request({"type": "invoke", "attribute": attribute, "scene": scene,
+                                              "message": message, "args": list(arguments), "notice": notice,
+                                              "invocation": token})
+        finally:
+            if token is not None:
+                self.worker.invocations.pop(token, None)
     forward.__name__ = attribute
     setattr(forward, MARK, mark)
     return forward
@@ -96,6 +110,8 @@ class Worker:
         self.ids = itertools.count(1)
         self.pending: dict[int, asyncio.Future] = {}
         self.calls: set[asyncio.Task] = set()
+        # Running invocations triggered by a real message: token -> (scene, message).
+        self.invocations: dict[str, tuple[str, ChatMessage]] = {}
         self.closing = False
         self.lock = asyncio.Lock()
 
@@ -218,7 +234,11 @@ class Worker:
             case "generate":
                 return await host.generate(name, self._scene(args[0]), *args[1:])
             case "delegate":
-                return await host.delegate(name, self._scene(args[0]), *args[1:])
+                scene, token = self._scene(args[0]), args[1]
+                invocation = self.invocations.get(token) if isinstance(token, str) else None
+                if invocation is None or invocation[0] != scene:
+                    raise ValueError("插件委派需要真实触发消息；后台和无发送者的工具调用不能伪造请求人")
+                return await host.delegate(name, scene, invocation[1].sender.uid, *args[2:])
         raise ValueError(f"插件进程请求了未知的宿主能力 {method}")
 
     async def close(self) -> None:

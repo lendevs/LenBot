@@ -15,11 +15,13 @@ from len_bot.next.models.failover import open_model
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.plugins.host import PluginHost
 from test_next_plugins import CORE
-from test_scene_commands_protocol import SCENE, Peer, claims, until, write_config
+from test_scene_commands_protocol import MEMBER, SCENE, Peer, claims, until, write_config
 
 SAMPLE = Path(__file__).parent / 'fixtures/plugins/sample'
 BOXED = '''
+import asyncio
 import os
+from len_bot.next.plugins.worker import INVOCATION
 from len_bot.plugin import Invocation, Plugin, command, regex
 
 
@@ -38,6 +40,25 @@ class Boxed(Plugin):
     async def history(self, ctx: Invocation, args: str) -> str:
         return str(len(ctx.recent_messages(5)))
 
+    @command("委派", "以触发人身份委派，并试着冒充主人")
+    async def hand(self, ctx: Invocation, args: str) -> None:
+        await ctx.delegate("合成目标", "原文")
+        await self.ctx.host.delegate("boxed", ctx.scene, "onebot:70009", "冒充主人", "原文", "", [])
+        token, refused = INVOCATION.get(), []
+
+        async def later():
+            await asyncio.sleep(.3)
+            for value in (token, None, "0" * 32):
+                INVOCATION.set(value)
+                try:
+                    await self.ctx.host.delegate("boxed", ctx.scene, "onebot:70009", "后台冒充", "原文", "", [])
+                except ValueError as error:
+                    refused.append(str(error))
+            await self.ctx.host.set_kv("boxed", "refused", refused)
+
+        self.later = asyncio.create_task(later())
+        await ctx.reply("已委派")
+
     @command("崩溃", "让进程直接退出")
     async def crash(self, ctx: Invocation, args: str) -> None:
         print("不会进入协议输出")
@@ -52,7 +73,7 @@ def plugin_packages(root: Path) -> None:
     boxed.mkdir()
     manifest = (SAMPLE / 'plugin.toml').read_text(encoding='utf-8').split('[config')[0]
     (boxed / 'plugin.toml').write_text(manifest.replace('name = "sample"', 'name = "boxed"')
-                                       + 'isolation = "process"\npermissions = ["send"]\n', encoding='utf-8')
+                                       + 'isolation = "process"\npermissions = ["send", "delegate"]\n', encoding='utf-8')
     (boxed / '__init__.py').write_text(BOXED, encoding='utf-8')
 
 
@@ -121,6 +142,42 @@ async def test_isolated_plugin_answers_crashes_alone_and_reloads(tmp_path):
         await until(lambda: any(text.startswith('回来了（第 2 次') for text in peer.texts()), 10)
         assert peer.texts()[-1].split('进程 ')[1] != first_pid
         assert ('boxed', 'reply') in claims(store)
+
+
+class Tasks:
+    """Records what reaches the task service; admission itself is covered by the account tests."""
+
+    def __init__(self):
+        self.requests = []
+
+    async def delegate(self, scene, **arguments):
+        self.requests.append((scene, arguments['requester'], arguments['goal']))
+        return {'id': len(self.requests)}
+
+
+@pytest.mark.asyncio
+async def test_isolated_plugin_cannot_choose_the_delegate_requester(tmp_path):
+    async with running(tmp_path) as (plugins, peer, store):
+        tasks = plugins.runtime.tasks = Tasks()
+        try:
+            await delegate_and_replay(plugins, peer, tasks)
+        finally:
+            plugins.runtime.tasks = None
+
+
+async def delegate_and_replay(plugins, peer, tasks):
+    await peer.say('/委派')
+    await until(lambda: '已委派' in peer.texts(), 10)
+    member = f'onebot:{MEMBER}'
+    assert tasks.requests == [(SCENE, member, '合成目标'), (SCENE, member, '冒充主人')]
+    # After the invocation, a kept token, no token and a guessed one are all refused.
+    refused = None
+    async with asyncio.timeout(10):
+        while refused is None:
+            refused = await plugins.get_kv('boxed', 'refused', None)
+            await asyncio.sleep(.05)
+    assert len(refused) == 3 and all('不能伪造请求人' in text for text in refused)
+    assert len(tasks.requests) == 2
 
 
 def test_unsupported_entry_points_refuse_to_load_in_a_process(tmp_path):

@@ -8,6 +8,7 @@ A crash here ends this process only.
 
 import asyncio
 import base64
+import contextvars
 import importlib.util
 import inspect
 import itertools
@@ -22,6 +23,8 @@ from ...plugin import MARK, Invocation, Plugin, PluginContext
 from .codec import (error_value, message_from, notice_from, part_value, raise_error, sent_from)
 
 SUPPORTED = {"command", "fullmatch", "regex", "notice", "background"}
+# The host's token for the invocation this code runs under; the host maps it back to the real sender.
+INVOCATION: contextvars.ContextVar[str | None] = contextvars.ContextVar("invocation", default=None)
 
 
 def plugin_class(directory: Path, name: str) -> type[Plugin]:
@@ -169,7 +172,9 @@ class RemoteHost:
         return await self.channel.call("generate", scene, prompt, role, system)
 
     async def delegate(self, plugin, scene, requester, goal, deliverable, context, materials):
-        return await self.channel.call("delegate", scene, requester, goal, deliverable, context, list(materials))
+        # The requester is not sent: the host takes it from the message of the current invocation.
+        return await self.channel.call("delegate", scene, INVOCATION.get(), goal, deliverable, context,
+                                       list(materials))
 
     def cron(self, *args, **kwargs):
         raise RuntimeError("进程隔离的插件暂不支持定点任务")
@@ -200,6 +205,7 @@ async def serve(channel: Channel, init: dict) -> None:
             elif kind == "migrate":
                 value = await instance.migrate_data(request["from_version"])
             else:
+                INVOCATION.set(request.get("invocation"))
                 attribute, arguments = request["attribute"], list(request["args"])
                 if request["scene"] is None:
                     target = context
