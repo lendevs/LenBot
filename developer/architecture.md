@@ -288,7 +288,7 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 每个连接最多排队 2000 条事件。溢出时丢弃积压，发送 `resync`，客户端重新读取查询结果。
 断线重连也应重新读取状态；服务端不保存重放日志。
 `host.state` 表示运行、连接、暂停和发送方式变化；其他通知使用 `host.changed`，合并到每秒最多四次。
-旧 `/api/host/events` 暂时保留供旧页面使用。
+面板前端每个标签页只开这一条连接（`src/realtime/stream.ts`），按事件类型让对应查询失效；断线后按 1 到 30 秒退避重连，重连后全部查询重新读取。
 
 `message.received` 携带 `message_seq` 和 `verdict`（woke、channel、reason、score、threshold）。判定同时保存在消息表的 wake_verdict 中；历史消息为空，表示未记录。判定描述本条消息是否提出新的唤醒，不把前一条待处理唤醒算给后续消息。
 

@@ -39,7 +39,7 @@ const sizes: Record<Size, string> = { sm: 'size-7', md: 'size-8', lg: 'size-10' 
 const iconSize = computed(() => ({ sm: 15, md: 17, lg: 19 })[props.size])
 const inactive = computed(() => props.disabled || props.loading)
 const classes = computed(() => [
-  'inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md transition-[background-color,color,transform] duration-150 ease-out',
+  'link-plain inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md transition-[background-color,color,transform] duration-150 ease-out',
   'focus-visible:focus-ring active:scale-95 pointer-coarse:size-11',
   'aria-disabled:pointer-events-none aria-disabled:opacity-40',
   variants[props.variant],

@@ -81,7 +81,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                     assert (await client.get("/api/panel-context")).json() == {
-                        "mode": "isolated-multi", "home": "/host/overview",
+                        "mode": "isolated-multi", "home": "/overview",
                     }
                     for path in ("/api/auth/me", "/api/host/state", "/api/host/memory/state", "/api/host/retention", "/api/host/limits", "/api/host/scenes/onebot:group:80001/control", "/api/host/scenes/onebot:group:80001",
                                  f"/api/host/scenes/onebot:group:80001/turns/{configured_turn}"):

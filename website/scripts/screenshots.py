@@ -5,8 +5,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-PAGES = {'home': '/#/host/overview', 'persona': '/#/host/persona', 'plugins': '/#/host/plugins?view=discover',
-         'scenes': '/#/host/scenes', 'connection': '/#/host/system?tab=connection'}
+PAGES = {'home': '/#/overview', 'persona': '/#/personas', 'plugins': '/#/plugins?view=discover',
+         'scenes': '/#/groups', 'connection': '/#/system?tab=connection'}
 
 
 def main() -> None:
@@ -22,7 +22,7 @@ def main() -> None:
         page.get_by_label('用户名').fill('demo')
         page.get_by_label('密码').fill('demo-password')
         page.get_by_role('button', name='登录').click()
-        page.wait_for_url('**/#/host/**')
+        page.wait_for_url('**/#/overview')
         for name, path in PAGES.items():
             page.goto(args.panel + path)
             page.wait_for_load_state('networkidle')

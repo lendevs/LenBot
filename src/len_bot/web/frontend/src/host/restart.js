@@ -25,11 +25,11 @@ export function newPanelUrl() {
   const panel = restartFlow.preview.panel.saved
   if (panel === null || panel.port === 0) return null
   if (location.protocol === 'https:' || Number(location.port || 80) !== restartFlow.preview.panel.running.port) {
-    return `${location.origin}/#/host/overview`
+    return `${location.origin}/#/overview`
   }
   const hostname = ['0.0.0.0', '::'].includes(panel.host) ? location.hostname : panel.host
   const host = hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname
-  return `${location.protocol}//${host}:${panel.port}/#/host/overview`
+  return `${location.protocol}//${host}:${panel.port}/#/overview`
 }
 
 export async function waitForRestart() {

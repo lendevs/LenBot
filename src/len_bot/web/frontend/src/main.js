@@ -1,7 +1,7 @@
 import { createApp } from 'vue'
 import { VueQueryPlugin } from '@tanstack/vue-query'
 import App from './App.vue'
-import router from './router/index.js'
+import router from './router'
 import vuetify from './plugins/vuetify.js'
 import { bindThemeMode } from './composables/useThemeMode.js'
 import { i18n, startLocale } from './i18n'

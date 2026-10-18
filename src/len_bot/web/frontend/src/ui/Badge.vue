@@ -1,7 +1,10 @@
 <script setup lang="ts">
 export type Tone = 'neutral' | 'brand' | 'success' | 'warning' | 'error' | 'info'
 
-withDefaults(defineProps<{ tone?: Tone; dot?: boolean; pulse?: boolean }>(), { tone: 'neutral' })
+withDefaults(defineProps<{ tone?: Tone; dot?: boolean; pulse?: boolean; size?: 'sm' | 'md' }>(), {
+  tone: 'neutral',
+  size: 'sm',
+})
 
 const tones: Record<Tone, string> = {
   neutral: 'bg-fill text-muted',
@@ -15,8 +18,8 @@ const tones: Record<Tone, string> = {
 
 <template>
   <span
-    class="inline-flex h-5 max-w-full shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium whitespace-nowrap"
-    :class="tones[tone]"
+    class="inline-flex max-w-full shrink-0 items-center gap-1.5 rounded-full font-medium whitespace-nowrap"
+    :class="[tones[tone], size === 'md' ? 'h-8 px-3 text-sm' : 'h-5 px-2 text-xs']"
   >
     <span
       v-if="dot"

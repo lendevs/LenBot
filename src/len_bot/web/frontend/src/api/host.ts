@@ -48,4 +48,6 @@ export interface SceneTitles {
 export const hostApi = {
   state: (signal?: AbortSignal) => http.get<HostState>('/api/host/state', undefined, signal),
   sceneTitles: (signal?: AbortSignal) => http.get<SceneTitles>('/api/host/scene-titles', undefined, signal),
+  setChat: (scene: string, enabled: boolean) =>
+    http.put<unknown>(`/api/host/scenes/${encodeURIComponent(scene)}/control/chat`, { enabled }),
 }

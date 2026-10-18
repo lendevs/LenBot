@@ -1,8 +1,10 @@
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth, refreshAuth } from './composables/useAuth.js'
-import TrialShell from './layouts/TrialShell.vue'
-import HostShell from './layouts/HostShell.vue'
+import { defineAsyncComponent } from 'vue'
+// Shells load after login, so the login page does not wait for them.
+const TrialShell = defineAsyncComponent(() => import('./layouts/TrialShell.vue'))
+const AppShell = defineAsyncComponent(() => import('./layouts/AppShell.vue'))
 const auth=useAuth(),route=useRoute(),router=useRouter()
 async function retry() {
   await refreshAuth();
@@ -22,7 +24,7 @@ async function retry() {
     </div>
     <router-view v-else-if="route.name==='login'" />
     <template v-else-if="auth.status==='authenticated'">
-      <component :is="auth.panelContext.mode==='isolated-multi' ? HostShell : TrialShell" v-if="['isolated-multi','isolated'].includes(auth.panelContext.mode)">
+      <component :is="auth.panelContext.mode==='isolated-multi' ? AppShell : TrialShell" v-if="['isolated-multi','isolated'].includes(auth.panelContext.mode)">
         <router-view v-slot="{ Component, route: page }">
           <transition name="page" mode="out-in"><component :is="Component" :key="page.name" /></transition>
         </router-view>

@@ -8,7 +8,7 @@ import { clearHost } from '../host/store.js'
 const state = reactive({ status: 'loading', user: null, error: '', panelContext: null })
 let initialization
 let authRequest = 0
-const homes = { isolated: '/chat-test', 'isolated-multi': '/host/overview' }
+const homes = { isolated: '/chat-test', 'isolated-multi': '/overview' }
 
 export function useAuth() {
   return state

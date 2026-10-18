@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
-import { api, sceneTitles } from '../api.js'
+import { sceneTitles } from '../api.js'
+import { http } from '../api/client'
 
 export const host = reactive({ state: null, stateError: null, restart: null, toast: '', titleErrors: {},
   overview: null, overviewError: null, members: {}, updates: null })
@@ -8,7 +9,7 @@ let updatesRead = 0, stateRead = 0, restartRead = 0, titlesRead = 0, overviewRea
 export async function readHostState() {
   const own = ++stateRead
   try {
-    const value = await api('/api/host/state')
+    const value = await http.get('/api/host/state')
     if (own !== stateRead) return
     host.state = value
     host.stateError = null
@@ -20,7 +21,7 @@ export async function readHostState() {
 export async function readSceneTitles() {
   const own = ++titlesRead
   try {
-    const value = await api('/api/host/scene-titles')
+    const value = await http.get('/api/host/scene-titles')
     if (own !== titlesRead) return
     Object.assign(sceneTitles, value.titles)
     host.members = value.members
@@ -33,7 +34,7 @@ export async function readSceneTitles() {
 export async function readOverview() {
   const own = ++overviewRead
   try {
-    const value = await api('/api/host/overview')
+    const value = await http.get('/api/host/overview')
     if (own !== overviewRead) return
     host.overview = value
     host.overviewError = null
@@ -45,7 +46,7 @@ export async function readOverview() {
 export async function readPendingRestart() {
   const own = ++restartRead
   try {
-    const value = await api('/api/host/pending-restart')
+    const value = await http.get('/api/host/pending-restart')
     if (own === restartRead) host.restart = value
   } catch (error) {
     if (own === restartRead) host.restart = { error }
@@ -69,7 +70,7 @@ export function clearHost() {
 export async function readUpdates() {
   const own = ++updatesRead
   try {
-    const value = await api('/api/host/updates')
+    const value = await http.get('/api/host/updates')
     if (own === updatesRead) host.updates = value
   } catch {
     if (own === updatesRead) host.updates = null

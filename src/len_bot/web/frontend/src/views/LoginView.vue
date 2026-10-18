@@ -1,55 +1,104 @@
-<script setup>
-import { computed, ref } from 'vue'
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { login, useAuth } from '../composables/useAuth.js'
-import { returnPath } from '../router/index.js'
-import { useRequestGuard } from '../composables/useRequestGuard.js'
+import { LogIn } from '@lucide/vue'
+import { login } from '../composables/useAuth.js'
+import { returnPath } from '../router'
+import { ApiError } from '../api/client'
 import markUrl from '../assets/lenbot-mark-tile.svg'
-const route=useRoute(),router=useRouter()
-const isolated=computed(()=>useAuth().panelContext?.mode==='isolated')
-const username=ref(''),password=ref(''),busy=ref(false),error=ref('')
-const guard=useRequestGuard()
-async function submit(){
-  if(busy.value)return
-  const fresh=guard(), destination=returnPath(route.query.redirect)
-  busy.value=true;
-  error.value=''
-  try{
-    const accepted=await login(username.value,password.value)
-    if(!fresh())return
-    password.value=''
-    if(accepted)await router.replace(destination)
-  }catch(e){
-    if(fresh())error.value=e.status===401?'用户名或密码不正确':e.message
-  }
-  finally{
-    if(fresh())busy.value=false
+import { localeOptions, currentLocale, setLocale, type Locale } from '../i18n'
+import { describeError } from '../ui/errors'
+import Button from '../ui/Button.vue'
+import Field from '../ui/Field.vue'
+import Input from '../ui/Input.vue'
+import SegmentedControl from '../ui/SegmentedControl.vue'
+
+const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const username = ref('')
+const password = ref('')
+const busy = ref(false)
+const error = ref('')
+const shake = ref(0)
+let attempt = 0
+
+const locale = ref<Locale>(currentLocale.value)
+function chooseLocale(value: Locale) {
+  locale.value = value
+  void setLocale(value)
+}
+
+async function submit() {
+  if (busy.value || !username.value || !password.value) return
+  const own = ++attempt
+  const destination = returnPath(route.query.redirect)
+  busy.value = true
+  error.value = ''
+  try {
+    const accepted = await login(username.value, password.value)
+    if (own !== attempt) return
+    password.value = ''
+    if (accepted) await router.replace(destination)
+  } catch (problem) {
+    if (own !== attempt) return
+    error.value =
+      problem instanceof ApiError && problem.status === 401
+        ? t('login.invalid')
+        : describeError(problem, t('ui.error.network')).message
+    shake.value += 1
+  } finally {
+    if (own === attempt) busy.value = false
   }
 }
 </script>
+
 <template>
-  <main class="login-page">
-    <form class="login-card" @submit.prevent="submit">
-      <img class="login-mark" :src="markUrl" alt="" />
-      <div>
-        <h1>欢迎回来</h1>
-        <p class="muted">{{ isolated ? '登录后和 Bot 试聊，回复不会发到 QQ。' : '登录 LenBot 控制台，管理你的 Bot。' }}</p>
-      </div>
-      <v-alert v-if="error" type="error" role="alert">{{ error }}</v-alert>
-      <v-text-field v-model="username" label="用户名" autocomplete="username" required :disabled="busy" density="comfortable" />
-      <v-text-field v-model="password" label="密码" type="password" autocomplete="current-password" required :disabled="busy" density="comfortable" />
-      <v-btn type="submit" color="primary" block size="large" :loading="busy" :disabled="!username || !password">登录</v-btn>
+  <main class="relative grid min-h-dvh place-items-center overflow-hidden bg-sidebar px-4 py-10">
+    <div
+      class="pointer-events-none absolute -top-40 left-1/2 size-[640px] -translate-x-1/2 rounded-full bg-brand opacity-[0.07] blur-3xl"
+      aria-hidden="true"
+    />
+    <form
+      :key="shake"
+      class="relative flex w-full max-w-sm animate-rise flex-col gap-5 rounded-xl bg-surface p-7 shadow-dialog sm:p-8"
+      :class="shake ? 'animate-[ui-shake_360ms_var(--ease-out)]' : ''"
+      novalidate
+      @submit.prevent="submit"
+    >
+      <img
+        :src="markUrl"
+        alt=""
+        class="size-11 rounded-lg transition-transform duration-300 ease-out hover:-rotate-8"
+      />
+      <h1 class="text-xl font-semibold">{{ t('login.title') }}</h1>
+      <Field :label="t('login.username')">
+        <Input v-model="username" autocomplete="username" :disabled="busy" autofocus />
+      </Field>
+      <Field :label="t('login.password')" :error="error || null">
+        <Input v-model="password" type="password" autocomplete="current-password" :disabled="busy" />
+      </Field>
+      <Button
+        type="submit"
+        variant="primary"
+        size="lg"
+        block
+        :icon="LogIn"
+        :loading="busy"
+        :disabled="!username || !password"
+      >
+        {{ t('login.submit') }}
+      </Button>
     </form>
+    <div class="absolute right-4 bottom-4">
+      <SegmentedControl
+        :model-value="locale"
+        :options="localeOptions"
+        size="sm"
+        label="Language"
+        @update:model-value="chooseLocale"
+      />
+    </div>
   </main>
 </template>
-<style scoped>
-.login-page{display:grid;place-items:center;min-height:100vh;padding:var(--sp-5);background:var(--sidebar)}
-.login-card{width:400px;max-width:100%;display:grid;gap:var(--sp-4);padding:var(--sp-6);background:var(--surface);
-  border-radius:16px;box-shadow:var(--shadow-card),var(--shadow-float);animation:rise var(--dur-4) var(--ease-out) both}
-.login-mark{width:44px;height:44px;border-radius:12px;transition:transform var(--dur-3) var(--ease-out)}
-.login-card:hover .login-mark{transform:rotate(-8deg)}
-@media (prefers-reduced-motion:reduce){.login-card{animation:none}.login-mark{transition:none}}
-.login-card h1{font-size:var(--fs-xl)}
-.login-card p{margin:var(--sp-1) 0 0}
-@media(max-width:600px){.login-page{padding:var(--sp-4)}.login-card{padding:var(--sp-5)}}
-</style>

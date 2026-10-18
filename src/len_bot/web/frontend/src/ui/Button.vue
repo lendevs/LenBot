@@ -47,7 +47,7 @@ const sizes: Record<ButtonSize, string> = {
 const iconSize = computed(() => (props.size === 'lg' ? 18 : 16))
 const inactive = computed(() => props.disabled || props.loading)
 const classes = computed(() => [
-  'relative inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md font-semibold whitespace-nowrap select-none',
+  'link-plain relative inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md font-semibold whitespace-nowrap select-none',
   'transition-[background-color,border-color,color,box-shadow,filter,transform] duration-150 ease-out',
   'focus-visible:focus-ring active:translate-y-px pointer-coarse:min-h-11',
   'aria-disabled:pointer-events-none aria-disabled:opacity-50',

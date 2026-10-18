@@ -154,6 +154,15 @@
   scrollbar-color: var(--line-strong) transparent;
 }
 
+/* Links styled as buttons or nav items. base.css underlines a:hover for every pointer type, while the
+   hover: variant only applies on devices that can hover, so the reset needs its own selector. */
+@utility link-plain {
+  text-decoration: none;
+  &:hover {
+    text-decoration: none;
+  }
+}
+
 @utility tabular {
   font-variant-numeric: tabular-nums;
 }
@@ -310,5 +319,16 @@
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+  }
+}
+
+@keyframes ui-shake {
+  20%,
+  60% {
+    transform: translateX(-6px);
+  }
+  40%,
+  80% {
+    transform: translateX(6px);
   }
 }
