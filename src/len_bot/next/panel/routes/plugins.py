@@ -247,7 +247,8 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             raise HTTPException(409, f'插件 {name} 已经安装，请用更新')
         if not entry.compatible:
             raise HTTPException(422, f'插件 {name} 不能在本机加载：{entry.incompatible_reason}')
-        return await operate(lambda: manager.install(entry.repository, ref=entry.ref))
+        # The repository's own manifest must be the plugin the catalog entry names.
+        return await operate(lambda: manager.install(entry.repository, ref=entry.ref, expected_name=entry.name))
 
     @app.get('/api/host/plugins/health')
     async def plugins_health(_: str = Depends(user)):

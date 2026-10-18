@@ -197,12 +197,16 @@ class PluginInstaller:
         output += '\n' + await run_command('git', 'checkout', '--detach', 'FETCH_HEAD', cwd=path)
         return output.strip()
 
-    async def candidate(self, checkout: Path, source: Source, paths: list[Path], *, switch_source: bool) -> tuple[Manifest, Installation]:
+    async def candidate(self, checkout: Path, source: Source, paths: list[Path], *, switch_source: bool,
+                        expected_name: str | None = None) -> tuple[Manifest, Installation]:
+        """Validate and stage a checkout; ``expected_name`` (a catalog entry or an update) must match the manifest."""
         bytecode = await finish_file_operation(lambda: next((path for path in checkout.rglob('*')
             if path.name.casefold() == '__pycache__' or path.suffix.lower() == '.pyc'), None))
         if bytecode is not None:
             raise ValueError(f'Plugin candidate must contain source rather than Python bytecode: {bytecode}')
         manifest = parse_manifest(checkout / 'plugin.toml')
+        if expected_name is not None and manifest.name != expected_name:
+            raise ValueError(f'仓库清单的插件名是 {manifest.name}，不是 {expected_name}；没有准备候选版本')
         manifest.require_compatible()
         if not (checkout / '__init__.py').is_file():
             raise ValueError(f'Plugin package lacks __init__.py: {checkout}')
@@ -236,7 +240,8 @@ class PluginInstaller:
         return manifest, record
 
     async def prepare_git(self, url: str, paths: list[Path], *, ref: str | None = None,
-                          switch_source: bool = False) -> tuple[Manifest, Installation, str]:
+                          switch_source: bool = False, expected_name: str | None = None
+                          ) -> tuple[Manifest, Installation, str]:
         url = repository_url(url)
         self.candidates.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='.git-', dir=self.candidates) as temporary:
@@ -247,7 +252,8 @@ class PluginInstaller:
             source = Source(kind='git', location=url, ref=ref,
                             branch=await run_command('git', 'branch', '--show-current', cwd=checkout),
                             revision=await run_command('git', 'rev-parse', 'HEAD', cwd=checkout), version='')
-            manifest, record = await self.candidate(checkout, source, paths, switch_source=switch_source)
+            manifest, record = await self.candidate(checkout, source, paths, switch_source=switch_source,
+                                                    expected_name=expected_name)
         return manifest, record, output
 
     @staticmethod
@@ -309,7 +315,7 @@ class PluginInstaller:
         if source is None or source.kind != 'git':
             raise ValueError(f'{name} has no Git source; import its next ZIP explicitly')
         selected = (source.ref if source.ref is not None else source.branch) if ref is None else revision_ref(ref)
-        return await self.prepare_git(source.location, paths, ref=selected)
+        return await self.prepare_git(source.location, paths, ref=selected, expected_name=name)
 
     async def check_apply(self, name: str, values: dict, scenes: Collection[str]) -> Manifest:
         record = self.read(name)

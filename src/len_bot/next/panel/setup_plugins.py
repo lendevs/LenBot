@@ -34,9 +34,8 @@ async def install_official(root: Path, entry: CatalogEntry) -> dict:
             return {'name': entry.name, 'installed': True, 'version': record.installed.version}
     try:
         async with asyncio.timeout(180):
-            manifest, record, _ = await installer.prepare_git(entry.repository, [installer.directory], ref=entry.ref)
-            if manifest.name != entry.name:
-                raise ValueError(f'目录条目 {entry.name} 与仓库清单 {manifest.name} 不一致')
+            manifest, record, _ = await installer.prepare_git(entry.repository, [installer.directory], ref=entry.ref,
+                                                              expected_name=entry.name)
             await install_dependencies(manifest.dependencies)
             # Installation does not activate a plugin. Required service credentials
             # are filled in the normal panel before enabling it for a scene.
