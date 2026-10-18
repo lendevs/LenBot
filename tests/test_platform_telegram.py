@@ -261,6 +261,17 @@ def test_telegram_configuration_is_checked(tmp_path, changes, message):
         load_host_config(tmp_path)
 
 
+def test_the_say_tool_mentions_accounts_of_the_scene_platform(tmp_path):
+    from len_bot.next.chat.tools import build_tools
+    write_config(tmp_path, onebot=None, delivery='telegram', bot_id=f'telegram:{BOT}', owners=['telegram:7009'],
+                 telegram={'bot_token': TOKEN}, scenes={SCENE: {'persona': 'persona'}})
+    config = load_host_config(tmp_path).scene_config(SCENE)
+    persona = load_persona(config.persona).model_copy(update={'tools': ['say']})
+    say = next(tool for tool in build_tools(config, persona, platform=True) if tool['function']['name'] == 'say')
+    mention = say['function']['parameters']['properties']['mention']
+    assert mention['anyOf'][0]['pattern'] == '^telegram:[1-9][0-9]*$' and 'telegram:70001' in mention['description']
+
+
 def test_the_bot_token_is_a_log_secret(tmp_path):
     from len_bot.next.runtime.logs import credentials
     write_config(tmp_path, onebot=None, delivery='telegram', bot_id=f'telegram:{BOT}', owners=['telegram:7009'],
