@@ -178,7 +178,8 @@ async def ask(peer: Peer, text: str, *, user: int = MANAGER, role: str = 'admin'
 async def test_group_manager_sees_and_uses_scene_commands(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
         listed = await ask(peer, '/help')
-        assert all(f'/{name}' in listed for name in ('status', 'chat', 'quiet', 'resume', 'reset'))
+        assert all(f'/{name}' in listed for name in ('status', 'quiet', 'resume'))
+        assert '/chat' not in listed and '/reset' not in listed
         status = await ask(peer, '/status')
     assert status.splitlines() == [f'场景：{SCENE}', '聊天：开启',
                                    '发言：最近一小时 0/60 条（全局设置），被叫到时另有余量 5/5 条',
@@ -194,17 +195,59 @@ async def test_member_cannot_change_the_scene_and_is_not_answered(tmp_path):
         assert peer.sends == [] and runtime.runners[SCENE].state.paused is False
 
 
+OWNER_SENDER = {'user': OWNER, 'role': 'member'}
+
+
 @pytest.mark.asyncio
 async def test_chat_off_keeps_recording_and_chat_on_still_works(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
-        assert '已关闭本群聊天' in await ask(peer, '/chat off', user=OWNER, role='member')
+        assert '已关闭本群聊天' in await ask(peer, '/chat off', **OWNER_SENDER)
         runner = runtime.runners[SCENE]
         assert runner.state.paused is True
         assert '聊天：已关闭' in await ask(peer, '/status')
-        assert await ask(peer, '/chat off') == '本群聊天本来就是关闭的'
-        assert '已打开本群聊天' in await ask(peer, '/chat on')
+        assert await ask(peer, '/chat off', **OWNER_SENDER) == '本群聊天本来就是关闭的'
+        assert '已打开本群聊天' in await ask(peer, '/chat on', **OWNER_SENDER)
         assert runner.state.paused is False
-        assert await ask(peer, '/chat maybe') == '用法：/chat on 或 /chat off'
+        assert await ask(peer, '/chat maybe', **OWNER_SENDER) == '用法：/chat on 或 /chat off'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text', ['/chat off', '/reset'])
+async def test_group_manager_cannot_switch_chat_or_reset_by_default(tmp_path, text):
+    async with host(tmp_path) as (runtime, peer, store):
+        store.append(SCENE, {'role': 'user', 'content': '旧话'})
+        await peer.say(text, user=MANAGER, role='owner')
+        await until(lambda: store.pending_messages(SCENE))
+        await asyncio.sleep(.1)
+        assert peer.sends == [] and runtime.runners[SCENE].state.paused is False
+        assert store.entries(SCENE) == [{'role': 'user', 'content': '旧话'}]
+
+
+@pytest.mark.asyncio
+async def test_group_managers_switch_chat_and_reset_when_configured(tmp_path):
+    async with host(tmp_path, commands={'group_managers_chat_reset': True}) as (runtime, peer, store):
+        listed = await ask(peer, '/help')
+        assert '/chat' in listed and '/reset' in listed
+        assert '已关闭本群聊天' in await ask(peer, '/chat off')
+        assert runtime.runners[SCENE].state.paused is True
+        assert '已打开本群聊天' in await ask(peer, '/chat on', role='owner')
+        assert (await ask(peer, '/reset')).startswith('已开始新的对话上下文')
+        # The option names group managers only; a plain member still reaches the conversation.
+        await peer.say('/chat off', user=MEMBER, role='member')
+        await until(lambda: store.pending_messages(SCENE))
+        await asyncio.sleep(.1)
+        assert runtime.runners[SCENE].state.paused is False
+
+
+@pytest.mark.asyncio
+async def test_switch_option_is_independent_of_the_quiet_roles(tmp_path):
+    scenes = {SCENE: {'persona': 'persona', 'attention': {'only_direct': True}, 'chat_control_roles': ['owner']}}
+    async with host(tmp_path, scenes=scenes, commands={'group_managers_chat_reset': True}) as (runtime, peer, store):
+        assert '已关闭本群聊天' in await ask(peer, '/chat off')
+        await peer.say('/quiet 5', user=MANAGER, role='admin')
+        await until(lambda: store.pending_messages(SCENE))
+        await asyncio.sleep(.1)
+        assert len(peer.sends) == 1 and runtime.runners[SCENE].state.temporary_quiet is None
 
 
 @pytest.mark.asyncio
@@ -231,11 +274,11 @@ async def test_quiet_and_resume(tmp_path):
 async def test_reset_moves_the_context_boundary_but_keeps_history(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
         store.append(SCENE, {'role': 'user', 'content': '旧话'})
-        reply = await ask(peer, '/reset')
+        reply = await ask(peer, '/reset', **OWNER_SENDER)
         assert reply == '已开始新的对话上下文；聊天记录、记忆和未读消息都保留'
         assert store.entries(SCENE) == []
         assert store.db.execute('SELECT COUNT(*) FROM mind_entries WHERE scene=?', (SCENE,)).fetchone()[0] == 1
-        assert await ask(peer, '/reset now') == '用法：/reset'
+        assert await ask(peer, '/reset now', **OWNER_SENDER) == '用法：/reset'
 
 
 @pytest.mark.asyncio
@@ -243,7 +286,7 @@ async def test_reset_refuses_while_a_turn_is_unfinished(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
         store.append(SCENE, {'role': 'user', 'content': '旧话'})
         store.start_turn(SCENE)
-        assert await ask(peer, '/reset') == '本群还有没结束或等待恢复的一轮，没有重置'
+        assert await ask(peer, '/reset', **OWNER_SENDER) == '本群还有没结束或等待恢复的一轮，没有重置'
         assert store.entries(SCENE) == [{'role': 'user', 'content': '旧话'}]
 
 

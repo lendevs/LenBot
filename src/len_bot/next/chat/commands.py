@@ -6,6 +6,8 @@ is a host command when ``name`` is a built-in command, the command is not turned
 
 - ``member``: anyone the scene does not blacklist;
 - ``control``: the scene's ``chat_control_roles`` (the same check as the scene_control tool);
+- ``switch``: the bot's owners and global admins, and the group's owner and admins only when
+  ``commands.group_managers_chat_reset`` is on (switching the chat off and a new context do not expire);
 - ``manage``: the bot's owners and global admins (the same check as host_manage).
 
 A sender without the level, or an unknown name, is not answered by the host: the message reaches the
@@ -42,8 +44,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-Level = Literal["member", "control", "manage"]
-LEVEL_TITLES = {"member": "所有人", "control": "本群聊天管理", "manage": "机器人主人和全局管理员"}
+Level = Literal["member", "control", "switch", "manage"]
+LEVEL_TITLES = {"member": "所有人", "control": "本群聊天管理", "switch": "机器人主人和全局管理员（可选群主和群管理员）",
+                "manage": "机器人主人和全局管理员"}
 
 
 class CommandError(ValueError):
@@ -109,17 +112,21 @@ def allowed(level: Level, runtime: NetworkRuntime, runner: SceneRunner, message:
         return False
     if level == "member":
         return True
-    if level == "manage":
+    if level in ("manage", "switch"):
         from ..runtime.management import require_management
         try:
             require_management(runtime.config, config.scene, requester)
         except PermissionError:
-            return False
-        return True
+            if level == "manage" or not runtime.config.commands.group_managers_chat_reset:
+                return False
+        else:
+            return True
     group = config.scene.split(":", 2)[1] == "group"
     role = (message.sender.role or runner.store.latest_sender_role(config.scene, requester)) if group else None
     identities = roles_for(requester, owners=config.owners, scoped_owner=None, admins=config.permissions.admins,
                            whitelist=config.permissions.whitelist, group_role=role)
+    if level == "switch":
+        return "group_manager" in identities
     return bool(identities.intersection(config.chat_control_roles))
 
 
@@ -340,10 +347,10 @@ BUILTIN: list[Command] = [
     Command("help", "/help", "列出你可以使用的命令", "member", _help),
     Command("id", "/id", "显示本场景、你和机器人的账号，用于填写权限", "member", _id),
     Command("status", "/status", "查看本群聊天开关、安静、发言余量和主脑模型", "control", _status),
-    Command("chat", "/chat on|off", "打开或关闭本群聊天，关闭时消息照常记录", "control", _chat),
+    Command("chat", "/chat on|off", "打开或关闭本群聊天，关闭时消息照常记录", "switch", _chat),
     Command("quiet", "/quiet <分钟> [defer]", "本群临时安静；defer 时被叫到也延后", "control", _quiet),
     Command("resume", "/resume", "提前结束本群的临时安静", "control", _resume),
-    Command("reset", "/reset", "开始新的对话上下文，原记录和记忆保留", "control", _reset),
+    Command("reset", "/reset", "开始新的对话上下文，原记录和记忆保留", "switch", _reset),
     Command("model", "/model", "查看主脑服务、备用服务和熔断状态", "manage", _model),
     Command("limit", "/limit [<条数>|off|global|reset]", "查看或修改本群每小时发言上限", "manage", _limit),
 ]

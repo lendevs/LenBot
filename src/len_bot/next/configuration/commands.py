@@ -18,6 +18,9 @@ class CommandSettings(BaseModel):
     enabled: bool = True
     # Commands turned off one by one; their text then reaches the conversation as an ordinary message.
     disabled: list[CommandName] = Field(default_factory=list)
+    # On: a group's owner and admins may also use /chat on|off and /reset there. Off (the default): only
+    # the bot's owners and global admins may, as when the switch and a new context were panel actions.
+    group_managers_chat_reset: bool = False
 
     @field_validator("disabled")
     @classmethod
