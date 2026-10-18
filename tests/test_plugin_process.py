@@ -11,7 +11,7 @@ import pytest
 from websockets.asyncio.server import serve
 
 from len_bot.next.config import load_host_config
-from len_bot.next.models.failover import open_model
+from len_bot.next.models.client import ChatModel
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.plugins.host import PluginHost
 from test_next_plugins import CORE
@@ -93,7 +93,7 @@ async def running(tmp_path: Path):
         config = load_host_config(tmp_path)
         plugins = PluginHost(config, core_tools=CORE)
         with Store(config.database) as store:
-            async with open_model(config.models, 'mind') as model:
+            async with ChatModel(config.model_settings('mind')) as model:
                 runtime = NetworkRuntime(config, [(config.scene_config(SCENE), load_persona(tmp_path / 'persona'))],
                                          store, model, plugins=plugins)
                 task = asyncio.create_task(runtime.run(manage_signals=False))

@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -37,7 +36,6 @@ from typing import TYPE_CHECKING, Literal
 from zoneinfo import ZoneInfo
 
 from ...plugin import Text
-from ..models.failover import HEALTH, ProviderHealth
 from ..models.limits import SpeechLimitReached, check_speech, record_speech, speech_quota
 from ..platform.messages import ChatMessage
 from ..prompt_files import read_prompt
@@ -201,33 +199,9 @@ def _speech_line(call: CommandCall) -> str:
             f"被叫到时另有余量 {quota.reserve_left}/{quota.reserve} 条")
 
 
-def _mind_health(call: CommandCall) -> dict | None:
-    """The mind's circuits in the host's provider health, for the configured candidates only.
-
-    None unless the mind lists fallbacks. Rows and the last served model that do not belong to the
-    running configuration (another model opened under the same role) are left out.
-    """
-    candidates = [(item.provider, item.model) for item in call.runtime.config.models.roles.mind.candidates()]
-    state = call.runtime.commands.health.state()["roles"].get("mind")
-    if len(candidates) < 2 or state is None:
-        return None
-    served = state["last_served"]
-    return {"candidates": [row for row in state["candidates"] if (row["provider"], row["model"]) in candidates],
-            "last_served": served if served is not None and (served["provider"], served["model"]) in candidates
-            else None}
-
-
 def _model_line(call: CommandCall) -> str:
-    candidates = call.runtime.config.models.roles.mind.candidates()
-    text = f"主脑模型：{candidates[0].provider} / {candidates[0].model}"
-    if len(candidates) > 1:
-        health = _mind_health(call)
-        served = None if health is None else health["last_served"]
-        text += f"（另有 {len(candidates) - 1} 个备用"
-        if served is not None and served["priority"] > 0:
-            text += f"，最近一次由备用 {served['provider']} / {served['model']} 回复"
-        text += "）"
-    return text
+    binding = call.runtime.config.models.roles.mind
+    return f"主脑模型：{binding.provider} / {binding.model}"
 
 
 async def _status(call: CommandCall) -> str:
@@ -290,29 +264,12 @@ async def _reset(call: CommandCall) -> str:
     return "已开始新的对话上下文；聊天记录、记忆和未读消息都保留"
 
 
-STATE_TITLES = {"closed": "正常", "open": "熔断冷却中", "half_open": "冷却结束待试"}
-
-
 async def _model(call: CommandCall) -> str:
-    """The mind's binding and its fallbacks with each circuit; switching is a configuration change."""
+    """The mind's configured binding; changing it is a configuration change in the panel."""
     if call.arguments:
-        raise CommandError("用法：/model。调整顺序或备用服务请在面板的模型页修改")
-    candidates = call.runtime.config.models.roles.mind.candidates()
-    health = _mind_health(call)
-    rows = {(row["provider"], row["model"]): row for row in ([] if health is None else health["candidates"])}
-    lines = ["主脑服务（按顺序尝试）：" if len(candidates) > 1 else "主脑服务："]
-    for index, candidate in enumerate(candidates, 1):
-        row = rows.get((candidate.provider, candidate.model))
-        state = "" if row is None else f"，{STATE_TITLES[row['state']]}"
-        if row is not None and row["state"] == "open" and row["reopens_in_seconds"] is not None:
-            state += f"，{math.ceil(row['reopens_in_seconds'])} 秒后再试"
-        lines.append(f"{index}. {candidate.provider} / {candidate.model}{state}")
-    served = None if health is None else health["last_served"]
-    if served is not None:
-        lines.append(f"最近一次由 {served['provider']} / {served['model']} 回复")
-    if len(candidates) == 1:
-        lines.append("没有配置备用服务；出错时不会切换")
-    return "\n".join(lines)
+        raise CommandError("用法：/model。更换主脑服务请在面板的模型页修改")
+    binding = call.runtime.config.models.roles.mind
+    return f"主脑服务：{binding.provider} / {binding.model}\n出错时不会自动更换模型或服务"
 
 
 async def _limit(call: CommandCall) -> str:
@@ -361,7 +318,7 @@ BUILTIN: list[Command] = [
     Command("quiet", "/quiet <分钟> [defer]", "本群临时安静；defer 时被叫到也延后", "control", _quiet),
     Command("resume", "/resume", "提前结束本群的临时安静", "control", _resume),
     Command("reset", "/reset", "开始新的对话上下文，原记录和记忆保留", "switch", _reset),
-    Command("model", "/model", "查看主脑服务、备用服务和熔断状态", "manage", _model),
+    Command("model", "/model", "查看主脑服务", "manage", _model),
     Command("limit", "/limit [<条数>|off|global|reset]", "查看或修改本群每小时发言上限", "manage", _limit),
 ]
 
@@ -369,9 +326,7 @@ BUILTIN: list[Command] = [
 class Commands:
     """The scene command layer of one runtime."""
 
-    def __init__(self, commands: list[Command] | None = None, *, health: ProviderHealth = HEALTH):
-        # The provider health the host's role models report to (the same instance the panel reads).
-        self.health = health
+    def __init__(self, commands: list[Command] | None = None):
         self.table = {command.name: command for command in (BUILTIN if commands is None else commands)}
         self.tasks: set[asyncio.Task] = set()
         # (scene, sender, command) -> monotonic time of the last answered member command.

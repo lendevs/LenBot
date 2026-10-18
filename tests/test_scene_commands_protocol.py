@@ -6,12 +6,11 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
 import pytest
 from websockets.asyncio.server import serve
 
 from len_bot.next.config import load_host_config
-from len_bot.next.models.failover import open_model
+from len_bot.next.models.client import ChatModel
 from len_bot.next.models.limits import record_speech
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.runtime.network import NetworkRuntime
@@ -87,7 +86,7 @@ async def host(tmp_path: Path, **changes):
                                        'ws_url': f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}'}, **changes)
         config = load_host_config(tmp_path)
         with Store(config.database) as store:
-            async with open_model(config.models, 'mind') as model:
+            async with ChatModel(config.model_settings('mind')) as model:
                 runtime = NetworkRuntime(config, [(config.scene_config(SCENE), load_persona(tmp_path / 'persona'))],
                                          store, model)
                 running = asyncio.create_task(runtime.run(manage_signals=False))
@@ -327,36 +326,13 @@ async def test_reset_refuses_while_a_turn_is_unfinished(tmp_path):
         assert store.entries(SCENE) == [{'role': 'user', 'content': '旧话'}]
 
 
-CHAIN = {'providers': {'fixture': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-unused'},
-                       'backup': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v2', 'api_key': 'synthetic-unused'}},
-         'roles': {'mind': {'provider': 'fixture', 'model': 'synthetic-command-primary', 'context_window_tokens': 8192,
-                            'fallbacks': [{'provider': 'backup', 'model': 'synthetic-command-backup'}]}},
-         'failover': {'failure_threshold': 1, 'cooldown_seconds': 600}}
-
-
 @pytest.mark.asyncio
-async def test_owner_sees_the_mind_fallbacks_and_their_circuits(tmp_path):
-    async with host(tmp_path, models=CHAIN) as (runtime, peer, store):
+async def test_model_shows_the_primary_binding_only(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
         owner = {'user': OWNER, 'role': 'member'}
         assert (await ask(peer, '/model', **owner)).splitlines() == [
-            '主脑服务（按顺序尝试）：', '1. fixture / synthetic-command-primary，正常',
-            '2. backup / synthetic-command-backup，正常']
-        # Both services are unreachable: the real failover path opens each circuit at the first failure.
-        async with open_model(runtime.config.models, 'mind') as mind:
-            with pytest.raises(httpx.TransportError):
-                await mind.complete([{'role': 'user', 'content': '你好'}], [])
-        lines = (await ask(peer, '/model', **owner)).splitlines()
-        assert lines[1].startswith('1. fixture / synthetic-command-primary，熔断冷却中，')
-        assert lines[2].startswith('2. backup / synthetic-command-backup，熔断冷却中，') and lines[2].endswith('秒后再试')
-        assert '主脑模型：fixture / synthetic-command-primary（另有 1 个备用）' in await ask(peer, '/status', **owner)
-        assert await ask(peer, '/model use 2', **owner) == '用法：/model。调整顺序或备用服务请在面板的模型页修改'
-
-
-@pytest.mark.asyncio
-async def test_model_without_fallbacks_says_it_does_not_switch(tmp_path):
-    async with host(tmp_path) as (runtime, peer, store):
-        assert (await ask(peer, '/model', user=OWNER, role='member')).splitlines() == [
-            '主脑服务：', '1. fixture / synthetic-unused', '没有配置备用服务；出错时不会切换']
+            '主脑服务：fixture / synthetic-unused', '出错时不会自动更换模型或服务']
+        assert await ask(peer, '/model use 2', **owner) == '用法：/model。更换主脑服务请在面板的模型页修改'
 
 
 @pytest.mark.asyncio
