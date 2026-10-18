@@ -538,15 +538,9 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 if scene not in saved.scenes or saved.scenes[scene].learning is None:
                     raise ValueError(f'场景 {scene!r} 未启用学习，不能配置学习向量模型')
                 source['scenes'][scene]['learning']['embedding'] = None if binding is None else binding.model_dump(mode='json')
-            roles = change.roles.model_dump(mode="json")
-            # The panel sends the role's own provider under its new name; backups keep the name they were saved with.
-            for binding in roles.values():
-                for backup in [] if binding is None else binding.get('fallbacks', []):
-                    backup['provider'] = renames.get(backup['provider'], backup['provider'])
             source["models"] = {
                 "providers": providers,
-                "roles": roles,
-                **({"failover": source["models"]["failover"]} if "failover" in source["models"] else {}),
+                "roles": change.roles.model_dump(mode="json"),
             }
 
         return await save(edit)
