@@ -92,8 +92,6 @@ class ModelReply:
     usage: dict[str, Any] | None
     token_usage: TokenUsage | None
     response: dict | None = None
-    # Which candidate answered, set by FailoverModel: provider, model, priority, skipped/failed before it.
-    served_by: dict[str, Any] | None = None
 
 
 class ModelProtocolError(RuntimeError):
@@ -109,10 +107,6 @@ class ModelProtocolError(RuntimeError):
 
 class ModelHTTPError(RuntimeError):
     """The configured provider rejected a model request."""
-
-    def __init__(self, message: str, *, status_code: int | None = None):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 def _reject_non_json_constant(value: str) -> None:
@@ -260,7 +254,7 @@ class ChatModel:
             await asyncio.sleep(delay)
         if not response.is_success:
             fragment = response.text.replace(self.settings.api_key, '[hidden]')[:2000]
-            raise ModelHTTPError(f"Model HTTP {response.status_code}: {fragment}", status_code=response.status_code)
+            raise ModelHTTPError(f"Model HTTP {response.status_code}: {fragment}")
         try:
             body = json.loads(response.text, parse_constant=_reject_non_json_constant, parse_float=_finite_json_number)
         except ValueError as error:
