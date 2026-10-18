@@ -82,6 +82,12 @@ class BotAPI:
             with self.lock:
                 self.sent.append((method, params))
                 return 200, {'ok': True, 'result': {'message_id': 7000 + len(self.sent)}}
+        if method == 'getChat':
+            chat = json.loads(body)['chat_id']
+            return 200, {'ok': True, 'result': ({'id': chat, 'type': 'supergroup', 'title': '脱敏群'} if chat < 0 else
+                                                {'id': chat, 'type': 'private', 'first_name': '脱敏', 'last_name': '群友'})}
+        if method == 'getChatMemberCount':
+            return 200, {'ok': True, 'result': 42}
         if method == 'sendChatAction':
             return 400, {'ok': False, 'error_code': 400, 'description': 'Bad Request: chat not found'}
         return 404, {'ok': False, 'error_code': 404, 'description': 'Not Found'}
@@ -246,6 +252,18 @@ async def test_a_telegram_host_stores_group_messages_and_answers_commands(tmp_pa
             await until(lambda: len(store.pending_messages(SCENE)) > stored, 5)
             await asyncio.sleep(.1)
             assert len(api.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_scene_titles_come_from_the_bot_api(tmp_path):
+    from len_bot.next.runtime.scene_titles import SceneTitles
+    with BotAPI() as api:
+        async with telegram_host(tmp_path, api) as (runtime, store):
+            await until(lambda: runtime.platform.connected, 5)
+            titles, errors = await SceneTitles(runtime).read(['telegram:private:7001'])
+            assert errors == {}
+            assert titles == {SCENE: '脱敏群', 'telegram:private:7001': '脱敏 群友'}
+            assert await runtime.platform.scene_title(SCENE) == ('脱敏群', 42)
 
 
 @pytest.mark.parametrize(('changes', 'message'), [

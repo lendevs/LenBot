@@ -55,6 +55,9 @@ class PlatformAdapter(Protocol):
 
     async def upload_file(self, scene: str, file: str, name: str) -> UploadResult: ...
 
+    async def scene_title(self, scene: str) -> tuple[str, int | None]:
+        """The group name and member count, or the private contact's name, for labelling the scene."""
+
     async def call(self, action: str, params: dict) -> dict:
         """A platform-specific action (OneBot action, Telegram Bot API method) with its raw answer."""
 

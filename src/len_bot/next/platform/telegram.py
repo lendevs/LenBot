@@ -260,5 +260,24 @@ class Telegram:
             return SendResult("unconfirmed" if error.submitted else "failed", None, str(error))
         return SendResult("sent", str(result["message_id"]), None)
 
+    async def scene_title(self, scene: str) -> tuple[str, int | None]:
+        """``getChat`` (and ``getChatMemberCount`` for groups); the Bot API has no OneBot group actions."""
+        platform, kind, chat = scene.split(":", 2)
+        if platform != "telegram" or kind not in {"group", "private"}:
+            raise ValueError(f"Invalid Telegram scene: {scene!r}")
+        found = await self.call("getChat", {"chat_id": int(chat)})
+        if kind == "group":
+            title = found.get("title")
+            if not isinstance(title, str) or not title:
+                raise ValueError(f"Telegram getChat 没有群名：{json.dumps(found, ensure_ascii=False)[:300]}")
+            members = await self.call("getChatMemberCount", {"chat_id": int(chat)})
+            if type(members) is not int or members < 0:
+                raise ValueError(f"Telegram getChatMemberCount 不是人数：{members!r}")
+            return title, members
+        name = " ".join(part for part in (found.get("first_name"), found.get("last_name")) if part)
+        if not name:
+            raise ValueError(f"Telegram getChat 没有名字：{json.dumps(found, ensure_ascii=False)[:300]}")
+        return name, None
+
     async def upload_file(self, scene: str, file: str, name: str) -> UploadResult:
         return UploadResult("failed", None, "Telegram 适配器暂不支持上传文件", None)

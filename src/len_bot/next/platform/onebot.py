@@ -300,6 +300,10 @@ class OneBot:
                     self.on_connection_change()
             await websocket.close()
 
+    async def scene_title(self, scene: str) -> tuple[str, int | None]:
+        from .platform_tools import scene_title
+        return await scene_title(scene, self.call)
+
     async def call(self, action: str, params: dict) -> dict:
         if not self._running:
             raise OneBotCallError("OneBot transport has not been started", submitted=False)
