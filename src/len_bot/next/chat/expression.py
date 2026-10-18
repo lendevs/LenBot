@@ -17,7 +17,7 @@ from .tools import ReactArguments, SayArguments
 from ..config import LabConfig
 from ..platform.delivery import Expression, part_length, report_parts, split_expression
 from ..models.limits import LimitReached, check_speech, record_speech
-from ..platform.messages import ChatMessage, Segment, Sender, SendResult
+from ..platform.messages import ChatMessage, Segment, Sender, SendResult, plain_text
 from ..persona.profile import Persona
 from ..persona.stickers import PersonaSticker
 from ...plugin import Content, Sent
@@ -59,8 +59,10 @@ class ChatExpression:
     def __init__(self, config: LabConfig, persona: Persona, store: Store, *, context: ChatContext,
                  send_message: MessageSender | None, notify: Callable[[], None],
                  on_reply_sample: Callable[[], None] | None, now: Callable[[], float],
-                 exclude_from_memory: Callable[[int], None] | None = None):
+                 exclude_from_memory: Callable[[int], None] | None = None,
+                 on_sent: Callable[[dict], None] | None = None):
         self.config, self.persona, self.store = config, persona, store
+        self.on_sent = on_sent
         # Plugin output (pushes, cards, summaries) is not something that happened in the group.
         self.exclude_from_memory = exclude_from_memory
         self.context = context
@@ -70,6 +72,12 @@ class ChatExpression:
         self.outlet = asyncio.Lock()
         # Whether the current turn may use the direct reserve of the hourly speech limit.
         self.reserve: Callable[[], bool] = lambda: False
+
+    def sent(self, seq: int, part: ChatMessage, error: str | None, *, turn_id: str | None = None,
+             plugin: str | None = None) -> None:
+        if self.on_sent is not None:
+            self.on_sent({'type': 'message.sent', 'message_seq': seq, 'turn_id': turn_id,
+                          'status': part.send_status, 'summary': plain_text(part)[:500], 'error': error, 'plugin': plugin})
 
     def check_send_available(self) -> None:
         until = self.store.bot_muted_until(self.config.scene, self.config.bot_id)
@@ -205,6 +213,7 @@ class ChatExpression:
                 self.notify()
                 if self.send_message is None:
                     log_sent(message_seq, part, None, index=index, parts=len(parts))
+                    self.sent(message_seq, part, None, turn_id=turn_id)
                     if index == 0 and not fixed_notice:
                         await self.store.call(record_speech, self.store, self.config.scene)
                 if self.send_message is not None:
@@ -215,6 +224,7 @@ class ChatExpression:
                     content = report_parts(parts, errors, self.context.render)
                     kept = await self.store.call(self.store.finish_expression, (message_seq, entry_seq), part,
                                                  prefix + content, turn_id=turn_id)
+                    self.sent(message_seq, part, result.error, turn_id=turn_id)
                     if result.status == "sent":
                         confirmed.append((kept, self.now()))
                     # The host send hold returns simulated; speech still counts so limits behave as when sending.
@@ -269,12 +279,14 @@ class ChatExpression:
                     self.notify()
                     if self.send_message is None:
                         log_sent(seq, part, None, index=index, parts=len(parts), plugin=plugin)
+                        self.sent(seq, part, None, plugin=plugin)
                         continue
                     result = await self.send_message(part, image_bytes=None if image is None else image.data)
                     part.send_status, part.platform_message_id = result.status, result.platform_message_id
                     errors[-1] = result.error
                     log_sent(seq, part, result.error, index=index, parts=len(parts), plugin=plugin)
                     await self.store.call(self.store.finish_expression, (seq, None), part, "")
+                    self.sent(seq, part, result.error, plugin=plugin)
                     self.notify()
                     if result.status not in {"sent", "simulated"}:
                         break

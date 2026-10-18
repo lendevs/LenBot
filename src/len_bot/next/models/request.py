@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 import logging
+import time
 from contextlib import nullcontext
 from typing import Literal, Protocol
 
@@ -68,7 +69,8 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         append_to_scene: bool = False, recap_for: tuple[str, int] | None = None,
                         expression_ids: list[int] | None = None,
                         input_estimate: tuple[int, str] | None = None,
-                        notify: Callable[[], None] | None = None) -> ModelReply:
+                        notify: Callable[[], None] | None = None,
+                        trace: Callable[[dict], None] | None = None) -> ModelReply:
     binding = getattr(config.models.roles, "mind" if role == "recap" else role)
     messages = project_messages(messages, binding.history_policy)
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
@@ -96,6 +98,9 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                    "history_policy": binding.history_policy, "session_id": session_id}
         call_id = (store.start_call(turn_id, role, request) if plugin is None
                    else PluginStore(store).start_plugin_call(scene, plugin, role, request))
+        started = time.monotonic()
+        if trace is not None:
+            trace({'kind': 'model', 'phase': 'start', 'call_id': call_id, 'role': role})
         if notify is not None:
             notify()
         reply = None
@@ -116,6 +121,10 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                       error=error if isinstance(error, Exception) else None)
             if notify is not None:
                 notify()
+            if trace is not None:
+                trace({'kind': 'model', 'phase': 'end', 'call_id': call_id, 'role': role,
+                       'elapsed_seconds': time.monotonic() - started, 'tokens': token_record(token_usage),
+                       'error': f'{type(error).__name__}: {error}'})
             raise
         # The reply is saved on the database thread; a cancellation here still leaves the call recorded as ended.
         await store.call(store.end_call, call_id,
@@ -126,4 +135,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                   **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage))
         if notify is not None:
             notify()
+        if trace is not None:
+            trace({'kind': 'model', 'phase': 'end', 'call_id': call_id, 'role': role,
+                   'elapsed_seconds': time.monotonic() - started, 'tokens': token_record(reply.token_usage), 'error': None})
         return reply

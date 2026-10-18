@@ -65,9 +65,12 @@ class Chat:
                  on_update: Callable[[], None] | None = None,
                  on_compaction: Callable[[], None] | None = None,
                  on_reply_sample: Callable[[], None] | None = None,
-                 now: Callable[[], float] = time.time):
+                 now: Callable[[], float] = time.time,
+                 on_trace: Callable[[dict], None] | None = None):
         self.config, self.persona, self.store = config, persona, store
         self.now = now
+        self.on_trace = on_trace
+        self.trace_step: int | None = None
         self.mind, self.vision = mind, vision
         self.audio = audio_service
         self.expression_service = expression_service
@@ -101,6 +104,7 @@ class Chat:
         self.expression = ChatExpression(
             config, persona, store, context=self.context,
             send_message=send_message,
+            on_sent=on_trace,
             notify=self.notify, on_reply_sample=on_reply_sample, now=now,
             exclude_from_memory=None if memory is None else lambda seq: memory.jobs.exclude_records(config.scene, [seq]))
         self.expression.reserve = lambda: self.speech_reserve
@@ -121,6 +125,10 @@ class Chat:
     def notify(self) -> None:
         if self.on_update is not None:
             self.on_update()
+
+    def trace(self, type: str, turn_id: str, **fields) -> None:
+        if self.on_trace is not None:
+            self.on_trace({'type': type, 'turn_id': turn_id, 'step': self.trace_step, **fields})
 
     def restore(self) -> bool:
         previous = self.store.last_mind_request(self.config.scene)
@@ -164,7 +172,8 @@ class Chat:
             validate=validate, append_to_scene=role == "mind",
             recap_for=None if recap_target is None else (self.config.scene, recap_target.through),
             expression_ids=self.expression_ids if role == "mind" else expression_ids,
-            input_estimate=input_estimate, notify=self.notify)
+            input_estimate=input_estimate, notify=self.notify,
+            trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
 
     async def compact_now(self) -> dict:
         """One explicit operator-requested compaction; caller owns the scene lock."""
@@ -346,6 +355,8 @@ class Chat:
                                        plugin_events=plugin_events,
                                        wake_received_at=wake_received_at, proactive=proactive,
                                        wake_channel=channel or 'resume')
+        self.trace_step = None
+        self.trace('turn.started', turn_id, channel=channel or 'resume', channels=sorted(self.turn_channels), direct=direct)
         add_context(turn_id=turn_id)
         # The link from waking input to this turn: message seqs, schedules, task notices and plugin events.
         log_event(logger, 'turn_start', channel=channel, channels=sorted(self.turn_channels), direct=direct,
@@ -362,12 +373,24 @@ class Chat:
         try:
             async with asyncio.timeout(self.config.turn_timeout_seconds):
                 recalled = None
-                if self.memory is not None and self.memory.settings.auto_recall:
-                    phase = '记忆自动召回'
-                    recall = await self.memory.recall(
-                        scene, await self.store.call(self.store.recent_context_messages, scene, limit=8))
-                    if recall["items"]:
-                        recalled = encode({"backend": recall["backend"], "items": recall["items"]})
+                self.trace('turn.step', turn_id, kind='recall', phase='start')
+                recall_items = []
+                recall_error = None
+                try:
+                    if self.memory is not None and self.memory.settings.auto_recall:
+                        phase = '记忆自动召回'
+                        recall = await self.memory.recall(
+                            scene, await self.store.call(self.store.recent_context_messages, scene, limit=8))
+                        if recall["items"]:
+                            recalled = encode({"backend": recall["backend"], "items": recall["items"]})
+                        recall_items = recall['items']
+                except BaseException as error:
+                    recall_error = f'{type(error).__name__}: {error}'
+                    raise
+                finally:
+                    self.trace('turn.step', turn_id, kind='recall', phase='end', error=recall_error, items=[
+                        {'scope': item['scope'], 'path': item['path'], 'characters': len(item['content'])}
+                        for item in recall_items])
                 phase = None
                 self.expression_ids = None
                 learned = None
@@ -394,6 +417,7 @@ class Chat:
                 if learned is not None:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
                 for step in range(self.config.max_steps):
+                    self.trace_step = step + 1
                     self.check_limits()
                     prepared = await self.prepare_context(turn_id, observed_at=observed_at,
                                                           expression_style=expression_style, recalled=recalled)
@@ -401,48 +425,67 @@ class Chat:
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method))
                     end_turn, group_failed = False, False
                     for call in reply.tool_calls:
-                        if call.name == "memory":
-                            # A tool may have edited or removed the recalled file, even if
-                            # a later index update failed. Do not reattach an old excerpt.
-                            recalled = None
+                        self.trace('turn.step', turn_id, kind='tool', phase='start', call_id=call.id,
+                                   name=call.name, arguments_summary=encode(call.arguments)[:500])
+                        tool_status, tool_summary = 'complete', ''
                         try:
-                            content, expression, discovered = await self.toolset.execute(
-                                turn_id, call, wait_for_messages, expression_style=expression_style, direct=self.direct_request,
-                            )
-                        except Exception as error:
-                            group_failed = True
-                            failed_tools += 1
-                            await self.store.call(self.store.complete_tool, scene, call.id,
-                                                  f"{call.name} 失败：{type(error).__name__}: {error}")
-                            if isinstance(error, LimitReached):
-                                raise
-                        else:
-                            if expression is None:
-                                reaction = call.name == 'message_reaction'
-                                await self.store.call(self.store.complete_tool, scene, call.id, content,
-                                                      discovered_tools=discovered,
-                                                      response_turn_id=turn_id if reaction else None)
-                                if reaction:
+                            if call.name == "memory":
+                                # A tool may have edited or removed the recalled file, even if
+                                # a later index update failed. Do not reattach an old excerpt.
+                                recalled = None
+                            try:
+                                content, expression, discovered = await self.toolset.execute(
+                                    turn_id, call, wait_for_messages, expression_style=expression_style, direct=self.direct_request,
+                                )
+                            except Exception as error:
+                                tool_status = 'error'
+                                tool_summary = f'{type(error).__name__}: {error}'
+                                group_failed = True
+                                failed_tools += 1
+                                await self.store.call(self.store.complete_tool, scene, call.id,
+                                                      f"{call.name} 失败：{type(error).__name__}: {error}")
+                                if isinstance(error, LimitReached):
+                                    raise
+                            else:
+                                if expression is None:
+                                    reaction = call.name == 'message_reaction'
+                                    await self.store.call(self.store.complete_tool, scene, call.id, content,
+                                                          discovered_tools=discovered,
+                                                          response_turn_id=turn_id if reaction else None)
+                                    if reaction:
+                                        expressions.append(content)
+                                        self.turn_expressions += 1
+                                        end_turn = end_turn or call.arguments.get('end_turn', True)
+                                        self.trace('turn.step', turn_id, kind='expression', phase='end',
+                                                   call_id=call.id, status='complete', summary=content[:500])
+                                    elif call.name == 'attention':
+                                        end_turn = end_turn or call.arguments.get('end_turn', False)
+                                    elif call.name == 'end_turn':
+                                        end_turn = True
+                                else:
+                                    content, delivery_status = await self.expression.deliver_expression(
+                                        call.id, expression, turn_id=turn_id, channels=self.turn_channels,
+                                    )
                                     expressions.append(content)
                                     self.turn_expressions += 1
-                                    end_turn = end_turn or call.arguments.get('end_turn', True)
-                                elif call.name == 'attention':
-                                    end_turn = end_turn or call.arguments.get('end_turn', False)
-                                elif call.name == 'end_turn':
-                                    end_turn = True
-                            else:
-                                content, delivery_status = await self.expression.deliver_expression(
-                                    call.id, expression, turn_id=turn_id, channels=self.turn_channels,
-                                )
-                                expressions.append(content)
-                                self.turn_expressions += 1
-                                if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
-                                    self.turn_messages += 1
-                                if delivery_status in {"sent", "simulated"}:
-                                    end_turn = end_turn or expression.end_turn
-                                else:
-                                    group_failed = True
-                                    failed_tools += 1
+                                    if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
+                                        self.turn_messages += 1
+                                    if delivery_status in {"sent", "simulated"}:
+                                        end_turn = end_turn or expression.end_turn
+                                    else:
+                                        group_failed = True
+                                        tool_status = 'error'
+                                        failed_tools += 1
+                                    self.trace('turn.step', turn_id, kind='expression', phase='end',
+                                               call_id=call.id, status=delivery_status, summary=content[:500])
+                                tool_summary = content
+                        except BaseException as error:
+                            tool_status = 'cancelled' if isinstance(error, asyncio.CancelledError) else 'error'
+                            tool_summary = f'{type(error).__name__}: {error}'
+                            raise
+                        finally:
+                            self.trace('turn.step', turn_id, kind='tool', phase='end', call_id=call.id,
+                                       name=call.name, status=tool_status, summary=tool_summary[:500])
                         self.notify()
                     if not reply.tool_calls or (end_turn and not group_failed):
                         status = "settled"
@@ -454,6 +497,7 @@ class Chat:
         except asyncio.CancelledError:
             self.store.finish_pending_tools(scene, "当前轮被取消")
             self.store.end_turn(turn_id, "cancelled", "CancelledError")
+            self.trace('turn.ended', turn_id, status='cancelled', error='CancelledError')
             raise
         except Exception as error:
             status = "limited" if isinstance(error, LimitReached) else "timeout" if isinstance(error, TimeoutError) else "error"
@@ -464,6 +508,8 @@ class Chat:
             if phase is not None:
                 error_text = f'{phase}失败：{error_text}'
         self.store.finish_pending_tools(scene, error_text or status)
+        self.trace('turn.ended', turn_id, status=status, error=error_text,
+                   expressions=len(expressions), steps=self.trace_step or 0)
         return {"turn_id": turn_id, "status": status, "error": error_text,
                 "delivery": "simulated" if self.expression.send_message is None else "onebot",
                 "expressions": expressions, "extensions": extensions,

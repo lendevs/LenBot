@@ -1,0 +1,87 @@
+"""A local model drives live turn cards through the real panel event stream."""
+
+import asyncio
+import json
+
+import pytest
+from websockets.asyncio.client import connect
+
+from test_attention_protocol import message, response
+from test_host_stream import login, panel, receive
+from test_next_native_models import peer_server
+from test_next_panel_acts_as_owner import SCENE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['success', 'tool-error', 'model-error', 'cancel'])
+async def test_turn_trace_includes_model_tools_delivery_and_end(tmp_path, case):
+    replies = [response('say', {'content': '合成回答', 'end_turn': True}, 'say1')]
+    if case == 'tool-error':
+        replies.insert(0, response('say', {'content': '', 'end_turn': True}, 'invalid1'))
+    if case == 'model-error':
+        replies = [(503, 'application/json', b'{"error":{"message":"synthetic unavailable"}}')]
+    if case == 'cancel':
+        replies = [response('wait', {'seconds': 30, 'reason': '合成等待'}, 'wait1')]
+    requests = []
+    server = await peer_server(replies, requests)
+
+    def configure(root):
+        path = root / 'lenbot.config.json'
+        source = json.loads(path.read_text())
+        source['models']['providers']['local']['base_url'] = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        source['memory'] = {'backend': 'local', 'local': {'directory': 'memory'}}
+        source['models']['roles']['mind']['context_window_tokens'] = 64000
+        source['compaction']['input_tokens'] = 30000
+        source['scenes'][SCENE]['attention'] = {'direct_idle_seconds': 0}
+        path.write_text(json.dumps(source))
+        path = root / 'persona/persona.yaml'
+        path.write_text('id: trace-test\nname: 测试角色\nbrief: 合成资料\nbehavior: 回答\n'
+                        'self_reference: [我]\naliases: []\ntools: [say, wait]\nskills: []\nstyles: []\n')
+
+    async with server, panel(tmp_path, configure) as (runtime, client, url):
+        await runtime.memory.write(SCENE, 'topics/report.md', '报告周五提交。', '合成记忆')
+        async with connect(url, additional_headers=await login(client), proxy=None) as ws:
+            await receive(ws)
+            runner = runtime.runners[SCENE]
+            runner.receive(message(70001, 101, '报告周五提交', direct=True))
+            runner.close_input()
+            running = asyncio.create_task(runner.run())
+            events = []
+            while True:
+                event = await receive(ws)
+                events.append(event)
+                if case == 'cancel' and event['type'] == 'turn.step' and event['kind'] == 'tool' and event['phase'] == 'start':
+                    running.cancel()
+                if event['type'] == 'turn.ended':
+                    break
+            if case == 'cancel':
+                with pytest.raises(asyncio.CancelledError):
+                    await running
+            else:
+                await asyncio.wait_for(running, 3)
+    traced = [e for e in events if e['type'] in {'turn.started', 'turn.step', 'turn.ended', 'message.sent'}]
+    assert traced[0]['type'] == 'turn.started'
+    assert traced[0]['channel'] == 'direct' and traced[0]['direct']
+    assert all(e['scene'] == SCENE and e['turn_id'] == traced[0]['turn_id'] for e in traced)
+    assert traced[-1]['type'] == 'turn.ended'
+    assert traced[-1]['status'] == ('error' if case == 'model-error' else 'cancelled' if case == 'cancel' else 'settled'), traced[-1]
+    recall = next(e for e in traced if e.get('kind') == 'recall' and e['phase'] == 'end')
+    assert any(item['path'] == 'topics/report.md' and item['characters'] > 0 for item in recall['items'])
+    models = [e for e in traced if e.get('kind') == 'model']
+    assert [e['phase'] for e in models] == ['start', 'end'] * len(requests)
+    assert all(e['role'] == 'mind' and isinstance(e['call_id'], int) for e in models)
+    assert models[-1]['elapsed_seconds'] >= 0
+    if case == 'model-error':
+        assert '503' in models[-1]['error'] and models[-1]['tokens'] is None
+    else:
+        assert models[-1]['tokens'] == {'input': 100, 'output': 20, 'cached': None}
+        tools = [e for e in traced if e.get('kind') == 'tool']
+        assert [e['phase'] for e in tools] == ['start', 'end'] * len(requests)
+        assert all(len(e['arguments_summary']) <= 500 for e in tools if e['phase'] == 'start')
+        if case == 'cancel':
+            assert tools[-1]['status'] == 'cancelled'
+        else:
+            assert any(e['type'] == 'message.sent' and e['status'] == 'simulated' and e['message_seq'] > 0 for e in traced)
+            assert any(e.get('kind') == 'expression' and e['status'] == 'simulated' for e in traced)
+        if case == 'tool-error':
+            assert tools[1]['status'] == 'error' and tools[-1]['status'] == 'complete'

@@ -144,6 +144,7 @@ class NetworkRuntime:
                                 + ([] if mcp is None else mcp.tools_for(scene))),
                 audio_service=self.audio,
                 on_update=self.notify,
+                on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
             )
         if lifecycle is not None:
             self.bind_management(config._instance_root, lifecycle)

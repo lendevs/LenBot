@@ -267,6 +267,20 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 `host.state` 表示运行、连接、暂停和发送方式变化；其他通知使用 `host.changed`，合并到每秒最多四次。
 旧 `/api/host/events` 暂时保留供旧页面使用。
 
+`Chat` 可选的 `on_trace` 回调接到同一事件流，不改变没有回调的调用方式：
+
+| 类型 | 字段 |
+|---|---|
+| `turn.started` | `turn_id`、`channel`、`channels`、`direct` |
+| `turn.step` | `turn_id`、`step`（模型步骤从 1 开始）、`kind`、`phase` |
+| `turn.ended` | `turn_id`、`status`、`error`、正常返回时的 `steps` 和 `expressions` |
+| `message.sent` | `message_seq`、`turn_id`（非回合发送可为空）、`status`、`summary`、`error`、`plugin` |
+
+`kind=recall` 的结束事件带 `items`（scope、path、characters）与 error。
+`kind=model` 的事件带 role 和数据库 call_id；结束时再带 elapsed_seconds、tokens（input、output、cached）与 error。
+`kind=tool` 带工具 name 和原生 call_id，开始时带最多 500 字的 arguments_summary，结束时带 status 和最多 500 字的 summary。
+`kind=expression` 在表达送出后带 call_id、status 和最多 500 字的 summary。完整请求、回复和结果仍从回合详情读取。
+
 ### 视觉规范
 
 #### 颜色
