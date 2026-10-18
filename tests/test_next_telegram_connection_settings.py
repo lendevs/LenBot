@@ -54,7 +54,7 @@ def test_telegram_connection_page_round_trips(tmp_path):
                     body['owners'] = ['telegram:7001']
                     response = await client.put('/api/host/settings/connection', json=body)
                     assert response.status_code == 200, response.text
-                    assert response.json()['restart_required']['connection'] is True
+                    assert response.json()['restart_required']['connection'] is False
                     saved = json.loads((root / 'lenbot.config.json').read_text())
                     assert saved['owners'] == ['telegram:7001'] and saved['delivery'] == 'telegram'
                     assert saved['telegram']['bot_token'] == TOKEN

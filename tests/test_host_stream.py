@@ -1,7 +1,7 @@
 """The live event protocol over an authenticated network WebSocket."""
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 import json
 import socket
 
@@ -19,6 +19,11 @@ from len_bot.next.panel.app import create_app
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.runtime.network import NetworkRuntime
 from len_bot.next.storage.store import Store
+from len_bot.next.models.slots import ModelSlots
+from len_bot.next.learning.expressions import ExpressionLearner
+from len_bot.next.learning.jargon import JargonLearner
+from len_bot.next.learning.sticker_collection import StickerCollector
+from len_bot.next.learning.reply_effects import ReplyEffectTracker
 from test_next_panel_acts_as_owner import SCENE, write_instance
 
 
@@ -29,11 +34,20 @@ async def panel(root, configure=None):
         configure(root)
     config = load_host_config(root)
     with Store(config.database) as store:
-        async with (ChatModel(config.model_settings('mind')) as model, open_memory(config, store) as memory,
+        slots = ModelSlots(config.max_model_requests)
+        async with (ChatModel(config.model_settings('mind')) as model,
+                    (ChatModel(config.model_settings('learner')) if config.models.roles.learner is not None else nullcontext(None)) as learner,
+                    (ChatModel(config.model_settings('vision')) if config.models.roles.vision is not None else nullcontext(None)) as vision,
+                    open_memory(config, store) as memory,
                     open_memory_ingestor(config, store, memory, list(config.scenes)) as ingestor):
             runtime = NetworkRuntime(config, [(config.scene_config(scene), load_persona(settings.persona))
                                               for scene, settings in config.scenes.items()],
-                                     store, model, memory=memory, ingestor=ingestor)
+                                     store, model, memory=memory, ingestor=ingestor, slots=slots, vision=vision,
+                                     learning=None if learner is None else ExpressionLearner(config, store, learner, slots=slots),
+                                     jargon=None if learner is None else JargonLearner(config, store, learner, slots=slots),
+                                     reply_effects=None if learner is None else ReplyEffectTracker(config, store, learner, slots=slots),
+                                     sticker_collection=None if vision is None else StickerCollector(config, store, vision, slots=slots,
+                                         recording=lambda scene: runtime.chats[scene].toolset.replay_images))
             app = create_app(config, runtime, root=root)
             with socket.socket() as listener:
                 listener.bind(('127.0.0.1', 0))

@@ -153,14 +153,14 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     change['task_identities'] = {'owner':'onebot:70006', 'admins':['onebot:70007'], 'whitelist':[]}
                     saved = await client.put('/api/host/permissions?scene=onebot:group:80001', json=change)
                     assert saved.status_code == 200, saved.text
-                    assert saved.json()['restart_required'] is True
-                    assert saved.json()['running']['global_identities']['admins'] == []
+                    assert saved.json()['restart_required'] is False
+                    assert saved.json()['running']['global_identities']['admins'] == ['onebot:70003']
                     assert load_host_config(root).scene_config('onebot:group:80001').permissions.admins == ['onebot:70003']
                     saved_tasks = load_host_config(root).scenes['onebot:group:80001'].tasks
                     assert (saved_tasks.owner, saved_tasks.admins) == ('onebot:70006', ['onebot:70007'])
                     pending = (await client.get('/api/host/pending-restart')).json()
-                    assert {'permissions', 'account_browser'} <= set(pending['sections'])
-                    assert pending['scenes'] == ['onebot:group:80001'] and pending['personas'] == []
+                    assert pending['sections'] == ['account_browser']
+                    assert pending['scenes'] == [] and pending['personas'] == []
                     scene_saved = (await client.get('/api/host/settings')).json()['saved']['scenes']['onebot:group:80001']
                     scene_body = {'timezone': None, 'voice_mode': 'direct',  'attention': scene_saved['attention'],
                                   'schedules': {'enabled': True, 'max_pending': 9, 'autonomous': False},

@@ -19,7 +19,7 @@ from ..configuration.tasks import TaskSettings, WorkerSettings
 from ..configuration.types import STRICT
 from ..memory.service import LocalMemoryConfig
 from ..models.asr import ASRBinding
-from ..models.limits import ResourceLimits, apply_speech_limits
+from ..models.limits import ResourceLimits
 from ..plugins.manager import PluginManager, plugin_manifest
 from ..plugins.manifest import Manifest, config_model, redact_values
 from ..tools.discovery import model_schema
@@ -283,10 +283,7 @@ class HostManagement:
 
         async with self.write_lock:
             saved = await asyncio.to_thread(save_config, self.root, self.running, edit)
-            if args.section == 'limits':
-                apply_speech_limits(self.running, saved)
-                for runner in self.runtime.runners.values():
-                    runner.changed.set()
+            await self.runtime.settings.apply(saved)
             result = self._describe(saved, path, args)
         result.update(before=before, saved_to='lenbot.config.json')
         if names:

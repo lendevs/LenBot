@@ -182,6 +182,19 @@ class AudioService:
             if self.started:
                 self._start_scene(scene)
 
+    async def set_automatic(self, scene: str, enabled: bool) -> None:
+        if enabled and scene not in self.changed:
+            self.changed[scene] = asyncio.Event()
+            if self.started:
+                self._start_scene(scene)
+        elif not enabled and scene in self.changed:
+            worker = self.workers.pop(scene, None)
+            if worker is not None:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+            self.changed.pop(scene)
+            self.errors.pop(scene, None)
+
     async def remove_scene(self, scene: str) -> None:
         worker = self.workers.pop(scene, None)
         tasks = [task for task, owner in self.active.items() if owner == scene]

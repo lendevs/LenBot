@@ -110,6 +110,7 @@ def register_host_permissions(app: FastAPI, *, root: Path, runtime, user, write_
                     await asyncio.to_thread(temporary.replace, path)
                 finally:
                     temporary.unlink(missing_ok=True)
+                await runtime.settings.apply(candidate)
                 return snapshot(candidate, scene)
             except (ValueError, OSError) as error:
                 raise HTTPException(422, str(error)) from error

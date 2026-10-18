@@ -100,8 +100,8 @@ async def test_updates_preserve_unrelated_configuration_and_pending_panel_change
                 client.put('/api/host/settings/retention', json={'retention': {'request_days': 3}}),
             )
             assert panel.status_code == 200, panel.text
-        assert saved['restart_required'] is True
-        assert saved['running']['attention']['only_direct'] is False
+        assert saved['restart_required'] is False
+        assert saved['running']['attention']['only_direct'] is True
         assert saved['saved']['attention']['only_direct'] is True
         assert manager.lifecycle.intent == 'running'
         raw = json.loads((tmp_path / 'lenbot.config.json').read_text())

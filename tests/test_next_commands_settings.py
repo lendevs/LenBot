@@ -15,7 +15,7 @@ def test_group_managers_switch_saves_and_keeps_other_command_settings(tmp_path):
         response = await client.put('/api/host/settings/commands', json={'group_managers_chat_reset': True})
         assert response.status_code == 200, response.text
         assert response.json()['saved']['commands']['group_managers_chat_reset'] is True
-        assert response.json()['restart_required']['commands'] is True
+        assert response.json()['restart_required']['commands'] is False
         saved = json.loads(path.read_text())['commands']
         assert saved['group_managers_chat_reset'] is True and saved['disabled'] == ['model']
         assert (await client.put('/api/host/settings/commands', json={'group_managers_chat_reset': 'yes'})).status_code == 422

@@ -6,6 +6,7 @@ import asyncio
 from .signals import install_stop
 from .events import EventHub
 from .scenes import SceneService
+from .settings import LiveSettings
 import logging
 import sqlite3
 from collections.abc import Callable
@@ -136,6 +137,7 @@ class NetworkRuntime:
         if lifecycle is not None:
             self.bind_management(config._instance_root, lifecycle)
         self.scene_service = SceneService(self)
+        self.settings = LiveSettings(self)
         self.runners: dict[str, SceneRunner] = {}
         for scene, chat in self.chats.items():
             self.runners[scene] = SceneRunner(

@@ -52,8 +52,8 @@ def test_scene_bindings_validate_before_save_and_keep_running_snapshot(tmp_path)
                     processing['audio']['wait_seconds'] = 3
                     saved_processing = await client.put('/api/host/settings/processing', json=processing)
                     assert saved_processing.status_code == 200, saved_processing.text
-                    assert saved_processing.json()['restart_required']['processing'] is True
-                    assert saved_processing.json()['running']['processing']['audio']['wait_seconds'] == 2
+                    assert saved_processing.json()['restart_required']['processing'] is False
+                    assert saved_processing.json()['running']['processing']['audio']['wait_seconds'] == 3
                     assert (await client.get('/api/host/log-files/../../lenbot.config.json')).status_code != 200
                     assert (await client.post('/api/host/scenes/onebot:group:80001/history/new-context')).status_code == 422
                     async with runtime.runners['onebot:group:80001'].execution:

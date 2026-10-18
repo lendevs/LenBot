@@ -247,6 +247,21 @@ class SceneRunner:
         return tuple(dict.fromkeys(word.strip().casefold() for word in
             [persona.name, *persona.aliases, *self.config.persona_aliases, *self.settings.keywords]))
 
+    def apply_attention_settings(self) -> None:
+        state = copy.deepcopy(self.state)
+        wake = state.pending
+        if wake is not None and (
+            self.settings.only_direct and wake.channel != 'direct'
+            or wake.channel == 'focus' and self.settings.focus_seconds == 0
+            or wake.channel == 'ambient' and self.settings.activity == 0
+            or wake.channel == 'explore' and self.settings.explore_probability == 0
+        ):
+            state.pending = None
+        now = self.now()
+        self.clear_quiet_wake(state, now, self.quiet_period(now))
+        self.save_state(state)
+        self.changed.set()
+
     def attention_enabled(self, persona: Persona) -> bool:
         return (self.settings.declarations is not None
                 and (persona.tools == 'all' or 'attention' in persona.tools))

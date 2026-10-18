@@ -31,6 +31,11 @@ class ModelSlots:
         self._active -= 1
         self._fill()
 
+    def resize(self, limit: int) -> None:
+        """A lower limit lets active calls finish; a higher one releases queued calls now."""
+        self.limit = limit
+        self._fill()
+
     @asynccontextmanager
     async def slot(self, *, direct: bool = False, scene: str | None = None) -> AsyncIterator[None]:
         waiter: asyncio.Future[None] | None = None

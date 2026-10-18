@@ -416,6 +416,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                                 source.pop(section, None)
                     await asyncio.to_thread(save_config, root, running, restore)
                     raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            await runtime.settings.apply(candidate)
             return _snapshot(running, candidate)
 
     @app.get("/api/host/settings")
