@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 import httpx
 import pytest
+import pytest_asyncio
 
 from len_bot.next.config import load_host_config
 from len_bot.next.panel.routes.settings import register_host_settings
@@ -14,13 +15,17 @@ from len_bot.next.panel.setup import FirstSetup, initialize
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.memory.local import LocalMemory
 from len_bot.next.memory.embeddings import EmbeddingClient, EmbeddingSettings
+from len_bot.next.memory.service import open_memory
+from len_bot.next.models.client import ChatModel
+from len_bot.next.runtime.network import NetworkRuntime
+from len_bot.next.storage.store import Store
 from test_next_native_models import peer_server
 
 SCENE = 'onebot:group:80001'
 
 
-@pytest.fixture
-def instance(tmp_path: Path):
+@pytest_asyncio.fixture
+async def instance(tmp_path: Path):
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
         'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
@@ -45,9 +50,12 @@ def instance(tmp_path: Path):
     def user(request: Request) -> str:
         return 'fixture'
 
-    register_host_settings(app, root=tmp_path, running=config, personas=lambda: {SCENE: persona},
-                           user=user, write_lock=asyncio.Lock())
-    return tmp_path, app
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as mind, open_memory(config, store) as memory:
+            runtime = NetworkRuntime(config, [(config.scene_config(SCENE), persona)], store, mind, memory=memory)
+            register_host_settings(app, root=tmp_path, running=config, runtime=runtime, personas=lambda: {SCENE: persona},
+                                   user=user, write_lock=asyncio.Lock())
+            yield tmp_path, app
 
 
 async def models_body(client) -> dict:

@@ -103,6 +103,7 @@ class JargonLearner:
         self._force: set[str] = set()
         self._retry: set[str] = set()
         self._workers: dict[str, asyncio.Task[None]] = {}
+        self.started = False
         self.errors: dict[str, BaseException] = {}
         self._discovery_prompt = read_prompt("next_jargon_discovery.md")
         self._meaning_prompt = read_prompt("next_jargon_meaning.md")
@@ -110,14 +111,38 @@ class JargonLearner:
             self.records.initialize(scene, store.max_message_seq(scene))
             self.records.recover(scene)
 
+    def _start_scene(self, scene: str) -> None:
+        with log_context(scene=scene, job='jargon_learning'):
+            self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"jargon-learning:{scene}")
+
     def start(self) -> None:
-        if self._workers:
-            raise RuntimeError("jargon workers already started")
+        if self.started:
+            raise RuntimeError("jargon-learning workers already started")
+        self.started = True
         for scene in self.scenes:
-            with log_context(scene=scene, job='jargon_learning'):
-                self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"jargon-learning:{scene}")
+            self._start_scene(scene)
+
+    def add_scene(self, scene: str) -> None:
+        self.records.initialize(scene, self.store.max_message_seq(scene))
+        self.records.recover(scene)
+        self.scenes += (scene,)
+        self._wake[scene] = asyncio.Event()
+        if self.started:
+            self._start_scene(scene)
+
+    async def remove_scene(self, scene: str) -> None:
+        worker = self._workers.pop(scene, None)
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self.scenes = tuple(item for item in self.scenes if item != scene)
+        self._wake.pop(scene)
+        self.errors.pop(scene, None)
+        self._force.discard(scene)
+        self._retry.discard(scene)
 
     async def close(self) -> None:
+        self.started = False
         for worker in self._workers.values():
             worker.cancel()
         if self._workers:

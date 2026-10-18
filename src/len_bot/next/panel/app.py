@@ -109,7 +109,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             runner.changed.set()
         notify()
 
-    register_host_settings(app, root=root, running=config, user=user, write_lock=write_lock,
+    register_host_settings(app, root=root, running=config, runtime=runtime, user=user, write_lock=write_lock,
                            personas=lambda: {scene: chat.persona for scene, chat in runtime.chats.items()},
                            on_speech_limits=speech_limits_changed)
     register_host_persona(app, root=root, runtime=runtime, user=user, write_lock=write_lock)

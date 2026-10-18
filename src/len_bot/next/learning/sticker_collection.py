@@ -84,19 +84,41 @@ class StickerCollector:
                             if settings.learning is not None and settings.learning.collect_stickers)
         self._wake = {scene: asyncio.Event() for scene in self.scenes}
         self._workers: dict[str, asyncio.Task[None]] = {}
+        self.started = False
         self.errors: dict[str, BaseException] = {}
         self._prompt = read_prompt("next_sticker_learning.md")
         for scene in self.scenes:
             self.records.recover(scene)
 
+    def _start_scene(self, scene: str) -> None:
+        with log_context(scene=scene, job='sticker_collection'):
+            self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"sticker-collection:{scene}")
+
     def start(self) -> None:
-        if self._workers:
-            raise RuntimeError("sticker collection workers already started")
+        if self.started:
+            raise RuntimeError("sticker-collection workers already started")
+        self.started = True
         for scene in self.scenes:
-            with log_context(scene=scene, job='sticker_collection'):
-                self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"sticker-collection:{scene}")
+            self._start_scene(scene)
+
+    def add_scene(self, scene: str) -> None:
+        self.records.recover(scene)
+        self.scenes += (scene,)
+        self._wake[scene] = asyncio.Event()
+        if self.started:
+            self._start_scene(scene)
+
+    async def remove_scene(self, scene: str) -> None:
+        worker = self._workers.pop(scene, None)
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self.scenes = tuple(item for item in self.scenes if item != scene)
+        self._wake.pop(scene)
+        self.errors.pop(scene, None)
 
     async def close(self) -> None:
+        self.started = False
         for worker in self._workers.values():
             worker.cancel()
         if self._workers:

@@ -88,19 +88,43 @@ class ReplyEffectTracker:
         self._force: set[str] = set()
         self._retry: dict[str, int] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
+        self.started = False
         self.errors: dict[str, BaseException] = {}
         self._prompt = read_prompt("next_reply_effects.md")
         for scene in self.scenes:
             self.records.recover(scene)
 
+    def _start_scene(self, scene: str) -> None:
+        with log_context(scene=scene, job='reply_effects'):
+            self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"reply-effects:{scene}")
+
     def start(self) -> None:
-        if self._workers:
-            raise RuntimeError("reply effect workers already started")
+        if self.started:
+            raise RuntimeError("reply-effects workers already started")
+        self.started = True
         for scene in self.scenes:
-            with log_context(scene=scene, job='reply_effects'):
-                self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"reply-effects:{scene}")
+            self._start_scene(scene)
+
+    def add_scene(self, scene: str) -> None:
+        self.records.recover(scene)
+        self.scenes += (scene,)
+        self._wake[scene] = asyncio.Event()
+        if self.started:
+            self._start_scene(scene)
+
+    async def remove_scene(self, scene: str) -> None:
+        worker = self._workers.pop(scene, None)
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self.scenes = tuple(item for item in self.scenes if item != scene)
+        self._wake.pop(scene)
+        self.errors.pop(scene, None)
+        self._force.discard(scene)
+        self._retry.pop(scene, None)
 
     async def close(self) -> None:
+        self.started = False
         for worker in self._workers.values():
             worker.cancel()
         if self._workers:

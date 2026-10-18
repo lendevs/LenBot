@@ -1036,7 +1036,6 @@ def test_scene_persona_save_rejects_malformed_root_without_writing(tmp_path):
     [
         (lambda source: source.pop("onebot"), "onebot"),
         (lambda source: source.update(onebot=None, delivery="onebot"), "onebot"),
-        (lambda source: source.update(scenes={}), "scenes"),
         (lambda source: source["scenes"].update({"onebot:group:0": {"persona": "personas/invalid"}}), "platform:group:id"),
         (lambda source: source.update(scene="onebot:group:80001"), "scene"),
         (lambda source: source.update(persona="personas/group"), "persona"),

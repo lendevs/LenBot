@@ -69,9 +69,9 @@ def test_scene_bindings_validate_before_save_and_keep_running_snapshot(tmp_path)
                     created = await client.post(endpoint, json={'scene': 'onebot:group:80002', 'persona': 'personas/fixture'})
                     assert created.status_code == 200, created.text
                     snapshot = created.json()
-                    assert 'onebot:group:80002' not in snapshot['running']['scenes']
+                    assert 'onebot:group:80002' in snapshot['running']['scenes']
                     assert snapshot['saved']['scenes']['onebot:group:80002']['attention']['only_direct'] is True
-                    assert snapshot['restart_required']['scenes']['onebot:group:80002'] is True
+                    assert snapshot['restart_required']['scenes']['onebot:group:80002'] is False
                     assert (await client.post(endpoint, json={'scene': 'onebot:group:80002', 'persona': 'personas/fixture'})).status_code == 422
                     # A copied folder still carries the same role id, which would merge two roles' memories.
                     duplicate = await client.post('/api/host/personas/other/scenes', json={'scenes': ['onebot:group:80001']})
@@ -88,9 +88,8 @@ def test_scene_bindings_validate_before_save_and_keep_running_snapshot(tmp_path)
                     assert settings['running']['scenes']['onebot:group:80001']['persona'].endswith('/other')
                     assert (await client.delete(endpoint+'/onebot:group:80001')).status_code == 200
                     assert (await client.get('/api/host/settings/scenes/onebot:group:80001/learning')).status_code == 404
-                    before_last = (tmp_path/'lenbot.config.json').read_bytes()
-                    assert (await client.delete(endpoint+'/onebot:group:80002')).status_code == 422
-                    assert (tmp_path/'lenbot.config.json').read_bytes() == before_last
+                    assert (await client.delete(endpoint+'/onebot:group:80002')).status_code == 200
+                    assert json.loads((tmp_path/'lenbot.config.json').read_text())['scenes'] == {}
                     assert (tmp_path/'personas/fixture/persona.yaml').exists()
-                    assert runtime.chats['onebot:group:80001'].persona.id == 'other'
+                    assert runtime.chats == runtime.runners == {}
     asyncio.run(run())

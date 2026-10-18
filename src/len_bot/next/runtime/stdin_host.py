@@ -41,8 +41,8 @@ async def run_stdin(runtime: NetworkRuntime, *, manage_signals: bool) -> None:
         async with asyncio.TaskGroup() as group:
             pending: list[asyncio.Task] = []
             try:
-                running = [group.create_task(runner.run()) for runner in runtime.runners.values()]
-                pending.extend(running)
+                runtime.scene_service.start(group)
+                pending.append(group.create_task(runtime.scene_service.wait_stopped()))
 
                 async def feed() -> None:
                     if runtime.config.panel is not None:
@@ -60,7 +60,7 @@ async def run_stdin(runtime: NetworkRuntime, *, manage_signals: bool) -> None:
                     # It does not promise to finish a task that still needs input.
                     for runner in runtime.runners.values():
                         runner.close_input()
-                    await asyncio.gather(*running)
+                    await runtime.scene_service.join()
 
                 feeding = group.create_task(feed())
                 stopping = group.create_task(runtime.stopped.wait())
@@ -72,6 +72,7 @@ async def run_stdin(runtime: NetworkRuntime, *, manage_signals: bool) -> None:
                                'reason': 'signal' if stopping in done else 'stdin_eof'})
             finally:
                 runtime.stop()
+                runtime.scene_service.group = None
                 for runner in runtime.runners.values():
                     runner.close_input()
                 for task in pending:

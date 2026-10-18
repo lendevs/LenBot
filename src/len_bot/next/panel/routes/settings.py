@@ -22,7 +22,7 @@ from ...configuration.chat import (
     TextDelivery,
     WebReadSettings,
 )
-from ...config import HostConfig
+from ...config import HostConfig, _read_root
 from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
 from ...configuration.models import Roles
@@ -381,6 +381,7 @@ async def _body(request: Request, kind: type[BaseModel]) -> BaseModel:
 
 
 def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
+                           runtime,
                            personas: Callable[[], dict[str, Persona]],
                            user: Callable[[Request], str], write_lock: asyncio.Lock,
                            on_speech_limits: Callable[[], None] = lambda: None) -> None:
@@ -392,9 +393,10 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         return {"scene": scene, "running": current, "saved": recorded,
                 "restart_required": current != recorded}
 
-    async def save(edit: Callable[[dict, HostConfig], None], *, speech: bool = False) -> dict:
+    async def save(edit: Callable[[dict, HostConfig], None], *, speech: bool = False, scenes: bool = False) -> dict:
         async with write_lock:
             try:
+                original = (await asyncio.to_thread(_read_root, root))[1] if scenes else None
                 candidate = await asyncio.to_thread(save_config, root, running, edit)
             except (ValueError, OSError) as error:
                 raise HTTPException(422 if isinstance(error, ValueError) else 500,
@@ -402,6 +404,18 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if speech:
                 apply_speech_limits(running, candidate)
                 on_speech_limits()
+            if scenes:
+                try:
+                    await runtime.scene_service.apply(candidate)
+                except (ValueError, OSError) as error:
+                    def restore(source, saved):
+                        for section in ('scenes', 'mcp', 'task_archive'):
+                            if section in original:
+                                source[section] = original[section]
+                            else:
+                                source.pop(section, None)
+                    await asyncio.to_thread(save_config, root, running, restore)
+                    raise HTTPException(422, f'{type(error).__name__}: {error}') from error
             return _snapshot(running, candidate)
 
     @app.get("/api/host/settings")
@@ -557,7 +571,14 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if change.scene in saved.scenes:
                 raise ValueError(f"场景已存在：{change.scene}")
             source["scenes"][change.scene] = {"persona": change.persona, "attention": {"only_direct": True}}
-        return await save(edit)
+        return await save(edit, scenes=True)
+
+    @app.get('/api/host/settings/scenes/available')
+    async def available_scenes(_: str = Depends(user)):
+        try:
+            return {'items': await runtime.scene_service.available()}
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(409, str(error)) from error
 
     @app.delete("/api/host/settings/scenes/{scene}")
     async def delete_scene(scene: str, _: str = Depends(user)):
@@ -565,7 +586,16 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if scene not in saved.scenes:
                 raise ValueError(f"保存配置没有场景：{scene}")
             del source["scenes"][scene]
-        return await save(edit)
+            for service in source.get('mcp', {}).values():
+                service['scenes'] = [item for item in service.get('scenes', []) if item != scene]
+                if not service['scenes']:
+                    service['enabled'] = False
+            archive = source.get('task_archive')
+            if archive is not None:
+                archive['scenes'] = [item for item in archive['scenes'] if item != scene]
+                if not archive['scenes']:
+                    source['task_archive'] = None
+        return await save(edit, scenes=True)
 
     @app.put("/api/host/settings/scenes/{scene}")
     async def put_scene(scene: str, request: Request, _: str = Depends(user)):

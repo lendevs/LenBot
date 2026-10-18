@@ -197,7 +197,13 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 
 ## 配置与权限
 
-`lenbot.config.json` 是唯一的运行参数来源，在入口处一次性解析并完整校验。面板和群里的管理工具都通过 `configuration/editing.py` 保存配置，共用一把写锁。插件配置会定向重新加载，其他修改在明确重启后生效。
+`lenbot.config.json` 是唯一的运行参数来源，在入口处一次性解析并完整校验。面板和群里的管理工具都通过 `configuration/editing.py` 保存配置，共用一把写锁。插件配置会定向重新加载；群聊添加与移除立即应用，其他设置的待重启差异由面板返回。
+
+`POST /api/host/settings/scenes` 创建 Chat、SceneRunner 及相应的记忆和学习工作线程；
+`DELETE /api/host/settings/scenes/{scene}` 立即停止该群接收输入，等待当前回合收尾，再关闭该群后台工作和正在执行的独立任务。
+其他群继续执行，消息与任务历史不删除。移除会从 MCP 和任务归档范围中去掉该群，并重新加载受影响的插件。
+可以移除最后一个群；平台连接与面板继续运行，供再次接入。
+`GET /api/host/settings/scenes/available` 在 OneBot 下查询已加入的群，Telegram 下列出本次运行最近收到消息的未接入群。
 
 权限只看真实身份。判断谁在发出请求由宿主负责，请求指向谁由模型判断。
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from .signals import install_stop
 from .events import EventHub
+from .scenes import SceneService
 import logging
 import sqlite3
 from collections.abc import Callable
@@ -67,6 +68,7 @@ class NetworkRuntime:
                  lifecycle: HostLifecycle | None = None,
                  on_update: Callable[[], None] | None = None):
         self.config, self.store = config, store
+        self.mind, self.vision = mind, vision
         self.events = EventHub()
         self.log_secrets = credentials(config)
         self.memory = memory
@@ -130,35 +132,40 @@ class NetworkRuntime:
             scene = scene_config.scene
             if scene in self.chats:
                 raise ValueError(f"Duplicate network scene {scene}")
-            self.chats[scene] = Chat(
-                scene_config, persona, store, mind, vision=vision, slots=slots, memory=memory,
-                tasks=tasks, expression_service=expression_service,
-                on_compaction=lambda scene=scene: self.compacted(scene),
-                on_reply_sample=(None if reply_effects is None else
-                                 lambda scene=scene: reply_effects.wake(scene)),
-                send_message=self.send_message if config.delivery != "simulated" else None,
-                upload_file=self.upload_file if config.delivery != "simulated" else None,
-                platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
-                               if config.delivery == "onebot" else None),
-                external_tools=(([] if plugins is None else plugins.tools_for(scene, preparing=True))
-                                + ([] if mcp is None else mcp.tools_for(scene))),
-                audio_service=self.audio,
-                on_update=self.notify,
-                on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
-            )
+            self.chats[scene] = self.create_chat(scene_config, persona)
         if lifecycle is not None:
             self.bind_management(config._instance_root, lifecycle)
+        self.scene_service = SceneService(self)
         self.runners: dict[str, SceneRunner] = {}
         for scene, chat in self.chats.items():
             self.runners[scene] = SceneRunner(
                 chat, lambda result, scene=scene: self._emit({"type": "turn", **result, "scene": scene}),
-                ready_for_turn=self._ready,
+                ready_for_turn=lambda wait, scene=scene: self.scene_service.ready(scene, wait),
                 connected_since=lambda: self.connected_since,
             )
         if plugins is not None:
             plugins.bind(self)
         if mcp is not None:
             mcp.on_update = self.refresh_external_tools
+
+    def create_chat(self, scene_config: LabConfig, persona: Persona) -> Chat:
+        scene = scene_config.scene
+        return Chat(
+            scene_config, persona, self.store, self.mind, vision=self.vision, slots=self.slots, memory=self.memory,
+            tasks=self.tasks, expression_service=self.expression_service,
+            on_compaction=lambda scene=scene: self.compacted(scene),
+            on_reply_sample=(None if self.reply_effects is None else
+                             lambda scene=scene: self.reply_effects.wake(scene)),
+            send_message=self.send_message if self.config.delivery != "simulated" else None,
+            upload_file=self.upload_file if self.config.delivery != "simulated" else None,
+            platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
+                           if self.config.delivery == "onebot" else None),
+            external_tools=(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=True))
+                            + ([] if self.mcp is None else self.mcp.tools_for(scene))),
+            audio_service=self.audio,
+            on_update=self.notify,
+            on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
+        )
 
     def held(self, scene: str | None) -> bool:
         """The host-wide send hold, or a scene configured to simulate its delivery."""
@@ -297,7 +304,9 @@ class NetworkRuntime:
                         "status": "not_accepted", "reason": self.status})
             return
         runner = self.runners.get(message.scene)
-        if runner is None:
+        if runner is None or message.scene in self.scene_service.retiring:
+            if message.scene.split(':', 2)[1] == 'group':
+                self.scene_service.observe(message.scene, raw)
             self._emit({"type": "receipt", "scene": message.scene, "status": "ignored",
                         "platform_message_id": message.platform_message_id})
             return
@@ -471,9 +480,10 @@ class NetworkRuntime:
                     self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
                                 "delivery": self.config.delivery})
                     pending.append(group.create_task(self.retention.run()))
-                    running = [group.create_task(runner.run()) for runner in self.runners.values()]
-                    pending.extend(running)
-                    done, _ = await asyncio.wait({*running, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
+                    self.scene_service.start(group)
+                    scenes_ended = group.create_task(self.scene_service.wait_stopped())
+                    pending.append(scenes_ended)
+                    done, _ = await asyncio.wait({scenes_ended, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
                     self.accepting = False
                     reason = ("storage_error" if self.storage_error is not None else
                               "signal" if stopping in done
@@ -498,9 +508,10 @@ class NetworkRuntime:
                         await self.tasks.close()
                     for runner in self.runners.values():
                         runner.close_input()
-                    await asyncio.gather(*running)
+                    await self.scene_service.join()
                 finally:
                     self.accepting = False
+                    self.scene_service.group = None
                     for task in pending:
                         task.cancel()
         finally:

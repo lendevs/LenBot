@@ -134,9 +134,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
             (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
              else nullcontext(None)) as vision,
             (ChatModel(config.model_settings("learner"))
-             if any(settings.learning is not None and (settings.learning.extract or settings.learning.jargon_extract
-                                                       or settings.learning.reply_effects)
-                    for settings in config.scenes.values())
+             if config.models.roles.learner is not None
              else nullcontext(None)) as learner_model,
             open_expression_service(config, store, slots=slots) as expression_service,
             open_memory(config, store, active_personas={settings.scene: persona.id for settings, persona in scenes}, slots=slots) as memory,
@@ -159,21 +157,15 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                               tool_permissions={settings.scene: persona.tools
                                                 for settings, persona in scenes})
                      if config.worker is not None else None)
-            learning = (None if not any(settings.learning is not None and settings.learning.extract
-                                        for settings in config.scenes.values()) else
+            learning = (None if learner_model is None else
                         ExpressionLearner(config, store, learner_model, slots=slots,
                                           expression_service=expression_service))
-            jargon = (None if not any(settings.learning is not None and settings.learning.jargon_extract
-                                      for settings in config.scenes.values()) else
+            jargon = (None if learner_model is None else
                       JargonLearner(config, store, learner_model, slots=slots))
-            sticker_collection = (None if not any(
-                settings.learning is not None and settings.learning.collect_stickers
-                for settings in config.scenes.values()) else
+            sticker_collection = (None if vision is None else
                 StickerCollector(config, store, vision, slots=slots,
                                  recording=lambda scene: runtime.chats[scene].toolset.replay_images))
-            reply_effects = (None if not any(
-                settings.learning is not None and settings.learning.reply_effects
-                for settings in config.scenes.values()) else
+            reply_effects = (None if learner_model is None else
                 ReplyEffectTracker(config, store, learner_model, slots=slots))
             mcp = MCPHost(config.mcp, reserved_tools={tool["function"]["name"] for tool in tool_catalog(platform=True)}
                           | (set() if plugins is None else set(plugins.tool_owner)), log_directory=config.logging.directory)

@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 from len_bot.next.config import load_host_config
 from len_bot.next.models.client import ChatModel
 from len_bot.next.memory.service import open_memory
+from len_bot.next.memory.ingest import open_memory_ingestor
 from len_bot.next.panel.app import create_app
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.runtime.network import NetworkRuntime
@@ -28,9 +29,11 @@ async def panel(root, configure=None):
         configure(root)
     config = load_host_config(root)
     with Store(config.database) as store:
-        async with ChatModel(config.model_settings('mind')) as model, open_memory(config, store) as memory:
-            runtime = NetworkRuntime(config, [(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona))],
-                                     store, model, memory=memory)
+        async with (ChatModel(config.model_settings('mind')) as model, open_memory(config, store) as memory,
+                    open_memory_ingestor(config, store, memory, list(config.scenes)) as ingestor):
+            runtime = NetworkRuntime(config, [(config.scene_config(scene), load_persona(settings.persona))
+                                              for scene, settings in config.scenes.items()],
+                                     store, model, memory=memory, ingestor=ingestor)
             app = create_app(config, runtime, root=root)
             with socket.socket() as listener:
                 listener.bind(('127.0.0.1', 0))

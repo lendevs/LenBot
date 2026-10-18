@@ -283,7 +283,7 @@ class HostConfig(SharedConfig):
     account_browser: AccountBrowserSettings | None = None
     onebot: OneBotSettings | None = Field(...)
     panel: PanelSettings | None = None
-    scenes: dict[str, SceneSettings] = Field(min_length=1)
+    scenes: dict[str, SceneSettings]
     plugins: PluginSettings | None = None
     plugin_catalog: PluginCatalogSettings = Field(default_factory=PluginCatalogSettings)
     mcp: dict[str, MCPService] = Field(default_factory=dict)

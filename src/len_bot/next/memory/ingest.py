@@ -55,6 +55,7 @@ class MemoryIngestor:
         self._wake = {scene: asyncio.Event() for scene in self.scenes}
         self._force: set[str] = set()
         self._workers: dict[str, asyncio.Task[None]] = {}
+        self.started = False
         self.errors: dict[str, BaseException] = {}
         for scene in self.scenes:
             self.jobs.initialize(scene, store.max_message_seq(scene))
@@ -66,14 +67,36 @@ class MemoryIngestor:
                     f"scene {scene}: unfinished {latest['backend']} memory job "
                     f"{latest['id']} cannot be processed by {memory.settings.backend}")
 
+    def _start_scene(self, scene: str) -> None:
+        with log_context(scene=scene, job='memory_ingest'):
+            self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"memory-ingest:{scene}")
+
     def start(self) -> None:
-        if self._workers:
-            raise RuntimeError("memory workers already started")
+        if self.started:
+            raise RuntimeError("memory-ingest workers already started")
+        self.started = True
         for scene in self.scenes:
-            with log_context(scene=scene, job='memory_ingest'):
-                self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"memory-ingest:{scene}")
+            self._start_scene(scene)
+
+    def add_scene(self, scene: str) -> None:
+        self.jobs.initialize(scene, self.store.max_message_seq(scene))
+        self.scenes += (scene,)
+        self._wake[scene] = asyncio.Event()
+        if self.started:
+            self._start_scene(scene)
+
+    async def remove_scene(self, scene: str) -> None:
+        worker = self._workers.pop(scene, None)
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        self.scenes = tuple(item for item in self.scenes if item != scene)
+        self._wake.pop(scene)
+        self.errors.pop(scene, None)
+        self._force.discard(scene)
 
     async def close(self) -> None:
+        self.started = False
         for worker in self._workers.values():
             worker.cancel()
         if self._workers:

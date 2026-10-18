@@ -82,6 +82,7 @@ class WorkTasks:
         self.live_listeners: dict[int, set[asyncio.Event]] = {}
         self.changed = asyncio.Event()
         self.accepting = False
+        self.retiring_scenes: set[str] = set()
         self._pump: asyncio.Task | None = None
         self.error: str | None = None
         self._failure: asyncio.Future[BaseException] = asyncio.get_running_loop().create_future()
@@ -524,6 +525,17 @@ class WorkTasks:
                 current.interrupt()
             await asyncio.gather(*(current.job for current in executions), return_exceptions=True)
 
+    async def remove_scene(self, scene: str) -> None:
+        self.retiring_scenes.add(scene)
+        executions = [current for current in self.running.values() if current.item.scene == scene]
+        for current in executions:
+            current.interrupt()
+        await asyncio.gather(*(current.job for current in executions))
+        for mapping in (self.skills, self.skill_permissions, self.tool_permissions, self.data_tools):
+            mapping.pop(scene)
+        self.retiring_scenes.remove(scene)
+        self.changed.set()
+
     async def wait_failure(self) -> None:
         raise await asyncio.shield(self._failure)
 
@@ -582,6 +594,8 @@ class WorkTasks:
                     await self.changed.wait()
                     continue
                 for item in self.records.queued():
+                    if item.scene in self.retiring_scenes:
+                        continue
                     if item.scene not in self.config.scenes:
                         self._finish(item, "failed", None, "任务原场景不在当前根配置中")
                         continue
