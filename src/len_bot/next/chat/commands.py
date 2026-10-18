@@ -13,7 +13,12 @@ is a host command when ``name`` is a built-in command, the command is not turned
 A sender without the level, or an unknown name, is not answered by the host: the message reaches the
 conversation like any other, so an ordinary member typing ``/reset`` is not refused in public.
 The command message is stored with a note that the host handled it, does not wake the mind, and the
-reply goes through the scene outlet like a plugin reply (send hold and simulation included, no speech count).
+reply goes through the scene outlet like a plugin reply (send hold and simulation included).
+
+Replies to ``member`` commands, which anyone may send, count as speech: a reply is dropped when the
+scene's hourly limit is used up (the direct reserve is kept for real turns), and the same sender gets
+the same member command answered at most once per ``MEMBER_COOLDOWN_SECONDS``. Replies to higher
+levels do not count, so an administrator can still quiet a scene that ran out of speech.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import asyncio
 import logging
 import math
 import re
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -32,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 from ...plugin import Text
 from ..models.failover import HEALTH, ProviderHealth
-from ..models.limits import speech_quota
+from ..models.limits import SpeechLimitReached, check_speech, record_speech, speech_quota
 from ..platform.messages import ChatMessage
 from ..prompt_files import read_prompt
 from ..runtime.logs import log_context, log_event
@@ -69,6 +75,8 @@ class CommandCall:
     message: ChatMessage
     runner: SceneRunner
     runtime: NetworkRuntime
+    # Why the host takes the message but sends no reply (a repeated member command), or None.
+    dropped: str | None = None
 
     @property
     def scene(self) -> str:
@@ -142,6 +150,8 @@ async def _id(call: CommandCall) -> str:
     return f"场景：{call.scene}\n你的账号：{call.requester}\n机器人账号：{call.runner.config.bot_id}"
 
 
+# The same sender's same member command is answered at most once in this many seconds.
+MEMBER_COOLDOWN_SECONDS = 30
 # A command that changes the scene waits this long for the running turn, so the turn cannot overwrite it.
 EXECUTION_WAIT_SECONDS = 30
 MAX_QUIET_MINUTES = 7 * 24 * 60
@@ -364,6 +374,10 @@ class Commands:
         self.health = health
         self.table = {command.name: command for command in (BUILTIN if commands is None else commands)}
         self.tasks: set[asyncio.Task] = set()
+        # (scene, sender, command) -> monotonic time of the last answered member command.
+        self.answered: dict[tuple[str, str, str], float] = {}
+        # Member replies of one scene check and record speech one at a time.
+        self.metered: dict[str, asyncio.Lock] = {}
 
     def enabled(self, runtime: NetworkRuntime) -> list[Command]:
         settings = runtime.config.commands
@@ -385,7 +399,19 @@ class Commands:
         command = next((item for item in self.enabled(runtime) if item.name == name), None)
         if command is None or not allowed(command.level, runtime, runner, message):
             return None
-        return CommandCall(command, arguments, message, runner, runtime)
+        return CommandCall(command, arguments, message, runner, runtime, dropped=self._cooldown(command, message))
+
+    def _cooldown(self, command: Command, message: ChatMessage) -> str | None:
+        """Note this member command as answered, or say why it is not answered again so soon."""
+        if command.level != "member":
+            return None
+        now = time.monotonic()
+        self.answered = {key: at for key, at in self.answered.items() if now - at < MEMBER_COOLDOWN_SECONDS}
+        key = (message.scene, message.sender.uid, command.name)
+        if key in self.answered:
+            return "cooldown"
+        self.answered[key] = now
+        return None
 
     def report(self, call: CommandCall) -> str:
         now = datetime.fromtimestamp(call.runner.store.now(), ZoneInfo(call.runner.config.timezone))
@@ -407,12 +433,33 @@ class Commands:
         return reply
 
     def dispatch(self, call: CommandCall) -> None:
-        async def run() -> None:
+        async def send() -> None:
             reply = await self.execute(call)
             chat = call.runtime.chats[call.scene]
-            await chat.expression.send_plugin_content("/" + call.command.name, [Text(reply)],
-                                                      reply_to=call.message.platform_message_id,
-                                                      reply_prompt="next_command_reply.md")
+            sent = await chat.expression.send_plugin_content("/" + call.command.name, [Text(reply)],
+                                                             reply_to=call.message.platform_message_id,
+                                                             reply_prompt="next_command_reply.md")
+            if call.command.level == "member" and sent.status != "failed":
+                await store.call(record_speech, store, call.scene)
+
+        async def run() -> None:
+            if call.dropped is not None:
+                log_event(logger, "command_dropped", command=call.command.name, requester=call.requester,
+                          reason=call.dropped)
+                return
+            if call.command.level != "member":
+                await send()
+                return
+            async with self.metered.setdefault(call.scene, asyncio.Lock()):
+                try:
+                    await store.call(check_speech, store, call.runner.config)
+                except SpeechLimitReached as error:
+                    log_event(logger, "command_dropped", command=call.command.name, requester=call.requester,
+                              reason="speech_limit", detail=str(error))
+                    return
+                await send()
+
+        store = call.runner.store
 
         with log_context(scene=call.scene, platform_message_id=call.message.platform_message_id):
             task = asyncio.create_task(run(), name=f"command:{call.command.name}")

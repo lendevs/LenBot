@@ -174,6 +174,42 @@ async def ask(peer: Peer, text: str, *, user: int = MANAGER, role: str = 'admin'
     return peer.texts()[count]
 
 
+def received(store) -> int:
+    return store.db.execute("SELECT COUNT(*) FROM messages WHERE platform_id LIKE '-%'").fetchone()[0]
+
+
+def speech(store) -> int:
+    return store.db.execute('SELECT COUNT(*) FROM speech WHERE scene=?', (SCENE,)).fetchone()[0]
+
+
+@pytest.mark.asyncio
+async def test_repeated_member_command_is_answered_once_and_counts_as_speech(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        for _ in range(8):
+            await peer.say('/id')
+        await until(lambda: received(store) == 8)
+        await until(lambda: peer.sends)
+        await asyncio.sleep(.2)
+        assert len(peer.sends) == 1 and speech(store) == 1
+        # Another command, or the same one from someone else, is a separate answer.
+        await ask(peer, '/help', user=MEMBER, role='member')
+        await ask(peer, '/id', user=70003, role='member')
+        assert speech(store) == 3 and runtime.runners[SCENE].state.pending is None
+
+
+@pytest.mark.asyncio
+async def test_member_commands_stop_at_the_speech_limit_but_managers_still_answer(tmp_path):
+    async with host(tmp_path, limits={'messages_per_hour': 2, 'direct_reserve': 0}) as (runtime, peer, store):
+        for user in (70003, 70004, 70005, 70006):
+            await peer.say('/id', user=user)
+        await until(lambda: received(store) == 4)
+        await until(lambda: len(peer.sends) == 2)
+        await asyncio.sleep(.2)
+        assert len(peer.sends) == 2 and speech(store) == 2
+        assert '最近一小时 2/2 条' in await ask(peer, '/status')
+        assert speech(store) == 2
+
+
 @pytest.mark.asyncio
 async def test_group_manager_sees_and_uses_scene_commands(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
@@ -181,8 +217,9 @@ async def test_group_manager_sees_and_uses_scene_commands(tmp_path):
         assert all(f'/{name}' in listed for name in ('status', 'quiet', 'resume'))
         assert '/chat' not in listed and '/reset' not in listed
         status = await ask(peer, '/status')
+    # The /help before it counts as speech; /status itself does not.
     assert status.splitlines() == [f'场景：{SCENE}', '聊天：开启',
-                                   '发言：最近一小时 0/60 条（全局设置），被叫到时另有余量 5/5 条',
+                                   '发言：最近一小时 1/60 条（全局设置），被叫到时另有余量 5/5 条',
                                    '主脑模型：fixture / synthetic-unused']
 
 
