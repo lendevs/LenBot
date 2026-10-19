@@ -12,6 +12,7 @@
 name = "counter"
 version = "1.0.0"
 interface = 1
+permissions = ["send"]
 requires_lenbot = ">=0.2,<1"
 requires_python = ">=3.13"
 platforms = ["linux", "darwin", "win32"]
@@ -32,7 +33,7 @@ description = "每群独立计数"
 
 ### 权限声明
 
-可选的 `permissions` 列出插件需要的宿主能力。声明了这个字段，插件就只能使用列出的能力，其余调用抛出 `PermissionError`，并说明缺少哪一项。
+可选的 `permissions` 列出插件需要的宿主能力。声明了这个字段，插件就只能通过宿主接口使用列出的能力，其余调用抛出 `PermissionError`，并说明缺少哪一项。
 
 ```toml
 permissions = ["send", "history"]
@@ -49,7 +50,7 @@ permissions = ["send", "history"]
 | `network` | `fetch_image` 从公网获取图片 |
 | `schedule` | `ctx.cron` 登记定点任务 |
 
-插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的插件保留全部能力，面板显示为「未声明」；新插件建议总是声明。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
+插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的旧插件保留全部能力，面板显示为「未声明」。新插件和官方插件应明确声明实际调用的宿主能力；模板也按此编写。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
 
 ### 进程隔离
 
@@ -155,9 +156,9 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 | `@tool("plugin_read", "完整说明", summary="发现简介", needs_source=False)` | `self, ctx: Invocation, ...` | 根据参数类型生成 schema，返回文本或 JSON 值 |
 | `@background(every="5m")` | `self, ctx: PluginContext` | 本次执行完成后再等待一个周期，最短 10 秒。它按间隔执行，与定点的 cron 不同 |
 
-每个方法只使用一个入口装饰器。匹配的优先级依次为命令、全文、正则，正则之间按 priority 降序匹配。同一条消息最多由一个处理器接管，并且不唤醒聊天模型。匹配只针对纯文本，开头的回复段和 @Bot 自己的部分可以去掉。
+每个方法只使用一个入口装饰器。匹配的优先级依次为命令、全文、正则，正则之间按 priority 降序匹配。同一条消息最多由一个处理器接管，并且不唤醒聊天模型。默认匹配只针对纯文本，开头的回复段和 @Bot 自己的部分可以去掉。命令可用 `@command("转发", "说明", allow_mentions=True)` 明确接收正文中的提及；提及保留在 `ctx.message.segments`，文字参数中的提及位置替换为一个空格，插件从真实消息读取目标账号。图片、语音等其他段仍不接管。全文和正则规则继续只匹配纯文本，不把提及或媒体悄悄拼接进去。
 
-`/角色` 是宿主自己的命令：机器人主人和全局管理员发出时，宿主直接用它切换这个群的角色，插件匹配不到这条消息。插件不要注册这个命令名。
+插件先于宿主命令匹配。插件显式注册 `/角色` 等同名命令时由插件处理；否则 `/角色` 交给宿主，只有主人和全局管理员可以切换角色。需要保留宿主命令时，不要给插件注册同名命令。
 
 部署方可以只关掉插件的某几条规则，插件其余功能照常：在 `plugins.disabled_rules` 里按插件名列出，命令写 `/日程`，全文写原文，正则写模式字符串，例如 `"disabled_rules": {"asoul": ["今日直播"]}`。被关掉的文本当普通聊天处理。写了插件没有的规则时，日志里有一条警告。
 
@@ -525,11 +526,13 @@ async def check():
 ```
 
 - `scenes` 和 `owners` 可以在构造时指定，`scene`／`scene_list` 参数按 `scenes` 校验。
-- `message(text, scene=..., sender=...)` 模拟真实的身份，返回消息是否被插件接管。
+- `message(text, scene=..., sender=..., parts=...)` 模拟身份和消息，返回是否被接管。`parts` 是追加在文字之后的公开 `Segment` 列表，可验证提及或媒体的接管边界。
 - `deliveries` 包含插件、场景、组合内容、reply_to 和 simulated 状态。
 - `events()` 用于查看实际记录的插件事件。
 
 处理器或启动失败时，本次测试会报错。退出上下文时会停止插件并删除临时实例。
+
+当前官方业务插件和模板都有工具，部分还使用 cron 或 start_task，保持 inline；它们不能只改 isolation 就切到进程模式。进程模式的限制是当前接口的明确范围，不表示这些插件已完成进程隔离验证。
 
 模型默认关闭。通过 `models=` 明确配置测试模型后，generate 会经过真实的宿主协议、预算和用量记录。记忆服务和工作服务仍然会明确报错。插件自行访问外部网络的调用仍然会执行，同进程测试并非沙箱。
 

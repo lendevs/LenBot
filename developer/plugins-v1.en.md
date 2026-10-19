@@ -8,6 +8,7 @@ A plugin is a Python package containing `plugin.toml`, `__init__.py`, and exactl
 name = "counter"
 version = "1.0.0"
 interface = 1
+permissions = ["send"]
 requires_lenbot = ">=0.2,<1"
 requires_python = ">=3.13"
 platforms = ["linux", "darwin", "win32"]
@@ -43,7 +44,7 @@ class Example(Plugin):
 
 Methods are async and use one decorator each. Command, exact-text, then regex matching takes precedence; regex priority sorts descending. At most one handler consumes a message, without waking the chat model. Returning text records a result; sending requires `ctx.reply`. A model selecting a plugin tool and the tool itself calling a model are separate actions.
 
-`/角色` belongs to the host: when a bot owner or global admin sends it, the host switches that group's role and no plugin sees the message. Do not register a command with this name.
+Plugin commands are matched first. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
 
 A deployment can switch off single rules while the rest of a plugin keeps working: list them under `plugins.disabled_rules` by plugin name, as `/command`, the exact text, or the regex pattern string, for example `"disabled_rules": {"asoul": ["今日直播"]}`. Switched-off text is handled as ordinary chat. A rule the plugin does not have is reported as a log warning.
 
@@ -166,3 +167,13 @@ Use `await ctx.fetch_image(url, timeout_seconds=15)` for verified public image b
 `PluginTest.preview_tools()` shows the model-facing summaries, schemas, shared guides and availability. Inject a clock with `now=...`, save a source with `add_message(...)`, and explicitly configure `models=...` only for model protocol tests. Sending stays simulated. The template includes native JSON lookup and background generation/delivery examples. See the [Chinese guide](plugins-v1.md) for full examples and compatibility details.
 
 Group related search/detail operations into a single capability using strict discriminated request models; keep data queries separate from sending and account writes. Model schemas omit generated titles while preserving property names, descriptions, examples and constraints. Check context size as well as tool count. Development continues without a version tag or Release.
+
+## Command mentions and precedence
+
+Commands use text-only matching by default. Opt in to body mentions with `@command("forward", "Forward a command", allow_mentions=True)`. Real targets remain in `ctx.message.segments`; each body mention becomes one space in `args`. Other media segments are not accepted. Full-text and regex rules remain text-only. An initial reply or mention of the bot may still precede a command.
+
+Plugin commands run before host commands. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
+
+Declare the host APIs actually used in `permissions`. The current official plugin updates and template do so; older manifests without this field retain the documented unrestricted host capabilities. This is not a Python or network sandbox. The official plugins use tools, and some use cron or start_task, so they remain inline.
+
+`PluginTest.message(..., parts=[Segment(...)])` and `add_message(..., parts=...)` append real message segments after the text to test mention and media matching. The harness does not provide memory or task workers: verify those capabilities in a temporary host instance. Simulated sends and protocol fixtures do not establish live delivery or model quality.

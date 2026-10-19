@@ -25,11 +25,11 @@ INTERFACE = 1
 MARK = "__lenbot_plugin__"
 
 
-def command(name: str, description: str):
-    """Exact command ``/name``; handler ``(self, ctx: Invocation, args: str)``."""
+def command(name: str, description: str, *, allow_mentions: bool = False):
+    """Exact command ``/name``; optional body mentions remain in ``ctx.message``."""
     if not re.fullmatch(r"[^\s/]{1,32}", name):
         raise ValueError(f"命令名必须是 1–32 个非空白字符且不含 /：{name!r}")
-    return _mark(("command", name, description))
+    return _mark(("command", name, description, allow_mentions))
 
 
 def fullmatch(text: str, description: str):
