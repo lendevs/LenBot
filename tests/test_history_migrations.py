@@ -20,7 +20,7 @@ from len_bot.next.config import CONFIG_VERSION
 from len_bot.next.maintenance.doctor import check
 from len_bot.next.maintenance.upgrade import migrate_instance
 from len_bot.next.memory.jobs import MemoryJobs
-from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
+from len_bot.next.memory.local import FORMAT_VERSION as LOCAL_FORMAT_VERSION, LocalMemory, LocalMemorySettings
 from len_bot.next.storage.codec import decode_message
 from len_bot.next.storage.store import Store
 from len_bot.next.runtime.retention import expire_request
@@ -104,7 +104,7 @@ def test_local_index_starts_only_from_an_empty_file_or_its_own_format(tmp_path):
         LocalMemory(LocalMemorySettings(directory=directory))
     (directory / '.memory-index.sqlite3').unlink()
     LocalMemory(LocalMemorySettings(directory=directory))
-    assert _schema(directory / '.memory-index.sqlite3')[0] == (0x4C424D31, 3)
+    assert _schema(directory / '.memory-index.sqlite3')[0] == (0x4C424D31, LOCAL_FORMAT_VERSION)
 
 
 def test_wake_migration_keeps_expired_requests_as_unknown(tmp_path):

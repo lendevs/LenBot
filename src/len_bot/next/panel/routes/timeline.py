@@ -114,12 +114,20 @@ class Step(BaseModel):
     tools: list[ToolDetail]
 
 
+class RecallSection(BaseModel):
+    start_char: int
+    end_char: int
+    headings: list[list[str]]
+    source_version: str
+
+
 class RecallItem(BaseModel):
     scope: str
     path: str
     content: str
     kind: str
     truncated: bool
+    sections: list[RecallSection] = []
 
 
 class TurnInfo(BaseModel):

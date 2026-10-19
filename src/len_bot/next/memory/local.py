@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
+import hashlib
 import os
 import re
 import sqlite3
@@ -28,6 +30,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .embeddings import EmbeddingBinding, EmbeddingClient
 from .types import MemoryDocument, MemoryNode, MemoryPage
+from .sections import SECTION_STATEMENTS, put_sections, split_sections
 from ..storage.sqlite import connect
 from ..runtime.logs import log_event
 
@@ -40,7 +43,7 @@ ABSTRACT_CHARS = 256
 OVERVIEW_CHARS = 4000
 PENDING_PREFIX = "legacy-import/"
 _APPLICATION_ID = 0x4C424D31
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 SUMMARY_SCHEMA = """
 CREATE TABLE memory_summaries (
     scope TEXT NOT NULL,
@@ -154,6 +157,7 @@ class LocalMemoryHit:
     path: str
     preview: str
     total_chars: int
+    sections: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,8 +380,8 @@ class LocalMemory:
                         db.execute("PRAGMA user_version").fetchone()[0])
             if identity == (_APPLICATION_ID, FORMAT_VERSION):
                 return
-            if identity == (_APPLICATION_ID, 2):
-                raise ValueError(f"local memory index format 2 requires offline migration: {self.index}; "
+            if identity[0] == _APPLICATION_ID and 2 <= identity[1] < FORMAT_VERSION:
+                raise ValueError(f"local memory index format {identity[1]} requires offline migration: {self.index}; "
                                  "run python -m len_bot.next.maintenance.migrate_local_memory")
             if identity != (0, 0) or db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is not None:
                 raise ValueError(f"unsupported local memory index format at {self.index}: "
@@ -392,11 +396,7 @@ class LocalMemory:
                         content TEXT NOT NULL,
                         UNIQUE(scope, path)
                     );
-                    CREATE VIRTUAL TABLE memory_fts USING fts5(
-                        content, content='memory_files', content_rowid='id',
-                        tokenize='trigram case_sensitive 1'
-                    );
-                    INSERT INTO memory_fts(memory_fts, rank) VALUES('secure-delete', 1);
+                    {''.join(statement + ';' for statement in SECTION_STATEMENTS)}
                     CREATE TABLE memory_changes (
                         id INTEGER PRIMARY KEY,
                         scope TEXT NOT NULL,
@@ -529,27 +529,36 @@ class LocalMemory:
         row = db.execute("SELECT id, content FROM memory_files WHERE scope=? AND path=?", (scope, path)).fetchone()
         if (row is None) != (current is None) or (row is not None and row["content"] != current.casefold()):
             raise ValueError(f"local memory Markdown/index mismatch at {scope}/{path}; rebuild the memory index")
+        if row is not None:
+            source = db.execute('SELECT source_version FROM memory_sections WHERE scope=? AND path=? LIMIT 1',
+                                (scope, path)).fetchone()
+            if source is not None and source['source_version'] != hashlib.sha256(current.encode('utf-8')).hexdigest():
+                raise ValueError(f"local memory Markdown/index mismatch at {scope}/{path}; rebuild the memory index")
         return row
 
     @staticmethod
     def _put_index(db: sqlite3.Connection, scope: str, path: str, text: str,
-                   old: sqlite3.Row | None) -> None:
-        folded = text.casefold()
+                   old: sqlite3.Row | None) -> list[int]:
         if old is None:
-            cursor = db.execute("INSERT INTO memory_files(scope, path, content) VALUES(?,?,?)",
-                                (scope, path, folded))
-            db.execute("INSERT INTO memory_fts(rowid, content) VALUES(?,?)", (cursor.lastrowid, folded))
+            db.execute("INSERT INTO memory_files(scope, path, content) VALUES(?,?,?)", (scope, path, text.casefold()))
         else:
-            db.execute("INSERT INTO memory_fts(memory_fts, rowid, content) VALUES('delete', ?, ?)",
-                       (old["id"], old["content"]))
-            db.execute("UPDATE memory_files SET content=? WHERE id=?", (folded, old["id"]))
-            db.execute("INSERT INTO memory_fts(rowid, content) VALUES(?,?)", (old["id"], folded))
+            LocalMemory._remove_sections(db, scope, path)
+            db.execute("UPDATE memory_files SET content=? WHERE id=?", (text.casefold(), old["id"]))
+        return put_sections(db, scope, path, text)
+
+    @staticmethod
+    def _remove_sections(db: sqlite3.Connection, scope: str, path: str) -> None:
+        for row in db.execute("SELECT id,content FROM memory_sections WHERE scope=? AND path=?", (scope, path)).fetchall():
+            if LocalMemory._vector_table_exists(db):
+                db.execute("DELETE FROM memory_vec WHERE rowid=?", (row['id'],))
+            db.execute("INSERT INTO memory_fts(memory_fts,rowid,content) VALUES('delete',?,?)", (row['id'], row['content']))
+        db.execute("DELETE FROM memory_sections WHERE scope=? AND path=?", (scope, path))
 
     @staticmethod
     def _remove_index(db: sqlite3.Connection, old: sqlite3.Row | None) -> None:
         if old is not None:
-            db.execute("INSERT INTO memory_fts(memory_fts, rowid, content) VALUES('delete', ?, ?)",
-                       (old["id"], old["content"]))
+            source = db.execute("SELECT scope,path FROM memory_files WHERE id=?", (old['id'],)).fetchone()
+            LocalMemory._remove_sections(db, source['scope'], source['path'])
             db.execute("DELETE FROM memory_files WHERE id=?", (old["id"],))
 
     @staticmethod
@@ -568,7 +577,7 @@ class LocalMemory:
             return None
         row = db.execute("SELECT provider,base_url,model,dimensions FROM memory_vector_binding WHERE id=1").fetchone()
         if row is None:
-            if db.execute("SELECT 1 FROM memory_files LIMIT 1").fetchone() is not None:
+            if db.execute("SELECT 1 FROM memory_sections LIMIT 1").fetchone() is not None:
                 raise VectorIndexNeedsRebuild("configured embedding has existing Markdown without vectors; "
                                  "请在记忆页重建索引")
             return None
@@ -599,12 +608,9 @@ class LocalMemory:
         return serialize_float32(list(vector))
 
     def _put_vector(self, db: sqlite3.Connection, rowid: int, scope: str,
-                    vector: tuple[float, ...] | None, *, remove_existing: bool) -> None:
-        if remove_existing and self._vector_table_exists(db):
-            db.execute("DELETE FROM memory_vec WHERE rowid=?", (rowid,))
-        if vector is not None:
-            db.execute("INSERT INTO memory_vec(rowid, embedding, scope) VALUES(?,?,?)",
-                       (rowid, self._vector_bytes(vector), scope))
+                    vector: tuple[float, ...]) -> None:
+        db.execute("INSERT INTO memory_vec(rowid, embedding, scope) VALUES(?,?,?)",
+                   (rowid, self._vector_bytes(vector), scope))
 
     def _vector_preflight(self) -> int | None:
         with self._db() as db:
@@ -636,11 +642,13 @@ class LocalMemory:
         partitions: dict[str, list[tuple[str, str]]] = {}
         for (scope, path), content in ordered:
             partitions.setdefault(scope, []).append((path, content))
-        vectors: dict[tuple[str, str], tuple[float, ...]] = {}
+        vectors: dict[tuple[str, str], list[tuple[float, ...]]] = {}
         dimensions: int | None = None
         for scope, entries in partitions.items():
-            for offset in range(0, len(entries), 100):
-                selected = entries[offset:offset + 100]
+            units = [(path, section.embedding_text(content)) for path, content in entries
+                     for section in split_sections(content)]
+            for offset in range(0, len(units), 100):
+                selected = units[offset:offset + 100]
                 batch = await self._embedding(scope, [content for _, content in selected], "reindex")
                 if dimensions is None:
                     dimensions = batch.dimensions
@@ -648,7 +656,7 @@ class LocalMemory:
                     raise ValueError(f'Memory reindex partitions have different embedding dimensions: '
                                      f'expected={dimensions}, scope={scope!r}, actual={batch.dimensions}; index not replaced')
                 for index, (path, _) in enumerate(selected):
-                    vectors[scope, path] = batch.vectors[index]
+                    vectors.setdefault((scope, path), []).append(batch.vectors[index])
         async with self._reindex_locks(set(partitions)):
             with self._db() as db:
                 db.execute("BEGIN EXCLUSIVE")
@@ -664,10 +672,9 @@ class LocalMemory:
                 if dimensions is not None:
                     self._create_vector_table(db, dimensions)
                 for (scope, path), content in ordered:
-                    self._put_index(db, scope, path, content, None)
-                    rowid = db.execute("SELECT id FROM memory_files WHERE scope=? AND path=?",
-                                       (scope, path)).fetchone()[0]
-                    self._put_vector(db, rowid, scope, vectors[scope, path], remove_existing=False)
+                    ids = self._put_index(db, scope, path, content, None)
+                    for rowid, vector in zip(ids, vectors.get((scope, path), []), strict=True):
+                        self._put_vector(db, rowid, scope, vector)
         return len(ordered)
 
     def _browse_sync(self, scope: str, path: str, offset: int, limit: int,
@@ -753,7 +760,7 @@ class LocalMemory:
             return await asyncio.to_thread(self._profiles_sync, source, users)
 
     def _write_sync(self, scope: str, path: str, content: str, reason: str,
-                    vector: tuple[float, ...] | None, create_only: bool = False) -> LocalMemoryChange:
+                    vectors: list[tuple[float, ...]], create_only: bool = False) -> LocalMemoryChange:
         target = self._target(scope, path, file=True)
         if create_only and target.exists():
             raise FileExistsError(f'New formal memory never overwrites an existing file: {target}')
@@ -762,17 +769,17 @@ class LocalMemory:
         with self._file_mutation(scope, path, 'write', changed_at, [target]) as db:
             self._prepare_mutation(db)
             dimensions = self._vector_binding(db)
-            if vector is not None:
+            if vectors:
                 if dimensions is None:
-                    self._create_vector_table(db, len(vector))
-                elif len(vector) != dimensions:
-                    raise ValueError(f"memory vector dimension {len(vector)} differs from index {dimensions}")
+                    self._create_vector_table(db, len(vectors[0]))
+                elif len(vectors[0]) != dimensions:
+                    raise ValueError(f"memory vector dimension {len(vectors[0])} differs from index {dimensions}")
             old = self._indexed(db, scope, path, before)
             _atomic_replace(target, content, create_only=create_only)
-            self._put_index(db, scope, path, content, old)
-            rowid = old["id"] if old is not None else db.execute(
-                "SELECT id FROM memory_files WHERE scope=? AND path=?", (scope, path)).fetchone()[0]
-            self._put_vector(db, rowid, scope, vector, remove_existing=old is not None)
+            ids = self._put_index(db, scope, path, content, old)
+            if self.embedding is not None:
+                for rowid, vector in zip(ids, vectors, strict=True):
+                    self._put_vector(db, rowid, scope, vector)
             db.execute("INSERT INTO memory_changes(scope,path,changed_at,action,reason,before,after) "
                        "VALUES(?,?,?,?,?,?,?)", (scope, path, changed_at, "write", reason, before, content))
         return LocalMemoryChange("write", path, changed_at, reason, before, content)
@@ -785,7 +792,7 @@ class LocalMemory:
             target = self._target(source, path, file=True)
             if create_only and target.exists():
                 raise FileExistsError(f'New formal memory never overwrites an existing file: {target}')
-            vector = await self._embed_text(source, content)
+            vector = await self._embed_sections(source, content)
             return await _finish_write_thread(self._write_sync, source, path, content, reason, vector, create_only)
 
     async def owner_write_public(self, path: str, content: str, reason: str) -> LocalMemoryChange:
@@ -794,7 +801,7 @@ class LocalMemory:
             raise ValueError("public memory write reason must not be blank")
         async with self._lock("public"):
             self._target("public", path, file=True)
-            vector = await self._embed_text("public", content)
+            vector = await self._embed_sections("public", content)
             return await _finish_write_thread(self._write_sync, "public", path, content, reason, vector)
 
     async def _embedding(self, source: str, texts: list[str], purpose: str):
@@ -802,14 +809,19 @@ class LocalMemory:
             return await self.track_embedding(source, texts, purpose)
         return await self.embedding.embed(texts)
 
-    async def _embed_text(self, source: str, content: str) -> tuple[float, ...] | None:
+    async def _embed_sections(self, source: str, content: str) -> list[tuple[float, ...]]:
         if self.embedding is None:
-            return None
+            return []
         dimensions = await asyncio.to_thread(self._vector_preflight)
-        batch = await self._embedding(source, [content], "index")
-        if dimensions is not None and batch.dimensions != dimensions:
-            raise ValueError(f"embedding dimensions {batch.dimensions} differ from memory index {dimensions}")
-        return batch.vectors[0]
+        texts = [section.embedding_text(content) for section in split_sections(content)]
+        vectors = []
+        for offset in range(0, len(texts), 100):
+            batch = await self._embedding(source, texts[offset:offset + 100], "index")
+            if dimensions is not None and batch.dimensions != dimensions:
+                raise ValueError(f"embedding dimensions {batch.dimensions} differ from memory index {dimensions}")
+            dimensions = batch.dimensions
+            vectors.extend(batch.vectors)
+        return vectors
 
     @staticmethod
     def _lexical_rows(db: sqlite3.Connection, scene: str, query: str,
@@ -822,16 +834,16 @@ class LocalMemory:
         if len(folded) >= 3:
             expression = '"' + folded.replace('"', '""') + '"'
             return db.execute(f"""
-                SELECT m.scope, m.path
-                FROM memory_fts JOIN memory_files AS m ON m.id=memory_fts.rowid
+                SELECT m.id, m.scope, m.path
+                FROM memory_fts JOIN memory_sections AS m ON m.id=memory_fts.rowid
                 WHERE memory_fts MATCH ? AND m.scope IN ({placeholders})
                   AND instr(m.content, ?) > 0 {eligible}
-                ORDER BY CASE WHEN m.scope=? THEN 0 ELSE 1 END, m.path LIMIT ?
+                ORDER BY CASE WHEN m.scope=? THEN 0 ELSE 1 END, m.path, m.start_char LIMIT ?
             """, (expression, *scopes, folded, scene, limit)).fetchall()
         return db.execute(f"""
-            SELECT scope, path FROM memory_files
+            SELECT id, scope, path FROM memory_sections
             WHERE scope IN ({placeholders}) AND instr(content, ?) > 0 {eligible}
-            ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END, path LIMIT ?
+            ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END, path, id LIMIT ?
         """, (*scopes, folded, scene, limit)).fetchall()
 
     @staticmethod
@@ -853,18 +865,18 @@ class LocalMemory:
         parameters = [expression, *scopes]
         if short:
             matches = " OR ".join("instr(content, ?) > 0" for _ in short)
-            short_rows = f"""UNION ALL SELECT scope, path, 0 FROM memory_files
+            short_rows = f"""UNION ALL SELECT id, scope, path, 0 FROM memory_sections
                 WHERE scope IN ({placeholders}) AND ({matches}) {eligible}"""
             parameters.extend([*scopes, *short])
         return db.execute(f"""
             WITH hits AS MATERIALIZED (
-                SELECT m.scope, m.path, memory_fts.rank AS relevance
-                FROM memory_fts JOIN memory_files AS m ON m.id=memory_fts.rowid
+                SELECT m.id, m.scope, m.path, memory_fts.rank AS relevance
+                FROM memory_fts JOIN memory_sections AS m ON m.id=memory_fts.rowid
                 WHERE memory_fts MATCH ? AND m.scope IN ({placeholders}) {eligible}
                 {short_rows}
             )
-            SELECT scope, path FROM hits GROUP BY scope, path
-            ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END, MIN(relevance), path LIMIT ?
+            SELECT id, scope, path FROM hits GROUP BY id, scope, path
+            ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END, MIN(relevance), path, id LIMIT ?
         """, (*parameters, scene, limit)).fetchall()
 
     def _search_sync(self, scene: str, query: str, limit: int,
@@ -873,40 +885,31 @@ class LocalMemory:
         with self._db() as db:
             search = self._automatic_rows if automatic else self._lexical_rows
             rows = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
-        hits: list[LocalMemoryHit] = []
-        for row in rows:
-            content = self._read_sync(row["scope"], row["path"]).content
-            hits.append(LocalMemoryHit(scope="public" if row["scope"] == "public" else "scene",
-                                       path=row["path"], preview=self._excerpt(content, query, automatic),
-                                       total_chars=len(content)))
-        return hits
+        return self._section_hits([row['id'] for row in rows])
 
-    @staticmethod
-    def _excerpt(content: str, query: str, automatic: bool) -> str:
-        folded = query.casefold()
-        terms = (tuple(dict.fromkeys(folded[index:index + 3] for index in range(len(folded) - 2)))
-                 if automatic and len(folded) >= 3 else (folded,))
-        text = content.casefold()
-        positions = []
-        for term in terms:
-            position = text.find(term)
-            while position >= 0:
-                positions.append(position)
-                position = text.find(term, position + 1)
-        positions.sort()
-        left, score, anchor = 0, 0, 0
-        for right, position in enumerate(positions):
-            while position - positions[left] > 160:
-                left += 1
-            if right - left + 1 >= score:
-                score, anchor = right - left + 1, positions[left]
-        # Case folding can expand a character; preserve the original spelling.
-        consumed, index = 0, 0
-        while consumed < anchor:
-            consumed += len(content[index].casefold())
-            index += 1
-        start = min(max(0, index - 40), max(0, len(content) - 240))
-        return content[start:start + 240]
+    def _section_hits(self, ids: list[int]) -> list[LocalMemoryHit]:
+        grouped: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        with self._db() as db:
+            for rowid in ids:
+                row = db.execute('SELECT * FROM memory_sections WHERE id=?', (rowid,)).fetchone()
+                grouped.setdefault((row['scope'], row['path']), []).append(row)
+        hits = []
+        for (scope, path), rows in grouped.items():
+            content = self._read_sync(scope, path).content
+            # Adjacent matched sections become one source range; non-adjacent ones
+            # keep a visible gap. The source is read once and returned once.
+            ranges: list[dict] = []
+            for row in sorted(rows, key=lambda row: row['start_char']):
+                if ranges and ranges[-1]['end_char'] == row['start_char']:
+                    ranges[-1]['end_char'] = row['end_char']
+                    ranges[-1]['headings'].append(json.loads(row['heading']))
+                else:
+                    ranges.append({'start_char': row['start_char'], 'end_char': row['end_char'],
+                                   'headings': [json.loads(row['heading'])], 'source_version': row['source_version']})
+            preview = '\n…\n'.join(content[part['start_char']:part['end_char']] for part in ranges)
+            hits.append(LocalMemoryHit(scope='public' if scope == 'public' else 'scene', path=path,
+                                       preview=preview, total_chars=len(content), sections=tuple(ranges)))
+        return hits
 
     def _search_hybrid_sync(self, scene: str, query: str,
                             vector: tuple[float, ...], limit: int,
@@ -919,8 +922,8 @@ class LocalMemory:
             search = self._automatic_rows if automatic else self._lexical_rows
             lexical = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
             conditions = _eligible(exclude_pending, bot_persona)
-            eligible = f" AND rowid IN (SELECT id FROM memory_files WHERE 1{conditions})" if conditions else ""
-            vector_rows: list[tuple[str, str, float]] = []
+            eligible = f" AND rowid IN (SELECT id FROM memory_sections WHERE 1{conditions})" if conditions else ""
+            vector_rows: list[tuple[int, str, float]] = []
             query_bytes = self._vector_bytes(vector)
             for scope in ((scene, "public") if include_public else (scene,)):
                 rows = db.execute(f"""
@@ -928,26 +931,22 @@ class LocalMemory:
                     WHERE embedding MATCH ? AND k=? AND scope=? {eligible} ORDER BY distance
                 """, (query_bytes, limit, scope)).fetchall()
                 for row in rows:
-                    source = db.execute("SELECT scope,path FROM memory_files WHERE id=?",
+                    source = db.execute("SELECT scope,path FROM memory_sections WHERE id=?",
                                         (row["rowid"],)).fetchone()
                     if source is None or source["scope"] != scope:
                         raise ValueError(f"memory vector row {row['rowid']} is outside its source scope")
-                    vector_rows.append((scope, source["path"], row["distance"]))
-        ranks: dict[tuple[str, str], float] = {}
+                    vector_rows.append((row["rowid"], scope, row["distance"]))
+        ranks: dict[int, float] = {}
+        scopes: dict[int, str] = {}
         for position, row in enumerate(lexical, 1):
-            key = (row["scope"], row["path"])
+            key = row['id']
+            scopes[key] = row['scope']
             ranks[key] = ranks.get(key, 0.0) + 1 / position
-        for position, (scope, path, _) in enumerate(sorted(vector_rows, key=lambda row: row[2]), 1):
-            key = (scope, path)
+        for position, (key, scope, _) in enumerate(sorted(vector_rows, key=lambda row: row[2]), 1):
+            scopes[key] = scope
             ranks[key] = ranks.get(key, 0.0) + 1 / position
-        ordered = sorted(ranks, key=lambda key: (-ranks[key], key[0] != scene, key[1]))[:limit]
-        hits: list[LocalMemoryHit] = []
-        for scope, path in ordered:
-            content = self._read_sync(scope, path).content
-            hits.append(LocalMemoryHit(scope="public" if scope == "public" else "scene",
-                                       path=path, preview=self._excerpt(content, query, automatic),
-                                       total_chars=len(content)))
-        return hits
+        ordered = sorted(ranks, key=lambda key: (-ranks[key], scopes[key] != scene, key))[:limit]
+        return self._section_hits(ordered)
 
     async def search(self, scene: str, query: str, limit: int = 10, *,
                      include_public: bool = True, exclude_pending: bool = False,
@@ -1006,7 +1005,6 @@ class LocalMemory:
             self._prepare_mutation(db)
             old = self._indexed(db, scope, path, before)
             target.unlink()
-            self._put_vector(db, old["id"], scope, None, remove_existing=True)
             self._remove_index(db, old)
             db.execute("INSERT INTO memory_changes(scope,path,changed_at,action,reason,before,after) "
                        "VALUES(?,?,?,?,?,?,NULL)", (scope, path, changed_at, "delete", reason, before))
@@ -1034,8 +1032,6 @@ class LocalMemory:
             old = self._indexed(db, scope, path, before)
             if before is not None:
                 target.unlink()
-            if old is not None:
-                self._put_vector(db, old["id"], scope, None, remove_existing=True)
             self._remove_index(db, old)
             cursor = db.execute("DELETE FROM memory_changes WHERE scope=? AND path=?", (scope, path))
             removed_history = cursor.rowcount

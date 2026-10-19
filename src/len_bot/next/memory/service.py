@@ -302,7 +302,7 @@ class MemoryService:
         seen: set[tuple[str, str]] = set()
 
         def append(scope: str, path: str, content: str, limit: int, *,
-                   kind: str = "file", source_chars: int | None = None) -> None:
+                   kind: str = "file", source_chars: int | None = None, sections: tuple[dict, ...] = ()) -> None:
             nonlocal budget
             if not content.strip() or limit == 0 or (scope, path) in seen or budget <= 0:
                 return
@@ -310,6 +310,8 @@ class MemoryService:
             items.append({"scope": scope, "path": path, "content": shown, "kind": kind,
                           "truncated": len(shown) < len(content) or (
                               source_chars is not None and len(shown) < source_chars)})
+            if sections:
+                items[-1]['sections'] = sections
             seen.add((scope, path))
             budget -= len(shown)
 
@@ -327,7 +329,7 @@ class MemoryService:
                                          persona=self.active_personas.get(scene)):
                 append(hit["scope"], hit["path"], hit["preview"], budget,
                        kind="excerpt",
-                       source_chars=hit["total_chars"])
+                       source_chars=hit["total_chars"], sections=hit["sections"])
         return {"backend": self.settings.backend, "query": query, "items": items,
                 "content_chars": self.settings.recall_budget_chars - budget,
                 "budget_chars": self.settings.recall_budget_chars}
