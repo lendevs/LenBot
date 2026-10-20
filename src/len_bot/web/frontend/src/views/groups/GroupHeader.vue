@@ -16,10 +16,10 @@ import DropdownMenu, { type MenuEntry } from '../../ui/DropdownMenu.vue'
 import IconButton from '../../ui/IconButton.vue'
 import StatusDot from '../../ui/StatusDot.vue'
 import Switch from '../../ui/Switch.vue'
-import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import QuietDialog from './QuietDialog.vue'
+import { useSessionActions } from './session/useSessionActions'
 import { statusTones, useStatusLabel } from './status'
 
 const props = defineProps<{ item: HostScene }>()
@@ -80,22 +80,7 @@ const resume = useMutation({
   onSettled: () => readHostState(),
 })
 
-const fresh = useMutation({
-  mutationFn: () => hostApi.newContext(scene.value),
-  onSuccess: () => {
-    toast.success(t('groups.newSession.done'))
-    void client.invalidateQueries({ queryKey: keys.scene.all(scene.value) })
-  },
-  onError: failed(t('groups.newSession.failed')),
-})
-async function startSession() {
-  const confirmed = await confirm({
-    title: t('groups.newSession.title'),
-    message: t('groups.newSession.message'),
-    confirmLabel: t('groups.newSession.action'),
-  })
-  if (confirmed) fresh.mutate()
-}
+const { starting, startSession } = useSessionActions(scene)
 
 const actions = computed<MenuEntry[]>(() => [
   temporaryQuiet.value
@@ -104,7 +89,7 @@ const actions = computed<MenuEntry[]>(() => [
   {
     label: t('groups.newSession.action'),
     icon: RefreshCcw,
-    disabled: fresh.isPending.value,
+    disabled: starting.value,
     select: startSession,
   },
   { type: 'separator' },

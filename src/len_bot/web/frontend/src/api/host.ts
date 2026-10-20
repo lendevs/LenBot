@@ -1,4 +1,4 @@
-import { http, request } from './client'
+import { http } from './client'
 
 export interface ItemHealth {
   name: string
@@ -94,11 +94,6 @@ export const hostApi = {
   quiet: (scene: string, seconds: number, direct: 'allow' | 'defer') =>
     http.post<SceneControl>(`${scenePath(scene)}/control/quiet`, { seconds, direct }),
   resume: (scene: string) => http.post<SceneControl>(`${scenePath(scene)}/control/resume`),
-  newContext: (scene: string) =>
-    request<unknown>(`${scenePath(scene)}/history/new-context`, {
-      method: 'POST',
-      query: { confirmed: true },
-    }),
   availableScenes: (signal?: AbortSignal) =>
     http.get<{ items: AvailableScene[] }>('/api/host/settings/scenes/available', undefined, signal),
   addScene: (scene: string, persona: string) =>

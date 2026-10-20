@@ -9,7 +9,6 @@ import { useCurrentScene } from '../../composables/useCurrentScene.js'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges.js'
 import { useHostEvents } from '../../host/events.js'
 import { host, notify, readHostState, readPendingRestart } from '../../host/store.js'
-import BrainTab from '../../host/pages/scenes/BrainTab.vue'
 import LearningTab from '../../host/pages/scenes/LearningTab.vue'
 import SettingsTab from '../../host/pages/scenes/SettingsTab.vue'
 import PermissionsSection from '../../host/pages/settings/PermissionsSection.vue'
@@ -30,6 +29,7 @@ import GroupList from './GroupList.vue'
 import { groupTabs, isGroupTab, lastGroupTab, type GroupTab } from './route'
 import { statusTones } from './status'
 import LiveTab from './live/LiveTab.vue'
+import SessionTab from './session/SessionTab.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -140,7 +140,7 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
         <template #[tab]>
           <div :key="`${scene}:${tab}`" class="grid min-w-0 gap-4">
             <LiveTab v-if="tab === 'live'" :scene="scene" :time-zone="current.timezone" :persona="current.persona.name" />
-            <BrainTab v-else-if="tab === 'session'" :scene="scene" />
+            <SessionTab v-else-if="tab === 'session'" :scene="scene" :time-zone="current.timezone" />
             <MemoryPage v-else-if="tab === 'memory'" />
             <TasksPage v-else-if="tab === 'tasks'" />
             <LearningTab
