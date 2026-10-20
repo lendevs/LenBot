@@ -16,7 +16,7 @@ uv run --no-sync len-bot   # start; opens the setup wizard if there is no config
 
 The repository root is your local instance: `lenbot.config.json`, the database, `state/` and `personas/` live there and are ignored by Git. Development and local use share one checkout started with `uv`; there is no separate install.
 
-After changing the frontend, run `npm run build` in `src/len_bot/web/frontend`. The output in `web/static/dist/` is not committed. `npm run dev` works for frontend work too.
+After changing the frontend, run `npm run typecheck`, `npm run lint` and `npm run build` in `src/len_bot/web/frontend`. The output in `web/static/dist/` is not committed. `npm run dev` works for frontend work too. Frontend conventions are in the [panel frontend guide (zh)](developer/panel.md).
 
 When `len-bot` starts from a Git checkout, the launcher checks whether the frontend content has changed. A missing or outdated panel is rebuilt with `npm ci` and `npm run build`; unchanged content starts directly. Release packages use the panel built during packaging and do not need Node.js at runtime.
 

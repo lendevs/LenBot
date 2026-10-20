@@ -1,7 +1,7 @@
 /*
  * Design tokens: the one place panel colors, type, spacing, radius, elevation and motion are defined.
  * Tailwind utilities read them through app.css; components read them as var(--name).
- * While Vuetify is still loaded, styles/theme.js repeats the color values for Vuetify's theme (work.md M4.9).
+ * While Vuetify is still loaded, styles/theme.js parses the hex colors below for Vuetify's theme.
  */
 :root {
   color-scheme: light;
