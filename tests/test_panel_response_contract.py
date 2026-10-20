@@ -27,7 +27,17 @@ async def panel(root):
     source = json.loads(file.read_text())
     source['memory'] = {'backend': 'local', 'local': {'directory': 'memory'}}
     source['panel']['update_check'] = False
+    source['plugins'] = {'paths': ['plugins']}
     file.write_text(json.dumps(source))
+    # 已发现但未启用的插件：清单里的地址字段要按字符串输出。
+    plugin = root / 'plugins' / 'linked'
+    plugin.mkdir(parents=True)
+    (plugin / '__init__.py').write_text('')
+    (plugin / 'plugin.toml').write_text('\n'.join([
+        'name = "linked"', 'version = "1.0.0"', 'interface = 1', 'requires_lenbot = ">=0.2,<1"',
+        'requires_python = ">=3.13"', 'platforms = ["linux", "darwin", "win32"]', 'reload = "plugin"',
+        'authors = ["LEN5010"]', 'license = "MIT"', 'description = "带仓库地址的样本。"',
+        'repository = "https://example.com/plugins/linked"', 'homepage = "https://example.com/linked"']))
     config = load_host_config(root)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings('mind')) as mind, open_memory(config, store) as memory:
@@ -85,6 +95,9 @@ def test_host_read_responses_keep_the_unfiltered_json(tmp_path):
                                   '/api/host/plugins', '/api/host/mcp', '/api/host/memory/browse'}:
                     assert before.json() == after.json(), path
             assert len(checked) >= 50
+            linked = (await client.get('/api/host/plugins')).json()['available']['linked'][0]
+            assert (linked['repository'], linked['homepage']) == ('https://example.com/plugins/linked',
+                                                                  'https://example.com/linked')
     asyncio.run(run())
 
 

@@ -103,8 +103,10 @@ def _entry(directory: Path) -> dict:
         manifest = read_manifest(directory)
         return {"directory": str(directory), "error": None, "version": manifest.version,
                 "description": manifest.description, "authors": manifest.authors,
-                "license": manifest.license, "repository": manifest.repository,
-                "homepage": manifest.homepage, "dependencies": manifest.dependencies,
+                "license": manifest.license,
+                "repository": None if manifest.repository is None else str(manifest.repository),
+                "homepage": None if manifest.homepage is None else str(manifest.homepage),
+                "dependencies": manifest.dependencies,
                 "requires_lenbot": manifest.requires_lenbot, "requires_python": manifest.requires_python,
                 "platforms": manifest.platforms, "reload": manifest.reload,
                 "fields": _field_info(manifest),
