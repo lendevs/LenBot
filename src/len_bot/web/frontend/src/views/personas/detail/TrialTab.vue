@@ -5,7 +5,8 @@ import { useMutation } from '@tanstack/vue-query'
 import { ArrowUpRight, MessageCircle, Square } from '@lucide/vue'
 import type { HostScene } from '../../../api/host'
 import { personasApi, type PersonaRole, type Trial } from '../../../api/personas'
-import ChatPanel from '../../../host/components/ChatPanel.vue'
+import { trialSource } from '../../../api/trials'
+import ChatPanel from '../../playground/chat/ChatPanel.vue'
 import { host } from '../../../host/store.js'
 import { groupLabel } from '../../../layouts/shell/scenes'
 import Badge from '../../../ui/Badge.vue'
@@ -70,7 +71,7 @@ async function end() {
       </Button>
       <Button size="sm" :icon="Square" :loading="stop.isPending.value" @click="end">{{ t('personas.detail.trial.stop') }}</Button>
     </div>
-    <ChatPanel :key="trial.id" :api-base="`/api/host/trials/${encodeURIComponent(trial.id)}`" />
+    <ChatPanel :key="trial.id" :source="trialSource(trial.id)" />
   </div>
   <form v-else class="flex max-w-3xl flex-col gap-6" @submit.prevent="start.mutate()">
     <FormSection :title="t('personas.detail.trial.title')">

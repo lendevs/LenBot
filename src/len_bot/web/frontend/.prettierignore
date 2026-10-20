@@ -9,7 +9,6 @@ src/components
 src/views
 src/composables/*.js
 src/layouts/HostShell.vue
-src/layouts/TrialShell.vue
 src/plugins
 src/router/*.js
 src/styles/base.css

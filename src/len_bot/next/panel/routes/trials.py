@@ -17,6 +17,7 @@ from .. import responses
 from ...chat.tools import tool_catalog, tool_unavailable_reasons
 from ...config import HostConfig, LabConfig, load_host_config
 from .persona import finish_role_write
+from .timeline import TurnDetail, read_turn
 from ...instance_lock import InstanceBusyError, instance_lock
 from ...runtime.logs import LoggingSettings
 from ...memory.service import LocalMemoryConfig, open_memory
@@ -295,6 +296,18 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
         def read():
             with Store(trial.config.database, readonly=True) as store:
                 return store.turn_detail(trial.scene, turn_id)
+        result = await asyncio.to_thread(read)
+        if result is None:
+            raise HTTPException(404, '这一轮不属于当前试聊')
+        return result
+
+    @app.get('/api/host/trials/{trial_id}/turns/{turn_id}/steps', response_model=TurnDetail)
+    async def turn_steps(trial_id: str, turn_id: str, _: str = Depends(user)):
+        """The same step view as a group's live timeline, read from the trial's own database."""
+        trial = trials.get(trial_id)
+        def read():
+            with Store(trial.config.database, readonly=True) as store:
+                return read_turn(store, trial.scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
             raise HTTPException(404, '这一轮不属于当前试聊')

@@ -32,7 +32,11 @@ provide(fieldKey, {
 
 <template>
   <div class="flex min-w-0 flex-col gap-1.5" :class="wide && 'sm:col-span-2'">
-    <div :class="inline ? 'flex min-h-9 items-center justify-between gap-4 [&>:last-child]:shrink-0' : 'contents'">
+    <div
+      :class="
+        inline ? 'flex min-h-9 items-center justify-between gap-4 [&>:last-child]:shrink-0' : 'contents'
+      "
+    >
       <span v-if="label && info" class="flex min-w-0 items-center gap-1">
         <label
           :for="id"

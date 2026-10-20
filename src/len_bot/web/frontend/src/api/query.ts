@@ -36,6 +36,18 @@ export const keys = {
     logs: (filter: object) => ['system', 'logs', filter] as const,
     logFiles: () => ['system', 'log-files'] as const,
   },
+  /** A trial or the isolated chat test; its own event socket refreshes these, host events do not. */
+  chat: {
+    all: (source: string) => ['chat', source] as const,
+    state: (source: string) => ['chat', source, 'state'] as const,
+    steps: (source: string, turn: string) => ['chat', source, 'steps', turn] as const,
+  },
+  trials: () => ['host', 'trials'] as const,
+  /** The standalone chat-test instance; nothing else writes these. */
+  chatTest: {
+    settings: () => ['chat-test', 'settings'] as const,
+    scenePersona: () => ['chat-test', 'scene-persona'] as const,
+  },
   /** Skill files do not change with host events; reading them walks directories. */
   skills: {
     all: () => ['skills'] as const,

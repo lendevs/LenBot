@@ -199,6 +199,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     prefix = f"/api/host/trials/{trial.json()['id']}"
                     try:
                         assert (await client.get(f"{prefix}/turns/{configured_turn}")).status_code == 404
+                        assert (await client.get(f"{prefix}/turns/{configured_turn}/steps")).status_code == 404
                         assert (await client.post(f"{prefix}/messages", json={
                             "uid": 'onebot:90001', "nickname": "虚拟", "text": "合成消息",
                         })).status_code == 422
@@ -207,7 +208,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                             "reply_to": "10001",
                         })).status_code == 422
                         assert (await client.post("/api/auth/logout")).status_code == 200
-                        for method, path in (("GET", prefix + "/state"),
+                        for method, path in (("GET", prefix + "/state"), ("GET", prefix + "/turns/x/steps"),
                                              ("POST", prefix + "/stop"),
                                              ("GET", "/api/host/trials"), ("GET", "/api/host/permissions?scene=onebot:group:80001")):
                             assert (await client.request(method, path)).status_code == 401

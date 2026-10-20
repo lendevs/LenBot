@@ -7,7 +7,12 @@ import { currentLocale, localeOptions, setLocale, type Locale } from '../../i18n
 import Popover from '../../ui/Popover.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 
-defineProps<{ username: string; restartDisabled: boolean; leaving: boolean }>()
+withDefaults(
+  defineProps<{ username: string; restartDisabled?: boolean; leaving: boolean; restartable?: boolean }>(),
+  {
+    restartable: true,
+  },
+)
 const emit = defineEmits<{ restart: []; logout: [] }>()
 
 const { t } = useI18n()
@@ -63,7 +68,13 @@ function choose(event: 'restart' | 'logout') {
         />
       </div>
       <div class="-mx-1 flex flex-col gap-0.5 border-t border-line pt-2">
-        <button type="button" :class="item" :disabled="restartDisabled" @click="choose('restart')">
+        <button
+          v-if="restartable"
+          type="button"
+          :class="item"
+          :disabled="restartDisabled"
+          @click="choose('restart')"
+        >
           <RotateCw :size="15" class="text-muted" aria-hidden="true" />
           {{ t('shell.account.restart') }}
         </button>

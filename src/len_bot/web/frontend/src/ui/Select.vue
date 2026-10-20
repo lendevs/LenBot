@@ -56,7 +56,10 @@ const selected = computed(() => props.options.find((option) => option.value === 
     >
       <span class="flex min-w-0 items-center gap-2">
         <component :is="selected.icon" v-if="selected?.icon" :size="16" class="shrink-0 text-muted" />
-        <SelectValue :placeholder="placeholder ?? t('ui.select.placeholder')" class="truncate" />
+        <!-- Rendered from the options so a label that changes after selection, such as a group name read later, updates. -->
+        <SelectValue :placeholder="placeholder ?? t('ui.select.placeholder')" class="truncate">
+          {{ selected ? selected.label : (placeholder ?? t('ui.select.placeholder')) }}
+        </SelectValue>
       </span>
       <ChevronDown :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
     </SelectTrigger>

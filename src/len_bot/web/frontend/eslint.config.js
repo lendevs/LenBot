@@ -10,10 +10,8 @@ export default tseslint.config(
       // Pages and helpers from the Vuetify panel; each goes away when its replacement lands (docs: work.md M2-M4).
       'src/host/**',
       'src/components/**',
-      'src/views/ChatTest*.vue',
       'src/views/NotFoundView.vue',
       'src/plugins/**',
-      'src/layouts/TrialShell.vue',
       'src/App.vue',
       'src/**/*.js',
     ],

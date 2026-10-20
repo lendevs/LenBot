@@ -30,6 +30,7 @@ from ..memory.service import MemoryService, open_memory
 from ..memory.ingest import MemoryIngestor, open_memory_ingestor
 from ..panel import responses
 from ..panel.auth import changes_socket, install_panel_auth
+from ..panel.routes.timeline import TurnDetail, read_turn
 from ..persona.profile import Persona, load_persona, select_examples
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
@@ -247,6 +248,14 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
     @app.get("/api/chat-test/turns/{turn_id}", response_model=responses.StoredTurn, response_model_exclude_unset=True)
     async def turn(turn_id: str, _: str = Depends(user)):
         result = app.state.session.store.turn_detail(config.scene, turn_id)
+        if result is None:
+            raise HTTPException(404, "当前测试场景没有这一轮")
+        return result
+
+    @app.get("/api/chat-test/turns/{turn_id}/steps", response_model=TurnDetail)
+    async def turn_steps(turn_id: str, _: str = Depends(user)):
+        """The same step view as a group's live timeline."""
+        result = read_turn(app.state.session.store, config.scene, turn_id)
         if result is None:
             raise HTTPException(404, "当前测试场景没有这一轮")
         return result
