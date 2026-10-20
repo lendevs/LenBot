@@ -29,7 +29,7 @@ The live view of each group shows every turn of the bot as it happens: which cha
 - LenBot does not log in to QQ itself. A OneBot implementation such as [NapCat](https://github.com/NapNeko/NapCatQQ) has to run alongside it.
 - No model is included. Supported APIs are OpenAI-compatible, OpenAI Responses, Anthropic and Gemini.
 - Voice messages are understood, but replies are text only.
-- Prompts and the panel are in Chinese only.
+- Prompts are in Chinese only; the panel is available in Chinese and English.
 
 ## Quick start
 

@@ -48,7 +48,7 @@ features:
   <div class="box">
     <h2>当前状态</h2>
     <p>首个公开版本 0.2.0 尚未发布，部署包和 Docker 镜像要等发布后才能下载。在此之前请<a href="./guide/install-source">从源码运行</a>。</p>
-    <p>目前只支持 QQ，需要另外运行一个 OneBot 实现（例如 NapCat），并准备自己的模型服务。提示词和面板只有中文。</p>
+    <p>目前只支持 QQ，需要另外运行一个 OneBot 实现（例如 NapCat），并准备自己的模型服务。提示词只有中文，面板有中文和英文。</p>
   </div>
 </div>
 

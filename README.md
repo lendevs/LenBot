@@ -29,7 +29,7 @@ LenBot 是一个基于大模型的 QQ 群聊机器人。它通过 OneBot v11 协
 - LenBot 本身不登录 QQ，需要另外运行一个 OneBot 实现，例如 [NapCat](https://github.com/NapNeko/NapCatQQ)。
 - 不附带模型。支持的接口有 OpenAI 兼容接口、OpenAI Responses、Anthropic 和 Gemini。
 - 能理解语音消息，但只用文字回复。
-- 提示词和面板只有中文。
+- 提示词只有中文，面板有中文和英文。
 
 ## 快速开始
 
