@@ -1,5 +1,3 @@
-import { statusText } from './status.js'
-
 export const roleOptions = [
   { title: '主人', value: 'owner' }, { title: '管理员', value: 'admin' },
   { title: '群管理', value: 'group_manager' }, { title: '白名单', value: 'whitelist' },
@@ -14,11 +12,7 @@ const sections = {
   commands: '群内命令', account_browser: '账号浏览器', plugins: '插件', mcp: 'MCP', prompts: '框架提示词',
 }
 
-export const messageLabel = value => statusText('message', value)
-export const turnLabel = value => statusText('turn', value)
-export const runtimeLabel = value => statusText('runtime', value)
 export const sectionLabel = value => sections[value] || '其他配置'
-export const turnFailed = value => ['error', 'timeout', 'interrupted', 'step_limit'].includes(value)
 
 const tools = {
   say: '发言', wait: '等待', recall_chat: '翻聊天记录', look: '看图', web_search: '搜索网页', web_read: '读网页',

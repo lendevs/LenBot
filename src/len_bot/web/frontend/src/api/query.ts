@@ -19,6 +19,7 @@ export const keys = {
     availableScenes: () => ['host', 'available-scenes'] as const,
     settings: () => ['host', 'settings'] as const,
     limits: () => ['host', 'limits'] as const,
+    eventLoop: () => ['host', 'event-loop'] as const,
   },
   /** Under `host`, so the `host.changed` event that task progress raises refreshes them. */
   tasks: {

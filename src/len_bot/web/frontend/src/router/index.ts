@@ -37,7 +37,7 @@ const page = (
 
 /** Host pages. Route names other than `groups` are the ones old pages link to. */
 const hostRoutes: RouteRecordRaw[] = [
-  page('/overview', 'host-overview', () => import('../host/pages/home/HomePage.vue')),
+  page('/overview', 'host-overview', () => import('../views/overview/OverviewView.vue')),
   page('/playground', 'host-trials', () => import('../host/pages/trial/TrialPage.vue')),
   page('/groups/:scene?/:tab?', 'groups', () => import('../views/groups/GroupsView.vue')),
   page('/personas', 'host-persona', () => import('../views/personas/PersonasView.vue')),

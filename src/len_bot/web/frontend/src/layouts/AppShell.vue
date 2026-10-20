@@ -15,7 +15,6 @@ import {
   readSceneTitles,
   readUpdates,
 } from '../host/store.js'
-import { attentionItems } from '../host/attention.js'
 import { openRestart, restartFlow } from '../host/restart.js'
 import { useHostEvents } from '../host/events.js'
 import RestartDialog from '../host/components/RestartDialog.vue'
@@ -37,7 +36,9 @@ import AccountMenu from './shell/AccountMenu.vue'
 import CommandPalette from './shell/CommandPalette.vue'
 import Sidebar from './shell/Sidebar.vue'
 import { groupLabel } from './shell/scenes'
+import { useConnectionStatus } from './shell/status'
 import { areaOf, groupOf, scopedRoutes, sectionKey } from './nav'
+import { useAttention } from '../views/overview/attention'
 
 interface Restart {
   sections: string[]
@@ -96,33 +97,7 @@ const tab = computed({
   },
 })
 
-const platform = computed(() => (host.state?.connection.mode === 'telegram' ? 'Telegram' : 'QQ'))
-const status = computed(() => {
-  const state = host.state
-  if (!state) {
-    return host.stateError
-      ? { text: t('shell.status.readFailed'), tone: 'error' as const }
-      : { text: t('shell.status.reading'), tone: 'neutral' as const }
-  }
-  const connection = state.connection
-  if (connection.connected && connection.accepting)
-    return { text: t('shell.status.online'), tone: 'success' as const }
-  if (connection.status === 'running') {
-    return { text: t('shell.status.platformOffline', { platform: platform.value }), tone: 'warning' as const }
-  }
-  const tones: Record<string, 'info' | 'warning' | 'error' | 'neutral'> = {
-    created: 'info',
-    starting: 'info',
-    waiting_connection: 'warning',
-    connection_failed: 'error',
-    failed: 'error',
-    stopping: 'warning',
-  }
-  return {
-    text: t(`shell.status.runtime.${connection.status}`, { platform: platform.value }),
-    tone: tones[connection.status] ?? ('neutral' as const),
-  }
-})
+const { status } = useConnectionStatus()
 
 const listFormat = computed(() => new Intl.ListFormat(currentLocale.value, { type: 'unit', style: 'short' }))
 const restart = computed(() => host.restart as Restart | null)
@@ -138,10 +113,7 @@ const restartItems = computed(() => {
     ]),
   ]
 })
-// Counting before today's overview arrives would show a smaller number that then jumps.
-const attention = computed(() =>
-  host.overview || host.overviewError ? attentionItems(host.state, host.overview).length : 0,
-)
+const { count: attention } = useAttention()
 const newer = computed(() => {
   const updates = host.updates as { check?: { update_available?: boolean; latest?: string } } | null
   return updates?.check?.update_available ? (updates.check.latest ?? '') : ''
