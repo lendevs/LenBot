@@ -81,8 +81,12 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 watch(initial, (next, previous) => {
   if (!previous || same(draft.value, previous)) draft.value = copy(next)
 })
-const dirty = computed(() => props.name === null ? Boolean(draft.value.name.trim()) : !same(draft.value, initial.value))
-useUnsavedChanges(dirty, { keep: ['tab', 'item'] })
+/** Set once this editor saved or removed its service, right before the list selects another one. */
+const finished = ref(false)
+const dirty = computed(
+  () => !finished.value && (props.name === null ? Boolean(draft.value.name.trim()) : !same(draft.value, initial.value)),
+)
+useUnsavedChanges(dirty, { keep: ['tab'] })
 
 const NAME = /^[a-z][a-z0-9_]{0,23}$/
 const errors = computed(() => {
@@ -133,6 +137,7 @@ const save = useMutation({
   onSuccess: (state) => {
     accept(state)
     toast.success(t('capabilities.savedRestart'))
+    finished.value = true
     emit('saved', draft.value.name.trim())
   },
 })
@@ -141,6 +146,7 @@ const remove = useMutation({
   onSuccess: (state) => {
     accept(state)
     toast.success(t('capabilities.mcp.removed'))
+    finished.value = true
     emit('removed')
   },
   onError: (error) => toast.error(t('capabilities.failed'), { detail: describeError(error, t('ui.error.network')).message }),

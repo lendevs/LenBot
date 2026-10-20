@@ -16,7 +16,7 @@ const tabNames = ['mcp', 'skills', 'web', 'tasks', 'browser'] as const
 type Tab = (typeof tabNames)[number]
 const tab = computed<Tab>({
   get: () => ((tabNames as readonly string[]).includes(route.query.tab as string) ? (route.query.tab as Tab) : 'mcp'),
-  set: (value) => void router.replace({ query: { tab: value } }),
+  set: (value) => void router.replace({ query: { ...route.query, tab: value } }),
 })
 const tabs = computed(() => tabNames.map((value) => ({ value, label: t(`capabilities.tabs.${value}`) })))
 </script>
@@ -24,10 +24,12 @@ const tabs = computed(() => tabNames.map((value) => ({ value, label: t(`capabili
 <template>
   <div class="flex min-w-0 flex-col gap-5">
     <Tabs v-model="tab" :items="tabs" :label="t('shell.pages.capabilities')" />
-    <McpTab v-if="tab === 'mcp'" />
-    <SkillsTab v-else-if="tab === 'skills'" />
-    <WebTab v-else-if="tab === 'web'" />
-    <WorkerTab v-else-if="tab === 'tasks'" />
-    <BrowserTab v-else />
+    <KeepAlive>
+      <McpTab v-if="tab === 'mcp'" />
+      <SkillsTab v-else-if="tab === 'skills'" />
+      <WebTab v-else-if="tab === 'web'" />
+      <WorkerTab v-else-if="tab === 'tasks'" />
+      <BrowserTab v-else />
+    </KeepAlive>
   </div>
 </template>

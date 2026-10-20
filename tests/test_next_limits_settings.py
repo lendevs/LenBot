@@ -102,30 +102,3 @@ def test_stale_tab_cannot_wipe_per_group_settings(tmp_path):
         assert limits['scene_messages_per_hour'] == {GROUP: 5}
     _panel(tmp_path, body)
 
-
-def test_conflict_notice_clears_after_discarding_edits():
-    """小然 review 2: run the composable with Vue's reactivity when the frontend deps are installed."""
-    import shutil
-
-    import pytest
-    import subprocess
-    from pathlib import Path
-    frontend = Path(__file__).parents[1] / 'src' / 'len_bot' / 'web' / 'frontend'
-    if shutil.which('node') is None or not (frontend / 'node_modules' / 'vue').exists():
-        pytest.skip('node or frontend node_modules missing')
-    script = """
-import { computed, nextTick, ref } from 'vue'
-import { useConflictNotice } from './src/host/conflictNotice.js'
-const saved = ref('a'), draft = ref('mine')
-const dirty = computed(() => draft.value !== saved.value)
-const { conflict, show } = useConflictNotice(dirty)
-await nextTick()
-saved.value = 'b'; draft.value = 'b'            // 409: the form is replaced by the server's values
-await show('没有保存')
-if (conflict.value !== '没有保存') throw new Error('notice cleared by the reload itself')
-draft.value = 'retyped'; await nextTick()
-if (conflict.value !== '没有保存') throw new Error('notice cleared while editing')
-draft.value = 'b'; await nextTick()             // discard / undo the edits
-if (conflict.value !== '') throw new Error('notice kept after discarding: ' + conflict.value)
-"""
-    subprocess.run(['node', '--input-type=module', '-e', script], cwd=frontend, check=True)

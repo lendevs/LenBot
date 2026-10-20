@@ -34,6 +34,7 @@ from ...models.asr import AudioSettings
 from ...runtime.logs import LoggingSettings
 from ...models.limits import ResourceLimits, apply_speech_limits
 from ...work.egress_policy import NetworkSettings
+from ...runtime.identity import IdentitySettings
 from ...runtime.retention import RetentionSettings
 from ...tools.web_search import WebSearchSettings
 from ...memory.service import RecallSettings
@@ -214,6 +215,12 @@ class CommandsChange(BaseModel):
     group_managers_chat_reset: bool
 
 
+class PermissionsChange(BaseModel):
+    """The global identity lists; per-group lists and the ability matrix stay on /api/host/permissions."""
+    model_config = ConfigDict(strict=True, extra="forbid")
+    permissions: IdentitySettings
+
+
 class PanelChange(BaseModel):
     model_config = STRICT
 
@@ -293,6 +300,7 @@ def _project(config: HostConfig) -> dict:
             for scene, settings in config.scenes.items()
         },
         "commands": config.commands.model_dump(mode="json"),
+        "permissions": config.permissions.model_dump(mode="json"),
         "web_read": None if config.web_read is None else config.web_read.model_dump(mode="json"),
         "web_search": None if config.web_search is None else config.web_search.model_dump(mode="json"),
         "network": config.network.model_dump(mode="json"),
@@ -352,6 +360,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
                 for scene in sorted(current["scenes"].keys() | recorded["scenes"].keys())
             },
             "commands": running.commands != saved.commands,
+            "permissions": running.permissions != saved.permissions,
             "web_read": running.web_read != saved.web_read,
             "web_search": running.web_search != saved.web_search,
             "network": running.network != saved.network,
@@ -716,6 +725,15 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         def edit(source: dict, saved: HostConfig) -> None:
             source["commands"] = {**saved.commands.model_dump(mode="json"),
                                   "group_managers_chat_reset": change.group_managers_chat_reset}
+
+        return await save(edit)
+
+    @app.put("/api/host/settings/permissions", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
+    async def put_permissions(request: Request, _: str = Depends(user)):
+        change: PermissionsChange = await _body(request, PermissionsChange)
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            source["permissions"] = change.permissions.model_dump(mode="json")
 
         return await save(edit)
 

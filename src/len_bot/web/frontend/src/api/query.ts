@@ -25,6 +25,14 @@ export const keys = {
     mcp: () => ['host', 'mcp'] as const,
     browser: () => ['host', 'browser'] as const,
   },
+  /** Outside `host`: the cleanup preview counts tables, and update state asks the update controller or GitHub. */
+  system: {
+    retention: () => ['system', 'retention'] as const,
+    prompts: () => ['system', 'prompts'] as const,
+    prompt: (name: string) => ['system', 'prompts', name] as const,
+    updates: () => ['system', 'updates'] as const,
+    releases: () => ['system', 'updates', 'releases'] as const,
+  },
   /** Skill files do not change with host events; reading them walks directories. */
   skills: {
     all: () => ['skills'] as const,

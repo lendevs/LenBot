@@ -66,7 +66,6 @@ function remove(value: T) {
     :multiple="multiple"
     :disabled="field.disabled.value"
     open-on-click
-    :reset-search-term-on-select="multiple"
   >
     <ComboboxAnchor
       :class="[
