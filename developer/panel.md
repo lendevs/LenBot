@@ -229,3 +229,12 @@ PYTHON
 JSON 接口通过 `response_model` 声明响应。`panel/responses.py` 保存面板视图的响应结构，任务、资源、时间线和插件目录复用各领域已有模型。模型服务原文、插件参数、持久化调用记录等可变正文使用 JSON 类型，不裁剪供应方字段。可选字段使用 `response_model_exclude_unset=True` 保留原响应的缺省行为；不把原先缺省的字段补成 null。图片、音频、文件和诊断归档保持二进制响应。
 
 `tests/test_panel_response_contract.py` 使用相同业务入口的无响应过滤应用取得原始 HTTP JSON，再对照响应模型序列化结果；比较 JSON 文本以区分整数、浮点数和布尔值。它覆盖读取及角色、记忆、会话、提醒等写入响应。
+
+
+HTTP 业务错误与参数校验错误统一返回：
+
+```json
+{"detail": {"message": "错误原文", "code": null}}
+```
+
+附加资料放在可选的 `detail.data`；上限设置冲突的代码为 `limits_conflict`，最新快照在 `detail.data.snapshot`。参数校验的代码为 `validation_error`，位置、消息和类型在 `detail.data.errors`，不回传原始输入正文。鉴权、同源拒绝和静态资源错误使用相同结构，原 HTTP 状态码与响应头保持不变。前端的普通提示读取 `detail.message`，有专门恢复行为的页面按 code/data 处理。

@@ -82,10 +82,10 @@ def test_stale_tab_cannot_wipe_per_group_settings(tmp_path):
         assert response.status_code == 409
         detail = response.json()['detail']
         assert '重新载入' in detail['message']
-        assert detail['snapshot']['saved']['limits']['scene_messages_per_hour'] == {GROUP: 5}
+        assert detail['data']['snapshot']['saved']['limits']['scene_messages_per_hour'] == {GROUP: 5}
         assert _saved(root)['scene_messages_per_hour'] == {GROUP: 5} and _saved(root).get('messages_per_hour', 60) == 60
         # After reloading, the same edit goes through and keeps the group setting.
-        fresh = detail['snapshot']['versions']['limits']
+        fresh = detail['data']['snapshot']['versions']['limits']
         saved = await client.put('/api/host/settings/limits', json={'messages_per_hour': 30, 'version': fresh})
         assert saved.status_code == 200
         assert saved.json()['saved']['limits']['scene_messages_per_hour'] == {GROUP: 5}

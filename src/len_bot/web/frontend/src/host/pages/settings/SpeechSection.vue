@@ -36,10 +36,11 @@ async function submit() {
     try {
       return await api('/api/host/settings/limits', { method: 'PUT', body: JSON.stringify(body) })
     } catch (error) {
-      if (error.status !== 409 || !error.details?.snapshot) throw error
+      const snapshot = error.details?.code === 'limits_conflict' ? error.details.data?.snapshot : null
+      if (!snapshot) throw error
       // Load the latest settings (and version) into the form so the next save works, and say why.
-      emit('reload', error.details.snapshot)
-      draft.value = clone(pick(error.details.snapshot.saved.limits))
+      emit('reload', snapshot)
+      draft.value = clone(pick(snapshot.saved.limits))
       // The form now shows the server's values, so say plainly that what was typed is gone.
       await showConflict('没有保存：上限设置已在其他页面或标签页修改。你刚填的内容已被替换为最新的设置，请重新填写后再保存。')
       return undefined

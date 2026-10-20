@@ -171,7 +171,7 @@ def test_login_validation_names_missing_username_without_echoing_password(panel_
         assert password not in response.text
         assert any(item["loc"] == ["body", "username"]
                    and item["type"] == "missing" and item["msg"]
-                   for item in response.json()["detail"])
+                   for item in response.json()["detail"]["data"]["errors"])
 
 
 def test_virtual_sender_cannot_use_configured_bot_identity(panel_config, panel_root):
@@ -181,7 +181,7 @@ def test_virtual_sender_cannot_use_configured_bot_identity(panel_config, panel_r
             "uid": panel_config.bot_id, "nickname": "伪装自身", "text": "不能保存的虚拟消息",
         })
         assert response.status_code == 422
-        assert "Bot" in response.json()["detail"]
+        assert "Bot" in response.json()["detail"]["message"]
         assert client.get("/api/chat-test/state").json()["messages"] == []
         assert client.post("/api/auth/logout").status_code == 200
     with Store(panel_config.database) as store:

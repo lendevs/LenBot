@@ -9,12 +9,10 @@ from urllib.parse import urlsplit
 from collections.abc import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 
+from len_bot.web.errors import error_response, install_panel_errors
 from len_bot.web.auth import (
     clear_login_failures, create_session, login_blocked, record_login_failure,
     revoke_session, session_user, verify_password,
@@ -51,6 +49,7 @@ def require_panel_origin(connection: HTTPConnection) -> None:
 
 def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
                        on_logout: Callable[[], None]) -> Callable[[Request], str]:
+    install_panel_errors(app)
     last_login_at: float | None = None
 
     @app.middleware('http')
@@ -59,17 +58,8 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
             try:
                 require_panel_origin(request)
             except HTTPException as error:
-                return JSONResponse({'detail': error.detail}, status_code=error.status_code)
+                return error_response(error.status_code, error.detail, headers=error.headers)
         return await call_next(request)
-
-    @app.exception_handler(RequestValidationError)
-    async def validation_error(request: Request, error: RequestValidationError):
-        if request.url.path == "/api/auth/login":
-            # A missing field otherwise echoes the complete password-bearing body.
-            return JSONResponse(status_code=422, content={"detail": [
-                {key: item[key] for key in ("type", "loc", "msg")} for item in error.errors()
-            ]})
-        return await request_validation_exception_handler(request, error)
 
     def user(request: Request) -> str:
         return session_user(request.cookies.get(cookie_name(request)))

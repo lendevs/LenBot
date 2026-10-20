@@ -81,10 +81,10 @@ const save = useMutation({
   },
   onError: (error) => {
     // Changed in another tab first: load the latest limits so the next save works, and say the edit is gone.
-    const detail = error instanceof ApiError && error.status === 409 ? (error.detail as { snapshot?: SettingsSnapshot }) : null
-    if (!detail?.snapshot) return
-    client.setQueryData(keys.host.settings(), detail.snapshot)
-    adopt(detail.snapshot)
+    const data = error instanceof ApiError && error.code === 'limits_conflict' ? (error.data as { snapshot?: SettingsSnapshot }) : null
+    if (!data?.snapshot) return
+    client.setQueryData(keys.host.settings(), data.snapshot)
+    adopt(data.snapshot)
     conflict.value = t('models.limits.conflict')
   },
 })

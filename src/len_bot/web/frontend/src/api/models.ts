@@ -139,7 +139,7 @@ export const modelsApi = {
   save: (change: ModelsChange) => http.put<SettingsSnapshot>('/api/host/settings/models', change),
   usage: (period: 'day' | 'month', signal?: AbortSignal) =>
     http.get<Usage>('/api/host/usage', { period }, signal),
-  /** `version` is the snapshot's `versions.limits`; a stale one is refused with 409 and the latest snapshot. */
+  /** `version` is the snapshot's `versions.limits`; a stale one is refused with 409, code `limits_conflict` and the latest snapshot in `data.snapshot`. */
   saveLimits: (change: {
     daily_tokens: number | null
     scene_daily_tokens: Record<string, number>

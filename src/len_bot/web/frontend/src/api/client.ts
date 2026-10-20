@@ -18,9 +18,11 @@ export interface RequestOptions {
 export class ApiError extends Error {
   /** HTTP status; 0 when the request never got an answer. */
   readonly status: number
-  /** The `detail` field of the error body, kept as sent. */
+  /** The `detail` field of the error body, kept as sent: `{message, code, data?}`. */
   readonly detail: unknown
   readonly code: string | null
+  /** `detail.data`: what a page needs to recover from this error, such as the latest snapshot on a conflict. */
+  readonly data: unknown
 
   constructor(message: string, status: number, detail: unknown = null, code: string | null = null) {
     super(message)
@@ -28,6 +30,7 @@ export class ApiError extends Error {
     this.status = status
     this.detail = detail
     this.code = code
+    this.data = detail && typeof detail === 'object' ? ((detail as { data?: unknown }).data ?? null) : null
   }
 }
 
@@ -55,7 +58,7 @@ export function onUnauthorized(handler: () => void): void {
   unauthorized = handler
 }
 
-/** Readable text of an error `detail`: a string, a FastAPI validation list, or `{message}`. */
+/** Readable text of an error `detail`: `{message}`, or a plain string or validation list from older answers. */
 export function detailMessage(detail: unknown): string | null {
   if (typeof detail === 'string') return detail || null
   if (Array.isArray(detail)) {

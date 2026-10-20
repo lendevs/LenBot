@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from len_bot.next import prompt_files
 from len_bot.next.panel.routes.prompts import register_host_prompts
 from len_bot.next.prompt_files import activate, bundled, check, pending, read_prompt, save
+from len_bot.web.errors import install_panel_errors
 
 TEMPLATE = 'next_expression_principles.md'  # uses $name
 PLAIN = 'next_direct.md'  # read as plain text, no placeholders
@@ -70,6 +71,7 @@ def test_panel_routes_edit_reset_and_keep_setting(tmp_path):
         return 'operator'
 
     app = FastAPI()
+    install_panel_errors(app)
     register_host_prompts(app, root=tmp_path, user=operator)
     with TestClient(app) as client:
         overview = client.get('/api/host/prompts').json()
@@ -78,7 +80,7 @@ def test_panel_routes_edit_reset_and_keep_setting(tmp_path):
 
         assert client.get('/api/host/prompts/next_missing.md').status_code == 404
         refused = client.put(f'/api/host/prompts/{TEMPLATE}', json={'text': '没有占位符'})
-        assert refused.status_code == 422 and '$name' in refused.json()['detail']
+        assert refused.status_code == 422 and '$name' in refused.json()['detail']['message']
 
         saved = client.put(f'/api/host/prompts/{TEMPLATE}', json={'text': '$name 只说一句。'}).json()
         assert {'name': TEMPLATE, 'edited': True} in saved['items'] and saved['edited_version'] == saved['version']

@@ -12,8 +12,7 @@ import shutil
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
@@ -31,6 +30,7 @@ from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
 from ..persona.profile import Persona, load_persona
 from len_bot.web.auth import hash_password
+from len_bot.web.errors import install_panel_errors
 from ..storage.files import sync_directory
 
 DEFAULT_PERSONA_DIRECTORY = Path(__file__).resolve().parents[2] / 'default_personas' / 'companion'
@@ -204,14 +204,9 @@ CONTAINER_PANEL_PORT = 11307
 
 def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, container: bool = False) -> FastAPI:
     app = FastAPI(title='LenBot 首次配置')
+    install_panel_errors(app)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['*'] if container else ['127.0.0.1', 'localhost'])
     lock = asyncio.Lock()
-
-    @app.exception_handler(RequestValidationError)
-    async def invalid_input(request, error: RequestValidationError):
-        return JSONResponse(status_code=422, content={'detail': [
-            {key: item[key] for key in ('loc', 'msg', 'type')} for item in error.errors()
-        ]})
 
     def config_exists():
         return (root / "lenbot.config.json").exists()

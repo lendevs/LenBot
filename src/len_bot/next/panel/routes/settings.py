@@ -468,7 +468,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             async with write_lock:
                 saved = await asyncio.to_thread(_read_saved, root)
             raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，这次提交的内容没有保存。请重新载入最新设置，重新填写后再保存。",
-                                      "snapshot": _snapshot(running, saved)}) from None
+                                      "code": "limits_conflict", "data": {"snapshot": _snapshot(running, saved)}}) from None
 
     @app.put("/api/host/settings/limits/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def scene_speech_limit(scene: str, request: Request, _: str = Depends(user)):
