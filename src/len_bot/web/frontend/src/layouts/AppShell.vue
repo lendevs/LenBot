@@ -99,7 +99,7 @@ const tab = computed({
 
 const { status } = useConnectionStatus()
 
-const listFormat = computed(() => new Intl.ListFormat(currentLocale.value, { type: 'unit', style: 'short' }))
+const listFormat = computed(() => new Intl.ListFormat(currentLocale.value, { type: 'conjunction' }))
 const restart = computed(() => host.restart as Restart | null)
 const restartItems = computed(() => {
   const value = restart.value

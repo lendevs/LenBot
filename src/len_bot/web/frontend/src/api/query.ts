@@ -22,6 +22,15 @@ export const keys = {
     eventLoop: () => ['host', 'event-loop'] as const,
     modelProtocols: () => ['host', 'model-protocols'] as const,
     usage: (period: string) => ['host', 'usage', period] as const,
+    mcp: () => ['host', 'mcp'] as const,
+    browser: () => ['host', 'browser'] as const,
+  },
+  /** Skill files do not change with host events; reading them walks directories. */
+  skills: {
+    all: () => ['skills'] as const,
+    scene: (scene: string) => ['skills', scene] as const,
+    files: (scene: string, source: string, name: string, taskId: number | null) =>
+      ['skills', scene, source, name, taskId, 'files'] as const,
   },
   /** Under `host`, so the `host.changed` event that task progress raises refreshes them. */
   tasks: {

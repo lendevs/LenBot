@@ -6,13 +6,12 @@ import { FileSearch, Puzzle, TriangleAlert } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { personasApi, type Allowance, type SkillInfo, type ToolInfo } from '../../../api/personas'
 import { developerDetails } from '../../../composables/useDeveloperMode.js'
-import SkillInspector from '../../../host/components/SkillInspector.vue'
 import { readPendingRestart } from '../../../host/store.js'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import Checkbox from '../../../ui/Checkbox.vue'
-import Dialog from '../../../ui/Dialog.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
+import SkillDialog from '../../capabilities/SkillDialog.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
@@ -201,15 +200,12 @@ const save = useMutation({
       @save="save.mutate()"
       @discard="adopt"
     />
-    <Dialog v-model:open="inspecting" :title="inspected?.name ?? ''" size="lg">
-      <SkillInspector
-        v-if="inspected && abilities.data.value"
-        :key="`${inspected.source}:${inspected.name}`"
-        :scene="abilities.data.value.scene"
-        :source="inspected.source"
-        :name="inspected.name"
-        @changed="skillChanged"
-      />
-    </Dialog>
+    <SkillDialog
+      v-if="inspected && abilities.data.value"
+      :key="`${inspected.source}:${inspected.name}`"
+      v-model:open="inspecting"
+      :place="{ scene: abilities.data.value.scene, source: inspected.source, name: inspected.name }"
+      @changed="skillChanged"
+    />
   </form>
 </template>
