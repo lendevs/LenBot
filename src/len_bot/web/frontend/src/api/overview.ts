@@ -62,9 +62,12 @@ export interface Overview {
 /** GET /api/host/event-loop (panel/routes/diagnostics.py). */
 export interface EventLoop {
   running: boolean
+  started_at: number | null
   interval_ms: number
   threshold_ms: number
+  probes: number
   stalls: number
+  stalled_ms_total: number
   /** Gaps from the computer sleeping; not counted as stalls. */
   pauses: number
   max_lag_ms: number

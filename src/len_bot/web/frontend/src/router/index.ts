@@ -45,9 +45,7 @@ const hostRoutes: RouteRecordRaw[] = [
   page('/capabilities', 'host-capabilities', () => import('../views/capabilities/CapabilitiesView.vue')),
   page('/models', 'host-models', () => import('../views/models/ModelsView.vue')),
   page('/system', 'host-system', () => import('../views/system/SystemView.vue')),
-  page('/system/logs', 'host-logs', () => import('../host/pages/logs/LogsPage.vue'), {
-    scene: (route) => route.query.tab !== 'system',
-  }),
+  page('/system/logs', 'host-logs', () => import('../views/system/logs/LogsView.vue')),
 ]
 
 const trialRoutes: RouteRecordRaw[] = [

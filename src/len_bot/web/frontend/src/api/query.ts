@@ -32,6 +32,9 @@ export const keys = {
     prompt: (name: string) => ['system', 'prompts', name] as const,
     updates: () => ['system', 'updates'] as const,
     releases: () => ['system', 'updates', 'releases'] as const,
+    /** Read on demand or by the page's own follow timer; host events would re-read files many times a second. */
+    logs: (filter: object) => ['system', 'logs', filter] as const,
+    logFiles: () => ['system', 'log-files'] as const,
   },
   /** Skill files do not change with host events; reading them walks directories. */
   skills: {
