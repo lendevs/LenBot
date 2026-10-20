@@ -47,10 +47,24 @@ function onScroll() {
   if (fromEnd < props.threshold) emit('reachEnd')
 }
 
+/**
+ * Rows near the end may not be measured yet, so scrolling by index lands short of the real end. The scroller
+ * is pinned to its full height instead, again on the next frames while newly rendered rows report their size.
+ */
 function scrollToEnd(behavior: ScrollBehavior = 'auto') {
-  if (!props.items.length) return
-  virtualizer.value.scrollToIndex(props.items.length - 1, { align: 'end', behavior })
+  const element = scroller.value
+  if (!element || !props.items.length) return
   atEnd.value = true
+  let frames = 3
+  const pin = () => {
+    element.scrollTop = element.scrollHeight
+    atEnd.value = true
+    if (--frames > 0) requestAnimationFrame(pin)
+  }
+  if (behavior === 'smooth') {
+    element.scrollTo({ top: element.scrollHeight, behavior })
+    setTimeout(pin, 450)
+  } else pin()
 }
 
 /**

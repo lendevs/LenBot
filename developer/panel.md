@@ -129,7 +129,7 @@ const state = useQuery({ queryKey: keys.host.state(), queryFn: ({ signal }) => h
 
 ## 实时事件
 
-`realtime/stream.ts` 在登录后建立唯一的 `/api/host/stream` 连接，退出登录时关闭；断线按 1、2、4…30 秒加抖动重连，重连后和收到 `resync` 时让全部查询失效。全局规则写在 `cacheRules`：`host.state` 让宿主状态失效，`host.changed` 让宿主类查询失效，消息和回合开始、结束让对应群的时间线失效。
+`realtime/stream.ts` 在登录后建立唯一的 `/api/host/stream` 连接，退出登录时关闭；断线按 1、2、4…30 秒加抖动重连，重连后和收到 `resync` 时让全部查询失效。全局规则写在 `cacheRules`：`host.state` 让宿主状态失效，`host.changed` 让宿主类查询失效。群聊时间线不在全局规则里：现场页签打开时，自己在这个群的消息和回合事件后重新读取最新一页并合并进已读取的内容（`views/groups/live/useTimeline.ts`），不重新读取全部已加载的页；关闭后缓存丢弃，再打开从最新一页开始。
 
 页面需要对某类事件做增量处理时：
 

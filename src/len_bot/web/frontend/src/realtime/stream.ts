@@ -144,8 +144,6 @@ const refreshHost = throttle(() => void queryClient.invalidateQueries({ queryKey
 function cacheRules(event: HostEvent) {
   if (event.type === 'host.state') refreshState()
   else if (event.type === 'host.changed') refreshHost()
-  if (event.scene && /^(message\.|turn\.(started|ended)$)/.test(event.type)) {
-    void queryClient.invalidateQueries({ queryKey: keys.scene.timeline(event.scene) })
-  }
+  // Group timelines merge their newest page on message and turn events themselves (views/groups/live).
 }
 handlers.set('*', new Set([cacheRules]))
