@@ -12,8 +12,10 @@ const props = withDefaults(
     error?: string | null
     /** Blocks saving, such as when a required field is empty. */
     invalid?: boolean
+    /** Text of the save button when saving also does something else, such as 保存并启用. */
+    saveLabel?: string
   }>(),
-  { error: null },
+  { error: null, saveLabel: undefined },
 )
 const emit = defineEmits<{ save: []; discard: [] }>()
 
@@ -58,7 +60,7 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
           {{ t('common.discard') }}
         </Button>
         <Button variant="primary" size="sm" :loading="saving" :disabled="!canSave" @click="emit('save')">
-          {{ saving ? t('common.saving') : t('common.save') }}
+          {{ saving ? t('common.saving') : (saveLabel ?? t('common.save')) }}
           <span v-if="!saving" class="ml-0.5 text-[11px] font-medium opacity-70 max-sm:hidden">
             {{ mac ? '⌘S' : 'Ctrl S' }}
           </span>

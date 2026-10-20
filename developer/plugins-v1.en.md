@@ -66,9 +66,9 @@ The panel builds a form from `[config.field]` declarations, so operators do not 
 How the panel lays out the form (plugins cannot override placement or styling):
 
 - Each `group` is a card titled with the group name, in order of first appearance. Ungrouped plain fields share an untitled card that comes first; an ungrouped object_list gets a card of its own, titled with its `label` and showing the row count.
-- Cards have two columns. Half-width: single-line string, secret, integer, number, boolean (a switch row), dropdown or segmented options, and `scene`. Full-width: multiline string, string_list, `scene_list`, path, url and object_list. Narrow screens use one column. Numbers show their range inside the input, except a lone lower bound of 0 or 1.
+- Cards have two columns. Half-width: single-line string, secret, integer, number, boolean (a switch row), dropdown or segmented options, and `scene`. Full-width: multiline string, string_list, `scene_list`, path, url and object_list. Narrow screens use one column. Numbers show their range inside the input, except a lone lower bound of 0 or 1; an integer with both bounds no more than 100 apart also gets − and + buttons.
 - With four or more cards, wide screens show a section index on the left.
-- The label sits above the control; `description` lives in an info tooltip next to it. Required fields (no `default`) get a red asterisk. Secrets that are already saved are marked as saved.
+- The label sits above the control; `description` lives in an info tooltip next to it. Required fields (no `default`) get a red asterisk; a required secret loses it once saved. Secrets that are already saved are marked as saved. After an edit, or when enabling is tried, a missing required value, an out-of-range number or invalid JSON shows its reason under the field, and an object_list row with a problem gets a red border while collapsed.
 - A collapsed object_list row is titled by its first filled string child, falling back to the first filled number; the other numbers and strings follow as `label value`, a `scene_list` child shows its group count, and true booleans and chosen options show as badges.
 - Edits raise a save bar at the bottom of the page. While the plugin is stopped the button reads save and enable, since the host stores parameters only when enabling.
 

@@ -19,6 +19,8 @@ const props = withDefaults(
     size?: 'sm' | 'md'
     /** Hide the − and + buttons for wide ranges where stepping is pointless. */
     steppers?: boolean
+    /** Round typed values to a multiple of `step`; off for free decimals. */
+    snap?: boolean
     formatOptions?: Intl.NumberFormatOptions
     id?: string
     invalid?: boolean
@@ -32,6 +34,7 @@ const props = withDefaults(
     placeholder: undefined,
     size: 'md',
     steppers: true,
+    snap: true,
     formatOptions: () => ({ useGrouping: false, maximumFractionDigits: 6 }),
     id: undefined,
   },
@@ -53,6 +56,7 @@ const stepper =
     :min="min"
     :max="max"
     :step="step"
+    :step-snapping="snap"
     :locale="currentLocale"
     :format-options="formatOptions"
     :disabled="field.disabled.value"

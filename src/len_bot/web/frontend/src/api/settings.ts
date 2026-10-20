@@ -1,3 +1,4 @@
+import type { PluginsSnapshot } from './plugins'
 import { http, request } from './client'
 
 /** Types of panel/routes/settings.py, permissions.py and the parts of plugins.py a group's settings use. */
@@ -160,14 +161,6 @@ export interface PermissionsSnapshot {
   saved: Permissions
   owners: string[]
   restart_required: boolean
-}
-
-/** The parts of GET /api/host/plugins a group's plugin switches read. */
-export interface PluginsSnapshot {
-  running: { plugins: { name: string; status: string; description: string | null }[] }
-  saved: { disabled: string[]; plugins: Record<string, unknown> }
-  available: Record<string, { description?: string; error: string | null }[]>
-  scenes: Record<string, { saved: string[] | null; running: string[] }>
 }
 
 export interface RoleSwitch {
