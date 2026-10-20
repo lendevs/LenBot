@@ -1,4 +1,3 @@
-import { sceneName } from '../api.js'
 import { statusText } from './status.js'
 
 export const roleOptions = [
@@ -35,25 +34,9 @@ const notices = {
   group_ban: '禁言状态变化', group_card: '修改了群名片', notify: '平台通知', group_upload: '上传了群文件',
 }
 export const toolLabel = name => tools[name] || name
-const toolNotes = {
-  say: '在群里说话', wait: '等群友把话说完再回', recall_chat: '翻看本群以前的聊天', look: '看群里发的图片',
-  web_search: '上网搜索', web_read: '打开网页读内容', schedule: '定提醒和周期安排', schedule_list: '查看定好的提醒',
-  schedule_cancel: '取消提醒', tool_search: '用到不常用的工具时先把它找出来', memory: '记住、查找和修改长期记忆',
-  delegate: '把耗时的活交给后台任务', task: '查看和追问后台任务', send_file: '把任务做出来的文件发到群里',
-  react: '发表情回应', message_reaction: '给群消息贴表情回应', persona_knowledge: '查角色自带的资料', scene_control: '有人让它安静时暂停一会儿',
-  open_forward: '展开合并转发看里面的内容', member_info: '查群成员的名片和头衔', transcribe: '把语音转成文字',
-  host_manage: '主人在群里让它改设置',
-}
-export const toolNote = name => toolNotes[name] || ''
 export const callRoleLabel = role => role.startsWith('plugin:') ? `插件 ${role.slice(7)}` : callRoles[role] || role
 export const noticeLabel = kind => notices[kind] || kind
 export const wakeLabel = channel => ({ direct: '被 @ 或回复', named: '点名', focus: '对话继续', ambient: '群里在聊', explore: '随机叫醒',
   proactive: '主动开话题', schedule: '提醒', task: '任务', plugin: '插件', audio: '语音就绪', resume: '恢复对话',
   manual: '手动操作', unknown: '历史未记录' }[channel] || channel)
 
-// Other groups sharing the same role; long lists keep the first two names and a count.
-export function sharedRoleNote(scenes) {
-  const names = scenes.map(sceneName)
-  const list = names.length > 2 ? `${names.slice(0, 2).join('、')} 等 ${names.length} 个群` : names.join('、')
-  return `这个角色还用在 ${list}，修改会一起生效。`
-}

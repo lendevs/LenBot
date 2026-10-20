@@ -196,11 +196,15 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
         saved = load_host_config(root)
         if scene not in saved.scenes:
             raise ValueError("此场景已从保存配置移除，不能读取或编辑保存的角色许可")
-        path = saved.scenes[scene].persona
+        return write_role(saved, saved.scenes[scene].persona, directory, field, value)
+
+    def write_role(saved, path: Path, directory: str, field: Literal["tools", "skills"],
+                   value: str | list[str]) -> dict:
         require_persona_target(path, directory)
         persona = load_persona(path).model_copy(update={field: value})
         affected = [key for key, value in saved.scenes.items() if value.persona == path]
-        for key in affected:
+        # A role no group uses is still checked against one group, so unknown names are refused.
+        for key in affected or list(saved.scenes)[:1]:
             build_tools(saved.scene_config(key), persona, platform=saved.delivery == "onebot", host_management=True)
             if saved.worker is not None:
                 select_skills(scene_skill_catalog(saved, key), persona.skills)
@@ -246,3 +250,84 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error
         return await applied(scene, "skills", result)
+
+    def reference_scene(path: Path, saved, scene: str | None) -> str:
+        """The group whose configuration decides which tools and skills a role could use."""
+        if scene is not None:
+            chat_for(scene)
+            return scene
+        affected = [key for key, value in saved.scenes.items() if value.persona == path and key in runtime.chats]
+        candidates = affected or list(runtime.chats)
+        if not candidates:
+            raise HTTPException(409, "还没有群聊，无法判断角色能用哪些工具")
+        return candidates[0]
+
+    def role_abilities(key: str, scene: str | None) -> dict:
+        saved = load_host_config(root)
+        path = runtime.personas.find(key, saved).path
+        persona = load_persona(path)
+        reference = reference_scene(path, saved, scene)
+        chat = runtime.chats[reference]
+        host_management = chat.toolset.host_management is not None
+        tools = []
+        for tool in tool_catalog(platform=chat.config.delivery == "onebot"):
+            function = tool["function"]
+            name = function["name"]
+            tools.append({"name": name, "description": function["description"], "summary": function["description"],
+                          "parameters": function["parameters"], "instructions": None, "source": None,
+                          "deferred": name in DEFERRED_NAMES,
+                          "reasons": [reason for reason in tool_unavailable_reasons(
+                              chat.config, persona, name, host_management=host_management)
+                              if reason != "角色没有允许这个工具"]})
+        previews = [] if runtime.plugins is None else runtime.plugins.tool_previews(reference)
+        previews += [] if runtime.mcp is None else [
+            {**tool.discovery, "summary": tool.discovery["description"], "description": tool.description,
+             "parameters": tool.definition["function"]["parameters"], "instructions": tool.instructions, "reasons": []}
+            for tool in runtime.mcp.tools_for(reference)]
+        for preview in previews:
+            tools.append({**preview, "deferred": True, "reasons": list(preview["reasons"])})
+        catalog = scene_skill_catalog(saved, reference)
+        selected = select_skills(catalog, persona.skills) if saved.worker is not None else ()
+        directory = None if saved.worker is None else saved.worker.skills_directory
+        return {
+            "key": key, "directory": str(path), "scene": reference,
+            "affected_scenes": [name for name, value in saved.scenes.items() if value.persona == path],
+            "tools": {"saved": persona.tools, "catalog": tools},
+            "skills": {"saved": persona.skills, "directory": None if directory is None else str(directory),
+                       "catalog": [{**skill_info(skill), "selected": skill in selected} for skill in catalog]},
+        }
+
+    @app.get("/api/host/personas/{key}/abilities")
+    async def abilities(key: str, scene: str | None = None, _: str = Depends(user)):
+        try:
+            async with write_lock:
+                return await asyncio.to_thread(role_abilities, key, scene)
+        except LookupError as error:
+            raise HTTPException(404, "角色库里没有这个角色") from error
+        except (ValueError, OSError) as error:
+            raise HTTPException(422 if isinstance(error, ValueError) else 500,
+                                f"{type(error).__name__}: {error}") from error
+
+    async def save_for_role(key: str, directory: str, field: Literal["tools", "skills"],
+                            value: str | list[str]) -> dict:
+        def write() -> dict:
+            saved = load_host_config(root)
+            return write_role(saved, runtime.personas.find(key, saved).path, directory, field, value)
+
+        try:
+            async with write_lock:
+                result = await asyncio.to_thread(write)
+        except LookupError as error:
+            raise HTTPException(404, "角色库里没有这个角色") from error
+        except (ValueError, OSError) as error:
+            raise HTTPException(422 if isinstance(error, ValueError) else 500,
+                                f"{type(error).__name__}: {error}") from error
+        return {**result, **await apply_saved(runtime, Path(result["directory"]))}
+
+    @app.put("/api/host/personas/{key}/tools")
+    async def save_role_tools(key: str, changes: RoleTools, _: str = Depends(user)):
+        return await save_for_role(key, changes.directory, "tools", changes.tools)
+
+    @app.put("/api/host/personas/{key}/skills")
+    async def save_role_skills(key: str, changes: RoleSkills, _: str = Depends(user)):
+        return await save_for_role(key, changes.directory, "skills", changes.skills)

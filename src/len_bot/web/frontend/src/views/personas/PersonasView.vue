@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowLeft, ChevronDown, FileArchive, Plus, Search, UserRound } from '@lucide/vue'
 import { keys } from '../../api/query'
 import { personasApi, type PersonaRole } from '../../api/personas'
-import PersonaDetail from '../../host/pages/persona/PersonaDetail.vue'
 import { host } from '../../host/store.js'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Button from '../../ui/Button.vue'
@@ -20,6 +19,7 @@ import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import CreatePersonaDialog, { type CreateRequest } from './CreatePersonaDialog.vue'
 import PersonaCard from './PersonaCard.vue'
+import PersonaDetail from './detail/PersonaDetail.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -107,12 +107,13 @@ const exporting = useMutation({
       :retry="library.refetch"
     />
     <template v-else-if="key">
-      <!-- The detail page moves to the new components in M3.3. -->
       <PersonaDetail
         v-if="opened"
+        :key="opened.key"
         :role="opened"
-        @changed="refresh"
-        @create="(value: CreateRequest) => (request = value)"
+        :exporting="exporting.isPending.value"
+        @copy="request = { kind: 'copy', source: opened }"
+        @export="exporting.mutate(opened)"
       />
       <EmptyState v-else :icon="UserRound" :title="t('personas.missing')">
         <Button :icon="ArrowLeft" @click="open(null)">{{ t('personas.all') }}</Button>

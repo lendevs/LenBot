@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onActivated, onDeactivated, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useEventListener } from '@vueuse/core'
 import Button from './Button.vue'
@@ -20,10 +20,14 @@ const emit = defineEmits<{ save: []; discard: [] }>()
 const { t } = useI18n()
 const mac = /Mac|iPhone|iPad/.test(navigator.platform)
 const canSave = computed(() => props.dirty && !props.saving && !props.invalid)
+// A bar inside a hidden KeepAlive page keeps its draft but must not answer the shortcut.
+const active = ref(true)
+onActivated(() => (active.value = true))
+onDeactivated(() => (active.value = false))
 
 useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   if (event.key.toLowerCase() !== 's' || !(mac ? event.metaKey : event.ctrlKey)) return
-  if (!props.dirty) return
+  if (!props.dirty || !active.value) return
   event.preventDefault()
   if (canSave.value) emit('save')
 })

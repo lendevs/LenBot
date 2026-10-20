@@ -1,3 +1,4 @@
+import { reactive } from 'vue'
 import { http } from './client'
 
 export interface ItemHealth {
@@ -89,9 +90,13 @@ export interface PersonaSummary {
   scenes?: string[]
 }
 
+/** Bumped when a role's avatar changes, so every image of it is read again. */
+const avatarVersions = reactive<Record<string, number>>({})
+export const avatarChanged = (key: string) => (avatarVersions[key] = (avatarVersions[key] ?? 0) + 1)
+
 export const personaAvatar = (role: PersonaSummary) =>
   role.avatar
-    ? `/api/host/personas/${encodeURIComponent(role.key)}/avatar/image?directory=${encodeURIComponent(role.path)}`
+    ? `/api/host/personas/${encodeURIComponent(role.key)}/avatar/image?directory=${encodeURIComponent(role.path)}&v=${avatarVersions[role.key] ?? 0}`
     : null
 
 const scenePath = (scene: string) => `/api/host/scenes/${encodeURIComponent(scene)}`

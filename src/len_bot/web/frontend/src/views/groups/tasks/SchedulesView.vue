@@ -4,8 +4,10 @@ import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { Bell, Plus, TriangleAlert } from '@lucide/vue'
 import { keys } from '../../../api/query'
+import { personasApi } from '../../../api/personas'
 import { schedulesApi, type Schedule, type ScheduleFilter } from '../../../api/schedules'
 import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { host } from '../../../host/store.js'
 import { formatDateTime } from '../../../i18n/format'
 import Badge, { type Tone } from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
@@ -27,6 +29,12 @@ const { t } = useI18n()
 const client = useQueryClient()
 const service = useQuery({ queryKey: keys.tasks.scheduleState(), queryFn: ({ signal }) => schedulesApi.state(signal) })
 const settings = computed(() => service.data.value?.scenes.find((item) => item.scene === props.scene) ?? null)
+// Tools are allowed per role, on the role's detail page.
+const roles = useQuery({ queryKey: keys.personas.all(), queryFn: ({ signal }) => personasApi.library(signal) })
+const roleKey = computed(() => {
+  const path = (host.state?.scenes ?? []).find((item: { scene: string }) => item.scene === props.scene)?.persona_path
+  return roles.data.value?.roles.find((role) => role.path === path)?.key ?? null
+})
 
 const filter = ref<ScheduleFilter>('active')
 const filters = computed(() =>
@@ -121,8 +129,12 @@ function added() {
       <Button v-if="!settings.enabled" size="sm" :to="groupsTarget(scene, 'settings')">
         {{ t('groups.tasks.toSettings') }}
       </Button>
-      <Button v-else size="sm" :to="{ name: 'host-capabilities', query: { scene } }">
-        {{ t('groups.tasks.schedules.toCapabilities') }}
+      <Button
+        v-else-if="roleKey"
+        size="sm"
+        :to="{ name: 'host-persona', query: { persona: roleKey, tab: 'abilities' } }"
+      >
+        {{ t('groups.tasks.schedules.toRole') }}
       </Button>
     </div>
 

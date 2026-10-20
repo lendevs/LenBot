@@ -42,15 +42,7 @@ const hostRoutes: RouteRecordRaw[] = [
   page('/groups/:scene?/:tab?', 'groups', () => import('../views/groups/GroupsView.vue')),
   page('/personas', 'host-persona', () => import('../views/personas/PersonasView.vue')),
   page('/plugins', 'host-plugins', () => import('../host/pages/capabilities/PluginsPage.vue')),
-  page(
-    '/capabilities',
-    'host-capabilities',
-    () => import('../host/pages/capabilities/CapabilitiesPage.vue'),
-    {
-      scene: (route) => ['tools', undefined].includes(route.query.tab as string | undefined),
-      sceneMode: 'role',
-    },
-  ),
+  page('/capabilities', 'host-capabilities', () => import('../host/pages/capabilities/CapabilitiesPage.vue')),
   page('/models', 'host-models', () => import('../host/pages/models/ModelsPage.vue')),
   page('/system', 'host-system', () => import('../host/pages/settings/SettingsPage.vue')),
   page('/system/logs', 'host-logs', () => import('../host/pages/logs/LogsPage.vue'), {
