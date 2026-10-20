@@ -370,3 +370,22 @@ async def test_silent_exploration_turn_keeps_ambient_backoff(tmp_path):
     assert (turn['channel'], turn['status'], turn['silence_level']) == ('explore', 'settled', 0)
     assert '[群里在聊]' in json.dumps(requests[0][2], ensure_ascii=False)
     assert '参与分' not in json.dumps(requests[0][2], ensure_ascii=False)
+
+
+def test_chat_status_names_the_reason_and_when_it_changes(tmp_path):
+    from len_bot.next.configuration.chat import QuietHours
+    from len_bot.next.models.limits import record_speech
+    config, persona = config_for(tmp_path)
+    config.attention.quiet_hours = QuietHours(start='23:00', end='07:00')
+    config.limits.messages_per_hour = 1
+    now = [START]
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda event: None)
+        # START is 14:13:20 UTC; the configured quiet hours begin at 23:00.
+        assert live.chat_status() == {'status': 'chatting', 'changes_at': START + 31600}
+        record_speech(store, SCENE)
+        assert live.chat_status() == {'status': 'limited', 'changes_at': START + 3600}
+        live.set_temporary_quiet(600, 'allow', None)
+        assert live.chat_status() == {'status': 'quiet', 'changes_at': START + 600}
+        live.set_paused(True)
+        assert live.chat_status() == {'status': 'paused', 'changes_at': None}

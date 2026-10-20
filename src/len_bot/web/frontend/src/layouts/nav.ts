@@ -1,4 +1,5 @@
 import type { Component } from 'vue'
+import type { RouteLocationRaw } from 'vue-router'
 import {
   Blocks,
   Cpu,
@@ -9,6 +10,7 @@ import {
   UserRound,
   Wrench,
 } from '@lucide/vue'
+import { groupsTarget } from '../views/groups/route'
 
 /** One entry of the sidebar. `pages` are route names shown as tabs under it while old pages are migrated. */
 export interface NavArea {
@@ -56,14 +58,9 @@ export const navGroups: NavGroup[] = [
         id: 'groups',
         label: 'shell.pages.groups',
         icon: MessagesSquare,
-        route: 'host-scenes',
+        route: 'groups',
         scoped: true,
-        pages: [
-          { route: 'host-scenes', label: 'shell.pages.groupMessages' },
-          { route: 'host-memory', label: 'shell.pages.groupMemory' },
-          { route: 'host-tasks', label: 'shell.pages.groupTasks' },
-          { route: 'host-resources', label: 'shell.pages.groupResources' },
-        ],
+        pages: [],
       },
       { id: 'personas', label: 'shell.pages.personas', icon: UserRound, route: 'host-persona', pages: [] },
     ],
@@ -112,13 +109,13 @@ export function groupOf(area: NavArea | undefined): NavGroup | undefined {
 }
 
 /** Route names that keep `?scene=` when reached from another page. */
-export const scopedRoutes = new Set([
-  'host-scenes',
-  'host-memory',
-  'host-tasks',
-  'host-resources',
-  'host-logs',
-])
+export const scopedRoutes = new Set(['host-logs'])
+
+/** Where an area's link goes; group pages keep the selected group (the workbench also keeps its tab). */
+export function areaTarget(area: NavArea, scene: string): RouteLocationRaw {
+  if (area.route === 'groups') return groupsTarget(scene || undefined)
+  return { name: area.route, query: area.scoped && scene ? { scene } : {} }
+}
 
 /** Root config sections → the restart banner label key (shell.restart.sections.*). */
 const sectionKeys: Record<string, string> = {

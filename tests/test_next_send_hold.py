@@ -84,6 +84,7 @@ async def test_panel_switches_all_scenes_and_send_hold(tmp_path):
             assert response.json() == {'enabled': True}
             state = (await client.get('/api/host/state')).json()
             assert state['send_hold'] is True and not any(item['chat_enabled'] for item in state['scenes'])
+            assert {item['chat_status']['status'] for item in state['scenes']} == {'paused'}
             await client.put('/api/host/control/chat', json={'enabled': True})
             assert not any(runner.state.paused for runner in runtime.runners.values())
         assert SendHold(tmp_path).enabled is True

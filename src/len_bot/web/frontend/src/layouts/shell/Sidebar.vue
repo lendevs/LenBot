@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import markUrl from '../../assets/lenbot-mark.svg'
 import Tooltip from '../../ui/Tooltip.vue'
-import { areaOf, navGroups, type NavArea } from '../nav'
+import { areaOf, areaTarget, navGroups } from '../nav'
 
 const props = defineProps<{
   collapsed: boolean
@@ -15,10 +15,6 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const route = useRoute()
-
-function target(area: NavArea) {
-  return { name: area.route, query: area.scoped && props.scene ? { scene: props.scene } : {} }
-}
 </script>
 
 <template>
@@ -52,7 +48,7 @@ function target(area: NavArea) {
           :disabled="!collapsed"
         >
           <RouterLink
-            :to="target(area)"
+            :to="areaTarget(area, props.scene)"
             :aria-current="areaOf(route.name) === area ? 'page' : undefined"
             :aria-label="collapsed ? t(area.label) : undefined"
             class="link-plain relative flex h-9 items-center gap-3 rounded-md px-2.5 text-base text-ink-2 transition-[background-color,color,box-shadow] duration-150 hover:bg-hover hover:text-ink focus-visible:focus-ring aria-[current=page]:bg-surface aria-[current=page]:font-semibold aria-[current=page]:text-ink aria-[current=page]:shadow-card pointer-coarse:h-11"

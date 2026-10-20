@@ -1,4 +1,4 @@
-import { http } from './client'
+import { http, request } from './client'
 
 export interface ItemHealth {
   name: string
@@ -8,6 +8,12 @@ export interface ItemHealth {
   latest_error: unknown
 }
 
+/** Whether the Bot speaks here unprompted now; `changes_at` is when that changes without an event (Unix seconds). */
+export interface ChatStatus {
+  status: 'chatting' | 'paused' | 'quiet' | 'limited'
+  changes_at: number | null
+}
+
 export interface HostScene {
   scene: string
   persona: { id: string; name: string }
@@ -15,6 +21,7 @@ export interface HostScene {
   voice_mode: string
   timezone: string
   chat_enabled: boolean
+  chat_status: ChatStatus
 }
 
 export interface HostState {
@@ -45,9 +52,57 @@ export interface SceneTitles {
   errors: Record<string, string>
 }
 
+/** GET /api/host/scenes/{scene}/control */
+export interface SceneControl {
+  scene: string
+  timezone: string
+  temporary_quiet: {
+    started: number
+    until: number
+    direct: 'allow' | 'defer'
+    requester: string | null
+  } | null
+  paused: boolean
+  quiet_until: number | null
+  direct: string
+}
+
+/** A group the Bot is in (OneBot) or has recently seen (Telegram) that is not connected yet. */
+export interface AvailableScene {
+  scene: string
+  name: string | null
+  members?: number | null
+  last_seen: number | null
+}
+
+export interface PersonaSummary {
+  key: string
+  name?: string
+  config_path: string
+  error?: unknown
+}
+
+const scenePath = (scene: string) => `/api/host/scenes/${encodeURIComponent(scene)}`
+
 export const hostApi = {
   state: (signal?: AbortSignal) => http.get<HostState>('/api/host/state', undefined, signal),
   sceneTitles: (signal?: AbortSignal) => http.get<SceneTitles>('/api/host/scene-titles', undefined, signal),
   setChat: (scene: string, enabled: boolean) =>
-    http.put<unknown>(`/api/host/scenes/${encodeURIComponent(scene)}/control/chat`, { enabled }),
+    http.put<SceneControl>(`${scenePath(scene)}/control/chat`, { enabled }),
+  control: (scene: string, signal?: AbortSignal) =>
+    http.get<SceneControl>(`${scenePath(scene)}/control`, undefined, signal),
+  quiet: (scene: string, seconds: number, direct: 'allow' | 'defer') =>
+    http.post<SceneControl>(`${scenePath(scene)}/control/quiet`, { seconds, direct }),
+  resume: (scene: string) => http.post<SceneControl>(`${scenePath(scene)}/control/resume`),
+  newContext: (scene: string) =>
+    request<unknown>(`${scenePath(scene)}/history/new-context`, {
+      method: 'POST',
+      query: { confirmed: true },
+    }),
+  availableScenes: (signal?: AbortSignal) =>
+    http.get<{ items: AvailableScene[] }>('/api/host/settings/scenes/available', undefined, signal),
+  addScene: (scene: string, persona: string) =>
+    http.post<unknown>('/api/host/settings/scenes', { scene, persona }),
+  personas: (signal?: AbortSignal) =>
+    http.get<{ roles: PersonaSummary[] }>('/api/host/personas', undefined, signal),
 }

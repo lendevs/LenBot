@@ -12,14 +12,25 @@ export function formatCompact(value: number): string {
   )
 }
 
-/** Unix seconds → date and time; today shows only the time. */
-export function formatDateTime(seconds: number, { withSeconds = false } = {}): string {
+/**
+ * Unix seconds → date and time; today shows only the time. `timeZone` (IANA name) shows the clock of a group
+ * whose quiet hours and reminders follow its own time zone; without it the browser's zone is used.
+ */
+export function formatDateTime(
+  seconds: number,
+  { withSeconds = false, timeZone }: { withSeconds?: boolean; timeZone?: string } = {},
+): string {
   const date = new Date(seconds * 1000)
-  const now = new Date()
-  const today = date.toDateString() === now.toDateString()
+  // en-CA gives YYYY-MM-DD, which compares day and year in the chosen zone.
+  const day = (value: Date) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(
+      value,
+    )
+  const [shown, now] = [day(date), day(new Date())]
   return new Intl.DateTimeFormat(currentLocale.value, {
-    ...(today ? {} : { month: 'numeric', day: 'numeric' }),
-    ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}),
+    timeZone,
+    ...(shown === now ? {} : { month: 'numeric', day: 'numeric' }),
+    ...(shown.slice(0, 4) !== now.slice(0, 4) ? { year: 'numeric' } : {}),
     hour: '2-digit',
     minute: '2-digit',
     ...(withSeconds ? { second: '2-digit' } : {}),

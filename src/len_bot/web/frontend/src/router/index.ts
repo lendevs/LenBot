@@ -1,6 +1,7 @@
 import {
   createRouter,
   createWebHashHistory,
+  type LocationQuery,
   type RouteLocationNormalized,
   type RouteRecordRaw,
 } from 'vue-router'
@@ -9,6 +10,7 @@ import { setUnauthorizedHandler } from '../api.js'
 import { i18n } from '../i18n'
 import { areaOf } from '../layouts/nav'
 import { internalPath } from './navigation.js'
+import { groupsTarget, type GroupTab } from '../views/groups/route'
 
 type SceneRule = boolean | ((route: RouteLocationNormalized) => boolean)
 
@@ -33,24 +35,11 @@ const page = (
   meta: RouteRecordRaw['meta'] = {},
 ) => ({ path, name, component, meta }) as RouteRecordRaw
 
-/**
- * Host pages. Route names are the ones old pages link to; paths follow the new layout. M2 replaces the
- * group pages with /groups/:scene?/:tab?.
- */
+/** Host pages. Route names other than `groups` are the ones old pages link to. */
 const hostRoutes: RouteRecordRaw[] = [
   page('/overview', 'host-overview', () => import('../host/pages/home/HomePage.vue')),
   page('/playground', 'host-trials', () => import('../host/pages/trial/TrialPage.vue')),
-  page('/groups', 'host-scenes', () => import('../host/pages/scenes/ScenesPage.vue'), {
-    scene: true,
-    sceneSwitch: false,
-  }),
-  page('/groups/memory', 'host-memory', () => import('../host/pages/memory/MemoryPage.vue'), {
-    scene: (route) => route.query.tab !== 'settings',
-  }),
-  page('/groups/tasks', 'host-tasks', () => import('../host/pages/tasks/TasksPage.vue'), { scene: true }),
-  page('/groups/resources', 'host-resources', () => import('../host/pages/resources/ResourcesPage.vue'), {
-    scene: true,
-  }),
+  page('/groups/:scene?/:tab?', 'groups', () => import('../views/groups/GroupsView.vue')),
   page('/personas', 'host-persona', () => import('../host/pages/persona/PersonaPage.vue')),
   page('/plugins', 'host-plugins', () => import('../host/pages/capabilities/PluginsPage.vue')),
   page(
@@ -82,10 +71,6 @@ const trialRoutes: RouteRecordRaw[] = [
 const moved: Record<string, string> = {
   overview: '/overview',
   'chat-test': '/playground',
-  scenes: '/groups',
-  memory: '/groups/memory',
-  tasks: '/groups/tasks',
-  resources: '/groups/resources',
   persona: '/personas',
   plugins: '/plugins',
   capabilities: '/capabilities',
@@ -94,18 +79,49 @@ const moved: Record<string, string> = {
   logs: '/system/logs',
 }
 
+/** Old group pages, by name and by their `/host/...` address; they now open a tab of the workbench. */
+const sceneTabs: Record<string, GroupTab> = {
+  messages: 'live',
+  settings: 'settings',
+  permissions: 'settings',
+  brain: 'session',
+  learning: 'learning',
+}
+function legacyGroup(
+  path: string,
+  name: string,
+  target: (query: LocationQuery) => [GroupTab, LocationQuery],
+): RouteRecordRaw {
+  return {
+    path,
+    name,
+    redirect: (to) => {
+      const { scene, ...rest } = to.query
+      const [tab, query] = target(rest)
+      return groupsTarget(typeof scene === 'string' ? scene : undefined, tab, query)
+    },
+  }
+}
+const legacyGroupRoutes = [
+  legacyGroup('/host/scenes', 'host-scenes', ({ tab, ...query }) => [
+    sceneTabs[String(tab)] ?? 'live',
+    query,
+  ]),
+  legacyGroup('/host/memory', 'host-memory', (query) => ['memory', query]),
+  legacyGroup('/host/tasks', 'host-tasks', (query) => ['tasks', query]),
+  legacyGroup('/host/resources', 'host-resources', (query) => ['tasks', { ...query, tab: 'resources' }]),
+]
+
 const hostPageNames = hostRoutes.map((route) => route.name)
 const trialPageNames = trialRoutes.map((route) => route.name)
-const hostPaths = hostRoutes.map((route) => route.path)
-const trialPaths = trialRoutes.map((route) => route.path)
 
 /** A safe in-app path to return to after login; anything else goes to the mode's home. */
 export function returnPath(value: unknown): string {
   const context = useAuth().panelContext
   if (!context) return '/overview'
   const path = internalPath(value)
-  const paths = context.mode === 'isolated' ? trialPaths : hostPaths
-  return path && paths.includes(path.split(/[?#]/, 1)[0]) ? path : context.home
+  const pages = context.mode === 'isolated' ? trialPageNames : hostPageNames
+  return path && pages.includes(router.resolve(path).name ?? '') ? path : context.home
 }
 
 const router = createRouter({
@@ -114,6 +130,7 @@ const router = createRouter({
     { path: '/', redirect: { name: 'host-overview' } },
     ...hostRoutes,
     ...trialRoutes,
+    ...legacyGroupRoutes,
     {
       path: '/host/:page(.*)',
       redirect: (to) => ({ path: moved[String(to.params.page)] ?? '/overview', query: to.query }),

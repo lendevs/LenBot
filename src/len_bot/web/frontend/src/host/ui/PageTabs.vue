@@ -14,7 +14,7 @@ const items = () => props.tabs.map(tab => Array.isArray(tab) ? { value: tab[0], 
 function target(value) {
   const query = { ...route.query, [props.param]: value }
   for (const key of props.clear) delete query[key]
-  return { name: route.name, query }
+  return { name: route.name, params: route.params, query }
 }
 </script>
 <template>

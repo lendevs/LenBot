@@ -16,7 +16,7 @@
 
 检查命令在前端目录执行：`npm run typecheck`、`npm run lint`（ESLint 加 Prettier）、`npm run build`。CI 跑同样三项。构建产物写到 `src/len_bot/web/static/dist`，不进 Git。
 
-迁移期间旧页面（`src/host/`、`src/components/`、部分 `src/views/`）仍使用 Vuetify 和纯 JS，ESLint 忽略这些目录。新代码不引用 Vuetify，不新写 `.js` 文件。Vuetify 存在期间 Tailwind 不加载预检样式（preflight），工具类不放进层里，原因写在 `styles/app.css` 开头。
+迁移期间旧页面（`src/host/`、`src/components/`、部分 `src/views/`）仍使用 Vuetify 和纯 JS，ESLint 忽略这些目录。新代码不引用 Vuetify，不新写 `.js` 文件。Vuetify 存在期间 Tailwind 不加载预检样式（preflight），工具类不放进层里，原因写在 `styles/app.css` 开头。Vuetify 自带同名的颜色类（`bg-info`、`text-success` 等，带 `!important`），会盖过 Tailwind 的同名工具类，所以 `theme.js` 给 Vuetify 的每个状态色都取令牌里的同名颜色，两边算出来一致。
 
 ## 目录
 
@@ -31,7 +31,7 @@ src/
   styles/       tokens.css（设计令牌）、app.css（Tailwind 主题、动效）、base.css 与 shell.css（旧页面）、
                 theme.js（从 tokens.css 解析颜色，供 Vuetify 主题使用）
   dev/          UiGallery.vue：只在开发模式出现的组件展示页
-  views/        登录页等不在外壳里的页面
+  views/        新写的页面：登录页、群聊工作台（groups/）等
 ```
 
 ## 设计原则
@@ -97,10 +97,11 @@ src/
 
 1. 在 `router/index.ts` 的 `hostRoutes` 加路由，名字和路径按现有写法。
 2. 在 `nav.ts` 对应分组下加区域，`label` 写词条键，图标从 `@lucide/vue` 引入。
-3. 如果页面针对单个群，把路由名加进 `scopedRoutes`，切换页面时会带上当前群。
-4. 中英文词条各加一条。
+3. 中英文词条各加一条。
 
-文档标题由侧栏标签或路由的 `meta.titleKey` 生成。`/host/...` 是旧外壳的地址，只做重定向，不再新增。
+针对单个群的内容不新增侧栏区域，放进群聊工作台（`views/groups/`）的页签。工作台地址是 `/groups/:scene/:tab`，页签名写在 `views/groups/route.ts` 的 `groupTabs`；链接用 `groupsTarget(scene, tab)` 生成，切群时保留当前页签，从别的页面回到群聊时回到上次的群和页签。群聊标识（如 `onebot:group:80001`）总带冒号、页签名不带，所以 `/groups/memory` 表示默认群的记忆页签。旧页面里还在用 `?scene=` 的页面（日志）把路由名放在 `nav.ts` 的 `scopedRoutes`。
+
+文档标题由侧栏标签或路由的 `meta.titleKey` 生成。`/host/...` 是旧外壳的地址，只做重定向，不再新增；旧路由名 `host-scenes`、`host-memory`、`host-tasks`、`host-resources` 也是重定向，指向工作台对应页签，M2.11 清理旧页面时一并删除。
 
 ## 数据层
 
@@ -145,6 +146,7 @@ useHostEvent('turn.step', (event) => {
 - 中文词条 `locales/zh-CN.ts` 是源，`en.ts` 用 `satisfies Messages` 约束，缺键或多键在类型检查时报错。
 - 键名按 `区域.页面.条目`，通用词放 `common`，组件内置文字放 `ui`。
 - 新代码不写裸中文文案；后端返回的错误正文原样显示。
+- 词条里的 `@`、`{`、`}`、`|` 是 vue-i18n 的语法字符，要显示原字符时写成 `{'@'}`，否则整条词条在运行时编译失败。
 - 语言保存在 localStorage，没有保存时按浏览器语言；切换时同步 `<html lang>`。英文词条按需加载。
 - 数字、日期、相对时间、时长、字节用 `i18n/format.ts`，不手写拼接。
 

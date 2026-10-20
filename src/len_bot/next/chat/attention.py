@@ -317,6 +317,20 @@ class SceneRunner:
                 'direct': self.quiet_direct(now),
                 'scope': Template(read_prompt('next_scene_control.md')).substitute(scene=self.config.scene).strip()}
 
+    def chat_status(self) -> dict:
+        """Whether the Bot may speak here unprompted now, and when that next changes without an event."""
+        now = self.now()
+        if self.state.paused:
+            return {'status': 'paused', 'changes_at': None}
+        period = self.quiet_period(now)
+        if period is not None and period[0] <= now < period[1]:
+            return {'status': 'quiet', 'changes_at': period[1]}
+        held = speech_quota(self.store, self.config).until(direct=False)
+        if held is not None:
+            return {'status': 'limited', 'changes_at': held}
+        return {'status': 'chatting',
+                'changes_at': next_quiet_start(self.settings.quiet_hours, self.config.timezone, now)}
+
     def set_temporary_quiet(self, seconds: int | None, direct: Literal["allow", "defer"], requester: str | None) -> dict:
         now = self.now()
         state = copy.deepcopy(self.state)

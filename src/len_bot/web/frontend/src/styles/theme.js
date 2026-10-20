@@ -32,7 +32,7 @@ function toVuetify(values) {
     success: values.success,
     warning: values.warning,
     error: values.error,
-    info: values.primary,
+    info: values.info,
     'on-background': values.ink,
     'on-surface': values.ink,
     toast: values === darkPalette ? values['line-strong'] : values.ink,

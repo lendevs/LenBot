@@ -157,7 +157,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                                               "name": runtime.chats[scene].persona.name},
                  "persona_path": str(settings.persona),
                  "voice_mode": settings.voice_mode, "timezone": config.scene_timezone(scene),
-                 "chat_enabled": not runtime.runners[scene].state.paused}
+                 "chat_enabled": not runtime.runners[scene].state.paused,
+                 "chat_status": runtime.runners[scene].chat_status()}
                 for scene, settings in config.scenes.items()
             ],
             "send_hold": runtime.send_hold.enabled,

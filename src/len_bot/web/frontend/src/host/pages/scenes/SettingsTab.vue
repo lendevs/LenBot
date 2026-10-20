@@ -13,7 +13,6 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 import AdvancedFields from '../../ui/AdvancedFields.vue'
 import RowEditor from '../../ui/RowEditor.vue'
 import SaveBar from '../../ui/SaveBar.vue'
-import QuietControl from './QuietControl.vue'
 import RoleAvatar from '../persona/RoleAvatar.vue'
 import { applyRole, roleLabel, roleUsage } from '../persona/roles.js'
 
@@ -164,8 +163,6 @@ async function removeScene() {
   <ResourceState :resource="settings" error-title="读取群设置失败">
     <p v-if="!saved" class="muted">这个群已经从配置里移除，重启后不再显示。</p>
     <template v-else-if="draft">
-      <QuietControl :scene="scene" />
-
       <form class="stack" @submit.prevent="submit">
         <Panel title="角色">
           <ErrorNote v-if="library.error.value" title="读取角色失败" :error="library.error.value" @retry="library.reload()" />

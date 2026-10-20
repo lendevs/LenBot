@@ -23,7 +23,8 @@ import { localeOptions, setLocale } from '../../i18n'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import Kbd from '../../ui/Kbd.vue'
-import { navAreas } from '../nav'
+import { areaTarget, navAreas } from '../nav'
+import { groupsTarget } from '../../views/groups/route'
 import { groupLabel } from './scenes'
 
 interface Command {
@@ -66,7 +67,7 @@ const commands = computed<Command[]>(() => {
       title: area.pages.length ? `${t(area.label)} · ${t(page.label)}` : t(page.label),
       keywords: `${page.route} ${area.id}`,
       icon: FileText,
-      to: { name: page.route, query: area.scoped && props.scene ? { scene: props.scene } : {} },
+      to: area.pages.length ? { name: page.route } : areaTarget(area, props.scene),
     }))
   })
   const scenes = (host.state?.scenes ?? []) as {
@@ -81,7 +82,7 @@ const commands = computed<Command[]>(() => {
     detail: item.persona?.name,
     keywords: item.scene,
     icon: MessagesSquare,
-    to: { name: 'host-scenes', query: { scene: item.scene } },
+    to: groupsTarget(item.scene),
   }))
   const switches = scenes.map((item) => ({
     id: `chat:${item.scene}`,

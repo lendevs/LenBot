@@ -16,10 +16,15 @@ export const keys = {
     overview: () => ['host', 'overview'] as const,
     sceneTitles: () => ['host', 'scene-titles'] as const,
     pendingRestart: () => ['host', 'pending-restart'] as const,
+    availableScenes: () => ['host', 'available-scenes'] as const,
+  },
+  personas: {
+    all: () => ['personas'] as const,
   },
   scene: {
     all: (scene: string) => ['scene', scene] as const,
     timeline: (scene: string) => ['scene', scene, 'timeline'] as const,
+    control: (scene: string) => ['scene', scene, 'control'] as const,
     turn: (scene: string, turnId: string) => ['scene', scene, 'turn', turnId] as const,
   },
 }

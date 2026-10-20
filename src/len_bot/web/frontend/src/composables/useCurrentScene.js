@@ -14,7 +14,9 @@ export function resolveScene(value) {
 export function useCurrentScene() {
   const route = useRoute()
   const scene = computed(() => {
-    const value = resolveScene(route.query.scene)
+    // The workbench names the group in the path (/groups/:scene/:tab); other pages use ?scene=.
+    const param = route.params.scene
+    const value = resolveScene(typeof param === 'string' && param.includes(':') ? param : route.query.scene)
     if (value) last.value = value
     return value
   })
