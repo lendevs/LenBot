@@ -40,7 +40,7 @@ const hostRoutes: RouteRecordRaw[] = [
   page('/overview', 'host-overview', () => import('../host/pages/home/HomePage.vue')),
   page('/playground', 'host-trials', () => import('../host/pages/trial/TrialPage.vue')),
   page('/groups/:scene?/:tab?', 'groups', () => import('../views/groups/GroupsView.vue')),
-  page('/personas', 'host-persona', () => import('../host/pages/persona/PersonaPage.vue')),
+  page('/personas', 'host-persona', () => import('../views/personas/PersonasView.vue')),
   page('/plugins', 'host-plugins', () => import('../host/pages/capabilities/PluginsPage.vue')),
   page(
     '/capabilities',
