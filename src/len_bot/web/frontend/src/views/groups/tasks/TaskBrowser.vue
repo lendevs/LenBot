@@ -15,7 +15,7 @@ const props = defineProps<{
   browser: TaskDetail['browser']
   configured: boolean
 }>()
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; files: [] }>()
 
 const { t } = useI18n()
 const binding = computed(() => props.browser.binding as { browser_instance_id?: string; session_id?: string } | null)
@@ -69,6 +69,9 @@ const close = useMutation({
       {{ t(browser.public_enabled ? 'groups.tasks.browser.publicOn' : 'groups.tasks.browser.publicOff') }}
       <template v-if="task.container">{{ t('groups.tasks.browser.container') }}</template>
     </p>
+    <Button v-if="configured && browser.output_count" size="sm" variant="ghost" class="self-start" @click="emit('files')">
+      {{ t('groups.tasks.browser.files', { n: browser.output_count }) }}
+    </Button>
     <ErrorNote v-if="status.isError.value" :title="t('groups.tasks.browser.statusFailed')" :error="status.error.value" />
     <ErrorNote v-if="close.isError.value" :title="t('groups.tasks.browser.closeFailed')" :error="close.error.value" />
   </section>

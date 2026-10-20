@@ -109,7 +109,10 @@ const legacyGroupRoutes = [
   ]),
   legacyGroup('/host/memory', 'host-memory', (query) => ['memory', query]),
   legacyGroup('/host/tasks', 'host-tasks', (query) => ['tasks', query]),
-  legacyGroup('/host/resources', 'host-resources', (query) => ['tasks', { ...query, tab: 'resources' }]),
+  legacyGroup('/host/resources', 'host-resources', ({ task, ...query }) => [
+    'tasks',
+    { ...query, tab: 'resources', ...(task ? { id: task } : {}) },
+  ]),
 ]
 
 const hostPageNames = hostRoutes.map((route) => route.name)

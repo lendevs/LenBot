@@ -31,6 +31,12 @@ export const keys = {
     scheduleState: () => ['host', 'schedules', 'state'] as const,
     schedules: (scene: string, filter: string) => ['host', 'schedules', scene, filter] as const,
     proactive: (scene: string) => ['host', 'proactive', scene] as const,
+    /** Disk use and task files; reading them scans directories, so events do not refresh them. */
+    space: () => ['task-space'] as const,
+    pool: () => ['task-space', 'pool'] as const,
+    usage: (scene: string, query: object) => ['task-space', scene, 'usage', query] as const,
+    storage: (scene: string, id: number) => ['task-space', scene, 'task', id] as const,
+    files: (scene: string, location: object) => ['task-space', scene, 'files', location] as const,
     /** Stored events and skill files do not change; kept outside `host` so events do not read them again. */
     event: (scene: string, id: number, event: number) => ['task-records', scene, id, 'event', event] as const,
     skillFiles: (scene: string, id: number, name: string) =>

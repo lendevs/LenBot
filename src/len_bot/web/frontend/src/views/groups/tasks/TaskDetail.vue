@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
+import { FolderOpen } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { tasksApi, type TaskAction, type TaskService } from '../../../api/tasks'
 import { developerDetails } from '../../../composables/useDeveloperMode.js'
@@ -14,6 +15,7 @@ import Textarea from '../../../ui/Textarea.vue'
 import { confirm } from '../../../ui/confirm'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
+import FileBrowser from './FileBrowser.vue'
 import LivePreview from './LivePreview.vue'
 import RawRecord from './RawRecord.vue'
 import TaskBrowser from './TaskBrowser.vue'
@@ -21,6 +23,7 @@ import TaskEvents from './TaskEvents.vue'
 import TaskExtra from './TaskExtra.vue'
 import TaskFiles from './TaskFiles.vue'
 import TaskQuestion from './TaskQuestion.vue'
+import TaskSpace from './TaskSpace.vue'
 import { finished, statusTone } from './labels'
 
 const props = defineProps<{
@@ -100,6 +103,11 @@ async function cancel() {
   if (confirmed) act.mutate({ action: 'cancel' })
 }
 const changed = () => void client.invalidateQueries({ queryKey: keys.tasks.all() })
+/** The file browser opens on demand; the browser section opens it at the browser's output. */
+const filesAt = ref<string | null>(null)
+function showFiles(path: string) {
+  filesAt.value = filesAt.value === path ? null : path
+}
 
 const facts = computed(() => {
   const value = task.value
@@ -215,7 +223,29 @@ const facts = computed(() => {
       :browser="first.browser"
       :configured="service.configured"
       @changed="changed"
+      @files="showFiles('out/browser')"
     />
+    <template v-if="service.configured">
+      <TaskSpace :scene="scene" :task-id="id" :time-zone="timeZone" @changed="changed" />
+      <section class="flex flex-col gap-2">
+        <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
+          <FolderOpen :size="16" class="text-subtle" aria-hidden="true" />
+          {{ t('groups.tasks.space.files') }}
+          <Button size="sm" variant="ghost" class="ml-auto" @click="filesAt = filesAt === null ? '' : null">
+            {{ t(filesAt === null ? 'common.expand' : 'common.collapse') }}
+          </Button>
+        </h3>
+        <FileBrowser
+          v-if="filesAt !== null"
+          :key="filesAt"
+          :scene="scene"
+          :task-id="id"
+          :time-zone="timeZone"
+          :initial-path="filesAt"
+          @changed="changed"
+        />
+      </section>
+    </template>
     <TaskEvents
       :scene="scene"
       :task-id="id"
