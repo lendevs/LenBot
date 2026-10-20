@@ -20,6 +20,19 @@ export const keys = {
     settings: () => ['host', 'settings'] as const,
     limits: () => ['host', 'limits'] as const,
   },
+  /** Under `host`, so the `host.changed` event that task progress raises refreshes them. */
+  tasks: {
+    all: () => ['host', 'tasks'] as const,
+    state: () => ['host', 'tasks', 'state'] as const,
+    list: (scene: string, filter: string) => ['host', 'tasks', scene, 'list', filter] as const,
+    detail: (scene: string, id: number) => ['host', 'tasks', scene, id] as const,
+    skills: (scene: string, id: number) => ['host', 'tasks', scene, id, 'skills'] as const,
+    materials: (scene: string) => ['host', 'materials', scene] as const,
+    /** Stored events and skill files do not change; kept outside `host` so events do not read them again. */
+    event: (scene: string, id: number, event: number) => ['task-records', scene, id, 'event', event] as const,
+    skillFiles: (scene: string, id: number, name: string) =>
+      ['task-records', scene, id, 'skill', name] as const,
+  },
   personas: {
     all: () => ['personas'] as const,
   },

@@ -9,7 +9,6 @@ import { useCurrentScene } from '../../composables/useCurrentScene.js'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges.js'
 import { useHostEvents } from '../../host/events.js'
 import { host, readHostState } from '../../host/store.js'
-import TasksPage from '../../host/pages/tasks/TasksPage.vue'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Avatar from '../../ui/Avatar.vue'
 import Button from '../../ui/Button.vue'
@@ -29,6 +28,7 @@ import SessionTab from './session/SessionTab.vue'
 import SettingsTab from './settings/SettingsTab.vue'
 import LearningTab from './learning/LearningTab.vue'
 import MemoryTab from './memory/MemoryTab.vue'
+import TasksTab from './tasks/TasksTab.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -78,10 +78,14 @@ function addFromSheet() {
   adding.value = true
 }
 
-const dirty = reactive({ settings: false, learning: false, memory: false })
+const dirty = reactive({ settings: false, learning: false, memory: false, tasks: false })
 useUnsavedChanges(
   computed(() => Object.values(dirty).some(Boolean)),
-  { onDiscard: () => Object.assign(dirty, { settings: false, learning: false, memory: false }) },
+  {
+    // The tasks tab asks before it changes its own view (`tab`) or task (`id`).
+    keep: ['tab', 'id'],
+    onDiscard: () => Object.assign(dirty, { settings: false, learning: false, memory: false, tasks: false }),
+  },
 )
 
 // Quiet hours and the hourly speaking limit end without an event; read the state again when one does.
@@ -142,7 +146,12 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
               :time-zone="current.timezone"
               @dirty="(value: boolean) => (dirty.memory = value)"
             />
-            <TasksPage v-else-if="tab === 'tasks'" />
+            <TasksTab
+              v-else-if="tab === 'tasks'"
+              :scene="scene"
+              :time-zone="current.timezone"
+              @dirty="(value: boolean) => (dirty.tasks = value)"
+            />
             <LearningTab
               v-else-if="tab === 'learning'"
               :scene="scene"

@@ -62,8 +62,9 @@
 
   --z-nav: 20;
   --z-top: 30;
-  --z-popover: 50;
-  --z-dialog: 60;
+  /* Menus, lists and tooltips open from inside dialogs, so they sit above them. */
+  --z-dialog: 50;
+  --z-popover: 60;
   --z-toast: 70;
 
   /* Names used by the Vuetify-era styles; removed with them (work.md M4.9). */
