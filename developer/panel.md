@@ -162,8 +162,22 @@ useHostEvent('turn.step', (event) => {
 | 记忆 | Memory |
 | 插件 | Plugin |
 | 能力 | Capabilities |
-| 对话测试 | Playground |
-| 模拟发送 | Simulated sending |
+| 角色资料 | Persona knowledge |
+| 对话测试 | Playground；其中一次测试是 session |
+| 隔离试聊实例的场景 | Chat（不用 scene） |
+| 模拟发送 | Simulated sending；分段按钮里写 Simulated |
+| 群友 | Member |
+| 主人 | Owner |
+| 服务商 | Provider |
+| 模型用途 | Use（模型页的页签是 Uses） |
+| 向量模型 | Embedding model；页签和列表里写 Embeddings |
+| 记忆整理 | Memory filing |
+| 说法、黑话、表情 | Phrasing、Slang、Stickers |
+| 提醒 | Reminder |
+| 主动开话题 | Start topics；叫醒方式里写 Topic start |
+| 技能 | Skill |
+
+英文正文里写 the bot（小写），只有标签开头写 Bot，例如 Bot online。重启横幅的分区名用小写，因为它们拼进一句话里。后端返回的模型协议名在 `models.protocols` 里按协议 ID 翻译，没有词条的新协议显示后端给的名字。
 
 ## 页面骨架
 

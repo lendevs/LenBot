@@ -32,6 +32,11 @@ function measure() {
   if (!active) return
   indicator.value = { left: active.offsetLeft, width: active.offsetWidth, ready: indicator.value.ready }
   if (!indicator.value.ready) requestAnimationFrame(() => (indicator.value.ready = true))
+  // When the segments scroll sideways (narrow screens, long labels), keep the chosen one in view.
+  const start = active.offsetLeft - element!.scrollLeft
+  if (start < 0) element!.scrollLeft = active.offsetLeft
+  else if (start + active.offsetWidth > element!.clientWidth)
+    element!.scrollLeft = active.offsetLeft + active.offsetWidth - element!.clientWidth
 }
 
 /** A segmented control always has one value: clicking the active segment again keeps it. */
@@ -56,7 +61,7 @@ useResizeObserver(() => root.value?.$el as HTMLElement | undefined, measure)
     :model-value="model"
     :disabled="disabled"
     :aria-label="label"
-    class="relative inline-flex max-w-full items-center rounded-md bg-fill p-0.5"
+    class="relative inline-flex max-w-full items-center overflow-x-auto rounded-md bg-fill p-0.5 [scrollbar-width:none]"
     :class="block && 'flex w-full'"
     @update:model-value="choose"
   >
@@ -72,7 +77,10 @@ useResizeObserver(() => root.value?.$el as HTMLElement | undefined, measure)
       :value="option.value"
       :disabled="option.disabled"
       class="relative z-1 inline-flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] px-3 font-medium whitespace-nowrap text-muted transition-colors duration-150 hover:text-ink focus-visible:focus-ring data-disabled:cursor-not-allowed data-disabled:opacity-45 data-[state=on]:text-ink"
-      :class="[size === 'sm' ? 'h-7 text-xs' : 'h-8 text-sm pointer-coarse:h-10', block && 'flex-1']"
+      :class="[
+        size === 'sm' ? 'h-7 text-xs' : 'h-8 text-sm pointer-coarse:h-10',
+        block ? 'flex-1' : 'shrink-0',
+      ]"
     >
       <component :is="option.icon" v-if="option.icon" :size="size === 'sm' ? 14 : 15" aria-hidden="true" />
       <span class="truncate">{{ option.label }}</span>

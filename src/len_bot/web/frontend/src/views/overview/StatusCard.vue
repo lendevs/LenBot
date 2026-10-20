@@ -116,11 +116,11 @@ const menu = computed<MenuEntry[]>(() => [
           aria-hidden="true"
         />
       </span>
-      <div class="min-w-0 flex-1">
+      <div class="min-w-0 flex-1 basis-56">
         <h2 class="text-xl font-semibold" :class="!online && (status.tone === 'error' ? 'text-error' : 'text-warning')">
           {{ online ? t('overview.status.online') : status.text }}
         </h2>
-        <p class="mt-0.5 text-sm break-all text-muted">
+        <p class="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">
           {{ [state.bot_id, delivery, t('overview.status.groups', { n: state.scenes.length }, state.scenes.length)].filter(Boolean).join(' · ') }}
         </p>
       </div>

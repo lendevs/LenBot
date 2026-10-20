@@ -4,6 +4,7 @@ import { authApi } from '../api/auth'
 import { queryClient } from '../api/query'
 import { startStream, stopStream } from '../realtime/stream'
 import { clearHost } from '../api/hostStore'
+import { i18n } from '../i18n'
 
 const state = reactive({ status: 'loading', user: null, error: '', panelContext: null })
 let initialization
@@ -46,7 +47,7 @@ export async function refreshAuth() {
       const context = await authApi.context()
       if (own !== authRequest) return
       if (!Object.hasOwn(homes, context.mode) || context.home !== homes[context.mode]) {
-        throw new Error(`面板环境响应无效：mode 或 home 不符合当前面板契约：${JSON.stringify(context)}`)
+        throw new Error(i18n.global.t('login.badContext', { context: JSON.stringify(context) }))
       }
       state.panelContext = context
     }

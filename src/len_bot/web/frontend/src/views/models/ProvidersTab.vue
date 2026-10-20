@@ -10,6 +10,7 @@ import EmptyState from '../../ui/EmptyState.vue'
 import { confirm } from '../../ui/confirm'
 import ProviderEditor from './ProviderEditor.vue'
 import { useForm } from './form'
+import { useProtocolTitle } from './protocols'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -31,7 +32,11 @@ watch(
   },
 )
 
-const apiTitle = (api: string) => form.protocol(api)?.title.split(' · ')[0] ?? api
+const protocolTitle = useProtocolTitle()
+const apiTitle = (api: string) => {
+  const protocol = form.protocol(api)
+  return protocol ? protocolTitle(protocol) : api
+}
 const problemsOf = (id: string) => form.problems.value.filter((item) => item.provider === id)
 
 function add() {

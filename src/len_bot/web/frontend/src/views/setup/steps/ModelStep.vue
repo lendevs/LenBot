@@ -11,6 +11,7 @@ import NumberInput from '../../../ui/NumberInput.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Select from '../../../ui/Select.vue'
 import ModelName from '../../models/ModelName.vue'
+import { useProtocolTitle } from '../../models/protocols'
 import MoreFields from '../MoreFields.vue'
 import TestResult from '../TestResult.vue'
 import { useStepErrors, useWizard } from '../wizard'
@@ -19,8 +20,9 @@ const { t } = useI18n()
 const wizard = useWizard()
 const { draft } = wizard
 const error = useStepErrors('model')
+const protocolTitle = useProtocolTitle()
 
-const protocolOptions = computed(() => wizard.protocols.value.map((item) => ({ value: item.api, label: item.title })))
+const protocolOptions = computed(() => wizard.protocols.value.map((item) => ({ value: item.api, label: protocolTitle(item) })))
 const protocol = computed({
   get: () => draft.api || undefined,
   set: (api: string | undefined) => api && wizard.chooseProtocol(api),

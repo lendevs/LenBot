@@ -66,7 +66,7 @@ async function switchTo(value: View) {
 </script>
 
 <template>
-  <div class="flex flex-col gap-5">
+  <div class="flex min-w-0 flex-col gap-5">
     <Skeleton v-if="state.isPending.value" :lines="6" />
     <ErrorNote
       v-else-if="state.isError.value"

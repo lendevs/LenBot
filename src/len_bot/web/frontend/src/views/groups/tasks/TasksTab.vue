@@ -48,7 +48,7 @@ async function switchTo(value: View) {
 </script>
 
 <template>
-  <div class="flex flex-col gap-5">
+  <div class="flex min-w-0 flex-col gap-5">
     <SegmentedControl v-model="selected" :options="views" :label="t('groups.tabs.tasks')" class="self-start" />
     <TaskBoard
       v-if="view === 'tasks'"

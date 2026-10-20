@@ -9,16 +9,18 @@ import Input from '../../ui/Input.vue'
 import Select from '../../ui/Select.vue'
 import ProbeTools from './ProbeTools.vue'
 import { keyReusable, useForm, type ProviderRow } from './form'
+import { useProtocolTitle } from './protocols'
 
 const props = defineProps<{ id: string; wide: boolean }>()
 const emit = defineEmits<{ back: []; remove: [] }>()
 
 const { t } = useI18n()
 const form = useForm()
+const protocolTitle = useProtocolTitle()
 // Edited in place: the row belongs to the form's draft.
 const row = computed(() => form.providerFor(props.id) as ProviderRow)
 const apiOptions = computed(() =>
-  (form.protocols.data.value?.protocols ?? []).map((item) => ({ value: item.api, label: item.title })),
+  (form.protocols.data.value?.protocols ?? []).map((item) => ({ value: item.api, label: protocolTitle(item) })),
 )
 const errorOf = (field: 'name' | 'url' | 'key') =>
   form.problems.value.find((item) => item.provider === props.id && item.field === field)?.text

@@ -177,8 +177,8 @@
   scrollbar-color: var(--line-strong) transparent;
 }
 
-/* Links styled as buttons or nav items. base.css underlines a:hover for every pointer type, while the
-   hover: variant only applies on devices that can hover, so the reset needs its own selector. */
+/* Links styled as buttons or nav items: never underlined, also on hover (the hover: variant only applies on
+   devices that can hover, so the reset has its own selector). */
 @utility link-plain {
   text-decoration: none;
   &:hover {

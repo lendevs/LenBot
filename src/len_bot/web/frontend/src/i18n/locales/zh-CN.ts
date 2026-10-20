@@ -1484,6 +1484,14 @@ export default {
     title: '模型设置',
     readFailed: '读取模型设置失败',
     protocolsFailed: '读取协议列表失败',
+    protocols: {
+      'openai-chat': 'OpenAI 兼容聊天',
+      'openai-responses': 'OpenAI Responses',
+      anthropic: 'Anthropic Messages',
+      gemini: 'Gemini GenerateContent',
+      'openai-audio': 'OpenAI 兼容语音转写',
+      'openai-embeddings': 'OpenAI 兼容向量',
+    },
     tabs: { providers: '服务商', roles: '用途', vectors: '向量模型', usage: '用量与上限' },
     providers: {
       title: '服务商',
@@ -2630,6 +2638,7 @@ export default {
     invalid: '用户名或密码不正确',
     checking: '正在确认登录状态',
     checkFailed: '无法读取登录状态',
+    badContext: '面板环境响应无效，mode 或 home 不是这个面板认识的值：{context}',
   },
   time: {
     justNow: '刚刚',
