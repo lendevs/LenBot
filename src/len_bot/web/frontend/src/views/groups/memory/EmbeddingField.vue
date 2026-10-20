@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
 import { List, Zap } from '@lucide/vue'
-import { modelsApi, type EmbeddingBinding, type SavedProvider } from '../../../api/models'
+import { modelsApi, type Candidate, type EmbeddingBinding } from '../../../api/models'
 import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
@@ -12,22 +12,29 @@ import NumberInput from '../../../ui/NumberInput.vue'
 import Select from '../../../ui/Select.vue'
 import Switch from '../../../ui/Switch.vue'
 
-/** An embedding model on one of the saved providers; null means full-text search only. */
+export interface EmbeddingProvider {
+  /** What `binding.provider` holds. */
+  id: string
+  label: string
+  /** How to reach the provider for listing and testing; null while its key is missing. */
+  candidate: Candidate | null
+}
+
+/** An embedding model on one of the providers; null means full-text search only. */
 const binding = defineModel<EmbeddingBinding | null>({ required: true })
-const props = defineProps<{ providers: Record<string, SavedProvider> }>()
+const props = withDefaults(defineProps<{ providers: EmbeddingProvider[]; label?: string }>(), { label: undefined })
 
 const { t } = useI18n()
-const aliases = computed(() => Object.keys(props.providers))
 const enabled = computed({
   get: () => binding.value !== null,
-  set: (on: boolean) => (binding.value = on ? { provider: aliases.value[0] ?? '', model: '', dimensions: null } : null),
+  set: (on: boolean) => (binding.value = on ? { provider: props.providers[0]?.id ?? '', model: '', dimensions: null } : null),
 })
-const providerOptions = computed(() => aliases.value.map((alias) => ({ value: alias, label: alias })))
-const provider = computed(() => (binding.value ? props.providers[binding.value.provider] : undefined))
+const providerOptions = computed(() => props.providers.map((item) => ({ value: item.id, label: item.label })))
+const provider = computed(() => props.providers.find((item) => item.id === binding.value?.provider))
 
-const list = useMutation({ mutationFn: () => modelsApi.list(binding.value!.provider, provider.value!) })
+const list = useMutation({ mutationFn: () => modelsApi.list(provider.value!.candidate!) })
 const probe = useMutation({
-  mutationFn: () => modelsApi.probeEmbedding(binding.value!.provider, provider.value!, binding.value!),
+  mutationFn: () => modelsApi.probe(provider.value!.candidate!, binding.value!, 'embedding'),
 })
 watch(
   () => binding.value?.provider,
@@ -54,7 +61,7 @@ watch(picked, (id) => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <Field :label="t('groups.memory.settings.embedding')" inline>
+    <Field :label="label ?? t('groups.memory.settings.embedding')" inline>
       <Switch v-model="enabled" />
     </Field>
     <template v-if="binding">
@@ -72,7 +79,7 @@ watch(picked, (id) => {
           <Select v-model="picked" :options="listed" />
         </Field>
       </div>
-      <div v-if="provider" class="flex flex-wrap gap-2">
+      <div v-if="provider?.candidate" class="flex flex-wrap gap-2">
         <Button size="sm" :icon="List" :loading="list.isPending.value" @click="list.mutate()">
           {{ t('groups.memory.settings.list') }}
         </Button>

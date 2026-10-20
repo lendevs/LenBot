@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { http } from '../../../api/client'
-import type { EmbeddingBinding, SavedProvider } from '../../../api/models'
+import { savedCandidate, type EmbeddingBinding, type SavedProvider } from '../../../api/models'
 import { keys } from '../../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../../api/settings'
 import { readPendingRestart } from '../../../host/store.js'
@@ -52,11 +52,9 @@ const models = computed(
 )
 /** Embeddings go through OpenAI-compatible providers only. */
 const providers = computed(() =>
-  Object.fromEntries(
-    Object.entries(models.value?.providers ?? {}).filter(([, item]) =>
-      ['openai-chat', 'openai-embeddings'].includes(item.api),
-    ),
-  ),
+  Object.entries(models.value?.providers ?? {})
+    .filter(([, item]) => ['openai-chat', 'openai-embeddings'].includes(item.api))
+    .map(([alias, item]) => ({ id: alias, label: alias, candidate: item.api_key_configured ? savedCandidate(alias, item) : null })),
 )
 const noMemoryModel = computed(() => Boolean(models.value) && !models.value!.roles.memory)
 

@@ -20,6 +20,8 @@ export const keys = {
     settings: () => ['host', 'settings'] as const,
     limits: () => ['host', 'limits'] as const,
     eventLoop: () => ['host', 'event-loop'] as const,
+    modelProtocols: () => ['host', 'model-protocols'] as const,
+    usage: (period: string) => ['host', 'usage', period] as const,
   },
   /** Under `host`, so the `host.changed` event that task progress raises refreshes them. */
   tasks: {
