@@ -26,6 +26,15 @@ export const keys = {
   plugins: {
     all: () => ['plugins'] as const,
   },
+  memory: {
+    all: () => ['memory'] as const,
+    state: () => ['memory', 'state'] as const,
+    browse: (scene: string, scope: string, path: string) => ['memory', scene, scope, 'browse', path] as const,
+    file: (scene: string, scope: string, path: string) => ['memory', scene, scope, 'file', path] as const,
+    summary: (scene: string, scope: string, path: string) =>
+      ['memory', scene, scope, 'summary', path] as const,
+    history: (scene: string, path: string) => ['memory', scene, 'history', path] as const,
+  },
   scene: {
     all: (scene: string) => ['scene', scene] as const,
     timeline: (scene: string) => ['scene', scene, 'timeline'] as const,

@@ -9,7 +9,6 @@ import { useCurrentScene } from '../../composables/useCurrentScene.js'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges.js'
 import { useHostEvents } from '../../host/events.js'
 import { host, readHostState } from '../../host/store.js'
-import MemoryPage from '../../host/pages/memory/MemoryPage.vue'
 import TasksPage from '../../host/pages/tasks/TasksPage.vue'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Avatar from '../../ui/Avatar.vue'
@@ -29,6 +28,7 @@ import LiveTab from './live/LiveTab.vue'
 import SessionTab from './session/SessionTab.vue'
 import SettingsTab from './settings/SettingsTab.vue'
 import LearningTab from './learning/LearningTab.vue'
+import MemoryTab from './memory/MemoryTab.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -78,10 +78,10 @@ function addFromSheet() {
   adding.value = true
 }
 
-const dirty = reactive({ settings: false, learning: false })
+const dirty = reactive({ settings: false, learning: false, memory: false })
 useUnsavedChanges(
   computed(() => Object.values(dirty).some(Boolean)),
-  { onDiscard: () => Object.assign(dirty, { settings: false, learning: false }) },
+  { onDiscard: () => Object.assign(dirty, { settings: false, learning: false, memory: false }) },
 )
 
 // Quiet hours and the hourly speaking limit end without an event; read the state again when one does.
@@ -136,7 +136,12 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
           <div :key="`${scene}:${tab}`" class="grid min-w-0 gap-4">
             <LiveTab v-if="tab === 'live'" :scene="scene" :time-zone="current.timezone" :persona="current.persona.name" />
             <SessionTab v-else-if="tab === 'session'" :scene="scene" :time-zone="current.timezone" />
-            <MemoryPage v-else-if="tab === 'memory'" />
+            <MemoryTab
+              v-else-if="tab === 'memory'"
+              :scene="scene"
+              :time-zone="current.timezone"
+              @dirty="(value: boolean) => (dirty.memory = value)"
+            />
             <TasksPage v-else-if="tab === 'tasks'" />
             <LearningTab
               v-else-if="tab === 'learning'"
