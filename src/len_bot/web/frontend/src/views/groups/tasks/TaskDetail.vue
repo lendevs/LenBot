@@ -8,7 +8,6 @@ import { developerDetails } from '../../../composables/useDeveloperMode.js'
 import { formatDateTime } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
-import CodeBlock from '../../../ui/CodeBlock.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Textarea from '../../../ui/Textarea.vue'
@@ -16,6 +15,7 @@ import { confirm } from '../../../ui/confirm'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
 import LivePreview from './LivePreview.vue'
+import RawRecord from './RawRecord.vue'
 import TaskBrowser from './TaskBrowser.vue'
 import TaskEvents from './TaskEvents.vue'
 import TaskExtra from './TaskExtra.vue'
@@ -153,12 +153,7 @@ const facts = computed(() => {
         </template>
       </dl>
       <ErrorNote v-if="task.error" :title="t('groups.tasks.failed')" :error="task.error" />
-      <CodeBlock
-        v-if="developerDetails"
-        :code="{ ...task, network: first.network }"
-        :label="t('groups.tasks.raw')"
-        :max-lines="12"
-      />
+      <RawRecord v-if="developerDetails" :label="t('groups.tasks.raw')" :code="{ ...task, network: first.network }" />
     </header>
 
     <LivePreview v-if="running && service.configured" :id="id" :scene="scene" />

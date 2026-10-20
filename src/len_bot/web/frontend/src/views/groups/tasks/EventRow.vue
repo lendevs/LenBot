@@ -10,6 +10,7 @@ import { formatDateTime } from '../../../i18n/format'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
+import RawRecord from './RawRecord.vue'
 
 const props = defineProps<{
   scene: string
@@ -97,7 +98,7 @@ const error = computed(() => {
         </template>
         <ErrorNote v-if="error" :title="t('groups.tasks.events.stepError')" :error="error" />
         <p v-if="!shown.length && !error && !developerDetails" class="text-xs text-muted">{{ t('groups.tasks.events.noText') }}</p>
-        <CodeBlock v-if="developerDetails" :code="full.data.value" :max-lines="12" />
+        <RawRecord v-if="developerDetails" :label="t('groups.tasks.events.raw')" :code="full.data.value" />
       </template>
     </div>
   </li>

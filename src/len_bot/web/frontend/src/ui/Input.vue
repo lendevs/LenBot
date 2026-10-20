@@ -10,7 +10,7 @@ defineOptions({ inheritAttrs: false })
 const model = defineModel<string>({ default: '' })
 const props = withDefaults(
   defineProps<{
-    type?: 'text' | 'password' | 'email' | 'url' | 'search' | 'tel'
+    type?: 'text' | 'password' | 'email' | 'url' | 'search' | 'tel' | 'date' | 'time'
     placeholder?: string
     icon?: Component
     clearable?: boolean

@@ -2,11 +2,11 @@
 import { computed, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import ProactiveTab from '../../../host/pages/tasks/ProactiveTab.vue'
-import SchedulesTab from '../../../host/pages/tasks/SchedulesTab.vue'
 import ResourcesPage from '../../../host/pages/resources/ResourcesPage.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import { confirm } from '../../../ui/confirm'
+import ProactiveView from './ProactiveView.vue'
+import SchedulesView from './SchedulesView.vue'
 import TaskBoard from './TaskBoard.vue'
 
 const props = defineProps<{ scene: string; timeZone: string }>()
@@ -56,12 +56,12 @@ async function switchTo(value: View) {
       :time-zone="timeZone"
       @dirty="(value: boolean) => (dirty.tasks = value)"
     />
-    <SchedulesTab
+    <SchedulesView
       v-else-if="view === 'schedules'"
       :scene="scene"
       @dirty="(value: boolean) => (dirty.schedules = value)"
     />
-    <ProactiveTab v-else-if="view === 'proactive'" :scene="scene" />
+    <ProactiveView v-else-if="view === 'proactive'" :scene="scene" />
     <ResourcesPage v-else />
   </div>
 </template>

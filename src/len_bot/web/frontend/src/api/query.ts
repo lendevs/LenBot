@@ -28,6 +28,9 @@ export const keys = {
     detail: (scene: string, id: number) => ['host', 'tasks', scene, id] as const,
     skills: (scene: string, id: number) => ['host', 'tasks', scene, id, 'skills'] as const,
     materials: (scene: string) => ['host', 'materials', scene] as const,
+    scheduleState: () => ['host', 'schedules', 'state'] as const,
+    schedules: (scene: string, filter: string) => ['host', 'schedules', scene, filter] as const,
+    proactive: (scene: string) => ['host', 'proactive', scene] as const,
     /** Stored events and skill files do not change; kept outside `host` so events do not read them again. */
     event: (scene: string, id: number, event: number) => ['task-records', scene, id, 'event', event] as const,
     skillFiles: (scene: string, id: number, name: string) =>
