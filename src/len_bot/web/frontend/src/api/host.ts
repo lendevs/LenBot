@@ -77,10 +77,22 @@ export interface AvailableScene {
 
 export interface PersonaSummary {
   key: string
+  /** The role's folder, which a group's `persona` setting points at. */
+  path: string
+  id: string | null
   name?: string
+  brief?: string | null
   config_path: string
   error?: unknown
+  avatar?: boolean
+  duplicate_id?: boolean
+  scenes?: string[]
 }
+
+export const personaAvatar = (role: PersonaSummary) =>
+  role.avatar
+    ? `/api/host/personas/${encodeURIComponent(role.key)}/avatar/image?directory=${encodeURIComponent(role.path)}`
+    : null
 
 const scenePath = (scene: string) => `/api/host/scenes/${encodeURIComponent(scene)}`
 

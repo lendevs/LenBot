@@ -8,10 +8,8 @@ import type { HostScene } from '../../api/host'
 import { useCurrentScene } from '../../composables/useCurrentScene.js'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges.js'
 import { useHostEvents } from '../../host/events.js'
-import { host, notify, readHostState, readPendingRestart } from '../../host/store.js'
+import { host, readHostState } from '../../host/store.js'
 import LearningTab from '../../host/pages/scenes/LearningTab.vue'
-import SettingsTab from '../../host/pages/scenes/SettingsTab.vue'
-import PermissionsSection from '../../host/pages/settings/PermissionsSection.vue'
 import MemoryPage from '../../host/pages/memory/MemoryPage.vue'
 import TasksPage from '../../host/pages/tasks/TasksPage.vue'
 import { groupLabel } from '../../layouts/shell/scenes'
@@ -30,6 +28,7 @@ import { groupTabs, isGroupTab, lastGroupTab, type GroupTab } from './route'
 import { statusTones } from './status'
 import LiveTab from './live/LiveTab.vue'
 import SessionTab from './session/SessionTab.vue'
+import SettingsTab from './settings/SettingsTab.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -79,15 +78,11 @@ function addFromSheet() {
   adding.value = true
 }
 
-const dirty = reactive({ settings: false, permissions: false, learning: false })
+const dirty = reactive({ settings: false, learning: false })
 useUnsavedChanges(
   computed(() => Object.values(dirty).some(Boolean)),
-  { onDiscard: () => Object.assign(dirty, { settings: false, permissions: false, learning: false }) },
+  { onDiscard: () => Object.assign(dirty, { settings: false, learning: false }) },
 )
-function permissionsSaved() {
-  readPendingRestart()
-  notify(t('common.saved'))
-}
 
 // Quiet hours and the hourly speaking limit end without an event; read the state again when one does.
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -148,14 +143,12 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
               :scene="scene"
               @dirty="(value: boolean) => (dirty.learning = value)"
             />
-            <template v-else>
-              <SettingsTab :scene="scene" @dirty="(value: boolean) => (dirty.settings = value)" />
-              <PermissionsSection
-                :scene="scene"
-                @saved="permissionsSaved"
-                @dirty="(value: boolean) => (dirty.permissions = value)"
-              />
-            </template>
+            <SettingsTab
+              v-else
+              :scene="scene"
+              :time-zone="current.timezone"
+              @dirty="(value: boolean) => (dirty.settings = value)"
+            />
           </div>
         </template>
       </Tabs>

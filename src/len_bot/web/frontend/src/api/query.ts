@@ -17,15 +17,21 @@ export const keys = {
     sceneTitles: () => ['host', 'scene-titles'] as const,
     pendingRestart: () => ['host', 'pending-restart'] as const,
     availableScenes: () => ['host', 'available-scenes'] as const,
+    settings: () => ['host', 'settings'] as const,
+    limits: () => ['host', 'limits'] as const,
   },
   personas: {
     all: () => ['personas'] as const,
+  },
+  plugins: {
+    all: () => ['plugins'] as const,
   },
   scene: {
     all: (scene: string) => ['scene', scene] as const,
     timeline: (scene: string) => ['scene', scene, 'timeline'] as const,
     control: (scene: string) => ['scene', scene, 'control'] as const,
     turn: (scene: string, turnId: string) => ['scene', scene, 'turn', turnId] as const,
+    permissions: (scene: string) => ['scene', scene, 'permissions'] as const,
     sessionAll: (scene: string) => ['scene', scene, 'session'] as const,
     session: (scene: string, activeOnly: boolean) => ['scene', scene, 'session', { activeOnly }] as const,
   },
