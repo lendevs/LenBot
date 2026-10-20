@@ -54,7 +54,7 @@ docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml -f ho
 docker compose -p lenbot logs lenbot
 ```
 
-日志里有首次配置的链接，格式为 `http://127.0.0.1:11307/#token=...`。在这台机器上打开它，按[首次配置](./first-setup)填写。之后面板也使用这个地址。
+日志里有首次配置的链接，格式为 `http://127.0.0.1:11307/#token=...`。在这台机器上打开它，按[首次配置](./first-setup)填写。之后面板也使用这个地址。用 `--panel-port` 改过端口时，把链接里的 11307 换成这个端口。
 
 面板和更新页只发布到本机回环地址。从其他机器访问时，请使用 SSH 端口转发，或者自行配置 HTTPS 反向代理。
 

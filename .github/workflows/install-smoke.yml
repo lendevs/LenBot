@@ -54,13 +54,17 @@ jobs:
             -f deploy/current/Dockerfile -t lenbot-current:smoke .
       - name: Initialize new volumes with the packaged recipe and log in to the panel
         run: python3 scripts/smoke_install.py docker packages "$RUNNER_TEMP/smoke" --image lenbot-current:smoke
-      - name: Build the independent updater and the synthetic baseline
+      - name: Build the independent updater, the synthetic baseline and a release that fails during startup
         run: |
           docker build -f docker/updater/Dockerfile -t lenbot-updater:smoke .
           uv run --no-project --python 3.13 python scripts/smoke_update.py packages "$RUNNER_TEMP/baseline" --baseline-only
           docker build --build-arg PACKAGE_SOURCE=wheel --build-context "release=$RUNNER_TEMP/baseline/baseline-artifacts" \
             -f deploy/current/Dockerfile -t lenbot-current:baseline .
+          uv run --no-project --python 3.13 python scripts/smoke_update.py packages "$RUNNER_TEMP/broken" --broken-only
+          docker build --build-arg PACKAGE_SOURCE=wheel --build-context "release=$RUNNER_TEMP/broken/broken-artifacts" \
+            -f deploy/current/Dockerfile -t lenbot-current:broken .
       - name: Replace the image and restore program, volume and instance data
         run: |
           python3 scripts/smoke_docker_update.py packages "$RUNNER_TEMP/docker-update" \
-            --baseline-image lenbot-current:baseline --host-image lenbot-current:smoke --updater-image lenbot-updater:smoke
+            --baseline-image lenbot-current:baseline --host-image lenbot-current:smoke --updater-image lenbot-updater:smoke \
+            --broken-image lenbot-current:broken

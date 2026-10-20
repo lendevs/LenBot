@@ -1,4 +1,8 @@
-"""Exercise image replacement and recovery against an isolated loopback registry and temporary volumes."""
+"""Exercise image replacement and recovery against an isolated loopback registry and temporary volumes.
+
+Between steps it runs `docker compose up -d` the way a user might, which recreates the host and removes
+the updater's other containers, and it ends with a release whose host fails during startup.
+"""
 
 import argparse
 import json
@@ -9,9 +13,10 @@ import time
 import urllib.request
 
 from smoke_install import free_port, request, check_panel, wait_until_served
+from smoke_update import next_patch
 
 
-def run(artifacts: Path, work: Path, old_image: str, host_image: str, updater_image: str) -> dict:
+def run(artifacts: Path, work: Path, old_image: str, host_image: str, updater_image: str, broken_image: str) -> dict:
     work.mkdir(parents=True, exist_ok=False)
     project = 'lenbot-update-smoke-' + secrets.token_hex(6)
     network = project + '-fixture'
@@ -20,6 +25,7 @@ def run(artifacts: Path, work: Path, old_image: str, host_image: str, updater_im
     prefix = f'127.0.0.1:{registry_port}/lenbot'
     manifest = json.loads((artifacts / 'release-manifest.json').read_text())
     version = manifest['version']
+    broken_version = next_patch(artifacts)
     docker = lambda *args, **kwargs: subprocess.run(['docker', *args], check=True, **kwargs)
     deployment = work / 'deployment'
     deployment.mkdir()
@@ -31,7 +37,8 @@ def run(artifacts: Path, work: Path, old_image: str, host_image: str, updater_im
         docker('run', '-d', '--name', registry_name, '-p', f'127.0.0.1:{registry_port}:5000', 'registry:2')
         opener = urllib.request.build_opener()
         wait_until_served(opener, f'http://127.0.0.1:{registry_port}/v2/', time.monotonic() + 30, lambda: True)
-        for source, target in ((old_image, prefix + ':0.0.0'), (host_image, prefix + ':' + version)):
+        for source, target in ((old_image, prefix + ':0.0.0'), (host_image, prefix + ':' + version),
+                               (broken_image, prefix + ':' + broken_version)):
             docker('tag', source, target)
             docker('push', target)
         docker('run', '--rm', '--mount', f'type=bind,source={deployment},target=/deployment',
@@ -55,9 +62,15 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         manifest['images'] = {'dockerhub': {'host': prefix + ':' + version, 'worker': prefix + ':' + version,
                                            'updater': updater_image}}
         (releases / 'release-manifest.json').write_text(json.dumps(manifest))
+        broken = {**manifest, 'version': broken_version, 'tag': 'v' + broken_version,
+                  'images': {'dockerhub': {'host': prefix + ':' + broken_version, 'worker': prefix + ':' + broken_version,
+                                           'updater': updater_image}}}
+        (releases / 'broken-manifest.json').write_text(json.dumps(broken))
         (releases / 'releases').write_text(json.dumps([{'tag_name': manifest['tag'], 'draft': False,
             'prerelease': manifest['prerelease'], 'body': 'Synthetic Docker update fixture.',
-            'assets': [{'name': 'release-manifest.json', 'browser_download_url': 'http://releases:8080/release-manifest.json'}]}]))
+            'assets': [{'name': 'release-manifest.json', 'browser_download_url': 'http://releases:8080/release-manifest.json'}]},
+            {'tag_name': broken['tag'], 'draft': False, 'prerelease': False, 'body': 'Synthetic version that fails during startup.',
+             'assets': [{'name': 'release-manifest.json', 'browser_download_url': 'http://releases:8080/broken-manifest.json'}]}]))
         docker('run', '-d', '--name', release_name, '--network', network, '--network-alias', 'releases',
                '--mount', f'type=bind,source={releases},target=/srv,readonly', '--workdir', '/srv',
                '--entrypoint', 'python', updater_image, '-m', 'http.server', '8080', '--bind', '0.0.0.0')
@@ -119,7 +132,7 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
                 value = status()
                 if value['status'] == expected:
                     return value
-                if value['status'] == 'failed':
+                if value['status'] == 'failed' and expected != 'failed':
                     _, log = request(opener, controller + '/api/log', headers=headers)
                     raise RuntimeError(value['error'] + '\n' + log)
                 time.sleep(0.5)
@@ -127,23 +140,49 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         def action(name, payload):
             code, text = request(opener, controller + '/api/' + name, headers=headers, body=payload)
             assert code == 202, text
+        def marker():
+            return docker('exec', current_host, '/opt/lenbot/.venv/bin/python', '-c',
+                          'from pathlib import Path; print(Path("upgrade-fixture.txt").read_text())',
+                          capture_output=True, text=True).stdout.strip()
         docker('exec', current_host, '/opt/lenbot/.venv/bin/python', '-c',
                'from pathlib import Path; Path("upgrade-fixture.txt").write_text("before")')
+        # Compose removes the prepared candidate; applying it fails before anything is stopped.
+        action('prepare', {'tag': manifest['tag']})
+        finish('prepared')
+        subprocess.run([*compose, 'up', '-d'], check=True)
+        action('apply', {})
+        failed = finish('failed')
+        assert '重新准备' in failed['error'] and not failed['stopped'] and failed['actions'] == ['prepare'], failed
+        assert failed['current_version'] == '0.0.0' and marker() == 'before'
         action('prepare', {'tag': manifest['tag']})
         finish('prepared')
         action('apply', {})
         assert finish('complete')['current_version'] == version
+        # Compose now recreates the host under the same name and removes the stopped previous host.
+        subprocess.run([*compose, 'up', '-d'], check=True)
+        check_panel(panel_port, 'smoke', 'smoke-password', lambda: True)
         docker('exec', current_host, '/opt/lenbot/.venv/bin/python', '-c',
                'from pathlib import Path; Path("upgrade-fixture.txt").write_text("after")')
         action('restore', {})
         assert finish('restored')['current_version'] == '0.0.0'
         action('start', {})
         finish('complete')
-        value = docker('exec', current_host, '/opt/lenbot/.venv/bin/python', '-c',
-                       'from pathlib import Path; print(Path("upgrade-fixture.txt").read_text())', capture_output=True, text=True).stdout.strip()
-        assert value == 'before', value
+        assert marker() == 'before'
         check_panel(panel_port, 'smoke', 'smoke-password', lambda: True)
-        return {'baseline': '0.0.0', 'target': version, 'upgrade': 'ready', 'restore': 'program, volume selection and data restored'}
+        # A release whose host fails during startup: the updater restores the snapshot and starts 0.0.0 by itself.
+        action('prepare', {'tag': broken['tag']})
+        finish('prepared')
+        action('apply', {})
+        rolled = finish('rolled_back')
+        assert rolled['current_version'] == '0.0.0' and not rolled['stopped'] and rolled['actions'] == ['prepare'], rolled
+        assert 'exited' in rolled['error'] and rolled['rolled_back_from'] == broken_version, rolled
+        assert marker() == 'before'
+        check_panel(panel_port, 'smoke', 'smoke-password', lambda: True)
+        return {'baseline': '0.0.0', 'target': version, 'upgrade': 'ready',
+                'restore': 'program, volume selection and data restored',
+                'compose_up': 'removed candidate refused before stopping; recreated host and removed previous host restored',
+                'startup_failure': 'rolled back to the previous program automatically'}
+
     finally:
         # Only names belonging to this invocation are removed. No daemon-wide cleanup.
         containers = subprocess.run(['docker', 'ps', '-a', '--format', '{{.Names}}'], capture_output=True, text=True, check=True).stdout.split()
@@ -167,8 +206,10 @@ def main() -> None:
     parser.add_argument('--baseline-image', required=True)
     parser.add_argument('--host-image', required=True)
     parser.add_argument('--updater-image', required=True)
+    parser.add_argument('--broken-image', required=True, help='Host image of smoke_update.py --broken-only, which fails during startup')
     args = parser.parse_args()
-    print(json.dumps(run(args.artifacts.resolve(), args.work.resolve(), args.baseline_image, args.host_image, args.updater_image), indent=2, ensure_ascii=False))
+    print(json.dumps(run(args.artifacts.resolve(), args.work.resolve(), args.baseline_image, args.host_image,
+                         args.updater_image, args.broken_image), indent=2, ensure_ascii=False))
 
 
 if __name__ == '__main__':

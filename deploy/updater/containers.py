@@ -14,6 +14,10 @@ import urllib.request
 from common import host_status, owned_like_parent, read_json, write_json
 
 
+class NotFound(RuntimeError):
+    """The engine has no such container or image."""
+
+
 class Engine(http.client.HTTPConnection):
     def __init__(self, path: str):
         super().__init__('localhost', timeout=190)
@@ -39,13 +43,20 @@ class Containers:
             response = connection.getresponse()
             data = response.read()
             if response.status >= 400:
-                raise RuntimeError(f'Docker {method} {endpoint}: {response.status}: {data.decode()}')
+                error = NotFound if response.status == 404 else RuntimeError
+                raise error(f'Docker {method} {endpoint}: {response.status}: {data.decode()}')
             return None if not data else json.loads(data)
         finally:
             connection.close()
 
     def metadata(self) -> dict:
-        return read_json(self.root / 'current.json')
+        current = read_json(self.root / 'current.json')
+        try:
+            self.info(current['container'])
+        except NotFound:
+            # `docker compose up` recreates the host under its fixed name once the version file has changed.
+            current['container'] = self.info(self.deployment['container'])['Id']
+        return current
 
     def info(self, container: str) -> dict:
         return self.api('GET', '/containers/' + quote(container, safe='') + '/json')
@@ -78,6 +89,13 @@ class Containers:
         images = manifest['images'][self.deployment['registry']]
         host_image, worker_image = images['host'], images['worker']
         self.command(['pull', host_image])
+        volume = self.deployment['project'] + '-python-' + manifest['version']
+        candidate = self.deployment['project'] + '-candidate-' + work.name.removeprefix('candidate-')
+        return {'version': manifest['version'], 'host_image': host_image, 'worker_image': worker_image,
+                'python_volume': volume, 'container': self.create(host_image, volume, candidate)}
+
+    def create(self, host_image: str, volume: str, name: str) -> str:
+        """A stopped copy of the current host on another image and Python volume; returns its ID."""
         original = self.info(self.metadata()['container'])
         image_config = self.api('GET', '/images/' + quote(host_image, safe='') + '/json')['Config']
         old_image = self.api('GET', '/images/' + quote(original['Image'], safe='') + '/json')['Config']
@@ -98,7 +116,6 @@ class Containers:
             name: {key: settings[key] for key in ('IPAMConfig', 'Links', 'Aliases', 'DriverOpts')}
             for name, settings in original['NetworkSettings']['Networks'].items()}}
         host_config = copy.deepcopy(original['HostConfig'])
-        volume = self.deployment['project'] + '-python-' + manifest['version']
         # Engines report compose volumes under Mounts or only under Binds; both lists may be absent.
         for mount in host_config.get('Mounts') or []:
             if mount['Target'] == '/opt/lenbot/.venv':
@@ -106,13 +123,15 @@ class Containers:
         for index, bind in enumerate(host_config['Binds'] or []):
             if ':/opt/lenbot/.venv:' in bind or bind.endswith(':/opt/lenbot/.venv'):
                 host_config['Binds'][index] = volume + bind[bind.index(':'):]
-        candidate = self.deployment['project'] + '-candidate-' + work.name.removeprefix('candidate-')
         configuration['HostConfig'] = host_config
-        created = self.api('POST', '/containers/create?name=' + quote(candidate), configuration)
-        return {'version': manifest['version'], 'host_image': host_image, 'worker_image': worker_image,
-                'python_volume': volume, 'container': created['Id']}
+        return self.api('POST', '/containers/create?name=' + quote(name), configuration)['Id']
 
     def inspect(self, target: dict) -> dict:
+        try:
+            self.info(target['container'])
+        except NotFound as error:
+            # Compose removes containers that carry its service labels beyond the one it runs.
+            raise ValueError('准备好的新版本容器已不存在（执行 docker compose up 会删除它），请重新准备更新') from error
         result = json.loads(self.maintenance('inspect', target=target, capture=True))
         target['work_enabled'] = result['work_enabled']
         if result['work_enabled']:
@@ -178,9 +197,18 @@ class Containers:
             recorded = read_json(self.root / 'previous.json')
             if recorded['version'] == old['version']:
                 previous = recorded
+        try:
+            previous = {**previous, 'container': self.info(previous['container'])['Id']}
+        except NotFound:
+            # `docker compose up` removes the stopped previous host; its image and Python volume remain.
+            try:
+                self.api('GET', '/images/' + quote(previous['host_image'], safe='') + '/json')
+            except NotFound:
+                self.command(['pull', previous['host_image']])
+            name = self.deployment['project'] + '-previous-' + previous['version']
+            previous = {**previous, 'container': self.create(previous['host_image'], previous['python_volume'], name)}
         self.maintenance('restore', target=previous, snapshot=snapshot)
         current = self.metadata()['container']
-        previous = {**previous, 'container': self.info(previous['container'])['Id']}
         write_json(self.root / 'current.json', previous)
         self.write_version(previous)
         if current != previous['container']:
