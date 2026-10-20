@@ -54,6 +54,12 @@ from ..runtime.network import NetworkRuntime
 from .auth import event_socket, install_panel_auth
 
 
+def listen_address(sockname: tuple) -> str:
+    """``host:port`` of a listening socket; IPv6 hosts in brackets."""
+    host, port = sockname[0], sockname[1]
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
 def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                lifecycle: HostLifecycle | None = None, container: bool = False) -> FastAPI:
     if config.panel is None:
@@ -149,7 +155,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                          else config.onebot.mode),
                 "connected": False if runtime.platform is None else runtime.platform.connected,
                 "status": runtime.status,
-                "addresses": [] if runtime.platform is None else runtime.platform.addresses,
+                "addresses": [] if runtime.platform is None else [
+                    listen_address(item) for item in runtime.platform.addresses],
                 "last_error": runtime.last_runtime_error or runtime.last_platform_error,
                 "can_connect": runtime.can_connect,
                 "can_disconnect": runtime.can_disconnect,

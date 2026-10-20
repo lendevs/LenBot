@@ -136,7 +136,12 @@ def smoke_package(artifacts: Path, work: Path) -> dict:
         setup = f'http://127.0.0.1:{match[1]}'
         opener = urllib.request.build_opener()
         page = wait_until_served(opener, setup + '/', time.monotonic() + STEP_SECONDS, lambda: process.poll() is None)
-        assert '<html' in page.lower(), page[:200]
+        # First setup is served by the built panel, so its entry script must be in the package too.
+        assert 'id="app"' in page, page[:200]
+        entry = re.search(r'<script type="module"[^>]* src="(/assets/[^"]+\.js)"', page)
+        assert entry, page[:500]
+        status, _ = request(opener, setup + entry[1])
+        assert status == 200, f'setup entry script {entry[1]} answered {status}'
         status, text = request(opener, setup + '/api/setup', body={
             'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': 'simulated',
             'onebot': {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{free_port()}', 'access_token': 'smoke-token'},

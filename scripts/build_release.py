@@ -102,7 +102,8 @@ def inspect_packages(artifacts: Path, stage: Path) -> dict:
     missing = [name for name in REQUIRED_SOURCE if name not in files]
     leaked = [name for name in files if name == 'lenbot.config.json'
               or PurePosixPath(name).name == '.lenbot-instance.lock' or name.startswith(FORBIDDEN_SOURCE)
-              or '/node_modules/' in name or '/__pycache__/' in name or name.endswith('.pyc')]
+              or ('/node_modules/' in name and not name.startswith('src/len_bot/web/static/dist/assets/licenses/frontend/'))
+              or '/__pycache__/' in name or name.endswith('.pyc')]
     if missing or leaked:
         raise ValueError(f'Release source lacks required files or contains local data: missing={missing!r}, local={leaked!r}')
     panel = stage / 'src/len_bot/web/static/dist'

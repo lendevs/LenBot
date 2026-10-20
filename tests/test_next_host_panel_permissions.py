@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -112,7 +113,16 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                         "retention": {"timeline_days": 31},
                     })).status_code == 422
                     assert (root / "lenbot.config.json").read_bytes() == saved
+                    if onebot is not None:
+                        # A reverse WebSocket server reports socket names as tuples; the panel sends text.
+                        runtime.platform._server = SimpleNamespace(sockets=[
+                            SimpleNamespace(getsockname=lambda: ("0.0.0.0", 8080)),
+                            SimpleNamespace(getsockname=lambda: ("::", 8080, 0, 0)),
+                        ])
                     state = (await client.get("/api/host/state")).json()
+                    if onebot is not None:
+                        assert state["connection"]["addresses"] == ["0.0.0.0:8080", "[::]:8080"]
+                        runtime.platform._server = None
                     assert state["delivery"] == "simulated"
                     assert [item["scene"] for item in state["scenes"]] == ["onebot:group:80001", "onebot:group:80002"]
                     assert state["connection"]["connected"] is False
