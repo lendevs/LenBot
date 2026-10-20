@@ -490,6 +490,8 @@ export default {
         readFailed: '读取回合详情失败',
         failed: '这一轮出错了',
         noModel: '这一轮没有调用模型',
+        logs: '这一轮的运行日志',
+        export: '下载诊断包',
       },
       statuses: {
         queued: '排队中',

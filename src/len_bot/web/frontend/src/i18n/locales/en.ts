@@ -507,6 +507,8 @@ export default {
         readFailed: 'Could not read the turn',
         failed: 'This turn failed',
         noModel: 'No model call in this turn',
+        logs: 'Logs for this turn',
+        export: 'Download diagnostics',
       },
       statuses: {
         queued: 'Queued',

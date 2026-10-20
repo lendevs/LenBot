@@ -3,12 +3,13 @@ import { computed, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useNow } from '@vueuse/core'
-import { ChevronDown, CircleAlert, Sparkles } from '@lucide/vue'
+import { ChevronDown, CircleAlert, Download, ScrollText, Sparkles } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { failedTurn, timelineApi, type TimelineTurn } from '../../../api/timeline'
 import { currentLocale } from '../../../i18n'
 import { formatCompact, formatDateTime, formatDuration } from '../../../i18n/format'
 import { useHostEvent } from '../../../realtime/stream'
+import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Spinner from '../../../ui/Spinner.vue'
@@ -106,6 +107,19 @@ onBeforeUnmount(() => clearTimeout(timer))
         :retry="detail.refetch"
       />
       <TurnSteps v-else-if="detail.data.value" :detail="detail.data.value" />
+      <div v-if="!running" class="mt-2 flex flex-wrap gap-1 border-t border-line pt-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          :icon="ScrollText"
+          :to="{ name: 'host-logs', query: { scene, turn: turn.turn_id } }"
+        >
+          {{ t('groups.live.turn.logs') }}
+        </Button>
+        <Button size="sm" variant="ghost" :icon="Download" :href="timelineApi.exportUrl(scene, turn.turn_id)">
+          {{ t('groups.live.turn.export') }}
+        </Button>
+      </div>
     </div>
   </div>
 </template>

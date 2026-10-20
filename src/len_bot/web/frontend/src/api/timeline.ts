@@ -138,6 +138,9 @@ export const timelineApi = {
     http.get<TimelinePage>(`${scenePath(scene)}/timeline`, { before, limit: 50 }, signal),
   turn: (scene: string, turnId: string, signal?: AbortSignal) =>
     http.get<TurnDetail>(`${scenePath(scene)}/turns/${encodeURIComponent(turnId)}`, undefined, signal),
+  /** Zip of the turn, its model and tool calls and the log records with its ID. */
+  exportUrl: (scene: string, turnId: string) =>
+    `${scenePath(scene)}/turns/${encodeURIComponent(turnId)}/export`,
 }
 
 export const itemKey = (item: TimelineItem) =>
