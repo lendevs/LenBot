@@ -34,6 +34,8 @@ export const keys = {
     summary: (scene: string, scope: string, path: string) =>
       ['memory', scene, scope, 'summary', path] as const,
     history: (scene: string, path: string) => ['memory', scene, 'history', path] as const,
+    ingest: () => ['memory', 'ingest'] as const,
+    embeddingCalls: (scene: string, scope: string) => ['memory', scene, scope, 'embedding-calls'] as const,
   },
   scene: {
     all: (scene: string) => ['scene', scene] as const,

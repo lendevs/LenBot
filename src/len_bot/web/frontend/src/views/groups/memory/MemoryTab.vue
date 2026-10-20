@@ -6,10 +6,6 @@ import { useQuery } from '@tanstack/vue-query'
 import { TriangleAlert } from '@lucide/vue'
 import { memoryApi, type MemoryScope } from '../../../api/memory'
 import { keys } from '../../../api/query'
-import IndexTab from '../../../host/pages/memory/IndexTab.vue'
-import IngestTab from '../../../host/pages/memory/IngestTab.vue'
-import MemorySettings from '../../../host/pages/memory/MemorySettings.vue'
-import SearchTab from '../../../host/pages/memory/SearchTab.vue'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
@@ -17,6 +13,10 @@ import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import { confirm } from '../../../ui/confirm'
 import BrowseView from './BrowseView.vue'
+import IndexView from './IndexView.vue'
+import IngestView from './IngestView.vue'
+import MemorySettingsView from './MemorySettingsView.vue'
+import SearchView from './SearchView.vue'
 
 const props = defineProps<{ scene: string; timeZone: string }>()
 const emit = defineEmits<{ dirty: [value: boolean] }>()
@@ -86,12 +86,11 @@ async function switchTo(value: View) {
       </div>
       <SegmentedControl v-if="views.length > 1" v-model="selected" :options="views" :label="t('groups.tabs.memory')" class="self-start" />
 
-      <MemorySettings v-if="view === 'settings'" @dirty="(value: boolean) => (dirty.settings = value)" />
-      <IndexTab
+      <MemorySettingsView v-if="view === 'settings'" @dirty="(value: boolean) => (dirty.settings = value)" />
+      <IndexView
         v-else-if="view === 'index' && state.data.value.index"
         :index="state.data.value.index"
         :reindexing="state.data.value.reindexing"
-        @rebuilt="state.refetch()"
       />
       <EmptyState v-else-if="!used" :title="t('groups.memory.unused')" />
       <BrowseView
@@ -103,8 +102,8 @@ async function switchTo(value: View) {
         @opened="opening = null"
         @dirty="(value: boolean) => (dirty.browse = value)"
       />
-      <SearchTab v-else-if="view === 'search'" :scene="scene" @open="openHit" />
-      <IngestTab v-else-if="view === 'ingest'" :scene="scene" />
+      <SearchView v-else-if="view === 'search'" :scene="scene" @open="openHit" />
+      <IngestView v-else-if="view === 'ingest'" :scene="scene" :time-zone="timeZone" />
     </template>
   </div>
 </template>
