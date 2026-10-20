@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import field_validator
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...config import HostConfig, load_host_config
 from .persona import PersonaFileChange, apply_saved, finish_role_write, validate_dependencies
@@ -176,17 +177,17 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/host/personas/{key}/sticker-files')
+    @app.get('/api/host/personas/{key}/sticker-files', response_model=responses.RoleStickers, response_model_exclude_unset=True)
     async def listing(key: str, response: Response, _: str = Depends(user)):
         response.headers['Cache-Control'] = 'no-store'
         return await operation(state, key)
 
-    @app.put('/api/host/personas/{key}/sticker-files/index')
+    @app.put('/api/host/personas/{key}/sticker-files/index', response_model=responses.RoleStickers, response_model_exclude_unset=True)
     async def index_write(key: str, item: PersonaFileChange, _: str = Depends(user)):
         result = await operation(save_index, key, item.directory, item.content, writing=True)
         return {**result, **await apply_saved(runtime, Path(result['saved_path']))}
 
-    @app.put('/api/host/personas/{key}/sticker-files/entries')
+    @app.put('/api/host/personas/{key}/sticker-files/entries', response_model=responses.RoleStickers, response_model_exclude_unset=True)
     async def entries_write(key: str, item: StickerEntries, _: str = Depends(user)):
         content = yaml.safe_dump([entry.model_dump() for entry in item.entries], allow_unicode=True, sort_keys=False)
         result = await operation(save_index, key, item.directory, content, writing=True)

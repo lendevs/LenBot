@@ -8,6 +8,7 @@ import tempfile
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, UploadFile
 
+from .. import responses
 from ...config import HostConfig, load_host_config
 from .persona import apply_saved, finish_role_write
 from ....image_assets import MAX_IMAGE_BYTES, OriginalImage
@@ -81,7 +82,7 @@ def register_host_persona_avatar(app: FastAPI, *, root: Path, runtime: NetworkRu
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/host/personas/{key}/avatar')
+    @app.get('/api/host/personas/{key}/avatar', response_model=responses.RoleAvatar, response_model_exclude_unset=True)
     async def metadata(key: str, response: Response, _: str = Depends(user)):
         response.headers['Cache-Control'] = 'no-store'
         return await operation(state, key)
@@ -91,7 +92,7 @@ def register_host_persona_avatar(app: FastAPI, *, root: Path, runtime: NetworkRu
         value = await operation(read, key, directory)
         return Response(value['data'], media_type='image/png', headers={'Cache-Control': 'no-store'})
 
-    @app.put('/api/host/personas/{key}/avatar')
+    @app.put('/api/host/personas/{key}/avatar', response_model=responses.RoleAvatar, response_model_exclude_unset=True)
     async def upload(key: str, file: UploadFile, directory: str = Form(min_length=1), _: str = Depends(user)):
         try:
             data = await file.read(MAX_IMAGE_BYTES + 1)
@@ -102,7 +103,7 @@ def register_host_persona_avatar(app: FastAPI, *, root: Path, runtime: NetworkRu
             await file.close()
         return {**result, **await apply_saved(runtime, Path(result['directory']))}
 
-    @app.delete('/api/host/personas/{key}/avatar')
+    @app.delete('/api/host/personas/{key}/avatar', response_model=responses.RoleAvatar, response_model_exclude_unset=True)
     async def remove(key: str, item: PersonaTarget, _: str = Depends(user)):
         result = await operation(delete, key, item.directory, writing=True)
         return {**result, **await apply_saved(runtime, Path(result['directory']))}

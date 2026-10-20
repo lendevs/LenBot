@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
+from .. import responses
 from ...browser.client import AccountBrowser, AccountBrowserSettings
 from ...configuration.editing import _prepare, _read_saved
 from ...browser.tasks import TaskBrowser
@@ -79,7 +80,7 @@ def register_host_browser(app: FastAPI, *, root: Path, runtime, user, write_lock
             except (ValueError, OSError) as error:
                 raise HTTPException(422, str(error)) from error
 
-    @app.post('/api/host/browser/status')
+    @app.post('/api/host/browser/status', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def status(_: str = Depends(user)):
         try:
             return await service().rpc('system.status', {})
@@ -109,7 +110,7 @@ def register_host_browser(app: FastAPI, *, root: Path, runtime, user, write_lock
         except (ValueError, KeyError, OSError, RuntimeError, TimeoutError) as error:
             raise HTTPException(502, str(error)) from error
 
-    @app.post('/api/host/browser/pair')
+    @app.post('/api/host/browser/pair', response_model=responses.Pairing, response_model_exclude_unset=True)
     async def pair(_: str = Depends(user)):
         async with control:
             try:
@@ -117,14 +118,14 @@ def register_host_browser(app: FastAPI, *, root: Path, runtime, user, write_lock
             except (ValueError, OSError, RuntimeError, TimeoutError) as error:
                 raise HTTPException(502, str(error)) from error
 
-    @app.get('/api/host/browser/devices')
+    @app.get('/api/host/browser/devices', response_model=responses.BrowserDevices, response_model_exclude_unset=True)
     async def devices(_: str = Depends(user)):
         try:
             return await service().management('devices')
         except (ValueError, OSError, RuntimeError, TimeoutError) as error:
             raise HTTPException(502, str(error)) from error
 
-    @app.delete('/api/host/browser/devices/{device}')
+    @app.delete('/api/host/browser/devices/{device}', response_model=responses.BrowserRevoked, response_model_exclude_unset=True)
     async def revoke(device: str, _: str = Depends(user)):
         async with control:
             try:
@@ -132,7 +133,7 @@ def register_host_browser(app: FastAPI, *, root: Path, runtime, user, write_lock
             except (ValueError, OSError, RuntimeError, TimeoutError) as error:
                 raise HTTPException(502, str(error)) from error
 
-    @app.post('/api/host/browser/release')
+    @app.post('/api/host/browser/release', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def release(body: ReleaseBrowser, _: str = Depends(user)):
         async with control:
             client = service()

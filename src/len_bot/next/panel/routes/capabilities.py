@@ -14,12 +14,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import field_validator
 import yaml
 
+from .. import responses
 from ...chat.tools import build_tools, tool_catalog, tool_unavailable_reasons
 from ...configuration.types import STRICT
 from ...config import load_host_config
 from ...tools.discovery import DEFERRED_NAMES
 from ...runtime.network import NetworkRuntime
-from ...persona.profile import PersonaTarget, load_persona, require_persona_target, select_examples
+from ...persona.profile import PersonaTarget, load_persona, require_persona_target
 from ...tools.skills import Skill, select_skills
 from ...plugins.manifest import scene_skill_catalog
 from .persona import apply_saved
@@ -83,7 +84,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             "affected_scenes": [key for key, value in saved.scenes.items() if value.persona == path],
         }
 
-    @app.get("/api/host/capabilities")
+    @app.get("/api/host/capabilities", response_model=responses.Capabilities, response_model_exclude_unset=True)
     async def capabilities(scene: str, _: str = Depends(user)):
         chat = chat_for(scene)
         try:
@@ -172,7 +173,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             "running": [skill_info(skill) for skill in chat.skills],
         }
 
-    @app.get("/api/host/skills")
+    @app.get("/api/host/skills", response_model=responses.Skills, response_model_exclude_unset=True)
     async def skills(scene: str, _: str = Depends(user)):
         chat_for(scene)
         try:
@@ -181,22 +182,6 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
         except (ValueError, OSError) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error
-
-    @app.get("/api/host/scenes/{scene}/persona")
-    async def persona(scene: str, _: str = Depends(user)):
-        loaded = chat_for(scene).persona
-        return {
-            "scene": scene, "persona": loaded.model_dump(),
-            "selected_examples": [item.model_dump() for item in select_examples(loaded)],
-            "knowledge": [{"filename": name, "tags": list(item.tags), "characters": len(item.content)}
-                          for name, item in sorted(loaded.knowledge.items())],
-        }
-
-    def save_role(scene: str, directory: str, field: Literal["tools", "skills"], value: str | list[str]) -> dict:
-        saved = load_host_config(root)
-        if scene not in saved.scenes:
-            raise ValueError("此场景已从保存配置移除，不能读取或编辑保存的角色许可")
-        return write_role(saved, saved.scenes[scene].persona, directory, field, value)
 
     def write_role(saved, path: Path, directory: str, field: Literal["tools", "skills"],
                    value: str | list[str]) -> dict:
@@ -219,37 +204,6 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             temporary.unlink(missing_ok=True)
         return {"directory": str(path), "persona": {"id": persona.id, "name": persona.name},
                 "saved": value, "affected_scenes": affected}
-
-    async def applied(scene: str, field: Literal["tools", "skills"], result: dict) -> dict:
-        """Hand the saved permission to the scenes running the role, then report what this scene runs."""
-        chat = chat_for(scene)
-        result = {**result, **await apply_saved(runtime, Path(result["directory"]))}
-        current = getattr(chat.persona, field)
-        return {**result, "running": current,
-                "restart_required": result["saved"] != current or Path(result["directory"]) != chat.config.persona}
-
-    @app.put("/api/host/scenes/{scene}/role-tools")
-    async def save(scene: str, changes: RoleTools, _: str = Depends(user)):
-        chat_for(scene)
-        try:
-            async with write_lock:
-                result = await asyncio.to_thread(save_role, scene, changes.directory, "tools", changes.tools)
-        except (ValueError, OSError) as error:
-            logger.exception("保存角色工具设置失败：%s", error)
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f"{type(error).__name__}: {error}") from error
-        return await applied(scene, "tools", result)
-
-    @app.put("/api/host/scenes/{scene}/role-skills")
-    async def save_skills(scene: str, changes: RoleSkills, _: str = Depends(user)):
-        chat_for(scene)
-        try:
-            async with write_lock:
-                result = await asyncio.to_thread(save_role, scene, changes.directory, "skills", changes.skills)
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f"{type(error).__name__}: {error}") from error
-        return await applied(scene, "skills", result)
 
     def reference_scene(path: Path, saved, scene: str | None) -> str:
         """The group whose configuration decides which tools and skills a role could use."""
@@ -297,7 +251,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
                        "catalog": [{**skill_info(skill), "selected": skill in selected} for skill in catalog]},
         }
 
-    @app.get("/api/host/personas/{key}/abilities")
+    @app.get("/api/host/personas/{key}/abilities", response_model=responses.RoleAbilities, response_model_exclude_unset=True)
     async def abilities(key: str, scene: str | None = None, _: str = Depends(user)):
         try:
             async with write_lock:
@@ -324,10 +278,10 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
                                 f"{type(error).__name__}: {error}") from error
         return {**result, **await apply_saved(runtime, Path(result["directory"]))}
 
-    @app.put("/api/host/personas/{key}/tools")
+    @app.put("/api/host/personas/{key}/tools", response_model=responses.RolePermission, response_model_exclude_unset=True)
     async def save_role_tools(key: str, changes: RoleTools, _: str = Depends(user)):
         return await save_for_role(key, changes.directory, "tools", changes.tools)
 
-    @app.put("/api/host/personas/{key}/skills")
+    @app.put("/api/host/personas/{key}/skills", response_model=responses.RolePermission, response_model_exclude_unset=True)
     async def save_role_skills(key: str, changes: RoleSkills, _: str = Depends(user)):
         return await save_for_role(key, changes.directory, "skills", changes.skills)

@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
+from .. import responses
 from ...config import HostConfig, _read_root
 from .settings import _body
 from ...configuration.editing import _prepare, _read_saved
@@ -59,14 +60,14 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
                 raise HTTPException(422 if isinstance(error, ValueError) else 500, str(error)) from error
         return await state()
 
-    @app.get('/api/host/mcp')
+    @app.get('/api/host/mcp', response_model=responses.McpState, response_model_exclude_unset=True)
     async def get(_: str = Depends(user)):
         try:
             return await state()
         except (ValueError, OSError) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500, str(error)) from error
 
-    @app.put('/api/host/mcp/{name}')
+    @app.put('/api/host/mcp/{name}', response_model=responses.McpState, response_model_exclude_unset=True)
     async def put(name: str, request: Request, _: str = Depends(user)):
         require_name(name)
         body = await _body(request, ServiceChange)
@@ -89,7 +90,7 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
             source.setdefault('mcp', {})[name] = setting
         return await save(edit)
 
-    @app.delete('/api/host/mcp/{name}')
+    @app.delete('/api/host/mcp/{name}', response_model=responses.McpState, response_model_exclude_unset=True)
     async def delete(name: str, _: str = Depends(user)):
         require_name(name)
         def edit(source: dict, saved: HostConfig) -> None:
@@ -110,10 +111,10 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
         runtime.refresh_external_tools()
         return {'result': result, 'binding': 'running', **await state()}
 
-    @app.post('/api/host/mcp/{name}/connect')
+    @app.post('/api/host/mcp/{name}/connect', response_model=responses.McpState, response_model_exclude_unset=True)
     async def connect(name: str, _: str = Depends(user)):
         return await action(name, True)
 
-    @app.post('/api/host/mcp/{name}/disconnect')
+    @app.post('/api/host/mcp/{name}/disconnect', response_model=responses.McpState, response_model_exclude_unset=True)
     async def disconnect(name: str, _: str = Depends(user)):
         return await action(name, False)

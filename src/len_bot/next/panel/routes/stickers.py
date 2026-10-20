@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, field_validator, model_validator
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...runtime.network import NetworkRuntime
 from ...learning.sticker_store import StickerStore
@@ -66,13 +67,13 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
             raise HTTPException(409, "宿主正在停止，不再接收收集请求")
         return runtime.sticker_collection
 
-    @app.get(base)
+    @app.get(base, response_model=responses.StickerState, response_model_exclude_unset=True)
     async def state(scene: str, _: str = Depends(user)):
         chat_for(scene)
         return {"scene": scene, "enabled": active(scene), "service_state": service_state(scene),
                 "counts": records.counts(scene)}
 
-    @app.get(base + "/candidates")
+    @app.get(base + "/candidates", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def candidates(scene: str, review: Literal["pending", "adopted", "rejected"] | None = None,
                          status: Literal["queued", "running", "complete", "failed", "interrupted"] | None = None,
                          limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
@@ -80,7 +81,7 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         return records.items(scene, review=review, status=status, limit=limit, offset=offset)
 
-    @app.get(base + "/candidates/{id}")
+    @app.get(base + "/candidates/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def candidate(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         item = records.item(scene, id)
@@ -90,7 +91,7 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
         return {**item, "source_message": {"seq": item["source_message_seq"],
                                           "body": None if message is None else asdict(message)}}
 
-    @app.get(base + "/candidates/{id}/image")
+    @app.get(base + "/candidates/{id}/image", response_class=Response)
     async def original(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         asset = records.original(scene, id)
@@ -98,7 +99,7 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
             raise HTTPException(404, "当前场景没有该候选的已保存原件")
         return Response(asset[1], media_type=asset[0], headers={"Cache-Control": "private, no-store"})
 
-    @app.put(base + "/candidates/{id}")
+    @app.put(base + "/candidates/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def update(scene: str, id: int, change: StickerChange, _: str = Depends(user)):
         chat_for(scene)
         try:
@@ -110,7 +111,7 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return item
 
-    @app.delete(base + "/candidates/{id}")
+    @app.delete(base + "/candidates/{id}", response_model=responses.Deleted, response_model_exclude_unset=True)
     async def delete(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         try:
@@ -122,7 +123,7 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return {"deleted": True}
 
-    @app.post(base + "/candidates/{id}/retry")
+    @app.post(base + "/candidates/{id}/retry", response_model=responses.Requested, response_model_exclude_unset=True)
     async def retry(scene: str, id: int, _: str = Depends(user)):
         service = service_for(scene)
         if records.item(scene, id) is None:
@@ -134,7 +135,7 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return {"requested": True, "candidate": records.item(scene, id), "state": service_state(scene)}
 
-    @app.post(base + "/run")
+    @app.post(base + "/run", response_model=responses.Requested, response_model_exclude_unset=True)
     async def run(scene: str, _: str = Depends(user)):
         service = service_for(scene)
         try:
@@ -143,13 +144,13 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
             raise HTTPException(409, str(error)) from error
         return {"requested": True, "state": service_state(scene)}
 
-    @app.get(base + "/calls")
+    @app.get(base + "/calls", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def calls(scene: str, limit: int = Query(20, ge=1, le=20),
                     offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
         return records.calls(scene, limit=limit, offset=offset)
 
-    @app.get(base + "/calls/{id}")
+    @app.get(base + "/calls/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def call(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         item = records.call(scene, id)

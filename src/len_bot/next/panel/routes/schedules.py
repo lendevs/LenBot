@@ -1,5 +1,7 @@
 """Manage actual scene arrangements through the authenticated host panel."""
 
+from .. import responses
+from ...chat.schedule_store import Schedule
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Literal
@@ -28,7 +30,7 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.runners[scene].changed.set()
         runtime.notify()
 
-    @app.get("/api/host/schedules/state")
+    @app.get("/api/host/schedules/state", response_model=responses.ScheduleState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         return {"timezone": runtime.config.timezone,
                 "scenes": [{"scene": scene, "timezone": chat.config.timezone,
@@ -36,7 +38,7 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
                             "tool_allowed": "schedule" in chat.toolset.allowed_tool_names}
                            for scene, chat in runtime.chats.items()]}
 
-    @app.get("/api/host/schedules/proactive")
+    @app.get("/api/host/schedules/proactive", response_model=responses.ProactivePage, response_model_exclude_unset=True)
     async def proactive(scene: str, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=20),
                         _: str = Depends(user)):
         chat = chat_for(scene)
@@ -55,7 +57,7 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
                 "next_at": next_at, "next_reason": next_reason,
                 "items": items[:limit], "next_offset": offset + limit if len(items) > limit else None}
 
-    @app.get("/api/host/schedules")
+    @app.get("/api/host/schedules", response_model=responses.SchedulePage, response_model_exclude_unset=True)
     async def listing(scene: str,
                       status: Literal["active", "all", "pending", "blocked", "delivered", "cancelled"] = "active",
                       offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=20),
@@ -65,7 +67,7 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
         return {"items": [asdict(item) for item in items[:limit]],
                 "next_offset": offset + limit if len(items) > limit else None}
 
-    @app.post("/api/host/schedules")
+    @app.post("/api/host/schedules", response_model=Schedule, response_model_exclude_unset=True)
     async def create(scene: str, body: PanelScheduleArguments, _: str = Depends(user)):
         chat = chat_for(scene)
         if not runtime.accepting:
@@ -82,7 +84,7 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
         changed(scene)
         return asdict(item)
 
-    @app.post("/api/host/schedules/{id}/cancel")
+    @app.post("/api/host/schedules/{id}/cancel", response_model=Schedule, response_model_exclude_unset=True)
     async def cancel(id: int, scene: str, _: str = Depends(user)):
         chat = chat_for(scene)
         try:

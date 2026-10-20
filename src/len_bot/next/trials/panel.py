@@ -28,6 +28,7 @@ from ..prompt_files import activate as activate_prompts
 from ..models.client import ChatModel
 from ..memory.service import MemoryService, open_memory
 from ..memory.ingest import MemoryIngestor, open_memory_ingestor
+from ..panel import responses
 from ..panel.auth import changes_socket, install_panel_auth
 from ..persona.profile import Persona, load_persona, select_examples
 from ..models.slots import ModelSlots
@@ -175,11 +176,11 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
     config_write_lock = Lock()
     user = install_panel_auth(app, config.panel, on_logout=lambda: app.state.session.notify())
 
-    @app.get("/api/chat-test/state")
+    @app.get("/api/chat-test/state", response_model=responses.TrialState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         return app.state.session.snapshot()
 
-    @app.get("/api/chat-test/settings")
+    @app.get("/api/chat-test/settings", response_model=responses.TrialSettings, response_model_exclude_unset=True)
     async def settings(_: str = Depends(user)):
         session: PanelSession = app.state.session
         config, chat = session.config, session.chat
@@ -209,7 +210,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
         loaded = {field: getattr(config, field) for field in ScenePersona.model_fields}
         return {"saved": values, "restart_required": values != loaded}
 
-    @app.get("/api/chat-test/scene-persona")
+    @app.get("/api/chat-test/scene-persona", response_model=responses.ScenePersonaResult, response_model_exclude_unset=True)
     def scene_persona(_: str = Depends(user)):
         try:
             with config_write_lock:
@@ -220,7 +221,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                                 f"{type(error).__name__}: {error}") from error
         return scene_persona_result(saved)
 
-    @app.put("/api/chat-test/scene-persona")
+    @app.put("/api/chat-test/scene-persona", response_model=responses.ScenePersonaResult, response_model_exclude_unset=True)
     def put_scene_persona(item: ScenePersona, _: str = Depends(user)):
         try:
             with config_write_lock:
@@ -231,7 +232,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                                 f"{type(error).__name__}: {error}") from error
         return scene_persona_result(item)
 
-    @app.post("/api/chat-test/messages")
+    @app.post("/api/chat-test/messages", response_model=responses.MessageReceipt, response_model_exclude_unset=True)
     async def message(item: TestMessage, _: str = Depends(user)):
         return app.state.session.receive(item)
 
@@ -243,7 +244,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
     async def avatar(_: str = Depends(user)):
         return app.state.session.avatar()
 
-    @app.get("/api/chat-test/turns/{turn_id}")
+    @app.get("/api/chat-test/turns/{turn_id}", response_model=responses.StoredTurn, response_model_exclude_unset=True)
     async def turn(turn_id: str, _: str = Depends(user)):
         result = app.state.session.store.turn_detail(config.scene, turn_id)
         if result is None:

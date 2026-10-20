@@ -6,6 +6,7 @@ from typing import Callable, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator, model_validator
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...learning.jargon_store import JargonStore
 from ...runtime.network import NetworkRuntime
@@ -47,21 +48,21 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
     def service_state(scene: str) -> dict | None:
         return runtime.jargon.state(scene) if active(scene) else None
 
-    @app.get(base)
+    @app.get(base, response_model=responses.JargonState, response_model_exclude_unset=True)
     async def state(scene: str, _: str = Depends(user)):
         chat = chat_for(scene)
         return {"scene": scene, "enabled": active(scene),
                 "selection_enabled": chat.config.learning is not None,
                 "cursor": records.state(scene), "service_state": service_state(scene)}
 
-    @app.get(base + "/terms")
+    @app.get(base + "/terms", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def terms(scene: str, status: Literal["pending", "adopted", "rejected"] | None = None,
                     limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
                     _: str = Depends(user)):
         chat_for(scene)
         return records.items(scene, status=status, limit=limit, offset=offset)
 
-    @app.get(base + "/terms/{id}")
+    @app.get(base + "/terms/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def term(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         item = records.item(scene, id)
@@ -73,7 +74,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
             sources.append({"seq": seq, "body": None if message is None else asdict(message)})
         return {**item, "source_messages": sources}
 
-    @app.put(base + "/terms/{id}")
+    @app.put(base + "/terms/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def update(scene: str, id: int, change: JargonChange, _: str = Depends(user)):
         chat_for(scene)
         item = records.update(scene, id, meaning=change.meaning, status=change.status)
@@ -82,7 +83,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return item
 
-    @app.delete(base + "/terms/{id}")
+    @app.delete(base + "/terms/{id}", response_model=responses.Deleted, response_model_exclude_unset=True)
     async def delete(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         if not records.delete(scene, id):
@@ -90,13 +91,13 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return {"deleted": True}
 
-    @app.get(base + "/calls")
+    @app.get(base + "/calls", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def calls(scene: str, limit: int = Query(20, ge=1, le=20),
                     offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
         return records.calls(scene, limit=limit, offset=offset)
 
-    @app.get(base + "/calls/{id}")
+    @app.get(base + "/calls/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def call(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         item = records.call(scene, id)
@@ -120,10 +121,10 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return {"requested": action, "state": service_state(scene)}
 
-    @app.post(base + "/run")
+    @app.post(base + "/run", response_model=responses.LearningRequested, response_model_exclude_unset=True)
     async def run(scene: str, _: str = Depends(user)):
         return trigger(scene, "run")
 
-    @app.post(base + "/retry")
+    @app.post(base + "/retry", response_model=responses.LearningRequested, response_model_exclude_unset=True)
     async def retry(scene: str, _: str = Depends(user)):
         return trigger(scene, "retry")

@@ -101,7 +101,7 @@ def test_market_lists_filters_and_guards_installation(tmp_path):
 
             tools = (await client.get('/api/host/plugin-market', params={'category': '工具', 'query': '约定'})).json()
             assert [item['name'] for item in tools['entries']] == ['notes'] and tools['total'] == 3
-            notes = (await client.get('/api/host/plugin-market/notes')).json()
+            notes = view['notes']
             assert notes['version'] == '0.3.0' and notes['permissions'] == ['send']
             assert view['weather']['permissions'] is None
             assert (await client.get('/api/host/plugin-market/missing')).status_code == 404

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
-from dataclasses import asdict
 from datetime import datetime, timedelta
 import time
 from pathlib import Path
@@ -14,6 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket
 
 from len_bot.web.shell import mount_panel
+from . import responses
 from ..config import HostConfig
 from ..configuration.editing import _read_saved
 from ..models.limits import speech_quota
@@ -138,7 +138,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         role = None if runtime.personas is None else runtime.personas.switching.get(scene)
         return None if role is None else {"key": role.key, "name": role.name or role.key}
 
-    @app.get("/api/host/state")
+    @app.get("/api/host/state", response_model=responses.HostState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         return {
             "bot_id": config.bot_id,
@@ -182,7 +182,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             ],
         }
 
-    @app.get("/api/host/scene-titles")
+    @app.get("/api/host/scene-titles", response_model=responses.SceneTitles, response_model_exclude_unset=True)
     async def scene_titles(_: str = Depends(user)):
         try:
             saved = list((await asyncio.to_thread(_read_saved, root)).scenes)
@@ -193,7 +193,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 "members": {scene: runtime.scene_titles.members[scene] for scene in titles
                             if scene in runtime.scene_titles.members}}
 
-    @app.post("/api/host/connection/connect", status_code=202)
+    @app.post("/api/host/connection/connect", status_code=202, response_model=responses.Status, response_model_exclude_unset=True)
     async def connect(_: str = Depends(user)):
         try:
             runtime.request_connection()
@@ -201,7 +201,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             raise HTTPException(409, str(error)) from error
         return {"status": runtime.status}
 
-    @app.post("/api/host/connection/disconnect")
+    @app.post("/api/host/connection/disconnect", response_model=responses.Status, response_model_exclude_unset=True)
     async def disconnect(_: str = Depends(user)):
         try:
             await runtime.disconnect()
@@ -209,7 +209,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             raise HTTPException(409, str(error)) from error
         return {"status": runtime.status}
 
-    @app.get("/api/host/logs")
+    @app.get("/api/host/logs", response_model=responses.LogPage, response_model_exclude_unset=True)
     async def logs(level: Literal["INFO", "WARNING", "ERROR"] | None = None, source: str | None = None,
                    event: str | None = None, scene: str | None = None, turn_id: str | None = None,
                    tool_call_id: str | None = None, plugin: str | None = None, task_id: str | None = None,
@@ -252,7 +252,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                                     for until in [speech_quota(store, chat.config).until(direct=False)] if until is not None},
                     "memory_index": None if runtime.memory is None else runtime.memory.backend.index_status()}
 
-    @app.get("/api/host/overview")
+    @app.get("/api/host/overview", response_model=responses.Overview, response_model_exclude_unset=True)
     async def overview(_: str = Depends(user)):
         nonlocal overview_cached, overview_read_at
         async with overview_lock:
@@ -260,26 +260,6 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 overview_cached = await asyncio.to_thread(read_overview)
                 overview_read_at = time.monotonic()
             return overview_cached
-
-    @app.get("/api/host/scenes/{scene}")
-    async def scene_state(scene: str, _: str = Depends(user)):
-        configured_scene(scene)
-        chat = runtime.chats[scene]
-        return {
-            "scene": scene,
-            "timezone": config.scene_timezone(scene),
-            "bot_id": config.bot_id,
-            "persona": {"id": chat.persona.id, "name": chat.persona.name},
-            "delivery": config.delivery,
-            "voice_mode": config.scenes[scene].voice_mode,
-            "models": {"mind": config.models.roles.mind.model},
-            "messages": [
-                {"seq": seq, "rendered": chat.context.render(message), "text": chat.context.render_text(message), **asdict(message),
-                 "images": runtime.store.message_media(scene, seq)}
-                for seq, message in runtime.store.recent_records(scene)
-            ],
-            "turns": runtime.store.recent_turns(scene),
-        }
 
     @app.get("/api/host/scenes/{scene}/messages/{seq}/images/{image_index}")
     async def original_image(scene: str, seq: int, image_index: int, _: str = Depends(user)):
@@ -291,7 +271,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         mime_type, data = image
         return Response(data, media_type=mime_type, headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/host/scenes/{scene}/history")
+    @app.get("/api/host/scenes/{scene}/history", response_model=responses.SessionPage, response_model_exclude_unset=True)
     async def history(scene: str, before: int | None = Query(default=None, ge=1),
                       limit: int = Query(default=50, ge=1, le=200), active_only: bool = True,
                       _: str = Depends(user)):

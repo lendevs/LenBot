@@ -36,7 +36,7 @@ def test_scene_bindings_validate_before_save_and_keep_running_snapshot(tmp_path)
                     endpoint = '/api/host/settings/scenes'
                     for method, path in [('POST', endpoint), ('POST', '/api/host/personas/other/scenes'), ('DELETE', endpoint+'/onebot:group:80001')]:
                         assert (await client.request(method, path, json={})).status_code == 401
-                    for path in ['/api/host/usage', '/api/host/log-files', '/api/host/scenes/onebot:group:80001/notices',
+                    for path in ['/api/host/usage', '/api/host/log-files', '/api/host/scenes/onebot:group:80001/timeline',
                                  '/api/host/scenes/onebot:group:80001/turns/absent/export', '/api/host/tasks/1/export?scene=onebot:group:80001']:
                         assert (await client.get(path)).status_code == 401
                     assert (await client.put('/api/host/settings/processing', json={})).status_code == 401

@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...configuration.chat import (
     Compaction,
@@ -419,7 +420,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             await runtime.settings.apply(candidate)
             return _snapshot(running, candidate)
 
-    @app.get("/api/host/settings")
+    @app.get("/api/host/settings", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def get_settings(_: str = Depends(user)):
         async with write_lock:
             try:
@@ -429,7 +430,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                                     f"{type(error).__name__}: {error}") from error
             return _snapshot(running, saved)
 
-    @app.get("/api/host/pending-restart")
+    @app.get("/api/host/pending-restart", response_model=responses.PendingRestart, response_model_exclude_unset=True)
     async def pending_restart(_: str = Depends(user)):
         async with write_lock:
             try:
@@ -438,12 +439,12 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                     f"{type(error).__name__}: {error}") from error
 
-    @app.put("/api/host/settings/retention")
+    @app.put("/api/host/settings/retention", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def retention(request: Request, _: str = Depends(user)):
         change = await _body(request, RetentionChange)
         return await save(lambda source, saved: source.update(change.model_dump(mode="json")))
 
-    @app.put("/api/host/settings/limits")
+    @app.put("/api/host/settings/limits", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def limits(request: Request, _: str = Depends(user)):
         # Partial update: only the fields in the body change. An optional "version" (from the
         # snapshot's versions.limits) rejects the save with 409 when the limits changed meanwhile,
@@ -469,7 +470,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，这次提交的内容没有保存。请重新载入最新设置，重新填写后再保存。",
                                       "snapshot": _snapshot(running, saved)}) from None
 
-    @app.put("/api/host/settings/limits/scenes/{scene}")
+    @app.put("/api/host/settings/limits/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def scene_speech_limit(scene: str, request: Request, _: str = Depends(user)):
         change = await _body(request, SceneSpeechLimit)
 
@@ -486,7 +487,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit, speech=True)
 
-    @app.put("/api/host/settings/processing")
+    @app.put("/api/host/settings/processing", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def processing(request: Request, _: str = Depends(user)):
         try:
             change = ProcessingChange.model_validate_json(await request.body())
@@ -494,7 +495,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             raise HTTPException(422, _validation_detail(error)) from error
         return await save(lambda source, saved: source.update(change.model_dump(mode="json")))
 
-    @app.get("/api/host/models/protocols")
+    @app.get("/api/host/models/protocols", response_model=responses.Protocols, response_model_exclude_unset=True)
     async def protocols(_: str = Depends(user)):
         return {'protocols': PROTOCOLS}
 
@@ -503,7 +504,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             saved = await asyncio.to_thread(_read_saved, root)
         return item.provider.resolve(saved.models.providers.get(item.alias))
 
-    @app.post("/api/host/models/list")
+    @app.post("/api/host/models/list", response_model=responses.ModelList, response_model_exclude_unset=True)
     async def models_list(request: Request, _: str = Depends(user)):
         item = await _body(request, ProviderCandidate)
         try:
@@ -511,7 +512,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post("/api/host/models/probe")
+    @app.post("/api/host/models/probe", response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def models_probe(request: Request, _: str = Depends(user)):
         item = await _body(request, ModelCandidate)
         try:
@@ -519,7 +520,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.put("/api/host/settings/models")
+    @app.put("/api/host/settings/models", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_models(request: Request, _: str = Depends(user)):
         change: ModelsChange = await _body(request, ModelsChange)
 
@@ -565,7 +566,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit)
 
-    @app.post("/api/host/settings/scenes")
+    @app.post("/api/host/settings/scenes", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def create_scene(request: Request, _: str = Depends(user)):
         change: SceneCreate = await _body(request, SceneCreate)
         def edit(source: dict, saved: HostConfig) -> None:
@@ -574,14 +575,14 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             source["scenes"][change.scene] = {"persona": change.persona, "attention": {"only_direct": True}}
         return await save(edit, scenes=True)
 
-    @app.get('/api/host/settings/scenes/available')
+    @app.get('/api/host/settings/scenes/available', response_model=responses.Records, response_model_exclude_unset=True)
     async def available_scenes(_: str = Depends(user)):
         try:
             return {'items': await runtime.scene_service.available()}
         except (ValueError, RuntimeError) as error:
             raise HTTPException(409, str(error)) from error
 
-    @app.delete("/api/host/settings/scenes/{scene}")
+    @app.delete("/api/host/settings/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def delete_scene(scene: str, _: str = Depends(user)):
         def edit(source: dict, saved: HostConfig) -> None:
             if scene not in saved.scenes:
@@ -598,7 +599,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                     source['task_archive'] = None
         return await save(edit, scenes=True)
 
-    @app.put("/api/host/settings/scenes/{scene}")
+    @app.put("/api/host/settings/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_scene(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
             raise HTTPException(404, "当前宿主未配置这一场景")
@@ -614,24 +615,24 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit)
 
-    @app.put("/api/host/settings/web-read")
+    @app.put("/api/host/settings/web-read", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_web_read(request: Request, _: str = Depends(user)):
         change: WebReadChange = await _body(request, WebReadChange)
         return await save(lambda source, _: source.update(web_read=(
             None if change.web_read is None else change.web_read.model_dump(mode="json")
         )))
 
-    @app.put("/api/host/settings/network")
+    @app.put("/api/host/settings/network", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_network(request: Request, _: str = Depends(user)):
         change: NetworkChange = await _body(request, NetworkChange)
         return await save(lambda source, _: source.update(network=change.network.model_dump(mode="json")))
 
-    @app.put("/api/host/settings/worker")
+    @app.put("/api/host/settings/worker", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_worker(request: Request, _: str = Depends(user)):
         change: WorkerChange = await _body(request, WorkerChange)
         return await save(lambda source, _: source.update(worker=change.worker))
 
-    @app.put("/api/host/settings/scenes/{scene}/tasks")
+    @app.put("/api/host/settings/scenes/{scene}/tasks", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_tasks(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
             raise HTTPException(404, "当前宿主未配置这一场景")
@@ -644,7 +645,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit)
 
-    @app.get("/api/host/settings/scenes/{scene}/learning")
+    @app.get("/api/host/settings/scenes/{scene}/learning", response_model=responses.LearningSettingsSnapshot, response_model_exclude_unset=True)
     async def get_learning(scene: str, _: str = Depends(user)):
         if scene not in running.scenes:
             raise HTTPException(404, "当前宿主未配置这一场景")
@@ -656,7 +657,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                                     f"{type(error).__name__}: {error}") from error
             return learning_snapshot(scene, _snapshot(running, saved))
 
-    @app.put("/api/host/settings/scenes/{scene}/learning")
+    @app.put("/api/host/settings/scenes/{scene}/learning", response_model=responses.LearningSettingsSnapshot, response_model_exclude_unset=True)
     async def put_learning(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
             raise HTTPException(404, "当前宿主未配置这一场景")
@@ -671,14 +672,14 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return learning_snapshot(scene, await save(edit))
 
-    @app.put("/api/host/settings/web-search")
+    @app.put("/api/host/settings/web-search", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_web_search(request: Request, _: str = Depends(user)):
         change: WebSearchChange = await _body(request, WebSearchChange)
         return await save(lambda source, _: source.update(web_search=(
             None if change.web_search is None else change.web_search.model_dump(mode="json")
         )))
 
-    @app.put("/api/host/settings/connection")
+    @app.put("/api/host/settings/connection", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_connection(request: Request, _: str = Depends(user)):
         change: ConnectionChange = await _body(request, ConnectionChange)
 
@@ -708,7 +709,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit)
 
-    @app.put("/api/host/settings/commands")
+    @app.put("/api/host/settings/commands", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_commands(request: Request, _: str = Depends(user)):
         change: CommandsChange = await _body(request, CommandsChange)
 
@@ -718,7 +719,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit)
 
-    @app.put("/api/host/settings/memory")
+    @app.put("/api/host/settings/memory", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_memory(request: Request, _: str = Depends(user)):
         change: MemoryChange = await _body(request, MemoryChange)
 
@@ -732,7 +733,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit)
 
-    @app.put("/api/host/settings/panel")
+    @app.put("/api/host/settings/panel", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_panel(request: Request, _: str = Depends(user)):
         change: PanelChange = await _body(request, PanelChange)
 

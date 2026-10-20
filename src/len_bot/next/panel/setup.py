@@ -19,6 +19,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 import yaml
 
+from . import responses
 from ..configuration.models import Binding, Provider
 from ..memory.embeddings import EmbeddingBinding
 from ..configuration.chat import Compaction
@@ -225,7 +226,7 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
     async def page():
         return (Path(__file__).with_name('setup.html')).read_text(encoding='utf-8')
 
-    @app.post('/api/setup/platform', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/platform', dependencies=[Depends(authorize)], response_model=responses.SetupPlatform, response_model_exclude_unset=True)
     async def probe_platform(item: PlatformProbe):
         def failed(error: str) -> None:
             raise ValueError(error)
@@ -235,37 +236,37 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/setup/model', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/model', dependencies=[Depends(authorize)], response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def probe_model(item: ModelProbe):
         try:
             return await run_model_probe(item.provider, item.mind, item.kind)
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/setup/protocols', dependencies=[Depends(authorize)])
+    @app.get('/api/setup/protocols', dependencies=[Depends(authorize)], response_model=responses.SetupProtocols, response_model_exclude_unset=True)
     async def protocols():
         return {'protocols': [p for p in PROTOCOLS if 'mind' in p['roles']], 'container': container,
                 'panel_port': CONTAINER_PANEL_PORT if container else None}
 
-    @app.post('/api/setup/embedding', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/embedding', dependencies=[Depends(authorize)], response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def probe_embedding(item: EmbeddingProbe):
         try:
             return await run_model_probe(item.provider, item.binding, 'embedding')
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/setup/models', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/models', dependencies=[Depends(authorize)], response_model=responses.ModelList, response_model_exclude_unset=True)
     async def models(item: ProviderList):
         try:
             return {'models': await list_models(item.provider)}
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/setup/plugins', dependencies=[Depends(authorize)])
+    @app.get('/api/setup/plugins', dependencies=[Depends(authorize)], response_model=responses.SetupPlugins, response_model_exclude_unset=True)
     async def plugins():
         return {'plugins': await asyncio.to_thread(plugin_choices, root)}
 
-    @app.post('/api/setup', dependencies=[Depends(authorize)])
+    @app.post('/api/setup', dependencies=[Depends(authorize)], response_model=responses.SetupSaved, response_model_exclude_unset=True)
     async def save(item: FirstSetup):
         async with lock:
             if container:

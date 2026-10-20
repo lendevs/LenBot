@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, JsonValue
 from starlette.concurrency import run_in_threadpool
 
+from .. import responses
 from ...configuration.types import STRICT
 from .materials import failure
 from .owner import panel_owner
@@ -167,7 +168,7 @@ def register_host_resources(app: FastAPI, *, runtime: NetworkRuntime,
             raise HTTPException(409, '当前没有任务服务')
         return runtime.tasks
 
-    @app.post('/api/host/resources/adopt')
+    @app.post('/api/host/resources/adopt', response_model=responses.SharedFile, response_model_exclude_unset=True)
     async def adopt(scene: str, body: AdoptResource, _: str = Depends(user)):
         try:
             return await tasks(scene).adopt_resource(scene, body.reference, requester=panel_owner(runtime), name=body.name)
@@ -176,7 +177,7 @@ def register_host_resources(app: FastAPI, *, runtime: NetworkRuntime,
         except (ValueError, OSError, RuntimeError) as error:
             raise failure(error) from error
 
-    @app.delete('/api/host/resources')
+    @app.delete('/api/host/resources', response_model=responses.ResourceDeleted, response_model_exclude_unset=True)
     async def delete(scene: str, body: DeleteResource, _: str = Depends(user)):
         try:
             return await tasks(scene).delete_resource(scene, body.reference, requester=panel_owner(runtime))
@@ -185,7 +186,7 @@ def register_host_resources(app: FastAPI, *, runtime: NetworkRuntime,
         except (ValueError, OSError) as error:
             raise failure(error) from error
 
-    @app.post('/api/host/resources/upload')
+    @app.post('/api/host/resources/upload', response_model=responses.SharedFile, response_model_exclude_unset=True)
     async def upload(scene: str, body: Annotated[UploadResource, Form(media_type='multipart/form-data')],
                      _: str = Depends(user)):
         try:

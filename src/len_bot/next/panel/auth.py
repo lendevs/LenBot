@@ -19,6 +19,7 @@ from len_bot.web.auth import (
     clear_login_failures, create_session, login_blocked, record_login_failure,
     revoke_session, session_user, verify_password,
 )
+from . import responses
 from ..configuration.maintenance import PanelSettings
 from ..configuration.types import STRICT
 from ..runtime.events import EventHub
@@ -73,7 +74,7 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
     def user(request: Request) -> str:
         return session_user(request.cookies.get(cookie_name(request)))
 
-    @app.post("/api/auth/login")
+    @app.post("/api/auth/login", response_model=responses.LoginResult, response_model_exclude_unset=True)
     async def login(item: Login, request: Request, response: Response):
         nonlocal last_login_at
         key = f"isolated:{request.client.host if request.client is not None else 'local'}"
@@ -92,11 +93,11 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
                             secure=settings.cookie_secure, max_age=7 * 86400)
         return {"success": True, "username": item.username, "is_default_password": False}
 
-    @app.get("/api/auth/me")
+    @app.get("/api/auth/me", response_model=responses.CurrentUser, response_model_exclude_unset=True)
     async def me(current: str = Depends(user)):
         return {"username": current, "is_default_password": False, "last_login_at": last_login_at}
 
-    @app.post("/api/auth/logout")
+    @app.post("/api/auth/logout", response_model=responses.Success, response_model_exclude_unset=True)
     async def logout(request: Request, response: Response, _: str = Depends(user)):
         name = cookie_name(request)
         revoke_session(request.cookies[name])

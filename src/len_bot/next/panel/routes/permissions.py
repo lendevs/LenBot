@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from .. import responses
 from ...runtime.identity import IdentitySettings
 from ...configuration.tasks import TaskRole
 from .settings import _body
@@ -78,14 +79,14 @@ def register_host_permissions(app: FastAPI, *, root: Path, runtime, user, write_
                 'owners': runtime.config.owners,
                 'effective_identities': runtime.config.scene_config(scene).permissions.model_dump()}
 
-    @app.get('/api/host/permissions')
+    @app.get('/api/host/permissions', response_model=responses.Permissions, response_model_exclude_unset=True)
     async def state(scene: str, _: str = Depends(user)):
         try:
             return snapshot(await asyncio.to_thread(_read_saved, root), scene)
         except (ValueError, OSError) as error:
             raise HTTPException(422, str(error)) from error
 
-    @app.put('/api/host/permissions')
+    @app.put('/api/host/permissions', response_model=responses.Permissions, response_model_exclude_unset=True)
     async def save(scene: str, request: Request, _: str = Depends(user)):
         change = await _body(request, PermissionChange)
         if scene not in runtime.config.scenes:

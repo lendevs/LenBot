@@ -83,7 +83,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     assert (await client.get("/api/panel-context")).json() == {
                         "mode": "isolated-multi", "home": "/overview",
                     }
-                    for path in ("/api/auth/me", "/api/host/state", "/api/host/memory/state", "/api/host/retention", "/api/host/limits", "/api/host/scenes/onebot:group:80001/control", "/api/host/scenes/onebot:group:80001",
+                    for path in ("/api/auth/me", "/api/host/state", "/api/host/memory/state", "/api/host/retention", "/api/host/limits", "/api/host/scenes/onebot:group:80001/control", "/api/host/scenes/onebot:group:80001/timeline",
                                  f"/api/host/scenes/onebot:group:80001/turns/{configured_turn}"):
                         assert (await client.get(path)).status_code == 401
                     # The setup page on another loopback port may read readiness; other origins may not.
@@ -122,19 +122,19 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     assert str(root) in memory_state['reindex_command']
                     assert 'uv run' not in memory_state['reindex_command']
 
-                    scene = (await client.get("/api/host/scenes/onebot:group:80001")).json()
+                    scene = (await client.get("/api/host/scenes/onebot:group:80001/timeline")).json()
                     assert scene["scene"] == "onebot:group:80001"
-                    assert scene["persona"] == {"id": "synthetic-host", "name": "合成角色"}
-                    assert len(scene["messages"]) == 1
-                    assert scene["messages"][0]["rendered"]
-                    assert [turn["id"] for turn in scene["turns"]] == [configured_turn]
+                    messages = [item for item in scene["items"] if item["type"] == "message"]
+                    turns = [item for item in scene["items"] if item["type"] == "turn"]
+                    assert len(messages) == 1 and messages[0]["text"]
+                    assert [turn["turn_id"] for turn in turns] == [configured_turn]
                     assert (await client.get(f"/api/host/scenes/onebot:group:80001/turns/{configured_turn}")).status_code == 200
-                    assert (await client.get("/api/host/scenes/onebot:group:89999")).status_code == 404
+                    assert (await client.get("/api/host/scenes/onebot:group:89999/timeline")).status_code == 404
                     assert (await client.get(f"/api/host/scenes/onebot:group:89999/turns/{leftover_turn}")).status_code == 404
                     assert (await client.get(f"/api/host/scenes/onebot:group:80001/turns/{other_turn}")).status_code == 404
                     for method, path in (("POST", "/api/host/scenes/onebot:group:80001/messages"),
-                                         ("PUT", "/api/host/scenes/onebot:group:80001"),
-                                         ("DELETE", "/api/host/scenes/onebot:group:80001")):
+                                         ("PUT", "/api/host/scenes/onebot:group:80001/timeline"),
+                                         ("DELETE", "/api/host/scenes/onebot:group:80001/timeline")):
                         assert (await client.request(method, path)).status_code in {404, 405}
                     browser_settings = {'socket':str(root/'browser.sock'), 'browser_instance_id':None,
                                         'binary':str(root/'bsk'), 'home':str(root/'browser-home'),

@@ -55,7 +55,6 @@ def test_permission_write_uses_selected_persona(tmp_path: Path, field: str) -> N
                         assert (await client.post('/api/auth/login', json={
                             'username': 'fixture', 'password': 'synthetic-password'})).status_code == 200
                         read_url = f'/api/host/{"capabilities" if field == "tools" else "skills"}?scene=onebot:group:80001'
-                        write_url = f'/api/host/scenes/onebot:group:80001/role-{field}'
                         selected = (await client.get(read_url)).json()[f'role_{field}']
                         assert selected['persona']['name'] == 'first'
                         assert selected['restart_required'] is False
@@ -64,6 +63,7 @@ def test_permission_write_uses_selected_persona(tmp_path: Path, field: str) -> N
                         switched = await client.post(f'/api/host/personas/{second}/scenes',
                                                      json={'scenes': ['onebot:group:80001']})
                         assert switched.json()['results'][0]['status'] == 'switched', switched.text
+                        write_url = f'/api/host/personas/{second}/{field}'
                         before = {name: (tmp_path / name / 'persona.yaml').read_bytes() for name in ('first', 'second')}
                         stale = await client.put(write_url, json={'directory': selected['directory'], field: 'all'})
                         assert stale.status_code == 422
@@ -77,7 +77,7 @@ def test_permission_write_uses_selected_persona(tmp_path: Path, field: str) -> N
                         assert saved.json()['affected_scenes'] == ['onebot:group:80001', 'onebot:group:80002']
                         assert getattr(load_persona(tmp_path / 'first'), field) == []
                         assert getattr(load_persona(tmp_path / 'second'), field) == 'all'
-                        assert saved.json()['running'] == 'all' and saved.json()['restart_required'] is False
+                        assert saved.json()['applied'] is True
                         assert getattr(runtime.chats['onebot:group:80002'].persona, field) == 'all'
                 finally:
                     await app.state.trials.close()

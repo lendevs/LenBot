@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...runtime.network import NetworkRuntime
 from ...work.materials import MaterialName, adopt_file, finish_file_operation, list_materials, material_directory, open_regular
@@ -68,7 +69,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
             raise HTTPException(409, '当前运行配置没有 worker，无法定位共享资料和交付原件')
         return runtime.config.worker
 
-    @app.get('/api/host/materials')
+    @app.get('/api/host/materials', response_model=responses.MaterialListing, response_model_exclude_unset=True)
     async def listing(scene: str, request: Request, _: str = Depends(user)):
         worker = worker_for(scene)
         async with changes:
@@ -81,7 +82,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
             except (ValueError, OSError) as error:
                 raise failure(error) from error
 
-    @app.post('/api/host/materials/adopt')
+    @app.post('/api/host/materials/adopt', response_model=responses.MaterialAdopted, response_model_exclude_unset=True)
     async def adoption(scene: str, body: MaterialAdoption, request: Request, _: str = Depends(user)):
         worker = worker_for(scene)
         if not body.confirmed:

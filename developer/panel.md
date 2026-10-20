@@ -207,3 +207,25 @@ const state = useQuery({ queryKey: keys.host.state(), queryFn: ({ signal }) => h
 
 - 插件参数表单由插件清单生成（目前在旧页面的 `host/components/SchemaForm.vue`），不为单个插件写专用表单。
 - 首页的待处理事项在 `host/attention.js` 汇总，顶栏的计数和首页列表共用这一份数据。
+
+
+## 接口清单与响应模型
+
+面板的接口清单由 FastAPI OpenAPI 生成。对一个独立测试实例读取 `/openapi.json`，不需要从前端请求字符串反推接口。宿主管理、单场景试聊、首次配置分别由各自运行中的应用返回清单。
+
+```sh
+curl --fail http://127.0.0.1:18120/openapi.json -o /tmp/lenbot-panel-openapi.json
+uv run --no-sync python - <<'PYTHON'
+import json
+from pathlib import Path
+schema = json.loads(Path('/tmp/lenbot-panel-openapi.json').read_text())
+for path, operations in sorted(schema['paths'].items()):
+    for method, operation in operations.items():
+        if method in {'get', 'post', 'put', 'patch', 'delete'}:
+            print(method.upper(), path, operation.get('summary', ''))
+PYTHON
+```
+
+JSON 接口通过 `response_model` 声明响应。`panel/responses.py` 保存面板视图的响应结构，任务、资源、时间线和插件目录复用各领域已有模型。模型服务原文、插件参数、持久化调用记录等可变正文使用 JSON 类型，不裁剪供应方字段。可选字段使用 `response_model_exclude_unset=True` 保留原响应的缺省行为；不把原先缺省的字段补成 null。图片、音频、文件和诊断归档保持二进制响应。
+
+`tests/test_panel_response_contract.py` 使用相同业务入口的无响应过滤应用取得原始 HTTP JSON，再对照响应模型序列化结果；比较 JSON 文本以区分整数、浮点数和布尔值。它覆盖读取及角色、记忆、会话、提醒等写入响应。

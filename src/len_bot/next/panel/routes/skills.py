@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
+from .. import responses
 from ...config import HostConfig, load_host_config
 from ...configuration.types import STRICT
 from .capabilities import skill_info
@@ -124,7 +125,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 if isinstance((permission := load_persona(config.scenes[scene].persona).skills), list)
                 and name in permission]
 
-    @app.get('/api/host/tasks/{id}/skills')
+    @app.get('/api/host/tasks/{id}/skills', response_model=responses.TaskSkills, response_model_exclude_unset=True)
     async def candidates(id: int, scene: str, _: str = Depends(user)):
         scene_exists(scene)
         async with write_lock:
@@ -137,7 +138,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             except (ValueError, OSError) as error:
                 raise _failure(error) from error
 
-    @app.get('/api/host/skills/files')
+    @app.get('/api/host/skills/files', response_model=responses.SkillFiles, response_model_exclude_unset=True)
     async def files(scene: str, source: Source, name: SkillName,
                     task_id: int | None = Query(None, ge=1), _: str = Depends(user)):
         scene_exists(scene)
@@ -160,7 +161,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             except (ValueError, OSError) as error:
                 raise _failure(error) from error
 
-    @app.get('/api/host/skills/text')
+    @app.get('/api/host/skills/text', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def text_file(scene: str, source: Source, name: SkillName, path: str = 'SKILL.md',
                         offset: int = Query(0, ge=0), task_id: int | None = Query(None, ge=1),
                         _: str = Depends(user)):
@@ -175,7 +176,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             except (ValueError, OSError) as error:
                 raise _failure(error) from error
 
-    @app.post('/api/host/skills/move')
+    @app.post('/api/host/skills/move', response_model=responses.SkillMoved, response_model_exclude_unset=True)
     async def move(scene: str, body: MoveSkill, _: str = Depends(user)):
         scene_exists(scene)
         async with write_lock:
@@ -210,7 +211,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             except (ValueError, OSError) as error:
                 raise _failure(error) from error
 
-    @app.delete('/api/host/skills/{source}/{name}')
+    @app.delete('/api/host/skills/{source}/{name}', response_model=responses.SkillDeleted, response_model_exclude_unset=True)
     async def delete(scene: str, source: Literal['scene', 'shared'], name: SkillName,
                      _: str = Depends(user)):
         scene_exists(scene)

@@ -86,7 +86,7 @@ def test_limits_route_runs_budget_off_the_event_loop():
     import inspect
     from len_bot.next.panel.routes import operations
     source = inspect.getsource(operations)
-    route = source[source.index("def limit_states"):source.index("@app.post('/api/host/scenes/{scene}/speech/reset')")]
+    route = source[source.index("def limit_states"):source.index("@app.post('/api/host/scenes/{scene}/speech/reset'")]
     assert 'asyncio.to_thread' in route and 'readonly=True' in route
 
 

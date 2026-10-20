@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Respo
 from pydantic import BaseModel, Field, field_validator
 import yaml
 
+from .. import responses
 from ...chat.tools import build_tools
 from ...configuration.types import STRICT
 from ...config import HostConfig, load_host_config
@@ -242,7 +243,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             raise KeyError(key)
         return personas.describe(role, saved, listing)
 
-    @app.get('/api/host/personas')
+    @app.get('/api/host/personas', response_model=responses.RoleLibrary, response_model_exclude_unset=True)
     async def library(response: Response, _: str = Depends(user)):
         response.headers['Cache-Control'] = 'no-store'
 
@@ -257,16 +258,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.get('/api/host/personas/{key}')
-    async def role(key: str, response: Response, _: str = Depends(user)):
-        response.headers['Cache-Control'] = 'no-store'
-        try:
-            async with write_lock:
-                return await asyncio.to_thread(describe, key)
-        except (LookupError, ValueError, OSError) as error:
-            raise role_failure(error) from error
-
-    @app.post('/api/host/personas')
+    @app.post('/api/host/personas', response_model=responses.Role, response_model_exclude_unset=True)
     async def create(item: RoleCreate, _: str = Depends(user)):
         try:
             async with write_lock:
@@ -275,7 +267,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.post('/api/host/personas/{key}/copy')
+    @app.post('/api/host/personas/{key}/copy', response_model=responses.Role, response_model_exclude_unset=True)
     async def copy(key: str, item: RoleCreate, _: str = Depends(user)):
         def write() -> None:
             saved = load_host_config(root)
@@ -288,7 +280,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.delete('/api/host/personas/{key}')
+    @app.delete('/api/host/personas/{key}', response_model=responses.RoleDeleted, response_model_exclude_unset=True)
     async def delete(key: str, _: str = Depends(user)):
         def remove() -> dict:
             saved = load_host_config(root)
@@ -302,7 +294,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.post('/api/host/personas/{key}/scenes')
+    @app.post('/api/host/personas/{key}/scenes', response_model=responses.RoleScenes, response_model_exclude_unset=True)
     async def use_in(key: str, item: RoleScenes, _: str = Depends(user)):
         for scene in item.scenes:
             require_scene(scene)
@@ -328,7 +320,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         return Response(data, media_type='application/zip', headers={
             'Content-Disposition': f'attachment; filename="persona-{key}.zip"', 'Cache-Control': 'no-store'})
 
-    @app.post('/api/host/personas/import')
+    @app.post('/api/host/personas/import', response_model=responses.RoleImported, response_model_exclude_unset=True)
     async def upload_package(file: UploadFile, name: str = Form(min_length=1, max_length=64),
                              _: str = Depends(user)):
         try:
@@ -345,7 +337,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         finally:
             await file.close()
 
-    @app.get('/api/host/scenes/{scene}/persona-location')
+    @app.get('/api/host/scenes/{scene}/persona-location', response_model=responses.RoleLocation, response_model_exclude_unset=True)
     async def location(scene: str, response: Response, _: str = Depends(user)):
         require_scene(scene)
         response.headers['Cache-Control'] = 'no-store'
@@ -435,7 +427,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 'files': [{'filename': filename, 'tags': document.tags, 'chars': len(document.content)}
                           for filename, document in sorted(candidate.knowledge.items())]}
 
-    @app.get('/api/host/personas/{key}/knowledge')
+    @app.get('/api/host/personas/{key}/knowledge', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
     async def knowledge_listing(key: str, response: Response, _: str = Depends(user)):
         response.headers['Cache-Control'] = 'no-store'
         try:
@@ -444,7 +436,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.get('/api/host/personas/{key}/knowledge/document')
+    @app.get('/api/host/personas/{key}/knowledge/document', response_model=responses.KnowledgeDocument, response_model_exclude_unset=True)
     async def knowledge_document(key: str, response: Response,
                                  item: Annotated[KnowledgeFilename, Query()], _: str = Depends(user)):
         response.headers['Cache-Control'] = 'no-store'
@@ -473,19 +465,19 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             raise role_failure(error) from error
         return {**result, **await apply_saved(runtime, Path(result['saved_path']))}
 
-    @app.post('/api/host/personas/{key}/knowledge/document')
+    @app.post('/api/host/personas/{key}/knowledge/document', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
     async def knowledge_create(key: str, item: KnowledgeChange, _: str = Depends(user)):
         return await write_knowledge(key, item, 'create')
 
-    @app.put('/api/host/personas/{key}/knowledge/document')
+    @app.put('/api/host/personas/{key}/knowledge/document', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
     async def knowledge_write(key: str, item: KnowledgeChange, _: str = Depends(user)):
         return await write_knowledge(key, item, 'write')
 
-    @app.delete('/api/host/personas/{key}/knowledge/document')
+    @app.delete('/api/host/personas/{key}/knowledge/document', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
     async def knowledge_delete(key: str, item: KnowledgeFilename, _: str = Depends(user)):
         return await write_knowledge(key, item, 'delete')
 
-    @app.post("/api/host/scenes/{scene}/persona-examples")
+    @app.post("/api/host/scenes/{scene}/persona-examples", response_model=responses.RoleFiles, response_model_exclude_unset=True)
     async def add_example(scene: str, item: ExpressionExample, _: str = Depends(user)):
         require_scene(scene)
         expression = LearningStore(runtime.store).expression(scene, item.expression_id)
@@ -512,30 +504,6 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                                 f"{type(error).__name__}: {error}") from error
         return {**result, **await apply_saved(runtime, Path(result['saved_path']))}
 
-    @app.get("/api/host/scenes/{scene}/persona-stickers")
-    async def stickers(scene: str, response: Response, _: str = Depends(user)):
-        require_scene(scene)
-        response.headers["Cache-Control"] = "no-store"
-        persona = runtime.chats[scene].persona
-        uses = runtime.store.sticker_usage(scene, persona.id)
-        return {"scene": scene, "persona": {"id": persona.id, "name": persona.name},
-                "stickers": [{"file": sticker.file, "description": sticker.description,
-                              "emotions": sticker.emotions, "tags": sticker.tags,
-                              "mime_type": sticker.mime_type, "width": sticker.width,
-                              "height": sticker.height, "animated": sticker.animated,
-                              "bytes": len(sticker.data), "confirmed_uses": uses.get(sticker.file, 0)}
-                             for sticker in persona.stickers.values()]}
-
-    @app.get("/api/host/scenes/{scene}/persona-stickers/image")
-    async def sticker_image(scene: str, file: str, _: str = Depends(user)):
-        require_scene(scene)
-        sticker = runtime.chats[scene].persona.stickers.get(file)
-        if sticker is None:
-            raise HTTPException(404, "当前运行角色没有这张表情",
-                                headers={"Cache-Control": "no-store"})
-        return Response(sticker.data, media_type=sticker.mime_type,
-                        headers={"Cache-Control": "no-store"})
-
     def profile_state(key: str, change: PersonaProfileChange | None = None) -> dict:
         config, path = located(key)
         files = read_persona_files(path)
@@ -549,7 +517,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 'profile': PersonaProfile.model_validate(persona.model_dump(include={*PROFILE_METADATA, 'voice', 'boundaries', 'examples'})).model_dump(),
                 'affected_scenes': affected(config, path)}
 
-    @app.get('/api/host/personas/{key}/profile')
+    @app.get('/api/host/personas/{key}/profile', response_model=responses.RoleProfile, response_model_exclude_unset=True)
     async def profile(key: str, _: str = Depends(user)):
         try:
             async with write_lock:
@@ -557,7 +525,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.put('/api/host/personas/{key}/profile')
+    @app.put('/api/host/personas/{key}/profile', response_model=responses.RoleProfile, response_model_exclude_unset=True)
     async def save_profile(key: str, change: PersonaProfileChange, _: str = Depends(user)):
         try:
             async with write_lock:
@@ -573,7 +541,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         parse_persona_files(path, files)
         return {'directory': str(path), 'files': files, 'profile': change.profile.model_dump()}
 
-    @app.post('/api/host/personas/{key}/profile/draft')
+    @app.post('/api/host/personas/{key}/profile/draft', response_model=responses.RoleDraft, response_model_exclude_unset=True)
     async def profile_draft(key: str, change: PersonaProfileChange, _: str = Depends(user)):
         """Return normalized form and role files for import/export or trial; nothing is saved."""
         try:
@@ -582,7 +550,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.get("/api/host/personas/{key}/files")
+    @app.get("/api/host/personas/{key}/files", response_model=responses.RoleFiles, response_model_exclude_unset=True)
     async def files(key: str, _: str = Depends(user)):
         try:
             async with write_lock:
@@ -590,7 +558,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    @app.put("/api/host/personas/{key}/files/{filename}")
+    @app.put("/api/host/personas/{key}/files/{filename}", response_model=responses.RoleFiles, response_model_exclude_unset=True)
     async def save(key: str, filename: PersonaFilename, item: PersonaFileChange,
                    _: str = Depends(user)):
         try:

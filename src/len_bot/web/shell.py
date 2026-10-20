@@ -6,11 +6,17 @@ from typing import Literal
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+
+class PanelContext(BaseModel):
+    mode: Literal["isolated", "isolated-multi", "setup"]
+    home: str
 
 
 def mount_panel(app: FastAPI, *, mode: Literal["isolated", "isolated-multi"],
                 home: str, assets_dir: Path | None = None) -> None:
-    @app.get("/api/panel-context")
+    @app.get("/api/panel-context", response_model=PanelContext)
     async def panel_context():
         return {"mode": mode, "home": home}
 

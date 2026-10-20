@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field, model_validator
 
+from .. import responses
 from ...configuration.types import STRICT
 from .materials import failure
 from .owner import panel_owner
@@ -47,7 +48,7 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
         return (runtime.tasks is not None and item.status in TERMINAL and item.container is None
                 and not item.browser_active and item.id not in runtime.tasks.running)
 
-    @app.get('/api/host/task-storage/pool')
+    @app.get('/api/host/task-storage/pool', response_model=responses.TaskPool, response_model_exclude_unset=True)
     async def pool(_: str = Depends(user)):
         worker = runtime.config.worker
         if worker is None or worker.storage_pool is None:
@@ -58,7 +59,7 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
             raise HTTPException(409, ''.join(traceback.format_exception_only(error)).strip()) from error
         return {'configured': True, 'usage': usage}
 
-    @app.get('/api/host/task-storage')
+    @app.get('/api/host/task-storage', response_model=responses.TaskStoragePage, response_model_exclude_unset=True)
     async def listing(scene: str, status: Literal['all', 'active', 'terminal', 'done', 'failed', 'cancelled'] = 'all',
                       since: float | None = Query(None, ge=0), before: float | None = Query(None, ge=0),
                       environment: Literal['all', 'retained', 'discarded'] = 'all', measure: bool = False,
@@ -85,7 +86,7 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
         return {'scene': scene, 'items': items, 'measured': measure,
                 'next_offset': offset + limit if len(tasks) > limit else None}
 
-    @app.get('/api/host/tasks/{id}/storage')
+    @app.get('/api/host/tasks/{id}/storage', response_model=responses.TaskStorage, response_model_exclude_unset=True)
     async def storage(id: int, scene: str, _: str = Depends(user)):
         worker = worker_for(scene)
         started = time.time()
@@ -109,7 +110,7 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
                 'hard_disk_quota': quota,
                 'notice': '显示本次读取的文件逻辑大小与文件系统分配字节；运行中目录可继续变化。配额与剩余空间在实例存储池卡片读取。'}
 
-    @app.post('/api/host/task-storage/cleanup')
+    @app.post('/api/host/task-storage/cleanup', response_model=responses.TaskCleanup, response_model_exclude_unset=True)
     async def cleanup(scene: str, body: CleanupSelection, _: str = Depends(user)):
         worker_for(scene)
         if runtime.tasks is None:
@@ -126,7 +127,7 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
                 results.append({'task_id': id, 'status': 'complete', 'error': None, 'removal': result})
         return {'scene': scene, 'operation': body.operation, 'items': results}
 
-    @app.post('/api/host/tasks/{id}/close-environment')
+    @app.post('/api/host/tasks/{id}/close-environment', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def close_environment(id: int, scene: str, _: str = Depends(user)):
         worker_for(scene)
         if runtime.tasks is None:

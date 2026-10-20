@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .. import responses
 from ...chat.tools import tool_catalog, tool_unavailable_reasons
 from ...config import HostConfig, LabConfig, load_host_config
 from .persona import finish_role_write
@@ -243,11 +244,11 @@ class HostTrials:
 
 
 def register_host_trials(app: FastAPI, trials: HostTrials, user):
-    @app.get('/api/host/trials')
+    @app.get('/api/host/trials', response_model=responses.TrialList, response_model_exclude_unset=True)
     async def listing(_: str = Depends(user)):
         return {'items':[trial.info() for trial in trials.records.values()]}
 
-    @app.post('/api/host/trials')
+    @app.post('/api/host/trials', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def start(item: TrialStart, _: str = Depends(user)):
         if not item.acknowledge_model_cost:
             raise HTTPException(422, '开始前需明确知道模型请求仍会计费；平台发送始终模拟')
@@ -258,18 +259,18 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
         except (ValueError, OSError) as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/host/trials/{trial_id}/stop')
+    @app.post('/api/host/trials/{trial_id}/stop', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def stop(trial_id: str, _: str = Depends(user)):
         async with trials.lock:
             trial = trials.get(trial_id)
             await trial.stop()
             return trial.info()
 
-    @app.get('/api/host/trials/{trial_id}/state')
+    @app.get('/api/host/trials/{trial_id}/state', response_model=responses.TrialState, response_model_exclude_unset=True)
     async def state(trial_id: str, _: str = Depends(user)):
         return trials.get(trial_id).snapshot()
 
-    @app.post('/api/host/trials/{trial_id}/messages')
+    @app.post('/api/host/trials/{trial_id}/messages', response_model=responses.MessageReceipt, response_model_exclude_unset=True)
     async def message(trial_id: str, item: TestMessage, _: str = Depends(user)):
         trial = trials.get(trial_id)
         if trial.stopped is not None:
@@ -288,7 +289,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     async def avatar(trial_id: str, _: str = Depends(user)):
         return trials.get(trial_id).session.avatar()
 
-    @app.get('/api/host/trials/{trial_id}/turns/{turn_id}')
+    @app.get('/api/host/trials/{trial_id}/turns/{turn_id}', response_model=responses.StoredTurn, response_model_exclude_unset=True)
     async def turn(trial_id: str, turn_id: str, _: str = Depends(user)):
         trial = trials.get(trial_id)
         def read():
