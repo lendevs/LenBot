@@ -11,7 +11,6 @@ interface HttpLikeError {
   message?: unknown
   status?: unknown
   detail?: unknown
-  details?: unknown
 }
 
 function rawText(value: unknown): string | null {
@@ -24,10 +23,7 @@ function rawText(value: unknown): string | null {
   }
 }
 
-/**
- * Accepts both error shapes during the migration: the old api.js Error with `details`, and the new
- * client's ApiError with `detail`. `networkMessage` is shown when the request never reached LenBot.
- */
+/** Message, status and original text of an error; `networkMessage` is shown when the request never reached LenBot. */
 export function describeError(error: unknown, networkMessage: string): DescribedError {
   if (typeof error === 'string') return { message: error, status: null, raw: null }
   if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'network') {
@@ -38,7 +34,7 @@ export function describeError(error: unknown, networkMessage: string): Described
   }
   if (error && typeof error === 'object') {
     const value = error as HttpLikeError
-    const detail = value.detail ?? value.details
+    const detail = value.detail
     const status = typeof value.status === 'number' ? value.status : null
     const message =
       detailMessage(detail) ??

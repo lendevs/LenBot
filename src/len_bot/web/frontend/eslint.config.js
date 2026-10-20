@@ -8,11 +8,7 @@ export default tseslint.config(
     ignores: [
       'node_modules/**',
       // Pages and helpers from the Vuetify panel; each goes away when its replacement lands (docs: work.md M2-M4).
-      'src/host/**',
-      'src/components/**',
-      'src/views/NotFoundView.vue',
       'src/plugins/**',
-      'src/App.vue',
       'src/**/*.js',
     ],
   },

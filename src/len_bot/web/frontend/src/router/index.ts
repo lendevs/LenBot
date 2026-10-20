@@ -6,13 +6,11 @@ import {
   type RouteRecordRaw,
 } from 'vue-router'
 import { ensureAuth, useAuth, clearAuth } from '../composables/useAuth.js'
-import { setUnauthorizedHandler } from '../api.js'
 import { i18n } from '../i18n'
 import { areaOf } from '../layouts/nav'
+import { onUnauthorized } from '../api/client'
 import { internalPath } from './navigation.js'
 import { groupsTarget, type GroupTab } from '../views/groups/route'
-
-type SceneRule = boolean | ((route: RouteLocationNormalized) => boolean)
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -21,10 +19,6 @@ declare module 'vue-router' {
     bare?: boolean
     /** i18n key of the document title when the page is not a sidebar entry. */
     titleKey?: string
-    /** Old pages: whether HostPage shows the group switcher. */
-    scene?: SceneRule
-    sceneSwitch?: boolean
-    sceneMode?: 'scene' | 'role'
   }
 }
 
@@ -182,7 +176,7 @@ router.afterEach((to) => {
   document.title = `${pageTitle(to)} · LenBot`
 })
 
-setUnauthorizedHandler(() => {
+onUnauthorized(() => {
   const wasAuthenticated = useAuth().status === 'authenticated'
   clearAuth()
   const current = router.currentRoute.value

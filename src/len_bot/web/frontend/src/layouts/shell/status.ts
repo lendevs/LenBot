@@ -2,7 +2,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { HostState } from '../../api/host'
 import type { Tone } from '../../ui/Badge.vue'
-import { host } from '../../host/store.js'
+import { host } from '../../api/hostStore'
 
 const tones: Record<string, Tone> = {
   created: 'info',

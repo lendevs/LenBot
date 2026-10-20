@@ -1,7 +1,6 @@
 /**
  * The one HTTP client of the new panel: same-origin credentials, JSON or binary bodies, ApiError with the
  * status and the server's detail, one handler for 401, and results from before a login change dropped.
- * The old api.js shares the session counter and the 401 handler until it is removed (work.md M4.9).
  */
 
 export type Query = Record<string, string | number | boolean | null | undefined>

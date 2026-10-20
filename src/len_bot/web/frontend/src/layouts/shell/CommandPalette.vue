@@ -17,8 +17,8 @@ import {
   UserRound,
 } from '@lucide/vue'
 import { setThemeMode } from '../../composables/useThemeMode.js'
-import { host } from '../../host/store.js'
-import { openRestart } from '../../host/restart.js'
+import { host } from '../../api/hostStore'
+import { openRestart } from './restart'
 import { hostApi } from '../../api/host'
 import { localeOptions, setLocale } from '../../i18n'
 import { describeError } from '../../ui/errors'

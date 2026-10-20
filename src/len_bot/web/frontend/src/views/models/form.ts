@@ -16,7 +16,7 @@ import {
 } from '../../api/models'
 import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
-import { readPendingRestart } from '../../host/store.js'
+import { readPendingRestart } from '../../api/hostStore'
 import { groupLabel } from '../../layouts/shell/scenes'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'

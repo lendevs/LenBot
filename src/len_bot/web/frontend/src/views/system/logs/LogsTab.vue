@@ -8,7 +8,7 @@ import { ArrowUpRight, Download, FileText, RefreshCw, ScrollText, Search, X } fr
 import { logsApi, type LogFilter, type LogRecord } from '../../../api/logs'
 import { keys } from '../../../api/query'
 import { timelineApi } from '../../../api/timeline'
-import { host } from '../../../host/store.js'
+import { host } from '../../../api/hostStore'
 import { groupLabel } from '../../../layouts/shell/scenes'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'

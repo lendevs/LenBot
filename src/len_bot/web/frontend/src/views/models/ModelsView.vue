@@ -2,7 +2,7 @@
 import { computed, provide, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { useUnsavedChanges } from '../../composables/useUnsavedChanges.js'
+import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import SaveBar from '../../ui/SaveBar.vue'
 import Skeleton from '../../ui/Skeleton.vue'

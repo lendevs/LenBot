@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { pluginsApi, type Health, type PluginsSnapshot } from '../../api/plugins'
 import { keys } from '../../api/query'
-import { readPendingRestart } from '../../host/store.js'
+import { readPendingRestart } from '../../api/hostStore'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 

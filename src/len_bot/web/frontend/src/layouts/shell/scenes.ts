@@ -1,4 +1,4 @@
-import { sceneTitles } from '../../api.js'
+import { sceneTitles } from '../../api/scenes'
 
 /** Group name when known, otherwise the group number; the platform prefix is never shown. */
 export function groupLabel(scene: string): string {

@@ -3,7 +3,7 @@ import { resetSession } from '../api/client'
 import { authApi } from '../api/auth'
 import { queryClient } from '../api/query'
 import { startStream, stopStream } from '../realtime/stream'
-import { clearHost } from '../host/store.js'
+import { clearHost } from '../api/hostStore'
 
 const state = reactive({ status: 'loading', user: null, error: '', panelContext: null })
 let initialization

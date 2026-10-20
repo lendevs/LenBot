@@ -5,7 +5,7 @@ import type { PersonaSummary } from '../../api/host'
 import { personasApi } from '../../api/personas'
 import { keys } from '../../api/query'
 import { settingsApi } from '../../api/settings'
-import { readHostState } from '../../host/store.js'
+import { readHostState } from '../../api/hostStore'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 

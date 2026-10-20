@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useQueryClient } from '@tanstack/vue-query'
 import { keys } from '../../../api/query'
 import type { Applied } from '../../../api/personas'
-import { readHostState } from '../../../host/store.js'
+import { readHostState } from '../../../api/hostStore'
 import { toast } from '../../../ui/toast'
 
 type Part = Parameters<typeof keys.personas.part>[1]

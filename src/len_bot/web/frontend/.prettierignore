@@ -4,16 +4,11 @@ package-lock.json
 ../static/dist
 
 # Pages and helpers from the Vuetify panel; each goes away when its replacement lands (docs: work.md M2-M4).
-src/host
-src/components
 src/views
 src/composables/*.js
-src/layouts/HostShell.vue
 src/plugins
 src/router/*.js
 src/styles/base.css
 src/styles/shell.css
 src/styles/theme.js
-src/api.js
-src/App.vue
 src/main.js

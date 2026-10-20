@@ -10,7 +10,7 @@ import {
   type SpeechChange,
   type TaskChange,
 } from '../../../api/settings'
-import { readHostState, readPendingRestart } from '../../../host/store.js'
+import { readHostState, readPendingRestart } from '../../../api/hostStore'
 import { describeError } from '../../../ui/errors'
 
 export interface Relationship {

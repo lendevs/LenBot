@@ -6,7 +6,7 @@ import { useMediaQuery } from '@vueuse/core'
 import { TooltipProvider } from 'reka-ui'
 import { Bell, Menu, PanelLeftClose, PanelLeftOpen, RotateCw, Search } from '@lucide/vue'
 import { logout, useAuth } from '../composables/useAuth.js'
-import { useCurrentScene } from '../composables/useCurrentScene.js'
+import { useCurrentScene } from '../composables/useCurrentScene'
 import {
   host,
   readHostState,
@@ -14,11 +14,9 @@ import {
   readPendingRestart,
   readSceneTitles,
   readUpdates,
-} from '../host/store.js'
-import { openRestart, restartFlow } from '../host/restart.js'
-import { useHostEvents } from '../host/events.js'
-import RestartDialog from '../host/components/RestartDialog.vue'
-import OldConfirmHost from '../host/ui/ConfirmHost.vue'
+} from '../api/hostStore'
+import { openRestart, restartFlow } from './shell/restart'
+import { useHostEvents } from '../realtime/hostEvents'
 import { currentLocale } from '../i18n'
 import { streamRetryIn, streamStatus, reconnectStream } from '../realtime/stream'
 import Badge from '../ui/Badge.vue'
@@ -31,9 +29,9 @@ import Sheet from '../ui/Sheet.vue'
 import Tabs from '../ui/Tabs.vue'
 import Toaster from '../ui/Toaster.vue'
 import { confirm } from '../ui/confirm'
-import { toast } from '../ui/toast'
 import AccountMenu from './shell/AccountMenu.vue'
 import CommandPalette from './shell/CommandPalette.vue'
+import RestartDialog from './shell/RestartDialog.vue'
 import Sidebar from './shell/Sidebar.vue'
 import { groupLabel } from './shell/scenes'
 import { useConnectionStatus } from './shell/status'
@@ -122,16 +120,6 @@ const flagged = computed(() => {
   const overview = host.overview as { memory_index?: { needs_rebuild?: boolean } } | null
   return new Set(overview?.memory_index?.needs_rebuild ? ['groups'] : [])
 })
-
-// Old pages report results through host.toast; they show as toasts of the new shell.
-watch(
-  () => host.toast,
-  (text) => {
-    if (!text) return
-    toast.success(text)
-    host.toast = ''
-  },
-)
 
 function refresh() {
   readHostState()
@@ -327,7 +315,6 @@ async function exit() {
     </div>
     <CommandPalette v-model:open="palette" :scene="scene" />
     <RestartDialog />
-    <OldConfirmHost />
     <ConfirmHost />
     <Toaster />
   </TooltipProvider>

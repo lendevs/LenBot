@@ -2,7 +2,8 @@
 import type { PanelContext, PanelUser } from '../api/auth'
 
 export interface AuthState {
-  status: 'loading' | 'authenticated' | 'unauthenticated' | 'error'
+  /** `setup`: the first-run wizard, which has no login. */
+  status: 'loading' | 'authenticated' | 'unauthenticated' | 'error' | 'setup'
   user: PanelUser | null
   error: string
   panelContext: PanelContext | null

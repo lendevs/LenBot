@@ -44,6 +44,10 @@ export default {
     },
     error: { title: 'Something went wrong', network: 'Cannot reach LenBot. Check that it is still running.' },
     empty: { title: 'Nothing here yet' },
+    unsaved: {
+      title: 'Discard unsaved changes?',
+      message: 'This page has changes that are not saved yet; leaving loses them.',
+    },
   },
   shell: {
     console: 'Console',
@@ -69,6 +73,7 @@ export default {
       login: 'Sign in',
       notFound: 'Page not found',
     },
+    notFound: { message: 'There is no page at this address', home: 'Back to home' },
     search: 'Search or jump to',
     status: {
       reading: 'Loading',
@@ -113,6 +118,38 @@ export default {
       unknown: 'Cannot tell which changes need a restart',
       plugin: 'plugin {name}',
       persona: 'persona {name}',
+      dialog: {
+        later: 'Later',
+        confirm: 'Restart',
+        check: 'Check again',
+        failed: 'Restart did not finish',
+        pending: 'Applies these saved changes: {items}.',
+        nothing: 'No pending changes; restarts with the current settings.',
+        plugin: 'Plugin {name} {version}',
+        pluginFailed: '{name} failed to apply last time',
+        relogin: 'You will need to log in again, and unsaved changes on this page are lost.',
+        chats: 'Ongoing chats finish their reply first: {names}.',
+        tasks:
+          'These tasks are interrupted and can continue under the same number after the restart (account browsing tasks must be created again):',
+        accountBrowser: ' (account browsing)',
+        queued: '{n} queued tasks are kept.',
+        browsers: 'Account browsing sessions that close: {items}.',
+        creating: 'starting',
+        trials: 'Stops {n} playground sessions; their records are kept.',
+        newAddress: 'The panel moves to:',
+        addressInLog: 'see the startup log.',
+        proxy: 'Update any proxy or SSH forwarding to match.',
+        notRestartable:
+          'LenBot is not running under the len-bot launcher, so the panel cannot restart it. Stop it and start it with the launcher.',
+        waiting: 'Waiting for LenBot to start again; the login page opens when it is back.',
+        ready: 'Restarted, opening the panel.',
+        moved: 'Restart started. The panel has moved to:',
+        movedInLog: 'Restart started. The startup log shows the new panel address.',
+        unreachable: 'Still unreachable: {error}',
+        unavailable:
+          'The new host is not answering yet. Check the startup terminal, the systemd journal or the container log; the settings are saved. You can check again, which does not restart a second time.',
+        badReady: 'Invalid host process answer',
+      },
       sections: {
         connection: 'connection',
         panel: 'panel account',
@@ -2683,6 +2720,8 @@ export default {
     password: 'Password',
     submit: 'Sign in',
     invalid: 'Wrong username or password',
+    checking: 'Checking the login',
+    checkFailed: 'Could not read the login state',
   },
   time: {
     justNow: 'just now',
