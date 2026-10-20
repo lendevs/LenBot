@@ -6,7 +6,11 @@ LenBot is a QQ group chat bot driven by a large language model. It sends and rec
 
 The bot is not operated through commands. When someone in the group speaks, the model decides whether to reply. If it replies, it also decides which message to answer, or whether a single sticker is enough. When someone asks for a report or some research, the work is handed to a background task, the chat continues, and the result is posted to the group when the task finishes.
 
-<img src="website/public/screenshots/home.png" alt="Panel home page" width="860">
+<img src="website/public/screenshots/live.gif" alt="Live view of a group: after the bot is mentioned, its turn unfolds step by step, first searching the chat history, then replying in two lines" width="860">
+
+The live view of each group shows every turn of the bot as it happens: which chat history it looked up, what it thought at each step and what it finally said. The recording comes from the demo instance, where the model is a script.
+
+<img src="website/public/screenshots/home.png" alt="Panel overview" width="860">
 
 ## Features
 
@@ -48,9 +52,9 @@ On first start the terminal prints a link:
 尚无根配置。请打开 http://127.0.0.1:52811/#token=...
 ```
 
-Open it in a browser and complete the seven steps of the setup wizard: admin account, QQ connection, owner, chat model, optional vector model, persona and first group, and official plugins. After saving, LenBot starts with the new configuration and the page switches to the panel.
+Open it in a browser and complete the seven steps of the setup wizard: admin account, QQ connection, owner and time zone, chat model, optional vector model, persona and first group, and official plugins. After saving, LenBot starts with the new configuration and the page switches to the panel.
 
-For the first run, choose simulated delivery in the wizard. Replies then appear only in the panel and are not sent to QQ. Try a few rounds on the panel's chat test page. Once the results look right, switch delivery to real QQ sending under Settings → Connection.
+For the first run, choose simulated delivery in the wizard. Replies then appear only in the panel and are not sent to QQ. Try a few rounds in the panel's Playground. Once the results look right, switch delivery to real QQ sending under System → Settings → Connection.
 
 The full walkthrough is in the [quick start (zh)](https://lendevs.github.io/LenBot/guide/quick-start).
 

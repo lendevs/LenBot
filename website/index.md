@@ -53,7 +53,8 @@ features:
 </div>
 
 <div class="shots">
-  <figure class="wide"><img src="/screenshots/home.png" alt="面板首页，显示 QQ 连接状态、今天的消息量和群列表"><figcaption>面板首页。这里显示 QQ 的连接状态和今天的消息量，以及模型用量和需要处理的事项。</figcaption></figure>
+  <figure class="wide"><img src="/screenshots/live.gif" alt="群聊现场：群友 @ Bot 后，回合卡片逐步展开，先翻聊天记录，再分两句回复"><figcaption>群聊现场。Bot 每回复一轮，这里实时显示它翻了什么、想了什么、说了什么。</figcaption></figure>
+  <figure class="wide"><img src="/screenshots/home.png" alt="面板总览，显示 QQ 连接状态、今天的消息量和群列表"><figcaption>面板总览。这里显示 QQ 的连接状态和今天的统计，以及需要处理的事和各群实时动态。</figcaption></figure>
   <figure><img src="/screenshots/persona.png" alt="角色编辑页"><figcaption>角色编辑页。修改设定和样例后可以先试聊。</figcaption></figure>
   <figure><img src="/screenshots/plugins.png" alt="插件页的插件目录"><figcaption>插件目录。安装后可以选择在哪些群启用。</figcaption></figure>
 </div>

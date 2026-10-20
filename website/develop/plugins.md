@@ -95,7 +95,7 @@ class Counter(Plugin):
 
 ## 日志
 
-`self.ctx.log` 是标准的 `logging.Logger`。写入的记录会进入 LenBot 的运行日志 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前回复轮次和工具调用 ID。面板的日志页可以按插件筛选。处理器抛出的错误由 LenBot 记录，插件不需要另外记录。
+`self.ctx.log` 是标准的 `logging.Logger`。写入的记录会进入 LenBot 的运行日志 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前回复轮次和工具调用 ID。面板的**系统 → 日志**可以按插件筛选。处理器抛出的错误由 LenBot 记录，插件不需要另外记录。
 
 ## 数据版本
 

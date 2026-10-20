@@ -77,4 +77,4 @@ docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml -f ho
 
 ## 后台任务
 
-后台任务需要 LenBot 通过宿主机的 Docker 启动任务容器。为此要把 Docker socket 和任务目录挂载给 LenBot，并在面板的能力页配置任务环境。路径和权限的细节较多，见仓库里的 [Docker 部署说明](https://github.com/lendevs/LenBot/blob/master/deploy/current/docker.md#后台任务同一个-daemon同一个路径)。
+后台任务需要 LenBot 通过宿主机的 Docker 启动任务容器。为此要把 Docker socket 和任务目录挂载给 LenBot，并在面板的**能力 → 独立任务**中配置任务环境。路径和权限的细节较多，见仓库里的 [Docker 部署说明](https://github.com/lendevs/LenBot/blob/master/deploy/current/docker.md#后台任务同一个-daemon同一个路径)。

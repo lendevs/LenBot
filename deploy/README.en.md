@@ -71,7 +71,7 @@ Back up the instance before upgrading. The maintenance commands run in this orde
 5. `plugin_dependencies` restores the dependencies of installed plugins.
 6. `doctor` checks the result. Start LenBot once every line reports `ok` or `disabled`.
 
-Steps that are already current change nothing. Upgrading the local index from format 3 to 4 rebuilds section-level text retrieval while preserving Markdown, history and summaries. Whole-file vectors are cleared; explicitly rebuild the index in the memory page to restore hybrid retrieval. Migration does not call a model. Upgrading the local index from format 2 to 3 clears old derived summaries and keeps the source text and change history; the summaries are regenerated the next time memory curation is explicitly run.
+Steps that are already current change nothing. Upgrading the local index from format 3 to 4 rebuilds section-level text retrieval while preserving Markdown, history and summaries. Whole-file vectors are cleared; explicitly rebuild the index in the Memory tab of a group in the panel to restore hybrid retrieval. Migration does not call a model. Upgrading the local index from format 2 to 3 clears old derived summaries and keeps the source text and change history; the summaries are regenerated the next time memory curation is explicitly run.
 
 On macOS, LenBot can also be started by double-clicking [`current/start.command`](current/start.command). For running as a system service, see [optional services (zh)](current/README.md#作为系统服务运行).
 

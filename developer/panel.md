@@ -214,14 +214,14 @@ const state = useQuery({ queryKey: keys.host.state(), queryFn: ({ signal }) => h
 
 界面改动要截图核对宽屏、390 px 手机宽度、深色，双语完成的页面再看英文：
 
-1. 在仓库根目录启动演示实例：`uv run --no-sync python website/scripts/demo_instance.py <临时目录> --panel-port 18088`，账号 `demo`，密码 `demo-password`。演示实例是模拟发送，模型地址是不可达的占位地址。
+1. 在仓库根目录启动演示实例：`uv run --no-sync python website/scripts/demo_instance.py <临时目录> --panel-port 18088`，账号 `demo`，密码 `demo-password`。演示实例是模拟发送，模型是本机脚本：Bot 被 @ 后翻聊天记录、分两句回复，每步约 1.5 秒；向控制端口 18099 的 `/inject` 发送消息可以造出回合，用法见 `website/README.md`。
 2. 用 Playwright 无头浏览器登录后截图。主题和语言可以在打开页面前写入 localStorage 的 `lenbot.theme`、`lenbot.locale`；不写语言时按浏览器语言，Playwright 默认是英文。
 3. 组件改动在 `npm run dev` 下打开 `/#/dev/ui` 截图。`npm run dev` 的代理不改 Origin，后端会拒绝写请求和 WebSocket，看真实效果用演示实例。
 
 ## 其他约定
 
-- 插件参数表单由插件清单生成（目前在旧页面的 `host/components/SchemaForm.vue`），不为单个插件写专用表单。
-- 首页的待处理事项在 `host/attention.js` 汇总，顶栏的计数和首页列表共用这一份数据。
+- 插件参数表单由插件清单生成（`views/plugins/schema/SchemaForm.vue`），不为单个插件写专用表单。
+- 总览的需要处理的事在 `views/overview/attention.ts` 汇总，顶栏通知的计数和总览列表共用这一份数据。
 
 
 ## 接口清单与响应模型

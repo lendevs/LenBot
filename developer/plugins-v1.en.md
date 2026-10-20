@@ -57,7 +57,7 @@ Time limits:
 - Slow preparation, such as waiting for the network or warming a cache, belongs in `start_task` rather than being awaited in `start()`.
 - `migrate_data` has no time limit.
 
-A handler error ends that call. The host writes the original error to the run log (`plugin_error`) and does not retry. Use `self.ctx.log` (a standard `logging.Logger`) for the plugin's own records. They are written to the host's `logs/lenbot.jsonl` with the plugin name and the current scene, turn and tool call IDs, and the panel log page can filter by plugin.
+A handler error ends that call. The host writes the original error to the run log (`plugin_error`) and does not retry. Use `self.ctx.log` (a standard `logging.Logger`) for the plugin's own records. They are written to the host's `logs/lenbot.jsonl` with the plugin name and the current scene, turn and tool call IDs, and the system log in the panel can filter by plugin.
 
 ## Configuration and data
 

@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File "$HOME\lenbot\service.ps1" stop
 
 ### macOS
 
-注册为当前用户的 launchd 服务 `local.lenbot`。服务本身的输出写在 `logs/service.stdout.log`。LenBot 的运行日志写在实例目录的 `logs/lenbot.jsonl`，也可以在面板的日志页查看。也可以双击 `start.command` 启动，双击 `stop.command` 停止，双击 `restart.command` 重启。
+注册为当前用户的 launchd 服务 `local.lenbot`。服务本身的输出写在 `logs/service.stdout.log`。LenBot 的运行日志写在实例目录的 `logs/lenbot.jsonl`，也可以在面板的**系统 → 日志**中查看。也可以双击 `start.command` 启动，双击 `stop.command` 停止，双击 `restart.command` 重启。
 
 ### Windows
 

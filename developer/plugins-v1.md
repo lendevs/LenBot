@@ -503,7 +503,7 @@ async def publish(self, ctx):
 
 处理器的一次报错只会结束这一次调用。原始错误由宿主写入运行日志（`plugin_error`），宿主不会自动重试、更换服务，也不会停用整个插件。
 
-插件自己的日志使用 `self.ctx.log`（标准的 `logging.Logger`），写入宿主的 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前的回复轮次和工具调用 ID。面板的日志页可以按插件筛选。需要特殊权限的入口可以使用 `ctx.require_owner()`，普通查询不需要加上主人限制。
+插件自己的日志使用 `self.ctx.log`（标准的 `logging.Logger`），写入宿主的 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前的回复轮次和工具调用 ID。面板的系统日志可以按插件筛选。需要特殊权限的入口可以使用 `ctx.require_owner()`，普通查询不需要加上主人限制。
 
 默认的插件是同进程的代码，与宿主共享依赖环境，不能声称具备沙箱隔离；`isolation = "process"` 只隔离崩溃，不限制文件和网络访问。
 
