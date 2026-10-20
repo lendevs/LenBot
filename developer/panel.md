@@ -16,7 +16,7 @@
 
 检查命令在前端目录执行：`npm run typecheck`、`npm run lint`（ESLint 加 Prettier）、`npm run build`。CI 跑同样三项。构建产物写到 `src/len_bot/web/static/dist`，不进 Git。
 
-迁移期间旧页面（`src/host/`、`src/components/`、部分 `src/views/`）仍使用 Vuetify 和纯 JS，ESLint 忽略这些目录。新代码不引用 Vuetify，不新写 `.js` 文件。Vuetify 存在期间 Tailwind 不加载预检样式（preflight），工具类不放进层里，原因写在 `styles/app.css` 开头。Vuetify 自带同名的颜色类（`bg-info`、`text-success` 等，带 `!important`），会盖过 Tailwind 的同名工具类，所以 `theme.js` 给 Vuetify 的每个状态色都取令牌里的同名颜色，两边算出来一致。
+所有代码都是 TypeScript 或 `<script setup lang="ts">`，新文件不写 `.js`（`useAuth.js`、`useDeveloperMode.js`、`router/navigation.js` 是还没改写的少数几个）。Tailwind 的预检样式（preflight）放在 base 层，工具类不分层，原因写在 `styles/app.css` 开头。根字号固定 14px：间距、字号、圆角都按像素映射，但 `max-w-lg` 这类容器宽度用 rem。
 
 ## 目录
 
@@ -28,8 +28,7 @@ src/
   ui/           通用组件，页面只用这里的组件和 Tailwind 工具类
   layouts/      AppShell.vue（外壳）、nav.ts（侧栏结构）、shell/（侧栏、命令面板、账号菜单）
   router/       index.ts：路由表、登录守卫、旧地址重定向
-  styles/       tokens.css（设计令牌）、app.css（Tailwind 主题、动效）、base.css 与 shell.css（旧页面）、
-                theme.js（从 tokens.css 解析颜色，供 Vuetify 主题使用）
+  styles/       tokens.css（设计令牌）、app.css（Tailwind 主题、预检样式、基础样式、动效）
   dev/          UiGallery.vue：只在开发模式出现的组件展示页
   views/        新写的页面：登录页、首次配置向导（setup/）、群聊工作台（groups/）等
 ```
@@ -62,7 +61,7 @@ src/
 
 间距以 4 px 为一档（`p-3` = 12 px），不随根字号变化。`dark:` 变体跟随 `data-theme`，不直接读系统设置。辅助工具类：`focus-ring`（键盘焦点描边）、`scrollbar-thin`、`tabular`（等宽数字）、`link-plain`（做成按钮或导航项的链接去掉下划线）。
 
-不要在组件里写颜色值或像素字号；需要新颜色时先在 `tokens.css` 的浅色和深色两段各加一个令牌，再在 `app.css` 加映射。旧页面的 Vuetify 主题由 `styles/theme.js` 在构建时解析 `tokens.css` 得到，不另写颜色值。
+不要在组件里写颜色值或像素字号；需要新颜色时先在 `tokens.css` 的浅色和深色两段各加一个令牌，再在 `app.css` 加映射。
 
 ## 动效
 
@@ -101,7 +100,7 @@ src/
 
 针对单个群的内容不新增侧栏区域，放进群聊工作台（`views/groups/`）的页签。工作台地址是 `/groups/:scene/:tab`，页签名写在 `views/groups/route.ts` 的 `groupTabs`；链接用 `groupsTarget(scene, tab)` 生成，切群时保留当前页签，从别的页面回到群聊时回到上次的群和页签。群聊标识（如 `onebot:group:80001`）总带冒号、页签名不带，所以 `/groups/memory` 表示默认群的记忆页签。旧页面里还在用 `?scene=` 的页面（日志）把路由名放在 `nav.ts` 的 `scopedRoutes`。
 
-同一份构建产物服务三种模式，由 `/api/panel-context` 的 `mode` 区分：`isolated-multi` 是宿主面板（`AppShell`），`isolated` 是单场景隔离试聊（`TrialShell`），`setup` 是首次配置向导（`panel/setup.py`，还没有根配置时运行）。向导模式没有登录，路由守卫把所有地址都送到 `/setup`，其他模式下 `/setup` 回到首页。向导页（`views/setup/`）不经过外壳，自己提供 `TooltipProvider`；启动时终端打印的链接是 `/#token=…`，`main.js` 在第一次导航前把令牌移进本标签页的 sessionStorage，之后每个 `/api/setup/*` 请求带 `X-Setup-Token`。草稿暂存在 sessionStorage，密码和密钥不暂存。
+同一份构建产物服务三种模式，由 `/api/panel-context` 的 `mode` 区分：`isolated-multi` 是宿主面板（`AppShell`），`isolated` 是单场景隔离试聊（`TrialShell`），`setup` 是首次配置向导（`panel/setup.py`，还没有根配置时运行）。向导模式没有登录，路由守卫把所有地址都送到 `/setup`，其他模式下 `/setup` 回到首页。向导页（`views/setup/`）不经过外壳，自己提供 `TooltipProvider`；启动时终端打印的链接是 `/#token=…`，`main.ts` 在第一次导航前把令牌移进本标签页的 sessionStorage，之后每个 `/api/setup/*` 请求带 `X-Setup-Token`。草稿暂存在 sessionStorage，密码和密钥不暂存。
 
 文档标题由侧栏标签或路由的 `meta.titleKey` 生成。`/host/...` 是旧外壳的地址，只做重定向，不再新增；旧路由名 `host-scenes`、`host-memory`、`host-tasks`、`host-resources` 也是重定向，指向工作台对应页签，M2.11 清理旧页面时一并删除。
 

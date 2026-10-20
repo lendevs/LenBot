@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { LogOut, Monitor, Moon, RotateCw, Sun } from '@lucide/vue'
-import { setThemeMode, themeMode } from '../../composables/useThemeMode.js'
+import { setThemeMode, themeMode } from '../../composables/useThemeMode'
 import { currentLocale, localeOptions, setLocale, type Locale } from '../../i18n'
 import Popover from '../../ui/Popover.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'

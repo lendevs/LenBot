@@ -1,16 +1,39 @@
 /*
- * Tailwind for the new panel, while Vuetify is still loaded (both go when Vuetify is removed, work.md M4.9):
- * - No preflight: Vuetify's own reset (ress) already zeroes margins and paddings and strips button and
- *   input borders, and preflight would change Vuetify's base styles.
- * - Utilities are imported without a layer. Vuetify's reset is unlayered, and unlayered rules beat every
- *   layered rule regardless of specificity, so layered utilities would lose to `* { padding: 0 }`.
- *   Unlayered, a utility's class selector outranks the reset's element selectors.
- * - base.css loads after this file and still defines `.inline` as a flex row; new markup uses
- *   `inline-flex` or `inline-block` instead of the bare `inline` utility.
+ * Tailwind for the panel:
+ * - Preflight sits in the base layer, so every component style and utility outranks it.
+ * - Utilities are imported without a layer, as they were next to Vuetify; scoped component styles
+ *   still decide by specificity and order, not by layer.
  */
-@layer theme;
+@layer theme, base;
 @import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
 @import 'tailwindcss/utilities.css';
+
+@layer base {
+  /* Container widths such as max-w-lg are in rem; the panel has always been laid out on a 14px root. */
+  html {
+    font-size: 14px;
+  }
+  body {
+    min-width: 320px;
+    font-family: var(--font-sans);
+    color: var(--ink);
+    background: var(--page);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--selected);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
 
 @theme inline {
   --color-*: initial;
@@ -51,7 +74,7 @@
   --font-sans: var(--font-sans);
   --font-mono: var(--mono);
 
-  /* Pixel values keep the scale independent of the root font size Vuetify needs (14px). */
+  /* Pixel values keep the type and spacing scale independent of the root font size. */
   --spacing: 4px;
   --text-*: initial;
   --text-xs: 12px;
@@ -331,4 +354,21 @@
   80% {
     transform: translateX(6px);
   }
+}
+
+/* Vue <Transition name="page">: switching between pages of the shell. */
+.page-enter-active {
+  transition:
+    opacity var(--dur-3) var(--ease-out),
+    transform var(--dur-3) var(--ease-out);
+}
+.page-leave-active {
+  transition: opacity var(--dur-1) ease-in;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
 }

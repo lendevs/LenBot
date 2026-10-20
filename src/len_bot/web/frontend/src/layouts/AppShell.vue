@@ -286,7 +286,10 @@ async function exit() {
           <Tabs v-model="tab" :items="tabs" :label="area ? t(area.label) : undefined" />
         </div>
 
-        <main id="main-content" class="shell-main">
+        <main
+          id="main-content"
+          class="grid w-full min-w-0 content-start gap-4 px-3 pt-4 pb-10 sm:px-4 sm:pt-6 sm:pb-12 lg:px-8 lg:pt-8 lg:pb-16"
+        >
           <ErrorNote v-if="logoutError" :title="t('shell.account.logoutFailed')" :error="logoutError" />
           <Transition name="ui-rise">
             <div

@@ -114,7 +114,7 @@ def inspect_packages(artifacts: Path, stage: Path) -> dict:
         raise ValueError('The built panel must retain this npm installation\'s notice inventory')
     frontend_notices = json.loads(built[notice_index])
     packages = {item['installed_path']: item for item in frontend_notices['packages']}
-    for name in ('vue', 'vuetify', '@mdi/js'):
+    for name in ('vue', 'reka-ui', '@lucide/vue'):
         item = packages[name]
         if item['license'] is None or not item['notice_files']:
             raise ValueError(f'Panel dependency lacks its declared license or original notices: {name}')

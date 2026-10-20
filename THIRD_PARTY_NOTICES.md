@@ -21,8 +21,7 @@ LenBot 的原创代码采用 AGPL-3.0-only，插件模板和计数示例采用 G
 
 ## 面板随附的资料
 
-- **图标**：使用 `@mdi/js` 7.4.47 的 SVG 图标和 Vuetify 的 `mdi-svg` 图标集，不分发图标字体。`@mdi/js` 的原 LICENSE（Pictogrammers Free License：图标采用 Apache 2.0，代码采用 MIT）随包保留。
-- **新面板图标**：新组件使用 `@lucide/vue` 1.51.0 的 SVG 图标组件，构建时只打包用到的图标。Lucide 采用 ISC 许可证，部分图标来自 Feather（MIT），原 LICENSE 随包保留。
+- **图标**：面板使用 `@lucide/vue` 1.51.0 的 SVG 图标组件，构建时只打包用到的图标。Lucide 采用 ISC 许可证，部分图标来自 Feather（MIT），原 LICENSE 随包保留。
 - **字体**：样式里只列出字体族名称，使用系统已安装的字体，不下载也不打包字体文件。
 
 ## 独立服务

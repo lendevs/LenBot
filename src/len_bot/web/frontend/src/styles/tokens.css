@@ -1,7 +1,6 @@
 /*
  * Design tokens: the one place panel colors, type, spacing, radius, elevation and motion are defined.
  * Tailwind utilities read them through app.css; components read them as var(--name).
- * While Vuetify is still loaded, styles/theme.js parses the hex colors below for Vuetify's theme.
  */
 :root {
   color-scheme: light;
@@ -66,24 +65,6 @@
   --z-dialog: 50;
   --z-popover: 60;
   --z-toast: 70;
-
-  /* Names used by the Vuetify-era styles; removed with them (work.md M4.9). */
-  --fs-xs: 12px;
-  --fs-sm: 13px;
-  --fs-md: 14px;
-  --fs-lg: 16px;
-  --fs-xl: 20px;
-  --fs-2xl: 24px;
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
-  --sp-5: 24px;
-  --sp-6: 32px;
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 12px;
 }
 
 :root[data-theme='dark'] {

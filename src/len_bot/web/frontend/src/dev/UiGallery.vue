@@ -18,7 +18,7 @@ import {
   Trash,
   Wrench,
 } from '@lucide/vue'
-import { setThemeMode, themeMode } from '../composables/useThemeMode.js'
+import { setThemeMode, themeMode } from '../composables/useThemeMode'
 import { currentLocale, setLocale, type Locale } from '../i18n'
 import Avatar from '../ui/Avatar.vue'
 import Badge from '../ui/Badge.vue'

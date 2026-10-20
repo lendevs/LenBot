@@ -1,6 +1,5 @@
 import { defineConfig, type Plugin, type ResolvedConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import vuetify from 'vite-plugin-vuetify'
 import tailwindcss from '@tailwindcss/vite'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -34,12 +33,7 @@ function frontendNotices(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [
-    vue(),
-    tailwindcss(),
-    vuetify({ autoImport: true, styles: { configFile: 'src/styles/vuetify-settings.scss' } }),
-    frontendNotices(),
-  ],
+  plugins: [vue(), tailwindcss(), frontendNotices()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

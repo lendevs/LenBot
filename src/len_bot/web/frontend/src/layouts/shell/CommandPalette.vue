@@ -16,7 +16,7 @@ import {
   Search,
   UserRound,
 } from '@lucide/vue'
-import { setThemeMode } from '../../composables/useThemeMode.js'
+import { setThemeMode } from '../../composables/useThemeMode'
 import { host } from '../../api/hostStore'
 import { openRestart } from './restart'
 import { hostApi } from '../../api/host'

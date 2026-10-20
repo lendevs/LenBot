@@ -1,4 +1,4 @@
-/* Same pink and neutral grays as the panel (src/len_bot/web/frontend/src/styles/theme.js). */
+/* Same pink and neutral grays as the panel (src/len_bot/web/frontend/src/styles/tokens.css). */
 :root {
   --vp-c-brand-1: #b4476a;
   --vp-c-brand-2: #c25a7c;
