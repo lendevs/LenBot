@@ -12,7 +12,6 @@ import shutil
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
@@ -31,6 +30,7 @@ from .setup_plugins import official_plugins, plugin_choices, install_official
 from ..persona.profile import Persona, load_persona
 from len_bot.web.auth import hash_password
 from len_bot.web.errors import install_panel_errors
+from len_bot.web.shell import BUILT_PANEL, missing_build, mount_panel
 from ..storage.files import sync_directory
 
 DEFAULT_PERSONA_DIRECTORY = Path(__file__).resolve().parents[2] / 'default_personas' / 'companion'
@@ -202,7 +202,8 @@ def initialize(root: Path, item: FirstSetup) -> dict:
 CONTAINER_PANEL_PORT = 11307
 
 
-def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, container: bool = False) -> FastAPI:
+def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, container: bool = False,
+                     assets_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title='LenBot 首次配置')
     install_panel_errors(app)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['*'] if container else ['127.0.0.1', 'localhost'])
@@ -216,10 +217,6 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
             raise HTTPException(409, '实例已配置，请进入正常面板登录；首次向导不能覆盖配置')
         if not secrets.compare_digest(x_setup_token, token):
             raise HTTPException(401, '请使用本次启动在终端显示的初始化链接')
-
-    @app.get('/', response_class=HTMLResponse)
-    async def page():
-        return (Path(__file__).with_name('setup.html')).read_text(encoding='utf-8')
 
     @app.post('/api/setup/platform', dependencies=[Depends(authorize)], response_model=responses.SetupPlatform, response_model_exclude_unset=True)
     async def probe_platform(item: PlatformProbe):
@@ -297,6 +294,8 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
             completed.set()
             return result
 
+    # The wizard is a page of the panel frontend; registered last so its fallback route comes after the API.
+    mount_panel(app, mode='setup', home='/setup', assets_dir=assets_dir)
     return app
 
 
@@ -312,6 +311,10 @@ async def run_setup(root: Path, *, container: bool = False) -> None:
         server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False))
         print(f'尚无根配置。请打开 http://127.0.0.1:{port}/#token={token}\n'
               '保存后直接启动，按新配置连接 OneBot 并打开面板。', flush=True)
+        problem = missing_build(BUILT_PANEL)
+        if problem is not None:
+            # The wizard page is the built panel; without it the link only shows this error.
+            print(f'无法显示首次配置页面。{problem}', flush=True)
         serving = asyncio.create_task(server.serve(sockets=[listener]))
         saving = asyncio.create_task(completed.wait())
         try:

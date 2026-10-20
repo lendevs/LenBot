@@ -17,7 +17,7 @@ type SceneRule = boolean | ((route: RouteLocationNormalized) => boolean)
 declare module 'vue-router' {
   interface RouteMeta {
     public?: boolean
-    /** Rendered without the shell (development gallery). */
+    /** Rendered without the shell (setup wizard, development gallery). */
     bare?: boolean
     /** i18n key of the document title when the page is not a sidebar entry. */
     titleKey?: string
@@ -128,6 +128,11 @@ const router = createRouter({
       path: '/host/:page(.*)',
       redirect: (to) => ({ path: moved[String(to.params.page)] ?? '/overview', query: to.query }),
     },
+    page('/setup', 'setup', () => import('../views/setup/SetupView.vue'), {
+      public: true,
+      bare: true,
+      titleKey: 'setup.title',
+    }),
     page('/login', 'login', () => import('../views/LoginView.vue'), {
       public: true,
       titleKey: 'shell.pages.login',
@@ -155,6 +160,9 @@ router.beforeEach(async (to) => {
   await ensureAuth()
   const auth = useAuth()
   if (auth.status === 'error' || !auth.panelContext) return true
+  // The wizard is the only page before a root configuration exists, and never a page afterwards.
+  if (auth.panelContext.mode === 'setup') return to.name === 'setup' || { name: 'setup' }
+  if (to.name === 'setup') return auth.panelContext.home
   const pages = auth.panelContext.mode === 'isolated' ? trialPageNames : hostPageNames
   if (!to.meta.public && auth.status !== 'authenticated') {
     return { name: 'login', query: { redirect: returnPath(to.fullPath) } }

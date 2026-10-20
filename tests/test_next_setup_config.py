@@ -257,15 +257,35 @@ def test_container_setup_always_uses_the_published_panel_port(tmp_path: Path):
     asyncio.run(exercise())
 
 
-def test_local_setup_keeps_the_chosen_port_and_page_says_plugins_start_disabled(tmp_path: Path):
+def test_local_setup_keeps_the_chosen_port_and_serves_the_panel_frontend(tmp_path: Path):
+    built = tmp_path / 'dist'
+    (built / 'assets').mkdir(parents=True)
+    (built / 'index.html').write_text('<div id="app"></div>', encoding='utf-8')
+    (built / 'assets' / 'entry.js').write_text('export {}', encoding='utf-8')
+    instance = tmp_path / 'instance'
+    instance.mkdir()
+
     async def exercise():
-        app = create_setup_app(tmp_path, 'fixture-token', asyncio.Event())
+        app = create_setup_app(instance, 'fixture-token', asyncio.Event(), assets_dir=built)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://127.0.0.1',
                                      headers={'X-Setup-Token': 'fixture-token'}) as client:
             page = (await client.get('/api/setup/protocols')).json()
             assert page['container'] is False and page['panel_port'] is None
-            html = (await client.get('/')).text
-            assert '默认是关闭的' in html and "readOnly=true" in html
+            # The page itself needs no token: the token is read from the link by the frontend.
+            del client.headers['X-Setup-Token']
+            assert (await client.get('/api/panel-context')).json() == {'mode': 'setup', 'home': '/setup'}
+            index = await client.get('/')
+            assert index.status_code == 200 and index.text == '<div id="app"></div>'
+            assert (await client.get('/assets/entry.js')).status_code == 200
+            assert (await client.get('/api/setup/protocols')).status_code == 401
+            assert (await client.get('/api/setup/missing')).status_code == 404
+
+        missing = create_setup_app(instance, 'fixture-token', asyncio.Event(), assets_dir=tmp_path / 'absent')
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(missing), base_url='http://127.0.0.1') as client:
+            response = await client.get('/')
+            assert response.status_code == 503
+            message = response.json()['detail']['message']
+            assert str(tmp_path / 'absent' / 'index.html') in message and 'npm run build' in message
     asyncio.run(exercise())
 
 

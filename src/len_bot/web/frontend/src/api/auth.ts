@@ -1,6 +1,7 @@
 import { http } from './client'
 
-export type PanelMode = 'isolated' | 'isolated-multi'
+/** `setup`: the first-run wizard, served before a root configuration exists; it has no login. */
+export type PanelMode = 'isolated' | 'isolated-multi' | 'setup'
 
 export interface PanelContext {
   mode: PanelMode

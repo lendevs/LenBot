@@ -31,7 +31,7 @@ src/
   styles/       tokens.css（设计令牌）、app.css（Tailwind 主题、动效）、base.css 与 shell.css（旧页面）、
                 theme.js（从 tokens.css 解析颜色，供 Vuetify 主题使用）
   dev/          UiGallery.vue：只在开发模式出现的组件展示页
-  views/        新写的页面：登录页、群聊工作台（groups/）等
+  views/        新写的页面：登录页、首次配置向导（setup/）、群聊工作台（groups/）等
 ```
 
 ## 设计原则
@@ -100,6 +100,8 @@ src/
 3. 中英文词条各加一条。
 
 针对单个群的内容不新增侧栏区域，放进群聊工作台（`views/groups/`）的页签。工作台地址是 `/groups/:scene/:tab`，页签名写在 `views/groups/route.ts` 的 `groupTabs`；链接用 `groupsTarget(scene, tab)` 生成，切群时保留当前页签，从别的页面回到群聊时回到上次的群和页签。群聊标识（如 `onebot:group:80001`）总带冒号、页签名不带，所以 `/groups/memory` 表示默认群的记忆页签。旧页面里还在用 `?scene=` 的页面（日志）把路由名放在 `nav.ts` 的 `scopedRoutes`。
+
+同一份构建产物服务三种模式，由 `/api/panel-context` 的 `mode` 区分：`isolated-multi` 是宿主面板（`AppShell`），`isolated` 是单场景隔离试聊（`TrialShell`），`setup` 是首次配置向导（`panel/setup.py`，还没有根配置时运行）。向导模式没有登录，路由守卫把所有地址都送到 `/setup`，其他模式下 `/setup` 回到首页。向导页（`views/setup/`）不经过外壳，自己提供 `TooltipProvider`；启动时终端打印的链接是 `/#token=…`，`main.js` 在第一次导航前把令牌移进本标签页的 sessionStorage，之后每个 `/api/setup/*` 请求带 `X-Setup-Token`。草稿暂存在 sessionStorage，密码和密钥不暂存。
 
 文档标题由侧栏标签或路由的 `meta.titleKey` 生成。`/host/...` 是旧外壳的地址，只做重定向，不再新增；旧路由名 `host-scenes`、`host-memory`、`host-tasks`、`host-resources` 也是重定向，指向工作台对应页签，M2.11 清理旧页面时一并删除。
 

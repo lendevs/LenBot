@@ -8,7 +8,7 @@ import { clearHost } from '../host/store.js'
 const state = reactive({ status: 'loading', user: null, error: '', panelContext: null })
 let initialization
 let authRequest = 0
-const homes = { isolated: '/chat-test', 'isolated-multi': '/overview' }
+const homes = { isolated: '/chat-test', 'isolated-multi': '/overview', setup: '/setup' }
 
 export function useAuth() {
   return state
@@ -49,6 +49,11 @@ export async function refreshAuth() {
         throw new Error(`面板环境响应无效：mode 或 home 不符合当前面板契约：${JSON.stringify(context)}`)
       }
       state.panelContext = context
+    }
+    // The wizard has no accounts yet; it authorizes each request with the startup token instead.
+    if (state.panelContext.mode === 'setup') {
+      state.status = 'setup'
+      return
     }
     const user = await authApi.me()
     if (own !== authRequest) return
