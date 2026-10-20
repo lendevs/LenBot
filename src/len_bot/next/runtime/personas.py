@@ -9,7 +9,8 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,6 +191,8 @@ class PersonaService:
         self.root = root.resolve()
         self.runtime = runtime
         self.background: set[asyncio.Task] = set()
+        # Switches waiting for the scene's current turn, so the panel can show which role comes next.
+        self.switching: dict[str, Role] = {}
 
     def library(self, saved: HostConfig | None = None) -> list[Role]:
         return roles(self.root, _read_saved(self.root) if saved is None else saved)
@@ -307,14 +310,32 @@ class PersonaService:
             runtime.memory.jobs.remember_personas(scene, {persona.id})
         runtime.notify()
 
+    @asynccontextmanager
+    async def _between_turns(self, scene: str, key: str) -> AsyncIterator[None]:
+        """Hold the scene's turn lock; while the current turn runs, the role waiting for it is listed."""
+        lock = self.runtime.runners[scene].execution
+        role = await asyncio.to_thread(self.find, key) if lock.locked() else None
+        if role is not None:
+            self.switching[scene] = role
+            self.runtime.events.publish("host.state", scene=scene)
+        try:
+            await lock.acquire()
+        finally:
+            if role is not None and self.switching.get(scene) is role:
+                del self.switching[scene]
+                self.runtime.events.publish("host.state", scene=scene)
+        try:
+            yield
+        finally:
+            lock.release()
+
     async def switch(self, scene: str, key: str, *, source: str = "panel") -> dict:
         """Bind the scene to the role; waits for the current turn, writes the handover, then applies."""
         runtime = self.runtime
         if scene not in runtime.runners:
             raise KeyError(scene)
-        runner = runtime.runners[scene]
-        chat = runner.chat
-        async with runner.execution:
+        chat = runtime.runners[scene].chat
+        async with self._between_turns(scene, key):
             async with runtime.config_write_lock:
                 saved, role, persona, previous_id = await asyncio.to_thread(self._target, scene, key)
                 previous = chat.persona

@@ -134,6 +134,10 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         if scene not in config.scenes:
             raise HTTPException(404, "当前宿主未配置这一场景")
 
+    def switching(scene: str) -> dict | None:
+        role = None if runtime.personas is None else runtime.personas.switching.get(scene)
+        return None if role is None else {"key": role.key, "name": role.name or role.key}
+
     @app.get("/api/host/state")
     async def state(_: str = Depends(user)):
         return {
@@ -156,6 +160,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 {"scene": scene, "persona": {"id": runtime.chats[scene].persona.id,
                                               "name": runtime.chats[scene].persona.name},
                  "persona_path": str(settings.persona),
+                 "persona_switch": switching(scene),
                  "voice_mode": settings.voice_mode, "timezone": config.scene_timezone(scene),
                  "chat_enabled": not runtime.runners[scene].state.paused,
                  "chat_status": runtime.runners[scene].chat_status()}

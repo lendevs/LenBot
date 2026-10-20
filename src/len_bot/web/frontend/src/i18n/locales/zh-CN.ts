@@ -358,6 +358,7 @@ export default {
     chatOff: '已暂停 {name} 的聊天',
     chatFailed: '聊天开关没有改成',
     actions: '更多操作',
+    role: { switch: '换角色', label: '当前角色 {name}，点开换角色' },
     tabs: {
       live: '现场',
       session: '会话',
@@ -562,6 +563,7 @@ export default {
         discard: '本群设置还没保存，放弃这些修改？',
         done: '已换成 {name}',
         pending: '正在回复，这一轮结束后换成 {name}',
+        waiting: '这一轮回复结束后换成 {name}',
         failed: '没有换成',
         handoverFailed: '聊天交接没写成，已提醒新角色之前的话不是它说的',
       },
@@ -1338,6 +1340,7 @@ export default {
       resume: '恢复 {name}',
       paused: '已暂停 {name}',
       resumed: '已恢复 {name}',
+      role: '把 {group} 换成 {name}',
       failed: '没有改成',
     },
   },

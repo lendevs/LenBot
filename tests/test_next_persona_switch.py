@@ -128,8 +128,12 @@ def test_switch_waits_for_the_current_turn(tmp_path, monkeypatch):
             waiting = await client.post('/api/host/personas/second/scenes', json={'scenes': [SCENE]})
             assert waiting.json()['results'] == [{'scene': SCENE, 'status': 'pending'}]
             assert runner.chat.persona.id == 'fixture'
+            # The panel shows which role takes over once the current turn ends.
+            state = (await client.get('/api/host/state')).json()['scenes'][0]
+            assert state['persona_switch'] == {'key': 'second', 'name': '第二角色'}
         await asyncio.gather(*runtime.personas.background)
         assert runner.chat.persona.id == 'second'
+        assert (await client.get('/api/host/state')).json()['scenes'][0]['persona_switch'] is None
 
     run_host(tmp_path, exercise)
 

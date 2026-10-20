@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { Ellipsis, FlaskConical, Moon, RefreshCcw, Sun, UserRound } from '@lucide/vue'
+import { ArrowUpRight, Check, ChevronDown, Ellipsis, FlaskConical, Moon, RefreshCcw, Sun, UserRound } from '@lucide/vue'
 import { hostApi, type HostScene } from '../../api/host'
 import { keys } from '../../api/query'
 import { sceneTitles } from '../../api.js'
@@ -12,13 +12,16 @@ import { formatNumber } from '../../i18n/format'
 import { groupLabel } from '../../layouts/shell/scenes'
 import { useHostEvent } from '../../realtime/stream'
 import Avatar from '../../ui/Avatar.vue'
+import Badge from '../../ui/Badge.vue'
 import DropdownMenu, { type MenuEntry } from '../../ui/DropdownMenu.vue'
 import IconButton from '../../ui/IconButton.vue'
 import StatusDot from '../../ui/StatusDot.vue'
 import Switch from '../../ui/Switch.vue'
+import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import QuietDialog from './QuietDialog.vue'
+import { roleLabel, useRoleSwitch, useRoles } from './roleSwitch'
 import { useSessionActions } from './session/useSessionActions'
 import { statusTones, useStatusLabel } from './status'
 
@@ -82,6 +85,37 @@ const resume = useMutation({
 
 const { starting, startSession } = useSessionActions(scene)
 
+const { roles, usable } = useRoles()
+const { switchRole, sending } = useRoleSwitch()
+const currentRole = computed(() => roles.value.find((role) => role.path === props.item.persona_path))
+const roleItems = computed<MenuEntry[]>(() => [
+  { type: 'label', label: t('groups.role.switch') },
+  ...usable.value.map((role) => ({
+    label: roleLabel(role),
+    icon: role === currentRole.value ? Check : UserRound,
+    disabled: role === currentRole.value || Boolean(props.item.persona_switch) || sending(scene.value),
+    select: () => void choose(role),
+  })),
+  ...(currentRole.value
+    ? [
+        { type: 'separator' as const },
+        {
+          label: t('groups.settings.role.edit'),
+          icon: ArrowUpRight,
+          select: () => void router.push({ name: 'host-persona', query: { persona: currentRole.value!.key } }),
+        },
+      ]
+    : []),
+])
+async function choose(role: (typeof usable.value)[number]) {
+  const confirmed = await confirm({
+    title: t('groups.settings.role.title', { group: name.value, name: roleLabel(role) }),
+    confirmLabel: t('groups.settings.role.action'),
+    tone: 'primary',
+  })
+  if (confirmed) switchRole(scene.value, role)
+}
+
 const actions = computed<MenuEntry[]>(() => [
   temporaryQuiet.value
     ? { label: t('groups.quiet.resume'), icon: Sun, disabled: resume.isPending.value, select: () => resume.mutate() }
@@ -114,10 +148,20 @@ const actions = computed<MenuEntry[]>(() => [
           {{ statusLabel(item.chat_status, item.timezone) }}
         </span>
         <span v-for="detail in details" :key="detail" class="tabular">{{ detail }}</span>
-        <span class="inline-flex min-w-0 items-center gap-1">
-          <UserRound :size="14" aria-hidden="true" />
-          <span class="truncate">{{ item.persona.name }}</span>
-        </span>
+        <DropdownMenu :items="roleItems" align="start">
+          <button
+            type="button"
+            class="-mx-1 inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md px-1 transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+            :aria-label="t('groups.role.label', { name: item.persona.name })"
+          >
+            <UserRound :size="14" aria-hidden="true" />
+            <span class="truncate">{{ item.persona.name }}</span>
+            <ChevronDown :size="13" aria-hidden="true" />
+          </button>
+        </DropdownMenu>
+        <Badge v-if="item.persona_switch" tone="warning" dot pulse>
+          {{ t('groups.settings.role.waiting', { name: item.persona_switch.name }) }}
+        </Badge>
       </p>
     </div>
     <div class="flex items-center gap-2">

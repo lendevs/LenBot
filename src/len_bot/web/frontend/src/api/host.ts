@@ -19,6 +19,8 @@ export interface HostScene {
   scene: string
   persona: { id: string; name: string }
   persona_path: string
+  /** The role this group switches to once its current reply ends; null when no switch waits. */
+  persona_switch: { key: string; name: string } | null
   voice_mode: string
   timezone: string
   chat_enabled: boolean

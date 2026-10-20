@@ -14,6 +14,7 @@ import {
   Play,
   RotateCw,
   Search,
+  UserRound,
 } from '@lucide/vue'
 import { setThemeMode } from '../../composables/useThemeMode.js'
 import { host } from '../../host/store.js'
@@ -25,6 +26,7 @@ import { toast } from '../../ui/toast'
 import Kbd from '../../ui/Kbd.vue'
 import { areaTarget, navAreas } from '../nav'
 import { groupsTarget } from '../../views/groups/route'
+import { roleLabel, useRoleSwitch, useRoles } from '../../views/groups/roleSwitch'
 import { groupLabel } from './scenes'
 
 interface Command {
@@ -58,6 +60,9 @@ async function setChat(scene: string, enabled: boolean) {
   }
 }
 
+const { usable } = useRoles()
+const { switchRole } = useRoleSwitch()
+
 const commands = computed<Command[]>(() => {
   const pages = navAreas.flatMap((area) => {
     const entries = area.pages.length ? area.pages : [{ route: area.route, label: area.label }]
@@ -73,6 +78,8 @@ const commands = computed<Command[]>(() => {
   const scenes = (host.state?.scenes ?? []) as {
     scene: string
     persona?: { name: string }
+    persona_path: string
+    persona_switch: { key: string } | null
     chat_enabled: boolean
   }[]
   const groups = scenes.map((item) => ({
@@ -94,6 +101,21 @@ const commands = computed<Command[]>(() => {
     icon: item.chat_enabled ? Pause : Play,
     run: () => setChat(item.scene, !item.chat_enabled),
   }))
+  // Only offered when searching, like the other actions; a group waiting for a switch is left alone.
+  const roles = scenes
+    .filter((item) => !item.persona_switch)
+    .flatMap((item) =>
+      usable.value
+        .filter((role) => role.path !== item.persona_path)
+        .map((role) => ({
+          id: `role:${item.scene}:${role.key}`,
+          kind: 'action' as const,
+          title: t('palette.actions.role', { group: groupLabel(item.scene), name: roleLabel(role) }),
+          keywords: `${item.scene} ${role.key} role persona`,
+          icon: UserRound,
+          run: () => switchRole(item.scene, role),
+        })),
+    )
   const themes = (['system', 'light', 'dark'] as const).map((mode) => ({
     id: `theme:${mode}`,
     kind: 'action' as const,
@@ -118,7 +140,7 @@ const commands = computed<Command[]>(() => {
     icon: RotateCw,
     run: openRestart,
   }
-  return [...pages, ...groups, ...switches, ...themes, ...languages, restart]
+  return [...pages, ...groups, ...switches, ...roles, ...themes, ...languages, restart]
 })
 
 const results = computed(() => {

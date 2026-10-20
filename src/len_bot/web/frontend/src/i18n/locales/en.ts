@@ -370,6 +370,7 @@ export default {
     chatOff: 'Chat paused in {name}',
     chatFailed: 'Chat switch not changed',
     actions: 'More actions',
+    role: { switch: 'Switch persona', label: 'Persona {name}; open to switch' },
     tabs: {
       live: 'Live',
       session: 'Session',
@@ -579,6 +580,7 @@ export default {
         discard: 'Discard the unsaved group settings?',
         done: 'Switched to {name}',
         pending: 'Replying now; switches to {name} when this turn ends',
+        waiting: 'Switches to {name} when this reply ends',
         failed: 'Persona not switched',
         handoverFailed:
           'The chat handover was not written; the new persona was told the earlier lines are not its own',
@@ -1384,6 +1386,7 @@ export default {
       resume: 'Resume {name}',
       paused: 'Paused {name}',
       resumed: 'Resumed {name}',
+      role: 'Switch {group} to {name}',
       failed: 'Not changed',
     },
   },
