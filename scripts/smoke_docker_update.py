@@ -197,6 +197,10 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         if owned_volumes:
             subprocess.run(['docker', 'volume', 'rm', *owned_volumes], check=True)
         subprocess.run(['docker', 'network', 'rm', network], check=True)
+        # The registry-prefixed tags of this run; the source images keep their own names.
+        tags = subprocess.run(['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}', prefix], capture_output=True, text=True, check=True).stdout.split()
+        if tags:
+            subprocess.run(['docker', 'rmi', *tags], stdout=subprocess.DEVNULL, check=True)
 
 
 def main() -> None:
