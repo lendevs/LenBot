@@ -8,13 +8,20 @@ npm run dev      # 本地预览
 npm run build    # 输出到 .vitepress/dist，有失效链接时构建失败
 ```
 
-## 截图
+## 截图和动图
 
-截图取自一个临时演示实例。这个实例使用假的 OneBot 和虚构的群与消息，以模拟发送方式运行，不调用模型，也不涉及真实账号。
+截图和动图取自一个临时演示实例。这个实例使用假的 OneBot 和虚构的群与消息，以模拟发送方式运行，也不涉及真实账号。模型是本机的一段脚本：Bot 被 @ 后先翻聊天记录，再分两句回复，每一步等 1.5 秒，所以面板上的回合会像真实回合一样逐步展开。
 
 ```sh
 uv run --no-sync python website/scripts/demo_instance.py /tmp/lenbot-demo   # 保持运行
 uv run --no-project --with playwright python website/scripts/screenshots.py # 在另一个终端执行
+uv run --no-project --with playwright python website/scripts/record_live.py # 录制现场页签的动图，需要 ffmpeg
+```
+
+每次录制都用新的实例目录，否则群里会留着上一次录制的回合。实例运行期间，可以向控制端口发送群消息，`at` 表示 @ Bot：
+
+```sh
+curl -H 'Content-Type: application/json' -d '{"group": 80001, "user": 70002, "text": "周六带什么零食好", "at": true}' http://127.0.0.1:18099/inject
 ```
 
 第一次截图前，需要先执行 `uv run --no-project --with playwright playwright install chromium-headless-shell`。
