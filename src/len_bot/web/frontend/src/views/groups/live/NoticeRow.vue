@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TimelineNotice } from '../../../api/timeline'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { formatDateTime } from '../../../i18n/format'
 import RawRecord from '../tasks/RawRecord.vue'
 
@@ -14,7 +14,8 @@ const props = defineProps<{
 
 const { t, te } = useI18n()
 const prefix = 'groups.live.notices'
-const person = (uid: string | null, known: string | null) => known ?? (uid ? props.nameOf(uid) : t(`${prefix}.someone`))
+const person = (uid: string | null, known: string | null) =>
+  known ?? (uid ? props.nameOf(uid) : t(`${prefix}.someone`))
 /** Platform fields this sentence uses; OneBot sends them as they are named here. */
 const field = (key: string) => {
   const value = props.notice.raw[key]
@@ -43,8 +44,14 @@ const text = computed(() => {
 <template>
   <div class="flex flex-col items-center gap-1 px-4 py-1.5 text-center">
     <p class="max-w-full rounded-full bg-fill px-3 py-1 text-xs break-words text-muted">
-      {{ text }} · <span class="tabular">{{ formatDateTime(notice.time, { timeZone }) }}</span>
+      {{ text }} ·
+      <span class="tabular">{{ formatDateTime(notice.time, { timeZone }) }}</span>
     </p>
-    <RawRecord v-if="developerDetails" :label="t(`${prefix}.raw`)" :code="notice.raw" class="w-full max-w-lg text-left" />
+    <RawRecord
+      v-if="developerDetails"
+      :label="t(`${prefix}.raw`)"
+      :code="notice.raw"
+      class="w-full max-w-lg text-left"
+    />
   </div>
 </template>

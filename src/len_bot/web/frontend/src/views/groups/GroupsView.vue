@@ -108,71 +108,78 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
 
 <template>
   <div class="min-w-0">
-  <Skeleton v-if="!host.state && !host.stateError" :lines="6" />
-  <ErrorNote v-else-if="!host.state" :error="host.stateError" :retry="readHostState" />
-  <EmptyState v-else-if="!scenes.length" :title="t('groups.empty')">
-    <Button variant="primary" :icon="Plus" @click="adding = true">{{ t('groups.add') }}</Button>
-  </EmptyState>
-  <div v-else class="grid min-w-0 items-start gap-6 lg:grid-cols-[264px_minmax(0,1fr)]">
-    <aside
-      v-if="wide"
-      class="sticky top-20 flex max-h-[calc(100dvh-6.5rem)] min-h-0 flex-col border-r border-line pr-4"
-    >
-      <GroupList :scenes="scenes" :selected="scene" @select="select" @add="adding = true" />
-    </aside>
-    <button
-      v-else
-      type="button"
-      class="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2 text-left transition-colors hover:border-line-strong focus-visible:focus-ring"
-      :aria-label="t('groups.pick')"
-      @click="picking = true"
-    >
-      <span class="flex" aria-hidden="true"><Avatar :name="groupLabel(scene)" shape="square" :size="28" /></span>
-      <span class="min-w-0 flex-1 truncate text-base font-medium">{{ groupLabel(scene) }}</span>
-      <StatusDot v-if="current" :tone="statusTones[current.chat_status.status]" />
-      <ChevronsUpDown :size="16" class="shrink-0 text-muted" aria-hidden="true" />
-    </button>
+    <Skeleton v-if="!host.state && !host.stateError" :lines="6" />
+    <ErrorNote v-else-if="!host.state" :error="host.stateError" :retry="readHostState" />
+    <EmptyState v-else-if="!scenes.length" :title="t('groups.empty')">
+      <Button variant="primary" :icon="Plus" @click="adding = true">{{ t('groups.add') }}</Button>
+    </EmptyState>
+    <div v-else class="grid min-w-0 items-start gap-6 lg:grid-cols-[264px_minmax(0,1fr)]">
+      <aside
+        v-if="wide"
+        class="sticky top-20 flex max-h-[calc(100dvh-6.5rem)] min-h-0 flex-col border-r border-line pr-4"
+      >
+        <GroupList :scenes="scenes" :selected="scene" @select="select" @add="adding = true" />
+      </aside>
+      <button
+        v-else
+        type="button"
+        class="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2 text-left transition-colors hover:border-line-strong focus-visible:focus-ring"
+        :aria-label="t('groups.pick')"
+        @click="picking = true"
+      >
+        <span class="flex" aria-hidden="true">
+          <Avatar :name="groupLabel(scene)" shape="square" :size="28" />
+        </span>
+        <span class="min-w-0 flex-1 truncate text-base font-medium">{{ groupLabel(scene) }}</span>
+        <StatusDot v-if="current" :tone="statusTones[current.chat_status.status]" />
+        <ChevronsUpDown :size="16" class="shrink-0 text-muted" aria-hidden="true" />
+      </button>
 
-    <section v-if="current" class="flex min-w-0 flex-col gap-4">
-      <GroupHeader :item="current" />
-      <Tabs v-model="selectedTab" :items="tabs" :label="groupLabel(scene)">
-        <template #[tab]>
-          <div :key="`${scene}:${tab}`" class="grid min-w-0 gap-4">
-            <LiveTab v-if="tab === 'live'" :scene="scene" :time-zone="current.timezone" :persona="current.persona.name" />
-            <SessionTab v-else-if="tab === 'session'" :scene="scene" :time-zone="current.timezone" />
-            <MemoryTab
-              v-else-if="tab === 'memory'"
-              :scene="scene"
-              :time-zone="current.timezone"
-              @dirty="(value: boolean) => (dirty.memory = value)"
-            />
-            <TasksTab
-              v-else-if="tab === 'tasks'"
-              :scene="scene"
-              :time-zone="current.timezone"
-              @dirty="(value: boolean) => (dirty.tasks = value)"
-            />
-            <LearningTab
-              v-else-if="tab === 'learning'"
-              :scene="scene"
-              :time-zone="current.timezone"
-              @dirty="(value: boolean) => (dirty.learning = value)"
-            />
-            <SettingsTab
-              v-else
-              :scene="scene"
-              :time-zone="current.timezone"
-              @dirty="(value: boolean) => (dirty.settings = value)"
-            />
-          </div>
-        </template>
-      </Tabs>
-    </section>
-  </div>
+      <section v-if="current" class="flex min-w-0 flex-col gap-4">
+        <GroupHeader :item="current" />
+        <Tabs v-model="selectedTab" :items="tabs" :label="groupLabel(scene)">
+          <template #[tab]>
+            <div :key="`${scene}:${tab}`" class="grid min-w-0 gap-4">
+              <LiveTab
+                v-if="tab === 'live'"
+                :scene="scene"
+                :time-zone="current.timezone"
+                :persona="current.persona.name"
+              />
+              <SessionTab v-else-if="tab === 'session'" :scene="scene" :time-zone="current.timezone" />
+              <MemoryTab
+                v-else-if="tab === 'memory'"
+                :scene="scene"
+                :time-zone="current.timezone"
+                @dirty="(value: boolean) => (dirty.memory = value)"
+              />
+              <TasksTab
+                v-else-if="tab === 'tasks'"
+                :scene="scene"
+                :time-zone="current.timezone"
+                @dirty="(value: boolean) => (dirty.tasks = value)"
+              />
+              <LearningTab
+                v-else-if="tab === 'learning'"
+                :scene="scene"
+                :time-zone="current.timezone"
+                @dirty="(value: boolean) => (dirty.learning = value)"
+              />
+              <SettingsTab
+                v-else
+                :scene="scene"
+                :time-zone="current.timezone"
+                @dirty="(value: boolean) => (dirty.settings = value)"
+              />
+            </div>
+          </template>
+        </Tabs>
+      </section>
+    </div>
 
-  <Sheet v-model:open="picking" :title="t('groups.pick')" side="bottom">
-    <GroupList :scenes="scenes" :selected="scene" class="pb-2" @select="select" @add="addFromSheet" />
-  </Sheet>
-  <AddGroupDialog v-model:open="adding" @added="select" />
+    <Sheet v-model:open="picking" :title="t('groups.pick')" side="bottom">
+      <GroupList :scenes="scenes" :selected="scene" class="pb-2" @select="select" @add="addFromSheet" />
+    </Sheet>
+    <AddGroupDialog v-model:open="adding" @added="select" />
   </div>
 </template>

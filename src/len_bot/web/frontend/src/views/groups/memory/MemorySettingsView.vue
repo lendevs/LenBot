@@ -42,26 +42,34 @@ const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
-const settings = useQuery({ queryKey: keys.host.settings(), queryFn: ({ signal }) => settingsApi.read(signal) })
+const settings = useQuery({
+  queryKey: keys.host.settings(),
+  queryFn: ({ signal }) => settingsApi.read(signal),
+})
 const saved = computed(() => (settings.data.value?.saved.memory ?? null) as MemoryConfig | null)
 const models = computed(
   () =>
     settings.data.value?.saved.models as
-      | { providers: Record<string, SavedProvider>; roles: Record<string, unknown> }
-      | undefined,
+      { providers: Record<string, SavedProvider>; roles: Record<string, unknown> } | undefined,
 )
 /** Embeddings go through OpenAI-compatible providers only. */
 const providers = computed(() =>
   Object.entries(models.value?.providers ?? {})
     .filter(([, item]) => ['openai-chat', 'openai-embeddings'].includes(item.api))
-    .map(([alias, item]) => ({ id: alias, label: alias, candidate: item.api_key_configured ? savedCandidate(alias, item) : null })),
+    .map(([alias, item]) => ({
+      id: alias,
+      label: alias,
+      candidate: item.api_key_configured ? savedCandidate(alias, item) : null,
+    })),
 )
 const noMemoryModel = computed(() => Boolean(models.value) && !models.value!.roles.memory)
 
 const draft = ref<MemoryConfig | null>(null)
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const adopt = () => (draft.value = saved.value && copy(saved.value))
-const dirty = computed(() => Boolean(settings.data.value) && JSON.stringify(draft.value) !== JSON.stringify(saved.value))
+const dirty = computed(
+  () => Boolean(settings.data.value) && JSON.stringify(draft.value) !== JSON.stringify(saved.value),
+)
 // Saved elsewhere meanwhile: an unchanged draft follows, an edited one is kept.
 watch(
   saved,
@@ -94,7 +102,14 @@ const ingestOn = computed({
   set: (on: boolean) => {
     if (draft.value)
       draft.value.ingest = on
-        ? { idle_seconds: 1800, min_messages: 50, max_age_seconds: 86400, batch_size: 100, max_steps: 8, timeout_seconds: 180 }
+        ? {
+            idle_seconds: 1800,
+            min_messages: 50,
+            max_age_seconds: 86400,
+            batch_size: 100,
+            max_steps: 8,
+            timeout_seconds: 180,
+          }
         : null
   },
 })
@@ -115,7 +130,8 @@ const errors = computed<Record<string, string>>(() => {
   if (typeof value.recall_budget_chars !== 'number') found.budget = required
   if (typeof value.recall_limit !== 'number') found.limit = required
   if (!value.local.directory.trim()) found.directory = required
-  for (const { key } of ingestFields) if (value.ingest && typeof value.ingest[key] !== 'number') found[key] = required
+  for (const { key } of ingestFields)
+    if (value.ingest && typeof value.ingest[key] !== 'number') found[key] = required
   const embedding = value.local.embedding
   if (embedding && !embedding.provider) found.embedding = t('groups.memory.settings.noProvider')
   if (embedding && !embedding.model.trim()) found.embedding = required
@@ -167,7 +183,13 @@ const saveError = computed(() =>
             <Input v-model="draft.local.directory" placeholder="data/memory" mono />
           </Field>
           <Field :label="t('groups.memory.settings.budget')" :error="errors.budget">
-            <NumberInput v-model="draft.recall_budget_chars" :min="100" :max="12000" :step="100" :unit="t('groups.memory.settings.chars')" />
+            <NumberInput
+              v-model="draft.recall_budget_chars"
+              :min="100"
+              :max="12000"
+              :step="100"
+              :unit="t('groups.memory.settings.chars')"
+            />
           </Field>
           <Field :label="t('groups.memory.settings.limit')" :error="errors.limit">
             <NumberInput v-model="draft.recall_limit" :min="1" :max="20" />

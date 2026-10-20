@@ -18,8 +18,15 @@ const state = usePluginsState()
 const paths = ref(props.paths.join('\n'))
 const data = ref(props.dataDirectory)
 const error = ref<unknown>(null)
-const list = computed(() => paths.value.split('\n').map((item) => item.trim()).filter(Boolean))
-const dirty = computed(() => list.value.join('\n') !== props.paths.join('\n') || data.value.trim() !== props.dataDirectory)
+const list = computed(() =>
+  paths.value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean),
+)
+const dirty = computed(
+  () => list.value.join('\n') !== props.paths.join('\n') || data.value.trim() !== props.dataDirectory,
+)
 const saving = computed(() => state.busy.value === 'paths')
 const open = computed({
   get: () => true,
@@ -31,7 +38,10 @@ async function submit() {
   if (!dirty.value || !data.value.trim()) return
   error.value = null
   try {
-    await state.run('paths', () => pluginsApi.putPaths(list.value, data.value.trim()), { quiet: true, success: t('common.saved') })
+    await state.run('paths', () => pluginsApi.putPaths(list.value, data.value.trim()), {
+      quiet: true,
+      success: t('common.saved'),
+    })
     emit('close')
   } catch (problem) {
     error.value = problem
@@ -52,7 +62,13 @@ async function submit() {
     </form>
     <template #footer>
       <Button variant="ghost" :disabled="saving" @click="emit('close')">{{ t('common.cancel') }}</Button>
-      <Button variant="primary" type="submit" form="plugin-paths" :loading="saving" :disabled="!dirty || !data.trim()">
+      <Button
+        variant="primary"
+        type="submit"
+        form="plugin-paths"
+        :loading="saving"
+        :disabled="!dirty || !data.trim()"
+      >
         {{ t('common.save') }}
       </Button>
     </template>

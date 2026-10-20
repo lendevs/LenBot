@@ -31,7 +31,11 @@ const language = computed({
       </header>
       <div v-if="asr" class="grid gap-x-5 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">
         <Field :label="t('models.roles.provider')">
-          <Select v-model="asr.provider" :options="form.optionsFor('asr')" :placeholder="t('models.roles.noProvider')" />
+          <Select
+            v-model="asr.provider"
+            :options="form.optionsFor('asr')"
+            :placeholder="t('models.roles.noProvider')"
+          />
         </Field>
         <Field :label="t('models.roles.model')">
           <ModelName v-model="asr.model" :models="form.catalog.value[asr.provider]" placeholder="whisper-1" />
@@ -40,7 +44,12 @@ const language = computed({
           <Input v-model="language" mono :placeholder="t('models.roles.autoLanguage')" />
         </Field>
         <Field :label="t('models.roles.timeout')">
-          <NumberInput v-model="asr.timeout_seconds" :min="1" :steppers="false" :unit="t('groups.settings.seconds')" />
+          <NumberInput
+            v-model="asr.timeout_seconds"
+            :min="1"
+            :steppers="false"
+            :unit="t('groups.settings.seconds')"
+          />
         </Field>
       </div>
       <ul v-if="asrErrors.length" class="flex list-none flex-col gap-1 text-sm text-error">

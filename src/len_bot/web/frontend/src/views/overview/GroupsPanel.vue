@@ -34,7 +34,8 @@ const chat = useMutation({
   mutationFn: ({ scene, enabled }: { scene: string; enabled: boolean }) => hostApi.setChat(scene, enabled),
   onSuccess: (_, { scene, enabled }) =>
     toast.success(t(enabled ? 'groups.chatOn' : 'groups.chatOff', { name: groupLabel(scene) })),
-  onError: (error) => toast.error(t('groups.chatFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('groups.chatFailed'), { detail: describeError(error, t('ui.error.network')).message }),
   onSettled: () => void readHostState(),
 })
 const switching = (scene: string) => chat.isPending.value && chat.variables.value?.scene === scene
@@ -44,7 +45,9 @@ const switching = (scene: string) => chat.isPending.value && chat.variables.valu
   <section class="flex min-w-0 flex-col gap-3">
     <div class="flex items-center justify-between gap-2">
       <h2 class="text-base font-semibold">{{ t('overview.groups.title') }}</h2>
-      <Button size="sm" variant="ghost" :icon-right="ArrowRight" :to="groupsTarget()">{{ t('overview.groups.manage') }}</Button>
+      <Button size="sm" variant="ghost" :icon-right="ArrowRight" :to="groupsTarget()">
+        {{ t('overview.groups.manage') }}
+      </Button>
     </div>
     <EmptyState v-if="!state.scenes.length" :icon="MessagesSquare" :title="t('groups.empty')" compact>
       <Button variant="primary" size="sm" :icon="Plus" :to="groupsTarget()">{{ t('groups.add') }}</Button>
@@ -62,10 +65,16 @@ const switching = (scene: string) => chat.isPending.value && chat.variables.valu
       />
       <ul class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface">
         <li v-for="item in shown" :key="item.scene" class="flex min-w-0 items-center gap-3 px-4 py-2.5">
-          <RouterLink :to="groupsTarget(item.scene)" class="group flex min-w-0 flex-1 items-center gap-3 rounded-md focus-visible:focus-ring">
+          <RouterLink
+            :to="groupsTarget(item.scene)"
+            class="group flex min-w-0 flex-1 items-center gap-3 rounded-md focus-visible:focus-ring"
+          >
             <Avatar :name="groupLabel(item.scene)" shape="square" :size="32" />
             <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-medium text-ink group-hover:underline" :class="!item.chat_enabled && 'text-muted'">
+              <span
+                class="block truncate text-sm font-medium text-ink group-hover:underline"
+                :class="!item.chat_enabled && 'text-muted'"
+              >
                 {{ groupLabel(item.scene) }}
               </span>
               <span class="flex min-w-0 items-center gap-1.5 text-xs text-muted">
@@ -74,7 +83,9 @@ const switching = (scene: string) => chat.isPending.value && chat.variables.valu
                   {{
                     [
                       statusLabel(item.chat_status, item.timezone),
-                      members(item.scene) === undefined ? '' : t('groups.members', { n: formatNumber(members(item.scene)!) }),
+                      members(item.scene) === undefined
+                        ? ''
+                        : t('groups.members', { n: formatNumber(members(item.scene)!) }),
                       item.persona.name,
                     ]
                       .filter(Boolean)
@@ -92,7 +103,9 @@ const switching = (scene: string) => chat.isPending.value && chat.variables.valu
             @update:model-value="(enabled: boolean) => chat.mutate({ scene: item.scene, enabled })"
           />
         </li>
-        <li v-if="!shown.length" class="px-4 py-6 text-center text-sm text-muted">{{ t('common.noResults') }}</li>
+        <li v-if="!shown.length" class="px-4 py-6 text-center text-sm text-muted">
+          {{ t('common.noResults') }}
+        </li>
       </ul>
     </template>
   </section>

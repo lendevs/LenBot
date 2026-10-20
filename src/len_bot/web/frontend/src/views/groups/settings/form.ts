@@ -36,12 +36,21 @@ const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const minutes = (clock: string) => clock.replace(/^(\d\d:\d\d):00$/, '$1')
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
-function sceneOf(snapshot: SettingsSnapshot, scene: string): Pick<Draft, 'scene' | 'relationships' | 'tasks' | 'speech'> | null {
+function sceneOf(
+  snapshot: SettingsSnapshot,
+  scene: string,
+): Pick<Draft, 'scene' | 'relationships' | 'tasks' | 'speech'> | null {
   const saved = snapshot.saved.scenes[scene]
   if (!saved) return null
   const table = snapshot.saved.limits.scene_messages_per_hour ?? {}
-  const { enabled, max_running, max_daily_tasks, egress_max_task_bytes, egress_max_daily_bytes, egress_bytes_per_second } =
-    saved.tasks
+  const {
+    enabled,
+    max_running,
+    max_daily_tasks,
+    egress_max_task_bytes,
+    egress_max_daily_bytes,
+    egress_bytes_per_second,
+  } = saved.tasks
   const quiet = saved.attention.quiet_hours
   const proactive = saved.proactive
   return copy({
@@ -62,8 +71,18 @@ function sceneOf(snapshot: SettingsSnapshot, scene: string): Pick<Draft, 'scene'
       persona_aliases: saved.scene_persona.persona_aliases,
       behavior_addendum: saved.scene_persona.behavior_addendum,
     },
-    relationships: Object.entries(saved.scene_persona.relationships).map(([account, text]) => ({ account, text })),
-    tasks: { enabled, max_running, max_daily_tasks, egress_max_task_bytes, egress_max_daily_bytes, egress_bytes_per_second },
+    relationships: Object.entries(saved.scene_persona.relationships).map(([account, text]) => ({
+      account,
+      text,
+    })),
+    tasks: {
+      enabled,
+      max_running,
+      max_daily_tasks,
+      egress_max_task_bytes,
+      egress_max_daily_bytes,
+      egress_bytes_per_second,
+    },
     speech: !(scene in table)
       ? { mode: 'global', value: null }
       : table[scene] === null
@@ -75,12 +94,18 @@ function sceneOf(snapshot: SettingsSnapshot, scene: string): Pick<Draft, 'scene'
 export function useSettingsForm(scene: Ref<string>) {
   const { t } = useI18n()
   const client = useQueryClient()
-  const settings = useQuery({ queryKey: keys.host.settings(), queryFn: ({ signal }) => settingsApi.read(signal) })
+  const settings = useQuery({
+    queryKey: keys.host.settings(),
+    queryFn: ({ signal }) => settingsApi.read(signal),
+  })
   const permissions = useQuery({
     queryKey: computed(() => keys.scene.permissions(scene.value)),
     queryFn: ({ signal }) => settingsApi.permissions(scene.value, signal),
   })
-  const plugins = useQuery({ queryKey: keys.plugins.all(), queryFn: ({ signal }) => settingsApi.plugins(signal) })
+  const plugins = useQuery({
+    queryKey: keys.plugins.all(),
+    queryFn: ({ signal }) => settingsApi.plugins(signal),
+  })
 
   /** What is saved now, in the draft's shape; null until the settings are read. */
   const saved = computed<Draft | null>(() => {
@@ -98,7 +123,10 @@ export function useSettingsForm(scene: Ref<string>) {
   const changed = (part: (typeof parts)[number]) => {
     if (!draft.value || !saved.value) return false
     if (part === 'scene')
-      return !same([draft.value.scene, draft.value.relationships], [saved.value.scene, saved.value.relationships])
+      return !same(
+        [draft.value.scene, draft.value.relationships],
+        [saved.value.scene, saved.value.relationships],
+      )
     return !same(draft.value[part], saved.value[part])
   }
   const dirty = computed(() => parts.some(changed))
@@ -138,7 +166,8 @@ export function useSettingsForm(scene: Ref<string>) {
     if (quiet) {
       clock('quiet.start', quiet.start)
       clock('quiet.end', quiet.end)
-      if (!found['quiet.end'] && quiet.start === quiet.end) found['quiet.end'] = t('groups.settings.errors.samePeriod')
+      if (!found['quiet.end'] && quiet.start === quiet.end)
+        found['quiet.end'] = t('groups.settings.errors.samePeriod')
       if (quiet.direct === 'notice' && !quiet.notice_text?.trim()) found['quiet.notice'] = required
     }
     const proactive = value.scene.proactive
@@ -149,20 +178,29 @@ export function useSettingsForm(scene: Ref<string>) {
         found['proactive.end'] = t('groups.settings.errors.samePeriod')
       if (!(proactive.idle_seconds >= 600)) found['proactive.idle'] = t('groups.settings.errors.idle')
     }
-    if (value.speech.mode === 'custom' && !(Number.isInteger(value.speech.value) && (value.speech.value ?? 0) >= 1))
+    if (
+      value.speech.mode === 'custom' &&
+      !(Number.isInteger(value.speech.value) && (value.speech.value ?? 0) >= 1)
+    )
       found.speech = t('groups.settings.errors.speech')
     const seen = new Set<string>()
     value.relationships.forEach((row, index) => {
       const account = row.account.trim()
-      if (!ACCOUNT.test(account)) found[`relationships.${index}.account`] = t('groups.settings.errors.account')
-      else if (seen.has(account)) found[`relationships.${index}.account`] = t('groups.settings.errors.repeated')
+      if (!ACCOUNT.test(account))
+        found[`relationships.${index}.account`] = t('groups.settings.errors.account')
+      else if (seen.has(account))
+        found[`relationships.${index}.account`] = t('groups.settings.errors.repeated')
       seen.add(account)
       if (!row.text.trim()) found[`relationships.${index}.text`] = required
     })
     if (value.scene.persona_aliases.some((alias) => !alias.trim())) found.aliases = required
-    if (attention.other_bot_ids.some((id) => !ACCOUNT.test(id))) found.otherBots = t('groups.settings.errors.account')
+    if (attention.other_bot_ids.some((id) => !ACCOUNT.test(id)))
+      found.otherBots = t('groups.settings.errors.account')
     for (const [key, number] of Object.entries(attention)) {
-      if (typeof number !== 'number' && (key.endsWith('_seconds') || key === 'activity' || key === 'max_extensions'))
+      if (
+        typeof number !== 'number' &&
+        (key.endsWith('_seconds') || key === 'activity' || key === 'max_extensions')
+      )
         found[`attention.${key}`] = required
     }
     const pairs = [
@@ -196,11 +234,14 @@ export function useSettingsForm(scene: Ref<string>) {
           ...value.scene,
           timezone: value.scene.timezone?.trim() || null,
           behavior_addendum: value.scene.behavior_addendum?.trim() || null,
-          relationships: Object.fromEntries(value.relationships.map((row) => [row.account.trim(), row.text.trim()])),
+          relationships: Object.fromEntries(
+            value.relationships.map((row) => [row.account.trim(), row.text.trim()]),
+          ),
         }
         client.setQueryData(keys.host.settings(), await settingsApi.putScene(name, body))
       }
-      if (changed('tasks')) client.setQueryData(keys.host.settings(), await settingsApi.putTasks(name, value.tasks))
+      if (changed('tasks'))
+        client.setQueryData(keys.host.settings(), await settingsApi.putTasks(name, value.tasks))
       if (changed('speech')) {
         client.setQueryData(keys.host.settings(), await settingsApi.putSpeech(name, value.speech))
         void client.invalidateQueries({ queryKey: keys.host.limits() })
@@ -208,7 +249,10 @@ export function useSettingsForm(scene: Ref<string>) {
       if (changed('plugins'))
         client.setQueryData(keys.plugins.all(), await settingsApi.putScenePlugins(name, value.plugins))
       if (changed('permissions') && value.permissions)
-        client.setQueryData(keys.scene.permissions(name), await settingsApi.putPermissions(name, value.permissions))
+        client.setQueryData(
+          keys.scene.permissions(name),
+          await settingsApi.putPermissions(name, value.permissions),
+        )
       adopt()
       return true
     } catch (error) {
@@ -223,7 +267,20 @@ export function useSettingsForm(scene: Ref<string>) {
     }
   }
 
-  return reactive({ settings, permissions, plugins, saved, draft, dirty, errors, invalid, saving, saveError, save, adopt })
+  return reactive({
+    settings,
+    permissions,
+    plugins,
+    saved,
+    draft,
+    dirty,
+    errors,
+    invalid,
+    saving,
+    saveError,
+    save,
+    adopt,
+  })
 }
 
 export type SettingsForm = ReturnType<typeof useSettingsForm>

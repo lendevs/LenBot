@@ -23,7 +23,9 @@ export function initialField(field: ConfigField, value: FieldValue = field.defau
   if (field.type === 'object_list') {
     const rows = value as Record<string, FieldValue>[]
     return hasRows(field)
-      ? rows.map((row) => Object.fromEntries(field.fields.map((child) => [child.key, initialField(child, row[child.key])])))
+      ? rows.map((row) =>
+          Object.fromEntries(field.fields.map((child) => [child.key, initialField(child, row[child.key])])),
+        )
       : JSON.stringify(value, null, 2)
   }
   return clone(value) as DraftValue
@@ -45,7 +47,11 @@ export const wideField = (field: ConfigField) =>
 
 /** A few short choices read better as a segmented control than as a dropdown. */
 export const segmented = (field: ConfigField) =>
-  Boolean(field.options && field.options.length <= 3 && field.options.every((option) => [...option.label].length <= 8))
+  Boolean(
+    field.options &&
+    field.options.length <= 3 &&
+    field.options.every((option) => [...option.label].length <= 8),
+  )
 
 /** The range shown inside a number box; a lone lower bound of 0 or 1 only says the number is not negative. */
 export function rangeText(field: ConfigField): string | undefined {
@@ -70,7 +76,8 @@ export function rowSummary(fields: ConfigField[], row: Row, group: (scene: strin
       if (value) badges.push(label)
     } else if (child.type === 'scene_list') {
       const scenes = value as string[]
-      if (scenes.length) badges.push(scenes.length === 1 ? group(scenes[0]) : t('plugins.form.groups', { n: scenes.length }))
+      if (scenes.length)
+        badges.push(scenes.length === 1 ? group(scenes[0]) : t('plugins.form.groups', { n: scenes.length }))
     } else if (child.type === 'scene') {
       if (value) badges.push(group(value as string))
     } else if (child.type === 'string_list') {
@@ -105,7 +112,10 @@ export function configValue(field: ConfigField, value: DraftValue, t: Translate)
     } catch (error) {
       throw new Error(t('plugins.form.badJson', { name: fieldLabel(field), error: (error as Error).message }))
     }
-    if (!Array.isArray(items) || items.some((item) => item === null || typeof item !== 'object' || Array.isArray(item)))
+    if (
+      !Array.isArray(items) ||
+      items.some((item) => item === null || typeof item !== 'object' || Array.isArray(item))
+    )
       throw new Error(t('plugins.form.notObjects', { name: fieldLabel(field) }))
     return items as FieldValue
   }
@@ -119,8 +129,10 @@ function fieldProblem(field: ConfigField, value: DraftValue, t: Translate): stri
   if (field.type === 'integer' || field.type === 'number') {
     if (value === null) return field.required ? t('plugins.form.missing', { name }) : null
     const number = value as number
-    if (field.minimum !== null && number < field.minimum) return t('plugins.form.below', { name, n: field.minimum })
-    if (field.maximum !== null && number > field.maximum) return t('plugins.form.above', { name, n: field.maximum })
+    if (field.minimum !== null && number < field.minimum)
+      return t('plugins.form.below', { name, n: field.minimum })
+    if (field.maximum !== null && number > field.maximum)
+      return t('plugins.form.above', { name, n: field.maximum })
     if (field.type === 'integer' && !Number.isInteger(number)) return t('plugins.form.integer', { name })
   }
   if (field.required && field.type === 'scene' && !value) return t('plugins.form.pick', { name })

@@ -18,7 +18,8 @@ export function useRoleWrites(key: Ref<string>) {
     else if (result.applied === false) toast.success(t('personas.detail.savedPending'))
     else toast.success(message)
     void client.invalidateQueries({ queryKey: keys.personas.all() })
-    for (const part of refresh) void client.invalidateQueries({ queryKey: keys.personas.part(key.value, part) })
+    for (const part of refresh)
+      void client.invalidateQueries({ queryKey: keys.personas.part(key.value, part) })
     if (result.affected_scenes?.length) void readHostState()
   }
 

@@ -29,8 +29,12 @@ const router = useRouter()
 const wide = useMediaQuery('(min-width: 1280px)')
 
 const service = useQuery({ queryKey: keys.tasks.state(), queryFn: ({ signal }) => tasksApi.state(signal) })
-const sceneTasks = computed(() => service.data.value?.scenes.find((item) => item.scene === props.scene) ?? null)
-const accepting = computed(() => Boolean(service.data.value?.configured && service.data.value.accepting && sceneTasks.value?.enabled))
+const sceneTasks = computed(
+  () => service.data.value?.scenes.find((item) => item.scene === props.scene) ?? null,
+)
+const accepting = computed(() =>
+  Boolean(service.data.value?.configured && service.data.value.accepting && sceneTasks.value?.enabled),
+)
 
 const filter = ref<TaskFilter>('active')
 const filters = computed(() =>
@@ -62,7 +66,10 @@ watch(
 
 async function open(id: number | null) {
   if (id === selected.value) return
-  if (detailDirty.value && !(await confirm({ title: t('groups.tasks.unsavedTitle'), confirmLabel: t('common.discard') })))
+  if (
+    detailDirty.value &&
+    !(await confirm({ title: t('groups.tasks.unsavedTitle'), confirmLabel: t('common.discard') }))
+  )
     return
   detailDirty.value = false
   const { id: _, ...rest } = route.query
@@ -103,14 +110,29 @@ function created(task: Task) {
         <span class="min-w-0 flex-1">{{ t('groups.tasks.sceneOff') }}</span>
         <Button size="sm" :to="groupsTarget(scene, 'settings')">{{ t('groups.tasks.toSettings') }}</Button>
       </div>
-      <ErrorNote v-if="service.data.value.error" :title="t('groups.tasks.serviceError')" :error="service.data.value.error" />
+      <ErrorNote
+        v-if="service.data.value.error"
+        :title="t('groups.tasks.serviceError')"
+        :error="service.data.value.error"
+      />
     </template>
 
     <div class="grid min-w-0 items-start gap-5" :class="wide && 'grid-cols-[320px_minmax(0,1fr)]'">
-      <section v-if="wide || selected === null" class="flex min-w-0 flex-col gap-3" :aria-label="t('groups.tasks.views.tasks')">
+      <section
+        v-if="wide || selected === null"
+        class="flex min-w-0 flex-col gap-3"
+        :aria-label="t('groups.tasks.views.tasks')"
+      >
         <div class="flex items-center gap-2">
           <div class="w-32"><Select v-model="filter" :options="filters" size="sm" /></div>
-          <Button v-if="accepting" size="sm" variant="ghost" :icon="Plus" class="ml-auto" @click="creating = true">
+          <Button
+            v-if="accepting"
+            size="sm"
+            variant="ghost"
+            :icon="Plus"
+            class="ml-auto"
+            @click="creating = true"
+          >
             {{ t('groups.tasks.create') }}
           </Button>
         </div>
@@ -156,7 +178,14 @@ function created(task: Task) {
       </section>
 
       <section v-if="wide || selected !== null" class="flex min-w-0 flex-col gap-3">
-        <Button v-if="!wide" size="sm" variant="ghost" :icon="ArrowLeft" class="self-start" @click="open(null)">
+        <Button
+          v-if="!wide"
+          size="sm"
+          variant="ghost"
+          :icon="ArrowLeft"
+          class="self-start"
+          @click="open(null)"
+        >
           {{ t('common.back') }}
         </Button>
         <TaskDetail

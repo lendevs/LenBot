@@ -3,7 +3,3 @@ node_modules
 package-lock.json
 ../static/dist
 
-# Pages and helpers from the Vuetify panel; each goes away when its replacement lands (docs: work.md M2-M4).
-src/views
-src/composables/*.js
-src/router/*.js

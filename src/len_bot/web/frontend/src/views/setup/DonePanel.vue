@@ -84,7 +84,9 @@ function open() {
       :src="markUrl"
       alt=""
       class="size-16 rounded-xl"
-      :class="state === 'starting' || state === 'slow' ? 'animate-[setup-bob_1.6s_var(--ease-out)_infinite]' : ''"
+      :class="
+        state === 'starting' || state === 'slow' ? 'animate-[setup-bob_1.6s_var(--ease-out)_infinite]' : ''
+      "
     />
     <div class="flex flex-col gap-2" role="status">
       <h1 class="text-xl font-semibold">{{ t(`setup.done.${state}.title`) }}</h1>
@@ -94,13 +96,20 @@ function open() {
       </p>
     </div>
     <div v-if="state === 'starting'" class="flex gap-1.5" aria-hidden="true">
-      <span v-for="n in 3" :key="n" class="size-2 animate-pulse-dot rounded-full bg-brand" :style="{ animationDelay: `${n * 160}ms` }" />
+      <span
+        v-for="n in 3"
+        :key="n"
+        class="size-2 animate-pulse-dot rounded-full bg-brand"
+        :style="{ animationDelay: `${n * 160}ms` }"
+      />
     </div>
     <form class="flex w-full flex-col gap-3 text-left" novalidate @submit.prevent="open">
       <Field :label="t('setup.done.address')" :error="addressError" :info="t('setup.done.addressInfo')">
         <Input v-model="address" type="url" mono />
       </Field>
-      <Button type="submit" variant="primary" :icon-right="ArrowRight" block>{{ t('setup.done.open') }}</Button>
+      <Button type="submit" variant="primary" :icon-right="ArrowRight" block>
+        {{ t('setup.done.open') }}
+      </Button>
     </form>
   </section>
 </template>

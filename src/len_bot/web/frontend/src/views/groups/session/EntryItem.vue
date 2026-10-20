@@ -75,7 +75,11 @@ const resultOf = (call: EntryToolCall) => props.results.get(call.id)?.message.co
         </p>
         <CodeBlock v-else :code="content" :max-lines="10" />
       </template>
-      <div v-for="call in calls" :key="call.id" class="flex flex-col gap-1.5 border-l-2 border-line-strong pl-3">
+      <div
+        v-for="call in calls"
+        :key="call.id"
+        class="flex flex-col gap-1.5 border-l-2 border-line-strong pl-3"
+      >
         <div class="flex flex-wrap items-center gap-2">
           <strong class="text-sm font-medium text-ink">{{ labels.tool(call.function.name) }}</strong>
           <Badge v-if="!results.has(call.id)" tone="warning">{{ t('groups.session.noResult') }}</Badge>

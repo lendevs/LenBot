@@ -60,7 +60,9 @@ function toggle(name: string, on: boolean) {
           <div class="flex flex-wrap items-center gap-2">
             <strong class="text-sm font-medium text-ink">{{ item.name }}</strong>
             <Badge v-if="!item.loaded" tone="warning">{{ t('groups.settings.plugins.notLoaded') }}</Badge>
-            <Badge v-else-if="item.status === 'failed'" tone="error">{{ t('groups.settings.plugins.failed') }}</Badge>
+            <Badge v-else-if="item.status === 'failed'" tone="error">
+              {{ t('groups.settings.plugins.failed') }}
+            </Badge>
           </div>
           <p v-if="item.description" class="truncate text-xs text-muted" :title="item.description">
             {{ item.description }}

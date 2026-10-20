@@ -33,7 +33,8 @@ const pick = (snapshot: SettingsSnapshot): Draft => {
     groupManagers: Boolean(saved.commands.group_managers_chat_reset),
   }
 }
-const versionOf = (snapshot: SettingsSnapshot) => (snapshot.versions as { limits?: string } | undefined)?.limits
+const versionOf = (snapshot: SettingsSnapshot) =>
+  (snapshot.versions as { limits?: string } | undefined)?.limits
 
 const form = useSettingsDraft<Draft>({
   pick,
@@ -59,7 +60,8 @@ const form = useSettingsDraft<Draft>({
       }
       client.setQueryData(keys.host.settings(), snapshot)
     }
-    if (value.groupManagers !== saved.groupManagers) snapshot = await systemApi.saveCommands(value.groupManagers)
+    if (value.groupManagers !== saved.groupManagers)
+      snapshot = await systemApi.saveCommands(value.groupManagers)
     return snapshot
   },
   confirm: async (value): Promise<boolean> => {
@@ -89,7 +91,8 @@ const errors = computed(() => {
   const value = draft.value?.speech
   if (!value) return result
   if (value.messages_per_hour !== null && value.direct_reserve === null) result.reserve = t('system.required')
-  if (value.speech_notice_text !== null && !value.speech_notice_text.trim()) result.notice = t('system.required')
+  if (value.speech_notice_text !== null && !value.speech_notice_text.trim())
+    result.notice = t('system.required')
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)
@@ -97,7 +100,12 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
 
 <template>
   <Skeleton v-if="settings.isPending.value" :lines="6" />
-  <ErrorNote v-else-if="settings.isError.value" :title="t('system.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+  <ErrorNote
+    v-else-if="settings.isError.value"
+    :title="t('system.readFailed')"
+    :error="settings.error.value"
+    :retry="settings.refetch"
+  />
   <div v-else-if="draft" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection :title="t('system.chat.speech')">
@@ -120,7 +128,12 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
               @update:model-value="(on: boolean) => (speech.speech_notice_text = on ? '' : null)"
             />
           </Field>
-          <Field v-if="speech.speech_notice_text !== null" :label="t('system.chat.notice')" :error="errors.notice" wide>
+          <Field
+            v-if="speech.speech_notice_text !== null"
+            :label="t('system.chat.notice')"
+            :error="errors.notice"
+            wide
+          >
             <Input v-model="speech.speech_notice_text" :maxlength="200" />
           </Field>
         </template>
@@ -131,6 +144,13 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
         </Field>
       </FormSection>
     </div>
-    <SaveBar :dirty="form.dirty.value" :saving="form.saving.value" :error="form.saveError.value" :invalid="invalid" @save="form.submit" @discard="form.discard" />
+    <SaveBar
+      :dirty="form.dirty.value"
+      :saving="form.saving.value"
+      :error="form.saveError.value"
+      :invalid="invalid"
+      @save="form.submit"
+      @discard="form.discard"
+    />
   </div>
 </template>

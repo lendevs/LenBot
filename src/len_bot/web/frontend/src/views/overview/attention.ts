@@ -74,7 +74,11 @@ export function useAttention() {
           const latest = item.latest_error as { error?: string }
           items.push({
             key: `${kind}:${item.name}`,
-            text: t(`overview.todo.${kind}Errors`, { name: item.name, n: item.error_count }, item.error_count),
+            text: t(
+              `overview.todo.${kind}Errors`,
+              { name: item.name, n: item.error_count },
+              item.error_count,
+            ),
             error: latest.error ?? null,
             tone: 'warning',
             to,
@@ -102,7 +106,8 @@ export function useAttention() {
     )
     const failures: Record<string, number> = {}
     for (const turn of day.recent_errors) {
-      if (turn.started >= day.since && FAILED_TURNS.has(turn.status)) failures[turn.scene] = (failures[turn.scene] ?? 0) + 1
+      if (turn.started >= day.since && FAILED_TURNS.has(turn.status))
+        failures[turn.scene] = (failures[turn.scene] ?? 0) + 1
     }
     perScene(
       items,
@@ -174,7 +179,9 @@ export function useAttention() {
         text: t('overview.todo.review', {
           group: groupLabel(scene),
           what: [
-            reviews.expressions ? t('overview.todo.expressions', { n: reviews.expressions }, reviews.expressions) : '',
+            reviews.expressions
+              ? t('overview.todo.expressions', { n: reviews.expressions }, reviews.expressions)
+              : '',
             reviews.stickers ? t('overview.todo.stickers', { n: reviews.stickers }, reviews.stickers) : '',
           ]
             .filter(Boolean)

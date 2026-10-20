@@ -30,11 +30,17 @@ export function useSettingsDraft<T>(options: {
 }) {
   const { t } = useI18n()
   const client = useQueryClient()
-  const settings = useQuery({ queryKey: keys.host.settings(), queryFn: ({ signal }) => settingsApi.read(signal) })
+  const settings = useQuery({
+    queryKey: keys.host.settings(),
+    queryFn: ({ signal }) => settingsApi.read(signal),
+  })
   const saved = computed(() => (settings.data.value ? options.pick(settings.data.value) : undefined))
   const draft = ref(saved.value === undefined ? undefined : copy(saved.value)) as Ref<T | undefined>
   watch(saved, (next, previous) => {
-    if (next !== undefined && (previous === undefined || draft.value === undefined || same(draft.value, previous)))
+    if (
+      next !== undefined &&
+      (previous === undefined || draft.value === undefined || same(draft.value, previous))
+    )
       draft.value = copy(next)
   })
   const dirty = computed(

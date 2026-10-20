@@ -23,7 +23,6 @@ const form = useProfile()
         <AvatarEditor :role="role" :name="form.draft.value.name" />
       </Field>
       <Field
-       
         :label="t('personas.detail.profile.name')"
         :error="form.draft.value.name.trim() ? null : t('personas.detail.problems.name')"
         required
@@ -35,7 +34,10 @@ const form = useProfile()
         <TagInput v-model="form.draft.value.aliases" />
       </Field>
       <Field :label="t('personas.detail.profile.selfReference')">
-        <TagInput v-model="form.draft.value.self_reference" :placeholder="t('personas.detail.profile.selfReferenceExample')" />
+        <TagInput
+          v-model="form.draft.value.self_reference"
+          :placeholder="t('personas.detail.profile.selfReferenceExample')"
+        />
       </Field>
     </FormSection>
     <FormSection :title="t('personas.detail.profile.character')" :columns="1">

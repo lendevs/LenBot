@@ -30,8 +30,14 @@ interface Draft {
 const ACCOUNT = /^[a-z][a-z0-9_-]*:[^:\s/\\]+$/
 const { t } = useI18n()
 const client = useQueryClient()
-const settings = useQuery({ queryKey: keys.chatTest.settings(), queryFn: ({ signal }) => chatTestApi.settings(signal) })
-const stored = useQuery({ queryKey: keys.chatTest.scenePersona(), queryFn: ({ signal }) => chatTestApi.scenePersona(signal) })
+const settings = useQuery({
+  queryKey: keys.chatTest.settings(),
+  queryFn: ({ signal }) => chatTestApi.settings(signal),
+})
+const stored = useQuery({
+  queryKey: keys.chatTest.scenePersona(),
+  queryFn: ({ signal }) => chatTestApi.scenePersona(signal),
+})
 
 const draftOf = (saved: ScenePersonaValues): Draft => ({
   aliases: [...saved.persona_aliases],
@@ -80,9 +86,12 @@ const save = useMutation({
     toast.success(result.restart_required ? t('chatTest.settings.savedRestart') : t('common.saved'))
   },
 })
-const saveError = computed(() => (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null))
+const saveError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+)
 
-const list = (items: string[]) => (items.length ? items.join(t('chatTest.settings.separator')) : t('chatTest.settings.none'))
+const list = (items: string[]) =>
+  items.length ? items.join(t('chatTest.settings.separator')) : t('chatTest.settings.none')
 /** Tool and skill names show as code; the words for all and none do not. */
 const names = (value: 'all' | string[]) => Array.isArray(value) && value.length > 0
 const access = (value: 'all' | string[]) => (value === 'all' ? t('chatTest.settings.all') : list(value))
@@ -106,7 +115,12 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
 <template>
   <div class="flex min-w-0 max-w-4xl flex-col gap-8">
     <Skeleton v-if="stored.isPending.value" :lines="5" />
-    <ErrorNote v-else-if="stored.isError.value" :title="t('chatTest.settings.readFailed')" :error="stored.error.value" :retry="stored.refetch" />
+    <ErrorNote
+      v-else-if="stored.isError.value"
+      :title="t('chatTest.settings.readFailed')"
+      :error="stored.error.value"
+      :retry="stored.refetch"
+    />
     <form v-else-if="draft" class="flex flex-col gap-5" @submit.prevent="save.mutate()">
       <FormSection :title="t('chatTest.settings.additions')" :columns="1">
         <template v-if="stored.data.value?.restart_required" #actions>
@@ -123,15 +137,30 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
               class="grid items-start gap-2 sm:grid-cols-[180px_minmax(0,1fr)_auto]"
             >
               <Field :error="errors[`${index}.account`]">
-                <Input v-model="row.account" placeholder="onebot:10001" mono :aria-label="t('groups.settings.persona.account')" />
+                <Input
+                  v-model="row.account"
+                  placeholder="onebot:10001"
+                  mono
+                  :aria-label="t('groups.settings.persona.account')"
+                />
               </Field>
               <Field :error="errors[`${index}.text`]">
                 <Input v-model="row.text" :aria-label="t('groups.settings.persona.relationship')" />
               </Field>
-              <IconButton :icon="Trash2" :label="t('common.delete')" variant="ghost" @click="draft.relationships.splice(index, 1)" />
+              <IconButton
+                :icon="Trash2"
+                :label="t('common.delete')"
+                variant="ghost"
+                @click="draft.relationships.splice(index, 1)"
+              />
             </div>
             <div>
-              <Button size="sm" variant="ghost" :icon="Plus" @click="draft.relationships.push({ account: '', text: '' })">
+              <Button
+                size="sm"
+                variant="ghost"
+                :icon="Plus"
+                @click="draft.relationships.push({ account: '', text: '' })"
+              >
                 {{ t('groups.settings.persona.add') }}
               </Button>
             </div>
@@ -152,7 +181,12 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
     </form>
 
     <Skeleton v-if="settings.isPending.value" :lines="8" />
-    <ErrorNote v-else-if="settings.isError.value" :title="t('chatTest.settings.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+    <ErrorNote
+      v-else-if="settings.isError.value"
+      :title="t('chatTest.settings.readFailed')"
+      :error="settings.error.value"
+      :retry="settings.refetch"
+    />
     <template v-else-if="settings.data.value">
       <FormSection :title="t('chatTest.settings.running')">
         <dl class="contents">
@@ -163,11 +197,20 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
         </dl>
       </FormSection>
 
-      <FormSection :title="t('chatTest.settings.persona', { name: settings.data.value.persona.name })" :columns="1">
+      <FormSection
+        :title="t('chatTest.settings.persona', { name: settings.data.value.persona.name })"
+        :columns="1"
+      >
         <dl class="flex flex-col gap-4 text-sm">
-          <div v-for="field in (['brief', 'behavior', 'voice', 'boundaries'] as const)" :key="field" class="flex flex-col gap-1">
+          <div
+            v-for="field in ['brief', 'behavior', 'voice', 'boundaries'] as const"
+            :key="field"
+            class="flex flex-col gap-1"
+          >
             <dt class="text-xs text-muted">{{ t(`chatTest.settings.fields.${field}`) }}</dt>
-            <dd class="whitespace-pre-wrap text-ink-2">{{ settings.data.value.persona[field] || t('chatTest.settings.none') }}</dd>
+            <dd class="whitespace-pre-wrap text-ink-2">
+              {{ settings.data.value.persona[field] || t('chatTest.settings.none') }}
+            </dd>
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="flex flex-col gap-1">
@@ -191,7 +234,16 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
         </dl>
       </FormSection>
 
-      <FormSection :title="t('chatTest.settings.examples', { n: settings.data.value.selected_examples.length }, settings.data.value.selected_examples.length)" :columns="1">
+      <FormSection
+        :title="
+          t(
+            'chatTest.settings.examples',
+            { n: settings.data.value.selected_examples.length },
+            settings.data.value.selected_examples.length,
+          )
+        "
+        :columns="1"
+      >
         <p class="text-sm text-muted">
           {{
             settings.data.value.persona.example_tags.length
@@ -215,11 +267,20 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
       </FormSection>
 
       <FormSection :title="t('chatTest.settings.knowledge')" :columns="1">
-        <ul v-if="settings.data.value.knowledge.length" class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
-          <li v-for="file in settings.data.value.knowledge" :key="file.filename" class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+        <ul
+          v-if="settings.data.value.knowledge.length"
+          class="flex list-none flex-col divide-y divide-line rounded-lg border border-line"
+        >
+          <li
+            v-for="file in settings.data.value.knowledge"
+            :key="file.filename"
+            class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm"
+          >
             <span class="min-w-0 flex-1 truncate font-mono">{{ file.filename }}</span>
             <Badge v-for="tag in file.tags" :key="tag">{{ tag }}</Badge>
-            <span class="text-xs text-muted tabular">{{ t('chatTest.settings.characters', { n: file.characters }) }}</span>
+            <span class="text-xs text-muted tabular">
+              {{ t('chatTest.settings.characters', { n: file.characters }) }}
+            </span>
           </li>
         </ul>
         <p v-else class="text-sm text-muted">{{ t('chatTest.settings.noKnowledge') }}</p>
@@ -228,19 +289,27 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
       <FormSection :title="t('chatTest.settings.tools')">
         <div class="flex flex-col gap-1 text-sm">
           <span class="text-xs text-muted">{{ t('chatTest.settings.coreTools') }}</span>
-          <span class="text-ink-2" :class="names(settings.data.value.tools.core) && 'font-mono'">{{ list(settings.data.value.tools.core) }}</span>
+          <span class="text-ink-2" :class="names(settings.data.value.tools.core) && 'font-mono'">
+            {{ list(settings.data.value.tools.core) }}
+          </span>
         </div>
         <div class="flex flex-col gap-1 text-sm">
           <span class="text-xs text-muted">{{ t('chatTest.settings.deferredTools') }}</span>
-          <span class="text-ink-2" :class="names(settings.data.value.tools.deferred) && 'font-mono'">{{ list(settings.data.value.tools.deferred) }}</span>
+          <span class="text-ink-2" :class="names(settings.data.value.tools.deferred) && 'font-mono'">
+            {{ list(settings.data.value.tools.deferred) }}
+          </span>
         </div>
         <div class="flex flex-col gap-1 text-sm">
           <span class="text-xs text-muted">{{ t('chatTest.settings.roleTools') }}</span>
-          <span class="text-ink-2" :class="names(settings.data.value.persona.tools) && 'font-mono'">{{ access(settings.data.value.persona.tools) }}</span>
+          <span class="text-ink-2" :class="names(settings.data.value.persona.tools) && 'font-mono'">
+            {{ access(settings.data.value.persona.tools) }}
+          </span>
         </div>
         <div class="flex flex-col gap-1 text-sm">
           <span class="text-xs text-muted">{{ t('chatTest.settings.roleSkills') }}</span>
-          <span class="text-ink-2" :class="names(settings.data.value.persona.skills) && 'font-mono'">{{ access(settings.data.value.persona.skills) }}</span>
+          <span class="text-ink-2" :class="names(settings.data.value.persona.skills) && 'font-mono'">
+            {{ access(settings.data.value.persona.skills) }}
+          </span>
         </div>
       </FormSection>
     </template>

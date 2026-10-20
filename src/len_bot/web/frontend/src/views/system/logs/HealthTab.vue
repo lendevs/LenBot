@@ -35,7 +35,8 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
   if (!value) return { text: t('common.loading'), tone: 'neutral' }
   if (!value.running) return { text: t('overview.health.idle'), tone: 'neutral' }
   const latest = value.recent[0]
-  if (latest && Date.now() / 1000 - latest.at < 600) return { text: t('overview.health.stalled'), tone: 'warning' }
+  if (latest && Date.now() / 1000 - latest.at < 600)
+    return { text: t('overview.health.stalled'), tone: 'warning' }
   return { text: t('overview.health.smooth'), tone: 'success' }
 })
 </script>
@@ -43,13 +44,20 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
 <template>
   <div class="flex min-w-0 flex-col gap-4">
     <Skeleton v-if="loop.isPending.value" :lines="4" />
-    <ErrorNote v-else-if="loop.isError.value" :title="t('overview.health.readFailed')" :error="loop.error.value" :retry="loop.refetch" />
+    <ErrorNote
+      v-else-if="loop.isError.value"
+      :title="t('overview.health.readFailed')"
+      :error="loop.error.value"
+      :retry="loop.refetch"
+    />
     <template v-else-if="data">
       <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-5">
         <header class="flex flex-wrap items-center gap-2">
           <h3 class="text-base font-semibold">{{ t('overview.health.loop') }}</h3>
           <Badge :tone="verdict.tone" dot>{{ verdict.text }}</Badge>
-          <span v-if="data.started_at" class="text-xs text-muted">{{ t('logs.health.since', { time: formatDateTime(data.started_at, { timeZone }) }) }}</span>
+          <span v-if="data.started_at" class="text-xs text-muted">
+            {{ t('logs.health.since', { time: formatDateTime(data.started_at, { timeZone }) }) }}
+          </span>
         </header>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatTile :label="t('logs.health.stalls')" :value="data.stalls" />
@@ -58,14 +66,25 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
           <StatTile :label="t('logs.health.pauses')" :value="data.pauses" />
         </div>
         <p class="text-xs text-muted tabular">
-          {{ t('logs.health.probe', { interval: data.interval_ms, threshold: data.threshold_ms, n: formatNumber(data.probes) }) }}
+          {{
+            t('logs.health.probe', {
+              interval: data.interval_ms,
+              threshold: data.threshold_ms,
+              n: formatNumber(data.probes),
+            })
+          }}
         </p>
       </section>
 
       <section class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
         <header class="flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-base font-semibold">{{ t('logs.health.recent') }}</h3>
-          <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="{ query: { tab: 'system', event: 'event_loop_stall' } }">
+          <Button
+            size="sm"
+            variant="ghost"
+            :icon-right="ArrowUpRight"
+            :to="{ query: { tab: 'system', event: 'event_loop_stall' } }"
+          >
             {{ t('logs.health.allStalls') }}
           </Button>
         </header>
@@ -74,9 +93,14 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
           <li v-for="stall in data.recent" :key="stall.at" class="flex flex-col gap-1.5 py-3">
             <details>
               <summary class="flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-0.5 text-sm">
-                <strong class="font-semibold text-warning tabular">{{ formatNumber(stall.lag_ms) }} ms</strong>
+                <strong class="font-semibold text-warning tabular">
+                  {{ formatNumber(stall.lag_ms) }} ms
+                </strong>
                 <span class="font-mono text-ink-2">{{ stall.task ?? t('common.unknown') }}</span>
-                <span class="text-xs text-muted">{{ formatDateTime(stall.at, { withSeconds: true, timeZone }) }} · {{ formatRelative(stall.at) }}</span>
+                <span class="text-xs text-muted">
+                  {{ formatDateTime(stall.at, { withSeconds: true, timeZone }) }} ·
+                  {{ formatRelative(stall.at) }}
+                </span>
               </summary>
               <CodeBlock :code="stall.stack ?? t('overview.health.noStack')" :max-lines="16" class="mt-2" />
             </details>
@@ -88,12 +112,25 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
     <section class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
       <h3 class="text-base font-semibold">{{ t('logs.health.pauseTitle') }}</h3>
       <Skeleton v-if="pauses.isPending.value" :lines="2" />
-      <ErrorNote v-else-if="pauses.isError.value" :title="t('logs.readFailed')" :error="pauses.error.value" :retry="pauses.refetch" />
-      <p v-else-if="!pauses.data.value?.items.length" class="text-sm text-muted">{{ t('logs.health.noPauses') }}</p>
+      <ErrorNote
+        v-else-if="pauses.isError.value"
+        :title="t('logs.readFailed')"
+        :error="pauses.error.value"
+        :retry="pauses.refetch"
+      />
+      <p v-else-if="!pauses.data.value?.items.length" class="text-sm text-muted">
+        {{ t('logs.health.noPauses') }}
+      </p>
       <ul v-else class="flex list-none flex-col divide-y divide-line">
-        <li v-for="item in pauses.data.value.items" :key="item.ts" class="flex items-center gap-3 py-2 text-sm">
+        <li
+          v-for="item in pauses.data.value.items"
+          :key="item.ts"
+          class="flex items-center gap-3 py-2 text-sm"
+        >
           <Moon :size="15" class="shrink-0 text-subtle" aria-hidden="true" />
-          <span class="text-ink-2 tabular">{{ formatDateTime(seconds(item), { withSeconds: true, timeZone }) }}</span>
+          <span class="text-ink-2 tabular">
+            {{ formatDateTime(seconds(item), { withSeconds: true, timeZone }) }}
+          </span>
           <span class="text-muted tabular">
             {{ t('logs.health.pausedFor', { n: formatNumber(Math.round(Number(item.lag_ms ?? 0) / 1000)) }) }}
           </span>

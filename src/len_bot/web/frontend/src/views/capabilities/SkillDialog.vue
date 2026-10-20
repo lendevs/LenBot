@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { capabilitiesApi, type SkillPlace } from '../../api/capabilities'
 import { keys } from '../../api/query'
-import { developerDetails } from '../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../composables/useDeveloperMode'
 import { formatBytes } from '../../i18n/format'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
@@ -24,7 +24,9 @@ const emit = defineEmits<{ changed: [] }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
-const key = computed(() => keys.skills.files(props.place.scene, props.place.source, props.place.name, props.place.taskId ?? null))
+const key = computed(() =>
+  keys.skills.files(props.place.scene, props.place.source, props.place.name, props.place.taskId ?? null),
+)
 const listing = useQuery({
   queryKey: key,
   queryFn: ({ signal }) => capabilitiesApi.skillFiles(props.place, signal),
@@ -35,7 +37,8 @@ const path = ref<string | null>(null)
 const text = ref('')
 const next = ref<number | null>(null)
 const read = useMutation({
-  mutationFn: ({ file, offset }: { file: string; offset: number }) => capabilitiesApi.skillText(props.place, file, offset),
+  mutationFn: ({ file, offset }: { file: string; offset: number }) =>
+    capabilitiesApi.skillText(props.place, file, offset),
   onSuccess: (page, { file, offset }) => {
     path.value = file
     text.value = offset ? text.value + page.content : page.content
@@ -70,7 +73,10 @@ const remove = useMutation({
 })
 async function moveTo(target: 'scene' | 'shared') {
   const sure = await confirm({
-    title: t('capabilities.skills.moveTitle', { name: props.place.name, place: t(`capabilities.skills.places.${target}`) }),
+    title: t('capabilities.skills.moveTitle', {
+      name: props.place.name,
+      place: t(`capabilities.skills.places.${target}`),
+    }),
     message: t('capabilities.skills.moveMessage'),
     confirmLabel: t('capabilities.skills.move'),
     tone: 'primary',
@@ -93,14 +99,27 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
 <template>
   <Dialog v-model:open="open" :title="place.name" size="lg" :busy="busy">
     <Skeleton v-if="listing.isPending.value" :lines="6" />
-    <ErrorNote v-else-if="listing.isError.value" :title="t('capabilities.skills.readFailed')" :error="listing.error.value" :retry="listing.refetch" />
+    <ErrorNote
+      v-else-if="listing.isError.value"
+      :title="t('capabilities.skills.readFailed')"
+      :error="listing.error.value"
+      :retry="listing.refetch"
+    />
     <div v-else-if="listing.data.value" class="flex min-w-0 flex-col gap-3">
-      <p v-if="listing.data.value.skill.description" class="text-sm text-ink-2">{{ listing.data.value.skill.description }}</p>
+      <p v-if="listing.data.value.skill.description" class="text-sm text-ink-2">
+        {{ listing.data.value.skill.description }}
+      </p>
       <p class="flex flex-wrap items-center gap-2 text-xs text-muted">
         <Badge>{{ t(`capabilities.skills.sources.${place.source}`) }}</Badge>
-        <Badge v-if="!listing.data.value.skill.model_invocation" tone="warning">{{ t('capabilities.skills.manualOnly') }}</Badge>
+        <Badge v-if="!listing.data.value.skill.model_invocation" tone="warning">
+          {{ t('capabilities.skills.manualOnly') }}
+        </Badge>
         <span v-if="listing.data.value.used_by_running.length">
-          {{ t('capabilities.skills.usedBy', { groups: listing.data.value.used_by_running.map(groupLabel).join(t('personas.separator')) }) }}
+          {{
+            t('capabilities.skills.usedBy', {
+              groups: listing.data.value.used_by_running.map(groupLabel).join(t('personas.separator')),
+            })
+          }}
         </span>
       </p>
       <div class="flex flex-wrap gap-1.5">
@@ -117,8 +136,18 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
           {{ file.path }}
         </Button>
       </div>
-      <ErrorNote v-if="read.isError.value" :title="t('capabilities.skills.readFile')" :error="read.error.value" />
-      <CodeBlock v-if="path" :code="text || t('capabilities.skills.emptyFile')" :label="path" wrap :max-lines="30" />
+      <ErrorNote
+        v-if="read.isError.value"
+        :title="t('capabilities.skills.readFile')"
+        :error="read.error.value"
+      />
+      <CodeBlock
+        v-if="path"
+        :code="text || t('capabilities.skills.emptyFile')"
+        :label="path"
+        wrap
+        :max-lines="30"
+      />
       <Button
         v-if="next !== null && path"
         size="sm"
@@ -133,13 +162,31 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
       <RawRecord v-if="developerDetails" :label="t('capabilities.skills.raw')" :code="listing.data.value" />
     </div>
     <template v-if="movable || removable" #footer>
-      <Button v-if="removable" variant="danger-ghost" class="mr-auto" :disabled="!listing.data.value || busy" :loading="remove.isPending.value" @click="confirmRemove">
+      <Button
+        v-if="removable"
+        variant="danger-ghost"
+        class="mr-auto"
+        :disabled="!listing.data.value || busy"
+        :loading="remove.isPending.value"
+        @click="confirmRemove"
+      >
         {{ t('common.delete') }}
       </Button>
-      <Button v-if="place.source === 'task'" :disabled="!listing.data.value || busy" :loading="move.isPending.value && move.variables.value === 'scene'" @click="moveTo('scene')">
+      <Button
+        v-if="place.source === 'task'"
+        :disabled="!listing.data.value || busy"
+        :loading="move.isPending.value && move.variables.value === 'scene'"
+        @click="moveTo('scene')"
+      >
         {{ t('capabilities.skills.moveScene') }}
       </Button>
-      <Button v-if="movable" variant="primary" :disabled="!listing.data.value || busy" :loading="move.isPending.value && move.variables.value === 'shared'" @click="moveTo('shared')">
+      <Button
+        v-if="movable"
+        variant="primary"
+        :disabled="!listing.data.value || busy"
+        :loading="move.isPending.value && move.variables.value === 'shared'"
+        @click="moveTo('shared')"
+      >
         {{ place.source === 'scene' ? t('capabilities.skills.share') : t('capabilities.skills.moveShared') }}
       </Button>
     </template>

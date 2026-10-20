@@ -34,7 +34,9 @@ const file = ref<File | null>(null)
 function chosen(event: Event) {
   file.value = (event.target as HTMLInputElement).files?.[0] ?? null
 }
-const folderError = computed(() => (folder.value && !validFolder(folder.value) ? t('personas.create.folderInvalid') : null))
+const folderError = computed(() =>
+  folder.value && !validFolder(folder.value) ? t('personas.create.folderInvalid') : null,
+)
 const ready = computed(
   () =>
     validFolder(folder.value) &&
@@ -45,9 +47,12 @@ const save = useMutation({
   mutationFn: async () => {
     if (props.request.kind === 'import') {
       const result = await personasApi.importZip(folder.value, file.value!)
-      return result.renamed_id ? t('personas.create.renamed', { id: result.renamed_id.to }) : t('personas.create.imported')
+      return result.renamed_id
+        ? t('personas.create.renamed', { id: result.renamed_id.to })
+        : t('personas.create.imported')
     }
-    if (props.request.kind === 'copy') await personasApi.copy(props.request.source.key, folder.value, name.value.trim())
+    if (props.request.kind === 'copy')
+      await personasApi.copy(props.request.source.key, folder.value, name.value.trim())
     else await personasApi.create(folder.value, name.value.trim())
     return t(props.request.kind === 'copy' ? 'personas.create.copied' : 'personas.create.created')
   },
@@ -65,7 +70,12 @@ const open = computed({
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="t(`personas.create.${request.kind}Title`)" size="sm" :busy="save.isPending.value">
+  <Dialog
+    v-model:open="open"
+    :title="t(`personas.create.${request.kind}Title`)"
+    size="sm"
+    :busy="save.isPending.value"
+  >
     <form id="create-persona" class="flex flex-col gap-4" @submit.prevent="ready && save.mutate()">
       <Field v-if="request.kind !== 'import'" :label="t('personas.create.name')" required>
         <Input v-model="name" autofocus />
@@ -88,15 +98,24 @@ const open = computed({
             {{ t('personas.create.choose') }}
           </Button>
           <span v-if="file" class="min-w-0 truncate text-sm text-ink-2">
-            {{ file.name }} · <span class="tabular">{{ formatBytes(file.size) }}</span>
+            {{ file.name }} ·
+            <span class="tabular">{{ formatBytes(file.size) }}</span>
           </span>
         </div>
       </template>
       <ErrorNote v-if="save.isError.value" :title="t('personas.create.failed')" :error="save.error.value" />
     </form>
     <template #footer>
-      <Button variant="ghost" :disabled="save.isPending.value" @click="emit('close')">{{ t('common.cancel') }}</Button>
-      <Button variant="primary" type="submit" form="create-persona" :loading="save.isPending.value" :disabled="!ready">
+      <Button variant="ghost" :disabled="save.isPending.value" @click="emit('close')">
+        {{ t('common.cancel') }}
+      </Button>
+      <Button
+        variant="primary"
+        type="submit"
+        form="create-persona"
+        :loading="save.isPending.value"
+        :disabled="!ready"
+      >
         {{ t(`personas.create.${request.kind}`) }}
       </Button>
     </template>

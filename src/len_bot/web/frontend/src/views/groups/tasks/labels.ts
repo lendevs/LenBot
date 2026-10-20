@@ -10,7 +10,11 @@ export const statusTone: Record<TaskStatus, Tone> = {
   cancelled: 'neutral',
 }
 
-export const uploadTone: Record<string, Tone> = { uploaded: 'success', failed: 'error', unconfirmed: 'warning' }
+export const uploadTone: Record<string, Tone> = {
+  uploaded: 'success',
+  failed: 'error',
+  unconfirmed: 'warning',
+}
 
 export const finished = (status: TaskStatus | undefined) =>
   status === 'done' || status === 'failed' || status === 'cancelled'

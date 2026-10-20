@@ -37,7 +37,8 @@ function modelMeta(model: ModelStep): string {
   return parts.join(' · ')
 }
 const stepRunning = (step: Step) =>
-  running() && (step.models.some((model) => model.ended === null) || step.tools.some((tool) => tool.status === 'pending'))
+  running() &&
+  (step.models.some((model) => model.ended === null) || step.tools.some((tool) => tool.status === 'pending'))
 const stepFailed = (step: Step) =>
   step.models.some((model) => model.error) || step.tools.some((tool) => tool.status === 'error')
 </script>
@@ -54,7 +55,9 @@ const stepFailed = (step: Step) =>
         :title="t('groups.live.step.recall')"
         :icon="BookOpen"
         tone="info"
-        :meta="detail.recall.length ? t('groups.live.step.recallCount', { n: detail.recall.length }) : undefined"
+        :meta="
+          detail.recall.length ? t('groups.live.step.recallCount', { n: detail.recall.length }) : undefined
+        "
         :last="!detail.steps.length"
       >
         <p v-if="!detail.recall.length" class="text-muted">{{ t('groups.live.step.recallNone') }}</p>
@@ -84,10 +87,14 @@ const stepFailed = (step: Step) =>
           </p>
           <template v-for="model in step.models" :key="`e${model.id}`">
             <ErrorNote v-if="model.error" :title="t('groups.live.step.failed')" :error="model.error" />
-            <p v-if="model.snapshot_expired_at" class="text-xs text-muted">{{ t('groups.live.step.expired') }}</p>
+            <p v-if="model.snapshot_expired_at" class="text-xs text-muted">
+              {{ t('groups.live.step.expired') }}
+            </p>
           </template>
           <details v-if="step.thoughts.length" class="rounded-md bg-fill px-3 py-2">
-            <summary class="cursor-pointer text-xs font-medium text-muted">{{ t('groups.live.step.thoughts') }}</summary>
+            <summary class="cursor-pointer text-xs font-medium text-muted">
+              {{ t('groups.live.step.thoughts') }}
+            </summary>
             <p
               v-for="(thought, n) in step.thoughts"
               :key="n"
@@ -104,7 +111,9 @@ const stepFailed = (step: Step) =>
           >
             <div class="flex flex-wrap items-center gap-2">
               <strong class="text-sm font-medium text-ink">{{ labels.tool(tool.name) }}</strong>
-              <Badge :tone="toolTones[tool.status]">{{ t(`groups.live.step.toolStatus.${tool.status}`) }}</Badge>
+              <Badge :tone="toolTones[tool.status]">
+                {{ t(`groups.live.step.toolStatus.${tool.status}`) }}
+              </Badge>
             </div>
             <CodeBlock
               v-if="Object.keys(tool.arguments).length"
@@ -112,7 +121,12 @@ const stepFailed = (step: Step) =>
               :max-lines="8"
               :label="t('groups.live.step.arguments')"
             />
-            <CodeBlock v-if="tool.result" :code="tool.result" :max-lines="8" :label="t('groups.live.step.result')" />
+            <CodeBlock
+              v-if="tool.result"
+              :code="tool.result"
+              :max-lines="8"
+              :label="t('groups.live.step.result')"
+            />
           </div>
         </div>
       </TimelineItem>

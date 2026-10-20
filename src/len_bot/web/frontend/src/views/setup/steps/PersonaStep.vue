@@ -41,7 +41,11 @@ const kinds = computed(() => [
         <Textarea v-model="draft.voice" :placeholder="t('setup.persona.voicePlaceholder')" />
       </Field>
       <Field :label="t('setup.persona.boundaries')" wide>
-        <Textarea v-model="draft.boundaries" :rows="2" :placeholder="t('setup.persona.boundariesPlaceholder')" />
+        <Textarea
+          v-model="draft.boundaries"
+          :rows="2"
+          :placeholder="t('setup.persona.boundariesPlaceholder')"
+        />
       </Field>
     </div>
     <div class="grid gap-x-5 gap-y-5 border-t border-line pt-6 sm:grid-cols-2">

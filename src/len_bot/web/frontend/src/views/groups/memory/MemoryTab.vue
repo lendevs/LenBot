@@ -27,9 +27,10 @@ const route = useRoute()
 const state = useQuery({ queryKey: keys.memory.state(), queryFn: ({ signal }) => memoryApi.state(signal) })
 const enabled = computed(() => state.data.value?.enabled ?? false)
 const views = computed(() =>
-  (enabled.value ? (['browse', 'search', 'ingest', 'index', 'settings'] as const) : (['settings'] as const)).map(
-    (value) => ({ value, label: t(`groups.memory.views.${value}`) }),
-  ),
+  (enabled.value
+    ? (['browse', 'search', 'ingest', 'index', 'settings'] as const)
+    : (['settings'] as const)
+  ).map((value) => ({ value, label: t(`groups.memory.views.${value}`) })),
 )
 const initial = route.query.tab
 const chosen = ref<View>(
@@ -59,7 +60,8 @@ const selected = computed({
 })
 async function switchTo(value: View) {
   const current = view.value
-  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) return
+  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+    return
   dirty[current] = false
   chosen.value = value
 }
@@ -75,7 +77,9 @@ async function switchTo(value: View) {
       :retry="state.refetch"
     />
     <template v-else-if="state.data.value">
-      <p v-if="!enabled" class="rounded-lg border border-line px-4 py-3 text-sm text-muted">{{ t('groups.memory.off') }}</p>
+      <p v-if="!enabled" class="rounded-lg border border-line px-4 py-3 text-sm text-muted">
+        {{ t('groups.memory.off') }}
+      </p>
       <div
         v-if="state.data.value.index?.needs_rebuild && view !== 'index'"
         class="flex flex-wrap items-center gap-3 rounded-lg bg-warning-bg px-4 py-3 text-sm text-warning"
@@ -84,7 +88,13 @@ async function switchTo(value: View) {
         <span class="min-w-0 flex-1">{{ t('groups.memory.needsRebuild') }}</span>
         <Button size="sm" @click="selected = 'index'">{{ t('groups.memory.toIndex') }}</Button>
       </div>
-      <SegmentedControl v-if="views.length > 1" v-model="selected" :options="views" :label="t('groups.tabs.memory')" class="self-start" />
+      <SegmentedControl
+        v-if="views.length > 1"
+        v-model="selected"
+        :options="views"
+        :label="t('groups.tabs.memory')"
+        class="self-start"
+      />
 
       <MemorySettingsView v-if="view === 'settings'" @dirty="(value: boolean) => (dirty.settings = value)" />
       <IndexView

@@ -23,12 +23,14 @@ const selected = computed(() => {
   const id = typeof route.query.item === 'string' ? route.query.item : null
   return rows.value.find((row) => row.id === id) ?? (wide.value ? rows.value[0] : undefined)
 })
-const select = (id: string | null) => void router.replace({ query: { ...route.query, item: id ?? undefined } })
+const select = (id: string | null) =>
+  void router.replace({ query: { ...route.query, item: id ?? undefined } })
 // A provider removed or renamed away from under the address falls back to the first one.
 watch(
   () => [route.query.item, rows.value.length],
   () => {
-    if (typeof route.query.item === 'string' && !rows.value.some((row) => row.id === route.query.item)) select(null)
+    if (typeof route.query.item === 'string' && !rows.value.some((row) => row.id === route.query.item))
+      select(null)
   },
 )
 
@@ -46,7 +48,9 @@ async function remove(id: string) {
   const users = form.usedBy(id)
   const confirmed = await confirm({
     title: t('models.providers.remove', { name: form.nameOf(id) }),
-    message: users.length ? t('models.providers.removeUsed', { names: users.join(t('personas.separator')) }) : undefined,
+    message: users.length
+      ? t('models.providers.removeUsed', { names: users.join(t('personas.separator')) })
+      : undefined,
     confirmLabel: t('common.delete'),
     tone: 'danger',
   })
@@ -74,8 +78,12 @@ async function remove(id: string) {
             @click="select(row.id)"
           >
             <span class="flex min-w-0 items-center gap-2">
-              <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">{{ row.alias || t('models.providers.unnamed') }}</span>
-              <Badge v-if="problemsOf(row.id).length" tone="warning" dot>{{ t('models.providers.needsFix') }}</Badge>
+              <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+                {{ row.alias || t('models.providers.unnamed') }}
+              </span>
+              <Badge v-if="problemsOf(row.id).length" tone="warning" dot>
+                {{ t('models.providers.needsFix') }}
+              </Badge>
             </span>
             <span class="truncate text-xs text-muted">
               {{ [apiTitle(row.api), ...form.usedBy(row.id)].join(' · ') }}

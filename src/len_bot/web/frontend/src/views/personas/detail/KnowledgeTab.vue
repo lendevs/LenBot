@@ -40,7 +40,11 @@ const open = ref<{ filename: string | null; content: string } | null>(null)
 const name = ref('')
 const text = ref('')
 const dirty = computed(() =>
-  open.value === null ? false : open.value.filename === null ? Boolean(name.value || text.value) : text.value !== open.value.content,
+  open.value === null
+    ? false
+    : open.value.filename === null
+      ? Boolean(name.value || text.value)
+      : text.value !== open.value.content,
 )
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 const target = computed(() => {
@@ -51,11 +55,18 @@ const target = computed(() => {
 const problem = computed(() => {
   if (open.value?.filename !== null) return null
   if (!name.value.trim()) return t('personas.detail.knowledge.nameRequired')
-  return files.value.some((file) => file.filename === target.value) ? t('personas.detail.knowledge.taken') : null
+  return files.value.some((file) => file.filename === target.value)
+    ? t('personas.detail.knowledge.taken')
+    : null
 })
 
 const leave = async () =>
-  !dirty.value || confirm({ title: t('personas.detail.knowledge.discard'), confirmLabel: t('common.discard'), tone: 'danger' })
+  !dirty.value ||
+  confirm({
+    title: t('personas.detail.knowledge.discard'),
+    confirmLabel: t('common.discard'),
+    tone: 'danger',
+  })
 
 const reading = useMutation({
   mutationFn: (filename: string) => personasApi.document(props.persona, directory.value, filename),
@@ -86,7 +97,13 @@ function adopt(result: KnowledgeListing) {
 }
 const save = useMutation({
   mutationFn: () =>
-    personasApi.writeDocument(props.persona, open.value!.filename === null, directory.value, target.value, text.value),
+    personasApi.writeDocument(
+      props.persona,
+      open.value!.filename === null,
+      directory.value,
+      target.value,
+      text.value,
+    ),
   onSuccess: (result) => {
     adopt(result)
     const saved = result.document
@@ -116,7 +133,9 @@ async function remove() {
   const sure = await confirm({
     title: t('personas.detail.knowledge.removeTitle', { name: title(filename) }),
     message: shared.length
-      ? t('personas.detail.knowledge.removeShared', { names: shared.map(groupLabel).join(t('personas.separator')) })
+      ? t('personas.detail.knowledge.removeShared', {
+          names: shared.map(groupLabel).join(t('personas.separator')),
+        })
       : undefined,
     confirmLabel: t('common.delete'),
     tone: 'danger',
@@ -147,7 +166,12 @@ function discard() {
         <h3 class="text-base font-semibold">{{ t('personas.detail.knowledge.title') }}</h3>
         <Button size="sm" :icon="Plus" @click="create">{{ t('personas.detail.knowledge.create') }}</Button>
       </div>
-      <EmptyState v-if="!files.length" :icon="BookOpen" :title="t('personas.detail.knowledge.empty')" compact />
+      <EmptyState
+        v-if="!files.length"
+        :icon="BookOpen"
+        :title="t('personas.detail.knowledge.empty')"
+        compact
+      />
       <ul v-else class="flex list-none flex-col gap-0.5">
         <li v-for="file in files" :key="file.filename">
           <button
@@ -161,16 +185,19 @@ function discard() {
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-medium text-ink">{{ title(file.filename) }}</span>
               <span class="block truncate text-xs text-muted">
-                {{ t('personas.detail.knowledge.chars', { n: file.chars }) }}<template v-if="file.tags.length">
-                  · {{ file.tags.join(t('personas.separator')) }}</template
-                >
+                {{ t('personas.detail.knowledge.chars', { n: file.chars }) }}
+                <template v-if="file.tags.length">· {{ file.tags.join(t('personas.separator')) }}</template>
               </span>
             </span>
             <Spinner v-if="reading.isPending.value && reading.variables.value === file.filename" :size="14" />
           </button>
         </li>
       </ul>
-      <ErrorNote v-if="reading.isError.value" :title="t('personas.detail.knowledge.openFailed')" :error="reading.error.value" />
+      <ErrorNote
+        v-if="reading.isError.value"
+        :title="t('personas.detail.knowledge.openFailed')"
+        :error="reading.error.value"
+      />
     </aside>
 
     <section v-if="open" class="flex min-w-0 flex-col gap-4">
@@ -193,11 +220,20 @@ function discard() {
           {{ t('common.delete') }}
         </Button>
       </div>
-      <Field v-if="open.filename === null" :label="t('personas.detail.knowledge.filename')" :error="name ? problem : null">
+      <Field
+        v-if="open.filename === null"
+        :label="t('personas.detail.knowledge.filename')"
+        :error="name ? problem : null"
+      >
         <Input v-model="name" mono placeholder="people/xiaoming.md" />
       </Field>
       <Field :label="open.filename === null ? t('personas.detail.knowledge.content') : undefined">
-        <Textarea v-model="text" :rows="16" :max-rows="40" :aria-label="t('personas.detail.knowledge.content')" />
+        <Textarea
+          v-model="text"
+          :rows="16"
+          :max-rows="40"
+          :aria-label="t('personas.detail.knowledge.content')"
+        />
       </Field>
       <SaveBar
         :dirty="dirty"

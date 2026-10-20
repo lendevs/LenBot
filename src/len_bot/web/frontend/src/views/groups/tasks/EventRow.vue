@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { ChevronRight } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { tasksApi, type TaskEvent, type TaskEventPreview } from '../../../api/tasks'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { formatDateTime } from '../../../i18n/format'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
@@ -42,15 +42,24 @@ function parts(record: TaskEvent): Part[] {
   const found: Part[] = ['text', 'title', 'message', 'value', 'note', 'summary']
     .filter((key) => typeof body[key] === 'string')
     .map((key) => ({ type: 'text', text: body[key] as string }))
-  if (Array.isArray(body.options)) found.push({ type: 'text', text: t('groups.tasks.events.options', { options: body.options.join('、') }) })
+  if (Array.isArray(body.options))
+    found.push({ type: 'text', text: t('groups.tasks.events.options', { options: body.options.join('、') }) })
   if (typeof body.confirmed === 'boolean')
-    found.push({ type: 'text', text: t(body.confirmed ? 'groups.tasks.events.agreed' : 'groups.tasks.events.refused') })
-  const nested = body.type === 'tool_execution_end' ? body.result : body.type === 'message_end' ? body.message : null
+    found.push({
+      type: 'text',
+      text: t(body.confirmed ? 'groups.tasks.events.agreed' : 'groups.tasks.events.refused'),
+    })
+  const nested =
+    body.type === 'tool_execution_end' ? body.result : body.type === 'message_end' ? body.message : null
   const content = (nested as { content?: unknown } | null)?.content
   if (Array.isArray(content)) {
     for (const part of content as Record<string, unknown>[]) {
       if (part.type === 'text' && typeof part.text === 'string') found.push({ type: 'text', text: part.text })
-      else if (part.type === 'image' && IMAGES.includes(part.mimeType as string) && typeof part.data === 'string')
+      else if (
+        part.type === 'image' &&
+        IMAGES.includes(part.mimeType as string) &&
+        typeof part.data === 'string'
+      )
         found.push({ type: 'image', mimeType: part.mimeType as string, data: part.data })
     }
   }
@@ -77,14 +86,25 @@ const error = computed(() => {
         :class="open && 'rotate-90'"
         aria-hidden="true"
       />
-      <span class="w-24 shrink-0 text-xs text-muted tabular">{{ formatDateTime(event.created, { timeZone, withSeconds: true }) }}</span>
+      <span class="w-24 shrink-0 text-xs text-muted tabular">
+        {{ formatDateTime(event.created, { timeZone, withSeconds: true }) }}
+      </span>
       <span class="shrink-0 text-ink">
-        {{ label }}<template v-if="event.tool_name"> · <span class="font-mono text-xs">{{ event.tool_name }}</span></template>
+        {{ label }}
+        <template v-if="event.tool_name">
+          ·
+          <span class="font-mono text-xs">{{ event.tool_name }}</span>
+        </template>
       </span>
     </button>
     <div v-if="open" class="flex flex-col gap-2 pb-3 pl-6 sm:pl-[8.75rem]">
       <Skeleton v-if="full.isPending.value" :lines="2" />
-      <ErrorNote v-else-if="full.isError.value" :title="t('groups.tasks.events.readFailed')" :error="full.error.value" :retry="full.refetch" />
+      <ErrorNote
+        v-else-if="full.isError.value"
+        :title="t('groups.tasks.events.readFailed')"
+        :error="full.error.value"
+        :retry="full.refetch"
+      />
       <template v-else-if="full.data.value">
         <template v-for="(part, index) in shown" :key="index">
           <CodeBlock v-if="part.type === 'text'" :code="part.text" wrap :max-lines="20" />
@@ -97,7 +117,9 @@ const error = computed(() => {
           />
         </template>
         <ErrorNote v-if="error" :title="t('groups.tasks.events.stepError')" :error="error" />
-        <p v-if="!shown.length && !error && !developerDetails" class="text-xs text-muted">{{ t('groups.tasks.events.noText') }}</p>
+        <p v-if="!shown.length && !error && !developerDetails" class="text-xs text-muted">
+          {{ t('groups.tasks.events.noText') }}
+        </p>
         <RawRecord v-if="developerDetails" :label="t('groups.tasks.events.raw')" :code="full.data.value" />
       </template>
     </div>

@@ -31,10 +31,16 @@ const error = ref<unknown>(null)
 const part = computed(() => (props.request.kind === 'update' ? props.request.name : 'install'))
 const saving = computed(() => state.busy.value === part.value)
 const ready = computed(() =>
-  props.request.kind === 'git' ? Boolean(url.value.trim()) : props.request.kind === 'zip' ? Boolean(file.value) : true,
+  props.request.kind === 'git'
+    ? Boolean(url.value.trim())
+    : props.request.kind === 'zip'
+      ? Boolean(file.value)
+      : true,
 )
 const title = computed(() =>
-  props.request.kind === 'update' ? t('plugins.install.updateTitle', { name: props.request.name }) : t(`plugins.install.${props.request.kind}Title`),
+  props.request.kind === 'update'
+    ? t('plugins.install.updateTitle', { name: props.request.name })
+    : t(`plugins.install.${props.request.kind}Title`),
 )
 
 const open = computed({
@@ -79,16 +85,31 @@ async function submit() {
         <Input v-model="version" mono :placeholder="t('plugins.install.refPlaceholder')" />
       </Field>
       <template v-if="request.kind === 'zip'">
-        <input ref="picker" type="file" accept=".zip,application/zip" class="sr-only" tabindex="-1" aria-hidden="true" @change="chosen" />
+        <input
+          ref="picker"
+          type="file"
+          accept=".zip,application/zip"
+          class="sr-only"
+          tabindex="-1"
+          aria-hidden="true"
+          @change="chosen"
+        />
         <div class="flex min-w-0 items-center gap-3">
-          <Button size="sm" :icon="Paperclip" :disabled="saving" @click="picker?.click()">{{ t('plugins.install.choose') }}</Button>
+          <Button size="sm" :icon="Paperclip" :disabled="saving" @click="picker?.click()">
+            {{ t('plugins.install.choose') }}
+          </Button>
           <span v-if="file" class="min-w-0 truncate text-sm text-ink-2">
-            {{ file.name }} · <span class="tabular">{{ formatBytes(file.size) }}</span>
+            {{ file.name }} ·
+            <span class="tabular">{{ formatBytes(file.size) }}</span>
           </span>
         </div>
         <p class="text-xs text-muted">{{ t('plugins.install.zipLayout') }}</p>
       </template>
-      <Checkbox v-if="request.kind !== 'update'" :model-value="switchSource" @update:model-value="(value) => (switchSource = value === true)">
+      <Checkbox
+        v-if="request.kind !== 'update'"
+        :model-value="switchSource"
+        @update:model-value="(value) => (switchSource = value === true)"
+      >
         {{ t('plugins.install.switchSource') }}
       </Checkbox>
       <ErrorNote v-if="error" :title="t('plugins.install.failed')" :error="error" />

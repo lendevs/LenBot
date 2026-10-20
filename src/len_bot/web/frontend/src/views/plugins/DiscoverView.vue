@@ -32,10 +32,16 @@ const search = ref('')
 const query = refDebounced(search, 250)
 const ALL = '*'
 const category = ref(ALL)
-const catalog = useQuery({ queryKey: keys.plugins.catalog(), queryFn: ({ signal }) => pluginsApi.catalog(signal) })
+const catalog = useQuery({
+  queryKey: keys.plugins.catalog(),
+  queryFn: ({ signal }) => pluginsApi.catalog(signal),
+})
 const market = useQuery({
-  queryKey: computed(() => keys.plugins.market(query.value.trim(), category.value === ALL ? null : category.value)),
-  queryFn: ({ signal }) => pluginsApi.market(query.value.trim(), category.value === ALL ? null : category.value, signal),
+  queryKey: computed(() =>
+    keys.plugins.market(query.value.trim(), category.value === ALL ? null : category.value),
+  ),
+  queryFn: ({ signal }) =>
+    pluginsApi.market(query.value.trim(), category.value === ALL ? null : category.value, signal),
   placeholderData: keepPreviousData,
 })
 // Installing, removing or updating changes what the catalog marks as installed.
@@ -84,9 +90,13 @@ const detailOpen = computed({
 })
 async function install(entry: MarketEntry) {
   selected.value = null
-  const result = await state.run('install', () => pluginsApi.installEntry(entry.name), { failure: t('plugins.install.failed') })
+  const result = await state.run('install', () => pluginsApi.installEntry(entry.name), {
+    failure: t('plugins.install.failed'),
+  })
   if (!result) return
-  toast.success(result.operation?.needs_config ? t('plugins.install.readyConfigure') : t('plugins.install.ready'))
+  toast.success(
+    result.operation?.needs_config ? t('plugins.install.readyConfigure') : t('plugins.install.ready'),
+  )
   emit('open', entry.name)
 }
 function configure(entry: MarketEntry) {
@@ -101,7 +111,11 @@ const permissionText = (entry: MarketEntry) => {
   if (entry.permissions === undefined) return ''
   if (entry.permissions === null) return t('plugins.permissions.undeclared')
   if (!entry.permissions.length) return t('plugins.permissions.none')
-  return t('plugins.permissions.needs', { list: entry.permissions.map((name) => t(`plugins.permissions.names.${name}`)).join(t('personas.separator')) })
+  return t('plugins.permissions.needs', {
+    list: entry.permissions
+      .map((name) => t(`plugins.permissions.names.${name}`))
+      .join(t('personas.separator')),
+  })
 }
 
 const sourceOpen = ref(false)
@@ -136,10 +150,18 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
       />
       <div class="w-full sm:w-44"><Select v-model="category" :options="categories" size="sm" /></div>
       <div class="ml-auto flex items-center gap-1">
-        <Button size="sm" variant="ghost" :icon="RefreshCw" :loading="refresh.isPending.value" @click="refresh.mutate()">
+        <Button
+          size="sm"
+          variant="ghost"
+          :icon="RefreshCw"
+          :loading="refresh.isPending.value"
+          @click="refresh.mutate()"
+        >
           {{ t('plugins.discover.refresh') }}
         </Button>
-        <Button size="sm" variant="ghost" :icon="Settings2" @click="sourceOpen = true">{{ t('plugins.discover.source') }}</Button>
+        <Button size="sm" variant="ghost" :icon="Settings2" @click="sourceOpen = true">
+          {{ t('plugins.discover.source') }}
+        </Button>
       </div>
     </div>
     <p v-if="catalog.data.value?.loaded_at" class="text-xs text-muted">
@@ -151,9 +173,19 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
       }}
     </p>
 
-    <ErrorNote v-if="readError" :title="t('plugins.discover.readFailed')" :error="readError" :retry="() => refresh.mutate()" />
+    <ErrorNote
+      v-if="readError"
+      :title="t('plugins.discover.readFailed')"
+      :error="readError"
+      :retry="() => refresh.mutate()"
+    />
     <Skeleton v-if="market.isPending.value || (refresh.isPending.value && !entries.length)" :lines="6" />
-    <EmptyState v-else-if="market.data.value && !market.data.value.loaded_at" :icon="Store" :title="t('plugins.discover.notLoaded')" compact />
+    <EmptyState
+      v-else-if="market.data.value && !market.data.value.loaded_at"
+      :icon="Store"
+      :title="t('plugins.discover.notLoaded')"
+      compact
+    />
     <EmptyState v-else-if="!entries.length" :icon="Search" :title="t('common.noResults')" compact />
     <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
       <article
@@ -166,24 +198,46 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
           <Avatar :name="entry.name" shape="square" :size="40" />
           <div class="min-w-0 flex-1">
             <h3 class="truncate text-base font-semibold text-ink">{{ entry.title }}</h3>
-            <p class="truncate text-xs text-subtle">{{ entry.authors.join(t('personas.separator')) }} · v{{ entry.version }}</p>
+            <p class="truncate text-xs text-subtle">
+              {{ entry.authors.join(t('personas.separator')) }} · v{{ entry.version }}
+            </p>
           </div>
-          <Badge v-if="stateOf(entry)" :tone="stateOf(entry)!.tone" dot>{{ t(`plugins.discover.state.${stateOf(entry)!.key}`) }}</Badge>
+          <Badge v-if="stateOf(entry)" :tone="stateOf(entry)!.tone" dot>
+            {{ t(`plugins.discover.state.${stateOf(entry)!.key}`) }}
+          </Badge>
         </div>
         <p class="line-clamp-3 text-sm text-muted">{{ entry.description }}</p>
-        <p v-if="entry.update_available" class="self-start rounded-sm bg-warning-bg px-2 py-0.5 text-xs text-warning">
+        <p
+          v-if="entry.update_available"
+          class="self-start rounded-sm bg-warning-bg px-2 py-0.5 text-xs text-warning"
+        >
           {{ t('plugins.discover.updatable', { now: entry.installed_version ?? '?', next: entry.version }) }}
         </p>
-        <p v-else-if="!entry.compatible" class="self-start rounded-sm bg-error-bg px-2 py-0.5 text-xs text-error">{{ entry.incompatible_reason }}</p>
+        <p
+          v-else-if="!entry.compatible"
+          class="self-start rounded-sm bg-error-bg px-2 py-0.5 text-xs text-error"
+        >
+          {{ entry.incompatible_reason }}
+        </p>
         <div v-if="entry.capabilities.length" class="flex flex-wrap gap-1.5">
           <Badge v-for="item in entry.capabilities" :key="item">{{ item }}</Badge>
         </div>
         <div class="mt-auto flex items-center gap-1 border-t border-line pt-3">
-          <Button size="sm" variant="ghost" class="-ml-2" @click="selected = entry">{{ t('plugins.discover.details') }}</Button>
-          <Button v-if="entry.update_available && managed(entry.name)" size="sm" variant="ghost" :disabled="state.busy.value !== null" @click="update(entry)">
+          <Button size="sm" variant="ghost" class="-ml-2" @click="selected = entry">
+            {{ t('plugins.discover.details') }}
+          </Button>
+          <Button
+            v-if="entry.update_available && managed(entry.name)"
+            size="sm"
+            variant="ghost"
+            :disabled="state.busy.value !== null"
+            @click="update(entry)"
+          >
             {{ t('plugins.discover.updateTo', { version: entry.version }) }}
           </Button>
-          <Button v-if="entry.installed" size="sm" class="ml-auto" @click="configure(entry)">{{ t('plugins.discover.configure') }}</Button>
+          <Button v-if="entry.installed" size="sm" class="ml-auto" @click="configure(entry)">
+            {{ t('plugins.discover.configure') }}
+          </Button>
           <Button
             v-else
             size="sm"
@@ -211,14 +265,24 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
         <div v-if="selected.capabilities.length" class="flex flex-wrap gap-1.5">
           <Badge v-for="item in selected.capabilities" :key="item">{{ item }}</Badge>
         </div>
-        <p v-if="permissionText(selected)" class="text-sm" :class="selected.permissions === null ? 'text-warning' : 'text-muted'">
+        <p
+          v-if="permissionText(selected)"
+          class="text-sm"
+          :class="selected.permissions === null ? 'text-warning' : 'text-muted'"
+        >
           {{ permissionText(selected) }}
         </p>
         <dl class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
           <dt class="text-muted">{{ t('plugins.discover.name') }}</dt>
           <dd class="font-mono">{{ selected.name }}</dd>
           <dt class="text-muted">{{ t('plugins.discover.version') }}</dt>
-          <dd>v{{ selected.version }}<template v-if="selected.ref"> · <span class="font-mono">{{ selected.ref }}</span></template></dd>
+          <dd>
+            v{{ selected.version }}
+            <template v-if="selected.ref">
+              ·
+              <span class="font-mono">{{ selected.ref }}</span>
+            </template>
+          </dd>
           <dt class="text-muted">{{ t('plugins.discover.license') }}</dt>
           <dd>{{ selected.license }}</dd>
           <template v-if="selected.requires_lenbot">
@@ -230,35 +294,78 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
             <dd>v{{ selected.installed_version ?? '?' }}</dd>
           </template>
         </dl>
-        <p v-if="!selected.compatible" class="rounded-md bg-error-bg px-3 py-2 text-sm text-error">{{ selected.incompatible_reason }}</p>
+        <p v-if="!selected.compatible" class="rounded-md bg-error-bg px-3 py-2 text-sm text-error">
+          {{ selected.incompatible_reason }}
+        </p>
         <p class="flex flex-wrap gap-4 text-sm">
-          <a :href="selected.repository" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-primary hover:underline">
-            {{ t('plugins.detail.repository') }}<ArrowUpRight :size="13" aria-hidden="true" />
+          <a
+            :href="selected.repository"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-0.5 text-primary hover:underline"
+          >
+            {{ t('plugins.detail.repository') }}
+            <ArrowUpRight :size="13" aria-hidden="true" />
           </a>
-          <a v-if="selected.homepage" :href="selected.homepage" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-primary hover:underline">
-            {{ t('plugins.detail.homepage') }}<ArrowUpRight :size="13" aria-hidden="true" />
+          <a
+            v-if="selected.homepage"
+            :href="selected.homepage"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-0.5 text-primary hover:underline"
+          >
+            {{ t('plugins.detail.homepage') }}
+            <ArrowUpRight :size="13" aria-hidden="true" />
           </a>
         </p>
       </div>
       <template v-if="selected" #footer>
         <Button variant="ghost" @click="selected = null">{{ t('common.close') }}</Button>
-        <Button v-if="selected.installed" variant="primary" @click="configure(selected)">{{ t('plugins.discover.configure') }}</Button>
-        <Button v-else variant="primary" :disabled="state.busy.value !== null || !selected.compatible" @click="install(selected)">
+        <Button v-if="selected.installed" variant="primary" @click="configure(selected)">
+          {{ t('plugins.discover.configure') }}
+        </Button>
+        <Button
+          v-else
+          variant="primary"
+          :disabled="state.busy.value !== null || !selected.compatible"
+          @click="install(selected)"
+        >
           {{ t('plugins.discover.install') }}
         </Button>
       </template>
     </Dialog>
 
-    <Dialog v-model:open="sourceOpen" :title="t('plugins.discover.source')" size="sm" :busy="setSource.isPending.value">
-      <form id="catalog-source" class="flex flex-col gap-4" @submit.prevent="sourceDirty && setSource.mutate()">
+    <Dialog
+      v-model:open="sourceOpen"
+      :title="t('plugins.discover.source')"
+      size="sm"
+      :busy="setSource.isPending.value"
+    >
+      <form
+        id="catalog-source"
+        class="flex flex-col gap-4"
+        @submit.prevent="sourceDirty && setSource.mutate()"
+      >
         <Field :label="t('plugins.discover.sourceUrl')">
           <Input v-model="sourceUrl" type="url" mono :placeholder="t('plugins.discover.sourceBuiltin')" />
         </Field>
-        <ErrorNote v-if="setSource.isError.value" :title="t('plugins.discover.sourceFailed')" :error="setSource.error.value" />
+        <ErrorNote
+          v-if="setSource.isError.value"
+          :title="t('plugins.discover.sourceFailed')"
+          :error="setSource.error.value"
+        />
       </form>
       <template #footer>
-        <Button variant="ghost" :disabled="setSource.isPending.value" @click="sourceOpen = false">{{ t('common.cancel') }}</Button>
-        <Button variant="primary" type="submit" form="catalog-source" :loading="setSource.isPending.value" :disabled="!sourceDirty">
+        <Button variant="ghost" :disabled="setSource.isPending.value" @click="sourceOpen = false">
+          {{ t('common.cancel') }}
+        </Button>
+        <Button
+          variant="primary"
+          type="submit"
+          form="catalog-source"
+          :loading="setSource.isPending.value"
+          :disabled="!sourceDirty"
+        >
           {{ t('plugins.discover.sourceSave') }}
         </Button>
       </template>

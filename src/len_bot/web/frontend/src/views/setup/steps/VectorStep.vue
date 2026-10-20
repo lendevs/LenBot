@@ -75,7 +75,12 @@ const passed = computed(() => {
     <div v-if="draft.vectorMode !== 'skip'" class="flex animate-rise flex-col gap-5">
       <div class="flex flex-col gap-3">
         <div>
-          <Button size="sm" :icon="List" :loading="list.isPending.value" @click="checked(providerFields, () => list.mutate())">
+          <Button
+            size="sm"
+            :icon="List"
+            :loading="list.isPending.value"
+            @click="checked(providerFields, () => list.mutate())"
+          >
             {{ t('models.probe.list') }}
           </Button>
         </div>
@@ -90,7 +95,12 @@ const passed = computed(() => {
           <ModelName v-model="draft.vectorModel" :models="wizard.vectorCatalog.value" />
         </Field>
         <Field :label="t('setup.vectors.dimensions')">
-          <NumberInput v-model="draft.vectorDimensions" :min="1" :steppers="false" :placeholder="t('setup.vectors.defaultDimensions')" />
+          <NumberInput
+            v-model="draft.vectorDimensions"
+            :min="1"
+            :steppers="false"
+            :placeholder="t('setup.vectors.defaultDimensions')"
+          />
         </Field>
       </div>
       <div class="flex flex-col gap-3 border-t border-line pt-5">

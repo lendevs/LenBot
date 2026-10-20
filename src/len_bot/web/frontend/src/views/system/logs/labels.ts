@@ -19,8 +19,14 @@ export function useLogLabels() {
   return {
     /** Name of an event kind; records without one are grouped as other. */
     event: (value: string | undefined) =>
-      value === undefined ? t('logs.events._other') : te(`logs.events.${value}`) ? t(`logs.events.${value}`) : value,
+      value === undefined
+        ? t('logs.events._other')
+        : te(`logs.events.${value}`)
+          ? t(`logs.events.${value}`)
+          : value,
     title: (item: LogRecord) =>
-      item.event && te(`logs.events.${item.event}`) ? t(`logs.events.${item.event}`) : (item.event ?? item.message),
+      item.event && te(`logs.events.${item.event}`)
+        ? t(`logs.events.${item.event}`)
+        : (item.event ?? item.message),
   }
 }

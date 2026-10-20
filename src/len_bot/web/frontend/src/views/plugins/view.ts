@@ -40,7 +40,8 @@ export const isolationOf = (snapshot: PluginsSnapshot, name: string) =>
 export const featureCount = (running: RunningPlugin | null) =>
   running ? running.commands.length + running.rules.length + running.tools.length : 0
 
-export type PluginStatus = 'disabled' | 'running' | 'degraded' | 'failed' | 'starting' | 'stopped' | 'pending' | 'idle'
+export type PluginStatus =
+  'disabled' | 'running' | 'degraded' | 'failed' | 'starting' | 'stopped' | 'pending' | 'idle'
 const tones: Record<PluginStatus, Tone> = {
   disabled: 'neutral',
   running: 'success',
@@ -74,7 +75,12 @@ export function bucketOf(status: PluginStatus): Bucket {
 }
 
 const permissionKey = (list: Permission[] | null | undefined) =>
-  list == null ? null : list.map((item) => item.name).sort().join(',')
+  list == null
+    ? null
+    : list
+        .map((item) => item.name)
+        .sort()
+        .join(',')
 
 /** How a staged candidate differs from the running version in what it may do. */
 export function candidateChange(snapshot: PluginsSnapshot, name: string) {
@@ -82,7 +88,10 @@ export function candidateChange(snapshot: PluginsSnapshot, name: string) {
   const next = manifestOf(snapshot, name)
   if (!now || !next || !('permissions' in next)) return { permissions: undefined, isolation: undefined }
   return {
-    permissions: permissionKey(now.permissions) !== permissionKey(next.permissions) ? (next.permissions ?? null) : undefined,
+    permissions:
+      permissionKey(now.permissions) !== permissionKey(next.permissions)
+        ? (next.permissions ?? null)
+        : undefined,
     isolation: (now.isolation || 'inline') !== (next.isolation || 'inline') ? next.isolation : undefined,
   }
 }

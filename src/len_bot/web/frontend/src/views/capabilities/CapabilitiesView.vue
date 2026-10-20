@@ -15,7 +15,8 @@ const router = useRouter()
 const tabNames = ['mcp', 'skills', 'web', 'tasks', 'browser'] as const
 type Tab = (typeof tabNames)[number]
 const tab = computed<Tab>({
-  get: () => ((tabNames as readonly string[]).includes(route.query.tab as string) ? (route.query.tab as Tab) : 'mcp'),
+  get: () =>
+    (tabNames as readonly string[]).includes(route.query.tab as string) ? (route.query.tab as Tab) : 'mcp',
   set: (value) => void router.replace({ query: { ...route.query, tab: value } }),
 })
 const tabs = computed(() => tabNames.map((value) => ({ value, label: t(`capabilities.tabs.${value}`) })))

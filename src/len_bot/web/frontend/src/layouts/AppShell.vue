@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMediaQuery } from '@vueuse/core'
 import { TooltipProvider } from 'reka-ui'
 import { Bell, Menu, PanelLeftClose, PanelLeftOpen, RotateCw, Search } from '@lucide/vue'
-import { logout, useAuth } from '../composables/useAuth.js'
+import { logout, useAuth } from '../composables/useAuth'
 import { useCurrentScene } from '../composables/useCurrentScene'
 import {
   host,

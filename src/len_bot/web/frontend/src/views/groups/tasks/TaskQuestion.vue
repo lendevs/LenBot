@@ -55,22 +55,47 @@ function reply() {
       {{ t(help ? 'groups.tasks.question.help' : 'groups.tasks.question.title') }}
     </h3>
     <p class="text-sm break-words whitespace-pre-wrap text-ink">{{ question.title }}</p>
-    <p v-if="question.message" class="text-sm break-words whitespace-pre-wrap text-ink-2">{{ question.message }}</p>
+    <p v-if="question.message" class="text-sm break-words whitespace-pre-wrap text-ink-2">
+      {{ question.message }}
+    </p>
     <p v-if="help" class="text-sm text-muted">{{ t('groups.tasks.question.helpText') }}</p>
     <template v-else-if="canAnswer">
       <div v-if="question.method === 'confirm'" class="flex gap-2">
-        <Button variant="primary" size="sm" :loading="busy" @click="decide(true)">{{ t('groups.tasks.question.agree') }}</Button>
-        <Button size="sm" :disabled="busy" @click="decide(false)">{{ t('groups.tasks.question.refuse') }}</Button>
+        <Button variant="primary" size="sm" :loading="busy" @click="decide(true)">
+          {{ t('groups.tasks.question.agree') }}
+        </Button>
+        <Button size="sm" :disabled="busy" @click="decide(false)">
+          {{ t('groups.tasks.question.refuse') }}
+        </Button>
       </div>
       <template v-else-if="question.method === 'select'">
         <RadioGroup v-model="choice" :options="options" />
-        <Button variant="primary" size="sm" class="self-start" :disabled="choice === undefined" :loading="busy" @click="reply">
+        <Button
+          variant="primary"
+          size="sm"
+          class="self-start"
+          :disabled="choice === undefined"
+          :loading="busy"
+          @click="reply"
+        >
           {{ t('groups.tasks.question.answer') }}
         </Button>
       </template>
       <template v-else>
-        <Textarea v-model="text" :rows="2" :max-rows="10" :placeholder="t('groups.tasks.question.placeholder')" />
-        <Button variant="primary" size="sm" class="self-start" :disabled="!text.trim()" :loading="busy" @click="reply">
+        <Textarea
+          v-model="text"
+          :rows="2"
+          :max-rows="10"
+          :placeholder="t('groups.tasks.question.placeholder')"
+        />
+        <Button
+          variant="primary"
+          size="sm"
+          class="self-start"
+          :disabled="!text.trim()"
+          :loading="busy"
+          @click="reply"
+        >
           {{ t('groups.tasks.question.answer') }}
         </Button>
       </template>

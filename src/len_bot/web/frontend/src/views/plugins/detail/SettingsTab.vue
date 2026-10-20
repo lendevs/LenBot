@@ -29,6 +29,11 @@ const { t } = useI18n()
       :configured="configured"
       :problems="problems"
     />
-    <EmptyState v-else :icon="SlidersHorizontal" :title="readable ? t('plugins.detail.noFields') : t('plugins.detail.unreadable')" compact />
+    <EmptyState
+      v-else
+      :icon="SlidersHorizontal"
+      :title="readable ? t('plugins.detail.noFields') : t('plugins.detail.unreadable')"
+      compact
+    />
   </div>
 </template>

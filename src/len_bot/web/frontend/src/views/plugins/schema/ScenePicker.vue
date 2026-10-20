@@ -25,15 +25,23 @@ const picked = computed<string[]>(() =>
   props.single ? (model.value ? [model.value as string] : []) : ((model.value as string[] | null) ?? []),
 )
 // A saved group that is no longer configured stays visible so it can be removed.
-const all = computed(() => [...props.choices, ...picked.value.filter((scene) => !props.choices.includes(scene))])
+const all = computed(() => [
+  ...props.choices,
+  ...picked.value.filter((scene) => !props.choices.includes(scene)),
+])
 const shown = computed(() => {
   const words = search.value.trim().toLowerCase()
-  return words ? all.value.filter((scene) => `${groupLabel(scene)} ${scene}`.toLowerCase().includes(words)) : all.value
+  return words
+    ? all.value.filter((scene) => `${groupLabel(scene)} ${scene}`.toLowerCase().includes(words))
+    : all.value
 })
 const summary = computed(() => {
   const names = picked.value.map(groupLabel)
   return names.length > 2
-    ? t('plugins.form.pickedMany', { names: names.slice(0, 2).join(t('personas.separator')), n: names.length })
+    ? t('plugins.form.pickedMany', {
+        names: names.slice(0, 2).join(t('personas.separator')),
+        n: names.length,
+      })
     : names.join(t('personas.separator'))
 })
 function toggle(scene: string) {
@@ -41,7 +49,9 @@ function toggle(scene: string) {
     model.value = scene
     open.value = false
   } else {
-    model.value = picked.value.includes(scene) ? picked.value.filter((item) => item !== scene) : [...picked.value, scene]
+    model.value = picked.value.includes(scene)
+      ? picked.value.filter((item) => item !== scene)
+      : [...picked.value, scene]
   }
 }
 const pickAll = () => (model.value = [...new Set([...picked.value, ...shown.value])])
@@ -73,7 +83,12 @@ const clear = () => (model.value = props.single ? null : [])
         <span class="min-w-0 flex-1 truncate text-sm" :class="!picked.length && 'text-subtle'">
           {{ picked.length ? summary : single ? t('plugins.form.pickOne') : t('plugins.form.pickGroups') }}
         </span>
-        <ChevronDown :size="16" class="shrink-0 text-subtle transition-transform" :class="open && 'rotate-180'" aria-hidden="true" />
+        <ChevronDown
+          :size="16"
+          class="shrink-0 text-subtle transition-transform"
+          :class="open && 'rotate-180'"
+          aria-hidden="true"
+        />
       </button>
     </template>
     <div class="-m-2 flex flex-col gap-2">
@@ -87,11 +102,21 @@ const clear = () => (model.value = props.single ? null : [])
         :aria-label="t('plugins.form.searchGroups')"
       />
       <div v-if="!single" class="flex items-center gap-1 pl-2">
-        <span class="mr-auto text-xs text-muted">{{ t('plugins.form.pickedCount', { n: picked.length, total: all.length }) }}</span>
-        <Button size="sm" variant="ghost" :disabled="!shown.length" @click="pickAll">{{ t('plugins.form.all') }}</Button>
-        <Button size="sm" variant="ghost" :disabled="!picked.length" @click="clear">{{ t('plugins.form.clear') }}</Button>
+        <span class="mr-auto text-xs text-muted">
+          {{ t('plugins.form.pickedCount', { n: picked.length, total: all.length }) }}
+        </span>
+        <Button size="sm" variant="ghost" :disabled="!shown.length" @click="pickAll">
+          {{ t('plugins.form.all') }}
+        </Button>
+        <Button size="sm" variant="ghost" :disabled="!picked.length" @click="clear">
+          {{ t('plugins.form.clear') }}
+        </Button>
       </div>
-      <ul class="flex max-h-72 list-none flex-col overflow-y-auto scrollbar-thin" role="listbox" :aria-multiselectable="!single">
+      <ul
+        class="flex max-h-72 list-none flex-col overflow-y-auto scrollbar-thin"
+        role="listbox"
+        :aria-multiselectable="!single"
+      >
         <li v-for="scene in shown" :key="scene">
           <button
             type="button"
@@ -102,14 +127,21 @@ const clear = () => (model.value = props.single ? null : [])
           >
             <Avatar :name="groupLabel(scene)" shape="square" :size="24" />
             <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm text-ink" :class="!choices.includes(scene) && 'line-through'">
+              <span
+                class="block truncate text-sm text-ink"
+                :class="!choices.includes(scene) && 'line-through'"
+              >
                 {{ groupLabel(scene) }}
               </span>
-              <span class="block truncate font-mono text-xs text-subtle">{{ scene.split(':').slice(2).join(':') || scene }}</span>
+              <span class="block truncate font-mono text-xs text-subtle">
+                {{ scene.split(':').slice(2).join(':') || scene }}
+              </span>
             </span>
             <span
               class="flex size-4.5 shrink-0 items-center justify-center rounded-[5px] border"
-              :class="picked.includes(scene) ? 'border-primary bg-primary text-on-primary' : 'border-line-strong'"
+              :class="
+                picked.includes(scene) ? 'border-primary bg-primary text-on-primary' : 'border-line-strong'
+              "
               aria-hidden="true"
             >
               <Check v-if="picked.includes(scene)" :size="12" />

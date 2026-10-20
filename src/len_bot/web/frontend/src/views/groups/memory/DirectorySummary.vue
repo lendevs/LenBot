@@ -31,7 +31,9 @@ const generate = useMutation({
     else toast.success(t('groups.memory.summary.done'))
   },
   onError: (error) =>
-    toast.error(t('groups.memory.summary.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.memory.summary.failed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => client.invalidateQueries({ queryKey: queryKey.value }),
 })
 </script>
@@ -52,16 +54,29 @@ const generate = useMutation({
       <h3 class="min-w-0 flex-1 text-base font-semibold text-ink">
         {{ portrait ? t('groups.memory.summary.portrait') : t('groups.memory.summary.directory') }}
       </h3>
-      <Button v-if="data.enabled" size="sm" variant="ghost" :icon="RefreshCw" :loading="generate.isPending.value" @click="generate.mutate()">
+      <Button
+        v-if="data.enabled"
+        size="sm"
+        variant="ghost"
+        :icon="RefreshCw"
+        :loading="generate.isPending.value"
+        @click="generate.mutate()"
+      >
         {{ t('groups.memory.summary.regenerate') }}
       </Button>
     </header>
-    <p v-if="data.summary.abstract === null" class="text-sm text-muted">{{ t('groups.memory.summary.none') }}</p>
+    <p v-if="data.summary.abstract === null" class="text-sm text-muted">
+      {{ t('groups.memory.summary.none') }}
+    </p>
     <template v-else>
       <p class="text-base font-medium break-words text-ink">{{ data.summary.abstract }}</p>
       <p class="text-sm leading-6 break-words whitespace-pre-wrap text-ink-2">{{ data.summary.overview }}</p>
       <p v-if="data.summary.generated_at" class="text-xs text-subtle">
-        {{ t('groups.memory.summary.generated', { time: formatDateTime(data.summary.generated_at, { timeZone }) }) }}
+        {{
+          t('groups.memory.summary.generated', {
+            time: formatDateTime(data.summary.generated_at, { timeZone }),
+          })
+        }}
         <template v-if="data.summary.changed_after !== null">{{ t('groups.memory.summary.stale') }}</template>
       </p>
     </template>

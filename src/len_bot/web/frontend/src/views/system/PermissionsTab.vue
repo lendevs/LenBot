@@ -47,7 +47,10 @@ const form = useSettingsDraft<Draft>({
     return snapshot
   },
   // Each group's permission form sends the global lists back with its own; it must read them again.
-  onSaved: () => void client.invalidateQueries({ predicate: (query) => query.queryKey[0] === 'scene' && query.queryKey[2] === 'permissions' }),
+  onSaved: () =>
+    void client.invalidateQueries({
+      predicate: (query) => query.queryKey[0] === 'scene' && query.queryKey[2] === 'permissions',
+    }),
 })
 const { settings, draft } = form
 const bot = computed(() => (settings.data.value ? systemOf(settings.data.value).connection.bot_id : ''))
@@ -68,15 +71,32 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
 
 <template>
   <Skeleton v-if="settings.isPending.value" :lines="6" />
-  <ErrorNote v-else-if="settings.isError.value" :title="t('system.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+  <ErrorNote
+    v-else-if="settings.isError.value"
+    :title="t('system.readFailed')"
+    :error="settings.error.value"
+    :retry="settings.refetch"
+  />
   <div v-else-if="draft" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection :title="t('system.permissions.title')" :columns="1">
-        <Field v-for="list in lists" :key="list" :label="t(`system.permissions.lists.${list}`)" :error="errors[list]">
+        <Field
+          v-for="list in lists"
+          :key="list"
+          :label="t(`system.permissions.lists.${list}`)"
+          :error="errors[list]"
+        >
           <TagInput v-model="draft[list]" placeholder="onebot:10001" :invalid="Boolean(errors[list])" />
         </Field>
       </FormSection>
     </div>
-    <SaveBar :dirty="form.dirty.value" :saving="form.saving.value" :error="form.saveError.value" :invalid="invalid" @save="form.submit" @discard="form.discard" />
+    <SaveBar
+      :dirty="form.dirty.value"
+      :saving="form.saving.value"
+      :error="form.saveError.value"
+      :invalid="invalid"
+      @save="form.submit"
+      @discard="form.discard"
+    />
   </div>
 </template>

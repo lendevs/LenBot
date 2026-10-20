@@ -32,13 +32,15 @@ const addendum = computed({
           class="grid items-start gap-2 sm:grid-cols-[180px_minmax(0,1fr)_auto]"
         >
           <Field :error="form.errors[`relationships.${index}.account`]">
-            <Input v-model="row.account" placeholder="onebot:10001" mono :aria-label="t('groups.settings.persona.account')" />
+            <Input
+              v-model="row.account"
+              placeholder="onebot:10001"
+              mono
+              :aria-label="t('groups.settings.persona.account')"
+            />
           </Field>
           <Field :error="form.errors[`relationships.${index}.text`]">
-            <Input
-              v-model="row.text"
-              :aria-label="t('groups.settings.persona.relationship')"
-            />
+            <Input v-model="row.text" :aria-label="t('groups.settings.persona.relationship')" />
           </Field>
           <IconButton
             :icon="Trash2"
@@ -48,7 +50,12 @@ const addendum = computed({
           />
         </div>
         <div>
-          <Button size="sm" variant="ghost" :icon="Plus" @click="form.draft.relationships.push({ account: '', text: '' })">
+          <Button
+            size="sm"
+            variant="ghost"
+            :icon="Plus"
+            @click="form.draft.relationships.push({ account: '', text: '' })"
+          >
             {{ t('groups.settings.persona.add') }}
           </Button>
         </div>

@@ -21,7 +21,11 @@ const note = ref('')
 const save = useMutation({
   mutationFn: () =>
     props.mode === 'register'
-      ? resourcesApi.register(props.scene, { reference: props.entry.reference, name: name.value.trim(), note: note.value })
+      ? resourcesApi.register(props.scene, {
+          reference: props.entry.reference,
+          name: name.value.trim(),
+          note: note.value,
+        })
       : resourcesApi.adopt(props.scene, { reference: props.entry.reference, name: name.value.trim() }),
   onSuccess: (value) => {
     toast.success(t(`groups.tasks.space.${props.mode}Done`, { name: value.name }))
@@ -51,11 +55,23 @@ const open = computed({
       <Field v-if="mode === 'register'" :label="t('groups.tasks.space.note')">
         <Textarea v-model="note" :rows="2" :max-rows="6" />
       </Field>
-      <ErrorNote v-if="save.isError.value" :title="t('groups.tasks.files.keepFailed')" :error="save.error.value" />
+      <ErrorNote
+        v-if="save.isError.value"
+        :title="t('groups.tasks.files.keepFailed')"
+        :error="save.error.value"
+      />
     </form>
     <template #footer>
-      <Button variant="ghost" :disabled="save.isPending.value" @click="emit('close')">{{ t('common.cancel') }}</Button>
-      <Button variant="primary" type="submit" form="copy-file" :loading="save.isPending.value" :disabled="!name.trim()">
+      <Button variant="ghost" :disabled="save.isPending.value" @click="emit('close')">
+        {{ t('common.cancel') }}
+      </Button>
+      <Button
+        variant="primary"
+        type="submit"
+        form="copy-file"
+        :loading="save.isPending.value"
+        :disabled="!name.trim()"
+      >
         {{ t('common.save') }}
       </Button>
     </template>

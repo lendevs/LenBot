@@ -17,7 +17,8 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-const senderName = (sender: Sender) => sender.card || sender.nickname || sender.uid.split(':').pop() || sender.uid
+const senderName = (sender: Sender) =>
+  sender.card || sender.nickname || sender.uid.split(':').pop() || sender.uid
 const name = computed(() => (props.message.is_self ? props.persona : senderName(props.message.sender)))
 /**
  * The stored text is what the model reads: mentions are [提及 onebot:70001] and images [图片1：摘要]. Here
@@ -31,7 +32,9 @@ const text = computed(() =>
     .trim(),
 )
 const status = computed(() =>
-  props.message.is_self && ['failed', 'unconfirmed'].includes(props.message.status) ? props.message.status : null,
+  props.message.is_self && ['failed', 'unconfirmed'].includes(props.message.status)
+    ? props.message.status
+    : null,
 )
 </script>
 

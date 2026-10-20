@@ -22,7 +22,10 @@ watch(
   { immediate: true },
 )
 const roles = computed(() =>
-  (['member', 'admin', 'owner'] as MemberRole[]).map((value) => ({ value, label: t(`playground.roles.${value}`) })),
+  (['member', 'admin', 'owner'] as MemberRole[]).map((value) => ({
+    value,
+    label: t(`playground.roles.${value}`),
+  })),
 )
 function submit() {
   if (!draft.value.nickname.trim()) return
@@ -32,9 +35,17 @@ function submit() {
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="adding ? t('playground.addMember') : t('playground.editMember')" size="sm">
+  <Dialog
+    v-model:open="open"
+    :title="adding ? t('playground.addMember') : t('playground.editMember')"
+    size="sm"
+  >
     <form id="member-form" class="flex flex-col gap-4" @submit.prevent="submit">
-      <Field :label="t('playground.nickname')" required :error="draft.nickname.trim() ? null : t('playground.nicknameRequired')">
+      <Field
+        :label="t('playground.nickname')"
+        required
+        :error="draft.nickname.trim() ? null : t('playground.nicknameRequired')"
+      >
         <Input v-model="draft.nickname" autofocus />
       </Field>
       <Field :label="t('playground.account')">
@@ -59,7 +70,9 @@ function submit() {
         {{ t('common.delete') }}
       </Button>
       <Button variant="ghost" @click="open = false">{{ t('common.cancel') }}</Button>
-      <Button type="submit" form="member-form" variant="primary" :disabled="!draft.nickname.trim()">{{ t('common.save') }}</Button>
+      <Button type="submit" form="member-form" variant="primary" :disabled="!draft.nickname.trim()">
+        {{ t('common.save') }}
+      </Button>
     </template>
   </Dialog>
 </template>

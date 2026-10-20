@@ -6,7 +6,7 @@ import { Bell, Plus, TriangleAlert } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { personasApi } from '../../../api/personas'
 import { schedulesApi, type Schedule, type ScheduleFilter } from '../../../api/schedules'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { host } from '../../../api/hostStore'
 import { formatDateTime } from '../../../i18n/format'
 import Badge, { type Tone } from '../../../ui/Badge.vue'
@@ -27,12 +27,20 @@ const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
-const service = useQuery({ queryKey: keys.tasks.scheduleState(), queryFn: ({ signal }) => schedulesApi.state(signal) })
+const service = useQuery({
+  queryKey: keys.tasks.scheduleState(),
+  queryFn: ({ signal }) => schedulesApi.state(signal),
+})
 const settings = computed(() => service.data.value?.scenes.find((item) => item.scene === props.scene) ?? null)
 // Tools are allowed per role, on the role's detail page.
-const roles = useQuery({ queryKey: keys.personas.all(), queryFn: ({ signal }) => personasApi.library(signal) })
+const roles = useQuery({
+  queryKey: keys.personas.all(),
+  queryFn: ({ signal }) => personasApi.library(signal),
+})
 const roleKey = computed(() => {
-  const path = (host.state?.scenes ?? []).find((item: { scene: string }) => item.scene === props.scene)?.persona_path
+  const path = (host.state?.scenes ?? []).find(
+    (item: { scene: string }) => item.scene === props.scene,
+  )?.persona_path
   return roles.data.value?.roles.find((role) => role.path === path)?.key ?? null
 })
 
@@ -80,7 +88,9 @@ function details(item: Schedule): string {
   return [
     cadence(item),
     item.status === 'pending' ? t('groups.tasks.schedules.next', { time }) : time,
-    item.requester === null ? t('groups.tasks.schedules.byBot') : t('groups.tasks.schedules.by', { who: item.requester }),
+    item.requester === null
+      ? t('groups.tasks.schedules.byBot')
+      : t('groups.tasks.schedules.by', { who: item.requester }),
     ...(item.target !== 'self' ? [t('groups.tasks.schedules.remind', { who: item.target })] : []),
   ].join(' · ')
 }
@@ -89,7 +99,9 @@ const cancel = useMutation({
   mutationFn: (item: Schedule) => schedulesApi.cancel(props.scene, item.id),
   onSuccess: () => toast.success(t('groups.tasks.schedules.cancelled')),
   onError: (error) =>
-    toast.error(t('groups.tasks.schedules.cancelFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.tasks.schedules.cancelFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => client.invalidateQueries({ queryKey: ['host', 'schedules'] }),
 })
 async function ask(item: Schedule) {
@@ -166,7 +178,9 @@ function added() {
             <p class="text-sm break-words whitespace-pre-wrap text-ink">{{ item.note }}</p>
             <p class="mt-0.5 text-xs text-muted">{{ details(item) }}</p>
           </div>
-          <Badge :tone="tones[item.status]" dot size="sm">{{ t(`groups.tasks.schedules.status.${item.status}`) }}</Badge>
+          <Badge :tone="tones[item.status]" dot size="sm">
+            {{ t(`groups.tasks.schedules.status.${item.status}`) }}
+          </Badge>
           <Button
             v-if="item.status === 'pending' || item.status === 'blocked'"
             size="sm"

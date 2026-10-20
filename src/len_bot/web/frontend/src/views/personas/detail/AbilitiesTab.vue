@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { FileSearch, Puzzle, TriangleAlert } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { personasApi, type Allowance, type SkillInfo, type ToolInfo } from '../../../api/personas'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { readPendingRestart } from '../../../api/hostStore'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
@@ -47,7 +47,9 @@ function adopt() {
   skills.value = copy(data.skills.saved)
 }
 watch(() => abilities.data.value, adopt, { immediate: true })
-const toolsChanged = computed(() => Boolean(abilities.data.value) && sorted(tools.value) !== sorted(abilities.data.value!.tools.saved))
+const toolsChanged = computed(
+  () => Boolean(abilities.data.value) && sorted(tools.value) !== sorted(abilities.data.value!.tools.saved),
+)
 const skillsChanged = computed(
   () => Boolean(abilities.data.value) && sorted(skills.value) !== sorted(abilities.data.value!.skills.saved),
 )
@@ -58,10 +60,15 @@ const catalog = computed(() => abilities.data.value?.tools.catalog ?? [])
 const builtIn = computed(() => catalog.value.filter((tool) => !tool.source))
 const extra = computed(() => catalog.value.filter((tool) => tool.source))
 const note = (tool: ToolInfo) =>
-  te(`personas.detail.abilities.notes.${tool.name}`) ? t(`personas.detail.abilities.notes.${tool.name}`) : tool.summary
+  te(`personas.detail.abilities.notes.${tool.name}`)
+    ? t(`personas.detail.abilities.notes.${tool.name}`)
+    : tool.summary
 
 /** Tools that only work together: picking the first adds the rest. */
-const companions: Record<string, string[]> = { schedule: ['schedule_list', 'schedule_cancel'], delegate: ['task'] }
+const companions: Record<string, string[]> = {
+  schedule: ['schedule_list', 'schedule_cancel'],
+  delegate: ['task'],
+}
 function toggleTool(name: string, on: boolean) {
   if (tools.value === 'all') return
   const before = tools.value
@@ -130,7 +137,10 @@ const save = useMutation({
         <Switch :model-value="tools === 'all'" @update:model-value="allTools" />
       </Field>
       <template v-for="group in [builtIn, extra]" :key="group === builtIn ? 'built-in' : 'extra'">
-        <ul v-if="group.length" class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface">
+        <ul
+          v-if="group.length"
+          class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface"
+        >
           <li v-for="tool in group" :key="tool.name" class="flex flex-col gap-1.5 px-4 py-3">
             <Checkbox
               :model-value="allowed(tools, tool.name)"
@@ -151,7 +161,11 @@ const save = useMutation({
             <RawRecord
               v-if="developerDetails"
               :label="t('personas.detail.abilities.forModel')"
-              :code="{ description: tool.description, parameters: tool.parameters, instructions: tool.instructions }"
+              :code="{
+                description: tool.description,
+                parameters: tool.parameters,
+                instructions: tool.instructions,
+              }"
               class="pl-7"
             />
           </li>
@@ -171,7 +185,11 @@ const save = useMutation({
           <Switch :model-value="skills === 'all'" @update:model-value="allSkills" />
         </Field>
         <ul class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface">
-          <li v-for="skill in skillCatalog" :key="`${skill.source}:${skill.name}`" class="flex items-start gap-3 px-4 py-3">
+          <li
+            v-for="skill in skillCatalog"
+            :key="`${skill.source}:${skill.name}`"
+            class="flex items-start gap-3 px-4 py-3"
+          >
             <div class="flex min-w-0 flex-1 flex-col gap-1">
               <Checkbox
                 :model-value="allowed(skills, skill.name)"

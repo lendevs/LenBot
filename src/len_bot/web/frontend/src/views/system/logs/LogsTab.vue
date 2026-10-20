@@ -47,14 +47,19 @@ const levels = computed(() => [
   { value: 'WARNING', label: t('logs.levels.warning') },
   { value: 'ERROR', label: t('logs.levels.error') },
 ])
-const scenes = computed<string[]>(() => (host.state?.scenes ?? []).map((item: { scene: string }) => item.scene))
+const scenes = computed<string[]>(() =>
+  (host.state?.scenes ?? []).map((item: { scene: string }) => item.scene),
+)
 const scene = computed({
   get: () => text('scene') || ALL,
   set: (value: string) => setQuery({ scene: value === ALL ? undefined : value }),
 })
 const sceneOptions = computed(() => [
   { value: ALL, label: t('logs.allGroups') },
-  ...[...new Set([...scenes.value, ...(text('scene') ? [text('scene')] : [])])].map((value) => ({ value, label: groupLabel(value) })),
+  ...[...new Set([...scenes.value, ...(text('scene') ? [text('scene')] : [])])].map((value) => ({
+    value,
+    label: groupLabel(value),
+  })),
 ])
 /** Logger names seen so far, so the source filter offers what the log actually contains. */
 const seenSources = ref(new Set<string>())
@@ -64,13 +69,19 @@ const source = computed({
 })
 const sourceOptions = computed(() => [
   { value: ALL, label: t('logs.allSources') },
-  ...[...new Set([...seenSources.value, ...(text('source') ? [text('source')] : [])])].sort().map((value) => ({ value, label: value })),
+  ...[...new Set([...seenSources.value, ...(text('source') ? [text('source')] : [])])]
+    .sort()
+    .map((value) => ({ value, label: value })),
 ])
 // Typed filters reach the address after a pause, so each keystroke does not read the log files again.
 const plugin = ref(text('plugin'))
 const task = ref(text('task'))
 const search = ref(text('q'))
-watchDebounced([plugin, task, search], ([p, k, q]) => setQuery({ plugin: p.trim(), task: k.trim(), q: q.trim() }), { debounce: 400 })
+watchDebounced(
+  [plugin, task, search],
+  ([p, k, q]) => setQuery({ plugin: p.trim(), task: k.trim(), q: q.trim() }),
+  { debounce: 400 },
+)
 watch(
   () => [text('plugin'), text('task'), text('q')],
   ([p, k, q]) => {
@@ -119,14 +130,28 @@ const kinds = computed(() => {
   return [...counts].sort((a, b) => b[1] - a[1])
 })
 const haystack = (item: LogRecord) =>
-  [item.event, item.event && labels.event(item.event), item.message, item.source, item.scene, item.plugin, item.tool, item.task_id, item.turn_id, item.error?.type, item.error?.message]
+  [
+    item.event,
+    item.event && labels.event(item.event),
+    item.message,
+    item.source,
+    item.scene,
+    item.plugin,
+    item.tool,
+    item.task_id,
+    item.turn_id,
+    item.error?.type,
+    item.error?.message,
+  ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
 const shown = computed(() => {
   const words = text('q').toLowerCase().split(/\s+/).filter(Boolean)
   return items.value.filter(
-    (item) => (!kind.value || eventKey(item) === kind.value) && (!words.length || words.every((word) => haystack(item).includes(word))),
+    (item) =>
+      (!kind.value || eventKey(item) === kind.value) &&
+      (!words.length || words.every((word) => haystack(item).includes(word))),
   )
 })
 const keyed = computed(() => shown.value.map((item, index) => ({ item, key: `${item.ts}#${index}` })))
@@ -149,7 +174,9 @@ const files = useQuery({ queryKey: keys.system.logFiles(), queryFn: ({ signal })
 const size = (bytes: number) => `${Math.max(1, Math.ceil(bytes / 1024))} KB`
 
 function exportShown() {
-  const blob = new Blob([shown.value.map((item) => JSON.stringify(item)).join('\n') + '\n'], { type: 'application/x-ndjson' })
+  const blob = new Blob([shown.value.map((item) => JSON.stringify(item)).join('\n') + '\n'], {
+    type: 'application/x-ndjson',
+  })
   const link = Object.assign(document.createElement('a'), {
     href: URL.createObjectURL(blob),
     download: `lenbot-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.jsonl`,
@@ -163,7 +190,9 @@ function exportShown() {
   <div class="flex min-w-0 flex-col gap-4">
     <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-4">
       <div class="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
-        <div class="col-span-2"><SegmentedControl v-model="level" :options="levels" :label="t('logs.level')" /></div>
+        <div class="col-span-2">
+          <SegmentedControl v-model="level" :options="levels" :label="t('logs.level')" />
+        </div>
         <Field :label="t('logs.group')" class="col-span-2 sm:w-48">
           <Select v-model="scene" :options="sceneOptions" />
         </Field>
@@ -178,71 +207,127 @@ function exportShown() {
         </Field>
       </div>
       <div class="flex flex-wrap items-center gap-3">
-        <Input v-model="search" :icon="Search" clearable :placeholder="t('logs.search')" class="min-w-0 flex-1 basis-60" :aria-label="t('logs.search')" />
+        <Input
+          v-model="search"
+          :icon="Search"
+          clearable
+          :placeholder="t('logs.search')"
+          class="min-w-0 flex-1 basis-60"
+          :aria-label="t('logs.search')"
+        />
         <Field :label="t('logs.follow')" inline>
           <Switch v-model="follow" />
         </Field>
-        <Button size="sm" variant="ghost" :icon="RefreshCw" :loading="logs.isFetching.value && !follow" @click="logs.refetch()">{{ t('logs.refresh') }}</Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          :icon="RefreshCw"
+          :loading="logs.isFetching.value && !follow"
+          @click="logs.refetch()"
+        >
+          {{ t('logs.refresh') }}
+        </Button>
         <Button size="sm" variant="ghost" :icon="Download" :disabled="!shown.length" @click="exportShown">
           {{ t('logs.export', { n: shown.length }, shown.length) }}
         </Button>
       </div>
       <div v-if="turn" class="flex flex-wrap items-center gap-2">
         <Badge tone="brand">{{ t('logs.onlyTurn', { id: turn.slice(0, 8) }) }}</Badge>
-        <Button size="sm" variant="ghost" :icon="X" @click="setQuery({ turn: undefined })">{{ t('logs.allTurns') }}</Button>
+        <Button size="sm" variant="ghost" :icon="X" @click="setQuery({ turn: undefined })">
+          {{ t('logs.allTurns') }}
+        </Button>
       </div>
       <div v-if="kinds.length > 1" class="flex flex-wrap gap-1.5" role="group" :aria-label="t('logs.kinds')">
         <button
           type="button"
           class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
-          :class="!kind ? 'border-primary bg-primary-bg text-primary' : 'border-line text-ink-2 hover:bg-hover'"
+          :class="
+            !kind ? 'border-primary bg-primary-bg text-primary' : 'border-line text-ink-2 hover:bg-hover'
+          "
           :aria-pressed="!kind"
           @click="setQuery({ event: undefined })"
         >
-          {{ t('logs.allKinds') }} <span class="tabular opacity-70">{{ items.length }}</span>
+          {{ t('logs.allKinds') }}
+          <span class="tabular opacity-70">{{ items.length }}</span>
         </button>
         <button
           v-for="[key, count] in kinds"
           :key="key"
           type="button"
           class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
-          :class="kind === key ? 'border-primary bg-primary-bg text-primary' : 'border-line text-ink-2 hover:bg-hover'"
+          :class="
+            kind === key
+              ? 'border-primary bg-primary-bg text-primary'
+              : 'border-line text-ink-2 hover:bg-hover'
+          "
           :aria-pressed="kind === key"
           @click="setQuery({ event: kind === key ? undefined : key })"
         >
-          {{ key === '_other' ? labels.event(undefined) : labels.event(key) }} <span class="tabular opacity-70">{{ count }}</span>
+          {{ key === '_other' ? labels.event(undefined) : labels.event(key) }}
+          <span class="tabular opacity-70">{{ count }}</span>
         </button>
       </div>
     </section>
 
-    <section v-if="turn && scene !== ALL" class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4">
+    <section
+      v-if="turn && scene !== ALL"
+      class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4"
+    >
       <header class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-base font-semibold">{{ t('logs.turnTitle') }}</h3>
-        <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="groupsTarget(scene, 'live')">{{ t('logs.openGroup') }}</Button>
+        <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="groupsTarget(scene, 'live')">
+          {{ t('logs.openGroup') }}
+        </Button>
       </header>
       <Skeleton v-if="detail.isPending.value" :lines="3" />
-      <ErrorNote v-else-if="detail.isError.value" :title="t('logs.turnFailed')" :error="detail.error.value" :retry="detail.refetch" />
+      <ErrorNote
+        v-else-if="detail.isError.value"
+        :title="t('logs.turnFailed')"
+        :error="detail.error.value"
+        :retry="detail.refetch"
+      />
       <TurnSteps v-else-if="detail.data.value" :detail="detail.data.value" />
     </section>
 
     <Skeleton v-if="logs.isPending.value" :lines="8" />
-    <ErrorNote v-else-if="logs.isError.value" :title="t('logs.readFailed')" :error="logs.error.value" :retry="logs.refetch" />
+    <ErrorNote
+      v-else-if="logs.isError.value"
+      :title="t('logs.readFailed')"
+      :error="logs.error.value"
+      :retry="logs.refetch"
+    />
     <EmptyState v-else-if="!shown.length" :icon="ScrollText" :title="t('logs.empty')" compact />
     <div v-else class="flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface">
-      <VirtualList :items="keyed" :get-key="(row) => row.key" :estimate-size="76" class="max-h-[min(70vh,720px)]">
+      <VirtualList
+        :items="keyed"
+        :get-key="(row) => row.key"
+        :estimate-size="76"
+        class="max-h-[min(70vh,720px)]"
+      >
         <template #default="{ item: row }">
           <LogRow :item="row.item" :time-zone="timeZone" :turn="turn" @filter="onFilter" />
         </template>
       </VirtualList>
-      <div class="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2 text-xs text-muted">
+      <div
+        class="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2 text-xs text-muted"
+      >
         <span class="tabular">{{ t('logs.count', { shown: shown.length, read: items.length }) }}</span>
-        <Button v-if="more" size="sm" variant="ghost" :loading="logs.isFetching.value" @click="limit = LIMITS[LIMITS.indexOf(limit) + 1]!">
+        <Button
+          v-if="more"
+          size="sm"
+          variant="ghost"
+          :loading="logs.isFetching.value"
+          @click="limit = LIMITS[LIMITS.indexOf(limit) + 1]!"
+        >
           {{ t('logs.more', { n: LIMITS[LIMITS.indexOf(limit) + 1] }) }}
         </Button>
       </div>
     </div>
 
-    <section v-if="files.data.value?.items.length" class="flex min-w-0 flex-col gap-2 rounded-xl border border-line bg-surface p-4">
+    <section
+      v-if="files.data.value?.items.length"
+      class="flex min-w-0 flex-col gap-2 rounded-xl border border-line bg-surface p-4"
+    >
       <h3 class="text-base font-semibold">{{ t('logs.files') }}</h3>
       <ul class="flex list-none flex-col divide-y divide-line">
         <li v-for="file in files.data.value.items" :key="file.name" class="flex items-center gap-3 py-2">
@@ -253,7 +338,8 @@ function exportShown() {
             :href="logsApi.fileUrl(file.name)"
             class="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-ink hover:bg-hover focus-visible:focus-ring"
           >
-            <Download :size="15" aria-hidden="true" />{{ t('logs.download') }}
+            <Download :size="15" aria-hidden="true" />
+            {{ t('logs.download') }}
           </a>
         </li>
       </ul>

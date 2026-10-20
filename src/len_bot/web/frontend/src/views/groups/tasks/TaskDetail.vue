@@ -5,7 +5,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/vue-que
 import { FolderOpen } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { tasksApi, type TaskAction, type TaskService } from '../../../api/tasks'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { formatDateTime } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
@@ -88,9 +88,14 @@ const act = useMutation({
     if (body.action === 'append') append.value = ''
     if (body.action === 'continue') followUp.value = ''
     if (body.action === 'answer') answerDirty.value = false
-    toast.success(t(body.action === 'answer' ? 'groups.tasks.question.done' : `groups.tasks.${body.action}.done`))
+    toast.success(
+      t(body.action === 'answer' ? 'groups.tasks.question.done' : `groups.tasks.${body.action}.done`),
+    )
   },
-  onError: (error) => toast.error(t('groups.tasks.actionFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('groups.tasks.actionFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => client.invalidateQueries({ queryKey: keys.tasks.all() }),
 })
 async function cancel() {
@@ -134,8 +139,12 @@ const facts = computed(() => {
   <article v-else-if="task && first" class="flex min-w-0 flex-col gap-6">
     <header class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
-        <h2 class="min-w-0 flex-1 text-lg font-semibold break-words whitespace-pre-wrap text-ink">{{ task.goal }}</h2>
-        <Badge :tone="statusTone[task.status]" dot class="mt-1">{{ t(`groups.tasks.status.${task.status}`) }}</Badge>
+        <h2 class="min-w-0 flex-1 text-lg font-semibold break-words whitespace-pre-wrap text-ink">
+          {{ task.goal }}
+        </h2>
+        <Badge :tone="statusTone[task.status]" dot class="mt-1">
+          {{ t(`groups.tasks.status.${task.status}`) }}
+        </Badge>
       </div>
       <p class="flex flex-wrap items-center gap-x-2 text-sm text-muted">
         <span class="tabular">#{{ task.id }}</span>
@@ -161,7 +170,11 @@ const facts = computed(() => {
         </template>
       </dl>
       <ErrorNote v-if="task.error" :title="t('groups.tasks.failed')" :error="task.error" />
-      <RawRecord v-if="developerDetails" :label="t('groups.tasks.raw')" :code="{ ...task, network: first.network }" />
+      <RawRecord
+        v-if="developerDetails"
+        :label="t('groups.tasks.raw')"
+        :code="{ ...task, network: first.network }"
+      />
     </header>
 
     <LivePreview v-if="running && service.configured" :id="id" :scene="scene" />
@@ -177,7 +190,9 @@ const facts = computed(() => {
 
     <section v-if="canAppend || canContinue" class="flex flex-col gap-2">
       <template v-if="canAppend">
-        <label class="text-sm font-medium text-ink" :for="`append-${id}`">{{ t('groups.tasks.append.label') }}</label>
+        <label class="text-sm font-medium text-ink" :for="`append-${id}`">
+          {{ t('groups.tasks.append.label') }}
+        </label>
         <Textarea :id="`append-${id}`" v-model="append" :rows="2" :max-rows="8" />
         <Button
           size="sm"
@@ -190,7 +205,9 @@ const facts = computed(() => {
         </Button>
       </template>
       <template v-else>
-        <label class="text-sm font-medium text-ink" :for="`continue-${id}`">{{ t('groups.tasks.continue.label') }}</label>
+        <label class="text-sm font-medium text-ink" :for="`continue-${id}`">
+          {{ t('groups.tasks.continue.label') }}
+        </label>
         <Textarea
           :id="`continue-${id}`"
           v-model="followUp"

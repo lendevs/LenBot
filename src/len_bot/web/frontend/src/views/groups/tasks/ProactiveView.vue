@@ -72,15 +72,24 @@ function outcome(item: ProactiveWake): string {
             first.next_at === null
               ? t('groups.tasks.proactive.nextUnknown')
               : t('groups.tasks.proactive.next', { time: at(first.next_at) })
-          }}<template v-if="first.next_reason">（{{ first.next_reason }}）</template>
+          }}
+          <template v-if="first.next_reason">（{{ first.next_reason }}）</template>
         </p>
       </div>
-      <div v-if="first.pause" class="flex items-center gap-2 rounded-lg bg-info-bg px-4 py-3 text-sm text-info">
+      <div
+        v-if="first.pause"
+        class="flex items-center gap-2 rounded-lg bg-info-bg px-4 py-3 text-sm text-info"
+      >
         <PauseCircle :size="16" aria-hidden="true" />
         {{ t('groups.tasks.proactive.paused', { time: at(first.pause.until) }) }}
       </div>
 
-      <EmptyState v-if="!rows.length" :icon="MessageCirclePlus" :title="t('groups.tasks.proactive.empty')" compact />
+      <EmptyState
+        v-if="!rows.length"
+        :icon="MessageCirclePlus"
+        :title="t('groups.tasks.proactive.empty')"
+        compact
+      />
       <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
         <li v-for="item in rows" :key="item.id" class="flex items-center gap-3 px-4 py-2.5">
           <div class="min-w-0 flex-1">

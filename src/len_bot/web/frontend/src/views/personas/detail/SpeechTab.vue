@@ -65,7 +65,10 @@ function moveUp(index: number) {
           :key="index"
           class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_minmax(0,1.6fr)_auto] sm:items-start"
         >
-          <Field :label="t('personas.detail.speech.styleName')" :error="style.name.trim() ? null : t('common.required')">
+          <Field
+            :label="t('personas.detail.speech.styleName')"
+            :error="style.name.trim() ? null : t('common.required')"
+          >
             <Input v-model="style.name" />
           </Field>
           <Field :label="t('personas.detail.speech.share')">
@@ -79,7 +82,10 @@ function moveUp(index: number) {
             />
           </Field>
           <Field :label="t('personas.detail.speech.note')">
-            <Input :model-value="style.note ?? ''" @update:model-value="(value) => (style.note = value || null)" />
+            <Input
+              :model-value="style.note ?? ''"
+              @update:model-value="(value) => (style.note = value || null)"
+            />
           </Field>
           <IconButton
             :icon="X"
@@ -90,13 +96,20 @@ function moveUp(index: number) {
         </li>
       </ul>
       <div>
-        <Button size="sm" variant="ghost" :icon="Plus" @click="addStyle">{{ t('personas.detail.speech.addStyle') }}</Button>
+        <Button size="sm" variant="ghost" :icon="Plus" @click="addStyle">
+          {{ t('personas.detail.speech.addStyle') }}
+        </Button>
       </div>
     </FormSection>
 
     <FormSection :title="t('personas.detail.speech.examples')" :columns="1">
       <Field v-if="tags.length" :label="t('personas.detail.speech.filter')">
-        <Combobox v-model="draft.example_tags" :options="tagOptions" multiple :placeholder="t('personas.detail.speech.filterAll')" />
+        <Combobox
+          v-model="draft.example_tags"
+          :options="tagOptions"
+          multiple
+          :placeholder="t('personas.detail.speech.filterAll')"
+        />
       </Field>
       <EmptyState v-if="!draft.examples.length" :title="t('personas.detail.speech.noExamples')" compact />
       <ol v-else class="flex flex-col gap-3">
@@ -106,10 +119,16 @@ function moveUp(index: number) {
           class="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-lg border border-line bg-surface p-4"
         >
           <div class="flex min-w-0 flex-col gap-3">
-            <Field :label="t('personas.detail.speech.context')" :error="example.context.trim() ? null : t('common.required')">
+            <Field
+              :label="t('personas.detail.speech.context')"
+              :error="example.context.trim() ? null : t('common.required')"
+            >
               <Textarea v-model="example.context" :rows="1" />
             </Field>
-            <Field :label="t('personas.detail.speech.line')" :error="example.line.trim() ? null : t('common.required')">
+            <Field
+              :label="t('personas.detail.speech.line')"
+              :error="example.line.trim() ? null : t('common.required')"
+            >
               <Textarea v-model="example.line" :rows="1" />
             </Field>
             <Field :label="t('personas.detail.speech.tags')">
@@ -134,7 +153,9 @@ function moveUp(index: number) {
         </li>
       </ol>
       <div>
-        <Button size="sm" variant="ghost" :icon="Plus" @click="addExample">{{ t('personas.detail.speech.addExample') }}</Button>
+        <Button size="sm" variant="ghost" :icon="Plus" @click="addExample">
+          {{ t('personas.detail.speech.addExample') }}
+        </Button>
       </div>
     </FormSection>
 

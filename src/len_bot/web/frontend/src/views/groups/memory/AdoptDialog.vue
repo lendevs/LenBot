@@ -29,7 +29,9 @@ watch(open, (value) => {
   reason.value = t('groups.memory.adopt.reason')
   removeSource.value = true
 })
-const valid = computed(() => target.value.trim().endsWith('.md') && content.value.trim() && reason.value.trim())
+const valid = computed(
+  () => target.value.trim().endsWith('.md') && content.value.trim() && reason.value.trim(),
+)
 const adopt = useMutation({
   mutationFn: () =>
     memoryApi.adoptPending({
@@ -46,7 +48,12 @@ const adopt = useMutation({
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="t('groups.memory.adopt.action')" size="lg" :busy="adopt.isPending.value">
+  <Dialog
+    v-model:open="open"
+    :title="t('groups.memory.adopt.action')"
+    size="lg"
+    :busy="adopt.isPending.value"
+  >
     <div class="flex flex-col gap-4">
       <CodeBlock :code="original" :max-lines="8" :label="t('groups.memory.adopt.original')" />
       <Field :label="t('groups.memory.adopt.target')">
@@ -59,12 +66,19 @@ const adopt = useMutation({
         <Input v-model="reason" />
       </Field>
       <label class="flex cursor-pointer items-center gap-2.5 text-sm text-ink">
-        <Checkbox v-model="removeSource" />{{ t('groups.memory.adopt.removeSource') }}
+        <Checkbox v-model="removeSource" />
+        {{ t('groups.memory.adopt.removeSource') }}
       </label>
-      <ErrorNote v-if="adopt.isError.value" :title="t('groups.memory.adopt.failed')" :error="adopt.error.value" />
+      <ErrorNote
+        v-if="adopt.isError.value"
+        :title="t('groups.memory.adopt.failed')"
+        :error="adopt.error.value"
+      />
     </div>
     <template #footer>
-      <Button variant="ghost" :disabled="adopt.isPending.value" @click="open = false">{{ t('common.cancel') }}</Button>
+      <Button variant="ghost" :disabled="adopt.isPending.value" @click="open = false">
+        {{ t('common.cancel') }}
+      </Button>
       <Button variant="primary" :loading="adopt.isPending.value" :disabled="!valid" @click="adopt.mutate()">
         {{ t('common.save') }}
       </Button>

@@ -17,7 +17,9 @@ import { confirm } from '../../../ui/confirm'
 import { toast } from '../../../ui/toast'
 
 /** `resources` are files picked from task spaces; each can be renamed for the new task's inputs. */
-const props = withDefaults(defineProps<{ scene: string; resources?: ResourceInput[] }>(), { resources: () => [] })
+const props = withDefaults(defineProps<{ scene: string; resources?: ResourceInput[] }>(), {
+  resources: () => [],
+})
 const emit = defineEmits<{ dirty: [value: boolean]; created: [task: Task]; close: [] }>()
 
 const { t } = useI18n()
@@ -32,7 +34,9 @@ const shared = useQuery({
   queryKey: computed(() => keys.tasks.materials(props.scene)),
   queryFn: ({ signal }) => tasksApi.materials(props.scene, signal),
 })
-const options = computed(() => (shared.data.value?.files ?? []).map((file) => ({ value: file.name, label: file.name })))
+const options = computed(() =>
+  (shared.data.value?.files ?? []).map((file) => ({ value: file.name, label: file.name })),
+)
 
 const dirty = computed(() =>
   Boolean(goal.value || deliverable.value || context.value || materials.value.length || accountBrowser.value),
@@ -41,7 +45,9 @@ watch(dirty, (value) => emit('dirty', value), { immediate: true })
 const names = computed(() => [...materials.value, ...picked.value.map((item) => item.name.trim())])
 const problem = computed(() => {
   if (names.value.length > 16) return t('groups.tasks.new.tooMany')
-  if (picked.value.some((item) => !item.name.trim() || item.name.length > 240 || /[/\\\0\r\n]/.test(item.name)))
+  if (
+    picked.value.some((item) => !item.name.trim() || item.name.length > 240 || /[/\\\0\r\n]/.test(item.name))
+  )
     return t('groups.tasks.new.badName')
   if (new Set(names.value).size !== names.value.length) return t('groups.tasks.new.duplicate')
   return null
@@ -70,7 +76,10 @@ const open = computed({
   },
 })
 async function close() {
-  if (dirty.value && !(await confirm({ title: t('groups.tasks.new.discardTitle'), confirmLabel: t('common.discard') })))
+  if (
+    dirty.value &&
+    !(await confirm({ title: t('groups.tasks.new.discardTitle'), confirmLabel: t('common.discard') }))
+  )
     return
   emit('dirty', false)
   emit('close')
@@ -84,7 +93,12 @@ async function close() {
         <Textarea v-model="goal" :rows="3" :max-rows="8" />
       </Field>
       <Field :label="t('groups.tasks.new.deliverable')" required>
-        <Textarea v-model="deliverable" :rows="2" :max-rows="6" :placeholder="t('groups.tasks.new.deliverablePlaceholder')" />
+        <Textarea
+          v-model="deliverable"
+          :rows="2"
+          :max-rows="6"
+          :placeholder="t('groups.tasks.new.deliverablePlaceholder')"
+        />
       </Field>
       <Field :label="t('groups.tasks.new.context')">
         <Textarea v-model="context" :rows="2" :max-rows="8" />
@@ -95,27 +109,46 @@ async function close() {
           :options="options"
           multiple
           :disabled="shared.isPending.value || !options.length"
-          :placeholder="shared.isSuccess.value && !options.length ? t('groups.tasks.new.noMaterials') : undefined"
+          :placeholder="
+            shared.isSuccess.value && !options.length ? t('groups.tasks.new.noMaterials') : undefined
+          "
         />
       </Field>
       <Field v-if="picked.length" :label="t('groups.tasks.new.picked')" :error="problem">
         <ul class="flex list-none flex-col gap-2">
           <li v-for="(item, index) in picked" :key="index" class="flex items-center gap-2">
             <div class="min-w-0 flex-1"><Input v-model="item.name" size="sm" /></div>
-            <Button size="sm" variant="ghost" @click="picked.splice(index, 1)">{{ t('groups.tasks.new.remove') }}</Button>
+            <Button size="sm" variant="ghost" @click="picked.splice(index, 1)">
+              {{ t('groups.tasks.new.remove') }}
+            </Button>
           </li>
         </ul>
       </Field>
-      <ErrorNote v-if="shared.isError.value" :title="t('groups.tasks.new.materialsFailed')" :error="shared.error.value" />
+      <ErrorNote
+        v-if="shared.isError.value"
+        :title="t('groups.tasks.new.materialsFailed')"
+        :error="shared.error.value"
+      />
       <label class="flex cursor-pointer items-center gap-2 text-sm">
-        <Checkbox :model-value="accountBrowser" @update:model-value="(on) => (accountBrowser = on === true)" />
+        <Checkbox
+          :model-value="accountBrowser"
+          @update:model-value="(on) => (accountBrowser = on === true)"
+        />
         {{ t('groups.tasks.new.accountBrowser') }}
       </label>
-      <ErrorNote v-if="create.isError.value" :title="t('groups.tasks.new.failed')" :error="create.error.value" />
-      <p v-if="create.isError.value && names.length" class="text-xs text-muted">{{ t('groups.tasks.new.maybeCreated') }}</p>
+      <ErrorNote
+        v-if="create.isError.value"
+        :title="t('groups.tasks.new.failed')"
+        :error="create.error.value"
+      />
+      <p v-if="create.isError.value && names.length" class="text-xs text-muted">
+        {{ t('groups.tasks.new.maybeCreated') }}
+      </p>
     </form>
     <template #footer>
-      <Button variant="ghost" :disabled="create.isPending.value" @click="close">{{ t('common.cancel') }}</Button>
+      <Button variant="ghost" :disabled="create.isPending.value" @click="close">
+        {{ t('common.cancel') }}
+      </Button>
       <Button
         variant="primary"
         type="submit"

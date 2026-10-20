@@ -27,7 +27,10 @@ const config = useQuery({
   queryFn: ({ signal }) => learningApi.config(props.scene, signal),
 })
 // Learning needs a model bound to the learner role.
-const settings = useQuery({ queryKey: keys.host.settings(), queryFn: ({ signal }) => settingsApi.read(signal) })
+const settings = useQuery({
+  queryKey: keys.host.settings(),
+  queryFn: ({ signal }) => settingsApi.read(signal),
+})
 const noLearner = computed(() => {
   const roles = (settings.data.value?.saved.models as { roles?: Record<string, unknown> } | undefined)?.roles
   return Boolean(roles) && !roles!.learner
@@ -38,7 +41,9 @@ const saved = computed(() => config.data.value?.saved ?? null)
 const reset = () => (draft.value = saved.value && JSON.parse(JSON.stringify(saved.value)))
 watch(saved, reset, { immediate: true })
 watch(open, (value) => value && reset())
-const dirty = computed(() => Boolean(config.data.value) && JSON.stringify(draft.value) !== JSON.stringify(saved.value))
+const dirty = computed(
+  () => Boolean(config.data.value) && JSON.stringify(draft.value) !== JSON.stringify(saved.value),
+)
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
 const enabled = computed({
@@ -71,7 +76,8 @@ const errors = computed<Record<string, string>>(() => {
   const found: Record<string, string> = {}
   if (!value) return found
   for (const { key } of numbers) if (typeof value[key] !== 'number') found[key] = t('common.required')
-  if ((value.batch_size ?? 0) < (value.min_messages ?? 0)) found.batch_size = t('groups.learning.settings.batchTooSmall')
+  if ((value.batch_size ?? 0) < (value.min_messages ?? 0))
+    found.batch_size = t('groups.learning.settings.batchTooSmall')
   if ((value.max_age_seconds ?? 0) < (value.idle_seconds ?? 0))
     found.max_age_seconds = t('groups.learning.settings.ageTooSmall')
   return found
@@ -89,7 +95,8 @@ const save = useMutation({
   },
 })
 async function close() {
-  if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) return
+  if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+    return
   reset()
   open.value = false
 }
@@ -148,7 +155,9 @@ async function close() {
       />
     </div>
     <template #footer>
-      <Button variant="ghost" :disabled="save.isPending.value" @click="close">{{ t('common.cancel') }}</Button>
+      <Button variant="ghost" :disabled="save.isPending.value" @click="close">
+        {{ t('common.cancel') }}
+      </Button>
       <Button
         variant="primary"
         :loading="save.isPending.value"

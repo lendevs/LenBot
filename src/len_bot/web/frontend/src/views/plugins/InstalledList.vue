@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Blocks, ChevronDown, FileArchive, FolderCog, GitBranch, Plus, Search, Store, Trash2 } from '@lucide/vue'
+import {
+  Blocks,
+  ChevronDown,
+  FileArchive,
+  FolderCog,
+  GitBranch,
+  Plus,
+  Search,
+  Store,
+  Trash2,
+} from '@lucide/vue'
 import { pluginsApi, type PluginsSnapshot } from '../../api/plugins'
 import Button from '../../ui/Button.vue'
 import DropdownMenu, { type MenuEntry } from '../../ui/DropdownMenu.vue'
@@ -22,13 +32,21 @@ const emit = defineEmits<{ open: [name: string]; install: [request: InstallReque
 const { t } = useI18n()
 const state = usePluginsState()
 const names = computed(() => pluginNames(props.snapshot))
-const running = computed(() => props.snapshot.running.plugins.filter((item) => item.status === 'running').length)
+const running = computed(
+  () => props.snapshot.running.plugins.filter((item) => item.status === 'running').length,
+)
 const bucket = (name: string) => bucketOf(statusOf(props.snapshot, name, state.healthOf(name)))
 
 type Filter = 'all' | Bucket
 const filter = ref<Filter>('all')
 const filters = computed(() => {
-  const counts: Record<Filter, number> = { all: names.value.length, on: 0, attention: 0, disabled: 0, idle: 0 }
+  const counts: Record<Filter, number> = {
+    all: names.value.length,
+    on: 0,
+    attention: 0,
+    disabled: 0,
+    idle: 0,
+  }
   for (const name of names.value) counts[bucket(name)]++
   return (['all', 'on', 'attention', 'disabled', 'idle'] as const)
     .filter((key) => key === 'all' || counts[key])
@@ -42,7 +60,11 @@ const shown = computed(() => {
   const words = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
   return names.value.filter((name) => {
     if (filter.value !== 'all' && bucket(name) !== filter.value) return false
-    const text = [name, descriptionOf(props.snapshot, name), ...(manifestOf(props.snapshot, name)?.authors ?? [])]
+    const text = [
+      name,
+      descriptionOf(props.snapshot, name),
+      ...(manifestOf(props.snapshot, name)?.authors ?? []),
+    ]
       .join(' ')
       .toLowerCase()
     return words.every((word) => text.includes(word))
@@ -55,7 +77,10 @@ const menu = computed<MenuEntry[]>(() => [
   { label: t('plugins.install.zipTitle'), icon: FileArchive, select: () => emit('install', { kind: 'zip' }) },
 ])
 const editingPaths = ref(false)
-const errors = computed(() => [...props.snapshot.discovery_errors, ...props.snapshot.running.discovery_errors])
+const errors = computed(() => [
+  ...props.snapshot.discovery_errors,
+  ...props.snapshot.running.discovery_errors,
+])
 
 async function removeData(name: string) {
   const sure = await confirm({
@@ -64,7 +89,8 @@ async function removeData(name: string) {
     confirmLabel: t('plugins.removeData.confirm'),
     tone: 'danger',
   })
-  if (sure) await state.run(name, () => pluginsApi.removeData(name), { success: t('plugins.removeData.done') })
+  if (sure)
+    await state.run(name, () => pluginsApi.removeData(name), { success: t('plugins.removeData.done') })
 }
 </script>
 
@@ -83,15 +109,17 @@ async function removeData(name: string) {
         class="w-full sm:w-64"
       />
       <span class="text-sm text-muted">
-        {{ t('plugins.count', { n: names.length }, names.length) }}<template v-if="names.length">
-          · {{ t('plugins.running', { n: running }) }}</template
-        >
+        {{ t('plugins.count', { n: names.length }, names.length) }}
+        <template v-if="names.length">· {{ t('plugins.running', { n: running }) }}</template>
       </span>
       <div class="ml-auto flex items-center gap-2">
-        <Button size="sm" variant="ghost" :icon="FolderCog" @click="editingPaths = true">{{ t('plugins.paths.title') }}</Button>
+        <Button size="sm" variant="ghost" :icon="FolderCog" @click="editingPaths = true">
+          {{ t('plugins.paths.title') }}
+        </Button>
         <DropdownMenu :items="menu">
           <Button variant="primary" size="sm" :icon="Plus">
-            {{ t('plugins.install.title') }}<ChevronDown :size="14" aria-hidden="true" />
+            {{ t('plugins.install.title') }}
+            <ChevronDown :size="14" aria-hidden="true" />
           </Button>
         </DropdownMenu>
       </div>
@@ -107,7 +135,13 @@ async function removeData(name: string) {
     </EmptyState>
     <EmptyState v-else-if="!shown.length" :icon="Search" :title="t('common.noResults')" compact />
     <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-4">
-      <PluginCard v-for="name in shown" :key="name" :name="name" :snapshot="snapshot" @open="emit('open', name)" />
+      <PluginCard
+        v-for="name in shown"
+        :key="name"
+        :name="name"
+        :snapshot="snapshot"
+        @open="emit('open', name)"
+      />
     </div>
 
     <section v-if="snapshot.retained_data.length" class="flex flex-col gap-2">
@@ -118,7 +152,13 @@ async function removeData(name: string) {
             <p class="truncate text-sm font-medium text-ink">{{ item.name }}</p>
             <p class="truncate font-mono text-xs text-subtle">{{ item.directory }}</p>
           </div>
-          <Button size="sm" variant="danger-ghost" :icon="Trash2" :loading="state.busy.value === item.name" @click="removeData(item.name)">
+          <Button
+            size="sm"
+            variant="danger-ghost"
+            :icon="Trash2"
+            :loading="state.busy.value === item.name"
+            @click="removeData(item.name)"
+          >
             {{ t('plugins.removeData.confirm') }}
           </Button>
         </li>

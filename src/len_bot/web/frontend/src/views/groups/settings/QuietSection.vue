@@ -20,7 +20,10 @@ const enabled = computed({
       : null),
 })
 const directOptions = computed(() =>
-  (['allow', 'notice', 'defer'] as const).map((value) => ({ value, label: t(`groups.settings.quiet.direct.${value}`) })),
+  (['allow', 'notice', 'defer'] as const).map((value) => ({
+    value,
+    label: t(`groups.settings.quiet.direct.${value}`),
+  })),
 )
 const direct = computed({
   get: () => quiet.value?.direct,
@@ -55,7 +58,11 @@ const notice = computed({
       <Field :label="t('groups.settings.quiet.directLabel')">
         <Select v-model="direct" :options="directOptions" />
       </Field>
-      <Field v-if="quiet.direct === 'notice'" :label="t('groups.settings.quiet.notice')" :error="form.errors['quiet.notice']">
+      <Field
+        v-if="quiet.direct === 'notice'"
+        :label="t('groups.settings.quiet.notice')"
+        :error="form.errors['quiet.notice']"
+      >
         <Input v-model="notice" />
       </Field>
     </template>

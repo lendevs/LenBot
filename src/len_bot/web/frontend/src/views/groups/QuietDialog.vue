@@ -39,7 +39,11 @@ const quiet = useMutation({
     void readHostState()
     open.value = false
     const until = control.temporary_quiet?.until
-    toast.success(until ? t('groups.quiet.started', { time: formatDateTime(until, { timeZone: props.timeZone }) }) : t('common.saved'))
+    toast.success(
+      until
+        ? t('groups.quiet.started', { time: formatDateTime(until, { timeZone: props.timeZone }) })
+        : t('common.saved'),
+    )
   },
 })
 watch(open, (value) => {

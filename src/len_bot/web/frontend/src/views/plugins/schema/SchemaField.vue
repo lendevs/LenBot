@@ -17,15 +17,24 @@ import ScenePicker from './ScenePicker.vue'
 import { fieldLabel, rangeText, segmented, wideField, type DraftValue } from './config'
 
 const model = defineModel<DraftValue>({ required: true })
-const props = defineProps<{ field: ConfigField; sceneChoices: string[]; configured?: boolean; error?: string | null }>()
+const props = defineProps<{
+  field: ConfigField
+  sceneChoices: string[]
+  configured?: boolean
+  error?: string | null
+}>()
 
 const { t } = useI18n()
 const reveal = ref(false)
 const kept = computed(() => props.field.type === 'secret' && props.configured)
 const options = computed(() => props.field.options ?? [])
 // SegmentedControl takes text values; number choices stay in a dropdown.
-const asSegments = computed(() => segmented(props.field) && options.value.every((option) => typeof option.value === 'string'))
-const placeholder = computed(() => (kept.value ? t('plugins.form.secretKept') : (props.field.placeholder ?? undefined)))
+const asSegments = computed(
+  () => segmented(props.field) && options.value.every((option) => typeof option.value === 'string'),
+)
+const placeholder = computed(() =>
+  kept.value ? t('plugins.form.secretKept') : (props.field.placeholder ?? undefined),
+)
 // Steppers help on a short integer range; for wide or decimal ranges they are noise.
 const steppers = computed(
   () =>
@@ -43,7 +52,9 @@ const choice = computed({
 })
 const flag = computed({ get: () => model.value as boolean, set: (value: boolean) => (model.value = value) })
 const segment = computed({ get: () => model.value as string, set: (value: string) => (model.value = value) })
-const segments = computed(() => options.value.map((option) => ({ value: String(option.value), label: option.label })))
+const segments = computed(() =>
+  options.value.map((option) => ({ value: String(option.value), label: option.label })),
+)
 const scenes = computed({
   get: () => model.value as string | string[] | null,
   set: (value) => (model.value = value as DraftValue),
@@ -69,8 +80,18 @@ const scenes = computed({
     <Select v-else-if="field.options" v-model="choice" :options="options" />
     <ScenePicker v-else-if="field.type === 'scene'" v-model="scenes" :choices="sceneChoices" single />
     <ScenePicker v-else-if="field.type === 'scene_list'" v-model="scenes" :choices="sceneChoices" />
-    <TagInput v-else-if="field.type === 'string_list'" v-model="list" :delimiter="/\n/" :placeholder="t('plugins.form.addItem')" />
-    <Textarea v-else-if="field.type === 'string' && field.multiline" v-model="text" :rows="3" :placeholder="placeholder" />
+    <TagInput
+      v-else-if="field.type === 'string_list'"
+      v-model="list"
+      :delimiter="/\n/"
+      :placeholder="t('plugins.form.addItem')"
+    />
+    <Textarea
+      v-else-if="field.type === 'string' && field.multiline"
+      v-model="text"
+      :rows="3"
+      :placeholder="placeholder"
+    />
     <Textarea v-else-if="field.type === 'object_list'" v-model="text" :rows="5" mono placeholder="[]" />
     <NumberInput
       v-else-if="field.type === 'integer' || field.type === 'number'"
@@ -101,6 +122,12 @@ const scenes = computed({
         />
       </template>
     </Input>
-    <Input v-else v-model="text" :type="field.type === 'url' ? 'url' : 'text'" :mono="field.type === 'path' || field.type === 'url'" :placeholder="placeholder" />
+    <Input
+      v-else
+      v-model="text"
+      :type="field.type === 'url' ? 'url' : 'text'"
+      :mono="field.type === 'path' || field.type === 'url'"
+      :placeholder="placeholder"
+    />
   </Field>
 </template>

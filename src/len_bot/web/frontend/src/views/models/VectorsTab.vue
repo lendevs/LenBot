@@ -25,7 +25,11 @@ const errorsAt = (place: string) => form.problems.value.filter((item) => item.pl
     <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-5">
       <h3 class="text-base font-semibold text-ink">{{ t('models.vectors.memory') }}</h3>
       <template v-if="form.memoryOn.value">
-        <EmbeddingField v-model="form.draft.value!.memory_embedding" :providers="providers" :label="t('models.vectors.use')" />
+        <EmbeddingField
+          v-model="form.draft.value!.memory_embedding"
+          :providers="providers"
+          :label="t('models.vectors.use')"
+        />
         <p v-for="item in errorsAt('memory')" :key="item.text" class="text-sm text-error">{{ item.text }}</p>
       </template>
       <p v-else class="text-sm text-muted">{{ t('models.vectors.memoryOff') }}</p>
@@ -33,13 +37,19 @@ const errorsAt = (place: string) => form.problems.value.filter((item) => item.pl
     <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-5">
       <h3 class="text-base font-semibold text-ink">{{ t('models.vectors.learning') }}</h3>
       <p v-if="!learning.length" class="text-sm text-muted">{{ t('models.vectors.learningOff') }}</p>
-      <div v-for="scene in learning" :key="scene" class="flex flex-col gap-3 border-t border-line pt-4 first-of-type:border-t-0 first-of-type:pt-0">
+      <div
+        v-for="scene in learning"
+        :key="scene"
+        class="flex flex-col gap-3 border-t border-line pt-4 first-of-type:border-t-0 first-of-type:pt-0"
+      >
         <EmbeddingField
           v-model="form.draft.value!.learning_embeddings[scene]"
           :providers="providers"
           :label="groupLabel(scene)"
         />
-        <p v-for="item in errorsAt(`learning.${scene}`)" :key="item.text" class="text-sm text-error">{{ item.text }}</p>
+        <p v-for="item in errorsAt(`learning.${scene}`)" :key="item.text" class="text-sm text-error">
+          {{ item.text }}
+        </p>
       </div>
     </section>
   </div>

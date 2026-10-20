@@ -15,7 +15,12 @@ defineProps<{ title: string }>()
       @click="open = !open"
     >
       <span class="text-sm font-semibold text-ink-2">{{ title }}</span>
-      <ChevronDown :size="18" class="text-subtle transition-transform" :class="open && 'rotate-180'" aria-hidden="true" />
+      <ChevronDown
+        :size="18"
+        class="text-subtle transition-transform"
+        :class="open && 'rotate-180'"
+        aria-hidden="true"
+      />
     </button>
     <div v-if="open" class="mt-4 grid animate-rise gap-x-5 gap-y-5 sm:grid-cols-2">
       <slot />

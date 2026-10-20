@@ -52,7 +52,9 @@ const recent = computed(() => health.value?.errors_last_hour ?? 0)
         >
           {{ name }}
         </button>
-        <p v-if="versionOf(snapshot, name)" class="truncate text-xs text-subtle tabular">v{{ versionOf(snapshot, name) }}</p>
+        <p v-if="versionOf(snapshot, name)" class="truncate text-xs text-subtle tabular">
+          v{{ versionOf(snapshot, name) }}
+        </p>
       </div>
       <Badge :tone="statusTone(status)" dot>{{ t(`plugins.status.${status}`) }}</Badge>
     </div>
@@ -63,12 +65,16 @@ const recent = computed(() => health.value?.errors_last_hour ?? 0)
         {{ groups ? t('plugins.card.groups', { n: groups }, groups) : t('plugins.card.noGroups') }}
       </span>
       <span v-if="features" class="inline-flex items-center gap-1">
-        <Wrench :size="14" aria-hidden="true" />{{ t('plugins.card.features', { n: features }, features) }}
+        <Wrench :size="14" aria-hidden="true" />
+        {{ t('plugins.card.features', { n: features }, features) }}
       </span>
       <span v-if="recent" class="inline-flex items-center gap-1 text-error">
-        <CircleAlert :size="14" aria-hidden="true" />{{ t('plugins.card.errors', { n: recent }, recent) }}
+        <CircleAlert :size="14" aria-hidden="true" />
+        {{ t('plugins.card.errors', { n: recent }, recent) }}
       </span>
-      <Badge v-if="isolationOf(snapshot, name) === 'process'">{{ t('plugins.isolation.processShort') }}</Badge>
+      <Badge v-if="isolationOf(snapshot, name) === 'process'">
+        {{ t('plugins.isolation.processShort') }}
+      </Badge>
       <Badge v-if="permissions === null" tone="warning">{{ t('plugins.permissions.undeclaredShort') }}</Badge>
     </div>
   </article>

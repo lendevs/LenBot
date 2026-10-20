@@ -35,7 +35,10 @@ const mode = computed({
   set: (value: 'direct' | 'join') => (form.draft.scene.attention.only_direct = value === 'direct'),
 })
 const modes = computed(() =>
-  (['direct', 'join'] as const).map((value) => ({ value, label: t(`groups.settings.participation.modes.${value}`) })),
+  (['direct', 'join'] as const).map((value) => ({
+    value,
+    label: t(`groups.settings.participation.modes.${value}`),
+  })),
 )
 const timezone = computed({
   get: () => form.draft.scene.timezone ?? '',
@@ -90,7 +93,12 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
         :aria-expanded="details"
         @click="details = !details"
       >
-        <ChevronDown :size="15" class="transition-transform" :class="details && 'rotate-180'" aria-hidden="true" />
+        <ChevronDown
+          :size="15"
+          class="transition-transform"
+          :class="details && 'rotate-180'"
+          aria-hidden="true"
+        />
         {{ t('groups.settings.participation.details') }}
       </button>
     </div>
@@ -110,7 +118,7 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
           :max="item.max"
           :step="item.step ?? 1"
           :unit="item.seconds ? t('groups.settings.seconds') : undefined"
-          @update:model-value="(value) => ((form.draft.scene.attention[item.key] = value as number))"
+          @update:model-value="(value) => (form.draft.scene.attention[item.key] = value as number)"
         />
       </Field>
     </template>

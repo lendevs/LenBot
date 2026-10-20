@@ -45,7 +45,10 @@ const shown = computed(() => {
       />
       <IconButton :icon="Plus" :label="t('groups.add')" variant="secondary" @click="emit('add')" />
     </div>
-    <nav :aria-label="t('groups.list')" class="-mx-1 flex min-h-0 flex-col gap-0.5 overflow-y-auto px-1 scrollbar-thin">
+    <nav
+      :aria-label="t('groups.list')"
+      class="-mx-1 flex min-h-0 flex-col gap-0.5 overflow-y-auto px-1 scrollbar-thin"
+    >
       <button
         v-for="item in shown"
         :key="item.scene"
@@ -59,7 +62,10 @@ const shown = computed(() => {
             <Avatar :name="groupLabel(item.scene)" shape="square" :size="36" />
           </span>
           <span class="absolute -right-0.5 -bottom-0.5 flex rounded-full bg-page p-0.5">
-            <StatusDot :tone="statusTones[item.chat_status.status]" :label="statusLabel(item.chat_status, item.timezone)" />
+            <StatusDot
+              :tone="statusTones[item.chat_status.status]"
+              :label="statusLabel(item.chat_status, item.timezone)"
+            />
           </span>
         </span>
         <span class="grid min-w-0 flex-1 leading-snug">
@@ -73,7 +79,9 @@ const shown = computed(() => {
             <template v-if="item.chat_status.status !== 'chatting'">
               {{ t(`groups.status.${item.chat_status.status}`) }} ·
             </template>
-            {{ [titles[item.scene] ? number(item.scene) : '', item.persona.name].filter(Boolean).join(' · ') }}
+            {{
+              [titles[item.scene] ? number(item.scene) : '', item.persona.name].filter(Boolean).join(' · ')
+            }}
           </span>
         </span>
       </button>

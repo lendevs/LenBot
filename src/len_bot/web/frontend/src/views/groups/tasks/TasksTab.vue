@@ -41,7 +41,11 @@ const selected = computed({
 })
 async function switchTo(value: View) {
   if (value === view.value) return
-  if (dirty[view.value] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) return
+  if (
+    dirty[view.value] &&
+    !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))
+  )
+    return
   dirty[view.value] = false
   void router.replace({ query: value === 'tasks' ? {} : { tab: value } })
 }
@@ -49,7 +53,12 @@ async function switchTo(value: View) {
 
 <template>
   <div class="flex min-w-0 flex-col gap-5">
-    <SegmentedControl v-model="selected" :options="views" :label="t('groups.tabs.tasks')" class="self-start" />
+    <SegmentedControl
+      v-model="selected"
+      :options="views"
+      :label="t('groups.tabs.tasks')"
+      class="self-start"
+    />
     <TaskBoard
       v-if="view === 'tasks'"
       :scene="scene"

@@ -47,9 +47,14 @@ const sections = computed<Section[]>(() => {
       groups.get(field.group)!.fields.push(field)
     }
   }
-  return [...ungrouped, ...groups.values()].map((section, index) => ({ ...section, id: `${prefix}-${index}` }))
+  return [...ungrouped, ...groups.values()].map((section, index) => ({
+    ...section,
+    id: `${prefix}-${index}`,
+  }))
 })
-const undeclared = computed(() => props.fields.filter((field) => field.type === 'object_list' && !field.fields.length))
+const undeclared = computed(() =>
+  props.fields.filter((field) => field.type === 'object_list' && !field.fields.length),
+)
 const set = (key: string, value: DraftValue) => (values.value = { ...values.value, [key]: value })
 const rows = (key: string) => values.value[key] as Row[]
 
@@ -90,7 +95,11 @@ function jump(id: string) {
         :key="section.id"
         type="button"
         class="h-8 cursor-pointer truncate border-l-2 px-3 text-left text-sm transition-colors"
-        :class="current === section.id ? 'border-brand font-medium text-ink' : 'border-line text-muted hover:text-ink'"
+        :class="
+          current === section.id
+            ? 'border-brand font-medium text-ink'
+            : 'border-line text-muted hover:text-ink'
+        "
         @click="jump(section.id)"
       >
         {{ section.title || t('plugins.form.general') }}
@@ -106,7 +115,11 @@ function jump(id: string) {
         <header v-if="section.title" class="flex items-center gap-1.5">
           <h3 class="text-base font-semibold text-ink">{{ section.title }}</h3>
           <Tooltip v-if="section.description" :text="section.description">
-            <button type="button" class="inline-flex cursor-help rounded-sm text-subtle hover:text-ink-2 focus-visible:focus-ring" :aria-label="section.description">
+            <button
+              type="button"
+              class="inline-flex cursor-help rounded-sm text-subtle hover:text-ink-2 focus-visible:focus-ring"
+              :aria-label="section.description"
+            >
               <Info :size="14" aria-hidden="true" />
             </button>
           </Tooltip>
@@ -126,7 +139,11 @@ function jump(id: string) {
               <div class="flex items-center gap-1.5">
                 <h4 class="text-sm font-medium text-ink-2">{{ fieldLabel(field) }}</h4>
                 <Tooltip v-if="field.description" :text="field.description">
-                  <button type="button" class="inline-flex cursor-help rounded-sm text-subtle hover:text-ink-2 focus-visible:focus-ring" :aria-label="field.description">
+                  <button
+                    type="button"
+                    class="inline-flex cursor-help rounded-sm text-subtle hover:text-ink-2 focus-visible:focus-ring"
+                    :aria-label="field.description"
+                  >
                     <Info :size="14" aria-hidden="true" />
                   </button>
                 </Tooltip>
@@ -152,7 +169,9 @@ function jump(id: string) {
         </div>
       </section>
       <p v-if="undeclared.length" class="text-xs text-muted">
-        {{ t('plugins.form.undeclared', { names: undeclared.map(fieldLabel).join(t('personas.separator')) }) }}
+        {{
+          t('plugins.form.undeclared', { names: undeclared.map(fieldLabel).join(t('personas.separator')) })
+        }}
       </p>
     </div>
   </div>

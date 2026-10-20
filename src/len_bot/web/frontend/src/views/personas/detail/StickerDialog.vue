@@ -29,7 +29,11 @@ const description = ref(props.entry?.description ?? '')
 const emotions = ref([...(props.entry?.emotions ?? [])])
 const tags = ref([...(props.entry?.tags ?? [])])
 const image = computed(
-  () => preview.value ?? (props.entry ? personasApi.stickerImage(props.persona, props.listing.saved_path, props.entry.file) : null),
+  () =>
+    preview.value ??
+    (props.entry
+      ? personasApi.stickerImage(props.persona, props.listing.saved_path, props.entry.file)
+      : null),
 )
 const ready = computed(() => Boolean(description.value.trim() && (props.entry || file.value)))
 
@@ -40,10 +44,16 @@ const save = useMutation({
     let current = props.listing.entries ?? []
     let name = props.entry?.file
     if (!name) {
-      if (props.listing.entries === null) current = (await personasApi.saveStickers(props.persona, directory, [])).entries ?? []
+      if (props.listing.entries === null)
+        current = (await personasApi.saveStickers(props.persona, directory, [])).entries ?? []
       name = (await personasApi.uploadSticker(props.persona, directory, file.value!)).file
     }
-    const entry = { file: name, description: description.value.trim(), emotions: emotions.value, tags: tags.value }
+    const entry = {
+      file: name,
+      description: description.value.trim(),
+      emotions: emotions.value,
+      tags: tags.value,
+    }
     const known = current.some((item) => item.file === name)
     return personasApi.saveStickers(
       props.persona,
@@ -89,11 +99,18 @@ const open = computed({
             aria-hidden="true"
             @change="chosen"
           />
-          <Button size="sm" :icon="ImageUp" :disabled="save.isPending.value" class="self-start" @click="picker?.click()">
+          <Button
+            size="sm"
+            :icon="ImageUp"
+            :disabled="save.isPending.value"
+            class="self-start"
+            @click="picker?.click()"
+          >
             {{ t('personas.detail.stickers.choose') }}
           </Button>
           <span v-if="file" class="truncate text-sm text-ink-2">
-            {{ file.name }} · <span class="tabular">{{ formatBytes(file.size) }}</span>
+            {{ file.name }} ·
+            <span class="tabular">{{ formatBytes(file.size) }}</span>
           </span>
           <span v-else class="text-xs text-subtle">PNG · JPG · GIF · WebP · 10 MB</span>
         </div>
@@ -107,11 +124,23 @@ const open = computed({
       <Field :label="t('personas.detail.stickers.tags')">
         <TagInput v-model="tags" />
       </Field>
-      <ErrorNote v-if="save.isError.value" :title="t('personas.detail.stickers.saveFailed')" :error="save.error.value" />
+      <ErrorNote
+        v-if="save.isError.value"
+        :title="t('personas.detail.stickers.saveFailed')"
+        :error="save.error.value"
+      />
     </form>
     <template #footer>
-      <Button variant="ghost" :disabled="save.isPending.value" @click="emit('close')">{{ t('common.cancel') }}</Button>
-      <Button variant="primary" type="submit" form="sticker-form" :loading="save.isPending.value" :disabled="!ready">
+      <Button variant="ghost" :disabled="save.isPending.value" @click="emit('close')">
+        {{ t('common.cancel') }}
+      </Button>
+      <Button
+        variant="primary"
+        type="submit"
+        form="sticker-form"
+        :loading="save.isPending.value"
+        :disabled="!ready"
+      >
         {{ t('common.save') }}
       </Button>
     </template>

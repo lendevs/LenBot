@@ -28,9 +28,14 @@ const storage = useQuery({
   enabled: asked,
 })
 const value = computed(() => storage.data.value)
-const temporaryBytes = computed(() => value.value?.temporary.reduce((sum, item) => sum + item.file_bytes, 0) ?? 0)
+const temporaryBytes = computed(
+  () => value.value?.temporary.reduce((sum, item) => sum + item.file_bytes, 0) ?? 0,
+)
 const leftover = computed(
-  () => value.value && finished(value.value.task.status) && (value.value.task.container || value.value.task.browser_active),
+  () =>
+    value.value &&
+    finished(value.value.task.status) &&
+    (value.value.task.container || value.value.task.browser_active),
 )
 
 const cleaning = ref<CleanupOperation | null>(null)
@@ -60,12 +65,22 @@ async function closeEnvironment() {
     <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
       <HardDrive :size="16" class="text-subtle" aria-hidden="true" />
       {{ t('groups.tasks.space.title') }}
-      <Button size="sm" variant="ghost" class="ml-auto" :loading="storage.isFetching.value" @click="asked ? storage.refetch() : (asked = true)">
+      <Button
+        size="sm"
+        variant="ghost"
+        class="ml-auto"
+        :loading="storage.isFetching.value"
+        @click="asked ? storage.refetch() : (asked = true)"
+      >
         {{ t(asked ? 'groups.tasks.space.remeasure' : 'groups.tasks.space.measure') }}
       </Button>
     </h3>
     <Skeleton v-if="asked && storage.isPending.value" :lines="3" />
-    <ErrorNote v-else-if="storage.isError.value" :title="t('groups.tasks.space.storageFailed')" :error="storage.error.value" />
+    <ErrorNote
+      v-else-if="storage.isError.value"
+      :title="t('groups.tasks.space.storageFailed')"
+      :error="storage.error.value"
+    />
     <template v-else-if="value">
       <p class="text-sm text-ink-2">{{ t(`groups.tasks.space.continuation.${value.continuation}`) }}</p>
       <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-1 text-sm">
@@ -100,7 +115,13 @@ async function closeEnvironment() {
           <dt class="text-muted">{{ t('groups.tasks.space.lastCleanup') }}</dt>
           <dd class="text-ink">
             {{ formatDateTime(value.last_cleanup.created, { timeZone }) }} ·
-            {{ t(value.last_cleanup.complete === false ? 'groups.tasks.space.incomplete' : 'groups.tasks.space.complete') }}
+            {{
+              t(
+                value.last_cleanup.complete === false
+                  ? 'groups.tasks.space.incomplete'
+                  : 'groups.tasks.space.complete',
+              )
+            }}
           </dd>
         </template>
       </dl>
@@ -111,7 +132,9 @@ async function closeEnvironment() {
       />
       <div v-if="value.cleanable || leftover" class="flex flex-wrap gap-2">
         <template v-if="value.cleanable">
-          <Button size="sm" @click="cleaning = 'temporary'">{{ t('groups.tasks.space.cleanup.temporary') }}</Button>
+          <Button size="sm" @click="cleaning = 'temporary'">
+            {{ t('groups.tasks.space.cleanup.temporary') }}
+          </Button>
           <Button size="sm" variant="danger-ghost" @click="cleaning = 'environment'">
             {{ t('groups.tasks.space.cleanup.environment') }}
           </Button>
@@ -120,7 +143,11 @@ async function closeEnvironment() {
           {{ t('groups.tasks.space.close') }}
         </Button>
       </div>
-      <ErrorNote v-if="close.isError.value" :title="t('groups.tasks.browser.closeFailed')" :error="close.error.value" />
+      <ErrorNote
+        v-if="close.isError.value"
+        :title="t('groups.tasks.browser.closeFailed')"
+        :error="close.error.value"
+      />
     </template>
     <CleanupDialog
       v-if="cleaning"

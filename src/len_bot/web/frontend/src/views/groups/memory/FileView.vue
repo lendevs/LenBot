@@ -49,7 +49,9 @@ watch(original, (value) => (content.value = value), { immediate: true })
 const dirty = computed(
   () =>
     editing.value &&
-    (content.value !== original.value || reason.value !== '' || (props.path === null && newPath.value !== initialPath)),
+    (content.value !== original.value ||
+      reason.value !== '' ||
+      (props.path === null && newPath.value !== initialPath)),
 )
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
@@ -72,7 +74,8 @@ const save = useMutation({
   },
 })
 async function cancel() {
-  if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) return
+  if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+    return
   if (props.path === null) return emit('close')
   content.value = original.value
   reason.value = ''
@@ -110,9 +113,15 @@ function adopted(result: { target: string; source_removed: boolean }) {
     <Field :label="t('groups.memory.file.reason')">
       <Input v-model="reason" />
     </Field>
-    <ErrorNote v-if="save.isError.value" :title="t('groups.memory.file.saveFailed')" :error="save.error.value" />
+    <ErrorNote
+      v-if="save.isError.value"
+      :title="t('groups.memory.file.saveFailed')"
+      :error="save.error.value"
+    />
     <div class="flex justify-end gap-2">
-      <Button variant="ghost" :disabled="save.isPending.value" @click="cancel">{{ t('common.cancel') }}</Button>
+      <Button variant="ghost" :disabled="save.isPending.value" @click="cancel">
+        {{ t('common.cancel') }}
+      </Button>
       <Button type="submit" variant="primary" :loading="save.isPending.value" :disabled="!canSave">
         {{ t('common.save') }}
       </Button>
@@ -120,11 +129,19 @@ function adopted(result: { target: string; source_removed: boolean }) {
   </form>
   <article v-else class="flex min-w-0 flex-col gap-4">
     <header class="flex flex-wrap items-center gap-2">
-      <h3 class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-ink" :title="path ?? ''">{{ path }}</h3>
+      <h3 class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-ink" :title="path ?? ''">
+        {{ path }}
+      </h3>
       <Button v-if="writable && doc.data.value" size="sm" :icon="Pencil" @click="editing = true">
         {{ t('common.edit') }}
       </Button>
-      <Button v-if="inScene && can('history')" size="sm" variant="ghost" :icon="History" @click="historyOpen = true">
+      <Button
+        v-if="inScene && can('history')"
+        size="sm"
+        variant="ghost"
+        :icon="History"
+        @click="historyOpen = true"
+      >
         {{ t('groups.memory.history.action') }}
       </Button>
       <Button

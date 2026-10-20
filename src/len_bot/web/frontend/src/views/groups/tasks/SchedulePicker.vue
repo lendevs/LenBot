@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import Checkbox from '../../../ui/Checkbox.vue'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
@@ -30,7 +30,10 @@ const modes = computed(() =>
   })),
 )
 const units = computed(() =>
-  (['m', 'h', 'd'] as const).map((value) => ({ value, label: t(`groups.tasks.schedules.dialog.units.${value}`) })),
+  (['m', 'h', 'd'] as const).map((value) => ({
+    value,
+    label: t(`groups.tasks.schedules.dialog.units.${value}`),
+  })),
 )
 /** Monday first, as people read a week. */
 const weekdays = [1, 2, 3, 4, 5, 6, 0]
@@ -67,7 +70,9 @@ function withOffset(day: string, clock: string): string {
   return `${day}T${clock}:00${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
 }
 const clock = computed(() => (/^\d{2}:\d{2}/.test(time.value) ? time.value.slice(0, 5) : ''))
-const once = computed(() => (/^\d{4}-\d{2}-\d{2}$/.test(date.value) && clock.value ? withOffset(date.value, clock.value) : null))
+const once = computed(() =>
+  /^\d{4}-\d{2}-\d{2}$/.test(date.value) && clock.value ? withOffset(date.value, clock.value) : null,
+)
 const value = computed(() => {
   if (mode.value === 'custom') return custom.value.trim()
   if (mode.value === 'every') return every.value && every.value > 0 ? `every ${every.value}${unit.value}` : ''
@@ -87,18 +92,31 @@ function toggle(day: number, on: boolean) {
 
 <template>
   <div class="flex flex-col gap-3">
-    <SegmentedControl v-model="mode" :options="modes" size="sm" :label="t('groups.tasks.schedules.dialog.repeat')" class="self-start" />
+    <SegmentedControl
+      v-model="mode"
+      :options="modes"
+      size="sm"
+      :label="t('groups.tasks.schedules.dialog.repeat')"
+      class="self-start"
+    />
     <div v-if="mode === 'once'" class="grid grid-cols-2 gap-3">
       <Field :label="t('groups.tasks.schedules.dialog.date')"><Input v-model="date" type="date" /></Field>
       <Field :label="t('groups.tasks.schedules.dialog.time')"><Input v-model="time" type="time" /></Field>
     </div>
     <template v-else-if="mode === 'weekly'">
-      <Field :label="t('groups.tasks.schedules.dialog.time')" class="max-w-48"><Input v-model="time" type="time" /></Field>
+      <Field :label="t('groups.tasks.schedules.dialog.time')" class="max-w-48">
+        <Input v-model="time" type="time" />
+      </Field>
       <fieldset class="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0">
-        <legend class="mb-1.5 text-sm font-medium text-ink">{{ t('groups.tasks.schedules.dialog.days') }}</legend>
+        <legend class="mb-1.5 text-sm font-medium text-ink">
+          {{ t('groups.tasks.schedules.dialog.days') }}
+        </legend>
         <div class="flex flex-wrap gap-x-4 gap-y-2">
           <label v-for="day in weekdays" :key="day" class="flex cursor-pointer items-center gap-1.5 text-sm">
-            <Checkbox :model-value="days.includes(day)" @update:model-value="(on) => toggle(day, on === true)" />
+            <Checkbox
+              :model-value="days.includes(day)"
+              @update:model-value="(on) => toggle(day, on === true)"
+            />
             {{ t(`groups.tasks.schedules.weekdays.${day}`) }}
           </label>
         </div>
@@ -119,7 +137,8 @@ function toggle(day: number, on: boolean) {
     <p class="text-xs text-muted">
       {{ t('groups.tasks.schedules.dialog.timezone', { timezone }) }}
       <template v-if="developerDetails && value">
-        · <span class="font-mono">{{ t('groups.tasks.schedules.dialog.saved', { value }) }}</span>
+        ·
+        <span class="font-mono">{{ t('groups.tasks.schedules.dialog.saved', { value }) }}</span>
       </template>
     </p>
   </div>

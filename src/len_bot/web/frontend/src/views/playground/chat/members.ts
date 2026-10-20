@@ -39,7 +39,9 @@ export function useMembers(scene: Ref<string | undefined>, isPrivate: Ref<boolea
       if (!value) return
       if (isPrivate.value) {
         const [platform, , ...rest] = value.split(':')
-        members.value = [{ uid: `${platform}:${rest.join(':')}`, nickname: t('playground.other'), role: 'member' }]
+        members.value = [
+          { uid: `${platform}:${rest.join(':')}`, nickname: t('playground.other'), role: 'member' },
+        ]
       } else
         members.value = read(value) ?? [
           { uid: 'onebot:10001', nickname: t('playground.sampleA'), role: 'member' },
@@ -56,7 +58,9 @@ export function useMembers(scene: Ref<string | undefined>, isPrivate: Ref<boolea
     },
     { deep: true },
   )
-  const speaker = computed(() => members.value.find((member) => member.uid === current.value) ?? members.value[0])
+  const speaker = computed(
+    () => members.value.find((member) => member.uid === current.value) ?? members.value[0],
+  )
 
   function nextUid() {
     const used = new Set(members.value.map((member) => member.uid))

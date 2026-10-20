@@ -11,8 +11,16 @@ const list = useId()
 </script>
 
 <template>
-  <Input v-model="model" mono :placeholder="placeholder" :list="models?.length ? list : undefined" autocomplete="off" />
+  <Input
+    v-model="model"
+    mono
+    :placeholder="placeholder"
+    :list="models?.length ? list : undefined"
+    autocomplete="off"
+  />
   <datalist v-if="models?.length" :id="list">
-    <option v-for="item in models" :key="item.id" :value="item.id">{{ item.name !== item.id ? item.name : '' }}</option>
+    <option v-for="item in models" :key="item.id" :value="item.id">
+      {{ item.name !== item.id ? item.name : '' }}
+    </option>
   </datalist>
 </template>

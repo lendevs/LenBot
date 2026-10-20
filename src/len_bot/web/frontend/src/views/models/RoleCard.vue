@@ -93,7 +93,9 @@ watch(retries, (text) => {
         </Field>
       </div>
       <details class="group">
-        <summary class="flex w-fit cursor-pointer list-none items-center gap-1 text-sm text-muted hover:text-ink [&::-webkit-details-marker]:hidden">
+        <summary
+          class="flex w-fit cursor-pointer list-none items-center gap-1 text-sm text-muted hover:text-ink [&::-webkit-details-marker]:hidden"
+        >
           {{ t('models.roles.advanced') }}
           <ChevronDown :size="16" class="transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
@@ -102,20 +104,39 @@ watch(retries, (text) => {
             <NumberInput v-model="binding.max_output_tokens" :min="1" :steppers="false" unit="tokens" />
           </Field>
           <Field :label="t('models.roles.temperature')">
-            <NumberInput v-model="binding.temperature" :min="0" :max="2" :step="0.1" :placeholder="t('models.roles.providerDefault')" />
+            <NumberInput
+              v-model="binding.temperature"
+              :min="0"
+              :max="2"
+              :step="0.1"
+              :placeholder="t('models.roles.providerDefault')"
+            />
           </Field>
           <Field :label="t('models.roles.timeout')">
-            <NumberInput v-model="binding.timeout_seconds" :min="1" :steppers="false" :unit="t('groups.settings.seconds')" />
+            <NumberInput
+              v-model="binding.timeout_seconds"
+              :min="1"
+              :steppers="false"
+              :unit="t('groups.settings.seconds')"
+            />
           </Field>
           <Field :label="t('models.roles.effort')">
             <Select
               :model-value="binding.reasoning_effort ?? UNSET"
               :options="efforts"
-              @update:model-value="(value) => (binding!.reasoning_effort = !value || value === UNSET ? null : value)"
+              @update:model-value="
+                (value) => (binding!.reasoning_effort = !value || value === UNSET ? null : value)
+              "
             />
           </Field>
           <Field v-if="api === 'anthropic' || api === 'gemini'" :label="t('models.roles.thinking')">
-            <NumberInput v-model="binding.thinking_budget_tokens" :min="0" :steppers="false" unit="tokens" :placeholder="t('common.none')" />
+            <NumberInput
+              v-model="binding.thinking_budget_tokens"
+              :min="0"
+              :steppers="false"
+              unit="tokens"
+              :placeholder="t('common.none')"
+            />
           </Field>
           <Field :label="t('models.roles.retries')">
             <Input v-model="retries" mono :placeholder="t('models.roles.noRetry')" />

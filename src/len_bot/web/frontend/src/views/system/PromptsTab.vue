@@ -25,10 +25,17 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const client = useQueryClient()
-const overview = useQuery({ queryKey: keys.system.prompts(), queryFn: ({ signal }) => systemApi.prompts(signal) })
+const overview = useQuery({
+  queryKey: keys.system.prompts(),
+  queryFn: ({ signal }) => systemApi.prompts(signal),
+})
 const items = computed(() => overview.data.value?.items ?? [])
 const options = computed(() =>
-  items.value.map((item) => ({ value: item.name, label: item.name, meta: item.edited ? t('system.prompts.edited') : undefined })),
+  items.value.map((item) => ({
+    value: item.name,
+    label: item.name,
+    meta: item.edited ? t('system.prompts.edited') : undefined,
+  })),
 )
 const name = computed({
   get: () => {
@@ -69,7 +76,11 @@ const missing = computed(() =>
 function adopt(summary: PromptSummary, text: string) {
   client.setQueryData(keys.system.prompts(), summary)
   const current = document.data.value as PromptDocument
-  client.setQueryData(keys.system.prompt(current.name), { ...current, text, edited: text !== current.default })
+  client.setQueryData(keys.system.prompt(current.name), {
+    ...current,
+    text,
+    edited: text !== current.default,
+  })
   draft.value = text
   void readPendingRestart()
 }
@@ -86,7 +97,10 @@ const restore = useMutation({
     adopt(summary, document.data.value!.default)
     toast.success(t('system.prompts.restored'))
   },
-  onError: (error) => toast.error(t('system.prompts.restoreFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('system.prompts.restoreFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
 async function confirmRestore() {
   const sure = await confirm({
@@ -100,17 +114,33 @@ async function confirmRestore() {
 const keep = useMutation({
   mutationFn: (value: boolean) => systemApi.keepPrompts(value),
   onSuccess: (summary) => client.setQueryData(keys.system.prompts(), summary),
-  onError: (error) => toast.error(t('system.prompts.keepFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('system.prompts.keepFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
-const saveError = computed(() => (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null))
+const saveError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+)
 </script>
 
 <template>
   <Skeleton v-if="overview.isPending.value" :lines="6" />
-  <ErrorNote v-else-if="overview.isError.value" :title="t('system.prompts.readFailed')" :error="overview.error.value" :retry="overview.refetch" />
+  <ErrorNote
+    v-else-if="overview.isError.value"
+    :title="t('system.prompts.readFailed')"
+    :error="overview.error.value"
+    :retry="overview.refetch"
+  />
   <div v-else-if="overview.data.value" class="flex min-w-0 flex-col gap-4">
     <p v-if="outdated" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
-      {{ t('system.prompts.outdated', { n: editedCount, edited: outdated.edited_version, current: outdated.version }, editedCount) }}
+      {{
+        t(
+          'system.prompts.outdated',
+          { n: editedCount, edited: outdated.edited_version, current: outdated.version },
+          editedCount,
+        )
+      }}
     </p>
     <div class="flex min-w-0 flex-col gap-5 rounded-xl border border-line bg-surface p-5">
       <div class="flex flex-wrap items-end justify-between gap-4">
@@ -127,12 +157,24 @@ const saveError = computed(() => (save.isError.value ? describeError(save.error.
         </label>
       </div>
       <Skeleton v-if="name && document.isPending.value" :lines="10" />
-      <ErrorNote v-else-if="document.isError.value" :title="t('system.prompts.fileFailed')" :error="document.error.value" :retry="document.refetch" />
+      <ErrorNote
+        v-else-if="document.isError.value"
+        :title="t('system.prompts.fileFailed')"
+        :error="document.error.value"
+        :retry="document.refetch"
+      />
       <template v-else-if="name && document.data.value">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <p v-if="document.data.value.placeholders.length" class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-muted">
+          <p
+            v-if="document.data.value.placeholders.length"
+            class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-muted"
+          >
             {{ t('system.prompts.placeholders') }}
-            <Badge v-for="key in document.data.value.placeholders" :key="key" :tone="missing.includes(key) ? 'error' : 'neutral'">
+            <Badge
+              v-for="key in document.data.value.placeholders"
+              :key="key"
+              :tone="missing.includes(key) ? 'error' : 'neutral'"
+            >
               <span class="font-mono">${{ key }}</span>
             </Badge>
           </p>

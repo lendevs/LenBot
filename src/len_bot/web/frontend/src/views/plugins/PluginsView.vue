@@ -30,7 +30,11 @@ const view = computed<View>({
   set: (value) => void router.replace({ query: value === 'discover' ? { view: value } : {} }),
 })
 const views = computed(() => [
-  { value: 'installed' as const, label: t('plugins.views.installed'), count: snapshot.value ? pluginNames(snapshot.value).length || undefined : undefined },
+  {
+    value: 'installed' as const,
+    label: t('plugins.views.installed'),
+    count: snapshot.value ? pluginNames(snapshot.value).length || undefined : undefined,
+  },
   { value: 'discover' as const, label: t('plugins.views.discover') },
 ])
 const item = computed(() => (typeof route.query.item === 'string' ? route.query.item : ''))
@@ -42,7 +46,9 @@ function installed(result: PluginsSnapshot) {
   const kind = request.value?.kind
   request.value = null
   const name = result.operation?.name
-  toast.success(result.operation?.needs_config ? t('plugins.install.readyConfigure') : t('plugins.install.ready'))
+  toast.success(
+    result.operation?.needs_config ? t('plugins.install.readyConfigure') : t('plugins.install.ready'),
+  )
   if (name && kind !== 'update') open(name)
 }
 </script>
@@ -59,12 +65,23 @@ function installed(result: PluginsSnapshot) {
     />
     <template v-else-if="snapshot">
       <template v-if="item">
-        <PluginDetail v-if="known" :key="item" :name="item" :snapshot="snapshot" @install="(value) => (request = value)" />
+        <PluginDetail
+          v-if="known"
+          :key="item"
+          :name="item"
+          :snapshot="snapshot"
+          @install="(value) => (request = value)"
+        />
         <EmptyState v-else :icon="Blocks" :title="t('plugins.missing', { name: item })">
           <Button :icon="ArrowLeft" :to="{ query: {} }">{{ t('plugins.all') }}</Button>
         </EmptyState>
       </template>
-      <DiscoverView v-else-if="view === 'discover'" :snapshot="snapshot" @open="open" @install="(value) => (request = value)" />
+      <DiscoverView
+        v-else-if="view === 'discover'"
+        :snapshot="snapshot"
+        @open="open"
+        @install="(value) => (request = value)"
+      />
       <InstalledList
         v-else
         :snapshot="snapshot"

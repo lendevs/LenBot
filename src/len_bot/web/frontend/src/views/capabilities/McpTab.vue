@@ -25,7 +25,11 @@ const state = computed(() => mcp.data.value)
 
 const NEW = '+'
 const names = computed(() =>
-  state.value ? [...new Set([...Object.keys(state.value.saved), ...state.value.running.map((item) => item.name)])].sort() : [],
+  state.value
+    ? [
+        ...new Set([...Object.keys(state.value.saved), ...state.value.running.map((item) => item.name)]),
+      ].sort()
+    : [],
 )
 const running = (name: string) => state.value?.running.find((item) => item.name === name)
 const item = computed(() => (typeof route.query.item === 'string' ? route.query.item : null))
@@ -40,7 +44,8 @@ const select = (value: string | null | undefined) =>
 watch(
   () => [item.value, names.value.length],
   () => {
-    if (state.value && item.value && item.value !== NEW && !names.value.includes(item.value)) select(undefined)
+    if (state.value && item.value && item.value !== NEW && !names.value.includes(item.value))
+      select(undefined)
   },
 )
 const subtitle = (name: string) => {
@@ -55,7 +60,12 @@ const subtitle = (name: string) => {
 
 <template>
   <Skeleton v-if="mcp.isPending.value" :lines="6" />
-  <ErrorNote v-else-if="mcp.isError.value" :title="t('capabilities.mcp.readFailed')" :error="mcp.error.value" :retry="mcp.refetch" />
+  <ErrorNote
+    v-else-if="mcp.isError.value"
+    :title="t('capabilities.mcp.readFailed')"
+    :error="mcp.error.value"
+    :retry="mcp.refetch"
+  />
   <div v-else-if="state" class="grid min-w-0 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
     <section v-if="wide || selected === undefined" class="flex min-w-0 flex-col gap-3">
       <div class="flex items-center justify-between gap-2">

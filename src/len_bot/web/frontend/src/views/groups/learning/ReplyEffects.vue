@@ -46,7 +46,10 @@ const list = usePagedList<ReplyEffect, Filter>(
   'all',
 )
 const filters = computed(() =>
-  (['all', 'attention'] as const).map((value) => ({ value, label: t(`groups.learning.effects.filters.${value}`) })),
+  (['all', 'attention'] as const).map((value) => ({
+    value,
+    label: t(`groups.learning.effects.filters.${value}`),
+  })),
 )
 const open = ref<number | null>(null)
 const detail = useQuery({
@@ -66,7 +69,9 @@ const detail = useQuery({
       :retry="summary.refetch"
     />
     <template v-else-if="summary.data.value">
-      <p v-if="!summary.data.value.enabled" class="text-sm text-muted">{{ t('groups.learning.effects.off') }}</p>
+      <p v-if="!summary.data.value.enabled" class="text-sm text-muted">
+        {{ t('groups.learning.effects.off') }}
+      </p>
       <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile
           v-for="reaction in reactions"
@@ -76,7 +81,12 @@ const detail = useQuery({
         />
       </div>
       <p class="text-xs text-subtle">
-        {{ t('groups.learning.effects.samples', { n: summary.data.value.distribution.samples, days: summary.data.value.days }) }}
+        {{
+          t('groups.learning.effects.samples', {
+            n: summary.data.value.distribution.samples,
+            days: summary.data.value.days,
+          })
+        }}
       </p>
     </template>
 
@@ -106,15 +116,33 @@ const detail = useQuery({
             @click="open = open === item.id ? null : item.id"
           >
             <Badge :tone="tones[item.state]">{{ t(`groups.learning.effects.states.${item.state}`) }}</Badge>
-            <span class="min-w-0 flex-1 truncate text-ink-2">{{ item.reason || item.channels.map(labels.channel).join(' · ') }}</span>
-            <time class="shrink-0 text-xs text-subtle tabular">{{ formatDateTime(item.first_sent_at, { timeZone }) }}</time>
-            <ChevronDown :size="15" class="shrink-0 text-muted transition-transform" :class="open === item.id && 'rotate-180'" aria-hidden="true" />
+            <span class="min-w-0 flex-1 truncate text-ink-2">
+              {{ item.reason || item.channels.map(labels.channel).join(' · ') }}
+            </span>
+            <time class="shrink-0 text-xs text-subtle tabular">
+              {{ formatDateTime(item.first_sent_at, { timeZone }) }}
+            </time>
+            <ChevronDown
+              :size="15"
+              class="shrink-0 text-muted transition-transform"
+              :class="open === item.id && 'rotate-180'"
+              aria-hidden="true"
+            />
           </button>
           <div v-if="open === item.id" class="flex flex-col gap-3 pb-4 pl-1 text-sm">
             <Skeleton v-if="detail.isPending.value" :lines="3" />
-            <ErrorNote v-else-if="detail.isError.value" :title="t('groups.learning.readFailed')" :error="detail.error.value" :retry="detail.refetch" />
+            <ErrorNote
+              v-else-if="detail.isError.value"
+              :title="t('groups.learning.readFailed')"
+              :error="detail.error.value"
+              :retry="detail.refetch"
+            />
             <template v-else-if="detail.data.value">
-              <div v-for="part in ['before', 'expression', 'followups'] as const" :key="part" class="flex flex-col gap-1">
+              <div
+                v-for="part in ['before', 'expression', 'followups'] as const"
+                :key="part"
+                class="flex flex-col gap-1"
+              >
                 <p class="text-xs font-medium text-muted">{{ t(`groups.learning.effects.parts.${part}`) }}</p>
                 <p v-if="!detail.data.value[part].length" class="text-subtle">{{ t('common.none') }}</p>
                 <pre
@@ -122,7 +150,7 @@ const detail = useQuery({
                   :key="message.record"
                   class="rounded-md px-3 py-2 font-mono text-xs leading-5 break-words whitespace-pre-wrap"
                   :class="part === 'expression' ? 'bg-brand-soft text-ink' : 'bg-fill text-ink-2'"
-                >{{ message.rendered ?? t('groups.learning.effects.gone') }}</pre>
+                  >{{ message.rendered ?? t('groups.learning.effects.gone') }}</pre>
               </div>
             </template>
           </div>

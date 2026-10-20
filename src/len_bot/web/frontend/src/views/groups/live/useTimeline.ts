@@ -20,7 +20,10 @@ type Data = InfiniteData<TimelinePage, string | undefined>
 export function mergeNewest(data: Data, fresh: TimelinePage): Data {
   const [first] = data.pages
   if (!first || !fresh.items.length) return data
-  const newestLoaded = data.pages.flatMap((page) => page.items).sort(compareItems).at(-1)
+  const newestLoaded = data.pages
+    .flatMap((page) => page.items)
+    .sort(compareItems)
+    .at(-1)
   const oldestFresh = fresh.items[0]
   if (newestLoaded && fresh.next_before !== null && compareItems(oldestFresh, newestLoaded) > 0) {
     return { pages: [fresh], pageParams: [undefined] }

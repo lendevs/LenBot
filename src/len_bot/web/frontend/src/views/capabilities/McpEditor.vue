@@ -6,7 +6,7 @@ import { ArrowLeft, Plug, PlugZap, Plus, Trash2, X } from '@lucide/vue'
 import { capabilitiesApi, type McpService, type McpState } from '../../api/capabilities'
 import { keys } from '../../api/query'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
-import { developerDetails } from '../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../composables/useDeveloperMode'
 import { readPendingRestart } from '../../api/hostStore'
 import { formatDateTime } from '../../i18n/format'
 import { groupLabel } from '../../layouts/shell/scenes'
@@ -71,7 +71,11 @@ function draftOf(name: string | null): Draft {
     args: transport?.type === 'stdio' ? transport.args.join('\n') : '',
     cwd: transport?.type === 'stdio' ? transport.cwd : '.',
     url: transport?.type === 'http' ? transport.url : '',
-    pairs: Object.entries(values ?? {}).map(([key, value]) => ({ key, value: value ?? '', kept: value === null })),
+    pairs: Object.entries(values ?? {}).map(([key, value]) => ({
+      key,
+      value: value ?? '',
+      kept: value === null,
+    })),
   }
 }
 const initial = computed(() => draftOf(props.name))
@@ -84,7 +88,9 @@ watch(initial, (next, previous) => {
 /** Set once this editor saved or removed its service, right before the list selects another one. */
 const finished = ref(false)
 const dirty = computed(
-  () => !finished.value && (props.name === null ? Boolean(draft.value.name.trim()) : !same(draft.value, initial.value)),
+  () =>
+    !finished.value &&
+    (props.name === null ? Boolean(draft.value.name.trim()) : !same(draft.value, initial.value)),
 )
 useUnsavedChanges(dirty, { keep: ['tab'] })
 
@@ -124,7 +130,16 @@ function body(): McpService {
     max_response_bytes: value.max_response_bytes ?? 1048576,
     transport:
       value.type === 'stdio'
-        ? { type: 'stdio', command: value.command.trim(), args: value.args.split('\n').map((item) => item.trim()).filter(Boolean), cwd: value.cwd.trim(), env: pairs }
+        ? {
+            type: 'stdio',
+            command: value.command.trim(),
+            args: value.args
+              .split('\n')
+              .map((item) => item.trim())
+              .filter(Boolean),
+            cwd: value.cwd.trim(),
+            env: pairs,
+          }
         : { type: 'http', url: value.url.trim(), headers: pairs },
   }
 }
@@ -149,7 +164,8 @@ const remove = useMutation({
     finished.value = true
     emit('removed')
   },
-  onError: (error) => toast.error(t('capabilities.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('capabilities.failed'), { detail: describeError(error, t('ui.error.network')).message }),
 })
 async function confirmRemove() {
   const sure = await confirm({
@@ -161,16 +177,22 @@ async function confirmRemove() {
   if (sure) remove.mutate()
 }
 
-const running = computed(() => (props.name ? props.state.running.find((item) => item.name === props.name) : undefined))
+const running = computed(() =>
+  props.name ? props.state.running.find((item) => item.name === props.name) : undefined,
+)
 const control = useMutation({
   mutationFn: (action: 'connect' | 'disconnect') =>
-    action === 'connect' ? capabilitiesApi.connectMcp(props.name!) : capabilitiesApi.disconnectMcp(props.name!),
+    action === 'connect'
+      ? capabilitiesApi.connectMcp(props.name!)
+      : capabilitiesApi.disconnectMcp(props.name!),
   onSuccess: (state, action) => {
     client.setQueryData(keys.host.mcp(), state)
-    if (state.result?.status === 'failed') toast.error(t('capabilities.mcp.connectFailed'), { detail: state.result.error ?? undefined })
+    if (state.result?.status === 'failed')
+      toast.error(t('capabilities.mcp.connectFailed'), { detail: state.result.error ?? undefined })
     else toast.success(t(`capabilities.mcp.${action}ed`))
   },
-  onError: (error) => toast.error(t('capabilities.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('capabilities.failed'), { detail: describeError(error, t('ui.error.network')).message }),
 })
 async function reconnect() {
   const sure = await confirm({
@@ -188,7 +210,9 @@ const transports = computed(() => [
 ])
 const setPair = (index: number, patch: Partial<Pair>) =>
   (draft.value.pairs = draft.value.pairs.map((pair, at) => (at === index ? { ...pair, ...patch } : pair)))
-const saveError = computed(() => (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null))
+const saveError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+)
 </script>
 
 <template>
@@ -200,18 +224,33 @@ const saveError = computed(() => (save.isError.value ? describeError(save.error.
       <h2 class="min-w-0 flex-1 truncate text-base font-semibold" :class="!wide && 'sr-only'">
         {{ name ?? t('capabilities.mcp.add') }}
       </h2>
-      <Button v-if="name" size="sm" variant="danger-ghost" :icon="Trash2" :loading="remove.isPending.value" @click="confirmRemove">
+      <Button
+        v-if="name"
+        size="sm"
+        variant="danger-ghost"
+        :icon="Trash2"
+        :loading="remove.isPending.value"
+        @click="confirmRemove"
+      >
         {{ t('capabilities.mcp.remove') }}
       </Button>
     </div>
 
     <section v-if="running" class="flex flex-col gap-3 rounded-xl border border-line bg-surface p-5">
       <div class="flex flex-wrap items-center gap-2">
-        <Badge :tone="mcpTone(running.status)" dot>{{ t(`capabilities.mcp.status.${running.status}`, running.status) }}</Badge>
+        <Badge :tone="mcpTone(running.status)" dot>
+          {{ t(`capabilities.mcp.status.${running.status}`, running.status) }}
+        </Badge>
         <span class="min-w-0 flex-1 truncate text-sm text-muted">
           {{ running.scenes.map(groupLabel).join(t('personas.separator')) || t('capabilities.mcp.noGroups') }}
         </span>
-        <Button size="sm" :icon="PlugZap" :disabled="running.status === 'disabled'" :loading="control.isPending.value && control.variables.value === 'connect'" @click="reconnect">
+        <Button
+          size="sm"
+          :icon="PlugZap"
+          :disabled="running.status === 'disabled'"
+          :loading="control.isPending.value && control.variables.value === 'connect'"
+          @click="reconnect"
+        >
           {{ t('capabilities.mcp.reconnect') }}
         </Button>
         <Button
@@ -227,42 +266,67 @@ const saveError = computed(() => (save.isError.value ? describeError(save.error.
       </div>
       <ErrorNote v-if="running.error" :title="t('capabilities.mcp.connectFailed')" :error="running.error" />
       <details v-if="running.tools.length">
-        <summary class="cursor-pointer text-sm font-medium text-ink-2">{{ t('capabilities.mcp.tools', { n: running.tools.length }, running.tools.length) }}</summary>
+        <summary class="cursor-pointer text-sm font-medium text-ink-2">
+          {{ t('capabilities.mcp.tools', { n: running.tools.length }, running.tools.length) }}
+        </summary>
         <ul class="mt-2 flex list-none flex-col divide-y divide-line">
-          <li v-for="tool in running.tools" :key="tool.name" class="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2">
+          <li
+            v-for="tool in running.tools"
+            :key="tool.name"
+            class="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2"
+          >
             <code class="rounded-sm bg-fill px-1.5 py-0.5 font-mono text-sm">{{ tool.name }}</code>
             <span class="min-w-0 text-sm text-ink-2">{{ tool.description }}</span>
           </li>
         </ul>
       </details>
       <details v-if="running.errors.length">
-        <summary class="cursor-pointer text-sm font-medium text-error">{{ t('capabilities.mcp.errors', { n: running.errors.length }, running.errors.length) }}</summary>
+        <summary class="cursor-pointer text-sm font-medium text-error">
+          {{ t('capabilities.mcp.errors', { n: running.errors.length }, running.errors.length) }}
+        </summary>
         <ul class="mt-2 flex list-none flex-col gap-2">
           <li v-for="(item, index) in running.errors" :key="index" class="flex flex-col gap-1">
-            <span class="text-xs text-muted tabular">{{ formatDateTime(item.at, { withSeconds: true }) }}</span>
+            <span class="text-xs text-muted tabular">
+              {{ formatDateTime(item.at, { withSeconds: true }) }}
+            </span>
             <CodeBlock :code="item.error" :max-lines="6" />
           </li>
         </ul>
       </details>
       <RawRecord v-if="developerDetails" :label="t('capabilities.mcp.raw')" :code="running" />
     </section>
-    <p v-else-if="name" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">{{ t('capabilities.mcp.notRunning') }}</p>
+    <p v-else-if="name" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
+      {{ t('capabilities.mcp.notRunning') }}
+    </p>
 
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection>
-        <Field v-if="name === null" :label="t('capabilities.mcp.name')" required :error="draft.name ? errors.name : null">
+        <Field
+          v-if="name === null"
+          :label="t('capabilities.mcp.name')"
+          required
+          :error="draft.name ? errors.name : null"
+        >
           <Input v-model="draft.name" mono placeholder="search_docs" autofocus />
         </Field>
         <Field :label="t('capabilities.mcp.enabled')" inline :class="name === null ? '' : 'sm:col-span-2'">
           <Switch v-model="draft.enabled" />
         </Field>
         <Field :label="t('capabilities.mcp.scenes')" wide :error="dirty ? errors.scenes : null">
-          <ScenePicker :model-value="draft.scenes" :choices="state.scenes" @update:model-value="(value) => (draft.scenes = (value as string[] | null) ?? [])" />
+          <ScenePicker
+            :model-value="draft.scenes"
+            :choices="state.scenes"
+            @update:model-value="(value) => (draft.scenes = (value as string[] | null) ?? [])"
+          />
         </Field>
       </FormSection>
       <FormSection :title="t('capabilities.mcp.transport')">
         <div class="sm:col-span-2">
-          <SegmentedControl v-model="draft.type" :options="transports" :label="t('capabilities.mcp.transport')" />
+          <SegmentedControl
+            v-model="draft.type"
+            :options="transports"
+            :label="t('capabilities.mcp.transport')"
+          />
         </div>
         <template v-if="draft.type === 'stdio'">
           <Field :label="t('capabilities.mcp.command')" required :error="errors.command">
@@ -272,16 +336,28 @@ const saveError = computed(() => (save.isError.value ? describeError(save.error.
             <Input v-model="draft.cwd" mono />
           </Field>
           <Field :label="t('capabilities.mcp.args')" wide>
-            <Textarea v-model="draft.args" :rows="2" mono :placeholder="t('capabilities.mcp.argsPlaceholder')" />
+            <Textarea
+              v-model="draft.args"
+              :rows="2"
+              mono
+              :placeholder="t('capabilities.mcp.argsPlaceholder')"
+            />
           </Field>
         </template>
         <Field v-else :label="t('capabilities.mcp.url')" required wide :error="draft.url ? errors.url : null">
           <Input v-model="draft.url" type="url" mono placeholder="http://127.0.0.1:8000/mcp" />
         </Field>
       </FormSection>
-      <FormSection :title="draft.type === 'stdio' ? t('capabilities.mcp.env') : t('capabilities.mcp.headers')" :columns="1">
+      <FormSection
+        :title="draft.type === 'stdio' ? t('capabilities.mcp.env') : t('capabilities.mcp.headers')"
+        :columns="1"
+      >
         <ul v-if="draft.pairs.length" class="flex list-none flex-col gap-2">
-          <li v-for="(pair, index) in draft.pairs" :key="index" class="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-2">
+          <li
+            v-for="(pair, index) in draft.pairs"
+            :key="index"
+            class="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-2"
+          >
             <Input
               :model-value="pair.key"
               mono
@@ -299,25 +375,57 @@ const saveError = computed(() => (save.isError.value ? describeError(save.error.
               :placeholder="pair.kept ? t('plugins.form.secretKept') : t('capabilities.mcp.pairValue')"
               @update:model-value="(value: string) => setPair(index, { value })"
             />
-            <IconButton :icon="X" :label="t('common.delete')" variant="ghost" size="sm" @click="draft.pairs = draft.pairs.filter((_, at) => at !== index)" />
+            <IconButton
+              :icon="X"
+              :label="t('common.delete')"
+              variant="ghost"
+              size="sm"
+              @click="draft.pairs = draft.pairs.filter((_, at) => at !== index)"
+            />
           </li>
         </ul>
         <p v-if="errors.pairs" class="text-xs text-error">{{ errors.pairs }}</p>
         <div>
-          <Button size="sm" variant="ghost" :icon="Plus" class="-ml-2" @click="draft.pairs = [...draft.pairs, { key: '', value: '', kept: false }]">
+          <Button
+            size="sm"
+            variant="ghost"
+            :icon="Plus"
+            class="-ml-2"
+            @click="draft.pairs = [...draft.pairs, { key: '', value: '', kept: false }]"
+          >
             {{ t('capabilities.mcp.addPair') }}
           </Button>
         </div>
       </FormSection>
       <FormSection :title="t('capabilities.mcp.limits')">
         <Field :label="t('capabilities.mcp.timeout')" :error="errors.timeout">
-          <NumberInput v-model="draft.timeout_seconds" :min="0.1" :max="300" :snap="false" :steppers="false" :unit="t('capabilities.seconds')" />
+          <NumberInput
+            v-model="draft.timeout_seconds"
+            :min="0.1"
+            :max="300"
+            :snap="false"
+            :steppers="false"
+            :unit="t('capabilities.seconds')"
+          />
         </Field>
         <Field :label="t('capabilities.mcp.bytes')" :error="errors.bytes">
-          <NumberInput v-model="draft.max_response_bytes" :min="1024" :max="10000000" :steppers="false" unit="B" />
+          <NumberInput
+            v-model="draft.max_response_bytes"
+            :min="1024"
+            :max="10000000"
+            :steppers="false"
+            unit="B"
+          />
         </Field>
       </FormSection>
     </div>
-    <SaveBar :dirty="dirty" :saving="save.isPending.value" :error="saveError" :invalid="invalid" @save="save.mutate()" @discard="draft = copy(initial)" />
+    <SaveBar
+      :dirty="dirty"
+      :saving="save.isPending.value"
+      :error="saveError"
+      :invalid="invalid"
+      @save="save.mutate()"
+      @discard="draft = copy(initial)"
+    />
   </div>
 </template>

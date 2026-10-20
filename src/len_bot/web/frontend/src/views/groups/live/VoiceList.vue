@@ -5,7 +5,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/vue-que
 import { AudioLines } from '@lucide/vue'
 import { audioApi, type AudioItem, type AudioStatus } from '../../../api/audio'
 import { keys } from '../../../api/query'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { formatDateTime } from '../../../i18n/format'
 import Badge, { type Tone } from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
@@ -42,7 +42,9 @@ const id = (item: AudioItem) => `${item.platform_id}/${item.audio_index}`
 const transcribe = useMutation({
   mutationFn: (item: AudioItem) => audioApi.transcribe(props.scene, item),
   onError: (error) =>
-    toast.error(t('groups.live.audio.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.live.audio.failed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => client.invalidateQueries({ queryKey: keys.scene.audio(props.scene) }),
 })
 async function again(item: AudioItem) {
@@ -59,7 +61,9 @@ const reading = useMutation({
   mutationFn: (item: AudioItem) => audioApi.calls(props.scene, item),
   onSuccess: (value, item) => (calls.value = { ...calls.value, [id(item)]: value }),
   onError: (error) =>
-    toast.error(t('groups.live.audio.callsFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.live.audio.callsFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
 </script>
 
@@ -80,24 +84,32 @@ const reading = useMutation({
         <span class="min-w-0 flex-1">{{ t('groups.live.audio.unavailable') }}</span>
         <Button size="sm" :to="{ name: 'host-models' }">{{ t('groups.live.audio.toModels') }}</Button>
       </div>
-      <ErrorNote v-if="first.worker_error" :title="t('groups.live.audio.stopped')" :error="first.worker_error" />
+      <ErrorNote
+        v-if="first.worker_error"
+        :title="t('groups.live.audio.stopped')"
+        :error="first.worker_error"
+      />
       <EmptyState v-if="!rows.length" :icon="AudioLines" :title="t('groups.live.audio.empty')" compact />
       <ul v-else class="flex list-none flex-col divide-y divide-line">
         <li v-for="item in rows" :key="id(item)" class="flex flex-col gap-2 py-3">
           <div class="flex items-center gap-2">
-            <Badge :tone="tones[item.status]" dot size="sm">{{ t(`groups.live.audio.status.${item.status}`) }}</Badge>
+            <Badge :tone="tones[item.status]" dot size="sm">
+              {{ t(`groups.live.audio.status.${item.status}`) }}
+            </Badge>
             <span class="tabular text-xs text-muted">
-              {{ formatDateTime(item.updated, { timeZone: first.timezone })
-              }}<template v-if="item.duration !== null">
-                · {{ t('groups.live.audio.seconds', { n: item.duration.toFixed(1) }) }}</template
-              >
+              {{ formatDateTime(item.updated, { timeZone: first.timezone }) }}
+              <template v-if="item.duration !== null">
+                · {{ t('groups.live.audio.seconds', { n: item.duration.toFixed(1) }) }}
+              </template>
             </span>
             <Button
               size="sm"
               variant="ghost"
               class="ml-auto"
               :loading="transcribe.isPending.value && transcribe.variables.value === item"
-              :disabled="!first.available || first.stopping || item.status === 'queued' || item.status === 'running'"
+              :disabled="
+                !first.available || first.stopping || item.status === 'queued' || item.status === 'running'
+              "
               @click="again(item)"
             >
               {{ t('groups.live.audio.again') }}

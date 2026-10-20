@@ -33,7 +33,13 @@ const hours = computed({
     </template>
     <template v-if="proactive">
       <Field :label="t('groups.settings.proactive.idle')" :error="form.errors['proactive.idle']" wide>
-        <NumberInput v-model="hours" :min="0.5" :step="0.5" :unit="t('groups.settings.hours')" class="sm:max-w-60" />
+        <NumberInput
+          v-model="hours"
+          :min="0.5"
+          :step="0.5"
+          :unit="t('groups.settings.hours')"
+          class="sm:max-w-60"
+        />
       </Field>
       <Field :label="t('groups.settings.proactive.start')" :error="form.errors['proactive.start']">
         <Input v-model="proactive.start" placeholder="10:00" mono />

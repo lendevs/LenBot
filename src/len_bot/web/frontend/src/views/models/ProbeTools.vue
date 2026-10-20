@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
 import { List, Zap } from '@lucide/vue'
 import { modelsApi, type ChatBinding } from '../../api/models'
-import { developerDetails } from '../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../composables/useDeveloperMode'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
@@ -38,12 +38,21 @@ const list = useMutation({
 const probe = useMutation({
   mutationFn: () =>
     embedding.value
-      ? modelsApi.probe(candidateOf(props.row), { provider: props.row.alias || 'probe', model: model.value, dimensions: null }, 'embedding')
+      ? modelsApi.probe(
+          candidateOf(props.row),
+          { provider: props.row.alias || 'probe', model: model.value, dimensions: null },
+          'embedding',
+        )
       : modelsApi.probe(
           candidateOf(props.row),
           props.binding
             ? { ...props.binding, provider: props.row.alias || 'probe' }
-            : { ...newBinding(props.row.alias || 'probe'), model: model.value, context_window_tokens: 8192, temperature: null },
+            : {
+                ...newBinding(props.row.alias || 'probe'),
+                model: model.value,
+                context_window_tokens: 8192,
+                temperature: null,
+              },
           kind.value,
         ),
 })
@@ -68,7 +77,13 @@ watch(
       </Field>
     </div>
     <div class="flex flex-wrap items-center gap-2">
-      <Button size="sm" :icon="List" :loading="list.isPending.value" :disabled="!ready" @click="list.mutate()">
+      <Button
+        size="sm"
+        :icon="List"
+        :loading="list.isPending.value"
+        :disabled="!ready"
+        @click="list.mutate()"
+      >
         {{ t('models.probe.list') }}
       </Button>
       <Button
@@ -81,17 +96,33 @@ watch(
       >
         {{ binding ? t(`models.probe.run.${kind}`) : t('models.probe.run.any') }}
       </Button>
-      <SegmentedControl v-if="binding" v-model="kind" :options="kinds" size="sm" :label="t('models.probe.kind')" />
+      <SegmentedControl
+        v-if="binding"
+        v-model="kind"
+        :options="kinds"
+        size="sm"
+        :label="t('models.probe.kind')"
+      />
       <span v-if="list.isSuccess.value" class="text-xs text-muted">
         {{ t('models.probe.listed', { n: models.length }, models.length) }}
       </span>
     </div>
     <ErrorNote v-if="list.isError.value" :title="t('models.probe.listFailed')" :error="list.error.value" />
     <ErrorNote v-if="probe.isError.value" :title="t('models.probe.failed')" :error="probe.error.value" />
-    <div v-if="probe.data.value" role="status" class="flex flex-col gap-1 rounded-md bg-success-bg px-3 py-2 text-sm text-success">
-      <span class="font-medium">{{ t(`models.probe.passed.${probe.data.value.kind}`, { model: probe.data.value.model ?? model }) }}</span>
+    <div
+      v-if="probe.data.value"
+      role="status"
+      class="flex flex-col gap-1 rounded-md bg-success-bg px-3 py-2 text-sm text-success"
+    >
+      <span class="font-medium">
+        {{ t(`models.probe.passed.${probe.data.value.kind}`, { model: probe.data.value.model ?? model }) }}
+      </span>
       <span class="whitespace-pre-wrap text-ink-2">{{ probe.data.value.text }}</span>
     </div>
-    <RawRecord v-if="developerDetails && probe.data.value?.usage" :label="t('models.probe.usage')" :code="JSON.stringify(probe.data.value.usage, null, 2)" />
+    <RawRecord
+      v-if="developerDetails && probe.data.value?.usage"
+      :label="t('models.probe.usage')"
+      :code="JSON.stringify(probe.data.value.usage, null, 2)"
+    />
   </div>
 </template>

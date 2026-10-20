@@ -30,7 +30,9 @@ const rows = ['stored', 'configured'] as const
     <p class="flex flex-wrap items-center gap-2 text-sm text-ink">
       {{ t('groups.memory.index.retrieval') }}
       <Badge :tone="index.retrieval === 'hybrid' ? 'success' : 'neutral'">
-        {{ index.retrieval === 'hybrid' ? t('groups.memory.index.hybrid') : t('groups.memory.index.fulltext') }}
+        {{
+          index.retrieval === 'hybrid' ? t('groups.memory.index.hybrid') : t('groups.memory.index.fulltext')
+        }}
       </Badge>
       <Badge v-if="index.needs_rebuild" tone="warning">{{ t('groups.memory.index.mismatch') }}</Badge>
     </p>
@@ -46,10 +48,16 @@ const rows = ['stored', 'configured'] as const
         </thead>
         <tbody class="divide-y divide-line border-t border-line">
           <tr v-for="row in rows" :key="row">
-            <th scope="row" class="py-2 pr-3 text-left font-normal text-ink">{{ t(`groups.memory.index.rows.${row}`) }}</th>
-            <td class="py-2 pr-3 font-mono text-xs break-all text-ink-2">{{ index[row]?.base_url ?? '—' }}</td>
+            <th scope="row" class="py-2 pr-3 text-left font-normal text-ink">
+              {{ t(`groups.memory.index.rows.${row}`) }}
+            </th>
+            <td class="py-2 pr-3 font-mono text-xs break-all text-ink-2">
+              {{ index[row]?.base_url ?? '—' }}
+            </td>
             <td class="py-2 pr-3 text-ink-2">{{ index[row]?.model ?? t('groups.memory.index.noVector') }}</td>
-            <td class="py-2 text-ink-2 tabular">{{ index[row]?.dimensions ?? t('groups.memory.index.defaultDimensions') }}</td>
+            <td class="py-2 text-ink-2 tabular">
+              {{ index[row]?.dimensions ?? t('groups.memory.index.defaultDimensions') }}
+            </td>
           </tr>
         </tbody>
       </table>
@@ -59,6 +67,10 @@ const rows = ['stored', 'configured'] as const
         {{ t('groups.memory.index.rebuild') }}
       </Button>
     </div>
-    <ErrorNote v-if="rebuild.isError.value" :title="t('groups.memory.index.failed')" :error="rebuild.error.value" />
+    <ErrorNote
+      v-if="rebuild.isError.value"
+      :title="t('groups.memory.index.failed')"
+      :error="rebuild.error.value"
+    />
   </div>
 </template>

@@ -23,15 +23,23 @@ const detail = useQuery({
   queryFn: ({ signal }) => chatApi.steps(props.source, open.value!, signal),
   enabled: computed(() => open.value !== null),
 })
-const tone = (turn: ChatTurn) => (turn.ended === null ? 'info' : failedTurn(turn.status) ? 'error' : 'neutral')
+const tone = (turn: ChatTurn) =>
+  turn.ended === null ? 'info' : failedTurn(turn.status) ? 'error' : 'neutral'
 </script>
 
 <template>
-  <section class="flex max-h-[min(78vh,820px)] min-w-0 flex-col gap-2 overflow-y-auto rounded-xl border border-line bg-surface p-3 scrollbar-thin">
+  <section
+    class="flex max-h-[min(78vh,820px)] min-w-0 flex-col gap-2 overflow-y-auto rounded-xl border border-line bg-surface p-3 scrollbar-thin"
+  >
     <h3 class="px-1 text-sm font-semibold text-ink">{{ t('playground.turns') }}</h3>
     <p v-if="!turns.length" class="px-1 text-sm text-muted">{{ t('playground.noTurns') }}</p>
     <ul v-else class="flex list-none flex-col gap-1.5">
-      <li v-for="turn in turns" :key="turn.id" :data-turn="turn.id" class="overflow-hidden rounded-lg border border-line">
+      <li
+        v-for="turn in turns"
+        :key="turn.id"
+        :data-turn="turn.id"
+        class="overflow-hidden rounded-lg border border-line"
+      >
         <button
           type="button"
           class="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm hover:bg-hover focus-visible:focus-ring"
@@ -39,12 +47,24 @@ const tone = (turn: ChatTurn) => (turn.ended === null ? 'info' : failedTurn(turn
           @click="open = open === turn.id ? null : turn.id"
         >
           <Badge :tone="tone(turn)" dot>{{ labels.status(turn.status) }}</Badge>
-          <time class="min-w-0 flex-1 truncate text-xs text-muted tabular">{{ formatDateTime(turn.started, { withSeconds: true, timeZone }) }}</time>
-          <ChevronDown :size="15" class="shrink-0 text-subtle transition-transform" :class="open === turn.id && 'rotate-180'" aria-hidden="true" />
+          <time class="min-w-0 flex-1 truncate text-xs text-muted tabular">
+            {{ formatDateTime(turn.started, { withSeconds: true, timeZone }) }}
+          </time>
+          <ChevronDown
+            :size="15"
+            class="shrink-0 text-subtle transition-transform"
+            :class="open === turn.id && 'rotate-180'"
+            aria-hidden="true"
+          />
         </button>
         <div v-if="open === turn.id" class="border-t border-line px-3 py-3">
           <Skeleton v-if="detail.isPending.value" :lines="3" />
-          <ErrorNote v-else-if="detail.isError.value" :title="t('playground.turnFailed')" :error="detail.error.value" :retry="detail.refetch" />
+          <ErrorNote
+            v-else-if="detail.isError.value"
+            :title="t('playground.turnFailed')"
+            :error="detail.error.value"
+            :retry="detail.refetch"
+          />
           <TurnSteps v-else-if="detail.data.value" :detail="detail.data.value" />
         </div>
       </li>

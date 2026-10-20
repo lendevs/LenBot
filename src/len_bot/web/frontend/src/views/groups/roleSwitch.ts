@@ -31,19 +31,23 @@ export function useRoleSwitch() {
   const { t } = useI18n()
   const client = useQueryClient()
   const mutation = useMutation({
-    mutationFn: ({ scene, role }: { scene: string; role: PersonaSummary }) => settingsApi.useRole(role.key, [scene]),
+    mutationFn: ({ scene, role }: { scene: string; role: PersonaSummary }) =>
+      settingsApi.useRole(role.key, [scene]),
     onSuccess: ({ results }, { role }) => {
       const result = results[0]
       if (result?.status === 'failed') {
         toast.error(t('groups.settings.role.failed'), { detail: result.error })
         return
       }
-      if (result?.status === 'pending') toast.success(t('groups.settings.role.pending', { name: roleLabel(role) }))
+      if (result?.status === 'pending')
+        toast.success(t('groups.settings.role.pending', { name: roleLabel(role) }))
       else toast.success(t('groups.settings.role.done', { name: roleLabel(role) }))
       if (result?.handover === 'failed') toast.error(t('groups.settings.role.handoverFailed'))
     },
     onError: (error) =>
-      toast.error(t('groups.settings.role.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+      toast.error(t('groups.settings.role.failed'), {
+        detail: describeError(error, t('ui.error.network')).message,
+      }),
     onSettled: () => {
       void client.invalidateQueries({ queryKey: keys.personas.all() })
       void client.invalidateQueries({ queryKey: keys.host.settings() })

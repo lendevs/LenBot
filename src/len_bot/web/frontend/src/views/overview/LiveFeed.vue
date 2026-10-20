@@ -56,7 +56,13 @@ useHostEvent('turn.started', (event) =>
   }),
 )
 useHostEvent('turn.ended', (event) =>
-  put({ key: `turn:${String(event.turn_id)}`, kind: 'turn', scene: sceneOf(event), at: event.at, status: String(event.status) }),
+  put({
+    key: `turn:${String(event.turn_id)}`,
+    kind: 'turn',
+    scene: sceneOf(event),
+    at: event.at,
+    status: String(event.status),
+  }),
 )
 useHostEvent('message.sent', (event) =>
   put({
@@ -86,8 +92,15 @@ const entries = computed(() => {
     .slice(0, LIMIT)
 })
 
-
-const turnTones: Record<string, Tone> = { running: 'info', settled: 'success', error: 'error', timeout: 'error', interrupted: 'warning', step_limit: 'warning', cancelled: 'neutral' }
+const turnTones: Record<string, Tone> = {
+  running: 'info',
+  settled: 'success',
+  error: 'error',
+  timeout: 'error',
+  interrupted: 'warning',
+  step_limit: 'warning',
+  cancelled: 'neutral',
+}
 const sendTones: Record<string, Tone> = { sent: 'success', simulated: 'neutral', failed: 'error' }
 function describe(entry: Entry) {
   if (entry.kind === 'turn') {
@@ -110,7 +123,9 @@ function describe(entry: Entry) {
   }
   return {
     text: t('overview.feed.task', { goal: entry.text ?? '' }),
-    status: t(`overview.feed.taskStatus.${entry.status === 'failed' ? 'failed' : entry.status === 'cancelled' ? 'cancelled' : 'done'}`),
+    status: t(
+      `overview.feed.taskStatus.${entry.status === 'failed' ? 'failed' : entry.status === 'cancelled' ? 'cancelled' : 'done'}`,
+    ),
     tone: (entry.status === 'failed' ? 'error' : 'neutral') as Tone,
     to: groupsTarget(entry.scene, 'tasks', entry.task === undefined ? {} : { id: String(entry.task) }),
   }
@@ -132,11 +147,15 @@ function describe(entry: Entry) {
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm text-ink">
               <span class="font-medium">{{ groupLabel(entry.scene) }}</span>
-              <span class="text-ink-2"> · {{ describe(entry).text }}</span>
+              <span class="text-ink-2">· {{ describe(entry).text }}</span>
             </span>
             <span class="block text-xs text-muted tabular">{{ formatRelative(entry.at, now) }}</span>
           </span>
-          <Badge :tone="describe(entry).tone" :dot="entry.status === 'running'" :pulse="entry.status === 'running'">
+          <Badge
+            :tone="describe(entry).tone"
+            :dot="entry.status === 'running'"
+            :pulse="entry.status === 'running'"
+          >
             {{ describe(entry).status }}
           </Badge>
         </RouterLink>

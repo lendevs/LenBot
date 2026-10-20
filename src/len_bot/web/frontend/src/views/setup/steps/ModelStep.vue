@@ -22,7 +22,9 @@ const { draft } = wizard
 const error = useStepErrors('model')
 const protocolTitle = useProtocolTitle()
 
-const protocolOptions = computed(() => wizard.protocols.value.map((item) => ({ value: item.api, label: protocolTitle(item) })))
+const protocolOptions = computed(() =>
+  wizard.protocols.value.map((item) => ({ value: item.api, label: protocolTitle(item) })),
+)
 const protocol = computed({
   get: () => draft.api || undefined,
   set: (api: string | undefined) => api && wizard.chooseProtocol(api),
@@ -49,7 +51,9 @@ const providerSignature = computed(() => JSON.stringify(wizard.provider()))
 /** Requests go out only for settings that pass the checks; otherwise the step shows what is wrong. */
 function checked(fields: string[] | null, run: () => void) {
   const found = wizard.problems('model')
-  const wrong = fields ? fields.some((field) => found[field]) : Object.keys(found).some((key) => key !== 'probe')
+  const wrong = fields
+    ? fields.some((field) => found[field])
+    : Object.keys(found).some((key) => key !== 'probe')
   if (wrong) wizard.tried.add('model')
   else run()
 }
@@ -108,7 +112,12 @@ const passed = computed(() => {
       </Field>
       <div class="flex flex-col gap-3 sm:col-span-2">
         <div>
-          <Button size="sm" :icon="List" :loading="list.isPending.value" @click="checked(['api', 'baseUrl', 'apiKey', 'proxy'], () => list.mutate())">
+          <Button
+            size="sm"
+            :icon="List"
+            :loading="list.isPending.value"
+            @click="checked(['api', 'baseUrl', 'apiKey', 'proxy'], () => list.mutate())"
+          >
             {{ t('models.probe.list') }}
           </Button>
         </div>
@@ -119,14 +128,23 @@ const passed = computed(() => {
         />
       </div>
       <Field :label="t('models.roles.model')" :error="error('model')" required>
-        <ModelName v-model="draft.model" :models="wizard.catalog.value" :placeholder="t('setup.model.modelPlaceholder')" />
+        <ModelName
+          v-model="draft.model"
+          :models="wizard.catalog.value"
+          :placeholder="t('setup.model.modelPlaceholder')"
+        />
       </Field>
       <Field :label="t('models.roles.context')" :error="error('contextWindow')" required>
         <NumberInput v-model="draft.contextWindow" :min="2048" :steppers="false" unit="tokens" />
       </Field>
     </div>
     <MoreFields v-model="more" :title="t('models.roles.advanced')">
-      <Field :label="t('setup.model.inputBudget')" :error="error('inputBudget')" :info="t('setup.model.inputBudgetInfo')" required>
+      <Field
+        :label="t('setup.model.inputBudget')"
+        :error="error('inputBudget')"
+        :info="t('setup.model.inputBudgetInfo')"
+        required
+      >
         <NumberInput v-model="draft.inputBudget" :min="1" :steppers="false" unit="tokens" />
       </Field>
       <Field :label="t('models.roles.maxOutput')" :error="error('maxOutput')" required>
@@ -154,7 +172,12 @@ const passed = computed(() => {
     </MoreFields>
     <div class="flex flex-col gap-3 border-t border-line pt-5">
       <div class="flex flex-wrap items-center gap-3">
-        <SegmentedControl v-model="draft.probeKind" :options="kinds" size="sm" :label="t('models.probe.kind')" />
+        <SegmentedControl
+          v-model="draft.probeKind"
+          :options="kinds"
+          size="sm"
+          :label="t('models.probe.kind')"
+        />
         <Button :icon="Zap" :loading="probe.isPending.value" @click="checked(null, () => probe.mutate())">
           {{ t('setup.model.test') }}
         </Button>

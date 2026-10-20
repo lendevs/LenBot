@@ -109,10 +109,14 @@ watch(open, (value) => {
           >
             <Avatar :name="item.name || item.scene.split(':').pop() || '?'" shape="square" :size="30" />
             <span class="grid min-w-0 flex-1 leading-snug">
-              <span class="truncate text-base">{{ item.name || item.scene.split(':').slice(2).join(':') }}</span>
+              <span class="truncate text-base">
+                {{ item.name || item.scene.split(':').slice(2).join(':') }}
+              </span>
               <span class="truncate text-xs text-muted tabular">
                 {{ item.scene.split(':').slice(2).join(':') }}
-                <template v-if="item.members">· {{ t('groups.members', { n: formatNumber(item.members) }) }}</template>
+                <template v-if="item.members">
+                  · {{ t('groups.members', { n: formatNumber(item.members) }) }}
+                </template>
               </span>
             </span>
             <Check v-if="picked === item.scene" :size="16" class="shrink-0 text-primary" aria-hidden="true" />
@@ -149,7 +153,9 @@ watch(open, (value) => {
       <ErrorNote v-if="add.isError.value" :title="t('groups.join.failed')" :error="add.error.value" />
     </div>
     <template #footer>
-      <Button variant="ghost" :disabled="add.isPending.value" @click="open = false">{{ t('common.cancel') }}</Button>
+      <Button variant="ghost" :disabled="add.isPending.value" @click="open = false">
+        {{ t('common.cancel') }}
+      </Button>
       <Button
         variant="primary"
         :loading="add.isPending.value"

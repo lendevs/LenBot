@@ -31,7 +31,10 @@ const list = usePagedList<Sticker, Review>(
   'pending',
 )
 const filters = computed(() =>
-  (['pending', 'adopted', 'rejected'] as const).map((value) => ({ value, label: t(`groups.learning.review.${value}`) })),
+  (['pending', 'adopted', 'rejected'] as const).map((value) => ({
+    value,
+    label: t(`groups.learning.review.${value}`),
+  })),
 )
 const fresh = (item: Sticker) => ({
   description: item.description ?? '',
@@ -55,7 +58,9 @@ const save = useMutation({
   },
   onSuccess: (_, { item }) => edits.stop(item.id),
   onError: (error) =>
-    toast.error(t('groups.learning.saveFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.learning.saveFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => client.invalidateQueries({ queryKey: keys.scene.learningAll(props.scene) }),
 })
 const busy = (item: Sticker) => save.isPending.value && save.variables.value?.item.id === item.id
@@ -94,12 +99,16 @@ const busy = (item: Sticker) => save.isPending.value && save.variables.value?.it
               class="size-24 shrink-0 rounded-md border border-line bg-fill object-contain"
             />
             <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-              <p class="text-sm break-words text-ink">{{ item.description || t('groups.learning.sticker.noDescription') }}</p>
+              <p class="text-sm break-words text-ink">
+                {{ item.description || t('groups.learning.sticker.noDescription') }}
+              </p>
               <p v-if="item.text" class="text-xs break-words text-muted">
                 {{ t('groups.learning.sticker.text') }}：{{ item.text }}
               </p>
               <div v-if="item.emotions.length || item.tags.length" class="flex flex-wrap gap-1">
-                <Badge v-for="emotion in item.emotions" :key="`e${emotion}`" tone="brand">{{ emotion }}</Badge>
+                <Badge v-for="emotion in item.emotions" :key="`e${emotion}`" tone="brand">
+                  {{ emotion }}
+                </Badge>
                 <Badge v-for="tag in item.tags" :key="`t${tag}`">{{ tag }}</Badge>
               </div>
               <Badge v-if="item.status === 'failed'" tone="error" class="self-start">
@@ -135,7 +144,9 @@ const busy = (item: Sticker) => save.isPending.value && save.variables.value?.it
               </Button>
             </template>
             <template v-else>
-              <Button size="sm" variant="ghost" :icon="Pencil" @click="edits.start(item)">{{ t('common.edit') }}</Button>
+              <Button size="sm" variant="ghost" :icon="Pencil" @click="edits.start(item)">
+                {{ t('common.edit') }}
+              </Button>
               <Button
                 v-if="item.review !== 'pending'"
                 size="sm"

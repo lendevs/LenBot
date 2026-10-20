@@ -22,15 +22,21 @@ const { t } = useI18n()
 const form = useForm()
 const { library, roles, usable } = useRoles()
 const { switchRole, sending } = useRoleSwitch()
-const current = computed(() => roles.value.find((role) => role.path === form.settings.data?.saved.scenes[props.scene]?.persona))
+const current = computed(() =>
+  roles.value.find((role) => role.path === form.settings.data?.saved.scenes[props.scene]?.persona),
+)
 const waiting = computed(
-  () => ((host.state?.scenes ?? []) as HostScene[]).find((item) => item.scene === props.scene)?.persona_switch ?? null,
+  () =>
+    ((host.state?.scenes ?? []) as HostScene[]).find((item) => item.scene === props.scene)?.persona_switch ??
+    null,
 )
 const options = computed(() =>
-  [...usable.value, ...(current.value && !usable.value.includes(current.value) ? [current.value] : [])].map((role) => ({
-    value: role.key,
-    label: roleLabel(role),
-  })),
+  [...usable.value, ...(current.value && !usable.value.includes(current.value) ? [current.value] : [])].map(
+    (role) => ({
+      value: role.key,
+      label: roleLabel(role),
+    }),
+  ),
 )
 
 const selected = computed({
@@ -42,7 +48,10 @@ async function choose(key: string | undefined) {
   const role = roles.value.find((item) => item.key === key)
   if (!role || role === current.value) return
   if (form.dirty) {
-    const discard = await confirm({ title: t('groups.settings.role.discard'), confirmLabel: t('common.discard') })
+    const discard = await confirm({
+      title: t('groups.settings.role.discard'),
+      confirmLabel: t('common.discard'),
+    })
     if (!discard) return
     form.adopt()
   }

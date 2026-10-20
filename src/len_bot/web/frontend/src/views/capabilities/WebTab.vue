@@ -2,7 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { capabilitiesApi, capabilitiesOf, type Network, type WebRead, type WebSearch } from '../../api/capabilities'
+import {
+  capabilitiesApi,
+  capabilitiesOf,
+  type Network,
+  type WebRead,
+  type WebSearch,
+} from '../../api/capabilities'
 import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
@@ -21,7 +27,10 @@ import { toast } from '../../ui/toast'
 
 const { t } = useI18n()
 const client = useQueryClient()
-const settings = useQuery({ queryKey: keys.host.settings(), queryFn: ({ signal }) => settingsApi.read(signal) })
+const settings = useQuery({
+  queryKey: keys.host.settings(),
+  queryFn: ({ signal }) => settingsApi.read(signal),
+})
 
 interface Draft {
   read: WebRead | null
@@ -61,7 +70,12 @@ const changed = computed(() => {
 })
 const dirty = computed(() => Object.values(changed.value).some(Boolean))
 useUnsavedChanges(dirty, { keep: ['tab'] })
-const networks = computed(() => (draft.value?.fakeIp ?? '').split('\n').map((line) => line.trim()).filter(Boolean))
+const networks = computed(() =>
+  (draft.value?.fakeIp ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean),
+)
 const invalid = computed(() => {
   const value = draft.value
   if (!value) return true
@@ -83,7 +97,10 @@ async function save() {
     if (changed.value.read) snapshot = await capabilitiesApi.saveWebRead(value.read)
     if (changed.value.search) snapshot = await capabilitiesApi.saveWebSearch(value.search)
     if (changed.value.network)
-      snapshot = await capabilitiesApi.saveNetwork({ fake_ip_networks: networks.value, public_dns_url: value.dns.trim() } satisfies Network)
+      snapshot = await capabilitiesApi.saveNetwork({
+        fake_ip_networks: networks.value,
+        public_dns_url: value.dns.trim(),
+      } satisfies Network)
     if (snapshot) {
       client.setQueryData(keys.host.settings(), snapshot)
       draft.value = pick(snapshot)
@@ -101,30 +118,63 @@ async function save() {
 
 <template>
   <Skeleton v-if="settings.isPending.value" :lines="6" />
-  <ErrorNote v-else-if="settings.isError.value" :title="t('capabilities.web.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+  <ErrorNote
+    v-else-if="settings.isError.value"
+    :title="t('capabilities.web.readFailed')"
+    :error="settings.error.value"
+    :retry="settings.refetch"
+  />
   <div v-else-if="draft" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection :title="t('capabilities.web.read')">
         <Field :label="t('capabilities.web.readOn')" inline wide>
-          <Switch :model-value="draft.read !== null" @update:model-value="(on: boolean) => (draft!.read = on ? { timeout_seconds: 20 } : null)" />
+          <Switch
+            :model-value="draft.read !== null"
+            @update:model-value="(on: boolean) => (draft!.read = on ? { timeout_seconds: 20 } : null)"
+          />
         </Field>
-        <Field v-if="draft.read" :label="t('capabilities.web.timeout')" :error="draft.read.timeout_seconds === null ? t('capabilities.required') : null">
-          <NumberInput v-model="draft.read.timeout_seconds" :min="1" :snap="false" :steppers="false" :unit="t('capabilities.seconds')" />
+        <Field
+          v-if="draft.read"
+          :label="t('capabilities.web.timeout')"
+          :error="draft.read.timeout_seconds === null ? t('capabilities.required') : null"
+        >
+          <NumberInput
+            v-model="draft.read.timeout_seconds"
+            :min="1"
+            :snap="false"
+            :steppers="false"
+            :unit="t('capabilities.seconds')"
+          />
         </Field>
       </FormSection>
       <FormSection :title="t('capabilities.web.search')">
         <Field :label="t('capabilities.web.searchOn')" inline wide>
           <Switch
             :model-value="draft.search !== null"
-            @update:model-value="(on: boolean) => (draft!.search = on ? { provider: 'bing_rss', timeout_seconds: 15, max_results: 5 } : null)"
+            @update:model-value="
+              (on: boolean) =>
+                (draft!.search = on ? { provider: 'bing_rss', timeout_seconds: 15, max_results: 5 } : null)
+            "
           />
         </Field>
         <template v-if="draft.search">
-          <Field :label="t('capabilities.web.results')" :error="draft.search.max_results === null ? t('capabilities.required') : null">
+          <Field
+            :label="t('capabilities.web.results')"
+            :error="draft.search.max_results === null ? t('capabilities.required') : null"
+          >
             <NumberInput v-model="draft.search.max_results" :min="1" :max="20" />
           </Field>
-          <Field :label="t('capabilities.web.timeout')" :error="draft.search.timeout_seconds === null ? t('capabilities.required') : null">
-            <NumberInput v-model="draft.search.timeout_seconds" :min="1" :snap="false" :steppers="false" :unit="t('capabilities.seconds')" />
+          <Field
+            :label="t('capabilities.web.timeout')"
+            :error="draft.search.timeout_seconds === null ? t('capabilities.required') : null"
+          >
+            <NumberInput
+              v-model="draft.search.timeout_seconds"
+              :min="1"
+              :snap="false"
+              :steppers="false"
+              :unit="t('capabilities.seconds')"
+            />
           </Field>
         </template>
       </FormSection>
@@ -132,11 +182,21 @@ async function save() {
         <Field :label="t('capabilities.web.fakeIp')">
           <Textarea v-model="draft.fakeIp" :rows="2" mono placeholder="198.18.0.0/15" />
         </Field>
-        <Field :label="t('capabilities.web.dns')" :error="/^https?:\/\/[^/?#]+/.test(draft.dns.trim()) ? null : t('capabilities.web.dnsRule')">
+        <Field
+          :label="t('capabilities.web.dns')"
+          :error="/^https?:\/\/[^/?#]+/.test(draft.dns.trim()) ? null : t('capabilities.web.dnsRule')"
+        >
           <Input v-model="draft.dns" type="url" mono />
         </Field>
       </FormSection>
     </div>
-    <SaveBar :dirty="dirty" :saving="saving" :error="saveError" :invalid="invalid" @save="save" @discard="draft = initial && copy(initial)" />
+    <SaveBar
+      :dirty="dirty"
+      :saving="saving"
+      :error="saveError"
+      :invalid="invalid"
+      @save="save"
+      @discard="draft = initial && copy(initial)"
+    />
   </div>
 </template>

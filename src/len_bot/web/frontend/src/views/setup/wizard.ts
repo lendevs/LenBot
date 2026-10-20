@@ -181,11 +181,21 @@ export function createWizard() {
     const common = { access_token: draft.accessToken, request_timeout_seconds: draft.onebotTimeout ?? 30 }
     return draft.transport === 'forward_ws'
       ? { mode: 'forward_ws', ws_url: draft.wsUrl.trim(), ...common }
-      : { mode: 'reverse_ws', listen_host: draft.listenHost.trim(), listen_port: draft.listenPort ?? 0, ...common }
+      : {
+          mode: 'reverse_ws',
+          listen_host: draft.listenHost.trim(),
+          listen_port: draft.listenPort ?? 0,
+          ...common,
+        }
   }
 
   function provider(): SetupProvider {
-    return { api: draft.api, base_url: trimUrl(draft.baseUrl), api_key: draft.apiKey, proxy: trimUrl(draft.proxy) || null }
+    return {
+      api: draft.api,
+      base_url: trimUrl(draft.baseUrl),
+      api_key: draft.apiKey,
+      proxy: trimUrl(draft.proxy) || null,
+    }
   }
 
   function binding(): SetupBinding {
@@ -269,7 +279,11 @@ export function createWizard() {
       if (draft.transport === 'forward_ws') need('wsUrl', wsUrl(draft.wsUrl.trim()), 'wsUrl')
       else {
         need('listenHost', Boolean(draft.listenHost.trim()))
-        need('listenPort', draft.listenPort !== null && draft.listenPort >= 1 && draft.listenPort <= 65535, 'port')
+        need(
+          'listenPort',
+          draft.listenPort !== null && draft.listenPort >= 1 && draft.listenPort <= 65535,
+          'port',
+        )
       }
       need('onebotTimeout', draft.onebotTimeout !== null && draft.onebotTimeout >= 1, 'required')
       if (!Object.keys(found).length) need('connect', platformReady.value, 'connectFirst')

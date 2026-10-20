@@ -22,7 +22,13 @@ type Draft = Omit<Connection, 'owners' | 'bot_id' | 'telegram' | 'onebot'> & { o
 const { t } = useI18n()
 const token = ref('')
 const pick = (snapshot: SettingsSnapshot): Draft => {
-  const { owners: _owners, bot_id: _bot, telegram: _telegram, onebot, ...rest } = systemOf(snapshot).connection
+  const {
+    owners: _owners,
+    bot_id: _bot,
+    telegram: _telegram,
+    onebot,
+    ...rest
+  } = systemOf(snapshot).connection
   if (onebot === null) return { ...rest, onebot: null }
   const { access_token_configured: _configured, ...link } = onebot
   return { ...rest, onebot: link }
@@ -101,7 +107,11 @@ const mode = computed({
         }
     current.onebot =
       next === 'forward_ws'
-        ? { ...common, mode: 'forward_ws', ws_url: base?.mode === 'forward_ws' ? base.ws_url : 'ws://127.0.0.1:3001' }
+        ? {
+            ...common,
+            mode: 'forward_ws',
+            ws_url: base?.mode === 'forward_ws' ? base.ws_url : 'ws://127.0.0.1:3001',
+          }
         : {
             ...common,
             mode: 'reverse_ws',
@@ -111,7 +121,10 @@ const mode = computed({
   },
 })
 const deliveries = computed(() => [
-  { value: telegram.value ? 'telegram' : 'onebot', label: t('system.connection.real', { platform: telegram.value ? 'Telegram' : 'QQ' }) },
+  {
+    value: telegram.value ? 'telegram' : 'onebot',
+    label: t('system.connection.real', { platform: telegram.value ? 'Telegram' : 'QQ' }),
+  },
   { value: 'simulated', label: t('system.connection.simulated') },
 ])
 const transports = [
@@ -172,18 +185,21 @@ const errors = computed(() => {
   for (const [key] of numbers) if (current[key] === null) result[key] = required
   for (const [key] of deliveryNumbers) if (current.text_delivery[key] === null) result[key] = required
   const { min_interval_seconds: min, max_interval_seconds: max } = current.text_delivery
-  if (min !== null && max !== null && min > max) result.max_interval_seconds = t('system.connection.intervalOrder')
+  if (min !== null && max !== null && min > max)
+    result.max_interval_seconds = t('system.connection.intervalOrder')
   const link = current.onebot
   if (link) {
     for (const [key] of linkNumbers) if (link[key] === null) result[key] = required
-    if (link.mode === 'forward_ws' && !/^wss?:\/\/[^/]+/.test(link.ws_url.trim())) result.ws_url = t('system.connection.wsRule')
+    if (link.mode === 'forward_ws' && !/^wss?:\/\/[^/]+/.test(link.ws_url.trim()))
+      result.ws_url = t('system.connection.wsRule')
     if (link.mode === 'reverse_ws') {
       if (!link.listen_host.trim()) result.listen_host = required
       if (link.listen_port === null) result.listen_port = required
     }
     if (link.action_transport === 'http' && !/^https?:\/\/[^/]+/.test((link.http_url ?? '').trim()))
       result.http_url = t('system.connection.httpRule')
-    if (addressChanged.value && tokenConfigured.value && !token.value) result.token = t('system.connection.tokenAgain')
+    if (addressChanged.value && tokenConfigured.value && !token.value)
+      result.token = t('system.connection.tokenAgain')
   }
   return result
 })
@@ -202,7 +218,12 @@ watch(invalid, () => {
 
 <template>
   <Skeleton v-if="settings.isPending.value" :lines="8" />
-  <ErrorNote v-else-if="settings.isError.value" :title="t('system.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+  <ErrorNote
+    v-else-if="settings.isError.value"
+    :title="t('system.readFailed')"
+    :error="settings.error.value"
+    :retry="settings.refetch"
+  />
   <div v-else-if="draft && connection" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection :title="telegram ? t('system.connection.telegram') : t('system.connection.qq')">
@@ -214,14 +235,25 @@ watch(invalid, () => {
         </Field>
         <template v-if="link">
           <Field v-if="forward" :label="t('system.connection.wsUrl')" :error="errors.ws_url" required wide>
-            <Input :model-value="forward!.ws_url" mono placeholder="ws://127.0.0.1:3001" @update:model-value="(text: string) => (forward!.ws_url = text)" />
+            <Input
+              :model-value="forward!.ws_url"
+              mono
+              placeholder="ws://127.0.0.1:3001"
+              @update:model-value="(text: string) => (forward!.ws_url = text)"
+            />
           </Field>
           <template v-if="reverse">
             <Field :label="t('system.connection.listenHost')" :error="errors.listen_host" required>
               <Input v-model="reverse.listen_host" mono placeholder="127.0.0.1" />
             </Field>
             <Field :label="t('system.connection.listenPort')" :error="errors.listen_port" required>
-              <NumberInput v-model="reverse.listen_port" :min="1" :max="65535" :steppers="false" :format-options="{ useGrouping: false }" />
+              <NumberInput
+                v-model="reverse.listen_port"
+                :min="1"
+                :max="65535"
+                :steppers="false"
+                :format-options="{ useGrouping: false }"
+              />
             </Field>
           </template>
           <Field :label="t('system.connection.token')" :error="errors.token" wide>
@@ -229,18 +261,20 @@ watch(invalid, () => {
               v-model="token"
               type="password"
               autocomplete="new-password"
-              :placeholder="tokenConfigured ? t('system.connection.tokenKept') : t('system.connection.tokenNone')"
+              :placeholder="
+                tokenConfigured ? t('system.connection.tokenKept') : t('system.connection.tokenNone')
+              "
             />
           </Field>
         </template>
         <Field :label="t('system.connection.delivery')" wide>
           <div>
             <SegmentedControl
-            v-model="value.delivery"
-            :options="deliveries"
-            :disabled="!telegram && link === null"
-            :label="t('system.connection.delivery')"
-          />
+              v-model="value.delivery"
+              :options="deliveries"
+              :disabled="!telegram && link === null"
+              :label="t('system.connection.delivery')"
+            />
           </div>
         </Field>
         <Field :label="t('system.connection.timezone')" :error="errors.timezone">
@@ -256,16 +290,30 @@ watch(invalid, () => {
           @click="advanced = !advanced"
         >
           <h3 class="text-base font-semibold text-ink">{{ t('system.connection.advanced') }}</h3>
-          <ChevronDown :size="18" class="text-subtle transition-transform" :class="advanced && 'rotate-180'" aria-hidden="true" />
+          <ChevronDown
+            :size="18"
+            class="text-subtle transition-transform"
+            :class="advanced && 'rotate-180'"
+            aria-hidden="true"
+          />
         </button>
         <div v-if="advanced" class="mt-4 flex flex-col gap-6">
           <div v-if="link" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
             <Field :label="t('system.connection.transport')">
               <div>
-                <SegmentedControl v-model="link.action_transport" :options="transports" :label="t('system.connection.transport')" />
+                <SegmentedControl
+                  v-model="link.action_transport"
+                  :options="transports"
+                  :label="t('system.connection.transport')"
+                />
               </div>
             </Field>
-            <Field v-if="link.action_transport === 'http'" :label="t('system.connection.httpUrl')" :error="errors.http_url" required>
+            <Field
+              v-if="link.action_transport === 'http'"
+              :label="t('system.connection.httpUrl')"
+              :error="errors.http_url"
+              required
+            >
               <Input
                 :model-value="link.http_url ?? ''"
                 mono
@@ -273,7 +321,12 @@ watch(invalid, () => {
                 @update:model-value="(text: string) => (link!.http_url = text.trim() ? text : null)"
               />
             </Field>
-            <Field v-for="[key, min, decimals] in linkNumbers" :key="key" :label="t(`system.connection.fields.${key}`)" :error="errors[key]">
+            <Field
+              v-for="[key, min, decimals] in linkNumbers"
+              :key="key"
+              :label="t(`system.connection.fields.${key}`)"
+              :error="errors[key]"
+            >
               <NumberInput
                 :model-value="link![key]"
                 :min="min"
@@ -287,12 +340,19 @@ watch(invalid, () => {
               <Input
                 :model-value="link!.upload_visible_root ?? ''"
                 mono
-                @update:model-value="(text: string) => (link!.upload_visible_root = text.trim() ? text : null)"
+                @update:model-value="
+                  (text: string) => (link!.upload_visible_root = text.trim() ? text : null)
+                "
               />
             </Field>
           </div>
           <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
-            <Field v-for="[key, min, decimals] in numbers" :key="key" :label="t(`system.connection.fields.${key}`)" :error="errors[key]">
+            <Field
+              v-for="[key, min, decimals] in numbers"
+              :key="key"
+              :label="t(`system.connection.fields.${key}`)"
+              :error="errors[key]"
+            >
               <NumberInput
                 v-model="value[key]"
                 :min="min"
@@ -301,19 +361,37 @@ watch(invalid, () => {
                 :unit="key === 'turn_timeout_seconds' ? t('system.seconds') : undefined"
               />
             </Field>
-            <Field v-for="[key, min, decimals] in deliveryNumbers" :key="key" :label="t(`system.connection.fields.${key}`)" :error="errors[key]">
+            <Field
+              v-for="[key, min, decimals] in deliveryNumbers"
+              :key="key"
+              :label="t(`system.connection.fields.${key}`)"
+              :error="errors[key]"
+            >
               <NumberInput
                 v-model="value.text_delivery[key]"
                 :min="min"
                 :snap="!decimals"
                 :steppers="false"
-                :unit="key === 'max_chars' ? undefined : key === 'chars_per_second' ? t('system.connection.perSecond') : t('system.seconds')"
+                :unit="
+                  key === 'max_chars'
+                    ? undefined
+                    : key === 'chars_per_second'
+                      ? t('system.connection.perSecond')
+                      : t('system.seconds')
+                "
               />
             </Field>
           </div>
         </div>
       </section>
     </div>
-    <SaveBar :dirty="form.dirty.value" :saving="form.saving.value" :error="form.saveError.value" :invalid="invalid" @save="form.submit" @discard="form.discard" />
+    <SaveBar
+      :dirty="form.dirty.value"
+      :saving="form.saving.value"
+      :error="form.saveError.value"
+      :invalid="invalid"
+      @save="form.submit"
+      @discard="form.discard"
+    />
   </div>
 </template>

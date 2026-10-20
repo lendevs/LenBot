@@ -6,7 +6,7 @@ import { useResizeObserver } from '@vueuse/core'
 import { RefreshCcw, Sparkles } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { sessionApi, type SessionEntry } from '../../../api/session'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { useHostEvent } from '../../../realtime/stream'
 import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
@@ -41,15 +41,19 @@ const entries = computed<SessionEntry[]>(() =>
 const results = computed(() => {
   const found = new Map<string, SessionEntry>()
   for (const entry of entries.value) {
-    if (entry.message.role === 'tool' && entry.message.tool_call_id) found.set(entry.message.tool_call_id, entry)
+    if (entry.message.role === 'tool' && entry.message.tool_call_id)
+      found.set(entry.message.tool_call_id, entry)
   }
   return found
 })
 /** Tool results that answer a loaded call are shown under the call instead of on their own. */
 const shown = computed(() => {
-  const calls = new Set(entries.value.flatMap((entry) => (entry.message.tool_calls ?? []).map((call) => call.id)))
+  const calls = new Set(
+    entries.value.flatMap((entry) => (entry.message.tool_calls ?? []).map((call) => call.id)),
+  )
   return entries.value.filter(
-    (entry) => !(entry.message.role === 'tool' && entry.message.tool_call_id && calls.has(entry.message.tool_call_id)),
+    (entry) =>
+      !(entry.message.role === 'tool' && entry.message.tool_call_id && calls.has(entry.message.tool_call_id)),
   )
 })
 const firstActive = computed(() => shown.value.findIndex((entry) => entry.active))
@@ -125,7 +129,12 @@ useResizeObserver(recapText, () => {
           :retry="query.refetch"
         />
         <div v-if="query.hasNextPage.value" class="flex justify-center">
-          <Button size="sm" variant="ghost" :loading="query.isFetchingNextPage.value" @click="query.fetchNextPage()">
+          <Button
+            size="sm"
+            variant="ghost"
+            :loading="query.isFetchingNextPage.value"
+            @click="query.fetchNextPage()"
+          >
             {{ t('groups.session.older') }}
           </Button>
         </div>
@@ -136,7 +145,9 @@ useResizeObserver(recapText, () => {
               v-if="everything && index === firstActive && index > 0"
               class="mb-4 flex items-center gap-3 text-xs text-subtle"
             >
-              <span class="h-px flex-1 bg-line" />{{ t('groups.session.current') }}<span class="h-px flex-1 bg-line" />
+              <span class="h-px flex-1 bg-line" />
+              {{ t('groups.session.current') }}
+              <span class="h-px flex-1 bg-line" />
             </li>
             <EntryItem
               :entry="entry"

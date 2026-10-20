@@ -2,7 +2,7 @@
 import { defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { useAuth, refreshAuth } from './composables/useAuth.js'
+import { useAuth, refreshAuth } from './composables/useAuth'
 import ErrorNote from './ui/ErrorNote.vue'
 import Spinner from './ui/Spinner.vue'
 

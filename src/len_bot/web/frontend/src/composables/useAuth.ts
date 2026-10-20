@@ -1,21 +1,33 @@
 import { reactive } from 'vue'
-import { resetSession } from '../api/client'
-import { authApi } from '../api/auth'
+import { ApiError, resetSession } from '../api/client'
+import { authApi, type PanelContext, type PanelMode, type PanelUser } from '../api/auth'
 import { queryClient } from '../api/query'
-import { startStream, stopStream } from '../realtime/stream'
 import { clearHost } from '../api/hostStore'
+import { startStream, stopStream } from '../realtime/stream'
 import { i18n } from '../i18n'
 
-const state = reactive({ status: 'loading', user: null, error: '', panelContext: null })
-let initialization
-let authRequest = 0
-const homes = { isolated: '/chat-test', 'isolated-multi': '/overview', setup: '/setup' }
+export interface AuthState {
+  /** `setup`: the first-run wizard, which has no login. */
+  status: 'loading' | 'authenticated' | 'unauthenticated' | 'error' | 'setup'
+  user: PanelUser | null
+  error: string
+  panelContext: PanelContext | null
+}
 
-export function useAuth() {
+const state = reactive<AuthState>({ status: 'loading', user: null, error: '', panelContext: null })
+let initialization: Promise<void> | undefined
+let authRequest = 0
+const homes: Record<PanelMode, string> = {
+  isolated: '/chat-test',
+  'isolated-multi': '/overview',
+  setup: '/setup',
+}
+
+export function useAuth(): AuthState {
   return state
 }
 
-/** Everything cached for the previous user goes: requests in flight, query cache, old store, event stream. */
+/** Everything cached for the previous user goes: requests in flight, query cache, host store, event stream. */
 function forgetSession() {
   resetSession()
   stopStream()
@@ -23,14 +35,14 @@ function forgetSession() {
   clearHost()
 }
 
-function authenticated(user) {
+function authenticated(user: PanelUser) {
   state.user = user
   state.status = 'authenticated'
   state.error = ''
   if (state.panelContext?.mode === 'isolated-multi') startStream()
 }
 
-export function clearAuth() {
+export function clearAuth(): void {
   ++authRequest
   forgetSession()
   state.user = null
@@ -38,7 +50,7 @@ export function clearAuth() {
   state.error = ''
 }
 
-export async function refreshAuth() {
+export async function refreshAuth(): Promise<void> {
   const own = ++authRequest
   state.status = 'loading'
   state.error = ''
@@ -61,20 +73,20 @@ export async function refreshAuth() {
     authenticated(user)
   } catch (error) {
     if (own !== authRequest) return
-    if (error.status === 401) clearAuth()
+    if (error instanceof ApiError && error.status === 401) clearAuth()
     else {
       state.status = 'error'
-      state.error = error.message
+      state.error = error instanceof Error ? error.message : String(error)
     }
   }
 }
 
-export function ensureAuth() {
+export function ensureAuth(): Promise<void> {
   if (!initialization) initialization = refreshAuth()
   return initialization
 }
 
-export async function login(username, password) {
+export async function login(username: string, password: string): Promise<boolean> {
   const own = ++authRequest
   const result = await authApi.login(username, password)
   if (own !== authRequest) return false
@@ -83,7 +95,7 @@ export async function login(username, password) {
   return true
 }
 
-export async function logout() {
+export async function logout(): Promise<void> {
   await authApi.logout()
   clearAuth()
 }

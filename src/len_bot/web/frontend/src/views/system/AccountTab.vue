@@ -29,7 +29,8 @@ const errors = computed(() => {
   if (!value) return result
   if (!value.username.trim()) result.username = t('system.required')
   else if (value.username !== value.username.trim()) result.username = t('system.account.usernameSpace')
-  if (password.value && (password.value.length < 8 || !password.value.trim())) result.password = t('system.account.passwordRule')
+  if (password.value && (password.value.length < 8 || !password.value.trim()))
+    result.password = t('system.account.passwordRule')
   if (!value.host.trim()) result.host = t('system.required')
   if (value.port === null) result.port = t('system.required')
   return result
@@ -39,7 +40,12 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
 
 <template>
   <Skeleton v-if="settings.isPending.value" :lines="5" />
-  <ErrorNote v-else-if="settings.isError.value" :title="t('system.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+  <ErrorNote
+    v-else-if="settings.isError.value"
+    :title="t('system.readFailed')"
+    :error="settings.error.value"
+    :retry="settings.refetch"
+  />
   <div v-else-if="draft" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection :title="t('system.account.login')">
@@ -47,7 +53,12 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
           <Input v-model="draft.username" autocomplete="username" />
         </Field>
         <Field :label="t('system.account.password')" :error="errors.password">
-          <Input v-model="password" type="password" autocomplete="new-password" :placeholder="t('system.account.passwordKept')" />
+          <Input
+            v-model="password"
+            type="password"
+            autocomplete="new-password"
+            :placeholder="t('system.account.passwordKept')"
+          />
         </Field>
       </FormSection>
       <FormSection :title="t('system.account.address')">
@@ -55,13 +66,26 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
           <Input v-model="draft.host" mono placeholder="127.0.0.1" />
         </Field>
         <Field :label="t('system.account.port')" :error="errors.port" required>
-          <NumberInput v-model="draft.port" :min="1" :max="65535" :steppers="false" :format-options="{ useGrouping: false }" />
+          <NumberInput
+            v-model="draft.port"
+            :min="1"
+            :max="65535"
+            :steppers="false"
+            :format-options="{ useGrouping: false }"
+          />
         </Field>
         <Field :label="t('system.account.https')" inline wide>
           <Switch v-model="draft.cookie_secure" />
         </Field>
       </FormSection>
     </div>
-    <SaveBar :dirty="form.dirty.value" :saving="form.saving.value" :error="form.saveError.value" :invalid="invalid" @save="form.submit" @discard="form.discard" />
+    <SaveBar
+      :dirty="form.dirty.value"
+      :saving="form.saving.value"
+      :error="form.saveError.value"
+      :invalid="invalid"
+      @save="form.submit"
+      @discard="form.discard"
+    />
   </div>
 </template>

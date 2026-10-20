@@ -40,7 +40,9 @@ watch(
   () => props.role.scenes.join(),
   () => (chosen.value = chosen.value.filter((scene) => !props.role.scenes.includes(scene))),
 )
-const choosable = computed(() => rows.value.filter((row) => !row.using && !row.waiting).map((row) => row.scene))
+const choosable = computed(() =>
+  rows.value.filter((row) => !row.using && !row.waiting).map((row) => row.scene),
+)
 function toggle(scene: string, on: boolean) {
   chosen.value = on ? [...chosen.value, scene] : chosen.value.filter((item) => item !== scene)
 }
@@ -51,22 +53,33 @@ const use = useMutation({
     const failed = results.filter((item) => item.status === 'failed')
     const pending = results.filter((item) => item.status === 'pending')
     if (failed.length) {
-      toast.error(t('personas.detail.scenes.failed', { names: failed.map((item) => groupLabel(item.scene)).join(t('personas.separator')) }), {
-        detail: failed.map((item) => `${groupLabel(item.scene)}: ${item.error ?? ''}`).join('\n'),
-      })
+      toast.error(
+        t('personas.detail.scenes.failed', {
+          names: failed.map((item) => groupLabel(item.scene)).join(t('personas.separator')),
+        }),
+        {
+          detail: failed.map((item) => `${groupLabel(item.scene)}: ${item.error ?? ''}`).join('\n'),
+        },
+      )
     }
     if (results.length > failed.length) {
       toast.success(
         pending.length
-          ? t('personas.detail.scenes.pending', { names: pending.map((item) => groupLabel(item.scene)).join(t('personas.separator')), name: name.value })
+          ? t('personas.detail.scenes.pending', {
+              names: pending.map((item) => groupLabel(item.scene)).join(t('personas.separator')),
+              name: name.value,
+            })
           : t('personas.detail.scenes.done', { name: name.value }),
       )
     }
-    if (results.some((item) => item.handover === 'failed')) toast.error(t('groups.settings.role.handoverFailed'))
+    if (results.some((item) => item.handover === 'failed'))
+      toast.error(t('groups.settings.role.handoverFailed'))
     chosen.value = []
   },
   onError: (error) =>
-    toast.error(t('personas.detail.scenes.failedAll'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('personas.detail.scenes.failedAll'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => {
     void client.invalidateQueries({ queryKey: keys.personas.all() })
     void client.invalidateQueries({ queryKey: keys.host.settings() })
@@ -89,7 +102,9 @@ async function apply() {
   <div v-else class="flex max-w-3xl flex-col gap-4">
     <div class="flex flex-wrap items-center gap-3">
       <Checkbox
-        :model-value="chosen.length === 0 ? false : chosen.length === choosable.length ? true : 'indeterminate'"
+        :model-value="
+          chosen.length === 0 ? false : chosen.length === choosable.length ? true : 'indeterminate'
+        "
         :disabled="!choosable.length || Boolean(blocked)"
         @update:model-value="(on) => (chosen = on === true ? [...choosable] : [])"
       >
@@ -104,7 +119,11 @@ async function apply() {
         class="ml-auto"
         @click="apply"
       >
-        {{ chosen.length ? t('personas.detail.scenes.applyCount', { n: chosen.length }) : t('personas.detail.scenes.apply') }}
+        {{
+          chosen.length
+            ? t('personas.detail.scenes.applyCount', { n: chosen.length })
+            : t('personas.detail.scenes.apply')
+        }}
       </Button>
     </div>
     <p v-if="blocked" class="text-sm text-warning">{{ blocked }}</p>
@@ -124,7 +143,9 @@ async function apply() {
           <span class="block truncate text-xs text-muted">{{ row.current }}</span>
         </span>
         <Badge v-if="row.using" tone="brand">{{ t('personas.detail.scenes.using') }}</Badge>
-        <Badge v-else-if="row.waiting" tone="warning" dot pulse>{{ t('personas.detail.scenes.waiting') }}</Badge>
+        <Badge v-else-if="row.waiting" tone="warning" dot pulse>
+          {{ t('personas.detail.scenes.waiting') }}
+        </Badge>
         <IconButton
           :icon="ArrowUpRight"
           :label="t('personas.detail.scenes.open')"

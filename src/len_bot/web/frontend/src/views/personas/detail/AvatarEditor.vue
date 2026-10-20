@@ -27,7 +27,9 @@ const change = useMutation({
     writes.done(result, [], file ? t('personas.detail.avatar.changed') : t('personas.detail.avatar.removed'))
   },
   onError: (error) =>
-    toast.error(t('personas.detail.avatar.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('personas.detail.avatar.failed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
 function chosen(event: Event) {
   const input = event.target as HTMLInputElement
@@ -48,9 +50,23 @@ async function remove() {
 <template>
   <div class="flex items-center gap-4">
     <Avatar :name="name || role.key" :src="personaAvatar(role)" :size="72" />
-    <input ref="picker" type="file" accept="image/png,.png" class="sr-only" tabindex="-1" aria-hidden="true" @change="chosen" />
+    <input
+      ref="picker"
+      type="file"
+      accept="image/png,.png"
+      class="sr-only"
+      tabindex="-1"
+      aria-hidden="true"
+      @change="chosen"
+    />
     <div class="flex flex-wrap items-center gap-2">
-      <Button size="sm" :icon="ImageUp" :loading="change.isPending.value && change.variables.value !== null" :disabled="change.isPending.value" @click="picker?.click()">
+      <Button
+        size="sm"
+        :icon="ImageUp"
+        :loading="change.isPending.value && change.variables.value !== null"
+        :disabled="change.isPending.value"
+        @click="picker?.click()"
+      >
         {{ role.avatar ? t('personas.detail.avatar.replace') : t('personas.detail.avatar.upload') }}
       </Button>
       <Button

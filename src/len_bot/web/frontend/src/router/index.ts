@@ -5,11 +5,11 @@ import {
   type RouteLocationNormalized,
   type RouteRecordRaw,
 } from 'vue-router'
-import { ensureAuth, useAuth, clearAuth } from '../composables/useAuth.js'
+import { ensureAuth, useAuth, clearAuth } from '../composables/useAuth'
 import { i18n } from '../i18n'
 import { areaOf } from '../layouts/nav'
 import { onUnauthorized } from '../api/client'
-import { internalPath } from './navigation.js'
+import { internalPath } from './navigation'
 import { groupsTarget, type GroupTab } from '../views/groups/route'
 
 declare module 'vue-router' {

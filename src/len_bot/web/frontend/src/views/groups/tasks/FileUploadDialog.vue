@@ -41,24 +41,40 @@ const open = computed({
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="t('groups.tasks.space.uploadTitle')" size="sm" :busy="upload.isPending.value">
-    <form id="upload-file" class="flex flex-col gap-3" @submit.prevent="file && name.trim() && upload.mutate()">
+  <Dialog
+    v-model:open="open"
+    :title="t('groups.tasks.space.uploadTitle')"
+    size="sm"
+    :busy="upload.isPending.value"
+  >
+    <form
+      id="upload-file"
+      class="flex flex-col gap-3"
+      @submit.prevent="file && name.trim() && upload.mutate()"
+    >
       <input ref="picker" type="file" class="sr-only" tabindex="-1" aria-hidden="true" @change="chosen" />
       <div class="flex min-w-0 items-center gap-3">
         <Button size="sm" :icon="Paperclip" :disabled="upload.isPending.value" @click="picker?.click()">
           {{ t('groups.tasks.space.choose') }}
         </Button>
         <span v-if="file" class="min-w-0 truncate text-sm text-ink-2">
-          {{ file.name }} · <span class="tabular">{{ formatBytes(file.size) }}</span>
+          {{ file.name }} ·
+          <span class="tabular">{{ formatBytes(file.size) }}</span>
         </span>
       </div>
       <Field v-if="file" :label="t('groups.tasks.files.keepName')">
         <Input v-model="name" :disabled="upload.isPending.value" />
       </Field>
-      <ErrorNote v-if="upload.isError.value" :title="t('groups.tasks.space.uploadFailed')" :error="upload.error.value" />
+      <ErrorNote
+        v-if="upload.isError.value"
+        :title="t('groups.tasks.space.uploadFailed')"
+        :error="upload.error.value"
+      />
     </form>
     <template #footer>
-      <Button variant="ghost" :disabled="upload.isPending.value" @click="emit('close')">{{ t('common.cancel') }}</Button>
+      <Button variant="ghost" :disabled="upload.isPending.value" @click="emit('close')">
+        {{ t('common.cancel') }}
+      </Button>
       <Button
         variant="primary"
         type="submit"

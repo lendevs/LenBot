@@ -27,7 +27,9 @@ const { t } = useI18n()
 const form = useProfile()
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const scene = ref(props.role.scenes[0] ?? scenes.value[0]?.scene ?? '')
-const sceneOptions = computed(() => scenes.value.map((item) => ({ value: item.scene, label: groupLabel(item.scene) })))
+const sceneOptions = computed(() =>
+  scenes.value.map((item) => ({ value: item.scene, label: groupLabel(item.scene) })),
+)
 const context = ref('0')
 const contextOptions = computed(() =>
   ['0', '20', '50', '100'].map((value) => ({
@@ -47,7 +49,9 @@ const stop = useMutation({
   mutationFn: (id: string) => personasApi.stopTrial(id),
   onSuccess: () => (trial.value = null),
   onError: (error) =>
-    toast.error(t('personas.detail.trial.stopFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('personas.detail.trial.stopFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
 async function end() {
   const sure = await confirm({
@@ -66,10 +70,17 @@ async function end() {
       <h3 class="min-w-0 flex-1 truncate text-base font-semibold">
         {{ t('personas.detail.trial.running', { name: trial.persona, group: groupLabel(trial.scene) }) }}
       </h3>
-      <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="{ name: 'host-trials', query: { trial: trial.id } }">
+      <Button
+        size="sm"
+        variant="ghost"
+        :icon-right="ArrowUpRight"
+        :to="{ name: 'host-trials', query: { trial: trial.id } }"
+      >
         {{ t('personas.detail.trial.openPlayground') }}
       </Button>
-      <Button size="sm" :icon="Square" :loading="stop.isPending.value" @click="end">{{ t('personas.detail.trial.stop') }}</Button>
+      <Button size="sm" :icon="Square" :loading="stop.isPending.value" @click="end">
+        {{ t('personas.detail.trial.stop') }}
+      </Button>
     </div>
     <ChatPanel :key="trial.id" :source="trialSource(trial.id)" />
   </div>
@@ -86,7 +97,11 @@ async function end() {
       </Field>
     </FormSection>
     <p v-if="problem" class="text-sm text-error">{{ problem }}</p>
-    <ErrorNote v-if="start.isError.value" :title="t('personas.detail.trial.startFailed')" :error="start.error.value" />
+    <ErrorNote
+      v-if="start.isError.value"
+      :title="t('personas.detail.trial.startFailed')"
+      :error="start.error.value"
+    />
     <div>
       <Button
         type="submit"

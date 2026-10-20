@@ -70,7 +70,9 @@ watch(initial, (next, previous) => {
 })
 const dirty = computed(() => !same(draft.value, initial.value))
 const configured = computed(() =>
-  Object.fromEntries(Object.entries(saved.value ?? {}).map(([key, item]) => [key, 'configured' in item && item.configured])),
+  Object.fromEntries(
+    Object.entries(saved.value ?? {}).map(([key, item]) => [key, 'configured' in item && item.configured]),
+  ),
 )
 const problems = computed(() => formProblems(fields.value, draft.value, configured.value, t))
 const invalid = computed(() => Object.keys(problems.value).length > 0)
@@ -107,7 +109,8 @@ async function save() {
     saveError.value = describeError(error, t('ui.error.network')).message
   }
 }
-const disable = () => state.run(props.name, () => pluginsApi.save(props.name, false), { success: t('plugins.detail.disabled') })
+const disable = () =>
+  state.run(props.name, () => pluginsApi.save(props.name, false), { success: t('plugins.detail.disabled') })
 async function act(action: PluginAction) {
   const result = await state.run(props.name, () => pluginsApi.act(props.name, action))
   if (!result) return
@@ -124,7 +127,9 @@ async function uninstall() {
     tone: 'danger',
   })
   if (!sure) return
-  const result = await state.run(props.name, () => pluginsApi.uninstall(props.name), { success: t('plugins.uninstall.done') })
+  const result = await state.run(props.name, () => pluginsApi.uninstall(props.name), {
+    success: t('plugins.uninstall.done'),
+  })
   if (result) void router.push({ query: {} })
 }
 async function removeData() {
@@ -134,22 +139,53 @@ async function removeData() {
     confirmLabel: t('plugins.removeData.confirm'),
     tone: 'danger',
   })
-  if (sure) await state.run(props.name, () => pluginsApi.removeData(props.name), { success: t('plugins.removeData.done') })
+  if (sure)
+    await state.run(props.name, () => pluginsApi.removeData(props.name), {
+      success: t('plugins.removeData.done'),
+    })
 }
 const update = () => emit('install', { kind: 'update', name: props.name, ref: source.value?.ref ?? null })
 
 const menu = computed<MenuEntry[]>(() => {
   const items: MenuEntry[] = []
-  if (loaded.value) items.push({ label: t('plugins.detail.reload'), icon: RefreshCw, disabled: busy.value || dirty.value, select: () => void act('reload') })
+  if (loaded.value)
+    items.push({
+      label: t('plugins.detail.reload'),
+      icon: RefreshCw,
+      disabled: busy.value || dirty.value,
+      select: () => void act('reload'),
+    })
   if (source.value?.installed?.kind === 'git')
-    items.push({ label: t('plugins.detail.update'), icon: Upload, disabled: busy.value || dirty.value, select: update })
+    items.push({
+      label: t('plugins.detail.update'),
+      icon: Upload,
+      disabled: busy.value || dirty.value,
+      select: update,
+    })
   if (source.value?.previous && !source.value.candidate)
-    items.push({ label: t('plugins.version.rollback', { version: source.value.previous.version }), icon: RotateCcw, disabled: busy.value, select: () => void act('rollback') })
+    items.push({
+      label: t('plugins.version.rollback', { version: source.value.previous.version }),
+      icon: RotateCcw,
+      disabled: busy.value,
+      select: () => void act('rollback'),
+    })
   if (manifest.value?.managed || disabledIn(props.snapshot, props.name)) items.push({ type: 'separator' })
   if (manifest.value?.managed)
-    items.push({ label: t('plugins.uninstall.confirm'), icon: Trash2, danger: true, disabled: busy.value, select: () => void uninstall() })
+    items.push({
+      label: t('plugins.uninstall.confirm'),
+      icon: Trash2,
+      danger: true,
+      disabled: busy.value,
+      select: () => void uninstall(),
+    })
   if (disabledIn(props.snapshot, props.name))
-    items.push({ label: t('plugins.removeData.confirm'), icon: Trash2, danger: true, disabled: busy.value, select: () => void removeData() })
+    items.push({
+      label: t('plugins.removeData.confirm'),
+      icon: Trash2,
+      danger: true,
+      disabled: busy.value,
+      select: () => void removeData(),
+    })
   return items
 })
 
@@ -162,7 +198,9 @@ const changeText = computed(() => {
       permissions === null
         ? t('plugins.permissions.undeclared')
         : permissions.length
-          ? t('plugins.permissions.needs', { list: permissions.map((item) => item.title).join(t('personas.separator')) })
+          ? t('plugins.permissions.needs', {
+              list: permissions.map((item) => item.title).join(t('personas.separator')),
+            })
           : t('plugins.permissions.none'),
     )
   if (isolation) parts.push(t(`plugins.candidate.isolation.${isolation}`))
@@ -179,13 +217,20 @@ const counts = computed<Record<string, number | undefined>>(() => ({
   scenes: scenesUsing(props.snapshot, props.name).length || undefined,
   tools: featureCount(running.value) + (running.value?.crons.length ?? 0) || undefined,
   skills: running.value?.skills.length || undefined,
-  logs: (running.value?.errors.length ?? 0) + (running.value?.model_calls.filter((call) => call.error).length ?? 0) || undefined,
+  logs:
+    (running.value?.errors.length ?? 0) +
+      (running.value?.model_calls.filter((call) => call.error).length ?? 0) || undefined,
 }))
 const tabs = computed(() =>
-  tabNames.value.map((value) => ({ value, label: t(`plugins.detail.tabs.${value}`), count: counts.value[value] })),
+  tabNames.value.map((value) => ({
+    value,
+    label: t(`plugins.detail.tabs.${value}`),
+    count: counts.value[value],
+  })),
 )
 const tab = computed({
-  get: () => (tabNames.value.includes(route.query.part as string) ? (route.query.part as string) : 'settings'),
+  get: () =>
+    tabNames.value.includes(route.query.part as string) ? (route.query.part as string) : 'settings',
   set: (value: string) => void router.replace({ query: { ...route.query, part: value } }),
 })
 const back = computed(() => ({ query: {} }))
@@ -195,7 +240,9 @@ const permissions = computed(() => permissionsOf(props.snapshot, props.name))
 <template>
   <div class="flex min-w-0 flex-col gap-5">
     <div>
-      <Button variant="ghost" size="sm" :icon="ArrowLeft" :to="back" class="-ml-2">{{ t('plugins.all') }}</Button>
+      <Button variant="ghost" size="sm" :icon="ArrowLeft" :to="back" class="-ml-2">
+        {{ t('plugins.all') }}
+      </Button>
     </div>
     <header class="flex min-w-0 flex-wrap items-start gap-4">
       <span class="flex" :class="!enabled && 'opacity-60 grayscale'" aria-hidden="true">
@@ -213,16 +260,32 @@ const permissions = computed(() => permissionsOf(props.snapshot, props.name))
         <p v-if="manifest" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
           <span v-if="manifest.authors?.length">{{ manifest.authors.join(t('personas.separator')) }}</span>
           <span v-if="manifest.license">{{ manifest.license }}</span>
-          <a v-if="manifest.repository" :href="manifest.repository" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-primary hover:underline">
-            {{ t('plugins.detail.repository') }}<ArrowUpRight :size="13" aria-hidden="true" />
+          <a
+            v-if="manifest.repository"
+            :href="manifest.repository"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-0.5 text-primary hover:underline"
+          >
+            {{ t('plugins.detail.repository') }}
+            <ArrowUpRight :size="13" aria-hidden="true" />
           </a>
-          <a v-if="manifest.homepage" :href="manifest.homepage" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-0.5 text-primary hover:underline">
-            {{ t('plugins.detail.homepage') }}<ArrowUpRight :size="13" aria-hidden="true" />
+          <a
+            v-if="manifest.homepage"
+            :href="manifest.homepage"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-0.5 text-primary hover:underline"
+          >
+            {{ t('plugins.detail.homepage') }}
+            <ArrowUpRight :size="13" aria-hidden="true" />
           </a>
         </p>
       </div>
       <div class="flex shrink-0 items-center gap-2">
-        <Button v-if="enabled" :disabled="busy" :loading="working && !dirty" @click="disable">{{ t('plugins.detail.disable') }}</Button>
+        <Button v-if="enabled" :disabled="busy" :loading="working && !dirty" @click="disable">
+          {{ t('plugins.detail.disable') }}
+        </Button>
         <Button v-else-if="manifest" variant="primary" :disabled="busy" :loading="working" @click="save">
           {{ dirty ? t('plugins.detail.saveEnable') : t('plugins.detail.enable') }}
         </Button>
@@ -232,16 +295,38 @@ const permissions = computed(() => permissionsOf(props.snapshot, props.name))
       </div>
     </header>
 
-    <div v-if="source?.candidate" class="flex flex-wrap items-center gap-3 rounded-lg bg-info-bg px-4 py-3 text-sm text-info">
+    <div
+      v-if="source?.candidate"
+      class="flex flex-wrap items-center gap-3 rounded-lg bg-info-bg px-4 py-3 text-sm text-info"
+    >
       <p class="min-w-0 flex-1">
-        <strong class="font-semibold">{{ t('plugins.candidate.ready', { version: source.candidate.version }) }}</strong>
-        · {{ source.application === 'host' ? (source.requested ? t('plugins.candidate.requested') : t('plugins.candidate.restart')) : t('plugins.candidate.reload') }}
-        <template v-if="changeText"> · {{ changeText }}</template>
+        <strong class="font-semibold">
+          {{ t('plugins.candidate.ready', { version: source.candidate.version }) }}
+        </strong>
+        ·
+        {{
+          source.application === 'host'
+            ? source.requested
+              ? t('plugins.candidate.requested')
+              : t('plugins.candidate.restart')
+            : t('plugins.candidate.reload')
+        }}
+        <template v-if="changeText">· {{ changeText }}</template>
       </p>
       <div class="flex items-center gap-2">
-        <Button size="sm" variant="ghost" :disabled="busy" @click="act('cancel')">{{ t('plugins.candidate.cancel') }}</Button>
-        <Button size="sm" variant="primary" :disabled="busy || dirty" :loading="working" @click="act('apply')">
-          {{ source.application === 'host' ? t('plugins.candidate.applyRestart') : t('plugins.candidate.apply') }}
+        <Button size="sm" variant="ghost" :disabled="busy" @click="act('cancel')">
+          {{ t('plugins.candidate.cancel') }}
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          :disabled="busy || dirty"
+          :loading="working"
+          @click="act('apply')"
+        >
+          {{
+            source.application === 'host' ? t('plugins.candidate.applyRestart') : t('plugins.candidate.apply')
+          }}
         </Button>
       </div>
     </div>
@@ -253,10 +338,25 @@ const permissions = computed(() => permissionsOf(props.snapshot, props.name))
       }}
     </p>
     <ErrorNote v-if="source?.error" :title="t('plugins.detail.applyFailed')" :error="source.error" />
-    <ErrorNote v-if="running?.error" :title="t('plugins.detail.startFailed')" :error="running.error" :retry="() => act('reload')" />
-    <ErrorNote v-for="entry in entries.filter((item) => item.error)" :key="entry.directory" :title="t('plugins.detail.manifestFailed')" :error="entry.error" />
-    <p v-if="entries.length > 1" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">{{ t('plugins.detail.duplicate') }}</p>
-    <p v-if="permissions === null && (manifest || running)" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
+    <ErrorNote
+      v-if="running?.error"
+      :title="t('plugins.detail.startFailed')"
+      :error="running.error"
+      :retry="() => act('reload')"
+    />
+    <ErrorNote
+      v-for="entry in entries.filter((item) => item.error)"
+      :key="entry.directory"
+      :title="t('plugins.detail.manifestFailed')"
+      :error="entry.error"
+    />
+    <p v-if="entries.length > 1" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
+      {{ t('plugins.detail.duplicate') }}
+    </p>
+    <p
+      v-if="permissions === null && (manifest || running)"
+      class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning"
+    >
       {{ t('plugins.permissions.undeclared') }}
     </p>
 

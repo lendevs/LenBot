@@ -15,7 +15,11 @@ export const lastGroupTab = ref<GroupTab>('live')
  * Address of a group in the workbench. Scene ids always contain a colon and tab names never do, so
  * `/groups/memory` (no group chosen yet) still means the memory tab of the default group.
  */
-export function groupsTarget(scene?: string, tab: GroupTab = lastGroupTab.value, query = {}): RouteLocationRaw {
+export function groupsTarget(
+  scene?: string,
+  tab: GroupTab = lastGroupTab.value,
+  query = {},
+): RouteLocationRaw {
   return scene
     ? { name: 'groups', params: { scene, tab }, query }
     : { name: 'groups', params: { scene: tab }, query }

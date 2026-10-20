@@ -24,7 +24,10 @@ const when = ref('')
 const target = ref<'self' | 'other'>('self')
 const account = ref('')
 const targets = computed(() =>
-  (['self', 'other'] as const).map((value) => ({ value, label: t(`groups.tasks.schedules.dialog.${value}`) })),
+  (['self', 'other'] as const).map((value) => ({
+    value,
+    label: t(`groups.tasks.schedules.dialog.${value}`),
+  })),
 )
 const accountError = computed(() =>
   target.value === 'other' && account.value.trim() && !ACCOUNT.test(account.value.trim())
@@ -60,14 +63,20 @@ const open = computed({
   },
 })
 async function close() {
-  if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) return
+  if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+    return
   emit('dirty', false)
   emit('close')
 }
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="t('groups.tasks.schedules.dialog.title')" size="md" :busy="create.isPending.value">
+  <Dialog
+    v-model:open="open"
+    :title="t('groups.tasks.schedules.dialog.title')"
+    size="md"
+    :busy="create.isPending.value"
+  >
     <form id="new-schedule" class="flex flex-col gap-4" @submit.prevent="ready && create.mutate()">
       <Field :label="t('groups.tasks.schedules.dialog.note')" required>
         <Textarea v-model="note" :rows="2" :max-rows="6" />
@@ -76,14 +85,30 @@ async function close() {
       <Field :label="t('groups.tasks.schedules.dialog.target')">
         <SegmentedControl v-model="target" :options="targets" size="sm" class="self-start" />
       </Field>
-      <Field v-if="target === 'other'" :label="t('groups.tasks.schedules.dialog.account')" :error="accountError">
+      <Field
+        v-if="target === 'other'"
+        :label="t('groups.tasks.schedules.dialog.account')"
+        :error="accountError"
+      >
         <Input v-model="account" mono placeholder="onebot:10001" />
       </Field>
-      <ErrorNote v-if="create.isError.value" :title="t('groups.tasks.schedules.dialog.failed')" :error="create.error.value" />
+      <ErrorNote
+        v-if="create.isError.value"
+        :title="t('groups.tasks.schedules.dialog.failed')"
+        :error="create.error.value"
+      />
     </form>
     <template #footer>
-      <Button variant="ghost" :disabled="create.isPending.value" @click="close">{{ t('common.cancel') }}</Button>
-      <Button variant="primary" type="submit" form="new-schedule" :loading="create.isPending.value" :disabled="!ready">
+      <Button variant="ghost" :disabled="create.isPending.value" @click="close">
+        {{ t('common.cancel') }}
+      </Button>
+      <Button
+        variant="primary"
+        type="submit"
+        form="new-schedule"
+        :loading="create.isPending.value"
+        :disabled="!ready"
+      >
         {{ t('groups.tasks.schedules.dialog.add') }}
       </Button>
     </template>

@@ -6,7 +6,7 @@ import { Link2, MonitorSmartphone, RefreshCw } from '@lucide/vue'
 import { capabilitiesApi, type BrowserSettings } from '../../api/capabilities'
 import { keys } from '../../api/query'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
-import { developerDetails } from '../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../composables/useDeveloperMode'
 import { readPendingRestart } from '../../api/hostStore'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
@@ -27,7 +27,10 @@ import RawRecord from '../groups/tasks/RawRecord.vue'
 
 const { t } = useI18n()
 const client = useQueryClient()
-const browser = useQuery({ queryKey: keys.host.browser(), queryFn: ({ signal }) => capabilitiesApi.browser(signal) })
+const browser = useQuery({
+  queryKey: keys.host.browser(),
+  queryFn: ({ signal }) => capabilitiesApi.browser(signal),
+})
 const state = computed(() => browser.data.value)
 const blank = (): BrowserSettings => ({
   socket: '',
@@ -72,13 +75,19 @@ const save = useMutation({
     toast.success(t('capabilities.savedRestart'))
   },
 })
-const saveError = computed(() => (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null))
+const saveError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+)
 
-const failed = (error: unknown) => toast.error(t('capabilities.failed'), { detail: describeError(error, t('ui.error.network')).message })
+const failed = (error: unknown) =>
+  toast.error(t('capabilities.failed'), { detail: describeError(error, t('ui.error.network')).message })
 const status = ref<Record<string, unknown> | null>(null)
 const devices = ref<{ device_id: string; label: string }[] | null>(null)
 const check = useMutation({
-  mutationFn: async () => ({ status: await capabilitiesApi.browserStatus(), devices: (await capabilitiesApi.browserDevices()).devices }),
+  mutationFn: async () => ({
+    status: await capabilitiesApi.browserStatus(),
+    devices: (await capabilitiesApi.browserDevices()).devices,
+  }),
   onSuccess: (result) => {
     status.value = result.status
     devices.value = result.devices
@@ -111,7 +120,8 @@ async function confirmRevoke(device: string) {
   if (sure) revoke.mutate(device)
 }
 const release = useMutation({
-  mutationFn: (task: { scene: string; id: number }) => capabilitiesApi.releaseBrowser(task.scene, task.id, null),
+  mutationFn: (task: { scene: string; id: number }) =>
+    capabilitiesApi.releaseBrowser(task.scene, task.id, null),
   onSuccess: () => {
     void browser.refetch()
     toast.success(t('capabilities.browser.released'))
@@ -131,11 +141,21 @@ const finished = (value: string) => ['done', 'failed', 'cancelled'].includes(val
 
 <template>
   <Skeleton v-if="browser.isPending.value" :lines="6" />
-  <ErrorNote v-else-if="browser.isError.value" :title="t('capabilities.browser.readFailed')" :error="browser.error.value" :retry="browser.refetch" />
+  <ErrorNote
+    v-else-if="browser.isError.value"
+    :title="t('capabilities.browser.readFailed')"
+    :error="browser.error.value"
+    :retry="browser.refetch"
+  />
   <div v-else-if="state" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <Field :label="t('capabilities.browser.on')" inline>
-        <Switch :model-value="draft !== null" @update:model-value="(on: boolean) => (draft = on ? (state!.saved ? copy(state!.saved) : blank()) : null)" />
+        <Switch
+          :model-value="draft !== null"
+          @update:model-value="
+            (on: boolean) => (draft = on ? (state!.saved ? copy(state!.saved) : blank()) : null)
+          "
+        />
       </Field>
       <FormSection v-if="draft">
         <Field :label="t('capabilities.browser.socket')" required :error="errors.socket" wide>
@@ -151,11 +171,20 @@ const finished = (value: string) => ['done', 'failed', 'cancelled'].includes(val
           <Input
             :model-value="draft.browser_instance_id ?? ''"
             mono
-            @update:model-value="(value: string) => (draft!.browser_instance_id = value.trim() ? value : null)"
+            @update:model-value="
+              (value: string) => (draft!.browser_instance_id = value.trim() ? value : null)
+            "
           />
         </Field>
         <Field :label="t('capabilities.browser.timeout')" :error="errors.timeout">
-          <NumberInput v-model="draft.timeout_seconds" :min="1" :max="600" :snap="false" :steppers="false" :unit="t('capabilities.seconds')" />
+          <NumberInput
+            v-model="draft.timeout_seconds"
+            :min="1"
+            :max="600"
+            :snap="false"
+            :steppers="false"
+            :unit="t('capabilities.seconds')"
+          />
         </Field>
         <Field :label="t('capabilities.browser.bytes')" :error="errors.bytes">
           <NumberInput v-model="draft.max_response_bytes" :min="1024" :steppers="false" unit="B" />
@@ -163,15 +192,26 @@ const finished = (value: string) => ['done', 'failed', 'cancelled'].includes(val
       </FormSection>
     </div>
 
-    <section v-if="state.running" class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
+    <section
+      v-if="state.running"
+      class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5"
+    >
       <header class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-base font-semibold">{{ t('capabilities.browser.devices') }}</h3>
         <div class="flex items-center gap-2">
-          <Button size="sm" :icon="RefreshCw" :loading="check.isPending.value" @click="check.mutate()">{{ t('capabilities.browser.check') }}</Button>
-          <Button size="sm" :icon="Link2" :loading="pair.isPending.value" @click="pair.mutate()">{{ t('capabilities.browser.pair') }}</Button>
+          <Button size="sm" :icon="RefreshCw" :loading="check.isPending.value" @click="check.mutate()">
+            {{ t('capabilities.browser.check') }}
+          </Button>
+          <Button size="sm" :icon="Link2" :loading="pair.isPending.value" @click="pair.mutate()">
+            {{ t('capabilities.browser.pair') }}
+          </Button>
         </div>
       </header>
-      <ErrorNote v-if="check.isError.value" :title="t('capabilities.browser.checkFailed')" :error="check.error.value" />
+      <ErrorNote
+        v-if="check.isError.value"
+        :title="t('capabilities.browser.checkFailed')"
+        :error="check.error.value"
+      />
       <div v-if="pairing" class="flex flex-col gap-2 rounded-md bg-info-bg px-3 py-2 text-sm text-info">
         <p>{{ t('capabilities.browser.pairing') }}</p>
         <CodeBlock :code="pairing" :max-lines="4" />
@@ -180,7 +220,12 @@ const finished = (value: string) => ['done', 'failed', 'cancelled'].includes(val
         <li v-for="device in devices" :key="device.device_id" class="flex items-center gap-3 py-2">
           <MonitorSmartphone :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           <span class="min-w-0 flex-1 truncate text-sm">{{ device.label }}</span>
-          <Button size="sm" variant="danger-ghost" :loading="revoke.isPending.value && revoke.variables.value === device.device_id" @click="confirmRevoke(device.device_id)">
+          <Button
+            size="sm"
+            variant="danger-ghost"
+            :loading="revoke.isPending.value && revoke.variables.value === device.device_id"
+            @click="confirmRevoke(device.device_id)"
+          >
             {{ t('capabilities.browser.revoke') }}
           </Button>
         </li>
@@ -189,21 +234,41 @@ const finished = (value: string) => ['done', 'failed', 'cancelled'].includes(val
       <RawRecord v-if="developerDetails && status" :label="t('capabilities.browser.status')" :code="status" />
     </section>
 
-    <section v-if="state.occupied.length" class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
+    <section
+      v-if="state.occupied.length"
+      class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5"
+    >
       <h3 class="text-base font-semibold">{{ t('capabilities.browser.occupied') }}</h3>
       <ul class="flex list-none flex-col divide-y divide-line">
-        <li v-for="task in state.occupied" :key="`${task.scene}:${task.id}`" class="flex items-center gap-3 py-2">
+        <li
+          v-for="task in state.occupied"
+          :key="`${task.scene}:${task.id}`"
+          class="flex items-center gap-3 py-2"
+        >
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm text-ink">{{ task.goal }}</p>
             <p class="truncate text-xs text-muted">{{ groupLabel(task.scene) }} · #{{ task.id }}</p>
           </div>
           <Badge>{{ t(`groups.tasks.status.${task.status}`, task.status) }}</Badge>
-          <Button size="sm" variant="ghost" :disabled="!finished(task.status)" :loading="release.isPending.value && release.variables.value?.id === task.id" @click="confirmRelease(task)">
+          <Button
+            size="sm"
+            variant="ghost"
+            :disabled="!finished(task.status)"
+            :loading="release.isPending.value && release.variables.value?.id === task.id"
+            @click="confirmRelease(task)"
+          >
             {{ t('capabilities.browser.release') }}
           </Button>
         </li>
       </ul>
     </section>
-    <SaveBar :dirty="dirty" :saving="save.isPending.value" :error="saveError" :invalid="invalid" @save="save.mutate()" @discard="draft = state!.saved && copy(state!.saved)" />
+    <SaveBar
+      :dirty="dirty"
+      :saving="save.isPending.value"
+      :error="saveError"
+      :invalid="invalid"
+      @save="save.mutate()"
+      @discard="draft = state!.saved && copy(state!.saved)"
+    />
   </div>
 </template>

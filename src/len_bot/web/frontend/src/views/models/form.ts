@@ -141,7 +141,10 @@ function toChange(draft: ModelsDraft, memory: boolean): ModelsChange {
       ]),
     ),
     roles: Object.fromEntries(
-      Object.entries(draft.roles).map(([role, item]) => [role, bind(item as ChatBinding | AsrBinding | null)]),
+      Object.entries(draft.roles).map(([role, item]) => [
+        role,
+        bind(item as ChatBinding | AsrBinding | null),
+      ]),
     ) as ModelRoles,
     ...(memory ? { memory_embedding: bind(draft.memory_embedding) } : {}),
     learning_embeddings: Object.fromEntries(
@@ -164,14 +167,19 @@ export interface Problem {
 export function useModelsForm() {
   const { t } = useI18n()
   const client = useQueryClient()
-  const settings = useQuery({ queryKey: keys.host.settings(), queryFn: ({ signal }) => settingsApi.read(signal) })
+  const settings = useQuery({
+    queryKey: keys.host.settings(),
+    queryFn: ({ signal }) => settingsApi.read(signal),
+  })
   const protocols = useQuery({
     queryKey: keys.host.modelProtocols(),
     queryFn: ({ signal }) => modelsApi.protocols(signal),
     staleTime: Infinity,
   })
-  const protocol = (api: string | undefined) => protocols.data.value?.protocols.find((item) => item.api === api)
-  const supports = (row: ProviderRow | undefined, role: string) => Boolean(row && protocol(row.api)?.roles.includes(role))
+  const protocol = (api: string | undefined) =>
+    protocols.data.value?.protocols.find((item) => item.api === api)
+  const supports = (row: ProviderRow | undefined, role: string) =>
+    Boolean(row && protocol(row.api)?.roles.includes(role))
 
   const memoryOn = computed(() => settings.data.value?.saved.memory != null)
   const saved = computed(() => (settings.data.value ? fromSnapshot(settings.data.value) : null))
@@ -182,7 +190,8 @@ export function useModelsForm() {
     draft.value = saved.value && copy(saved.value)
     catalog.value = {}
   }
-  const changeOf = (value: ModelsDraft | null) => (value ? JSON.stringify(toChange(value, memoryOn.value)) : '')
+  const changeOf = (value: ModelsDraft | null) =>
+    value ? JSON.stringify(toChange(value, memoryOn.value)) : ''
   const dirty = computed(() => Boolean(draft.value) && changeOf(draft.value) !== changeOf(saved.value))
   // Saved elsewhere meanwhile: an unchanged draft follows, an edited one is kept.
   watch(
@@ -244,7 +253,8 @@ export function useModelsForm() {
   }
   function changeProtocol(row: ProviderRow, api: string) {
     const before = protocol(row.api)
-    if (!row.base_url.trim() || trimUrl(row.base_url) === trimUrl(before?.base_url)) row.base_url = protocol(api)?.base_url ?? ''
+    if (!row.base_url.trim() || trimUrl(row.base_url) === trimUrl(before?.base_url))
+      row.base_url = protocol(api)?.base_url ?? ''
     row.api = api
     for (const role of chatRoles) {
       const binding = draft.value!.roles[role]
@@ -268,7 +278,13 @@ export function useModelsForm() {
   }
   function toggleAsr(on: boolean) {
     draft.value!.roles.asr = on
-      ? { api: 'openai-audio', provider: optionsFor('asr')[0]?.value ?? '', model: '', timeout_seconds: 60, language: null }
+      ? {
+          api: 'openai-audio',
+          provider: optionsFor('asr')[0]?.value ?? '',
+          model: '',
+          timeout_seconds: 60,
+          language: null,
+        }
       : null
   }
 
@@ -281,10 +297,12 @@ export function useModelsForm() {
       const on = { tab: 'providers' as const, provider: row.id }
       const name = { ...on, field: 'name' as const }
       if (!row.alias.trim()) found.push({ ...name, text: t('models.problems.noName') })
-      else if (row.alias !== row.alias.trim()) found.push({ ...name, text: t('models.problems.spaces', { name: row.alias.trim() }) })
+      else if (row.alias !== row.alias.trim())
+        found.push({ ...name, text: t('models.problems.spaces', { name: row.alias.trim() }) })
       else if (names.filter((item) => item === row.alias).length > 1)
         found.push({ ...name, text: t('models.problems.sameName', { name: row.alias }) })
-      if (!row.base_url.trim()) found.push({ ...on, field: 'url', text: t('models.problems.noUrl', { name: nameOf(row.id) }) })
+      if (!row.base_url.trim())
+        found.push({ ...on, field: 'url', text: t('models.problems.noUrl', { name: nameOf(row.id) }) })
       if (!hasKey(row))
         found.push({
           ...on,
@@ -294,12 +312,19 @@ export function useModelsForm() {
             : t('models.problems.noKey', { name: nameOf(row.id) }),
         })
     }
-    const check = (title: string, use: string, item: { provider: string; model: string } | null, tab: Tab, place: string) => {
+    const check = (
+      title: string,
+      use: string,
+      item: { provider: string; model: string } | null,
+      tab: Tab,
+      place: string,
+    ) => {
       if (!item) return
       const at = { tab, place }
       const row = providerFor(item.provider)
       if (!row) found.push({ ...at, text: t('models.problems.noProvider', { title }) })
-      else if (!supports(row, use)) found.push({ ...at, text: t('models.problems.unsupported', { title, name: nameOf(row.id) }) })
+      else if (!supports(row, use))
+        found.push({ ...at, text: t('models.problems.unsupported', { title, name: nameOf(row.id) }) })
       if (!item.model.trim()) found.push({ ...at, text: t('models.problems.noModel', { title }) })
     }
     for (const role of chatRoles) {
@@ -309,7 +334,11 @@ export function useModelsForm() {
       if (!binding) continue
       const at = { tab: 'roles' as const, place }
       const title = roleTitle(role)
-      if (binding.context_window_tokens === null || binding.max_output_tokens === null || binding.timeout_seconds === null)
+      if (
+        binding.context_window_tokens === null ||
+        binding.max_output_tokens === null ||
+        binding.timeout_seconds === null
+      )
         found.push({ ...at, text: t('models.problems.missingNumber', { title }) })
       else if (binding.max_output_tokens >= binding.context_window_tokens)
         found.push({ ...at, text: t('models.problems.outputTooLong', { title }) })
@@ -319,12 +348,23 @@ export function useModelsForm() {
     const asr = value.roles.asr
     check(roleTitle('asr'), 'asr', asr, 'roles', 'roles.asr')
     if (asr && asr.timeout_seconds === null)
-      found.push({ tab: 'roles', place: 'roles.asr', text: t('models.problems.missingNumber', { title: roleTitle('asr') }) })
+      found.push({
+        tab: 'roles',
+        place: 'roles.asr',
+        text: t('models.problems.missingNumber', { title: roleTitle('asr') }),
+      })
     if (asr?.language && !/^[a-z]{2}$/.test(asr.language))
       found.push({ tab: 'roles', place: 'roles.asr', text: t('models.problems.language') })
-    if (memoryOn.value) check(t('models.vectors.memory'), 'embedding', value.memory_embedding, 'vectors', 'memory')
+    if (memoryOn.value)
+      check(t('models.vectors.memory'), 'embedding', value.memory_embedding, 'vectors', 'memory')
     for (const [scene, item] of Object.entries(value.learning_embeddings))
-      check(t('models.vectors.learningOf', { name: groupLabel(scene) }), 'embedding', item, 'vectors', `learning.${scene}`)
+      check(
+        t('models.vectors.learningOf', { name: groupLabel(scene) }),
+        'embedding',
+        item,
+        'vectors',
+        `learning.${scene}`,
+      )
     return found
   })
 

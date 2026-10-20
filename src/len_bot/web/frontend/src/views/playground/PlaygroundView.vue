@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { MessageCirclePlus, Square } from '@lucide/vue'
 import { keys } from '../../api/query'
 import { trialSource, trialsApi, type TrialInfo } from '../../api/trials'
-import { developerDetails } from '../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../composables/useDeveloperMode'
 import { formatDateTime } from '../../i18n/format'
 import type { HostScene } from '../../api/host'
 import { host } from '../../api/hostStore'
@@ -31,24 +31,30 @@ const client = useQueryClient()
 const trials = useQuery({ queryKey: keys.trials(), queryFn: ({ signal }) => trialsApi.list(signal) })
 const items = computed(() => [...(trials.data.value?.items ?? [])].sort((a, b) => b.created - a.created))
 const active = computed(() => items.value.find((item) => item.active) ?? null)
-const selected = computed(() => items.value.find((item) => item.id === route.query.trial) ?? active.value ?? items.value[0] ?? null)
+const selected = computed(
+  () => items.value.find((item) => item.id === route.query.trial) ?? active.value ?? items.value[0] ?? null,
+)
 const pick = (id: string) => void router.replace({ query: { ...route.query, trial: id } })
 /** Times follow the group's clock, as the chat window does. */
-const zone = (scene: string) => ((host.state?.scenes ?? []) as HostScene[]).find((item) => item.scene === scene)?.timezone
+const zone = (scene: string) =>
+  ((host.state?.scenes ?? []) as HostScene[]).find((item) => item.scene === scene)?.timezone
 const records = computed(() =>
   items.value.map((item) => ({
     value: item.id,
     label: `${groupLabel(item.scene)} · ${formatDateTime(item.created, { timeZone: zone(item.scene) })}${item.active ? ` · ${t('playground.running')}` : ''}`,
   })),
 )
-const text = (key: string) => (typeof route.query[key] === 'string' ? (route.query[key] as string) : undefined)
+const text = (key: string) =>
+  typeof route.query[key] === 'string' ? (route.query[key] as string) : undefined
 
 /** A new test is offered while none runs; the form opens on its own when there is nothing to show. */
 const starting = ref(false)
 watch(active, (value) => {
   if (value) starting.value = false
 })
-const showForm = computed(() => !active.value && (starting.value || !selected.value || Boolean(text('scene') || text('persona'))))
+const showForm = computed(
+  () => !active.value && (starting.value || !selected.value || Boolean(text('scene') || text('persona'))),
+)
 
 async function started(trial: TrialInfo) {
   starting.value = false
@@ -61,7 +67,8 @@ const stop = useMutation({
     toast.success(t('playground.stopped'))
     void client.invalidateQueries({ queryKey: keys.trials() })
   },
-  onError: (error) => toast.error(t('playground.stopFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('playground.stopFailed'), { detail: describeError(error, t('ui.error.network')).message }),
 })
 async function end() {
   const sure = await confirm({
@@ -76,7 +83,12 @@ async function end() {
 <template>
   <div class="flex min-w-0 flex-col gap-4">
     <Skeleton v-if="trials.isPending.value" :lines="6" />
-    <ErrorNote v-else-if="trials.isError.value" :title="t('playground.listFailed')" :error="trials.error.value" :retry="trials.refetch" />
+    <ErrorNote
+      v-else-if="trials.isError.value"
+      :title="t('playground.listFailed')"
+      :error="trials.error.value"
+      :retry="trials.refetch"
+    />
     <template v-else>
       <div v-if="items.length" class="flex flex-wrap items-center gap-3">
         <div class="w-full sm:w-80">
@@ -88,8 +100,12 @@ async function end() {
           />
         </div>
         <div class="ml-auto flex items-center gap-2">
-          <Button v-if="active" :icon="Square" :loading="stop.isPending.value" @click="end">{{ t('playground.stop') }}</Button>
-          <Button v-else-if="!showForm" variant="primary" :icon="MessageCirclePlus" @click="starting = true">{{ t('playground.new') }}</Button>
+          <Button v-if="active" :icon="Square" :loading="stop.isPending.value" @click="end">
+            {{ t('playground.stop') }}
+          </Button>
+          <Button v-else-if="!showForm" variant="primary" :icon="MessageCirclePlus" @click="starting = true">
+            {{ t('playground.new') }}
+          </Button>
         </div>
       </div>
       <StartForm v-if="showForm" :scene="text('scene')" :persona="text('persona')" @started="started" />

@@ -40,7 +40,14 @@ function toggle(id: number) {
         @toggle="toggle(event.id)"
       />
     </ol>
-    <Button v-if="hasMore" size="sm" variant="ghost" class="self-start" :loading="loadingMore" @click="emit('more')">
+    <Button
+      v-if="hasMore"
+      size="sm"
+      variant="ghost"
+      class="self-start"
+      :loading="loadingMore"
+      @click="emit('more')"
+    >
       {{ t('groups.tasks.more') }}
     </Button>
   </section>

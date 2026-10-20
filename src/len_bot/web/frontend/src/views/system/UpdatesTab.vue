@@ -15,7 +15,10 @@ import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
 
 const { t } = useI18n()
-const current = useQuery({ queryKey: keys.system.updates(), queryFn: ({ signal }) => systemApi.updates(signal) })
+const current = useQuery({
+  queryKey: keys.system.updates(),
+  queryFn: ({ signal }) => systemApi.updates(signal),
+})
 // Asks GitHub or the update controller, so only on request.
 const releases = useQuery({
   queryKey: keys.system.releases(),
@@ -24,7 +27,9 @@ const releases = useQuery({
   staleTime: Infinity,
 })
 const prerelease = ref(false)
-const visible = computed(() => (releases.data.value ?? []).filter((item) => prerelease.value || !item.prerelease))
+const visible = computed(() =>
+  (releases.data.value ?? []).filter((item) => prerelease.value || !item.prerelease),
+)
 const data = computed(() => current.data.value)
 const check = computed(() => data.value?.check)
 const summary = computed(() => {
@@ -51,7 +56,12 @@ const open = useMutation({
 
 <template>
   <Skeleton v-if="current.isPending.value" :lines="5" />
-  <ErrorNote v-else-if="current.isError.value" :title="t('system.updates.readFailed')" :error="current.error.value" :retry="current.refetch" />
+  <ErrorNote
+    v-else-if="current.isError.value"
+    :title="t('system.updates.readFailed')"
+    :error="current.error.value"
+    :retry="current.refetch"
+  />
   <div v-else-if="data" class="flex min-w-0 flex-col gap-4">
     <section
       class="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-5"
@@ -61,14 +71,28 @@ const open = useMutation({
         <span class="text-sm text-muted">{{ t('system.updates.current') }}</span>
         <strong class="text-xl font-semibold text-ink tabular">{{ data.version }}</strong>
       </div>
-      <p v-if="summary" class="flex flex-wrap items-center gap-2 text-sm" :class="check?.update_available ? 'font-semibold text-primary' : 'text-ink-2'">
-        <span class="size-2 rounded-full" :class="check?.update_available ? 'bg-brand' : 'bg-subtle'" aria-hidden="true" />
+      <p
+        v-if="summary"
+        class="flex flex-wrap items-center gap-2 text-sm"
+        :class="check?.update_available ? 'font-semibold text-primary' : 'text-ink-2'"
+      >
+        <span
+          class="size-2 rounded-full"
+          :class="check?.update_available ? 'bg-brand' : 'bg-subtle'"
+          aria-hidden="true"
+        />
         {{ summary }}
-        <span v-if="check?.checked_at" class="font-normal text-muted">· {{ formatDateTime(check.checked_at) }}</span>
+        <span v-if="check?.checked_at" class="font-normal text-muted">
+          · {{ formatDateTime(check.checked_at) }}
+        </span>
       </p>
     </section>
     <ErrorNote v-if="check?.error" :title="t('system.updates.checkFailed')" :error="check.error" />
-    <ErrorNote v-if="data.status?.error" :title="t('system.updates.controllerError')" :error="data.status.error" />
+    <ErrorNote
+      v-if="data.status?.error"
+      :title="t('system.updates.controllerError')"
+      :error="data.status.error"
+    />
 
     <section class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
       <h3 class="text-base font-semibold">{{ t('system.updates.howTitle') }}</h3>
@@ -77,11 +101,20 @@ const open = useMutation({
           <li v-for="line in data.notice ?? []" :key="line">{{ line }}</li>
         </ul>
         <div>
-          <Button variant="primary" :icon-right="ExternalLink" :loading="open.isPending.value" @click="open.mutate()">
+          <Button
+            variant="primary"
+            :icon-right="ExternalLink"
+            :loading="open.isPending.value"
+            @click="open.mutate()"
+          >
             {{ t('system.updates.open') }}
           </Button>
         </div>
-        <ErrorNote v-if="open.isError.value" :title="t('system.updates.openFailed')" :error="open.error.value" />
+        <ErrorNote
+          v-if="open.isError.value"
+          :title="t('system.updates.openFailed')"
+          :error="open.error.value"
+        />
       </template>
       <p v-else class="text-sm text-ink-2">{{ t('system.updates.source') }}</p>
     </section>
@@ -93,11 +126,19 @@ const open = useMutation({
           <Field :label="t('system.updates.prerelease')" inline>
             <Switch v-model="prerelease" />
           </Field>
-          <Button size="sm" :icon="RefreshCw" :loading="releases.isFetching.value" @click="checkNow">{{ t('system.updates.check') }}</Button>
+          <Button size="sm" :icon="RefreshCw" :loading="releases.isFetching.value" @click="checkNow">
+            {{ t('system.updates.check') }}
+          </Button>
         </div>
       </header>
-      <ErrorNote v-if="releases.isError.value" :title="t('system.updates.releasesFailed')" :error="releases.error.value" />
-      <p v-if="releases.data.value && !visible.length" class="text-sm text-muted">{{ t('system.updates.none') }}</p>
+      <ErrorNote
+        v-if="releases.isError.value"
+        :title="t('system.updates.releasesFailed')"
+        :error="releases.error.value"
+      />
+      <p v-if="releases.data.value && !visible.length" class="text-sm text-muted">
+        {{ t('system.updates.none') }}
+      </p>
       <ol v-if="visible.length" class="flex list-none flex-col divide-y divide-line">
         <li v-for="item in visible" :key="item.tag" class="flex flex-col gap-2 py-4 first:pt-1">
           <h4 class="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">

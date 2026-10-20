@@ -122,9 +122,13 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
         @reach-start="older"
       >
         <template #default="{ item }">
-          <div v-if="item.type === 'edge'" class="flex min-h-10 items-center justify-center text-xs text-subtle">
+          <div
+            v-if="item.type === 'edge'"
+            class="flex min-h-10 items-center justify-center text-xs text-subtle"
+          >
             <span v-if="query.isFetchingNextPage.value" class="inline-flex items-center gap-2">
-              <Spinner :size="13" />{{ t('groups.live.older') }}
+              <Spinner :size="13" />
+              {{ t('groups.live.older') }}
             </span>
             <span v-else-if="!query.hasNextPage.value">{{ t('groups.live.start') }}</span>
             <span v-else-if="!shown.length">{{ t('groups.live.noMatch') }}</span>
@@ -136,7 +140,12 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
             :persona="persona"
             :name-of="nameOf"
           />
-          <NoticeRow v-else-if="item.type === 'notice'" :notice="item" :time-zone="timeZone" :name-of="nameOf" />
+          <NoticeRow
+            v-else-if="item.type === 'notice'"
+            :notice="item"
+            :time-zone="timeZone"
+            :name-of="nameOf"
+          />
           <TurnCard
             v-else
             :turn="item"

@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { systemApi, systemOf, type Processing } from '../../api/system'
-import { developerMode } from '../../composables/useDeveloperMode.js'
+import { developerMode } from '../../composables/useDeveloperMode'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
@@ -74,7 +74,8 @@ const errors = computed(() => {
   const value = draft.value
   if (!value) return result
   for (const { group, fields } of groups.value)
-    for (const { key } of fields) if (fieldsOf(group)[key] === null) result[`${group}.${key}`] = t('system.required')
+    for (const { key } of fields)
+      if (fieldsOf(group)[key] === null) result[`${group}.${key}`] = t('system.required')
   if (!value.logging.directory.trim()) result['logging.directory'] = t('system.required')
   if (value.logging.retention_days === null) result['logging.retention_days'] = t('system.required')
   return result
@@ -90,10 +91,19 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
       </Field>
     </div>
     <Skeleton v-if="settings.isPending.value" :lines="6" />
-    <ErrorNote v-else-if="settings.isError.value" :title="t('system.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+    <ErrorNote
+      v-else-if="settings.isError.value"
+      :title="t('system.readFailed')"
+      :error="settings.error.value"
+      :retry="settings.refetch"
+    />
     <template v-else-if="draft">
       <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
-        <FormSection v-for="{ group, fields } in groups" :key="group" :title="t(`system.advanced.groups.${group}`)">
+        <FormSection
+          v-for="{ group, fields } in groups"
+          :key="group"
+          :title="t(`system.advanced.groups.${group}`)"
+        >
           <Field
             v-for="item in fields"
             :key="item.key"
@@ -114,17 +124,36 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
           <Field :label="t('system.advanced.fields.logging.directory')" :error="errors['logging.directory']">
             <Input v-model="draft.logging.directory" mono placeholder="logs" />
           </Field>
-          <Field :label="t('system.advanced.fields.logging.retention_days')" :error="errors['logging.retention_days']">
-            <NumberInput v-model="draft.logging.retention_days" :min="1" :max="3650" :unit="t('system.retention.days')" />
+          <Field
+            :label="t('system.advanced.fields.logging.retention_days')"
+            :error="errors['logging.retention_days']"
+          >
+            <NumberInput
+              v-model="draft.logging.retention_days"
+              :min="1"
+              :max="3650"
+              :unit="t('system.retention.days')"
+            />
           </Field>
           <Field :label="t('system.advanced.fields.logging.level')">
             <div>
-              <SegmentedControl v-model="draft.logging.level" :options="levels" :label="t('system.advanced.fields.logging.level')" />
+              <SegmentedControl
+                v-model="draft.logging.level"
+                :options="levels"
+                :label="t('system.advanced.fields.logging.level')"
+              />
             </div>
           </Field>
         </FormSection>
       </div>
-      <SaveBar :dirty="form.dirty.value" :saving="form.saving.value" :error="form.saveError.value" :invalid="invalid" @save="form.submit" @discard="form.discard" />
+      <SaveBar
+        :dirty="form.dirty.value"
+        :saving="form.saving.value"
+        :error="form.saveError.value"
+        :invalid="invalid"
+        @save="form.submit"
+        @discard="form.discard"
+      />
     </template>
   </div>
 </template>

@@ -74,6 +74,11 @@ const open = computed({
       :alt="entry.name"
       class="mx-auto block max-h-[70vh] max-w-full object-contain"
     />
-    <iframe v-else-if="entry.preview === 'pdf' && url" :src="url" :title="entry.name" class="h-[70vh] w-full border-0" />
+    <iframe
+      v-else-if="entry.preview === 'pdf' && url"
+      :src="url"
+      :title="entry.name"
+      class="h-[70vh] w-full border-0"
+    />
   </Dialog>
 </template>

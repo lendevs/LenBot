@@ -10,7 +10,10 @@ import { toast } from '../../ui/toast'
 export function usePlugins() {
   const { t } = useI18n()
   const client = useQueryClient()
-  const snapshot = useQuery({ queryKey: keys.plugins.all(), queryFn: ({ signal }) => pluginsApi.read(signal) })
+  const snapshot = useQuery({
+    queryKey: keys.plugins.all(),
+    queryFn: ({ signal }) => pluginsApi.read(signal),
+  })
   // Health is cheap to read (no disk access); poll it while the page is open and lay it over the snapshot.
   const health = useQuery({
     queryKey: keys.plugins.health(),
@@ -43,7 +46,9 @@ export function usePlugins() {
       return result
     } catch (error) {
       if (options.quiet) throw error
-      toast.error(options.failure ?? t('plugins.failed'), { detail: describeError(error, t('ui.error.network')).message })
+      toast.error(options.failure ?? t('plugins.failed'), {
+        detail: describeError(error, t('ui.error.network')).message,
+      })
       void snapshot.refetch()
       return null
     } finally {

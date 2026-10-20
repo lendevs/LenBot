@@ -40,9 +40,11 @@ const scopes = computed(() =>
 
 const listing = useInfiniteQuery({
   queryKey: computed(() => keys.memory.browse(props.scene, scope.value, directory.value)),
-  queryFn: ({ pageParam, signal }) => memoryApi.browse(props.scene, scope.value, directory.value, pageParam, signal),
+  queryFn: ({ pageParam, signal }) =>
+    memoryApi.browse(props.scene, scope.value, directory.value, pageParam, signal),
   initialPageParam: 0,
-  getNextPageParam: (page, pages) => (page.has_more ? pages.reduce((sum, item) => sum + item.nodes.length, 0) : undefined),
+  getNextPageParam: (page, pages) =>
+    page.has_more ? pages.reduce((sum, item) => sum + item.nodes.length, 0) : undefined,
   enabled: computed(() => can('browse')),
 })
 const nodes = computed(() => listing.data.value?.pages.flatMap((page) => page.nodes) ?? [])
@@ -115,7 +117,11 @@ const detail = computed(() => Boolean(file.value || creating.value))
 
 <template>
   <div class="grid min-w-0 items-start gap-5" :class="wide && 'grid-cols-[280px_minmax(0,1fr)]'">
-    <section v-if="wide || !detail" class="flex min-w-0 flex-col gap-3" :aria-label="t('groups.memory.views.browse')">
+    <section
+      v-if="wide || !detail"
+      class="flex min-w-0 flex-col gap-3"
+      :aria-label="t('groups.memory.views.browse')"
+    >
       <div class="flex items-center gap-2">
         <SegmentedControl
           v-if="state.public_readable"
@@ -182,7 +188,14 @@ const detail = computed(() => Boolean(file.value || creating.value))
     </section>
 
     <section v-if="wide || detail" class="flex min-w-0 flex-col gap-3">
-      <Button v-if="!wide && detail" size="sm" variant="ghost" :icon="ArrowLeft" class="self-start" @click="close">
+      <Button
+        v-if="!wide && detail"
+        size="sm"
+        variant="ghost"
+        :icon="ArrowLeft"
+        class="self-start"
+        @click="close"
+      >
         {{ t('common.back') }}
       </Button>
       <FileView
@@ -198,7 +211,14 @@ const detail = computed(() => Boolean(file.value || creating.value))
         @changed="changed"
         @close="close"
       />
-      <DirectorySummary v-else :key="`${scope}:${directory}`" :scene="scene" :scope="scope" :path="directory" :time-zone="timeZone" />
+      <DirectorySummary
+        v-else
+        :key="`${scope}:${directory}`"
+        :scene="scene"
+        :scope="scope"
+        :path="directory"
+        :time-zone="timeZone"
+      />
     </section>
   </div>
 </template>

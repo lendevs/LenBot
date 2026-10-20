@@ -75,7 +75,8 @@ const kind = computed({
 })
 async function switchTo(value: Kind) {
   const current = shownKind.value
-  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) return
+  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+    return
   dirty[current] = false
   shownKind.value = value
 }
@@ -94,7 +95,11 @@ watch(
     >
       <TriangleAlert :size="16" aria-hidden="true" />
       <span class="min-w-0 flex-1">{{ t('groups.learning.needsRebuild') }}</span>
-      <Button size="sm" :loading="reindex.isPending.value || Boolean(state.data.value.index.rebuilding)" @click="reindex.mutate()">
+      <Button
+        size="sm"
+        :loading="reindex.isPending.value || Boolean(state.data.value.index.rebuilding)"
+        @click="reindex.mutate()"
+      >
         {{ t('groups.learning.reindex') }}
       </Button>
     </div>
@@ -103,7 +108,9 @@ watch(
       class="flex flex-wrap items-center gap-3 rounded-lg border border-line px-4 py-3 text-sm"
     >
       <span class="min-w-0 flex-1 text-muted">{{ t('groups.learning.off') }}</span>
-      <Button size="sm" variant="primary" @click="settingsOpen = true">{{ t('groups.learning.turnOn') }}</Button>
+      <Button size="sm" variant="primary" @click="settingsOpen = true">
+        {{ t('groups.learning.turnOn') }}
+      </Button>
     </div>
 
     <div class="flex flex-wrap items-center gap-2">
@@ -124,9 +131,21 @@ watch(
       </div>
     </div>
 
-    <ExpressionList v-if="kind === 'expressions'" :scene="scene" @dirty="(value: boolean) => (dirty.expressions = value)" />
-    <JargonList v-else-if="kind === 'jargon'" :scene="scene" @dirty="(value: boolean) => (dirty.jargon = value)" />
-    <StickerList v-else-if="kind === 'stickers'" :scene="scene" @dirty="(value: boolean) => (dirty.stickers = value)" />
+    <ExpressionList
+      v-if="kind === 'expressions'"
+      :scene="scene"
+      @dirty="(value: boolean) => (dirty.expressions = value)"
+    />
+    <JargonList
+      v-else-if="kind === 'jargon'"
+      :scene="scene"
+      @dirty="(value: boolean) => (dirty.jargon = value)"
+    />
+    <StickerList
+      v-else-if="kind === 'stickers'"
+      :scene="scene"
+      @dirty="(value: boolean) => (dirty.stickers = value)"
+    />
     <ReplyEffects v-else :scene="scene" :time-zone="timeZone" />
 
     <LearningSettings

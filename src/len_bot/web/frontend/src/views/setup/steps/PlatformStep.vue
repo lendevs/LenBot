@@ -20,7 +20,10 @@ const { draft } = wizard
 const error = useStepErrors('platform')
 
 const modes = computed(() =>
-  (['forward_ws', 'reverse_ws'] as const).map((value) => ({ value, label: t(`system.connection.modes.${value}`) })),
+  (['forward_ws', 'reverse_ws'] as const).map((value) => ({
+    value,
+    label: t(`system.connection.modes.${value}`),
+  })),
 )
 const deliveries = computed(() => [
   { value: 'simulated' as const, label: t('setup.platform.simulated') },
@@ -62,7 +65,13 @@ function test() {
       <Field :label="t('system.connection.mode')" wide>
         <Select v-model="draft.transport" :options="modes" />
       </Field>
-      <Field v-if="draft.transport === 'forward_ws'" :label="t('system.connection.wsUrl')" :error="error('wsUrl')" required wide>
+      <Field
+        v-if="draft.transport === 'forward_ws'"
+        :label="t('system.connection.wsUrl')"
+        :error="error('wsUrl')"
+        required
+        wide
+      >
         <Input v-model="draft.wsUrl" type="url" mono placeholder="ws://127.0.0.1:3001" />
       </Field>
       <template v-else>
@@ -70,15 +79,30 @@ function test() {
           <Input v-model="draft.listenHost" mono placeholder="127.0.0.1" />
         </Field>
         <Field :label="t('system.connection.listenPort')" :error="error('listenPort')" required>
-          <NumberInput v-model="draft.listenPort" :min="1" :max="65535" :steppers="false" :format-options="{ useGrouping: false }" />
+          <NumberInput
+            v-model="draft.listenPort"
+            :min="1"
+            :max="65535"
+            :steppers="false"
+            :format-options="{ useGrouping: false }"
+          />
         </Field>
       </template>
       <Field :label="t('system.connection.token')" wide>
-        <Input v-model="draft.accessToken" type="password" autocomplete="off" :placeholder="t('setup.platform.tokenPlaceholder')" />
+        <Input
+          v-model="draft.accessToken"
+          type="password"
+          autocomplete="off"
+          :placeholder="t('setup.platform.tokenPlaceholder')"
+        />
       </Field>
     </div>
     <MoreFields v-model="more" :title="t('system.connection.advanced')">
-      <Field :label="t('system.connection.fields.request_timeout_seconds')" :error="error('onebotTimeout')" required>
+      <Field
+        :label="t('system.connection.fields.request_timeout_seconds')"
+        :error="error('onebotTimeout')"
+        required
+      >
         <NumberInput v-model="draft.onebotTimeout" :min="1" :steppers="false" :unit="t('system.seconds')" />
       </Field>
     </MoreFields>
@@ -95,7 +119,11 @@ function test() {
     </div>
     <Field :label="t('system.connection.delivery')" :info="t('setup.platform.deliveryInfo')">
       <div>
-        <SegmentedControl v-model="draft.delivery" :options="deliveries" :label="t('system.connection.delivery')" />
+        <SegmentedControl
+          v-model="draft.delivery"
+          :options="deliveries"
+          :label="t('system.connection.delivery')"
+        />
       </div>
     </Field>
   </div>

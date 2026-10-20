@@ -35,7 +35,9 @@ const download = useMutation({
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   },
   onError: (error) =>
-    toast.error(t('groups.tasks.files.downloadFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.tasks.files.downloadFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
 
 /** Copying a delivered file into the group's shared materials. */
@@ -81,8 +83,8 @@ const keep = useMutation({
             <p class="truncate text-sm text-ink">{{ file.name }}</p>
             <p class="text-xs text-muted">
               <span class="tabular">{{ formatBytes(file.size) }}</span>
-              <template v-if="file.note"> · {{ file.note }}</template>
-              <template v-if="!file.exists"> · {{ t('groups.tasks.files.missing') }}</template>
+              <template v-if="file.note">· {{ file.note }}</template>
+              <template v-if="!file.exists">· {{ t('groups.tasks.files.missing') }}</template>
             </p>
           </div>
           <Badge v-if="file.upload" :tone="uploadTone[file.upload.status] ?? 'neutral'" size="sm">
@@ -105,20 +107,41 @@ const keep = useMutation({
             @click="download.mutate(file)"
           />
         </div>
-        <ErrorNote v-if="file.upload?.error" :title="t('groups.tasks.files.uploadFailed')" :error="String(file.upload.error)" />
+        <ErrorNote
+          v-if="file.upload?.error"
+          :title="t('groups.tasks.files.uploadFailed')"
+          :error="String(file.upload.error)"
+        />
       </li>
     </ul>
 
-    <Dialog v-model:open="keepOpen" :title="t('groups.tasks.files.keepTitle')" size="sm" :busy="keep.isPending.value">
+    <Dialog
+      v-model:open="keepOpen"
+      :title="t('groups.tasks.files.keepTitle')"
+      size="sm"
+      :busy="keep.isPending.value"
+    >
       <form id="keep-file" class="flex flex-col gap-3" @submit.prevent="keep.mutate()">
         <Field :label="t('groups.tasks.files.keepName')">
           <Input v-model="name" />
         </Field>
-        <ErrorNote v-if="keep.isError.value" :title="t('groups.tasks.files.keepFailed')" :error="keep.error.value" />
+        <ErrorNote
+          v-if="keep.isError.value"
+          :title="t('groups.tasks.files.keepFailed')"
+          :error="keep.error.value"
+        />
       </form>
       <template #footer>
-        <Button variant="ghost" :disabled="keep.isPending.value" @click="keeping = null">{{ t('common.cancel') }}</Button>
-        <Button variant="primary" type="submit" form="keep-file" :loading="keep.isPending.value" :disabled="!name.trim()">
+        <Button variant="ghost" :disabled="keep.isPending.value" @click="keeping = null">
+          {{ t('common.cancel') }}
+        </Button>
+        <Button
+          variant="primary"
+          type="submit"
+          form="keep-file"
+          :loading="keep.isPending.value"
+          :disabled="!name.trim()"
+        >
           {{ t('common.save') }}
         </Button>
       </template>

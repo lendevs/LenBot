@@ -53,7 +53,14 @@ onBeforeUnmount(disconnect)
     <div class="flex items-center gap-2">
       <h3 class="text-sm font-medium text-ink">{{ t('groups.tasks.live.title') }}</h3>
       <span v-if="state === 'closed'" class="text-xs text-muted">{{ t('groups.tasks.live.closed') }}</span>
-      <Button v-if="state === 'closed'" size="sm" variant="ghost" :icon="RefreshCw" class="ml-auto" @click="connect">
+      <Button
+        v-if="state === 'closed'"
+        size="sm"
+        variant="ghost"
+        :icon="RefreshCw"
+        class="ml-auto"
+        @click="connect"
+      >
         {{ t('groups.tasks.live.reconnect') }}
       </Button>
     </div>
@@ -61,8 +68,7 @@ onBeforeUnmount(disconnect)
       v-if="live?.preview"
       class="max-h-96 overflow-y-auto rounded-lg border border-line bg-code px-3 py-2 font-mono text-xs leading-5 break-words whitespace-pre-wrap text-ink-2 scrollbar-thin"
       aria-live="polite"
-      >{{ live.preview.text }}</pre
-    >
+      >{{ live.preview.text }}</pre>
     <p v-if="live?.preview?.truncated" class="text-xs text-muted">{{ t('groups.tasks.live.truncated') }}</p>
     <ErrorNote v-if="unreadable" :title="t('groups.tasks.live.unreadable')" :error="unreadable" />
   </section>

@@ -45,7 +45,9 @@ const wide = useMediaQuery('(min-width: 1280px)')
 const service = useQuery({ queryKey: keys.tasks.state(), queryFn: ({ signal }) => tasksApi.state(signal) })
 const accepting = computed(() => {
   const value = service.data.value
-  return Boolean(value?.configured && value.accepting && value.scenes.find((item) => item.scene === props.scene)?.enabled)
+  return Boolean(
+    value?.configured && value.accepting && value.scenes.find((item) => item.scene === props.scene)?.enabled,
+  )
 })
 const pool = useQuery({ queryKey: keys.tasks.pool(), queryFn: ({ signal }) => storageApi.pool(signal) })
 
@@ -143,7 +145,10 @@ function open(id: number | 'shared' | null) {
 
 const picks = ref<ResourceInput[]>([])
 const same = (a: ResourceInput['reference'], b: ResourceInput['reference']) =>
-  a.scope === b.scope && a.task_id === b.task_id && a.path === b.path && (a.file_id ?? null) === (b.file_id ?? null)
+  a.scope === b.scope &&
+  a.task_id === b.task_id &&
+  a.path === b.path &&
+  (a.file_id ?? null) === (b.file_id ?? null)
 function pick(entry: ResourceEntry) {
   if (!picks.value.some((item) => same(item.reference, entry.reference)))
     picks.value.push({ reference: { ...entry.reference }, name: entry.name })
@@ -156,7 +161,8 @@ watch(
   { immediate: true },
 )
 async function clearPicks() {
-  if (await confirm({ title: t('groups.tasks.space.clearPicks'), confirmLabel: t('common.discard') })) picks.value = []
+  if (await confirm({ title: t('groups.tasks.space.clearPicks'), confirmLabel: t('common.discard') }))
+    picks.value = []
 }
 function created(task: Task) {
   creating.value = false
@@ -166,7 +172,11 @@ function created(task: Task) {
 }
 /** The tasks view; the tab switch skips the workbench's own unsaved check, so picks are confirmed here. */
 async function toTask(id: number, done = false) {
-  if (!done && picks.value.length && !(await confirm({ title: t('groups.tasks.space.clearPicks'), confirmLabel: t('common.discard') })))
+  if (
+    !done &&
+    picks.value.length &&
+    !(await confirm({ title: t('groups.tasks.space.clearPicks'), confirmLabel: t('common.discard') }))
+  )
     return
   picks.value = []
   emit('dirty', false)
@@ -185,8 +195,15 @@ async function toTask(id: number, done = false) {
     </Button>
   </div>
   <div v-else class="flex flex-col gap-4">
-    <ErrorNote v-if="pool.isError.value" :title="t('groups.tasks.space.poolFailed')" :error="pool.error.value" />
-    <div v-else-if="pool.data.value?.usage" class="flex flex-col gap-1.5 rounded-lg border border-line px-4 py-3">
+    <ErrorNote
+      v-if="pool.isError.value"
+      :title="t('groups.tasks.space.poolFailed')"
+      :error="pool.error.value"
+    />
+    <div
+      v-else-if="pool.data.value?.usage"
+      class="flex flex-col gap-1.5 rounded-lg border border-line px-4 py-3"
+    >
       <div class="flex flex-wrap items-baseline gap-x-3 text-sm">
         <span class="font-medium text-ink">{{ t('groups.tasks.space.pool') }}</span>
         <span class="tabular text-ink-2">
@@ -210,11 +227,19 @@ async function toTask(id: number, done = false) {
     </div>
 
     <div class="grid min-w-0 items-start gap-5" :class="wide && 'grid-cols-[340px_minmax(0,1fr)]'">
-      <section v-if="wide || !opened" class="flex min-w-0 flex-col gap-3" :aria-label="t('groups.tasks.views.resources')">
+      <section
+        v-if="wide || !opened"
+        class="flex min-w-0 flex-col gap-3"
+        :aria-label="t('groups.tasks.views.resources')"
+      >
         <button
           type="button"
           class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm hover:bg-hover focus-visible:focus-ring"
-          :class="route.query.id === 'shared' || (wide && selected === null) ? 'bg-brand-soft text-primary' : 'text-ink'"
+          :class="
+            route.query.id === 'shared' || (wide && selected === null)
+              ? 'bg-brand-soft text-primary'
+              : 'text-ink'
+          "
           @click="open('shared')"
         >
           <FolderOpen :size="16" aria-hidden="true" />
@@ -229,14 +254,19 @@ async function toTask(id: number, done = false) {
             {{ t('groups.tasks.space.range') }}
           </summary>
           <div class="mt-2 grid grid-cols-2 gap-2">
-            <Field :label="t('groups.tasks.space.since')"><Input v-model="since" type="date" size="sm" /></Field>
+            <Field :label="t('groups.tasks.space.since')">
+              <Input v-model="since" type="date" size="sm" />
+            </Field>
             <Field :label="t('groups.tasks.space.until')" :error="rangeError">
               <Input v-model="until" type="date" size="sm" />
             </Field>
           </div>
         </details>
         <div class="flex min-h-8 items-center gap-2">
-          <label v-if="cleanable.length" class="flex min-w-0 cursor-pointer items-center gap-2 pl-3 text-xs text-muted">
+          <label
+            v-if="cleanable.length"
+            class="flex min-w-0 cursor-pointer items-center gap-2 pl-3 text-xs text-muted"
+          >
             <Checkbox :model-value="allChecked" @update:model-value="(on) => checkAll(on === true)" />
             {{ t('groups.tasks.space.checkAll') }}
           </label>
@@ -286,7 +316,9 @@ async function toTask(id: number, done = false) {
                   {{ t(`groups.tasks.status.${item.status}`) }}
                 </Badge>
               </span>
-              <span class="text-xs text-muted">{{ t(`groups.tasks.space.continuation.${item.continuation}`) }}</span>
+              <span class="text-xs text-muted">
+                {{ t(`groups.tasks.space.continuation.${item.continuation}`) }}
+              </span>
               <span v-if="usage(item)" class="tabular text-xs text-muted">{{ usage(item) }}</span>
               <span v-if="item.usage_error" class="text-xs break-all text-error">{{ item.usage_error }}</span>
             </button>
@@ -307,13 +339,20 @@ async function toTask(id: number, done = false) {
         >
           <span class="text-sm text-ink">
             {{ t('groups.tasks.space.checked', { n: checked.length }) }}
-            <span v-if="checked.length > 100" class="text-warning">· {{ t('groups.tasks.space.tooManyChecked') }}</span>
+            <span v-if="checked.length > 100" class="text-warning">
+              · {{ t('groups.tasks.space.tooManyChecked') }}
+            </span>
           </span>
           <div class="ml-auto flex gap-1">
             <Button size="sm" :disabled="checked.length > 100" @click="cleaning = 'temporary'">
               {{ t('groups.tasks.space.cleanup.temporary') }}
             </Button>
-            <Button size="sm" variant="danger-ghost" :disabled="checked.length > 100" @click="cleaning = 'environment'">
+            <Button
+              size="sm"
+              variant="danger-ghost"
+              :disabled="checked.length > 100"
+              @click="cleaning = 'environment'"
+            >
               {{ t('groups.tasks.space.cleanup.environment') }}
             </Button>
           </div>
@@ -321,7 +360,14 @@ async function toTask(id: number, done = false) {
       </section>
 
       <section v-if="wide || opened" class="flex min-w-0 flex-col gap-5">
-        <Button v-if="!wide" size="sm" variant="ghost" :icon="ArrowLeft" class="self-start" @click="open(null)">
+        <Button
+          v-if="!wide"
+          size="sm"
+          variant="ghost"
+          :icon="ArrowLeft"
+          class="self-start"
+          @click="open(null)"
+        >
           {{ t('common.back') }}
         </Button>
         <div
@@ -329,10 +375,20 @@ async function toTask(id: number, done = false) {
           class="flex flex-col gap-2 rounded-lg border border-line bg-brand-soft px-4 py-3"
         >
           <div class="flex flex-wrap items-center gap-2">
-            <span class="text-sm font-medium text-ink">{{ t('groups.tasks.space.picks', { n: picks.length }) }}</span>
+            <span class="text-sm font-medium text-ink">
+              {{ t('groups.tasks.space.picks', { n: picks.length }) }}
+            </span>
             <div class="ml-auto flex gap-1">
-              <Button size="sm" variant="ghost" @click="clearPicks">{{ t('groups.tasks.space.clear') }}</Button>
-              <Button size="sm" variant="primary" :icon="Plus" :disabled="!accepting" @click="creating = true">
+              <Button size="sm" variant="ghost" @click="clearPicks">
+                {{ t('groups.tasks.space.clear') }}
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                :icon="Plus"
+                :disabled="!accepting"
+                @click="creating = true"
+              >
                 {{ t('groups.tasks.space.createWith') }}
               </Button>
             </div>

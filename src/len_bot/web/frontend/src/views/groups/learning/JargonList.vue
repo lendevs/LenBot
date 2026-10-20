@@ -30,7 +30,10 @@ const list = usePagedList<JargonTerm, Review>(
   'pending',
 )
 const filters = computed(() =>
-  (['pending', 'adopted', 'rejected'] as const).map((value) => ({ value, label: t(`groups.learning.jargon.${value}`) })),
+  (['pending', 'adopted', 'rejected'] as const).map((value) => ({
+    value,
+    label: t(`groups.learning.jargon.${value}`),
+  })),
 )
 const edits = useEdits((item: JargonTerm) => ({ meaning: item.meaning ?? item.latest_meaning ?? '' }))
 watch(edits.dirty, (value) => emit('dirty', value), { immediate: true })
@@ -39,12 +42,17 @@ const save = useMutation({
   mutationFn: ({ item, status }: { item: JargonTerm; status: Review }) =>
     learningApi.putJargon(props.scene, item.id, {
       // Fixing a meaning saves the edited text; going back to automatic drops it.
-      meaning: status === 'pending' ? null : (edits.editing(item.id) ? edits.draft(item.id).meaning : item.meaning)?.trim() || null,
+      meaning:
+        status === 'pending'
+          ? null
+          : (edits.editing(item.id) ? edits.draft(item.id).meaning : item.meaning)?.trim() || null,
       status,
     }),
   onSuccess: (_, { item }) => edits.stop(item.id),
   onError: (error) =>
-    toast.error(t('groups.learning.saveFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.learning.saveFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => client.invalidateQueries({ queryKey: keys.scene.learningAll(props.scene) }),
 })
 const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?.item.id === item.id
@@ -73,8 +81,12 @@ const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?
         <li v-for="item in list.page.value.items" :key="item.id" class="flex flex-col gap-2.5 py-3.5">
           <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <strong class="text-base font-semibold text-ink">{{ item.term }}</strong>
-            <span class="text-xs text-subtle">{{ t('groups.learning.jargon.count', { n: item.count }) }}</span>
-            <Badge v-if="item.status === 'adopted'" tone="brand">{{ t('groups.learning.jargon.fixed') }}</Badge>
+            <span class="text-xs text-subtle">
+              {{ t('groups.learning.jargon.count', { n: item.count }) }}
+            </span>
+            <Badge v-if="item.status === 'adopted'" tone="brand">
+              {{ t('groups.learning.jargon.fixed') }}
+            </Badge>
           </div>
           <Field v-if="edits.editing(item.id)" :label="t('groups.learning.jargon.meaning')">
             <Input v-model="edits.draft(item.id).meaning" />
@@ -82,7 +94,8 @@ const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?
           <template v-else>
             <p v-if="item.status === 'adopted'" class="text-sm break-words text-ink">{{ item.meaning }}</p>
             <p class="text-sm break-words" :class="item.status === 'adopted' ? 'text-muted' : 'text-ink-2'">
-              {{ t('groups.learning.jargon.latest') }}{{ item.latest_meaning || t('groups.learning.jargon.noMeaning') }}
+              {{ t('groups.learning.jargon.latest')
+              }}{{ item.latest_meaning || t('groups.learning.jargon.noMeaning') }}
             </p>
           </template>
           <div class="flex flex-wrap items-center justify-end gap-2">

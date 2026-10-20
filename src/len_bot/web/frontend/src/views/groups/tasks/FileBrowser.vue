@@ -4,7 +4,12 @@ import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { ChevronRight, File, Folder, MoreHorizontal, RefreshCw, Upload } from '@lucide/vue'
 import { keys } from '../../../api/query'
-import { resourcesApi, type ResourceEntry, type ResourceRef, type ResourceScope } from '../../../api/resources'
+import {
+  resourcesApi,
+  type ResourceEntry,
+  type ResourceRef,
+  type ResourceScope,
+} from '../../../api/resources'
 import { formatBytes, formatDateTime } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
@@ -47,7 +52,11 @@ const scopes = computed(() =>
   })),
 )
 watch(scope, () => (path.value = ''))
-const location = computed<ResourceRef>(() => ({ scope: scope.value, task_id: props.taskId, path: path.value }))
+const location = computed<ResourceRef>(() => ({
+  scope: scope.value,
+  task_id: props.taskId,
+  path: path.value,
+}))
 const listing = useInfiniteQuery({
   queryKey: computed(() => keys.tasks.files(props.scene, location.value)),
   queryFn: ({ pageParam, signal }) => resourcesApi.list(props.scene, location.value, pageParam, signal),
@@ -75,12 +84,15 @@ function where(reference: Partial<ResourceRef>): string {
 function source(entry: ResourceEntry): string | null {
   const value = entry.source
   if (!value) return null
-  if (entry.purpose === 'inputs') return value.reference ? where(value.reference) : (value.source_path ?? null)
+  if (entry.purpose === 'inputs')
+    return value.reference ? where(value.reference) : (value.source_path ?? null)
   return where(value)
 }
 function details(entry: ResourceEntry): string {
   return [
-    te(`groups.tasks.space.purposes.${entry.purpose}`) ? t(`groups.tasks.space.purposes.${entry.purpose}`) : entry.purpose,
+    te(`groups.tasks.space.purposes.${entry.purpose}`)
+      ? t(`groups.tasks.space.purposes.${entry.purpose}`)
+      : entry.purpose,
     entry.size === null ? null : formatBytes(entry.size),
     at(entry.modified),
     entry.kind === 'symlink' ? t('groups.tasks.space.symlink') : null,
@@ -115,12 +127,16 @@ const removal = useMutation({
     refresh()
   },
   onError: (error) =>
-    toast.error(t('groups.tasks.space.removeFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.tasks.space.removeFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
 async function remove(entry: ResourceEntry) {
   const sure = await confirm({
     title: t('groups.tasks.space.removeTitle', { name: entry.name }),
-    message: t(scope.value === 'deliveries' ? 'groups.tasks.space.removeDelivery' : 'groups.tasks.space.removeFile'),
+    message: t(
+      scope.value === 'deliveries' ? 'groups.tasks.space.removeDelivery' : 'groups.tasks.space.removeFile',
+    ),
     confirmLabel: t('common.delete'),
     tone: 'danger',
   })
@@ -128,17 +144,29 @@ async function remove(entry: ResourceEntry) {
 }
 function actions(entry: ResourceEntry): MenuEntry[] {
   const items: MenuEntry[] = [{ label: t('groups.tasks.space.download'), select: () => download(entry) }]
-  if (entry.preview === 'download') items.push({ label: t('groups.tasks.space.asText'), select: () => open(entry, true) })
+  if (entry.preview === 'download')
+    items.push({ label: t('groups.tasks.space.asText'), select: () => open(entry, true) })
   if (props.pickable && scope.value !== 'runtime')
     items.push({ label: t('groups.tasks.space.pick'), select: () => emit('pick', entry) })
   if (scope.value === 'workspace')
-    items.push({ label: t('groups.tasks.space.register'), select: () => (copying.value = { entry, mode: 'register' }) })
+    items.push({
+      label: t('groups.tasks.space.register'),
+      select: () => (copying.value = { entry, mode: 'register' }),
+    })
   if (['workspace', 'inputs', 'deliveries'].includes(scope.value))
-    items.push({ label: t('groups.tasks.space.adopt'), select: () => (copying.value = { entry, mode: 'adopt' }) })
+    items.push({
+      label: t('groups.tasks.space.adopt'),
+      select: () => (copying.value = { entry, mode: 'adopt' }),
+    })
   if (entry.deletable)
     items.push(
       { type: 'separator' },
-      { label: t('common.delete'), danger: true, disabled: removal.isPending.value, select: () => void remove(entry) },
+      {
+        label: t('common.delete'),
+        danger: true,
+        disabled: removal.isPending.value,
+        select: () => void remove(entry),
+      },
     )
   return items
 }
@@ -168,8 +196,15 @@ function actions(entry: ResourceEntry): MenuEntry[] {
         />
       </div>
     </div>
-    <nav :aria-label="t('groups.tasks.space.path')" class="flex min-w-0 flex-wrap items-center gap-0.5 font-mono text-xs">
-      <button type="button" class="rounded px-1 py-0.5 text-muted hover:bg-hover hover:text-ink" @click="path = ''">
+    <nav
+      :aria-label="t('groups.tasks.space.path')"
+      class="flex min-w-0 flex-wrap items-center gap-0.5 font-mono text-xs"
+    >
+      <button
+        type="button"
+        class="rounded px-1 py-0.5 text-muted hover:bg-hover hover:text-ink"
+        @click="path = ''"
+      >
         /
       </button>
       <template v-for="crumb in crumbs" :key="crumb.path">
@@ -196,7 +231,9 @@ function actions(entry: ResourceEntry): MenuEntry[] {
     <EmptyState
       v-else-if="!rows.length"
       :icon="Folder"
-      :title="t(first?.exists === false ? 'groups.tasks.space.noDirectory' : 'groups.tasks.space.emptyDirectory')"
+      :title="
+        t(first?.exists === false ? 'groups.tasks.space.noDirectory' : 'groups.tasks.space.emptyDirectory')
+      "
       compact
     />
     <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
@@ -227,22 +264,42 @@ function actions(entry: ResourceEntry): MenuEntry[] {
           </p>
           <p v-if="entry.browser_source" class="text-xs break-all text-muted">
             {{ t(`groups.tasks.space.browserKinds.${entry.browser_source.kind}`) }}
-            <template v-if="entry.browser_source.page_title"> · {{ entry.browser_source.page_title }}</template>
-            <template v-if="entry.browser_source.page_url"> · {{ entry.browser_source.page_url }}</template>
+            <template v-if="entry.browser_source.page_title">
+              · {{ entry.browser_source.page_title }}
+            </template>
+            <template v-if="entry.browser_source.page_url">· {{ entry.browser_source.page_url }}</template>
           </p>
           <p v-if="entry.registrations.length" class="text-xs text-muted">
-            {{ t('groups.tasks.space.registered', { ids: entry.registrations.map((id) => `#${id}`).join(' ') }) }}
+            {{
+              t('groups.tasks.space.registered', { ids: entry.registrations.map((id) => `#${id}`).join(' ') })
+            }}
           </p>
           <p v-if="entry.deletion" class="text-xs text-muted">
-            {{ t('groups.tasks.space.deleted', { time: at(entry.deletion.created), who: entry.deletion.requester }) }}
+            {{
+              t('groups.tasks.space.deleted', {
+                time: at(entry.deletion.created),
+                who: entry.deletion.requester,
+              })
+            }}
           </p>
           <p v-if="entry.note" class="mt-0.5 text-sm break-words text-ink-2">{{ entry.note }}</p>
         </div>
-        <Badge v-if="entry.upload" :tone="uploadTone[entry.upload.status] ?? 'neutral'" size="sm" class="mt-0.5">
+        <Badge
+          v-if="entry.upload"
+          :tone="uploadTone[entry.upload.status] ?? 'neutral'"
+          size="sm"
+          class="mt-0.5"
+        >
           {{ t(`groups.tasks.files.upload.${entry.upload.status}`) }}
         </Badge>
         <DropdownMenu v-if="entry.kind === 'file' && entry.exists" :items="actions(entry)">
-          <IconButton :icon="MoreHorizontal" :label="t('common.more')" variant="ghost" size="sm" :tooltip="false" />
+          <IconButton
+            :icon="MoreHorizontal"
+            :label="t('common.more')"
+            variant="ghost"
+            size="sm"
+            :tooltip="false"
+          />
         </DropdownMenu>
       </li>
     </ul>

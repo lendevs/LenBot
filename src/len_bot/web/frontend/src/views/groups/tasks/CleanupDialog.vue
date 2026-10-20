@@ -53,7 +53,9 @@ const open = computed({
     <div class="flex flex-col gap-4">
       <p class="text-sm text-ink-2">{{ t(`groups.tasks.space.cleanup.${operation}Effect`) }}</p>
       <template v-if="!results">
-        <div v-if="targets.length > 1" class="w-32"><Select v-model="viewing" :options="choices" size="sm" /></div>
+        <div v-if="targets.length > 1" class="w-32">
+          <Select v-model="viewing" :options="choices" size="sm" />
+        </div>
         <Skeleton v-if="storage.isPending.value" :lines="3" />
         <ErrorNote
           v-else-if="storage.isError.value"
@@ -90,7 +92,11 @@ const open = computed({
           />
         </template>
       </template>
-      <ErrorNote v-if="clean.isError.value" :title="t('groups.tasks.space.cleanup.failed')" :error="clean.error.value" />
+      <ErrorNote
+        v-if="clean.isError.value"
+        :title="t('groups.tasks.space.cleanup.failed')"
+        :error="clean.error.value"
+      />
       <ul v-if="results" class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
         <li v-for="item in results" :key="item.task_id" class="flex flex-col gap-1.5 px-3 py-2">
           <div class="flex items-center gap-3">
@@ -107,7 +113,11 @@ const open = computed({
               {{ t(`groups.tasks.space.cleanup.${item.status}`) }}
             </Badge>
           </div>
-          <ErrorNote v-if="item.error" :title="t('groups.tasks.space.cleanup.itemFailed')" :error="item.error" />
+          <ErrorNote
+            v-if="item.error"
+            :title="t('groups.tasks.space.cleanup.itemFailed')"
+            :error="item.error"
+          />
         </li>
       </ul>
     </div>

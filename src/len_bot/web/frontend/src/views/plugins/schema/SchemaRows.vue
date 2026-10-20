@@ -28,13 +28,18 @@ function set(index: number, key: string, value: DraftValue) {
   model.value = model.value.map((row, at) => (at === index ? { ...row, [key]: value } : row))
 }
 function add() {
-  const next = [...model.value, Object.fromEntries(props.field.fields.map((child) => [child.key, initialField(child)]))]
+  const next = [
+    ...model.value,
+    Object.fromEntries(props.field.fields.map((child) => [child.key, initialField(child)])),
+  ]
   model.value = next
   opened.value = new Set([...opened.value, next.length - 1])
 }
 function remove(index: number) {
   model.value = model.value.filter((_, at) => at !== index)
-  opened.value = new Set([...opened.value].filter((at) => at !== index).map((at) => (at > index ? at - 1 : at)))
+  opened.value = new Set(
+    [...opened.value].filter((at) => at !== index).map((at) => (at > index ? at - 1 : at)),
+  )
 }
 </script>
 
@@ -60,7 +65,9 @@ function remove(index: number) {
             <strong class="truncate text-sm font-medium text-ink">
               {{ summaries[index].title || t('plugins.form.row', { n: index + 1 }) }}
             </strong>
-            <span v-if="summaries[index].meta" class="truncate text-xs text-muted">{{ summaries[index].meta }}</span>
+            <span v-if="summaries[index].meta" class="truncate text-xs text-muted">
+              {{ summaries[index].meta }}
+            </span>
           </span>
           <span class="flex max-w-1/2 flex-wrap justify-end gap-1.5 max-sm:hidden">
             <Badge v-for="badge in summaries[index].badges" :key="badge">{{ badge }}</Badge>

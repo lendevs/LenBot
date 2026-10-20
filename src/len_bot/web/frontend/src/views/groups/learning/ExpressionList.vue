@@ -31,16 +31,23 @@ const list = usePagedList<Expression, Review>(
   'pending',
 )
 const filters = computed(() =>
-  (['pending', 'adopted', 'rejected'] as const).map((value) => ({ value, label: t(`groups.learning.review.${value}`) })),
+  (['pending', 'adopted', 'rejected'] as const).map((value) => ({
+    value,
+    label: t(`groups.learning.review.${value}`),
+  })),
 )
 const edits = useEdits((item: Expression) => ({ situation: item.situation, style: item.style }))
 watch(edits.dirty, (value) => emit('dirty', value), { immediate: true })
 
 const failed = (error: unknown) =>
-  toast.error(t('groups.learning.saveFailed'), { detail: describeError(error, t('ui.error.network')).message })
+  toast.error(t('groups.learning.saveFailed'), {
+    detail: describeError(error, t('ui.error.network')).message,
+  })
 const save = useMutation({
   mutationFn: ({ item, status }: { item: Expression; status: Review }) => {
-    const text = edits.editing(item.id) ? edits.draft(item.id) : { situation: item.situation, style: item.style }
+    const text = edits.editing(item.id)
+      ? edits.draft(item.id)
+      : { situation: item.situation, style: item.style }
     return learningApi.putExpression(props.scene, item.id, {
       situation: text.situation.trim(),
       style: text.style.trim(),
@@ -76,7 +83,9 @@ const addExample = useMutation({
     toast.success(t('groups.learning.example.done'))
   },
   onError: (error) =>
-    toast.error(t('groups.learning.example.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.learning.example.failed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
 })
 </script>
 
@@ -114,7 +123,9 @@ const addExample = useMutation({
             <p class="text-base break-words text-ink">{{ item.style }}</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <span class="mr-auto text-xs text-subtle">{{ t('groups.learning.sources', { n: item.count }) }}</span>
+            <span class="mr-auto text-xs text-subtle">
+              {{ t('groups.learning.sources', { n: item.count }) }}
+            </span>
             <template v-if="edits.editing(item.id)">
               <Button size="sm" variant="ghost" @click="edits.stop(item.id)">{{ t('common.cancel') }}</Button>
               <Button
@@ -136,7 +147,9 @@ const addExample = useMutation({
                 size="sm"
                 variant="ghost"
                 :icon="BookmarkPlus"
-                @click="example = { expression_id: item.id, context: item.situation, line: item.style, tags: [] }"
+                @click="
+                  example = { expression_id: item.id, context: item.situation, line: item.style, tags: [] }
+                "
               >
                 {{ t('groups.learning.example.action') }}
               </Button>
@@ -180,7 +193,11 @@ const addExample = useMutation({
       />
     </template>
 
-    <Dialog v-model:open="exampleOpen" :title="t('groups.learning.example.title')" :busy="addExample.isPending.value">
+    <Dialog
+      v-model:open="exampleOpen"
+      :title="t('groups.learning.example.title')"
+      :busy="addExample.isPending.value"
+    >
       <div v-if="example" class="flex flex-col gap-4">
         <Field :label="t('groups.learning.example.context')">
           <Textarea v-model="example.context" :rows="2" />

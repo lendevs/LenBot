@@ -32,12 +32,20 @@ const action = (value: string) =>
       :error="history.error.value"
       :retry="history.refetch"
     />
-    <p v-else-if="!history.data.value?.changes.length" class="text-sm text-muted">{{ t('groups.memory.history.none') }}</p>
+    <p v-else-if="!history.data.value?.changes.length" class="text-sm text-muted">
+      {{ t('groups.memory.history.none') }}
+    </p>
     <ol v-else class="flex list-none flex-col divide-y divide-line">
-      <li v-for="(change, index) in history.data.value.changes" :key="index" class="flex flex-col gap-1.5 py-3 first:pt-0">
+      <li
+        v-for="(change, index) in history.data.value.changes"
+        :key="index"
+        class="flex flex-col gap-1.5 py-3 first:pt-0"
+      >
         <p class="text-sm font-medium text-ink">
           {{ action(change.action) }}
-          <span class="ml-1 text-xs font-normal text-subtle tabular">{{ formatDateTime(change.changed_at, { timeZone }) }}</span>
+          <span class="ml-1 text-xs font-normal text-subtle tabular">
+            {{ formatDateTime(change.changed_at, { timeZone }) }}
+          </span>
         </p>
         <p class="text-sm break-words text-ink-2">{{ change.reason }}</p>
         <details>
@@ -45,8 +53,16 @@ const action = (value: string) =>
             {{ t('groups.memory.history.diff') }}
           </summary>
           <div class="mt-2 grid gap-2 sm:grid-cols-2">
-            <CodeBlock :code="change.before ?? t('common.none')" :max-lines="12" :label="t('groups.memory.history.before')" />
-            <CodeBlock :code="change.after ?? t('common.none')" :max-lines="12" :label="t('groups.memory.history.after')" />
+            <CodeBlock
+              :code="change.before ?? t('common.none')"
+              :max-lines="12"
+              :label="t('groups.memory.history.before')"
+            />
+            <CodeBlock
+              :code="change.after ?? t('common.none')"
+              :max-lines="12"
+              :label="t('groups.memory.history.after')"
+            />
           </div>
         </details>
       </li>

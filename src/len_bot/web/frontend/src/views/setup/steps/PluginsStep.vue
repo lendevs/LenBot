@@ -15,7 +15,8 @@ const { draft } = useWizard()
 const plugins = useQuery({ queryKey: ['setup', 'plugins'], queryFn: setupApi.plugins })
 
 function toggle(name: string, on: boolean | 'indeterminate') {
-  draft.plugins = on === true ? [...new Set([...draft.plugins, name])] : draft.plugins.filter((item) => item !== name)
+  draft.plugins =
+    on === true ? [...new Set([...draft.plugins, name])] : draft.plugins.filter((item) => item !== name)
 }
 </script>
 
@@ -52,7 +53,9 @@ function toggle(name: string, on: boolean | 'indeterminate') {
             </a>
           </div>
           <p class="text-sm text-ink-2">{{ item.description }}</p>
-          <p v-if="item.capabilities.length" class="text-xs text-muted">{{ item.capabilities.join(' · ') }}</p>
+          <p v-if="item.capabilities.length" class="text-xs text-muted">
+            {{ item.capabilities.join(' · ') }}
+          </p>
           <p v-if="item.error" class="text-xs break-words text-error">
             {{ t('setup.plugins.lastError', { error: item.error }) }}
           </p>

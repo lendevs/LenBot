@@ -24,7 +24,10 @@ import { toast } from '../../ui/toast'
 
 const { t } = useI18n()
 const client = useQueryClient()
-const settings = useQuery({ queryKey: keys.host.settings(), queryFn: ({ signal }) => settingsApi.read(signal) })
+const settings = useQuery({
+  queryKey: keys.host.settings(),
+  queryFn: ({ signal }) => settingsApi.read(signal),
+})
 const saved = computed(() => (settings.data.value ? capabilitiesOf(settings.data.value).worker : undefined))
 const hasModel = computed(() => {
   const models = settings.data.value?.saved.models as { roles?: { worker?: unknown } } | undefined
@@ -140,7 +143,8 @@ const errors = computed(() => {
     if (!value[key].trim()) result[key] = required
     else if (!value[key].startsWith('/')) result[key] = t('capabilities.worker.absolute')
   }
-  if (value.skills_directory && !value.skills_directory.startsWith('/')) result.skills_directory = t('capabilities.worker.absolute')
+  if (value.skills_directory && !value.skills_directory.startsWith('/'))
+    result.skills_directory = t('capabilities.worker.absolute')
   if (!/^unix:\/\/\/./.test(value.docker_host)) result.docker_host = t('capabilities.worker.dockerHostRule')
   if (value.uid === null) result.uid = required
   if (value.gid === null) result.gid = required
@@ -149,14 +153,20 @@ const errors = computed(() => {
   if (!SIZE.test(value.tmpfs_size)) result.tmpfs_size = t('capabilities.worker.size')
   for (const { key } of limits) if (value[key] === null) result[key] = required
   for (const { key } of egressLimits) if (value.egress[key] === null) result[`egress.${key}`] = required
-  if (value.public_browser && !value.egress.enabled) result.public_browser = t('capabilities.worker.browserNeedsNetwork')
+  if (value.public_browser && !value.egress.enabled)
+    result.public_browser = t('capabilities.worker.browserNeedsNetwork')
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)
 /** Advanced limits open on their own when one of them needs fixing. */
 const advanced = ref(false)
 watch(invalid, () => {
-  if (Object.keys(errors.value).some((key) => key.startsWith('egress.') || limits.some((item) => item.key === key))) advanced.value = true
+  if (
+    Object.keys(errors.value).some(
+      (key) => key.startsWith('egress.') || limits.some((item) => item.key === key),
+    )
+  )
+    advanced.value = true
 })
 
 const save = useMutation({
@@ -169,13 +179,16 @@ const save = useMutation({
     toast.success(t('capabilities.savedRestart'))
   },
 })
-const saveError = computed(() => (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null))
+const saveError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+)
 const reasoning = computed(() => [
   { value: 'yes', label: t('capabilities.worker.reasoningYes') },
   { value: 'no', label: t('capabilities.worker.reasoningNo') },
 ])
 const reasoningValue = computed({
-  get: () => (draft.value?.model_reasoning === null ? undefined : draft.value?.model_reasoning ? 'yes' : 'no'),
+  get: () =>
+    draft.value?.model_reasoning === null ? undefined : draft.value?.model_reasoning ? 'yes' : 'no',
   set: (value: string | undefined) => {
     if (draft.value) draft.value.model_reasoning = value === undefined ? null : value === 'yes'
   },
@@ -193,28 +206,57 @@ const pool = computed(() => {
 
 <template>
   <Skeleton v-if="settings.isPending.value" :lines="8" />
-  <ErrorNote v-else-if="settings.isError.value" :title="t('capabilities.worker.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+  <ErrorNote
+    v-else-if="settings.isError.value"
+    :title="t('capabilities.worker.readFailed')"
+    :error="settings.error.value"
+    :retry="settings.refetch"
+  />
   <div v-else-if="saved !== undefined" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <Field :label="t('capabilities.worker.on')" inline>
         <Switch :model-value="draft !== null" @update:model-value="toggle" />
       </Field>
       <template v-if="draft">
-        <p v-if="!hasModel" class="flex flex-wrap items-center gap-2 rounded-md bg-info-bg px-3 py-2 text-sm text-info">
+        <p
+          v-if="!hasModel"
+          class="flex flex-wrap items-center gap-2 rounded-md bg-info-bg px-3 py-2 text-sm text-info"
+        >
           {{ t('capabilities.worker.noModel') }}
-          <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="{ name: 'host-models', query: { tab: 'roles' } }">
+          <Button
+            size="sm"
+            variant="ghost"
+            :icon-right="ArrowUpRight"
+            :to="{ name: 'host-models', query: { tab: 'roles' } }"
+          >
             {{ t('capabilities.worker.toModels') }}
           </Button>
         </p>
         <FormSection :title="t('capabilities.worker.model')">
           <Field :label="t('capabilities.worker.reasoning')" required :error="errors.model_reasoning">
-            <Select v-model="reasoningValue" :options="reasoning" :placeholder="t('capabilities.worker.pickReasoning')" />
+            <Select
+              v-model="reasoningValue"
+              :options="reasoning"
+              :placeholder="t('capabilities.worker.pickReasoning')"
+            />
           </Field>
           <Field :label="t('capabilities.worker.input')">
-            <div><SegmentedControl v-model="form.input_support" :options="inputs" :label="t('capabilities.worker.input')" /></div>
+            <div>
+              <SegmentedControl
+                v-model="form.input_support"
+                :options="inputs"
+                :label="t('capabilities.worker.input')"
+              />
+            </div>
           </Field>
           <Field :label="t('capabilities.worker.maxTokens')">
-            <NumberInput v-model="form.max_tokens" :min="1" :steppers="false" unit="tokens" :placeholder="t('capabilities.unlimited')" />
+            <NumberInput
+              v-model="form.max_tokens"
+              :min="1"
+              :steppers="false"
+              unit="tokens"
+              :placeholder="t('capabilities.unlimited')"
+            />
           </Field>
         </FormSection>
         <FormSection :title="t('capabilities.worker.abilities')">
@@ -271,7 +313,9 @@ const pool = computed(() => {
         <FormSection :title="t('capabilities.worker.storage')" :columns="1">
           <p class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
             {{ pool }}
-            <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="{ name: 'host-resources' }">{{ t('capabilities.worker.usage') }}</Button>
+            <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="{ name: 'host-resources' }">
+              {{ t('capabilities.worker.usage') }}
+            </Button>
           </p>
         </FormSection>
         <section class="border-t border-line pt-6">
@@ -282,11 +326,27 @@ const pool = computed(() => {
             @click="advanced = !advanced"
           >
             <h3 class="text-base font-semibold text-ink">{{ t('capabilities.worker.advanced') }}</h3>
-            <ChevronDown :size="18" class="text-subtle transition-transform" :class="advanced && 'rotate-180'" aria-hidden="true" />
+            <ChevronDown
+              :size="18"
+              class="text-subtle transition-transform"
+              :class="advanced && 'rotate-180'"
+              aria-hidden="true"
+            />
           </button>
           <div v-if="advanced" class="mt-4 grid gap-x-5 gap-y-5 sm:grid-cols-2">
-            <Field v-for="item in limits" :key="item.key" :label="t(`capabilities.worker.limits.${item.key}`)" :error="errors[item.key]">
-              <NumberInput v-model="form[item.key]" :min="item.decimals ? 0.001 : 1" :snap="!item.decimals" :steppers="false" :unit="item.unit" />
+            <Field
+              v-for="item in limits"
+              :key="item.key"
+              :label="t(`capabilities.worker.limits.${item.key}`)"
+              :error="errors[item.key]"
+            >
+              <NumberInput
+                v-model="form[item.key]"
+                :min="item.decimals ? 0.001 : 1"
+                :snap="!item.decimals"
+                :steppers="false"
+                :unit="item.unit"
+              />
             </Field>
             <Field
               v-for="item in egressLimits"
@@ -294,12 +354,25 @@ const pool = computed(() => {
               :label="t(`capabilities.worker.egress.${item.key}`)"
               :error="errors[`egress.${item.key}`]"
             >
-              <NumberInput v-model="form.egress[item.key]" :min="item.decimals ? 0.001 : 1" :snap="!item.decimals" :steppers="false" :unit="item.unit" />
+              <NumberInput
+                v-model="form.egress[item.key]"
+                :min="item.decimals ? 0.001 : 1"
+                :snap="!item.decimals"
+                :steppers="false"
+                :unit="item.unit"
+              />
             </Field>
           </div>
         </section>
       </template>
     </div>
-    <SaveBar :dirty="dirty" :saving="save.isPending.value" :error="saveError" :invalid="invalid" @save="save.mutate()" @discard="draft = saved && copy(saved)" />
+    <SaveBar
+      :dirty="dirty"
+      :saving="save.isPending.value"
+      :error="saveError"
+      :invalid="invalid"
+      @save="save.mutate()"
+      @discard="draft = saved && copy(saved)"
+    />
   </div>
 </template>

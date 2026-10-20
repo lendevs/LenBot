@@ -3,7 +3,17 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowUpRight, Check, ChevronDown, Ellipsis, FlaskConical, Moon, RefreshCcw, Sun, UserRound } from '@lucide/vue'
+import {
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  Ellipsis,
+  FlaskConical,
+  Moon,
+  RefreshCcw,
+  Sun,
+  UserRound,
+} from '@lucide/vue'
 import { hostApi, type HostScene } from '../../api/host'
 import { keys } from '../../api/query'
 import { sceneTitles } from '../../api/scenes'
@@ -102,7 +112,8 @@ const roleItems = computed<MenuEntry[]>(() => [
         {
           label: t('groups.settings.role.edit'),
           icon: ArrowUpRight,
-          select: () => void router.push({ name: 'host-persona', query: { persona: currentRole.value!.key } }),
+          select: () =>
+            void router.push({ name: 'host-persona', query: { persona: currentRole.value!.key } }),
         },
       ]
     : []),
@@ -118,7 +129,12 @@ async function choose(role: (typeof usable.value)[number]) {
 
 const actions = computed<MenuEntry[]>(() => [
   temporaryQuiet.value
-    ? { label: t('groups.quiet.resume'), icon: Sun, disabled: resume.isPending.value, select: () => resume.mutate() }
+    ? {
+        label: t('groups.quiet.resume'),
+        icon: Sun,
+        disabled: resume.isPending.value,
+        select: () => resume.mutate(),
+      }
     : { label: t('groups.quiet.action'), icon: Moon, select: () => (quieting.value = true) },
   {
     label: t('groups.newSession.action'),

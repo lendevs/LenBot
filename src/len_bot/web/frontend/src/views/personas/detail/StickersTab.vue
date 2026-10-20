@@ -32,7 +32,9 @@ const listing = useQuery({
 const entries = computed(() => listing.data.value?.entries ?? [])
 /** Images in the folder that the index does not list yet. */
 const loose = computed(() =>
-  (listing.data.value?.files ?? []).filter((file) => !entries.value.some((entry) => entry.file === file.file)),
+  (listing.data.value?.files ?? []).filter(
+    (file) => !entries.value.some((entry) => entry.file === file.file),
+  ),
 )
 const image = (file: string) => personasApi.stickerImage(props.persona, listing.data.value!.saved_path, file)
 const broken = ref(new Set<string>())
@@ -65,7 +67,9 @@ const removal = useMutation({
     writes.done(result, [], t('personas.detail.stickers.removed'))
   },
   onError: (error) => {
-    toast.error(t('personas.detail.stickers.removeFailed'), { detail: describeError(error, t('ui.error.network')).message })
+    toast.error(t('personas.detail.stickers.removeFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    })
     reread()
   },
 })
@@ -97,7 +101,9 @@ const describe = (file: string) => (editing.value = { file, description: '', emo
   <div v-else class="flex flex-col gap-8">
     <FormSection :title="t('personas.detail.stickers.title')" :columns="1">
       <template #actions>
-        <Button size="sm" :icon="Plus" @click="editing = null">{{ t('personas.detail.stickers.add') }}</Button>
+        <Button size="sm" :icon="Plus" @click="editing = null">
+          {{ t('personas.detail.stickers.add') }}
+        </Button>
       </template>
       <EmptyState v-if="!entries.length" :icon="Smile" :title="t('personas.detail.stickers.empty')" compact />
       <ul v-else class="grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] gap-3">
@@ -139,13 +145,24 @@ const describe = (file: string) => (editing.value = { file, description: '', emo
 
     <FormSection v-if="loose.length" :title="t('personas.detail.stickers.loose')" :columns="1">
       <ul class="grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] gap-3">
-        <li v-for="item in loose" :key="item.file" class="flex min-w-0 flex-col gap-2 rounded-lg border border-line bg-surface p-3">
+        <li
+          v-for="item in loose"
+          :key="item.file"
+          class="flex min-w-0 flex-col gap-2 rounded-lg border border-line bg-surface p-3"
+        >
           <div class="grid h-32 place-items-center overflow-hidden rounded-md bg-fill">
-            <img :src="image(item.file)" :alt="item.file" loading="lazy" class="max-h-full max-w-full object-contain" />
+            <img
+              :src="image(item.file)"
+              :alt="item.file"
+              loading="lazy"
+              class="max-h-full max-w-full object-contain"
+            />
           </div>
           <p class="truncate font-mono text-xs text-muted" :title="item.file">{{ item.file }}</p>
           <div class="flex gap-1">
-            <Button size="sm" :icon="Pencil" @click="describe(item.file)">{{ t('personas.detail.stickers.describe') }}</Button>
+            <Button size="sm" :icon="Pencil" @click="describe(item.file)">
+              {{ t('personas.detail.stickers.describe') }}
+            </Button>
             <IconButton
               :icon="Trash2"
               :label="t('common.delete')"

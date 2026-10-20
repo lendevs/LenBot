@@ -36,7 +36,10 @@ const summary = computed(() => {
     t('groups.live.turn.steps', { n: turn.steps }),
     t('groups.live.turn.expressions', { n: turn.expressions }),
     formatDuration(Math.max(0, ended - turn.started) * 1000),
-    t('groups.live.turn.tokens', { input: formatCompact(turn.tokens.input), output: formatCompact(turn.tokens.output) }),
+    t('groups.live.turn.tokens', {
+      input: formatCompact(turn.tokens.input),
+      output: formatCompact(turn.tokens.output),
+    }),
   ]
 })
 const tools = computed(() => props.turn.tools.filter((name) => name !== 'say').map(labels.tool))
@@ -84,7 +87,9 @@ onBeforeUnmount(() => clearTimeout(timer))
         <span class="min-w-0 truncate text-ink-2 tabular">{{ summary.join(' · ') }}</span>
         <span v-if="tools.length" class="min-w-0 truncate text-muted">{{ list.format(tools) }}</span>
       </span>
-      <time class="shrink-0 text-xs text-subtle tabular">{{ formatDateTime(turn.started, { timeZone }) }}</time>
+      <time class="shrink-0 text-xs text-subtle tabular">
+        {{ formatDateTime(turn.started, { timeZone }) }}
+      </time>
       <ChevronDown
         :size="16"
         class="shrink-0 text-muted transition-transform duration-200"

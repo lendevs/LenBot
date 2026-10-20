@@ -15,10 +15,22 @@ import UpdatesTab from './UpdatesTab.vue'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const tabNames = ['connection', 'permissions', 'chat', 'account', 'retention', 'prompts', 'updates', 'advanced'] as const
+const tabNames = [
+  'connection',
+  'permissions',
+  'chat',
+  'account',
+  'retention',
+  'prompts',
+  'updates',
+  'advanced',
+] as const
 type Tab = (typeof tabNames)[number]
 const tab = computed<Tab>({
-  get: () => ((tabNames as readonly string[]).includes(route.query.tab as string) ? (route.query.tab as Tab) : 'connection'),
+  get: () =>
+    (tabNames as readonly string[]).includes(route.query.tab as string)
+      ? (route.query.tab as Tab)
+      : 'connection',
   set: (value) => void router.replace({ query: { ...route.query, tab: value } }),
 })
 const tabs = computed(() => tabNames.map((value) => ({ value, label: t(`system.tabs.${value}`) })))

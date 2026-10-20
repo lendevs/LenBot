@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
 import { FileText, Search } from '@lucide/vue'
 import { memoryApi, type MemoryScope } from '../../../api/memory'
-import { developerDetails } from '../../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../../composables/useDeveloperMode'
 import { formatNumber } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
@@ -38,9 +38,20 @@ function submit() {
         {{ t('common.search') }}
       </Button>
     </form>
-    <ErrorNote v-if="search.isError.value" :title="t('groups.memory.search.failed')" :error="search.error.value" />
-    <EmptyState v-else-if="search.data.value && !search.data.value.hits.length" :title="t('groups.memory.search.none')" compact />
-    <ul v-else-if="search.data.value" class="flex list-none flex-col divide-y divide-line border-y border-line">
+    <ErrorNote
+      v-if="search.isError.value"
+      :title="t('groups.memory.search.failed')"
+      :error="search.error.value"
+    />
+    <EmptyState
+      v-else-if="search.data.value && !search.data.value.hits.length"
+      :title="t('groups.memory.search.none')"
+      compact
+    />
+    <ul
+      v-else-if="search.data.value"
+      class="flex list-none flex-col divide-y divide-line border-y border-line"
+    >
       <li v-for="hit in search.data.value.hits" :key="`${hit.scope}:${hit.path}`">
         <button
           type="button"
@@ -56,7 +67,9 @@ function submit() {
               · {{ hit.total_chars === null ? '—' : t('groups.memory.search.chars', { n: hit.total_chars }) }}
             </span>
           </span>
-          <span class="line-clamp-3 text-sm break-words whitespace-pre-wrap text-ink-2">{{ hit.preview }}</span>
+          <span class="line-clamp-3 text-sm break-words whitespace-pre-wrap text-ink-2">
+            {{ hit.preview }}
+          </span>
         </button>
       </li>
     </ul>

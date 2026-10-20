@@ -51,7 +51,8 @@ async function askDisconnect() {
 const anyChat = computed(() => state.value.scenes.some((item) => item.chat_enabled))
 const allChat = useMutation({
   mutationFn: (enabled: boolean) => overviewApi.setAllChat(enabled),
-  onSuccess: (result) => toast.success(t(result.enabled ? 'overview.status.allResumed' : 'overview.status.allPaused')),
+  onSuccess: (result) =>
+    toast.success(t(result.enabled ? 'overview.status.allResumed' : 'overview.status.allPaused')),
   onError: failed(t('overview.status.allFailed')),
   onSettled: after,
 })
@@ -62,7 +63,8 @@ const hold = useMutation({
   onSettled: after,
 })
 const sendMode = computed({
-  get: () => (hold.isPending.value ? (hold.variables.value ? 'hold' : 'send') : state.value.send_hold ? 'hold' : 'send'),
+  get: () =>
+    hold.isPending.value ? (hold.variables.value ? 'hold' : 'send') : state.value.send_hold ? 'hold' : 'send',
   set: (value: 'send' | 'hold') => hold.mutate(value === 'hold'),
 })
 const sendOptions = computed(() => [
@@ -112,16 +114,33 @@ const menu = computed<MenuEntry[]>(() => [
         <img :src="markUrl" alt="" class="size-13 rounded-[14px]" />
         <span
           class="absolute -right-1 -bottom-1 size-3.5 rounded-full border-2 border-surface"
-          :class="online ? 'animate-pulse-dot bg-success text-success' : status.tone === 'error' ? 'bg-error' : 'bg-warning'"
+          :class="
+            online
+              ? 'animate-pulse-dot bg-success text-success'
+              : status.tone === 'error'
+                ? 'bg-error'
+                : 'bg-warning'
+          "
           aria-hidden="true"
         />
       </span>
       <div class="min-w-0 flex-1 basis-56">
-        <h2 class="text-xl font-semibold" :class="!online && (status.tone === 'error' ? 'text-error' : 'text-warning')">
+        <h2
+          class="text-xl font-semibold"
+          :class="!online && (status.tone === 'error' ? 'text-error' : 'text-warning')"
+        >
           {{ online ? t('overview.status.online') : status.text }}
         </h2>
         <p class="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">
-          {{ [state.bot_id, delivery, t('overview.status.groups', { n: state.scenes.length }, state.scenes.length)].filter(Boolean).join(' · ') }}
+          {{
+            [
+              state.bot_id,
+              delivery,
+              t('overview.status.groups', { n: state.scenes.length }, state.scenes.length),
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          }}
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -158,6 +177,10 @@ const menu = computed<MenuEntry[]>(() => [
       </div>
     </div>
     <p v-if="note" class="text-sm text-ink-2">{{ note }}</p>
-    <ErrorNote v-if="connection.last_error" :title="t('overview.status.lastError')" :error="connection.last_error" />
+    <ErrorNote
+      v-if="connection.last_error"
+      :title="t('overview.status.lastError')"
+      :error="connection.last_error"
+    />
   </section>
 </template>

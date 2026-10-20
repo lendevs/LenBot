@@ -19,7 +19,11 @@ const egress = ['egress_max_task_bytes', 'egress_max_daily_bytes', 'egress_bytes
     <Field :label="t('groups.settings.tasks.reminders')" inline>
       <Switch v-model="form.draft.scene.schedules.enabled" />
     </Field>
-    <Field :label="t('groups.settings.tasks.autonomous')" inline :disabled="!form.draft.scene.schedules.enabled">
+    <Field
+      :label="t('groups.settings.tasks.autonomous')"
+      inline
+      :disabled="!form.draft.scene.schedules.enabled"
+    >
       <Switch v-model="form.draft.scene.schedules.autonomous" />
     </Field>
     <Field
@@ -47,7 +51,12 @@ const egress = ['egress_max_task_bytes', 'egress_max_daily_bytes', 'egress_bytes
           :aria-expanded="traffic"
           @click="traffic = !traffic"
         >
-          <ChevronDown :size="15" class="transition-transform" :class="traffic && 'rotate-180'" aria-hidden="true" />
+          <ChevronDown
+            :size="15"
+            class="transition-transform"
+            :class="traffic && 'rotate-180'"
+            aria-hidden="true"
+          />
           {{ t('groups.settings.tasks.traffic') }}
         </button>
       </div>

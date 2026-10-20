@@ -41,29 +41,49 @@ const purpose = (value: string) =>
     <header class="flex flex-wrap items-center gap-2">
       <h3 class="mr-auto text-base font-semibold text-ink">{{ t('groups.memory.embedding.title') }}</h3>
       <SegmentedControl v-model="scope" :options="scopes" size="sm" :label="t('groups.memory.scope')" />
-      <Button size="sm" :loading="calls.isFetching.value" @click="reading ? calls.refetch() : (reading = true)">
+      <Button
+        size="sm"
+        :loading="calls.isFetching.value"
+        @click="reading ? calls.refetch() : (reading = true)"
+      >
         {{ t('groups.memory.embedding.read') }}
       </Button>
     </header>
     <ErrorNote v-if="calls.isError.value" :title="t('groups.memory.readFailed')" :error="calls.error.value" />
-    <p v-if="reading && calls.isSuccess.value && !rows.length" class="text-sm text-muted">{{ t('groups.memory.embedding.none') }}</p>
+    <p v-if="reading && calls.isSuccess.value && !rows.length" class="text-sm text-muted">
+      {{ t('groups.memory.embedding.none') }}
+    </p>
     <ul class="flex list-none flex-col divide-y divide-line">
       <li v-for="call in rows" :key="call.id" class="flex flex-col gap-2 py-3">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <strong class="font-medium text-ink">#{{ call.id }} {{ purpose(call.purpose) }}</strong>
           <span class="text-xs text-subtle tabular">{{ formatDateTime(call.started, { timeZone }) }}</span>
           <span class="text-xs text-subtle">
-            {{ call.tokens ? t('groups.memory.embedding.tokens', { n: call.tokens.input }) : t('groups.memory.embedding.noTokens') }}
+            {{
+              call.tokens
+                ? t('groups.memory.embedding.tokens', { n: call.tokens.input })
+                : t('groups.memory.embedding.noTokens')
+            }}
           </span>
           <span v-if="call.error" class="text-xs text-error">{{ t('groups.memory.embedding.error') }}</span>
           <Button v-if="!opened[call.id]" size="sm" variant="ghost" class="ml-auto" @click="detail(call.id)">
             {{ t('groups.memory.embedding.detail') }}
           </Button>
         </div>
-        <CodeBlock :code="opened[call.id] ?? { usage: call.usage, response: call.response, error: call.error }" :max-lines="10" />
+        <CodeBlock
+          :code="opened[call.id] ?? { usage: call.usage, response: call.response, error: call.error }"
+          :max-lines="10"
+        />
       </li>
     </ul>
-    <Button v-if="calls.hasNextPage.value" size="sm" variant="ghost" :loading="calls.isFetchingNextPage.value" class="self-center" @click="calls.fetchNextPage()">
+    <Button
+      v-if="calls.hasNextPage.value"
+      size="sm"
+      variant="ghost"
+      :loading="calls.isFetchingNextPage.value"
+      class="self-center"
+      @click="calls.fetchNextPage()"
+    >
       {{ t('groups.memory.more') }}
     </Button>
   </section>

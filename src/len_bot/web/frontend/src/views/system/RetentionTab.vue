@@ -5,7 +5,7 @@ import { useMutation, useQuery } from '@tanstack/vue-query'
 import { Eraser } from '@lucide/vue'
 import { keys } from '../../api/query'
 import { systemApi, systemOf, type Retention, type RetentionCounts } from '../../api/system'
-import { developerDetails } from '../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../composables/useDeveloperMode'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
@@ -22,7 +22,10 @@ import RawRecord from '../groups/tasks/RawRecord.vue'
 import { copy, useSettingsDraft } from './draft'
 
 const { t } = useI18n()
-const status = useQuery({ queryKey: keys.system.retention(), queryFn: ({ signal }) => systemApi.retention(signal) })
+const status = useQuery({
+  queryKey: keys.system.retention(),
+  queryFn: ({ signal }) => systemApi.retention(signal),
+})
 const form = useSettingsDraft<Retention | null>({
   pick: (snapshot) => systemOf(snapshot).retention,
   section: 'retention',
@@ -33,7 +36,11 @@ const { settings, draft } = form
 const scenes = computed(() => (settings.data.value ? Object.keys(settings.data.value.saved.scenes) : []))
 
 function toggle(on: boolean) {
-  draft.value = on ? (form.saved.value ? copy(form.saved.value) : { request_days: 7, timeline_days: 90, message_days: {} }) : null
+  draft.value = on
+    ? form.saved.value
+      ? copy(form.saved.value)
+      : { request_days: 7, timeline_days: 90, message_days: {} }
+    : null
 }
 function setDays(scene: string, days: number | null) {
   if (!draft.value) return
@@ -78,7 +85,9 @@ const prune = useMutation({
     void status.refetch()
   },
   onError: (error) => {
-    toast.error(t('system.retention.pruneFailed'), { detail: describeError(error, t('ui.error.network')).message })
+    toast.error(t('system.retention.pruneFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    })
     void status.refetch()
   },
 })
@@ -95,7 +104,12 @@ async function confirmPrune() {
 
 <template>
   <Skeleton v-if="settings.isPending.value" :lines="6" />
-  <ErrorNote v-else-if="settings.isError.value" :title="t('system.readFailed')" :error="settings.error.value" :retry="settings.refetch" />
+  <ErrorNote
+    v-else-if="settings.isError.value"
+    :title="t('system.readFailed')"
+    :error="settings.error.value"
+    :retry="settings.refetch"
+  />
   <div v-else-if="draft !== undefined" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <Field :label="t('system.retention.on')" inline>
@@ -125,7 +139,10 @@ async function confirmPrune() {
       </template>
     </div>
 
-    <section v-if="status.data.value?.enabled" class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
+    <section
+      v-if="status.data.value?.enabled"
+      class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5"
+    >
       <header class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-base font-semibold">{{ t('system.retention.now') }}</h3>
         <Button
@@ -139,13 +156,29 @@ async function confirmPrune() {
           {{ t('system.retention.prune') }}
         </Button>
       </header>
-      <ErrorNote v-if="status.data.value.error" :title="t('system.retention.stopped')" :error="status.data.value.error" />
+      <ErrorNote
+        v-if="status.data.value.error"
+        :title="t('system.retention.stopped')"
+        :error="status.data.value.error"
+      />
       <p class="text-sm text-ink-2">
         {{ preview ? t('system.retention.next', { items: preview }) : t('system.retention.clean') }}
       </p>
       <RawRecord v-if="developerDetails" :label="t('system.retention.raw')" :code="status.data.value" />
     </section>
-    <ErrorNote v-else-if="status.isError.value" :title="t('system.retention.readFailed')" :error="status.error.value" :retry="status.refetch" />
-    <SaveBar :dirty="form.dirty.value" :saving="form.saving.value" :error="form.saveError.value" :invalid="invalid" @save="form.submit" @discard="form.discard" />
+    <ErrorNote
+      v-else-if="status.isError.value"
+      :title="t('system.retention.readFailed')"
+      :error="status.error.value"
+      :retry="status.refetch"
+    />
+    <SaveBar
+      :dirty="form.dirty.value"
+      :saving="form.saving.value"
+      :error="form.saveError.value"
+      :invalid="invalid"
+      @save="form.submit"
+      @discard="form.discard"
+    />
   </div>
 </template>

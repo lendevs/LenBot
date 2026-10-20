@@ -15,6 +15,8 @@ export function useStatusLabel() {
   return (value: ChatStatus, timeZone?: string) => {
     const status = t(`groups.status.${value.status}`)
     const ends = value.status === 'quiet' || value.status === 'limited'
-    return ends && value.changes_at ? t('groups.until', { status, time: formatDateTime(value.changes_at, { timeZone }) }) : status
+    return ends && value.changes_at
+      ? t('groups.until', { status, time: formatDateTime(value.changes_at, { timeZone }) })
+      : status
   }
 }

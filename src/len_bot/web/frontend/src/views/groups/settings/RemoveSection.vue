@@ -26,7 +26,9 @@ const remove = useMutation({
     void router.push({ name: 'groups' })
   },
   onError: (error) =>
-    toast.error(t('groups.settings.remove.failed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.settings.remove.failed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => void readHostState(),
 })
 async function ask() {

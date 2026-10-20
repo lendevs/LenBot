@@ -35,11 +35,16 @@ const modes = computed(() =>
 const mode = computed({
   get: () => form.draft.speech.mode,
   set: (value: SpeechMode) =>
-    (form.draft.speech = { mode: value, value: value === 'custom' ? (form.draft.speech.value ?? global.value ?? 60) : null }),
+    (form.draft.speech = {
+      mode: value,
+      value: value === 'custom' ? (form.draft.speech.value ?? global.value ?? 60) : null,
+    }),
 })
 
 const limits = useQuery({ queryKey: keys.host.limits(), queryFn: ({ signal }) => settingsApi.limits(signal) })
-const state = computed(() => limits.data.value?.scenes.find((item) => item.scene === props.scene)?.speech ?? null)
+const state = computed(
+  () => limits.data.value?.scenes.find((item) => item.scene === props.scene)?.speech ?? null,
+)
 const usage = computed(() => {
   const value = state.value
   if (!value) return ''
@@ -49,7 +54,11 @@ const usage = computed(() => {
       : t('groups.settings.speech.usedOf', { used: value.used, limit: value.limit }),
   ]
   if (value.held_until) {
-    parts.push(t('groups.settings.speech.held', { time: formatDateTime(value.held_until, { timeZone: props.timeZone }) }))
+    parts.push(
+      t('groups.settings.speech.held', {
+        time: formatDateTime(value.held_until, { timeZone: props.timeZone }),
+      }),
+    )
     parts.push(
       value.reserve_left
         ? t('groups.settings.speech.reserve', { n: value.reserve_left })
@@ -62,7 +71,9 @@ const reset = useMutation({
   mutationFn: () => settingsApi.resetSpeech(props.scene),
   onSuccess: () => toast.success(t('groups.settings.speech.released')),
   onError: (error) =>
-    toast.error(t('groups.settings.speech.releaseFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+    toast.error(t('groups.settings.speech.releaseFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
   onSettled: () => {
     void client.invalidateQueries({ queryKey: keys.host.limits() })
     void readHostState()
@@ -75,7 +86,11 @@ const reset = useMutation({
     <Field :label="t('groups.settings.speech.mode')" wide>
       <SegmentedControl v-model="mode" :options="modes" :label="t('groups.settings.speech.mode')" />
     </Field>
-    <Field v-if="form.draft.speech.mode === 'custom'" :label="t('groups.settings.speech.value')" :error="form.errors.speech">
+    <Field
+      v-if="form.draft.speech.mode === 'custom'"
+      :label="t('groups.settings.speech.value')"
+      :error="form.errors.speech"
+    >
       <NumberInput v-model="form.draft.speech.value" :min="1" :unit="t('groups.settings.speech.unit')" />
     </Field>
     <div v-if="state" class="flex flex-wrap items-center gap-3 text-sm sm:col-span-2">

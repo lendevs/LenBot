@@ -25,12 +25,18 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const client = useQueryClient()
-const library = useQuery({ queryKey: keys.personas.all(), queryFn: ({ signal }) => personasApi.library(signal) })
+const library = useQuery({
+  queryKey: keys.personas.all(),
+  queryFn: ({ signal }) => personasApi.library(signal),
+})
 const roles = computed(() => library.data.value?.roles ?? [])
 const refresh = () => void client.invalidateQueries({ queryKey: keys.personas.all() })
 // A switch from the group command or another page changes which groups use a role.
 watch(
-  () => (host.state?.scenes ?? []).map((item: { scene: string; persona_path: string }) => `${item.scene}=${item.persona_path}`).join(),
+  () =>
+    (host.state?.scenes ?? [])
+      .map((item: { scene: string; persona_path: string }) => `${item.scene}=${item.persona_path}`)
+      .join(),
   (now, before) => {
     if (before !== undefined && now !== before) refresh()
   },
@@ -69,7 +75,8 @@ function created(folder: string) {
 const removal = useMutation({
   mutationFn: (role: PersonaRole) => personasApi.remove(role.key),
   onSuccess: () => toast.success(t('personas.removed')),
-  onError: (error) => toast.error(t('personas.removeFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('personas.removeFailed'), { detail: describeError(error, t('ui.error.network')).message }),
   onSettled: refresh,
 })
 async function remove(role: PersonaRole) {
@@ -93,7 +100,8 @@ const exporting = useMutation({
     link.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   },
-  onError: (error) => toast.error(t('personas.exportFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onError: (error) =>
+    toast.error(t('personas.exportFailed'), { detail: describeError(error, t('ui.error.network')).message }),
 })
 </script>
 
@@ -132,13 +140,13 @@ const exporting = useMutation({
           class="w-full sm:w-64"
         />
         <span class="text-sm text-muted">
-          {{ t('personas.count', { n: roles.length }) }}<template v-if="roles.length">
-            · {{ t('personas.inUse', { n: inUse }) }}</template
-          >
+          {{ t('personas.count', { n: roles.length }) }}
+          <template v-if="roles.length">· {{ t('personas.inUse', { n: inUse }) }}</template>
         </span>
         <DropdownMenu :items="menu">
           <Button variant="primary" size="sm" :icon="Plus" class="ml-auto">
-            {{ t('personas.create.createTitle') }}<ChevronDown :size="14" aria-hidden="true" />
+            {{ t('personas.create.createTitle') }}
+            <ChevronDown :size="14" aria-hidden="true" />
           </Button>
         </DropdownMenu>
       </div>
@@ -153,7 +161,10 @@ const exporting = useMutation({
           v-for="role in shown"
           :key="role.key"
           :role="role"
-          :busy="(removal.isPending.value && removal.variables.value === role) || (exporting.isPending.value && exporting.variables.value === role)"
+          :busy="
+            (removal.isPending.value && removal.variables.value === role) ||
+            (exporting.isPending.value && exporting.variables.value === role)
+          "
           @open="open(role.key)"
           @copy="request = { kind: 'copy', source: role }"
           @export="exporting.mutate(role)"

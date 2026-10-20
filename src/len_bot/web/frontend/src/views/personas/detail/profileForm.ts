@@ -39,14 +39,17 @@ export function useProfileForm(key: Ref<string>) {
         return
       }
       for (const part of parts) {
-        if (same(pick(draft.value, part), pick(previous, part))) Object.assign(draft.value, copy(pick(value, part)))
+        if (same(pick(draft.value, part), pick(previous, part)))
+          Object.assign(draft.value, copy(pick(value, part)))
       }
     },
     { immediate: true },
   )
 
   const changed = (part: ProfilePart) =>
-    Boolean(draft.value && saved.data.value && !same(pick(draft.value, part), pick(saved.data.value.profile, part)))
+    Boolean(
+      draft.value && saved.data.value && !same(pick(draft.value, part), pick(saved.data.value.profile, part)),
+    )
   const dirty = computed(() => ({ identity: changed('identity'), speech: changed('speech') }))
 
   /** First problem that blocks saving a part, as the save bar shows it. */
@@ -70,7 +73,10 @@ export function useProfileForm(key: Ref<string>) {
   const saving = useMutation({
     mutationFn: (part: ProfilePart) => {
       const current = saved.data.value!
-      return personasApi.saveProfile(key.value, current.directory, { ...current.profile, ...pick(draft.value!, part) })
+      return personasApi.saveProfile(key.value, current.directory, {
+        ...current.profile,
+        ...pick(draft.value!, part),
+      })
     },
     onSuccess: (result) => {
       client.setQueryData(keys.personas.part(key.value, 'profile'), result)
@@ -87,7 +93,8 @@ export function useProfileForm(key: Ref<string>) {
       : null
 
   function discard(part: ProfilePart) {
-    if (draft.value && saved.data.value) Object.assign(draft.value, copy(pick(saved.data.value.profile, part)))
+    if (draft.value && saved.data.value)
+      Object.assign(draft.value, copy(pick(saved.data.value.profile, part)))
   }
 
   /** Role files of the whole draft, saved or not, for a draft trial. */

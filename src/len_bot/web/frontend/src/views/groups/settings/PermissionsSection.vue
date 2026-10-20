@@ -62,7 +62,9 @@ function setOwner(scope: ScopedIdentities, text: string) {
       <p class="text-sm text-ink-2">
         {{ t('groups.settings.permissions.owners') }}
         <strong class="font-medium text-ink">
-          {{ form.permissions.data?.owners.length ? form.permissions.data.owners.join(', ') : t('common.none') }}
+          {{
+            form.permissions.data?.owners.length ? form.permissions.data.owners.join(', ') : t('common.none')
+          }}
         </strong>
       </p>
 
@@ -71,7 +73,9 @@ function setOwner(scope: ScopedIdentities, text: string) {
           <caption class="sr-only">{{ t('groups.settings.permissions.matrix') }}</caption>
           <thead>
             <tr class="text-xs text-muted">
-              <th scope="col" class="py-2 pr-3 text-left font-medium">{{ t('groups.settings.permissions.matrix') }}</th>
+              <th scope="col" class="py-2 pr-3 text-left font-medium">
+                {{ t('groups.settings.permissions.matrix') }}
+              </th>
               <th v-for="role in roles" :key="role" scope="col" class="px-2 py-2 text-center font-medium">
                 {{ t(`groups.settings.permissions.roles.${role}`) }}
               </th>
@@ -112,13 +116,20 @@ function setOwner(scope: ScopedIdentities, text: string) {
           :aria-expanded="scoped"
           @click="scoped = !scoped"
         >
-          <ChevronDown :size="15" class="transition-transform" :class="scoped && 'rotate-180'" aria-hidden="true" />
+          <ChevronDown
+            :size="15"
+            class="transition-transform"
+            :class="scoped && 'rotate-180'"
+            aria-hidden="true"
+          />
           {{ t('groups.settings.permissions.scoped') }}
         </button>
       </div>
       <div v-if="scoped" class="grid gap-6 sm:grid-cols-2">
         <div v-for="scope in scopes" :key="scope" class="grid content-start gap-4">
-          <h4 class="text-sm font-semibold text-ink">{{ t(`groups.settings.permissions.scopes.${scope}`) }}</h4>
+          <h4 class="text-sm font-semibold text-ink">
+            {{ t(`groups.settings.permissions.scopes.${scope}`) }}
+          </h4>
           <Field :label="t('groups.settings.permissions.scopedOwner')">
             <Input
               :model-value="value[scope].owner ?? ''"

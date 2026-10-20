@@ -33,10 +33,22 @@ const route = useRoute()
 const router = useRouter()
 const name = computed(() => props.role.name || props.role.key)
 
-const tabNames = ['profile', 'speech', 'knowledge', 'stickers', 'abilities', 'scenes', 'trial', 'files'] as const
+const tabNames = [
+  'profile',
+  'speech',
+  'knowledge',
+  'stickers',
+  'abilities',
+  'scenes',
+  'trial',
+  'files',
+] as const
 type Tab = (typeof tabNames)[number]
 const tab = computed<Tab>({
-  get: () => (tabNames as readonly string[]).includes(route.query.tab as string) ? (route.query.tab as Tab) : 'profile',
+  get: () =>
+    (tabNames as readonly string[]).includes(route.query.tab as string)
+      ? (route.query.tab as Tab)
+      : 'profile',
   set: (value) => void router.replace({ query: { ...route.query, tab: value } }),
 })
 const tabs = computed(() =>
@@ -72,7 +84,12 @@ const usage = computed(() => {
 })
 const menu = computed<MenuEntry[]>(() => [
   { label: t('personas.copy'), icon: Copy, disabled: Boolean(props.role.error), select: () => emit('copy') },
-  { label: t('personas.export'), icon: Download, disabled: Boolean(props.role.error), select: () => emit('export') },
+  {
+    label: t('personas.export'),
+    icon: Download,
+    disabled: Boolean(props.role.error),
+    select: () => emit('export'),
+  },
 ])
 </script>
 
@@ -106,23 +123,26 @@ const menu = computed<MenuEntry[]>(() => [
         </p>
       </div>
       <div class="flex shrink-0 items-center gap-2">
-        <Button
-          variant="primary"
-          :icon="Repeat"
-          :disabled="Boolean(blocked)"
-          @click="tab = 'scenes'"
-        >
+        <Button variant="primary" :icon="Repeat" :disabled="Boolean(blocked)" @click="tab = 'scenes'">
           {{ t('personas.detail.useIn') }}
         </Button>
         <DropdownMenu :items="menu">
-          <IconButton :icon="MoreHorizontal" :label="t('common.more')" variant="secondary" :loading="exporting" :tooltip="false" />
+          <IconButton
+            :icon="MoreHorizontal"
+            :label="t('common.more')"
+            variant="secondary"
+            :loading="exporting"
+            :tooltip="false"
+          />
         </DropdownMenu>
       </div>
     </header>
 
     <ErrorNote v-if="role.error" :title="t('personas.broken')" :error="role.error" />
     <template v-else>
-      <p v-if="role.duplicate_id" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">{{ blocked }}</p>
+      <p v-if="role.duplicate_id" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
+        {{ blocked }}
+      </p>
       <Tabs v-model="tab" :items="tabs" :label="name" />
       <Skeleton v-if="form.saved.isPending.value" :lines="8" />
       <ErrorNote
@@ -134,9 +154,17 @@ const menu = computed<MenuEntry[]>(() => [
       <KeepAlive v-else>
         <ProfileTab v-if="tab === 'profile'" :role="role" />
         <SpeechTab v-else-if="tab === 'speech'" />
-        <KnowledgeTab v-else-if="tab === 'knowledge'" :persona="role.key" @dirty="(value) => (dirty.knowledge = value)" />
+        <KnowledgeTab
+          v-else-if="tab === 'knowledge'"
+          :persona="role.key"
+          @dirty="(value) => (dirty.knowledge = value)"
+        />
         <StickersTab v-else-if="tab === 'stickers'" :persona="role.key" />
-        <AbilitiesTab v-else-if="tab === 'abilities'" :persona="role.key" @dirty="(value) => (dirty.abilities = value)" />
+        <AbilitiesTab
+          v-else-if="tab === 'abilities'"
+          :persona="role.key"
+          @dirty="(value) => (dirty.abilities = value)"
+        />
         <ScenesTab v-else-if="tab === 'scenes'" :role="role" :blocked="blocked" />
         <TrialTab v-else-if="tab === 'trial'" :role="role" />
         <FilesTab v-else :persona="role.key" @dirty="(value) => (dirty.files = value)" />

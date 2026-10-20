@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Overview } from '../../api/overview'
-import { developerDetails } from '../../composables/useDeveloperMode.js'
+import { developerDetails } from '../../composables/useDeveloperMode'
 import { host, readHostState, readOverview } from '../../api/hostStore'
 import { formatNumber } from '../../i18n/format'
 import ErrorNote from '../../ui/ErrorNote.vue'
@@ -27,7 +27,12 @@ const stats = computed(() => {
   const value = day.value
   if (!value) return null
   return [
-    { key: 'received', value: value.messages.received ?? 0, trend: value.hourly.received, tone: 'brand' as const },
+    {
+      key: 'received',
+      value: value.messages.received ?? 0,
+      trend: value.hourly.received,
+      tone: 'brand' as const,
+    },
     {
       key: 'spoke',
       value: (value.messages.sent ?? 0) + (value.messages.simulated ?? 0),
@@ -35,7 +40,12 @@ const stats = computed(() => {
       tone: 'success' as const,
     },
     { key: 'turns', value: sum(value.turns), trend: value.hourly.turns, tone: 'info' as const },
-    { key: 'tokens', value: value.tokens.input + value.tokens.output, trend: value.hourly.tokens, tone: 'warning' as const },
+    {
+      key: 'tokens',
+      value: value.tokens.input + value.tokens.output,
+      trend: value.hourly.tokens,
+      tone: 'warning' as const,
+    },
     { key: 'schedules', value: value.pending_schedules, trend: undefined, tone: 'neutral' as const },
   ]
 })
@@ -44,7 +54,10 @@ const tokenNote = computed(() => {
   if (!value) return ''
   return value.unknown_token_calls
     ? t('overview.stats.unknownTokens', { n: formatNumber(value.unknown_token_calls) })
-    : t('overview.stats.tokenSplit', { input: formatNumber(value.tokens.input), output: formatNumber(value.tokens.output) })
+    : t('overview.stats.tokenSplit', {
+        input: formatNumber(value.tokens.input),
+        output: formatNumber(value.tokens.output),
+      })
 })
 const effects = computed(() =>
   Object.entries(day.value?.reply_effects ?? {})
@@ -56,13 +69,25 @@ const effects = computed(() =>
 <template>
   <div class="flex min-w-0 flex-col gap-6">
     <Skeleton v-if="!host.state && !host.stateError" :lines="4" />
-    <ErrorNote v-else-if="!host.state" :title="t('overview.stateFailed')" :error="host.stateError" :retry="readHostState" />
+    <ErrorNote
+      v-else-if="!host.state"
+      :title="t('overview.stateFailed')"
+      :error="host.stateError"
+      :retry="readHostState"
+    />
     <template v-else>
       <StatusCard />
 
-      <ErrorNote v-if="host.overviewError" :title="t('overview.readFailed')" :error="host.overviewError" :retry="readOverview" />
+      <ErrorNote
+        v-if="host.overviewError"
+        :title="t('overview.readFailed')"
+        :error="host.overviewError"
+        :retry="readOverview"
+      />
       <section class="flex flex-col gap-2">
-        <div class="grid grid-cols-2 gap-x-6 gap-y-5 rounded-xl border border-line bg-surface p-5 sm:grid-cols-3 lg:grid-cols-5">
+        <div
+          class="grid grid-cols-2 gap-x-6 gap-y-5 rounded-xl border border-line bg-surface p-5 sm:grid-cols-3 lg:grid-cols-5"
+        >
           <template v-if="stats">
             <StatTile
               v-for="item in stats"
@@ -71,7 +96,9 @@ const effects = computed(() =>
               :value="item.value"
               :trend="item.trend"
               :tone="item.tone"
-              :format-options="item.key === 'tokens' ? { notation: 'compact', maximumFractionDigits: 1 } : undefined"
+              :format-options="
+                item.key === 'tokens' ? { notation: 'compact', maximumFractionDigits: 1 } : undefined
+              "
             />
           </template>
           <template v-else>
@@ -99,7 +126,11 @@ const effects = computed(() =>
       <div v-if="developerDetails" class="flex flex-col gap-2">
         <RawRecord :label="t('overview.raw.connection')" :code="host.state.connection" />
         <RawRecord v-if="day" :label="t('overview.raw.overview')" :code="day" />
-        <RawRecord v-if="Object.keys(host.titleErrors).length" :label="t('overview.raw.titles')" :code="host.titleErrors" />
+        <RawRecord
+          v-if="Object.keys(host.titleErrors).length"
+          :label="t('overview.raw.titles')"
+          :code="host.titleErrors"
+        />
       </div>
     </template>
   </div>

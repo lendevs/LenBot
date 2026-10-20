@@ -19,7 +19,11 @@ const usage = computed(() => {
   const names = props.role.scenes.map(groupLabel)
   if (!names.length) return t('personas.unused')
   return names.length > 2
-    ? t('personas.usedMany', { names: names.slice(0, 2).join(t('personas.separator')), n: names.length, more: names.length - 2 })
+    ? t('personas.usedMany', {
+        names: names.slice(0, 2).join(t('personas.separator')),
+        n: names.length,
+        more: names.length - 2,
+      })
     : t('personas.used', { names: names.join(t('personas.separator')) })
 })
 const items = computed<MenuEntry[]>(() => [
@@ -27,7 +31,10 @@ const items = computed<MenuEntry[]>(() => [
   { label: t('personas.export'), icon: Download, disabled: broken.value, select: () => emit('export') },
   { type: 'separator' },
   {
-    label: props.role.scenes.length || props.role.running_scenes.length ? t('personas.removeInUse') : t('common.delete'),
+    label:
+      props.role.scenes.length || props.role.running_scenes.length
+        ? t('personas.removeInUse')
+        : t('common.delete'),
     icon: Trash2,
     danger: true,
     disabled: Boolean(props.role.scenes.length || props.role.running_scenes.length),
@@ -66,7 +73,9 @@ const items = computed<MenuEntry[]>(() => [
         />
       </DropdownMenu>
     </div>
-    <p class="line-clamp-2 min-h-10 text-sm text-muted">{{ firstSentence(role.brief) || t('personas.noBrief') }}</p>
+    <p class="line-clamp-2 min-h-10 text-sm text-muted">
+      {{ firstSentence(role.brief) || t('personas.noBrief') }}
+    </p>
     <p class="flex min-w-0 items-center gap-1.5 border-t border-line pt-3 text-xs text-muted">
       <template v-if="broken || role.duplicate_id">
         <TriangleAlert :size="14" class="shrink-0 text-warning" aria-hidden="true" />
