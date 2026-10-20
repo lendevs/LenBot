@@ -32,6 +32,8 @@ export const keys = {
     control: (scene: string) => ['scene', scene, 'control'] as const,
     turn: (scene: string, turnId: string) => ['scene', scene, 'turn', turnId] as const,
     permissions: (scene: string) => ['scene', scene, 'permissions'] as const,
+    learningAll: (scene: string) => ['scene', scene, 'learning'] as const,
+    learning: (scene: string, ...parts: unknown[]) => ['scene', scene, 'learning', ...parts] as const,
     sessionAll: (scene: string) => ['scene', scene, 'session'] as const,
     session: (scene: string, activeOnly: boolean) => ['scene', scene, 'session', { activeOnly }] as const,
   },

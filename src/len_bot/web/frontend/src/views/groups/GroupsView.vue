@@ -9,7 +9,6 @@ import { useCurrentScene } from '../../composables/useCurrentScene.js'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges.js'
 import { useHostEvents } from '../../host/events.js'
 import { host, readHostState } from '../../host/store.js'
-import LearningTab from '../../host/pages/scenes/LearningTab.vue'
 import MemoryPage from '../../host/pages/memory/MemoryPage.vue'
 import TasksPage from '../../host/pages/tasks/TasksPage.vue'
 import { groupLabel } from '../../layouts/shell/scenes'
@@ -29,6 +28,7 @@ import { statusTones } from './status'
 import LiveTab from './live/LiveTab.vue'
 import SessionTab from './session/SessionTab.vue'
 import SettingsTab from './settings/SettingsTab.vue'
+import LearningTab from './learning/LearningTab.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -141,6 +141,7 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
             <LearningTab
               v-else-if="tab === 'learning'"
               :scene="scene"
+              :time-zone="current.timezone"
               @dirty="(value: boolean) => (dirty.learning = value)"
             />
             <SettingsTab
