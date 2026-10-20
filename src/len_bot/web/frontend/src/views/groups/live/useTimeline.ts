@@ -90,7 +90,7 @@ export function useTimeline(scene: Ref<string>) {
   }
   useHostEvent('*', (event) => {
     if (event.scene !== scene.value) return
-    if (/^(message\.(received|sent)|turn\.(started|ended))$/.test(event.type)) soon(150)
+    if (/^(message\.(received|sent)|notice\.received|turn\.(started|ended))$/.test(event.type)) soon(150)
     else if (event.type === 'turn.step') soon(1000)
   })
   onScopeDispose(() => clearTimeout(timer))

@@ -4,7 +4,6 @@ import { useEventListener, useResizeObserver } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { ArrowDown, AudioLines } from '@lucide/vue'
 import { failedMessage, failedTurn, itemKey, type TimelineItem } from '../../../api/timeline'
-import AudioList from '../../../host/pages/scenes/AudioList.vue'
 import { host } from '../../../host/store.js'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
@@ -15,7 +14,9 @@ import Skeleton from '../../../ui/Skeleton.vue'
 import Spinner from '../../../ui/Spinner.vue'
 import VirtualList from '../../../ui/VirtualList.vue'
 import MessageRow from './MessageRow.vue'
+import NoticeRow from './NoticeRow.vue'
 import TurnCard from './TurnCard.vue'
+import VoiceList from './VoiceList.vue'
 import { useTimeline } from './useTimeline'
 
 const props = defineProps<{ scene: string; timeZone: string; persona: string }>()
@@ -38,7 +39,9 @@ const shown = computed(() =>
   items.value.filter((item) => {
     if (filter.value === 'turns') return item.type === 'turn'
     if (filter.value === 'errors')
-      return item.type === 'turn' ? failedTurn(item.status) || item.error !== null : failedMessage(item.status)
+      return item.type === 'turn'
+        ? failedTurn(item.status) || item.error !== null
+        : item.type === 'message' && failedMessage(item.status)
     return true
   }),
 )
@@ -133,6 +136,7 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
             :persona="persona"
             :name-of="nameOf"
           />
+          <NoticeRow v-else-if="item.type === 'notice'" :notice="item" :time-zone="timeZone" :name-of="nameOf" />
           <TurnCard
             v-else
             :turn="item"
@@ -157,7 +161,7 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
     </div>
 
     <Sheet v-model:open="voice" :title="t('groups.live.voice')" size="lg">
-      <AudioList :scene="scene" />
+      <VoiceList :scene="scene" />
     </Sheet>
   </section>
 </template>

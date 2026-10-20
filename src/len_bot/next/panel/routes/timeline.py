@@ -75,9 +75,26 @@ class TimelineTurn(BaseModel):
     error: str | None
 
 
+class TimelineNotice(BaseModel):
+    """A platform notice: someone joined, left, recalled a message, changed a group card, and so on."""
+    type: Literal['notice'] = 'notice'
+    at: float
+    id: int
+    kind: str
+    sub_type: str | None
+    time: float
+    user_id: str | None
+    user_name: str | None
+    operator_id: str | None
+    operator_name: str | None
+    duration: int | None
+    platform_message_id: str | None
+    raw: dict
+
+
 class TimelinePage(BaseModel):
     scene: str
-    items: list[Annotated[TimelineMessage | TimelineTurn, Field(discriminator='type')]]
+    items: list[Annotated[TimelineMessage | TimelineTurn | TimelineNotice, Field(discriminator='type')]]
     next_before: str | None
 
 
@@ -151,7 +168,7 @@ class TurnDetail(BaseModel):
 class Cursor(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     at: float = Field(allow_inf_nan=False)
-    kind: Literal['message', 'turn']
+    kind: Literal['message', 'notice', 'turn']
     key: str
 
     def encode(self) -> str:
@@ -177,6 +194,26 @@ def message_record(store: Store, row) -> dict:
                                                   'sender': replied.sender, 'text': render_body(replied.segments)},
             'is_self': message.is_self, 'status': message.send_status, 'recalled': message.recalled,
             'verdict': None if row['wake_verdict'] is None else json.loads(row['wake_verdict'])}
+
+
+def known_name(store: Store, scene: str, uid: str | None) -> str | None:
+    """The group card or nickname this account last spoke with here."""
+    if uid is None:
+        return None
+    row = store.db.execute(
+        "SELECT COALESCE(NULLIF(json_extract(body,'$.sender.card'),''),json_extract(body,'$.sender.nickname')) "
+        "FROM messages WHERE scene=? AND json_extract(body,'$.sender.uid')=? ORDER BY seq DESC LIMIT 1",
+        (scene, uid)).fetchone()
+    return None if row is None else row[0]
+
+
+def notice_record(store: Store, row) -> dict:
+    body = json.loads(row['body'])
+    return {'type': 'notice', 'at': row['received_at'], 'id': row['id'], 'kind': row['kind'],
+            'sub_type': body['sub_type'], 'time': row['time'],
+            'user_id': body['user_id'], 'user_name': known_name(store, row['scene'], body['user_id']),
+            'operator_id': body['operator_id'], 'operator_name': known_name(store, row['scene'], body['operator_id']),
+            'duration': body['duration'], 'platform_message_id': row['platform_id'], 'raw': json.loads(row['raw'])}
 
 
 def tool_results(store: Store, scene: str, entry: int | None) -> dict:
@@ -213,21 +250,28 @@ def turn_record(store: Store, row) -> dict:
             'tools': list(dict.fromkeys(tools))}
 
 
+# At the same moment messages come first, then notices, then turns.
+TIMELINE_SOURCES = (('message', 'messages', "COALESCE(received_at,json_extract(body,'$.time'))", 'seq'),
+                    ('notice', 'notices', 'received_at', 'id'),
+                    ('turn', 'turns', 'started', 'id'))
+RANK = {kind: rank for rank, (kind, *_) in enumerate(TIMELINE_SOURCES)}
+RECORDS = {'message': message_record, 'notice': notice_record, 'turn': turn_record}
+
+
 def read_timeline(store: Store, scene: str, before: Cursor | None, limit: int) -> dict:
     rows = []
-    for kind, table, clock, key in [('message', 'messages', "COALESCE(received_at,json_extract(body,'$.time'))", 'seq'),
-                                   ('turn', 'turns', 'started', 'id')]:
+    for kind, table, clock, key in TIMELINE_SOURCES:
         condition, values = '', [scene]
         if before is not None:
             if kind == before.kind:
                 condition = f' AND ({clock},{key})<(?,?)'
-                values += [before.at, int(before.key) if kind == 'message' else before.key]
+                values += [before.at, before.key if kind == 'turn' else int(before.key)]
             else:
-                condition = f' AND {clock}' + ('<=?' if kind == 'message' else '<?')
+                condition = f' AND {clock}' + ('<=?' if RANK[kind] < RANK[before.kind] else '<?')
                 values += [before.at]
         found = store.db.execute(f'SELECT *,{clock} AS at FROM {table} WHERE scene=?{condition} '
                                  f'ORDER BY {clock} DESC,{key} DESC LIMIT ?', (*values, limit + 1)).fetchall()
-        rows.extend((row['at'], 0 if kind == 'message' else 1, row[key], kind, row) for row in found)
+        rows.extend((row['at'], RANK[kind], row[key], kind, row) for row in found)
     rows.sort(key=lambda item: item[:3], reverse=True)
     selected = rows[:limit]
     cursor = None
@@ -235,8 +279,7 @@ def read_timeline(store: Store, scene: str, before: Cursor | None, limit: int) -
         at, _, key, kind, _ = selected[-1]
         cursor = Cursor(at=at, kind=kind, key=str(key)).encode()
     return {'scene': scene, 'next_before': cursor, 'items': [
-        message_record(store, row) if kind == 'message' else turn_record(store, row)
-        for _, _, _, kind, row in reversed(selected)]}
+        RECORDS[kind](store, row) for _, _, _, kind, row in reversed(selected)]}
 
 
 def thoughts(call: dict) -> list[str]:
@@ -322,7 +365,7 @@ def register_host_timeline(app, *, runtime, user) -> None:
         configured(scene)
         try:
             cursor = None if before is None else Cursor.model_validate_json(base64.urlsafe_b64decode(before))
-            if cursor is not None and cursor.kind == 'message':
+            if cursor is not None and cursor.kind != 'turn':
                 int(cursor.key)
         except ValueError as error:
             raise HTTPException(400, '时间线游标无效') from error

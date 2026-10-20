@@ -56,7 +56,25 @@ export interface TimelineTurn {
   error: string | null
 }
 
-export type TimelineItem = TimelineMessage | TimelineTurn
+/** A platform notice; `raw` is the event as the platform sent it. */
+export interface TimelineNotice {
+  type: 'notice'
+  at: number
+  id: number
+  kind: string
+  sub_type: string | null
+  time: number
+  user_id: string | null
+  /** The group card or nickname the account last spoke with in this group. */
+  user_name: string | null
+  operator_id: string | null
+  operator_name: string | null
+  duration: number | null
+  platform_message_id: string | null
+  raw: Record<string, unknown>
+}
+
+export type TimelineItem = TimelineMessage | TimelineTurn | TimelineNotice
 
 export interface TimelinePage {
   scene: string
@@ -123,13 +141,20 @@ export const timelineApi = {
 }
 
 export const itemKey = (item: TimelineItem) =>
-  item.type === 'message' ? `m${item.message_seq}` : `t${item.turn_id}`
+  item.type === 'message'
+    ? `m${item.message_seq}`
+    : item.type === 'notice'
+      ? `n${item.id}`
+      : `t${item.turn_id}`
 
-/** Server order: time, then messages before turns, then sequence or id. */
+const rank = { message: 0, notice: 1, turn: 2 } as const
+
+/** Server order: time, then messages, notices, turns, then sequence or id. */
 export function compareItems(a: TimelineItem, b: TimelineItem): number {
   if (a.at !== b.at) return a.at - b.at
-  if (a.type !== b.type) return a.type === 'message' ? -1 : 1
+  if (a.type !== b.type) return rank[a.type] - rank[b.type]
   if (a.type === 'message' && b.type === 'message') return a.message_seq - b.message_seq
+  if (a.type === 'notice' && b.type === 'notice') return a.id - b.id
   const [left, right] = [(a as TimelineTurn).turn_id, (b as TimelineTurn).turn_id]
   return left < right ? -1 : left > right ? 1 : 0
 }

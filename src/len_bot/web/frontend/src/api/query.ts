@@ -62,6 +62,7 @@ export const keys = {
   scene: {
     all: (scene: string) => ['scene', scene] as const,
     timeline: (scene: string) => ['scene', scene, 'timeline'] as const,
+    audio: (scene: string) => ['scene', scene, 'audio'] as const,
     control: (scene: string) => ['scene', scene, 'control'] as const,
     turn: (scene: string, turnId: string) => ['scene', scene, 'turn', turnId] as const,
     permissions: (scene: string) => ['scene', scene, 'permissions'] as const,

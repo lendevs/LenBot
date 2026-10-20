@@ -296,6 +296,7 @@ class NetworkRuntime:
                 raise
             self._emit({"type": "platform_event", "notice_type": message.notice_type,
                         "plugin_handlers": handled})
+            self.events.publish('notice.received', scene=message.scene, kind=message.notice_type)
             return
         with log_context(scene=message.scene, platform_message_id=message.platform_message_id):
             self._receive_message(message, raw)
