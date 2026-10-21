@@ -30,6 +30,7 @@ RESERVE_CHANNELS = frozenset({"schedule", "task"})
 # Calls that speak, wait or close a turn; any other call means the turn looked something up.
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
+PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "persona_knowledge", "member_info"})
 from ..memory.service import MemoryService
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
@@ -452,70 +453,80 @@ class Chat:
                     stepped_lookup = any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
                     looked_up = looked_up or stepped_lookup
                     end_turn, group_failed = False, False
-                    for call in reply.tool_calls:
-                        self.trace('turn.step', turn_id, kind='tool', phase='start', call_id=call.id,
-                                   name=call.name, arguments_summary=encode(call.arguments)[:500])
-                        tool_status, tool_summary = 'complete', ''
-                        try:
-                            if call.name == "memory":
-                                # A tool may have edited or removed the recalled file, even if
-                                # a later index update failed. Do not reattach an old excerpt.
-                                recalled = None
-                                recall_items = []
+                    # Several read-only calls in one reply run together; results are stored in call order.
+                    parallel = [call for call in reply.tool_calls if call.name in PARALLEL_TOOLS]
+                    prefetched = {call.id: asyncio.create_task(self.toolset.execute(
+                        turn_id, call, wait_for_messages, expression_style=expression_style, direct=self.direct_request))
+                        for call in parallel} if len(parallel) > 1 else {}
+                    try:
+                        for call in reply.tool_calls:
+                            self.trace('turn.step', turn_id, kind='tool', phase='start', call_id=call.id,
+                                       name=call.name, arguments_summary=encode(call.arguments)[:500])
+                            tool_status, tool_summary = 'complete', ''
                             try:
-                                content, expression, discovered = await self.toolset.execute(
-                                    turn_id, call, wait_for_messages, expression_style=expression_style, direct=self.direct_request,
-                                )
-                            except Exception as error:
-                                tool_status = 'error'
-                                tool_summary = f'{type(error).__name__}: {error}'
-                                group_failed = True
-                                failed_tools += 1
-                                await self.store.call(self.store.complete_tool, scene, call.id,
-                                                      f"{call.name} 失败：{type(error).__name__}: {error}")
-                                if isinstance(error, LimitReached):
-                                    raise
-                            else:
-                                if expression is None:
-                                    reaction = call.name == 'message_reaction'
-                                    await self.store.call(self.store.complete_tool, scene, call.id, content,
-                                                          discovered_tools=discovered,
-                                                          response_turn_id=turn_id if reaction else None)
-                                    if reaction:
+                                if call.name == "memory":
+                                    # A tool may have edited or removed the recalled file, even if
+                                    # a later index update failed. Do not reattach an old excerpt.
+                                    recalled = None
+                                    recall_items = []
+                                try:
+                                    started = prefetched.pop(call.id, None)
+                                    content, expression, discovered = await (started if started is not None else self.toolset.execute(
+                                        turn_id, call, wait_for_messages, expression_style=expression_style, direct=self.direct_request,
+                                    ))
+                                except Exception as error:
+                                    tool_status = 'error'
+                                    tool_summary = f'{type(error).__name__}: {error}'
+                                    group_failed = True
+                                    failed_tools += 1
+                                    await self.store.call(self.store.complete_tool, scene, call.id,
+                                                          f"{call.name} 失败：{type(error).__name__}: {error}")
+                                    if isinstance(error, LimitReached):
+                                        raise
+                                else:
+                                    if expression is None:
+                                        reaction = call.name == 'message_reaction'
+                                        await self.store.call(self.store.complete_tool, scene, call.id, content,
+                                                              discovered_tools=discovered,
+                                                              response_turn_id=turn_id if reaction else None)
+                                        if reaction:
+                                            expressions.append(content)
+                                            self.turn_expressions += 1
+                                            end_turn = end_turn or call.arguments.get('end_turn', True)
+                                            self.trace('turn.step', turn_id, kind='expression', phase='end',
+                                                       call_id=call.id, status='complete', summary=content[:500])
+                                        elif call.name == 'attention':
+                                            end_turn = end_turn or call.arguments.get('end_turn', False)
+                                        elif call.name == 'end_turn':
+                                            end_turn = True
+                                    else:
+                                        content, delivery_status = await self.expression.deliver_expression(
+                                            call.id, expression, turn_id=turn_id, channels=self.turn_channels,
+                                        )
                                         expressions.append(content)
                                         self.turn_expressions += 1
-                                        end_turn = end_turn or call.arguments.get('end_turn', True)
+                                        if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
+                                            self.turn_messages += 1
+                                        if delivery_status in {"sent", "simulated"}:
+                                            end_turn = end_turn or expression.end_turn
+                                        else:
+                                            group_failed = True
+                                            tool_status = 'error'
+                                            failed_tools += 1
                                         self.trace('turn.step', turn_id, kind='expression', phase='end',
-                                                   call_id=call.id, status='complete', summary=content[:500])
-                                    elif call.name == 'attention':
-                                        end_turn = end_turn or call.arguments.get('end_turn', False)
-                                    elif call.name == 'end_turn':
-                                        end_turn = True
-                                else:
-                                    content, delivery_status = await self.expression.deliver_expression(
-                                        call.id, expression, turn_id=turn_id, channels=self.turn_channels,
-                                    )
-                                    expressions.append(content)
-                                    self.turn_expressions += 1
-                                    if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
-                                        self.turn_messages += 1
-                                    if delivery_status in {"sent", "simulated"}:
-                                        end_turn = end_turn or expression.end_turn
-                                    else:
-                                        group_failed = True
-                                        tool_status = 'error'
-                                        failed_tools += 1
-                                    self.trace('turn.step', turn_id, kind='expression', phase='end',
-                                               call_id=call.id, status=delivery_status, summary=content[:500])
-                                tool_summary = content
-                        except BaseException as error:
-                            tool_status = 'cancelled' if isinstance(error, asyncio.CancelledError) else 'error'
-                            tool_summary = f'{type(error).__name__}: {error}'
-                            raise
-                        finally:
-                            self.trace('turn.step', turn_id, kind='tool', phase='end', call_id=call.id,
-                                       name=call.name, status=tool_status, summary=tool_summary[:500])
-                        self.notify()
+                                                   call_id=call.id, status=delivery_status, summary=content[:500])
+                                    tool_summary = content
+                            except BaseException as error:
+                                tool_status = 'cancelled' if isinstance(error, asyncio.CancelledError) else 'error'
+                                tool_summary = f'{type(error).__name__}: {error}'
+                                raise
+                            finally:
+                                self.trace('turn.step', turn_id, kind='tool', phase='end', call_id=call.id,
+                                           name=call.name, status=tool_status, summary=tool_summary[:500])
+                            self.notify()
+                    finally:
+                        for started in prefetched.values():
+                            started.cancel()
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the
                         # model as new input instead of waiting for the next turn.

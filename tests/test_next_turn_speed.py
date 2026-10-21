@@ -63,7 +63,7 @@ async def _unused_wait(_: float) -> str:
     return 'unused'
 
 
-async def _turn(config, persona, replies, later: list[tuple[int, str]] = ()):
+async def _turn(config, persona, replies, later: list[tuple[int, str]] = (), wrap=None):
     """One direct turn; ``later`` messages arrive after the turn's input was taken."""
     received = []
     server = await peer_server(replies, received)
@@ -73,6 +73,8 @@ async def _turn(config, persona, replies, later: list[tuple[int, str]] = ()):
             _receive(store, '帮我查一下刚才说的')
             async with ChatModel(config.model_settings('mind')) as mind:
                 chat = Chat(config, persona, store, mind)
+                if wrap is not None:
+                    chat.toolset.execute = wrap(chat.toolset.execute)
                 pending = store.pending_messages(SCENE)
                 batch = (pending[-1][0], [chat.context.batch([pending[-1][1]])])
                 for index, (user, text) in enumerate(later):
@@ -165,3 +167,29 @@ def test_quick_effort_is_checked_against_the_provider_at_load(tmp_path):
         Models.model_validate(source)
     source['roles']['mind']['temperature'] = None
     assert Models.model_validate(source).roles.mind.quick_reasoning_effort == 'low'
+
+
+@pytest.mark.asyncio
+async def test_read_only_calls_of_one_reply_run_together_and_keep_their_order(tmp_path):
+    import asyncio
+    config, persona = _instance(tmp_path)
+    config.max_steps = 4
+    events = []
+
+    def wrap(execute):
+        async def slow(turn_id, call, *args, **kwargs):
+            if call.name == 'recall_chat':
+                events.append(('start', call.id))
+                await asyncio.sleep(0.1 if call.id == 'call-0' else 0.01)
+                events.append(('end', call.id))
+            return await execute(turn_id, call, *args, **kwargs)
+        return slow
+
+    result, bodies = await _turn(config, persona, [
+        _calls(('recall_chat', {'action': 'recent'}), ('recall_chat', {'action': 'search', 'query': '刚才'})),
+        _calls(('say', {'content': '好', 'end_turn': True})),
+    ], wrap=wrap)
+    assert result['status'] == 'settled', result['error']
+    assert events[:2] == [('start', 'call-0'), ('start', 'call-1')]
+    tools = [message for message in bodies[1]['messages'] if message['role'] == 'tool']
+    assert [message['tool_call_id'] for message in tools] == ['call-0', 'call-1']
