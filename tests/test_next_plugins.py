@@ -460,3 +460,16 @@ def test_scene_being_added_has_no_runner_and_is_not_paused():
     assert PluginHost.scene_paused(host, "onebot:group:80001")
     assert not PluginHost.scene_paused(host, "onebot:group:80002")
     assert not PluginHost.scene_paused(SimpleNamespace(runtime=None), "onebot:group:80002")
+
+
+def test_home_page_counts_only_recent_plugin_errors():
+    """Errors read back from older logs stay on the plugin page, not in what needs attention today."""
+    from len_bot.next.panel.app import attention
+
+    now = 1_800_000_000
+    item = {"name": "sample", "status": "running", "error": None,
+            "errors": [{"at": now - 60, "where": "后台", "error": "新错误"},
+                       {"at": now - 5 * 86400, "where": "后台", "error": "旧错误"}]}
+    assert attention(item, now) == {"name": "sample", "status": "running", "error": None,
+                                    "error_count": 1, "latest_error": item["errors"][0]}
+    assert attention({**item, "errors": item["errors"][1:]}, now)["latest_error"] is None

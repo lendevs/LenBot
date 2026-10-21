@@ -60,6 +60,18 @@ def listen_address(sockname: tuple) -> str:
     return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
 
 
+# Older errors stay on the plugin and MCP pages but no longer ask for attention on the home page.
+ATTENTION_SECONDS = 86400
+
+
+def attention(item: dict, now: float | None = None) -> dict:
+    """One plugin or MCP service for the home page, counting only its recent errors (newest first)."""
+    since = (time.time() if now is None else now) - ATTENTION_SECONDS
+    recent = [error for error in item["errors"] if error["at"] >= since]
+    return {"name": item["name"], "status": item["status"], "error": item["error"],
+            "error_count": len(recent), "latest_error": recent[0] if recent else None}
+
+
 def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                lifecycle: HostLifecycle | None = None, container: bool = False) -> FastAPI:
     if config.panel is None:
@@ -177,16 +189,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             "memory_backend": None if config.memory is None else config.memory.backend,
             # Only what needs attention on the home page; details live on the capabilities page.
             "plugins": None if runtime.plugins is None else [
-                {"name": item["name"], "status": item["status"], "error": item["error"],
-                 "error_count": len(item["errors"]),
-                 "latest_error": item["errors"][0] if item["errors"] else None}
-                for item in runtime.plugins.state()["plugins"]
-            ],
-            "mcp": [] if runtime.mcp is None else [
-                {"name": item["name"], "status": item["status"], "error": item["error"],
-                 "error_count": len(item["errors"]),
-                 "latest_error": item["errors"][0] if item["errors"] else None} for item in runtime.mcp.state()
-            ],
+                attention(item) for item in runtime.plugins.state()["plugins"]],
+            "mcp": [] if runtime.mcp is None else [attention(item) for item in runtime.mcp.state()],
         }
 
     @app.get("/api/host/scene-titles", response_model=responses.SceneTitles, response_model_exclude_unset=True)
