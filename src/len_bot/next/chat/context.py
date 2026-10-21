@@ -269,7 +269,7 @@ def current_attention(config: LabConfig, store: Store) -> str:
         if settings is not None and settings.mode != 'context' and attention.get('declared') is not None:
             declared = Declared.load(attention['declared'])
             text += '\n持续关注：' + encode(declared.view(store.now()))
-            text += '\n本轮候选（不表示完成）：' + encode(declared.turn_matches)
+            text += '\n本轮候选：' + encode(declared.turn_matches)
     return '<当前关注>\n' + text + '\n</当前关注>'
 
 

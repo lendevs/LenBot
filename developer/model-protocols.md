@@ -13,7 +13,6 @@
 | `openai-audio` | 兼容服务的 API 根地址 | asr | audio/transcriptions |
 | `openai-embeddings` | 兼容服务的 API 根地址 | 本地记忆、场景学习的 embedding | embeddings |
 
-协议能够表达工具和图片，并不代表所选的模型具备相应的能力。
 
 暂不接入以下功能。
 

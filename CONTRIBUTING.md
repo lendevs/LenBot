@@ -131,7 +131,7 @@ uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 
 这条命令在副本中重新构建面板，生成源码包、wheel、Linux／macOS／Windows 部署包和发行清单，不启动程序，也不上传。正式发布使用 [Release 工作流](.github/workflows/release.yml)，步骤见[发行指南](deploy/releasing.md)。
 
-[CI](.github/workflows/ci.yml) 会编译代码并运行测试，然后构建面板并打包。测试在 Python 3.13 和 3.14 上各运行一遍（[check.yml](.github/workflows/check.yml)）。3.13 是 `pyproject.toml` 中的最低版本，3.14 用来提前发现新解释器上的问题。同一个工作流还用 actionlint 检查所有 workflow 文件。单元测试只在 Linux 上运行，Windows 和 macOS 只有安装冒烟测试覆盖。CI 通过不代表页面交互和真实聊天也没有问题。
+[CI](.github/workflows/ci.yml) 会编译代码并运行测试，然后构建面板并打包。测试在 Python 3.13 和 3.14 上各运行一遍（[check.yml](.github/workflows/check.yml)）。3.13 是 `pyproject.toml` 中的最低版本，3.14 用来提前发现新解释器上的问题。同一个工作流还用 actionlint 检查所有 workflow 文件。单元测试只在 Linux 上运行，Windows 和 macOS 只有安装冒烟测试覆盖。
 
 ## 提交
 

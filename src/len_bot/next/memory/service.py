@@ -122,7 +122,7 @@ MEMORY_ARGUMENTS = TypeAdapter(Annotated[
 ])
 MEMORY_TOOL = {"type": "function", "function": {
     "name": "memory", "description": "浏览、检索、读写当前场景长期记忆；公共分区只读。"
-    "普通删除保留修改历史；forget 清除该文件及其历史，不能据此宣称聊天和备份已删除。",
+    "普通删除保留修改历史；forget 清除该文件及其历史。",
     "parameters": {
         "type": "object", "additionalProperties": False, "required": ["action"],
         "properties": {
@@ -134,7 +134,7 @@ MEMORY_TOOL = {"type": "function", "function": {
             "reason": {"type": "string", "description": "write/delete/forget 必填的实际原因。"},
             "exclude_records": {"type": "array", "items": {"type": "integer", "minimum": 1},
                                 "maxItems": 500, "description": "仅 forget 必填：选中的 recall_chat 原话 record 此后不再后台抽取。"
-                                "显式 [] 表示不排除旧输入；不扩大到未选择的消息或未来再次讲述。"},
+                                "显式 [] 表示不排除旧输入。"},
             "offset": {"type": "integer", "minimum": 0, "description": "仅 browse 的分页起点，默认 0。"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100,
                       "description": "browse 默认 20、最多 100；search 默认 5、最多 20。"},

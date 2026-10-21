@@ -179,8 +179,8 @@ def prepare(root: Path, set_name: str, profile: str) -> tuple[LabConfig, Persona
         "delivery": "simulated",
         "estimated_model_calls": None, "estimated_cost": None,
         "notice": "调用数取决于实际工具、压缩与表达向量查询，费用未核定。"
-                  "配置embedding仅表示本轮可按已采用表达检索，不代表种子里已有可用向量。"
-                  "固定起点按真实秒数推进；此开发回放尚非历史时机对照，完成执行不等于质量通过。",
+                  "配置embedding表示本轮可按已采用表达检索。"
+                  "固定起点按真实秒数推进。",
     }
     return config, persona, cases, plan
 

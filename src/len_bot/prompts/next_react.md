@@ -9,5 +9,5 @@
 - 只发一张图：react(query="开心", end_turn=true)；在素材目录里看中了某一张，就用 react(file=选中的文件名, end_turn=true)。
 - 一句话带一张图：say(content=要说的话, sticker={"query":"生气"}, end_turn=true)。
 
-没有找到合适的素材和平台拒绝发送是两种不同的结果，以工具返回的状态为准。
+工具返回的状态会区分没找到合适素材和平台拒绝发送。
 </react>

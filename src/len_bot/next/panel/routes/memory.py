@@ -86,7 +86,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         try:
             with processing_records(runtime.config.database, None if runtime.memory is None else runtime.memory.jobs) as records:
                 if records is None:
-                    raise FileNotFoundError('本根未见现有记忆处理库；未创建记录源或启用服务，不能据此判断历史费用为零')
+                    raise FileNotFoundError('本根没有记忆处理库')
                 yield records
         except Exception as error:
             logger.exception('记忆调用记录读取失败，场景 %s：%s', scene, error)

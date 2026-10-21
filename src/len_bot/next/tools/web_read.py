@@ -108,7 +108,7 @@ async def _extract(url: str, content_type: str, body: bytes) -> tuple[str, str, 
         content = await _extract_html(decoded, url)
         if not content.strip():
             raise ValueError("web_read HTML extraction returned no body")
-        return media_type, content, "HTML正文由trafilatura一次提取；脚本渲染和未提取区域不在此结果内，图片链接不代表已看过像素。"
+        return media_type, content, "HTML正文由trafilatura提取。"
     if media_type in {"text/plain", "text/markdown", "text/csv"}:
         decoded = _decode(body, content_type)
         return media_type, decoded, "按响应字符集（缺省UTF-8）严格解码的文本；未执行页面脚本。"

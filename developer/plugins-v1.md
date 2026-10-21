@@ -460,7 +460,7 @@ task = await ctx.delegate("整理刚才的活动", "CSV 文件", context="实际
 - `needs_source=True` 的工具可以沿用真实消息的发送者委派任务，不要传入伪造的 requester。
 - 任务按已有的场景、发送者权限和角色技能许可执行。
 
-返回值只表示任务已经被接受，结果事件由宿主送回群会话。不要用 `wait` 轮询而长时间占用聊天。
+返回值表示任务已经被接受，结果事件由宿主送回群会话。不要用 `wait` 轮询而长时间占用聊天。
 
 ### 定点任务
 
@@ -532,7 +532,7 @@ async def check():
 
 处理器或启动失败时，本次测试会报错。退出上下文时会停止插件并删除临时实例。
 
-当前官方业务插件和模板都有工具，部分还使用 cron 或 start_task，保持 inline；它们不能只改 isolation 就切到进程模式。进程模式的限制是当前接口的明确范围，不表示这些插件已完成进程隔离验证。
+当前官方业务插件和模板都有工具，部分还使用 cron 或 start_task，保持 inline；它们不能只改 isolation 就切到进程模式。进程模式的限制是当前接口的明确范围。
 
 模型默认关闭。通过 `models=` 明确配置测试模型后，generate 会经过真实的宿主协议、预算和用量记录。记忆服务和工作服务仍然会明确报错。插件自行访问外部网络的调用仍然会执行，同进程测试并非沙箱。
 
@@ -557,7 +557,7 @@ async with PluginTest(package, models=models, now=lambda: fixed_time) as bot:
     print(bot.preview_tools())
 ```
 
-模型配置不提供网络隔离。请用本机的协议服务验证，不要填写生产环境的凭据。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。四个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。协议测试通过，不代表真实模型的选择或平台送达已经实测。
+模型配置不提供网络隔离。请用本机的协议服务验证，不要填写生产环境的凭据。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。四个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。
 
 在 GitHub 上打开[插件模板仓库](https://github.com/lendevs/lenbot-plugin-template)，点击 Use this template 生成自己的仓库。
 

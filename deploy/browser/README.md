@@ -46,7 +46,7 @@ BSK_HOME=/absolute/path/to/browser-home ./bin/bsk daemon start --mode local
 - 可信的 TLS 入口
 - 设备配对
 
-请按包内 `source-docs/remote-extension-connection.md` 的说明，选择原生 TLS 或已有的反向代理。同机回环模式能够运行，并不代表远程浏览器已经接通。
+请按包内 `source-docs/remote-extension-connection.md` 的说明，选择原生 TLS 或已有的反向代理。
 
 启动 server 后，用同一个 home 目录生成配对链接。
 
@@ -67,7 +67,7 @@ LenBot 和 daemon 需要共享本地 IPC。如果 LenBot 运行在容器中，�
 
 ## 文件与升级
 
-远程文件通过配对连接和本机的文件助手传输，服务器和浏览器所在的电脑不需要共享磁盘。上传成功只表示文件已经附加到页面控件上，提交网页是另一个动作。下载和截图的保存会分别报告，LenBot 的交付登记和上传到 QQ 也会分别报告。文件助手的职责和临时文件的清理方式见包内的 `source-docs/file-host.md`。
+远程文件通过配对连接和本机的文件助手传输，服务器和浏览器所在的电脑不需要共享磁盘。上传成功表示文件已经附加到页面控件上，提交网页是另一个动作。下载和截图的保存会分别报告，LenBot 的交付登记和上传到 QQ 也会分别报告。文件助手的职责和临时文件的清理方式见包内的 `source-docs/file-host.md`。
 
 升级前，请结束相关的任务并停止对应的 daemon。保留原来的服务 home 目录和配对数据，然后换成同一版本的 daemon、扩展和文件助手。扩展的加载目录或文件助手的位置发生变化后，需要为对应的扩展 ID 重新注册。宿主不会自动更新这项独立服务。请不要运行上游的自动更新命令，否则会覆盖这个版本的远程文件扩展。
 

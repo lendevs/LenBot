@@ -70,6 +70,6 @@ state/services/asr/build-tools/bin/cmake --build state/services/asr/build \
 
 增大 `audio.max_bytes` 时，也要同步调整已保存的 `max_frame_bytes`。另外两种做法是减小允许的音频大小，或者显式配置已有的 HTTP actions（`action_transport: "http"` 和 `http_url`）。系统不会自动切换通道。没有启用 ASR，或者使用模拟发送和 HTTP actions 时，不执行这项容量检查，消息上限的含义保持不变。
 
-保存后重启 LenBot。场景必须允许语音转写，角色需要开放 `transcribe`。完成下载安装并启动服务，并不代表 QQ 语音转写已经成功。真实音频的识别质量和端到端发送尚未验收。
+保存后重启 LenBot。场景必须允许语音转写，角色需要开放 `transcribe`。真实音频的识别质量和端到端发送尚未验收。
 
 参考资料：[服务参数](https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/server/README.md)，[模型列表](https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/models/README.md)。

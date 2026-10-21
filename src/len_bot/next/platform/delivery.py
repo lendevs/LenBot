@@ -53,7 +53,7 @@ def report_parts(parts: list[ChatMessage], errors: list[str | None],
             for part in parts[len(errors):])
         lines.append("尚未发送的内容（中断后不自动续发）：\n" + remaining)
     if any(part.send_status == "unconfirmed" for part in parts[:len(errors)]):
-        lines.append("尚未记录可靠平台回执；不能据此判断是否已发出。若执行中断，不重放本次发送。")
+        lines.append("还没有拿到可靠的平台回执，消息可能已经发出。执行中断时不重放本次发送。")
     return "\n".join(lines)
 
 

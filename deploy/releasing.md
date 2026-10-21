@@ -152,7 +152,7 @@ uv run --no-sync python scripts/prepare_component.py browserskill /tmp/browsersk
 - **Release 已创建，`latest` 更新失败**。同样使用 Re-run failed jobs。已上传的附件内容一致时会保留，然后重新创建别名。也可以手动对两个 registry 执行 `docker buildx imagetools create -t <镜像>:latest <镜像>:<版本>`。
 - **已发布的版本发现问题**。发布下一个补丁版本，已发布的标签和附件不做修改，镜像也不修改。
 
-上传成功不等于未登录的用户能够下载。上传成功也不能代替实际的安装和面板使用，以及对 QQ 收发和模型行为的观察。
+上传后用未登录状态确认能下载，再实际安装、使用面板，观察 QQ 收发和模型行为。
 
 ## 许可
 
