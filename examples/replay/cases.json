@@ -736,6 +736,281 @@
           "seconds": 20
         }
       ]
+    },
+    {
+      "id": "ordinary-update",
+      "set": "expression",
+      "start_time": 1791300000.0,
+      "expect": [
+        "可以只是一个普通反应，回应面或口味，不把小事写成夸张的笑话。",
+        "不额外催促、安排下一顿或强调自己的性格。"
+      ],
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": "90002",
+            "group_id": "80001",
+            "user_id": "70001",
+            "message_id": "ordinary-update-0",
+            "time": 1791300001.0,
+            "sender": {
+              "nickname": "阿杰",
+              "card": "",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "楼下新开了面馆，今天试了番茄鸡蛋面"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": "90002",
+            "group_id": "80001",
+            "user_id": "70001",
+            "message_id": "ordinary-update-1",
+            "time": 1791300002.0,
+            "sender": {
+              "nickname": "阿杰",
+              "card": "",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "味道还行，就是有点咸，小然"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        },
+        {
+          "type": "observe",
+          "seconds": 2.0
+        }
+      ]
+    },
+    {
+      "id": "mixed-result",
+      "set": "expression",
+      "start_time": 1791300600.0,
+      "expect": [
+        "同时理解进展和眼前的烦恼，不用肯定以后会成功来安慰。",
+        "可以轻声回应具体难处，不强行给完整的练习方案。"
+      ],
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": "90002",
+            "group_id": "80001",
+            "user_id": "70001",
+            "message_id": "mixed-result-0",
+            "time": 1791300601.0,
+            "sender": {
+              "nickname": "阿杰",
+              "card": "",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "今天练琴终于把整首弹下来了"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": "90002",
+            "group_id": "80001",
+            "user_id": "70001",
+            "message_id": "mixed-result-1",
+            "time": 1791300602.0,
+            "sender": {
+              "nickname": "阿杰",
+              "card": "",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "但最后那一段还是一直卡，听得我烦，小然"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        },
+        {
+          "type": "observe",
+          "seconds": 2.0
+        }
+      ]
+    },
+    {
+      "id": "unknown-arrangement",
+      "set": "expression",
+      "start_time": 1791301200.0,
+      "expect": [
+        "没有主办方信息时保持未知，不把合情合理的推测当成安排。",
+        "不为了让对方放心保证有货，也不虚构查到的消息。"
+      ],
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": "90002",
+            "group_id": "80001",
+            "user_id": "70001",
+            "message_id": "unknown-arrangement-0",
+            "time": 1791301201.0,
+            "sender": {
+              "nickname": "阿杰",
+              "card": "",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "周末画展的限量画册，不知道周日去还买不买得到"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": "90002",
+            "group_id": "80001",
+            "user_id": "70001",
+            "message_id": "unknown-arrangement-1",
+            "time": 1791301202.0,
+            "sender": {
+              "nickname": "阿杰",
+              "card": "",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "小然，主办方会给第二天留一些吧？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        },
+        {
+          "type": "observe",
+          "seconds": 2.0
+        }
+      ]
+    },
+    {
+      "id": "capability-without-posturing",
+      "set": "expression",
+      "start_time": 1791301800.0,
+      "expect": [
+        "按当前工具能力回答，不把能力限制说成任性或身份要求。",
+        "回答后不追加自夸、口头禅或表演性拒绝。"
+      ],
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": "90002",
+            "group_id": "80001",
+            "user_id": "70001",
+            "message_id": "capability-without-posturing-0",
+            "time": 1791301801.0,
+            "sender": {
+              "nickname": "阿杰",
+              "card": "",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "小然，你能在群里发语音吗？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        },
+        {
+          "type": "observe",
+          "seconds": 2.0
+        }
+      ]
     }
   ]
 }

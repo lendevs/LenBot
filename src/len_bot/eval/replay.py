@@ -295,6 +295,7 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
     directory.mkdir(parents=True, mode=0o700)
     effective = config.model_dump(mode="json", exclude={"evaluation", "panel", "task_archive", "replay_clock"})
     effective.update(database="chat.sqlite3", persona="persona", voice_mode=voice_mode)
+    effective["logging"]["directory"] = "logs"
     if isinstance(config.memory, LocalMemoryConfig):
         effective["memory"]["local"]["directory"] = "memory"
     config_path = directory / "lenbot.config.json"
