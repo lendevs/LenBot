@@ -268,7 +268,7 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
 
     assert config.database == root / "data/isolated-chat.db"
     assert config.persona == external_persona
-    assert config.voice_mode == "direct" and config.max_steps == 8
+    assert config.voice_mode == "direct" and config.max_steps == 16
     assert config.onebot is None and config.delivery == "simulated"
     assert config.panel is None
     assert config.compaction.input_tokens == 6000

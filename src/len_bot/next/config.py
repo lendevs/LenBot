@@ -76,7 +76,7 @@ class SharedConfig(BaseModel):
     telegram: TelegramSettings | None = None
     # "onebot" and "telegram" send through that platform; OneBot also enables its platform tools.
     delivery: Literal["simulated", "onebot", "telegram"] = "simulated"
-    max_steps: int = Field(default=8, gt=0)
+    max_steps: int = Field(default=16, gt=0)
     turn_timeout_seconds: float = Field(default=90.0, gt=0, allow_inf_nan=False)
     compaction: Compaction = Field(default_factory=Compaction)
     text_delivery: TextDelivery = Field(default_factory=TextDelivery)

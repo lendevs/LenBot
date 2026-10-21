@@ -27,6 +27,9 @@ from ..models.limits import LimitReached, ModelBudget, SpeechLimitReached, check
 
 # Turn channels that may use the direct reserve besides direct wakes themselves.
 RESERVE_CHANNELS = frozenset({"schedule", "task"})
+# Calls that speak, wait or close a turn; any other call means the turn looked something up.
+QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
+FINAL_STEP_TOOLS = frozenset({"say", "react"})
 from ..memory.service import MemoryService
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
@@ -47,6 +50,13 @@ class PreparedContext:
     messages: list[dict]
     input_tokens: int
     estimate_method: str
+
+
+def final_step(messages: list[dict], tools: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The last step of a turn that looked something up and has not spoken: only say and react."""
+    state = messages[-1]
+    return ([*messages[:-1], {**state, "content": state["content"] + "\n" + read_prompt("next_last_step.md")}],
+            [tool for tool in tools if tool["function"]["name"] in FINAL_STEP_TOOLS])
 
 
 class Chat:
@@ -417,14 +427,19 @@ class Chat:
                     )
                 if learned is not None:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
+                looked_up = False
                 for step in range(self.config.max_steps):
                     self.trace_step = step + 1
                     self.check_limits()
                     prepared = await self.prepare_context(turn_id, observed_at=observed_at,
                                                           expression_style=expression_style, recalled=recalled)
-                    reply = await self.request(turn_id, "mind", prepared.messages, self.toolset.tools,
+                    messages, tools = prepared.messages, self.toolset.tools
+                    if step + 1 == self.config.max_steps and looked_up and not expressions:
+                        messages, tools = final_step(messages, tools)
+                    reply = await self.request(turn_id, "mind", messages, tools,
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method),
                                                recall_items=recall_items)
+                    looked_up = looked_up or any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
                     end_turn, group_failed = False, False
                     for call in reply.tool_calls:
                         self.trace('turn.step', turn_id, kind='tool', phase='start', call_id=call.id,
