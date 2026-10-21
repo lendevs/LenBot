@@ -135,21 +135,29 @@ export function useSettingsForm(scene: Ref<string>) {
     draft.value = saved.value && copy(saved.value)
   }
   // A part read later (permissions, plugins) or saved elsewhere joins the draft when that part is unchanged.
-  watch(saved, (value, previous) => {
-    if (!value) return
-    if (!draft.value || !previous) return adopt()
-    for (const part of parts) {
-      if (part === 'scene') {
-        if (same([draft.value.scene, draft.value.relationships], [previous.scene, previous.relationships])) {
-          draft.value.scene = copy(value.scene)
-          draft.value.relationships = copy(value.relationships)
+  // Immediate: returning to the tab finds the settings already cached, so `saved` does not change again.
+  watch(
+    saved,
+    (value, previous) => {
+      if (!value) return
+      if (!draft.value || !previous) return adopt()
+      for (const part of parts) {
+        if (part === 'scene') {
+          if (
+            same([draft.value.scene, draft.value.relationships], [previous.scene, previous.relationships])
+          ) {
+            draft.value.scene = copy(value.scene)
+            draft.value.relationships = copy(value.relationships)
+          }
+        } else if (same(draft.value[part], previous[part])) {
+          ;(draft.value as unknown as Record<string, unknown>)[part] = copy(value[part])
         }
-      } else if (same(draft.value[part], previous[part])) {
-        ;(draft.value as unknown as Record<string, unknown>)[part] = copy(value[part])
       }
-    }
-  })
-  watch(scene, () => (draft.value = null))
+    },
+    { immediate: true },
+  )
+  // Another group starts from its own saved settings, whichever of the two watchers runs first.
+  watch(scene, adopt)
 
   const required = t('common.required')
   /** Field errors by a dotted path such as `quiet.start`. */
