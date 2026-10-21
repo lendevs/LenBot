@@ -6,11 +6,14 @@
 
 | 文件 | 负责的内容 |
 |---|---|
+| `next_mind.md` | 系统消息的骨架：身份、角色材料，以及一轮里怎样说话、结束和使用工具 |
 | `next_response_choice.md` | 判断是否回应、回应谁、用什么态度 |
-| `next_expression_principles.md` | 表达方式 |
+| `next_expression_principles.md` | 表达方式：长短、衔接、语气 |
 | `next_direct.md` | `say` 正文参数的含义 |
-| `next_react.md` | 表情工具的用法 |
+| `next_react.md` | 什么时候用表情和表情工具的用法，只在开放 `react` 时加入 |
 | `next_chat_examples.md` | 几个群聊情境的设计示范 |
+
+提示词统一用中文，以第二人称称呼角色，不写死角色的性别。工具参数的含义写在工具定义里，提示词不再重复。
 
 共用的示范不写具体角色的台词或梗，情境也避开回放用例中的原句。角色专属的说法放在角色包的样例中。
 
