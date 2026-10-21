@@ -98,3 +98,24 @@ async def test_yahoo_redirect_outside_search_host_is_refused(monkeypatch):
     monkeypatch.setattr(web_search, '_yahoo_cookies', httpx.Cookies())
     with pytest.raises(ValueError, match='redirected outside'):
         await execute_web_search(WebSearchSettings(provider='yahoo'), WebSearchArguments(query='anything'))
+
+
+@pytest.mark.asyncio
+async def test_search_adds_the_opening_text_of_the_first_result_that_reads(yahoo):
+    from types import SimpleNamespace
+    tried = []
+
+    async def read(url):
+        tried.append(url)
+        if len(tried) == 1:
+            raise TimeoutError('web_read exceeded 20 seconds')
+        return 7, SimpleNamespace(final_url=url, content='正文' * 1500)
+
+    text = await execute_web_search(WebSearchSettings(provider='yahoo', max_results=3),
+                                    WebSearchArguments(query='php cve'), read_top=read)
+    result = json.loads(text.split('\n\n')[1])
+    top = result['top_page']
+    assert tried == [row['url'] for row in result['results'][:2]]
+    assert top['document'] == 7 and top['url'] == tried[1] and len(top['text']) == 2000
+    assert top['total_chars'] == 3000 and top['next_offset'] == 2000
+    assert top['skipped'] == [{'url': tried[0], 'error': 'TimeoutError: web_read exceeded 20 seconds'}]

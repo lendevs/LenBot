@@ -10,6 +10,7 @@ from html import unescape
 from html.parser import HTMLParser
 from datetime import datetime, timedelta, timezone
 from string import Template
+from collections.abc import Awaitable, Callable
 from typing import Literal
 from urllib.parse import unquote, urlsplit
 
@@ -214,8 +215,31 @@ async def _search_bing_rss(client: httpx.AsyncClient, query: str, count: int) ->
     return _parse_rss(body, count)
 
 
+TOP_PAGE_CHARS = 2000
+TOP_PAGE_TRIES = 2
+
+
+async def _top_page(rows: list[dict[str, str | None]],
+                    read: Callable[[str], Awaitable[tuple[int, object]]]) -> dict:
+    """The opening text of the first result that reads, saved as a web_read document."""
+    skipped = []
+    for row in rows[:TOP_PAGE_TRIES]:
+        try:
+            document, page = await read(row["url"])
+        except Exception as error:
+            skipped.append({"url": row["url"], "error": f"{type(error).__name__}: {error}"[:300]})
+            continue
+        end = min(len(page.content), TOP_PAGE_CHARS)
+        return {"document": document, "url": row["url"], "final_url": page.final_url,
+                "total_chars": len(page.content), "next_offset": end if end < len(page.content) else None,
+                "text": page.content[:end], **({"skipped": skipped} if skipped else {})}
+    return {"skipped": skipped}
+
+
 async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchArguments, *,
-                             recording: RecordedWeb | None = None) -> str:
+                             recording: RecordedWeb | None = None,
+                             read_top: Callable[[str], Awaitable[tuple[int, object]]] | None = None) -> str:
+    """``read_top`` reads the first readable result live and adds its opening text."""
     count = arguments.count if arguments.count is not None else settings.max_results
     if count > settings.max_results:
         raise ValueError(f"web_search count {count} exceeds configured max_results {settings.max_results}")
@@ -254,4 +278,6 @@ async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchAr
         raise
     result = {"provider": settings.provider, "query": arguments.query,
               "fetched_at": fetched.strftime("%Y-%m-%dT%H:%MZ"), "results": rows}
+    if read_top is not None and rows:
+        result["top_page"] = await _top_page(rows, read_top)
     return Template(read_prompt("next_web_search.md")).substitute(result=json.dumps(result, ensure_ascii=False))

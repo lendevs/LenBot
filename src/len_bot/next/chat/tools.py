@@ -41,7 +41,7 @@ from .schedule import SCHEDULE_TOOLS, execute_schedule
 from ..storage.store import ImageAsset, Store, encode
 from ..work.store import TaskStore
 from ..work.tools import DELEGATE_TOOL, TASK_TOOL, execute_tasks
-from ..tools.web_read import WEB_READ_TOOL, WebReadArguments, execute_web_read
+from ..tools.web_read import WEB_READ_TOOL, WebReadArguments, execute_web_read, read_web_page
 from ..tools.web_search import WEB_SEARCH_TOOL, WebSearchArguments, execute_web_search
 from ..prompt_files import read_prompt
 
@@ -414,8 +414,14 @@ class SceneTools:
                                           WebReadArguments.model_validate(call.arguments), recording=self.replay_web,
                                           fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url), None, None
         if call.name == "web_search":
-            return await execute_web_search(self.config.web_search,
-                                            WebSearchArguments.model_validate(call.arguments), recording=self.replay_web), None, None
+            read_top = None
+            if self.replay_web is None and self.config.web_read is not None and "web_read" in self.allowed_tool_names:
+                async def read_top(url: str):
+                    return await read_web_page(self.store, self.config.scene, self.config.web_read, url,
+                                               fake_ip_networks=self.config.network.networks(),
+                                               public_dns_url=self.config.network.public_dns_url)
+            return await execute_web_search(self.config.web_search, WebSearchArguments.model_validate(call.arguments),
+                                            recording=self.replay_web, read_top=read_top), None, None
         if call.name == "memory":
             return await self.memory.execute(self.config.scene, call.arguments), None, None
         if call.name in {"delegate", "task"}:

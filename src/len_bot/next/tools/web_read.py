@@ -151,24 +151,22 @@ async def execute_web_read(store: Store, scene: str, settings: WebReadSettings,
         if page is None:
             raise ValueError(f"当前场景没有网页文档 {arguments.document}")
         return _page(arguments.document, page, arguments.offset)
+    if recording is None:
+        document, page = await read_web_page(store, scene, settings, arguments.url,
+                                             fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url)
+        return _page(document, page, 0)
     deadline = asyncio.timeout(settings.timeout_seconds)
     try:
         async with deadline:
-            if recording is None:
-                final_url, content_type, body = await fetch_public(arguments.url, settings.timeout_seconds, _web_limit,
-                                                                           fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url)
-                fetched_at = time.time()
-            else:
-                item, body = recording.document(arguments.url)
-                if not 200 <= item.status_code < 300:
-                    raise ValueError(f'HTTP read status {item.status_code}: {body[:2048].decode("utf-8", errors="replace")}')
-                final_url, content_type, fetched_at = item.final_url, item.content_type, item.fetched_at
-                media_type = content_type.split(';', 1)[0].strip().lower()
-                if len(body) > _web_limit(media_type, body[:8]):
-                    raise ValueError(f'Frozen web_read response exceeds the normal {media_type} byte limit')
+            item, body = recording.document(arguments.url)
+            if not 200 <= item.status_code < 300:
+                raise ValueError(f'HTTP read status {item.status_code}: {body[:2048].decode("utf-8", errors="replace")}')
+            final_url, content_type, fetched_at = item.final_url, item.content_type, item.fetched_at
+            media_type = content_type.split(';', 1)[0].strip().lower()
+            if len(body) > _web_limit(media_type, body[:8]):
+                raise ValueError(f'Frozen web_read response exceeds the normal {media_type} byte limit')
             media_type, content, notice = await _extract(final_url, content_type, body)
-            if recording is not None:
-                notice += " 本次读取的是冻结响应，不是实时联网查询；抓取时间来自原始资料清单。"
+            notice += " 本次读取的是冻结响应，不是实时联网查询；抓取时间来自原始资料清单。"
             page = WebPage(url=arguments.url, final_url=final_url, fetched_at=fetched_at,
                            media_type=media_type, content=content, notice=notice)
             document = store.save_web_page(scene, page)
@@ -177,6 +175,26 @@ async def execute_web_read(store: Store, scene: str, settings: WebReadSettings,
             raise TimeoutError(f"web_read exceeded {settings.timeout_seconds} seconds") from error
         raise
     return _page(document, page, 0)
+
+
+async def read_web_page(store: Store, scene: str, settings: WebReadSettings, url: str, *,
+                        fake_ip_networks: tuple, public_dns_url: str | None = None) -> tuple[int, WebPage]:
+    """Fetch one public page live, extract its text and save it as a scene document."""
+    deadline = asyncio.timeout(settings.timeout_seconds)
+    try:
+        async with deadline:
+            final_url, content_type, body = await fetch_public(url, settings.timeout_seconds, _web_limit,
+                                                               fake_ip_networks=fake_ip_networks,
+                                                               public_dns_url=public_dns_url)
+            fetched_at = time.time()
+            media_type, content, notice = await _extract(final_url, content_type, body)
+            page = WebPage(url=url, final_url=final_url, fetched_at=fetched_at,
+                           media_type=media_type, content=content, notice=notice)
+            return store.save_web_page(scene, page), page
+    except TimeoutError as error:
+        if deadline.expired():
+            raise TimeoutError(f"web_read exceeded {settings.timeout_seconds} seconds") from error
+        raise
 
 
 def _worker() -> None:
