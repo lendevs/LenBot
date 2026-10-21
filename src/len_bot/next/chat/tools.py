@@ -77,7 +77,7 @@ class SayArguments(BaseModel):
     mention: str | None = Field(default=None, pattern=r"^(?:onebot|telegram):[1-9][0-9]*$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
-        description="与正文一起发送在同一条消息里的表情；file、emotion、query 三选一，素材目录见 react。")
+        description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query 三选一，素材目录见 react。")
 
 
 class ReactArguments(StickerChoice):
@@ -105,7 +105,8 @@ SAY_TOOL = {"type": "function", "function": {
 
 
 REACT_TOOL = {"type": "function", "function": {
-    "name": "react", "description": "在当前场景发送一张表情，角色匹配优先，其次是启用的本群已采用表情；"
+    "name": "react", "description": "在当前场景单独发一张表情包图片，不带文字，这张图就是一条完整的回复；"
+        "角色素材优先，其次是启用的本群已采用表情；"
         "file 直接选择目录中的角色素材，emotion 精确匹配情绪标签，query 按描述、标签字面检索，三选一；"
         "结果返回实际来源与发送状态。",
     "parameters": ReactArguments.model_json_schema(),
@@ -221,7 +222,7 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
                 f"例如 {scene_platform}:70001。")
             description = function['description']
             if 'react' in names:
-                description += ' 同时需要说话和表情时，优先设置 sticker 合成一条消息；只用图像回应时使用 react。'
+                description += ' 一句话带一张表情包图片时设置 sticker；只发图、不说话时用 react。'
             else:
                 parameters['properties'].pop('sticker')
                 parameters.pop('$defs')
