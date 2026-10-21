@@ -24,6 +24,8 @@ interface Entry {
   text?: string
   channel?: string
   task?: number
+  /** Whether an ended turn sent anything; unknown while it runs. */
+  spoke?: boolean
 }
 
 const props = defineProps<{ overview: Overview | null }>()
@@ -62,6 +64,7 @@ useHostEvent('turn.ended', (event) =>
     scene: sceneOf(event),
     at: event.at,
     status: String(event.status),
+    spoke: typeof event.expressions === 'number' ? event.expressions > 0 : undefined,
   }),
 )
 useHostEvent('message.sent', (event) =>
@@ -86,6 +89,7 @@ const entries = computed(() => {
     status: item.status,
     text: item.goal,
     task: item.kind === 'task' ? Number(item.id) : undefined,
+    spoke: item.spoke,
   }))
   return [...live.value, ...earlier.filter((item) => !seen.has(item.key))]
     .sort((a, b) => b.at - a.at)
@@ -104,10 +108,16 @@ const turnTones: Record<string, Tone> = {
 const sendTones: Record<string, Tone> = { sent: 'success', simulated: 'neutral', failed: 'error' }
 function describe(entry: Entry) {
   if (entry.kind === 'turn') {
+    const listened = entry.status !== 'running' && entry.spoke === false
+    const channel = entry.channel && labels.channel(entry.channel)
     return {
-      text: entry.channel
-        ? t('overview.feed.turnFrom', { channel: labels.channel(entry.channel) })
-        : t('overview.feed.turn'),
+      text: listened
+        ? channel
+          ? t('overview.feed.listenedFrom', { channel })
+          : t('overview.feed.listened')
+        : channel
+          ? t('overview.feed.turnFrom', { channel })
+          : t('overview.feed.turn'),
       status: labels.status(entry.status),
       tone: turnTones[entry.status] ?? 'neutral',
       to: groupsTarget(entry.scene, 'live'),

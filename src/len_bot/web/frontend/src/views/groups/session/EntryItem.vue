@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Brain, Inbox, Settings2, Wrench } from '@lucide/vue'
+import { Brain, Ear, Inbox, Settings2, Wrench } from '@lucide/vue'
 import type { EntryToolCall, SessionEntry } from '../../../api/session'
 import { formatDateTime } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
@@ -29,16 +29,25 @@ const roles: Record<string, { icon: typeof Brain; tone: Tone }> = {
   tool: { icon: Wrench, tone: 'info' },
   system: { icon: Settings2, tone: 'neutral' },
 }
-const role = computed(() => roles[message.value.role] ?? roles.system)
+const calls = computed(() => message.value.tool_calls ?? [])
+/** A reply without tool calls ends the turn without speaking; its words are the model's own note. */
+const listened = computed(() => message.value.role === 'assistant' && !calls.value.length)
+const role = computed(() =>
+  listened.value ? { icon: Ear, tone: 'neutral' as Tone } : (roles[message.value.role] ?? roles.system),
+)
 const title = computed(() => {
+  if (listened.value) return t('groups.session.listened')
   const key = `groups.session.roles.${message.value.role}`
   return te(key) ? t(key) : message.value.role
 })
 const content = computed(() => {
   const value = message.value.content
-  return value === undefined || value === null || value === '' ? null : value
+  if (value === undefined || value === null || value === '') return null
+  // Notes often come as Markdown; the emphasis marks and bracketed labels are noise here.
+  return listened.value && typeof value === 'string'
+    ? value.replace(/\*\*|^\[|\]$/g, '').trim() || null
+    : value
 })
-const calls = computed(() => message.value.tool_calls ?? [])
 
 /** Arguments are JSON text written by the model; text that does not parse is shown as it is. */
 function argumentsOf(call: EntryToolCall): unknown {
@@ -69,7 +78,8 @@ const resultOf = (call: EntryToolCall) => props.results.get(call.id)?.message.co
       <template v-if="content !== null">
         <p
           v-if="message.role === 'assistant' && typeof content === 'string'"
-          class="text-sm break-words whitespace-pre-wrap text-ink"
+          class="text-sm break-words whitespace-pre-wrap"
+          :class="listened ? 'text-muted' : 'text-ink'"
         >
           {{ content }}
         </p>

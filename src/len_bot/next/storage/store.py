@@ -382,10 +382,12 @@ class Store:
         return {"since": since, "hours": hours, "received": received, "spoke": spoke, "turns": turns, "tokens": tokens}
 
     def recent_activity(self, scenes: Sequence[str], limit: int) -> list[dict]:
-        """Latest reply turns, finished tasks and failed sends, newest first."""
+        """Latest turns (whether they sent anything), finished tasks and failed sends, newest first."""
         placeholders = ",".join("?" for _ in scenes)
-        items = [{"kind": "turn", "scene": row[0], "at": row[1], "id": row[2], "status": row[3]} for row in self.db.execute(
-            f"SELECT scene,started,id,status FROM turns WHERE scene IN ({placeholders}) ORDER BY started DESC LIMIT ?",
+        items = [{"kind": "turn", "scene": row[0], "at": row[1], "id": row[2], "status": row[3], "spoke": bool(row[4])}
+                 for row in self.db.execute(
+            f"SELECT scene,started,id,status,first_expression_at IS NOT NULL FROM turns WHERE scene IN ({placeholders}) "
+            "ORDER BY started DESC LIMIT ?",
             (*scenes, limit))]
         items += [{"kind": "task", "scene": row[0], "at": row[1], "id": row[2], "status": row[3], "goal": row[4]}
                   for row in self.db.execute(

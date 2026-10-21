@@ -501,6 +501,7 @@ export default {
       turn: {
         steps: '{n} steps',
         expressions: '{n} sent',
+        listened: 'listened in',
         tokens: '{input} in · {output} out',
         expand: 'Expand this turn',
         collapse: 'Collapse this turn',
@@ -596,6 +597,7 @@ export default {
       readFailed: 'Could not read the session',
       noResult: 'No result',
       raw: 'Stored entry',
+      listened: 'Listened in',
       roles: {
         user: 'Given to the model',
         assistant: 'Model reply',
@@ -1511,6 +1513,8 @@ export default {
       empty: 'No activity yet',
       turn: 'replied',
       turnFrom: 'replied ({channel})',
+      listened: 'listened in',
+      listenedFrom: 'listened in ({channel})',
       send: 'sent a message',
       said: 'said: {text}',
       task: 'task ended: {goal}',

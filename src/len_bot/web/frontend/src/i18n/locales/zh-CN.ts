@@ -484,6 +484,7 @@ export default {
       turn: {
         steps: '{n} 步',
         expressions: '{n} 条发言',
+        listened: '旁听',
         tokens: '{input} 入 · {output} 出',
         expand: '展开这一轮',
         collapse: '收起这一轮',
@@ -579,6 +580,7 @@ export default {
       readFailed: '读取会话失败',
       noResult: '没有结果',
       raw: '原始条目',
+      listened: '旁听',
       roles: { user: '交给模型的内容', assistant: '模型回复', tool: '工具结果', system: '系统设定' },
     },
     settings: {
@@ -1451,6 +1453,8 @@ export default {
       empty: '还没有动态',
       turn: '回复了一轮',
       turnFrom: '回复了一轮（{channel}）',
+      listened: '旁听了一轮',
+      listenedFrom: '旁听了一轮（{channel}）',
       send: '发了一条消息',
       said: '说：{text}',
       task: '任务结束：{goal}',

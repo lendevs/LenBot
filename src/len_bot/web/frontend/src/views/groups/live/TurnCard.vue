@@ -35,7 +35,9 @@ const summary = computed(() => {
   return [
     labels.channel(turn.channel),
     t('groups.live.turn.steps', { n: turn.steps }),
-    t('groups.live.turn.expressions', { n: turn.expressions }),
+    turn.ended !== null && turn.expressions === 0
+      ? t('groups.live.turn.listened')
+      : t('groups.live.turn.expressions', { n: turn.expressions }),
     formatDuration(Math.max(0, ended - turn.started) * 1000),
     t('groups.live.turn.tokens', {
       input: formatCompact(turn.tokens.input),

@@ -18,6 +18,8 @@ export interface Activity {
   status: string
   /** Task goal, for `task`. */
   goal?: string
+  /** Whether the turn sent anything, for `turn`. */
+  spoke?: boolean
 }
 
 export interface Overview {
