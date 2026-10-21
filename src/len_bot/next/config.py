@@ -29,7 +29,7 @@ from .tools.web_search import WebSearchSettings
 from .configuration.types import STRICT, _valid_timezone, _valid_scene
 from .configuration.onebot import OneBotSettings
 from .configuration.telegram import TelegramSettings
-from .configuration.models import Models
+from .configuration.models import Binding, Models
 from .configuration.chat import (
     Compaction,
     TextDelivery,
@@ -100,21 +100,13 @@ class SharedConfig(BaseModel):
                 raise ValueError(f"memory.local.embedding.provider references unknown provider {provider!r}")
             if self.models.providers[provider].api not in {"openai-chat", "openai-embeddings"}:
                 raise ValueError("memory embedding requires an openai-chat or openai-embeddings provider")
-        if (self.memory is not None and self.memory.ingest is not None
-                and self.models.roles.memory is None):
-            raise ValueError("local memory ingest requires explicit models.roles.memory")
-        if (self.memory is not None and self.memory.summaries
-                and self.models.roles.memory is None):
-            raise ValueError("local memory summaries require explicit models.roles.memory")
         if self.worker is not None:
-            binding = self.models.roles.worker
-            if binding is None:
-                raise ValueError("worker requires explicit models.roles.worker")
+            binding = self.binding("worker")
             if (self.worker.compaction_reserve_tokens + self.worker.compaction_keep_recent_tokens
                     >= binding.context_window_tokens):
                 raise ValueError(
                     "worker.compaction_reserve_tokens + worker.compaction_keep_recent_tokens "
-                    "must be less than models.roles.worker.context_window_tokens; "
+                    "must be less than the worker model's context_window_tokens; "
                     "set both limits explicitly for a smaller worker context window"
                 )
         return self
@@ -190,10 +182,13 @@ class SharedConfig(BaseModel):
             )
         return self
 
+    def binding(self, role: Literal["mind", "recap", "vision", "memory", "worker", "learner"]) -> Binding:
+        """A role's binding; vision, memory, worker and learner without their own use the mind binding."""
+        binding = None if role == "recap" else getattr(self.models.roles, role)
+        return self.models.roles.mind if binding is None else binding
+
     def model_settings(self, role: Literal["mind", "vision", "memory", "worker", "learner"]) -> ModelSettings:
-        binding = getattr(self.models.roles, role)
-        if binding is None:
-            raise ValueError(f"models.roles.{role} is not configured")
+        binding = self.binding(role)
         provider = self.models.providers[binding.provider]
         return ModelSettings.from_binding(provider, binding)
 
@@ -341,11 +336,8 @@ class HostConfig(SharedConfig):
             if settings.learning is not None:
                 if scene.split(":", 2)[1] != "group":
                     raise ValueError(f"scenes.{scene}.learning is only supported for group scenes")
-                if ((settings.learning.extract or settings.learning.jargon_extract or settings.learning.reply_effects)
-                        and self.models.roles.learner is None):
-                    raise ValueError(f"scenes.{scene}.learning requires explicit models.roles.learner")
-                if settings.learning.collect_stickers and self.models.roles.vision is None:
-                    raise ValueError(f"scenes.{scene}.learning.collect_stickers requires explicit models.roles.vision")
+                if settings.learning.collect_stickers and not self.binding("vision").image_input:
+                    raise ValueError(f"scenes.{scene}.learning.collect_stickers needs a model that accepts images")
                 if (settings.learning.embedding is not None
                         and settings.learning.embedding.provider not in self.models.providers):
                     raise ValueError(f"scenes.{scene}.learning.embedding.provider references unknown provider "

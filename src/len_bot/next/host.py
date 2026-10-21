@@ -133,9 +133,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
             ChatModel(config.model_settings("mind")) as mind,
             (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
              else nullcontext(None)) as vision,
-            (ChatModel(config.model_settings("learner"))
-             if config.models.roles.learner is not None
-             else nullcontext(None)) as learner_model,
+            ChatModel(config.model_settings("learner")) as learner_model,
             open_expression_service(config, store, slots=slots) as expression_service,
             open_memory(config, store, active_personas={settings.scene: persona.id for settings, persona in scenes}, slots=slots) as memory,
             open_memory_ingestor(config, store, memory, list(config.scenes), slots=slots) as ingestor,

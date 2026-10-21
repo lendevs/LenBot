@@ -33,8 +33,8 @@ class LookArguments(BaseModel):
 
 LOOK_TOOL = {"type": "function", "function": {
     "name": "look",
-    "description": "描述当前场景已保存消息里的第几张图片。message 是原平台消息 ID，image 从1开始按原段顺序计数；"
-                   "refresh 仅重做已保存像素的视觉描述，不重新下载。",
+    "description": "查看当前场景已保存消息里的第几张图片。message 是原平台消息 ID，image 从1开始按原段顺序计数；"
+                   "refresh 重做已保存像素的视觉描述，不重新下载。",
     "parameters": LookArguments.model_json_schema(),
 }}
 
@@ -83,10 +83,10 @@ def _display(scene: str, arguments: LookArguments, asset: ImageAsset, *,
     return json.dumps(result, ensure_ascii=False) + "\n描述来自准备后的 JPEG；动图只分析第一帧。"
 
 
-async def execute_look(store: Store, scene: str, arguments: LookArguments,
-                       settings: ImageSettings, *, model_name: str,
-                       describe: Callable[[ImageAsset], Awaitable[str]],
-                       recording: RecordedImages | None = None, fake_ip_networks: tuple, public_dns_url: str | None = None) -> str:
+async def load_look_image(store: Store, scene: str, arguments: LookArguments, settings: ImageSettings, *,
+                          recording: RecordedImages | None = None, fake_ip_networks: tuple,
+                          public_dns_url: str | None = None) -> tuple[ImageAsset, bool, str]:
+    """The prepared pixels of one saved image, whether they were cached, and where they came from."""
     message = store.find_message(scene, arguments.message)
     if message is None:
         raise ValueError(f"当前场景没有平台消息 {arguments.message}")
@@ -126,6 +126,16 @@ async def execute_look(store: Store, scene: str, arguments: LookArguments,
             if deadline.expired():
                 raise TimeoutError(f"look image loading and preparation exceeded {settings.timeout_seconds} seconds") from error
             raise
+    return asset, pixels_reused, pixels_source
+
+
+async def execute_look(store: Store, scene: str, arguments: LookArguments,
+                       settings: ImageSettings, *, model_name: str,
+                       describe: Callable[[ImageAsset], Awaitable[str]],
+                       recording: RecordedImages | None = None, fake_ip_networks: tuple, public_dns_url: str | None = None) -> str:
+    asset, pixels_reused, pixels_source = await load_look_image(
+        store, scene, arguments, settings, recording=recording, fake_ip_networks=fake_ip_networks,
+        public_dns_url=public_dns_url)
     description_reused = asset.description is not None and not arguments.refresh
     if not description_reused:
         description = await describe(asset)
@@ -135,6 +145,19 @@ async def execute_look(store: Store, scene: str, arguments: LookArguments,
         asset = store.image(scene, arguments.message, arguments.image)
     return _display(scene, arguments, asset, pixels_reused=pixels_reused,
                     description_reused=description_reused, pixels_source=pixels_source)
+
+
+def shown_image(scene: str, arguments: LookArguments, asset: ImageAsset, *,
+                pixels_reused: bool, pixels_source: str) -> str:
+    """The look result when the mind model receives the pixels itself."""
+    result = {
+        "scene": scene, "platform_message_id": arguments.message, "image": arguments.image,
+        "jpeg_bytes": len(asset.jpeg), "width": asset.width, "height": asset.height,
+        "animated_first_frame_only": asset.animated,
+        "fetched_at": datetime.fromtimestamp(asset.fetched_at, timezone.utc).isoformat(),
+        "pixels_reused": pixels_reused, "pixels_source": pixels_source,
+    }
+    return json.dumps(result, ensure_ascii=False) + "\n图片附在本轮接下来的请求里；动图只有第一帧。"
 
 
 def _worker() -> None:

@@ -79,6 +79,9 @@ watch(retries, (text) => {
       <h3 class="text-base font-semibold text-ink">{{ title }}</h3>
       <Switch v-if="role !== 'mind'" v-model="enabled" :aria-label="title" />
     </header>
+    <p v-if="!binding" class="text-sm text-muted">
+      {{ role === 'vision' ? t('models.roles.mindSees') : t('models.roles.followsMind') }}
+    </p>
     <template v-if="binding">
       <div class="grid gap-x-5 gap-y-5 sm:grid-cols-3">
         <Field :label="t('models.roles.provider')">
@@ -95,6 +98,9 @@ watch(retries, (text) => {
         </Field>
         <Field :label="t('models.roles.context')">
           <NumberInput v-model="binding.context_window_tokens" :min="1" :steppers="false" unit="tokens" />
+        </Field>
+        <Field v-if="role === 'mind' || role === 'vision'" :label="t('models.roles.imageInput')">
+          <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
         </Field>
       </div>
       <details class="group">

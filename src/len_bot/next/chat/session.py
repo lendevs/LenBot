@@ -42,6 +42,7 @@ from ..storage.store import Store, encode
 from ..work.service import WorkTasks
 from ..runtime.logs import add_context, log_event
 from ..prompt_files import read_prompt
+from ...media.images import image_block
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,15 @@ class PreparedContext:
     messages: list[dict]
     input_tokens: int
     estimate_method: str
+
+
+def with_images(messages: list[dict], looked: list[tuple[str, bytes]]) -> list[dict]:
+    """Attach the images the mind looked at in this turn to the per-request state message."""
+    state = messages[-1]
+    parts = [{"type": "text", "text": state["content"]}]
+    for label, jpeg in looked:
+        parts += [{"type": "text", "text": f"<{label}>"}, image_block(jpeg)]
+    return [*messages[:-1], {**state, "content": parts}]
 
 
 def final_step(messages: list[dict], tools: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -438,6 +448,7 @@ class Chat:
                 if learned is not None:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
                 looked_up = stepped_lookup = False
+                self.toolset.looked = []
                 for step in range(self.config.max_steps):
                     self.trace_step = step + 1
                     self.check_limits()
@@ -446,6 +457,8 @@ class Chat:
                     messages, tools = prepared.messages, self.toolset.tools
                     if step + 1 == self.config.max_steps and looked_up and not expressions:
                         messages, tools = final_step(messages, tools)
+                    if self.toolset.looked:
+                        messages = with_images(messages, self.toolset.looked)
                     # Answering new messages thinks briefly; reading tool results uses the full effort.
                     reply = await self.request(turn_id, "mind", messages, tools,
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method),

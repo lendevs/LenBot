@@ -206,7 +206,7 @@ class MemoryIngestor:
         return rows
 
     async def _run_local(self, scene: str, job: dict) -> None:
-        binding = self.config.models.roles.memory
+        binding = self.config.binding("memory")
         self.jobs.status(job, "running")
 
         def start_call(request: dict) -> int:

@@ -46,7 +46,7 @@ def _asset(color: str, caption: str) -> ImageAsset:
     )
 
 
-def _chat_inputs(tmp_path, *, tools: str | list[str], vision: bool):
+def _chat_inputs(tmp_path, *, tools: str | list[str], vision: bool, mind_images: bool = True):
     root = tmp_path / "isolated"
     persona = root / "persona"
     persona.mkdir(parents=True)
@@ -59,7 +59,8 @@ def _chat_inputs(tmp_path, *, tools: str | list[str], vision: bool):
     (persona / "boundaries.md").write_text("仅限测试。", encoding="utf-8")
     (persona / "examples.yaml").write_text("[]\n", encoding="utf-8")
     roles = {
-        "mind": {"provider": "local", "model": "synthetic-mind", "context_window_tokens": 8192},
+        "mind": {"provider": "local", "model": "synthetic-mind", "context_window_tokens": 8192,
+                 "image_input": mind_images},
 
     }
     if vision:
@@ -138,17 +139,22 @@ async def test_look_registration_requires_role_configuration_and_vision_client(t
     async def wait_for_messages(seconds: float) -> str:
         return ""
 
-    config, persona = _chat_inputs(tmp_path / "explicit", tools=["look"], vision=False)
+    config, persona = _chat_inputs(tmp_path / "explicit", tools=["look"], vision=False, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind:
-            with pytest.raises(ValueError, match="look|vision"):
+            with pytest.raises(ValueError, match="look|vision|看图"):
                 Chat(config, persona, store, mind)
 
-    config, persona = _chat_inputs(tmp_path / "all", tools="all", vision=False)
+    config, persona = _chat_inputs(tmp_path / "all", tools="all", vision=False, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind:
             chat = Chat(config, persona, store, mind)
             assert "look" not in chat.toolset.tool_names
+
+    config, persona = _chat_inputs(tmp_path / "mind-sees", tools=["look"], vision=False)
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings("mind")) as mind:
+            assert "look" in Chat(config, persona, store, mind).toolset.tool_names
 
     config, persona = _chat_inputs(tmp_path / "missing-client", tools=["look"], vision=True)
     with Store(config.database) as store:

@@ -448,7 +448,7 @@ task = await ctx.delegate("整理刚才的活动", "CSV 文件", context="实际
 
 ### generate
 
-`generate` 的 role 只能是现有的 `mind` 或 `learner` 用途绑定。用途没有配置时直接报错。请求只发给这个用途绑定的服务商和模型，出错时不会更换模型或服务。`PluginContext.generate` 需要先传入 scene。
+`generate` 的 role 只能是 `mind` 或 `learner`。没有单独配置 `learner` 时使用 `mind` 的绑定。请求只发给这个用途绑定的服务商和模型，出错时不会更换模型或服务。`PluginContext.generate` 需要先传入 scene。
 
 调用使用 ModelSlots，以及原有的预算和用量记录。插件来源写入 `model_calls.plugin`，不会产生虚假的聊天轮次。完整的系统提示和输入都由插件提供，宿主不自动注入角色或历史。
 

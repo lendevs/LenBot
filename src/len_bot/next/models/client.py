@@ -40,7 +40,7 @@ class ModelSettings(BaseModel):
     def from_binding(cls, provider, binding) -> ModelSettings:
         return cls(api=provider.api, base_url=provider.base_url, api_key=provider.api_key, proxy=provider.proxy,
                    **binding.model_dump(exclude={'provider', 'context_window_tokens', 'history_policy',
-                                                 'quick_reasoning_effort'}))
+                                                 'quick_reasoning_effort', 'image_input'}))
 
     def with_effort(self, effort: str) -> ModelSettings:
         """The same request settings at another reasoning effort, validated again."""

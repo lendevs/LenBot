@@ -33,7 +33,7 @@ class ChatRequest(Protocol):
 def request_estimate(config: SharedConfig, store: Store, model: ChatModel, *, scene: str, role: str,
                      messages: list[dict], tools: list[dict], output_tokens: int) -> tuple[int, str]:
     """Actual prior input plus changed-material estimates, never cached-token discounts."""
-    binding = getattr(config.models.roles, "mind" if role == "recap" else role)
+    binding = config.binding(role)
     messages = project_messages(messages, binding.history_policy)
     estimated = estimate_text_request(messages, tools, output_tokens)
     images = any(isinstance(message.get('content'), list) and any(
@@ -72,7 +72,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         notify: Callable[[], None] | None = None,
                         trace: Callable[[dict], None] | None = None,
                         recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
-    binding = getattr(config.models.roles, "mind" if role == "recap" else role)
+    binding = config.binding(role)
     messages = project_messages(messages, binding.history_policy)
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
     session_id = None

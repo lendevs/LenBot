@@ -240,7 +240,7 @@ class StickerCollector:
                         {"role": "user", "content": [
                             {"type": "text", "text": encode(source)}, image_block(jpeg),
                         ]}]
-            binding = self.config.models.roles.vision
+            binding = self.config.binding("vision")
             estimated = estimate_text_request(messages, [], binding.max_output_tokens)
             request = {"provider": binding.provider,
                        "settings": self.vision.settings.model_dump(exclude={"api_key"}),

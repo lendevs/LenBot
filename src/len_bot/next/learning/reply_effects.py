@@ -263,7 +263,7 @@ class ReplyEffectTracker:
                 "bot_expression": sent, "before": before, "followups": followups}
 
     async def _run(self, scene: str, ids: list[int], *, retry_of: int | None = None) -> None:
-        binding = self.config.models.roles.learner
+        binding = self.config.binding("learner")
         effects = self.records.effects(scene, ids)
         messages = [{"role": "system", "content": self._prompt},
                     {"role": "user", "content": encode({"scene": scene, "bot_id": self.config.bot_id,

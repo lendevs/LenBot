@@ -39,10 +39,13 @@ def _instance(root: Path, **mind):
     return load_config(root), load_persona(role)
 
 
-def _receive(store: Store, text: str, user: int = 70001, message_id: int = 50001) -> None:
+def _receive(store: Store, text: str, user: int = 70001, message_id: int = 50001, image: bool = False) -> None:
+    segments = [{'type': 'text', 'data': {'text': text}}]
+    if image:
+        segments.append({'type': 'image', 'data': {'url': 'https://example.invalid/a.png', 'file': 'a.png'}})
     raw = {'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
            'user_id': user, 'message_id': message_id, 'time': 1790000000,
-           'sender': {'nickname': '合成成员', 'role': 'member'}, 'message': [{'type': 'text', 'data': {'text': text}}]}
+           'sender': {'nickname': '合成成员', 'role': 'member'}, 'message': segments}
     store.enqueue(parse_message(raw, own_message_ids=set()), raw, 1790000000)
 
 
@@ -63,14 +66,18 @@ async def _unused_wait(_: float) -> str:
     return 'unused'
 
 
-async def _turn(config, persona, replies, later: list[tuple[int, str]] = (), wrap=None):
+async def _turn(config, persona, replies, later: list[tuple[int, str]] = (), wrap=None, image=False):
     """One direct turn; ``later`` messages arrive after the turn's input was taken."""
     received = []
     server = await peer_server(replies, received)
     async with server:
         config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
         with Store(config.database) as store:
-            _receive(store, '帮我查一下刚才说的')
+            _receive(store, '帮我查一下刚才说的', image=image)
+            if image:
+                from len_bot.next.storage.store import ImageAsset
+                store.save_image(SCENE, '50001', 1, ImageAsset(jpeg=b'\xff\xd8fixture', width=8, height=8,
+                                                              animated=False, fetched_at=1790000000))
             async with ChatModel(config.model_settings('mind')) as mind:
                 chat = Chat(config, persona, store, mind)
                 if wrap is not None:
@@ -193,3 +200,27 @@ async def test_read_only_calls_of_one_reply_run_together_and_keep_their_order(tm
     assert events[:2] == [('start', 'call-0'), ('start', 'call-1')]
     tools = [message for message in bodies[1]['messages'] if message['role'] == 'tool']
     assert [message['tool_call_id'] for message in tools] == ['call-0', 'call-1']
+
+
+@pytest.mark.asyncio
+async def test_without_a_vision_model_the_mind_sees_the_image_for_the_rest_of_the_turn(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.max_steps = 4
+    result, bodies = await _turn(config, persona, [
+        _calls(('look', {'message': '50001'})),
+        _calls(('say', {'content': '看到了', 'end_turn': True})),
+    ], image=True)
+    assert result['status'] == 'settled', result['error']
+    assert isinstance(bodies[0]['messages'][-1]['content'], str)
+    state = bodies[1]['messages'][-1]['content']
+    assert state[1] == {'type': 'text', 'text': '<消息 50001 的第 1 张图片>'}
+    assert state[2]['image_url']['url'].startswith('data:image/jpeg;base64,')
+    tool = next(message for message in bodies[1]['messages'] if message['role'] == 'tool')
+    assert '图片附在本轮接下来的请求里' in tool['content'] and 'description' not in tool['content']
+    assert len(bodies) == 2
+
+
+def test_a_text_only_mind_without_vision_has_no_look(tmp_path):
+    from len_bot.next.chat.tools import tool_unavailable_reasons
+    config, persona = _instance(tmp_path, image_input=False)
+    assert '还没有设置看图模型' in tool_unavailable_reasons(config, persona, 'look')

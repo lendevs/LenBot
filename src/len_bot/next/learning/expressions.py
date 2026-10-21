@@ -244,7 +244,7 @@ class ExpressionLearner:
     async def _run(self, scene: str, after: int, through: int,
                    rows: list[tuple[int, ChatMessage, float]]) -> None:
         settings = self.config.scenes[scene].learning
-        binding = self.config.models.roles.learner
+        binding = self.config.binding("learner")
         timezone = ZoneInfo(self.config.scene_timezone(scene))
         source = [{"record": seq, "qq": message.sender.uid,
                    "display_name": message.sender.card or message.sender.nickname,

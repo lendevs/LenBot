@@ -51,6 +51,8 @@ class Binding(BaseModel):
     # Effort of a request that answers new messages rather than tool results; empty means reasoning_effort.
     quick_reasoning_effort: str | None = None
     thinking_budget_tokens: int | None = Field(default=None, ge=0)
+    # The model accepts images; without a separate vision model, look shows the chat model the pixels.
+    image_input: bool = True
     output_token_field: Literal["max_completion_tokens", "max_tokens"] = "max_completion_tokens"
     history_policy: Literal["native", "omit-reasoning"] = "native"
     # Waits before resending the same request after HTTP 429, 5xx or a dropped connection; empty means no retry.

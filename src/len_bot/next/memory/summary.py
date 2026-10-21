@@ -80,7 +80,7 @@ class MemorySummarizer:
         if not inputs["files"] and not inputs["directories"]:
             await self.backend.clear_summary(scene, path, scope=scope)
             return {"path": path, "cleared": True, "skipped": "目录为空，已清除派生摘要"}
-        binding = self.config.models.roles.memory
+        binding = self.config.binding("memory")
         partition = "公共分区" if scope == "public" else scene
         messages = [{"role": "system", "content": self._prompt},
                     {"role": "user", "content": encode({"partition": partition,

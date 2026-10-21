@@ -73,6 +73,7 @@ export function newBinding(provider: string): ChatBinding {
     reasoning_effort: null,
     quick_reasoning_effort: null,
     thinking_budget_tokens: null,
+    image_input: true,
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',
     retry_delays_seconds: [],

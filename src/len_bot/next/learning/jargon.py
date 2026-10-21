@@ -290,7 +290,7 @@ class JargonLearner:
                                                       "messages": [nearby[seq] for seq in sorted(nearby)]})}]
 
     def _request(self, messages: list[dict]) -> tuple[dict, int]:
-        binding = self.config.models.roles.learner
+        binding = self.config.binding("learner")
         estimated = estimate_request(messages, [], binding.max_output_tokens)
         return ({"provider": binding.provider,
                  "settings": self.model.settings.model_dump(exclude={"api_key"}),
@@ -298,7 +298,7 @@ class JargonLearner:
                  "context_window_tokens": binding.context_window_tokens}, estimated)
 
     async def _model_call(self, scene: str, call_id: int, messages: list[dict], estimated: int) -> ModelReply:
-        binding = self.config.models.roles.learner
+        binding = self.config.binding("learner")
         if estimated > binding.context_window_tokens:
             raise ContextBudgetError(
                 f"jargon request estimated {estimated} tokens, exceeding configured window "

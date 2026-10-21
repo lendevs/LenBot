@@ -18,7 +18,7 @@ from ..tools.discovery import DISCOVERY_REQUIRED_NAMES, DEFERRED_NAMES, TOOL_SEA
 from ..platform.delivery import Expression
 from ..tools.external_tools import ExternalTool
 from ..platform.file_delivery import SEND_FILE_TOOL, SendFileArguments, execute_send_file
-from ..media.images import LOOK_TOOL, LookArguments, execute_look
+from ..media.images import LOOK_TOOL, LookArguments, execute_look, load_look_image, shown_image
 from ..memory.service import MEMORY_TOOL, MemoryService
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ToolCall
@@ -120,6 +120,9 @@ WAIT_TOOL = {"type": "function", "function": {
 }}
 
 
+LOOKED_IMAGES = 4
+
+
 def tool_catalog(*, platform: bool) -> list[dict]:
     say = SAY_TOOL if not platform else {"type": "function", "function": {
         **SAY_TOOL["function"], "description": "在当前场景表达；结果返回实际原文和平台发送状态。",
@@ -154,7 +157,7 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
         reasons.append("还没有设置记忆")
     if name == 'attention' and config.attention.declarations is None:
         reasons.append('本群没有开启持续关注')
-    if name == "look" and config.models.roles.vision is None:
+    if name == "look" and not config.binding("vision").image_input:
         reasons.append("还没有设置看图模型")
     if name == "transcribe" and config.models.roles.asr is None:
         reasons.append("还没有设置语音转写模型")
@@ -257,6 +260,8 @@ class SceneTools:
                  platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float]):
         self.config, self.persona, self.store = config, persona, store
         self.expression, self.request, self.vision = expression, request, vision
+        # Images the mind model looked at itself in the current turn, newest last.
+        self.looked: list[tuple[str, bytes]] = []
         self.memory, self.tasks, self.audio = memory, tasks, audio
         self.upload_file, self.platform_call = upload_file, platform_call
         self.notify, self.now = notify, now
@@ -446,6 +451,13 @@ class SceneTools:
             async with self.expression.outlet:
                 self.expression.check_send_available()
                 return await message_reaction(self.store, self.config.scene, arguments, self.platform_call), None, None
+        if call.name == "look" and self.vision is None:
+            arguments = LookArguments.model_validate(call.arguments)
+            asset, reused, source = await load_look_image(
+                self.store, self.config.scene, arguments, self.config.images, recording=self.replay_images,
+                fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url)
+            self.looked = [*self.looked, (f"消息 {arguments.message} 的第 {arguments.image} 张图片", asset.jpeg)][-LOOKED_IMAGES:]
+            return shown_image(self.config.scene, arguments, asset, pixels_reused=reused, pixels_source=source), None, None
         if call.name == "look":
             return await execute_look(
                 self.store, self.config.scene, LookArguments.model_validate(call.arguments), self.config.images,
