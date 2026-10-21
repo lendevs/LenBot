@@ -449,3 +449,14 @@ async def test_hung_plugin_start_and_stop_are_cut_off(tmp_path, monkeypatch):
             await host.close()
     assert [str(error) for error in failure.value.exceptions] == ["插件 stop() 超过 0.1 秒没有返回，已取消"]
     assert host.plugins["slowstop"].status == "failed"
+
+
+def test_scene_being_added_has_no_runner_and_is_not_paused():
+    """Adding a group from the panel builds its chat, and asks plugins for tools, before the runner exists."""
+    from types import SimpleNamespace
+
+    paused = SimpleNamespace(state=SimpleNamespace(paused=True))
+    host = SimpleNamespace(runtime=SimpleNamespace(runners={"onebot:group:80001": paused}))
+    assert PluginHost.scene_paused(host, "onebot:group:80001")
+    assert not PluginHost.scene_paused(host, "onebot:group:80002")
+    assert not PluginHost.scene_paused(SimpleNamespace(runtime=None), "onebot:group:80002")

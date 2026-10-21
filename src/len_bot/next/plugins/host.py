@@ -359,8 +359,12 @@ class PluginHost:
         return self.config.scene_timezone(scene)
 
     def scene_paused(self, scene: str) -> bool:
-        """Whether the operator switched this scene's chat off; plugins stay silent there too."""
-        return self.runtime is not None and self.runtime.runners[scene].state.paused
+        """Whether the operator switched this scene's chat off; plugins stay silent there too.
+
+        A scene being added from the panel has no runner yet while its chat is built, and is not paused.
+        """
+        runner = None if self.runtime is None else self.runtime.runners.get(scene)
+        return runner is not None and runner.state.paused
 
     def _speaking(self, plugin: str, scene: str) -> Loaded:
         record = self._active(plugin, scene)
