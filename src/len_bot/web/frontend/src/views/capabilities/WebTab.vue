@@ -19,6 +19,7 @@ import FormSection from '../../ui/FormSection.vue'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
+import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
 import Textarea from '../../ui/Textarea.vue'
@@ -68,6 +69,10 @@ const changed = computed(() => {
     network: value.fakeIp !== base.fakeIp || value.dns !== base.dns,
   }
 })
+const providers: { value: WebSearch['provider']; label: string }[] = [
+  { value: 'yahoo', label: 'Yahoo' },
+  { value: 'bing_rss', label: 'Bing RSS' },
+]
 const dirty = computed(() => Object.values(changed.value).some(Boolean))
 useUnsavedChanges(dirty, { keep: ['tab'] })
 const networks = computed(() =>
@@ -153,11 +158,14 @@ async function save() {
             :model-value="draft.search !== null"
             @update:model-value="
               (on: boolean) =>
-                (draft!.search = on ? { provider: 'bing_rss', timeout_seconds: 15, max_results: 5 } : null)
+                (draft!.search = on ? { provider: 'yahoo', timeout_seconds: 15, max_results: 5 } : null)
             "
           />
         </Field>
         <template v-if="draft.search">
+          <Field :label="t('capabilities.web.provider')">
+            <Select v-model="draft.search.provider" :options="providers" />
+          </Field>
           <Field
             :label="t('capabilities.web.results')"
             :error="draft.search.max_results === null ? t('capabilities.required') : null"

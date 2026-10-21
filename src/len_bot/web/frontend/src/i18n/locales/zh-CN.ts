@@ -1987,6 +1987,7 @@ export default {
       readOn: '允许读网页',
       search: '搜索网页',
       searchOn: '允许搜索网页',
+      provider: '搜索服务',
       results: '每次最多几条结果',
       timeout: '超时',
       network: '代理的假 IP 网段',

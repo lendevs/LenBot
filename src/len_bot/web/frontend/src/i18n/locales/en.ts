@@ -2067,6 +2067,7 @@ export default {
       readOn: 'Allow reading web pages',
       search: 'Search the web',
       searchOn: 'Allow web search',
+      provider: 'Search provider',
       results: 'Results per search',
       timeout: 'Timeout',
       network: 'Proxy fake IP ranges',
