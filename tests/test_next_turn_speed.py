@@ -39,9 +39,9 @@ def _instance(root: Path, **mind):
     return load_config(root), load_persona(role)
 
 
-def _receive(store: Store, text: str) -> None:
+def _receive(store: Store, text: str, user: int = 70001, message_id: int = 50001) -> None:
     raw = {'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
-           'user_id': 70001, 'message_id': 50001, 'time': 1790000000,
+           'user_id': user, 'message_id': message_id, 'time': 1790000000,
            'sender': {'nickname': '合成成员', 'role': 'member'}, 'message': [{'type': 'text', 'data': {'text': text}}]}
     store.enqueue(parse_message(raw, own_message_ids=set()), raw, 1790000000)
 
@@ -63,7 +63,8 @@ async def _unused_wait(_: float) -> str:
     return 'unused'
 
 
-async def _turn(config, persona, replies):
+async def _turn(config, persona, replies, later: list[tuple[int, str]] = ()):
+    """One direct turn; ``later`` messages arrive after the turn's input was taken."""
     received = []
     server = await peer_server(replies, received)
     async with server:
@@ -73,8 +74,19 @@ async def _turn(config, persona, replies):
             async with ChatModel(config.model_settings('mind')) as mind:
                 chat = Chat(config, persona, store, mind)
                 pending = store.pending_messages(SCENE)
-                result = await chat.run_turn(batch=(pending[-1][0], [chat.context.batch([pending[-1][1]])]),
-                                             append_new=_no_new, wait_for_messages=_unused_wait,
+                batch = (pending[-1][0], [chat.context.batch([pending[-1][1]])])
+                for index, (user, text) in enumerate(later):
+                    _receive(store, text, user, 50002 + index)
+
+                async def append_new(_continuing, turn_id):
+                    arrived = store.pending_messages(SCENE)
+                    if not arrived:
+                        return False
+                    store.append_batch(SCENE, arrived[-1][0], [chat.context.batch([item[1] for item in arrived])],
+                                       turn_id=turn_id)
+                    return True
+
+                result = await chat.run_turn(batch=batch, append_new=append_new, wait_for_messages=_unused_wait,
                                              attention_state={}, direct=True)
     return result, [body for _, _, body in received]
 
@@ -103,3 +115,26 @@ async def test_last_step_keeps_all_tools_once_the_turn_has_spoken(tmp_path):
     assert result['status'] == 'settled', result['error']
     assert 'recall_chat' in {tool['function']['name'] for tool in bodies[1]['tools']}
     assert '这是本轮最后一步' not in bodies[1]['messages'][-1]['content']
+
+
+@pytest.mark.asyncio
+async def test_a_followup_from_the_same_person_continues_the_turn(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.max_steps = 4
+    result, bodies = await _turn(config, persona, [
+        _calls(('say', {'content': '好', 'end_turn': True})),
+        _calls(('say', {'content': '这个也行', 'end_turn': True})),
+    ], later=[(70001, '还有第二件事')])
+    assert result['status'] == 'settled' and len(bodies) == 2, result
+    assert '还有第二件事' in json.dumps(bodies[1]['messages'], ensure_ascii=False)
+    assert result['extensions'] == 1
+
+
+@pytest.mark.asyncio
+async def test_other_people_talking_does_not_hold_the_turn_open(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.max_steps = 4
+    result, bodies = await _turn(config, persona, [
+        _calls(('say', {'content': '好', 'end_turn': True})),
+    ], later=[(70002, '别人在聊别的')])
+    assert result['status'] == 'settled' and len(bodies) == 1 and result['extensions'] == 0

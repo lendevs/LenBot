@@ -332,6 +332,12 @@ class Chat:
             return False
         return self.direct_request or self.reserve_request or self.turn_channel in RESERVE_CHANNELS
 
+    def followup_arrived(self, talking: set[str]) -> bool:
+        """A new message from someone this turn answers, or one that addresses the bot."""
+        private = self.config.scene.split(":", 2)[1] == "private"
+        return any(not message.is_self and (private or message.mentions_bot or message.sender.uid in talking)
+                   for _, message, _ in self.store.pending_messages(self.config.scene))
+
     def check_limits(self, *, model: bool = False, direct: bool | None = None, max_age: float = 0.0) -> None:
         """``max_age`` lets a polling caller reuse token totals a few seconds old."""
         check_speech(self.store, self.config, direct=self.speech_reserve if direct is None else direct)
@@ -360,6 +366,9 @@ class Chat:
         observed_at = self.now()
         self.turn_channels = set() if channels is None else set(channels)
         scene = self.config.scene
+        talking = set() if batch is None else {
+            message.sender.uid for seq, message, _ in self.store.pending_messages(scene)
+            if seq <= batch[0] and not message.is_self}
         # Synchronous: a cancellation between this write and the try below would leave the turn open.
         turn_id = self.store.start_turn(scene, batch=batch, attention_state=attention_state,
                                        scheduled=scheduled, task_notices=task_notices,
@@ -506,6 +515,12 @@ class Chat:
                                        name=call.name, status=tool_status, summary=tool_summary[:500])
                         self.notify()
                     if not reply.tool_calls or (end_turn and not group_failed):
+                        # Someone in this conversation kept talking while the step ran: they reach the
+                        # model as new input instead of waiting for the next turn.
+                        if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
+                                and self.followup_arrived(talking) and await append_new(True, turn_id)):
+                            extensions += 1
+                            continue
                         status = "settled"
                         break
                     if step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions:

@@ -289,7 +289,7 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
     assert config.behavior_addendum is None
     assert config.attention.direct_idle_seconds == 1.5
     assert config.attention.direct_max_seconds == 4.0
-    assert config.attention.max_extensions == 2
+    assert config.attention.max_extensions == 4
     assert config.attention.only_direct is False
     assert config.attention.keywords == []
     assert config.attention.other_bot_ids == []

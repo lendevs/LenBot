@@ -893,7 +893,7 @@ class SceneRunner:
             self.chat.turn_channels.add(self.state.pending.channel if self.state.pending is not None else "in_turn")
             if self.state.pending is not None and self.state.pending.explored:
                 self.chat.turn_channels.add('explore')
-            through, contents = self.batch(pending, self.wake_reason())
+            through, contents = self.batch(pending, "[这一轮进行中收到；" + self.wake_reason()[1:])
             self.store.append_batch(self.config.scene, through, contents, turn_id=turn_id,
                                     attention_state=persisted(state))
             if self.state.pending is not None and self.state.pending.channel == "direct":
