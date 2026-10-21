@@ -160,7 +160,7 @@ class Chat:
                       recap_target: CompactionPlan | None = None,
                       expression_ids: list[int] | None = None,
                       input_estimate: tuple[int, str] | None = None,
-                      recall_items: list[dict] | None = None) -> ModelReply:
+                      recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
         model_role = "mind" if role == "recap" else role
         model = getattr(self, model_role)
         def validate(reply: ModelReply) -> None:
@@ -183,7 +183,7 @@ class Chat:
             validate=validate, append_to_scene=role == "mind",
             recap_for=None if recap_target is None else (self.config.scene, recap_target.through),
             expression_ids=self.expression_ids if role == "mind" else expression_ids,
-            input_estimate=input_estimate, notify=self.notify, recall_items=recall_items,
+            input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick,
             trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
 
     async def compact_now(self) -> dict:
@@ -436,7 +436,7 @@ class Chat:
                     )
                 if learned is not None:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
-                looked_up = False
+                looked_up = stepped_lookup = False
                 for step in range(self.config.max_steps):
                     self.trace_step = step + 1
                     self.check_limits()
@@ -445,10 +445,12 @@ class Chat:
                     messages, tools = prepared.messages, self.toolset.tools
                     if step + 1 == self.config.max_steps and looked_up and not expressions:
                         messages, tools = final_step(messages, tools)
+                    # Answering new messages thinks briefly; reading tool results uses the full effort.
                     reply = await self.request(turn_id, "mind", messages, tools,
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method),
-                                               recall_items=recall_items)
-                    looked_up = looked_up or any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
+                                               recall_items=recall_items, quick=not stepped_lookup)
+                    stepped_lookup = any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
+                    looked_up = looked_up or stepped_lookup
                     end_turn, group_failed = False, False
                     for call in reply.tool_calls:
                         self.trace('turn.step', turn_id, kind='tool', phase='start', call_id=call.id,

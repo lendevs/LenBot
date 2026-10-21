@@ -138,3 +138,30 @@ async def test_other_people_talking_does_not_hold_the_turn_open(tmp_path):
         _calls(('say', {'content': '好', 'end_turn': True})),
     ], later=[(70002, '别人在聊别的')])
     assert result['status'] == 'settled' and len(bodies) == 1 and result['extensions'] == 0
+
+
+@pytest.mark.asyncio
+async def test_new_messages_use_the_quick_effort_and_tool_results_the_full_one(tmp_path):
+    config, persona = _instance(tmp_path, reasoning_effort='high', quick_reasoning_effort='low')
+    config.max_steps = 4
+    result, bodies = await _turn(config, persona, [
+        _calls(('recall_chat', {'action': 'recent'})),
+        _calls(('say', {'content': '找到了', 'end_turn': True})),
+    ])
+    assert result['status'] == 'settled', result['error']
+    assert [body['reasoning_effort'] for body in bodies] == ['low', 'high']
+    with Store(config.database) as store:
+        recorded = [json.loads(row[0])['settings']['reasoning_effort'] for row in
+                    store.db.execute("SELECT request FROM model_calls WHERE role='mind' ORDER BY id")]
+    assert recorded == ['low', 'high']
+
+
+def test_quick_effort_is_checked_against_the_provider_at_load(tmp_path):
+    from len_bot.next.configuration.models import Models
+    source = {'providers': {'a': {'api': 'anthropic', 'base_url': 'https://example.invalid/v1', 'api_key': 'k'}},
+              'roles': {'mind': {'provider': 'a', 'model': 'm', 'context_window_tokens': 8000,
+                                 'quick_reasoning_effort': 'low'}}}
+    with pytest.raises(ValueError, match='温度'):
+        Models.model_validate(source)
+    source['roles']['mind']['temperature'] = None
+    assert Models.model_validate(source).roles.mind.quick_reasoning_effort == 'low'

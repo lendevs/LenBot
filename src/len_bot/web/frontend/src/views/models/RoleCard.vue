@@ -28,17 +28,22 @@ const enabled = computed({
 })
 /** Select options cannot be empty; this stands for leaving the effort to the provider. */
 const UNSET = '*'
-const efforts = computed(() => {
-  const current = binding.value?.reasoning_effort
+const effortOptions = (current: string | null | undefined, unset: string) => {
   const known = ['minimal', 'low', 'medium', 'high']
   return [
-    { value: UNSET, label: t('models.roles.effortDefault') },
+    { value: UNSET, label: unset },
     ...[...known, ...(current && !known.includes(current) ? [current] : [])].map((value) => ({
       value,
       label: value,
     })),
   ]
-})
+}
+const efforts = computed(() =>
+  effortOptions(binding.value?.reasoning_effort, t('models.roles.effortDefault')),
+)
+const quickEfforts = computed(() =>
+  effortOptions(binding.value?.quick_reasoning_effort, t('models.roles.quickEffortSame')),
+)
 const histories = computed(() => [
   { value: 'native' as const, label: t('models.roles.history.native') },
   { value: 'omit-reasoning' as const, label: t('models.roles.history.omit') },
@@ -126,6 +131,15 @@ watch(retries, (text) => {
               :options="efforts"
               @update:model-value="
                 (value) => (binding!.reasoning_effort = !value || value === UNSET ? null : value)
+              "
+            />
+          </Field>
+          <Field v-if="role === 'mind'" :label="t('models.roles.quickEffort')">
+            <Select
+              :model-value="binding.quick_reasoning_effort ?? UNSET"
+              :options="quickEfforts"
+              @update:model-value="
+                (value) => (binding!.quick_reasoning_effort = !value || value === UNSET ? null : value)
               "
             />
           </Field>

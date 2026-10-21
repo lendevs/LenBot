@@ -39,7 +39,13 @@ class ModelSettings(BaseModel):
     @classmethod
     def from_binding(cls, provider, binding) -> ModelSettings:
         return cls(api=provider.api, base_url=provider.base_url, api_key=provider.api_key, proxy=provider.proxy,
-                   **binding.model_dump(exclude={'provider', 'context_window_tokens', 'history_policy'}))
+                   **binding.model_dump(exclude={'provider', 'context_window_tokens', 'history_policy',
+                                                 'quick_reasoning_effort'}))
+
+    def with_effort(self, effort: str) -> ModelSettings:
+        """The same request settings at another reasoning effort, validated again."""
+        return ModelSettings.model_validate({**self.model_dump(), 'reasoning_effort': effort,
+                                             'thinking_budget_tokens': None})
 
     @field_validator("base_url")
     @classmethod
@@ -235,12 +241,15 @@ class ChatModel:
         await self._client.aclose()
 
     async def complete(self, messages: list[dict], tools: list[dict], *,
-                       max_output_tokens: int | None = None, session_id: str | None = None) -> ModelReply:
+                       max_output_tokens: int | None = None, session_id: str | None = None,
+                       settings: ModelSettings | None = None) -> ModelReply:
+        """``settings`` overrides request options for this call only; the client keeps its connection."""
         from .protocols import build_request, parse_reply
-        path, payload = build_request(self.settings, messages, tools, max_output_tokens=max_output_tokens)
-        for delay in (*self.settings.retry_delays_seconds, None):
+        settings = self.settings if settings is None else settings
+        path, payload = build_request(settings, messages, tools, max_output_tokens=max_output_tokens)
+        for delay in (*settings.retry_delays_seconds, None):
             try:
-                async with asyncio.timeout(self.settings.timeout_seconds):
+                async with asyncio.timeout(settings.timeout_seconds):
                     response = await self._client.post(path, json=payload,
                                                        headers={} if session_id is None else {"Session-Id": session_id})
             except httpx.TransportError as error:
@@ -262,4 +271,4 @@ class ChatModel:
                 f"Invalid chat completion JSON: {error}; response fragment: {response.text[:500]}",
                 response=response.text[:2000],
             ) from error
-        return parse_reply(self.settings, body)
+        return parse_reply(settings, body)

@@ -36,6 +36,7 @@ export interface ChatBinding {
   max_output_tokens: number | null
   timeout_seconds: number | null
   reasoning_effort: string | null
+  quick_reasoning_effort: string | null
   thinking_budget_tokens: number | null
   output_token_field: 'max_completion_tokens' | 'max_tokens'
   history_policy: 'native' | 'omit-reasoning'

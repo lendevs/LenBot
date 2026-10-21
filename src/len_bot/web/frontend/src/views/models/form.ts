@@ -71,6 +71,7 @@ export function newBinding(provider: string): ChatBinding {
     max_output_tokens: 1024,
     timeout_seconds: 60,
     reasoning_effort: null,
+    quick_reasoning_effort: null,
     thinking_budget_tokens: null,
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',

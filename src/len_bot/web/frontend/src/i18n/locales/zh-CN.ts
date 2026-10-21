@@ -1552,6 +1552,8 @@ export default {
       timeout: '超时',
       effort: '思考强度',
       effortDefault: '服务商默认',
+      quickEffort: '接话时的思考强度',
+      quickEffortSame: '和思考强度相同',
       thinking: '思考额度',
       retries: '失败重试等待（秒）',
       noRetry: '不重试',

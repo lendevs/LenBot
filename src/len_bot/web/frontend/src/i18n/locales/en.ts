@@ -1611,6 +1611,8 @@ export default {
       timeout: 'Timeout',
       effort: 'Reasoning effort',
       effortDefault: 'Provider default',
+      quickEffort: 'Effort when replying to new messages',
+      quickEffortSame: 'Same as reasoning effort',
       thinking: 'Thinking budget',
       retries: 'Retry waits (seconds)',
       noRetry: 'No retry',

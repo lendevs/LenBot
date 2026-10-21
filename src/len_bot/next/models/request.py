@@ -71,7 +71,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         input_estimate: tuple[int, str] | None = None,
                         notify: Callable[[], None] | None = None,
                         trace: Callable[[dict], None] | None = None,
-                        recall_items: list[dict] | None = None) -> ModelReply:
+                        recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
     binding = getattr(config.models.roles, "mind" if role == "recap" else role)
     messages = project_messages(messages, binding.history_policy)
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
@@ -88,7 +88,10 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         scope = "文本部分" if role == "vision" else "请求"
         raise ContextBudgetError(
             f"{role} {scope}含预留输出估算 {estimated} token，超过配置窗口 {binding.context_window_tokens}；未调用模型")
-    settings = {**model.settings.model_dump(exclude={"api_key"}), "max_output_tokens": tokens}
+    effective = model.settings
+    if quick and getattr(binding, "quick_reasoning_effort", None) is not None:
+        effective = effective.with_effort(binding.quick_reasoning_effort)
+    settings = {**effective.model_dump(exclude={"api_key"}), "max_output_tokens": tokens}
     async with (slots.slot(direct=direct, scene=scene) if slots is not None else nullcontext()):
         request = {"settings": settings, "messages": messages, "tools": tools, "provider": binding.provider,
                    **({"recall_items": recall_items} if recall_items is not None else {}),
@@ -107,7 +110,8 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
             notify()
         reply = None
         try:
-            reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id)
+            reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id,
+                                         settings=None if effective is model.settings else effective)
             if validate is not None:
                 validate(reply)
         except BaseException as error:
