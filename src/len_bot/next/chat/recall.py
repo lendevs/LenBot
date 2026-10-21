@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..platform.messages import ChatMessage, render_message
-from ..storage.store import Store, encode
+from ..storage.store import Store
 from ..media.audio_store import AudioStore
 from ..prompt_files import read_prompt
 
@@ -93,10 +93,34 @@ def message_page(record: int, message: ChatMessage, timezone: str, *, offset: in
             "next_offset": end if end < len(text) else None, "text": text[offset:end]}
 
 
+def _labeled(head: str, record: int, center: bool) -> str:
+    """The sender line of a rendered message with its record number in the existing label brackets."""
+    label = f"record={record}" + ("，查询的这条" if center else "")
+    return head[:-1] + "，" + label + "]" if head.endswith("]") else f"{head} [{label}]"
+
+
+def _listing(store: Store, scene: str, timezone: str, rows, *, size: int = 160,
+             center: int | None = None) -> str:
+    """Messages in the chat input layout: one date line per day, record numbers in the labels, long words cut."""
+    lines, day = [], None
+    for seq, message in rows:
+        rendered = render_message(message, timezone=timezone,
+                                  audio=AudioStore(store).captions(scene, message.platform_message_id))
+        header, speaker, *rest = rendered.split("\n")
+        date = header.split("｜", 1)[1]
+        if date != day:
+            lines.append(date)
+            day = date
+        lines.append(_labeled(speaker, seq, seq == center))
+        words = "\n".join(rest)
+        if len(words) > size:
+            total = sum(len(line.strip()) for line in rest)
+            words = words[:size] + f"……（共 {total} 字，用 read 读全文）"
+        lines.append(words)
+    return "\n".join(lines) if lines else "没有符合条件的记录。"
+
+
 def recall_chat(store: Store, scene: str, timezone: str, arguments: RecallArguments) -> str:
-    def render_page(seq, message, *, offset=0, size=160):
-        return message_page(seq, message, timezone, offset=offset, size=size,
-                            audio=AudioStore(store).captions(scene, message.platform_message_id))
     if arguments.action in {"search", "recent"}:
         current = store.max_message_seq(scene)
         snapshot = current if arguments.snapshot is None else arguments.snapshot
@@ -110,21 +134,27 @@ def recall_chat(store: Store, scene: str, timezone: str, arguments: RecallArgume
                 snapshot=snapshot, offset=arguments.offset, limit=11,
             )
             page = rows[:10]
+            direction = "更晚的"
         else:
             rows = store.recent_records(scene, limit=11, snapshot=snapshot, offset=arguments.offset)
             page = rows[-10:]
-        result = {"action": arguments.action, "snapshot": snapshot, "offset": arguments.offset,
-                  "next_offset": arguments.offset + 10 if len(rows) > 10 else None,
-                  "previews": [render_page(seq, message)
-                               for seq, message in page]}
+            direction = "更早的"
+        summary = (f"{arguments.action} 第 {arguments.offset // 10 + 1} 页，共 {len(page)} 条。"
+                   + (f"还有{direction}记录：同一 action 带 snapshot={snapshot}、offset={arguments.offset + 10} 翻页。"
+                      if len(rows) > 10 else "没有下一页了。"))
+        result = _listing(store, scene, timezone, page)
     elif arguments.action == "read":
         message = store.read_message(scene, arguments.record)
         if message is None:
             raise ValueError(f"当前场景没有消息记录 {arguments.record}")
-        result = {"action": "read", **render_page(arguments.record, message, offset=arguments.offset, size=4000)}
+        page = message_page(arguments.record, message, timezone, offset=arguments.offset, size=4000,
+                            audio=AudioStore(store).captions(scene, message.platform_message_id))
+        summary = (f"record={arguments.record} 全文，第 {arguments.offset} 到 {arguments.offset + len(page['text'])} 字，"
+                   f"共 {page['total_chars']} 字。"
+                   + ("" if page["next_offset"] is None else f"后面还有，read 带 offset={page['next_offset']} 续读。"))
+        result = page["text"]
     else:
         rows = store.context_messages(scene, arguments.record)
-        result = {"action": "context", "center": arguments.record,
-                  "previews": [render_page(seq, message)
-                               for seq, message in rows]}
-    return Template(read_prompt("next_recall.md")).substitute(scene=scene, result=encode(result))
+        summary = f"record={arguments.record} 前后的消息。"
+        result = _listing(store, scene, timezone, rows, center=arguments.record)
+    return Template(read_prompt("next_recall.md")).substitute(summary=summary, result=result)
