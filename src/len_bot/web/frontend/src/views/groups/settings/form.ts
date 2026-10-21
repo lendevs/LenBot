@@ -268,6 +268,7 @@ export function useSettingsForm(scene: Ref<string>) {
   }
 
   return reactive({
+    scene,
     settings,
     permissions,
     plugins,
@@ -281,6 +282,12 @@ export function useSettingsForm(scene: Ref<string>) {
     save,
     adopt,
   })
+}
+
+/** An account typed as the bare number gets the platform of the scene it is configured in. */
+export function withPlatform(scene: string, account: string): string {
+  const value = account.trim()
+  return value.includes(':') ? value : `${scene.split(':', 1)[0]}:${value}`
 }
 
 export type SettingsForm = ReturnType<typeof useSettingsForm>

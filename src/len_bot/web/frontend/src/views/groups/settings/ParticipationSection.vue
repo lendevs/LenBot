@@ -9,7 +9,7 @@ import NumberInput from '../../../ui/NumberInput.vue'
 import RadioGroup from '../../../ui/RadioGroup.vue'
 import Switch from '../../../ui/Switch.vue'
 import TagInput from '../../../ui/TagInput.vue'
-import { useForm } from './form'
+import { useForm, withPlatform } from './form'
 
 type NumberKey =
   | 'direct_idle_seconds'
@@ -40,6 +40,11 @@ const modes = computed(() =>
     label: t(`groups.settings.participation.modes.${value}`),
   })),
 )
+const otherBots = computed({
+  get: () => form.draft.scene.attention.other_bot_ids,
+  set: (values: string[]) =>
+    (form.draft.scene.attention.other_bot_ids = values.map((value) => withPlatform(form.scene, value))),
+})
 const timezone = computed({
   get: () => form.draft.scene.timezone ?? '',
   set: (value: string) => (form.draft.scene.timezone = value || null),
@@ -77,7 +82,7 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
       </Field>
     </template>
     <Field :label="t('groups.settings.participation.otherBots')" :error="form.errors.otherBots" wide>
-      <TagInput v-model="form.draft.scene.attention.other_bot_ids" placeholder="onebot:10001" />
+      <TagInput v-model="otherBots" placeholder="onebot:10001" />
     </Field>
     <Field :label="t('groups.settings.participation.timezone')">
       <Input v-model="timezone" placeholder="Asia/Shanghai" mono />
