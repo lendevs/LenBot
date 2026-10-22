@@ -42,6 +42,11 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 WAKE_INTERVAL_SECONDS = 30
+# A failed or interrupted pass runs again by itself this many times in a row, this long after failing.
+AUTO_RETRIES = 3
+RETRY_DELAY_SECONDS = 60
+# After an unexpected worker error the scene waits this long before trying again.
+ERROR_BACKOFF_SECONDS = 60
 EFFECT_BATCH = 10
 MEANING_BATCH = 5
 MAX_ITEMS = 20
@@ -110,6 +115,8 @@ class SessionUpkeep:
         self._force: set[str] = set()
         self._retry: set[str] = set()
         self._effect_retry: dict[str, int] = {}
+        self._failures: dict[str, int] = {}
+        self._failed_at: dict[str, float] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
         self.started = False
         self.errors: dict[str, BaseException] = {}
@@ -166,6 +173,8 @@ class SessionUpkeep:
         self._force.discard(scene)
         self._retry.discard(scene)
         self._effect_retry.pop(scene, None)
+        self._failures.pop(scene, None)
+        self._failed_at.pop(scene, None)
 
     def _start_scene(self, scene: str) -> None:
         with log_context(scene=scene, job="session_upkeep"):
@@ -196,12 +205,9 @@ class SessionUpkeep:
     def _check(self, scene: str, part: str) -> None:
         if scene not in self.parts[part]:
             raise ValueError(f"{part} upkeep is not configured for scene {scene!r}")
-        if scene in self.errors:
-            raise RuntimeError(f"session upkeep worker stopped for {scene}: "
-                               f"{_error_text(self.errors[scene])}") from self.errors[scene]
 
     def wake(self, scene: str) -> None:
-        if scene in self._wake and scene not in self.errors:
+        if scene in self._wake:
             self._wake[scene].set()
 
     def request(self, scene: str, part: str) -> None:
@@ -224,7 +230,7 @@ class SessionUpkeep:
 
     def compacted(self, scene: str) -> None:
         """Older history just left the session: take its range now, below the usual thresholds."""
-        if scene in self._wake and scene not in self.errors and not self._blocked(scene):
+        if scene in self._wake and not self._blocked(scene):
             self._force.add(scene)
             self._wake[scene].set()
 
@@ -331,28 +337,48 @@ class SessionUpkeep:
     # Worker
 
     async def _worker(self, scene: str) -> None:
-        try:
-            while True:
-                wake = self._wake[scene]
-                wake.clear()
+        """Runs until cancelled; an unexpected error is shown in the panel and retried after a pause."""
+        while True:
+            wake = self._wake[scene]
+            wake.clear()
+            try:
                 delay = self._close_windows(scene) if scene in self.parts["effects"] else WAKE_INTERVAL_SECONDS
-                if await self._step(scene):
-                    await asyncio.sleep(0)
-                    continue
-                try:
-                    await asyncio.wait_for(wake.wait(), timeout=delay)
-                except TimeoutError:
-                    pass
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            self.errors[scene] = error
-            LOG.exception("session upkeep worker stopped for %s", scene)
-            if self.on_update is not None:
-                self.on_update()
+                progressed = await self._step(scene)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                self.errors[scene] = error
+                LOG.exception("session upkeep step failed for %s", scene)
+                if self.on_update is not None:
+                    self.on_update()
+                progressed, delay = False, ERROR_BACKOFF_SECONDS
+            else:
+                if self.errors.pop(scene, None) is not None and self.on_update is not None:
+                    self.on_update()
+            if progressed:
+                await asyncio.sleep(0)
+                continue
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=delay)
+            except TimeoutError:
+                pass
+
+    def _auto_retry(self, scene: str) -> bool:
+        """Queue a failed or interrupted pass again, a few times in a row and after a pause."""
+        if (self._failures.get(scene, 0) >= AUTO_RETRIES
+                or self.store.now() - self._failed_at.get(scene, 0.0) < RETRY_DELAY_SECONDS):
+            return False
+        if scene in self.parts["effects"]:
+            latest = self.effects.latest_call(scene)
+            if latest is not None and latest["status"] in {"failed", "interrupted"}:
+                self._effect_retry[scene] = latest["id"]
+        self._retry.add(scene)
+        return True
 
     async def _step(self, scene: str) -> bool:
         plan = self._plan(scene)
+        if plan is None and scene not in self._retry and self._blocked(scene) and self._auto_retry(scene):
+            plan = self._plan(scene)
         if plan is None or self.fork is None:
             return False
         fork = await self.fork(scene)
@@ -493,35 +519,65 @@ class SessionUpkeep:
         if self.on_update is not None:
             self.on_update()
         steps = self.config.memory.ingest.max_steps if memory else 2
+        texts = {key: plain_text(message) for seq, message, _, _ in plan.rows
+                 if (key := self._key(message, seq)) in humans}
+        entries = {item["entry_seq"] for item in self.effects.effects(scene, plan.effects)} if plan.effects else set()
         written: list[str] = []
         failed_tools = 0
+        # One reminder each when the tool rounds run out and when the final JSON cannot be read.
+        out_of_steps = corrected = False
         try:
             async with asyncio.timeout(self.config.memory.ingest.timeout_seconds if memory else None):
-                for _ in range(steps):
+                rounds = 0
+                while True:
                     reply = await request_model(self.config, self.store, self.mind, conversation, tools, scene=scene,
                                                 role="upkeep", slots=self.slots, quick=True, notify=self.on_update)
                     conversation.append(reply.message)
-                    if not reply.tool_calls:
+                    if reply.tool_calls:
+                        rounds += 1
+                        if rounds >= steps and out_of_steps:
+                            raise RuntimeError(f"upkeep kept calling tools after {steps} rounds")
+                        for call in reply.tool_calls:
+                            if rounds >= steps:
+                                content = "整理的工具次数用完了，这次没有执行。"
+                            else:
+                                content, failed = await self._tool(scene, call.name, call.arguments, memory,
+                                                                   begun, written)
+                                failed_tools += failed
+                            conversation.append({"role": "tool", "tool_call_id": call.id, "content": content})
+                        if rounds >= steps:
+                            out_of_steps = True
+                            conversation.append({"role": "user", "content": "工具次数用完了，现在只输出整理结果的 JSON 对象。"})
+                        continue
+                    try:
+                        results, dropped = parse_results(reply, humans, texts, entries)
                         break
-                    for call in reply.tool_calls:
-                        content, failed = await self._tool(scene, call.name, call.arguments, memory, begun, written)
-                        failed_tools += failed
-                        conversation.append({"role": "tool", "tool_call_id": call.id, "content": content})
-                else:
-                    raise RuntimeError(f"upkeep used all {steps} steps and still called tools")
-            results = parse_results(reply, set(keys), humans, {key: plain_text(message) for seq, message, _, _
-                                                               in plan.rows if (key := self._key(message, seq)) in humans})
-            await self._complete(scene, plan, begun, results, keys, reply, written, failed_tools)
+                    except ValueError as error:
+                        if corrected:
+                            raise
+                        corrected = True
+                        conversation.append({"role": "user", "content": f"上一条回复没法解析：{error}\n只输出整理结果的 JSON 对象。"})
+            if dropped:
+                LOG.warning("session upkeep dropped %d result item(s) for %s: %s", len(dropped), scene, dropped)
+            await self._complete(scene, plan, begun, results, dropped, keys, reply, written, failed_tools)
         except asyncio.CancelledError as error:
             self._fail(begun, "interrupted", _error_text(error))
+            self._failed(scene)
             if self.on_update is not None:
                 self.on_update()
             raise
         except Exception as error:
             self._fail(begun, "failed", _error_text(error))
+            self._failed(scene)
             LOG.exception("session upkeep failed for %s", scene)
+        else:
+            self._failures.pop(scene, None)
         if self.on_update is not None:
             self.on_update()
+
+    def _failed(self, scene: str) -> None:
+        self._failures[scene] = self._failures.get(scene, 0) + 1
+        self._failed_at[scene] = self.store.now()
 
     async def _tool(self, scene: str, name: str, arguments: dict, memory: bool, begun: Begun,
                     written: list[str]) -> tuple[str, int]:
@@ -555,17 +611,15 @@ class SessionUpkeep:
                 return item["situation"]
         return situation
 
-    async def _complete(self, scene: str, plan: Plan, begun: Begun, results: dict, keys: dict[str, int],
-                        reply: ModelReply, written: list[str], failed_tools: int) -> None:
-        response = {"message": reply.message, "finish_reason": reply.finish_reason}
+    async def _complete(self, scene: str, plan: Plan, begun: Begun, results: dict, dropped: list[str],
+                        keys: dict[str, int], reply: ModelReply, written: list[str], failed_tools: int) -> None:
+        response = {"message": reply.message, "finish_reason": reply.finish_reason, "dropped": dropped}
         job = begun.memory_job
         if job is not None:
+            # Failed memory calls went back to the model as results; the pass still completes.
             job["details"]["result"] = {"summary": reply.text[:2000], "write_count": len(written),
                                         "failed_tools": failed_tools}
-            if failed_tools:
-                self.memory.jobs.status(job, "failed", f"{failed_tools} memory tool call(s) failed")
-            else:
-                self.memory.jobs.status(job, "complete")
+            self.memory.jobs.status(job, "complete")
         if begun.batch is not None:
             self.learning.response(begun.batch, response, None, None)
             settings = self.scenes[scene].learning
@@ -600,8 +654,8 @@ class SessionUpkeep:
                                              meanings[term["term"]]["confidence"])
         if begun.effect_call is not None:
             self.effects.response(begun.effect_call, response, None, None)
-            entries = {item["entry_seq"] for item in self.effects.effects(scene, plan.effects)}
-            self.effects.complete(begun.effect_call, effect_results(results["effects"], entries))
+            # Samples the reply left out stay unjudged on this call.
+            self.effects.complete(begun.effect_call, results["effects"])
         if written and self.memory.summarizer is not None:
             async with self.memory.write_lock(scene):
                 job["details"]["summaries"] = await self.memory.summarizer.refresh_after_writes(scene, written)
@@ -611,71 +665,96 @@ class SessionUpkeep:
 _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
 
 
-def parse_results(reply: ModelReply, keys: set[str], humans: set[str], texts: dict[str, str]) -> dict:
-    """The final upkeep reply; sources must name messages of this pass."""
-    fragment = reply.text[:500]
+def parse_results(reply: ModelReply, humans: set[str], texts: dict[str, str],
+                  entries: set[int]) -> tuple[dict, list[str]]:
+    """The final upkeep reply and the reasons for each item dropped from it.
+
+    Only a reply that is not a JSON object raises; an item failing a check is dropped and the rest kept.
+    Sources must be group members' messages of this pass; ``entries`` are the reply samples asked for.
+    """
+    text = reply.text.strip()
+    fenced = _FENCE.match(text)
     try:
-        text = reply.text.strip()
-        fenced = _FENCE.match(text)
         value = json.loads(fenced.group(1) if fenced else text, parse_constant=_reject_constant)
-        if not isinstance(value, dict):
-            raise ValueError("expected a JSON object")
-        results = {name: value.get(name, []) for name in ("expressions", "terms", "meanings", "effects")}
-        for name, items in results.items():
-            if not isinstance(items, list) or len(items) > MAX_ITEMS:
-                raise ValueError(f"{name} must be an array of at most {MAX_ITEMS}")
-            for index, item in enumerate(items):
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"Invalid upkeep result: {error}; response fragment: {reply.text[:500]!r}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid upkeep result: expected a JSON object; response fragment: {reply.text[:500]!r}")
+    dropped: list[str] = []
+    checks = {"expressions": lambda item: _expression(item, humans),
+              "terms": lambda item: _term(item, humans, texts),
+              "meanings": _meaning,
+              "effects": lambda item: _effect(item, entries)}
+    results: dict = {}
+    for name, check in checks.items():
+        items = value.get(name, [])
+        if not isinstance(items, list):
+            dropped.append(f"{name}: not an array")
+            items = []
+        if len(items) > MAX_ITEMS:
+            dropped.append(f"{name}: kept the first {MAX_ITEMS} of {len(items)}")
+            items = items[:MAX_ITEMS]
+        kept = []
+        for index, item in enumerate(items):
+            try:
                 if not isinstance(item, dict):
-                    raise ValueError(f"{name}[{index}] must be an object")
-        for index, item in enumerate(results["expressions"]):
-            for field_name in ("situation", "style"):
-                if not isinstance(item.get(field_name), str) or not item[field_name].strip():
-                    raise ValueError(f"expressions[{index}].{field_name} must be nonblank text")
-            _sources(item, humans, f"expressions[{index}]")
-        for index, item in enumerate(results["terms"]):
-            term = item.get("term")
-            if not isinstance(term, str) or not term or term.strip() != term:
-                raise ValueError(f"terms[{index}].term must be nonblank without outer whitespace")
-            for key in _sources(item, humans, f"terms[{index}]"):
-                if term not in texts[key]:
-                    raise ValueError(f"terms[{index}].term does not occur in message {key}: {term!r}")
-        for index, item in enumerate(results["meanings"]):
-            confidence = item.get("confidence")
-            if (not isinstance(item.get("term"), str) or not isinstance(item.get("meaning"), str)
-                    or not item["meaning"].strip() or type(confidence) not in {int, float}
-                    or not 0 <= confidence <= 1):
-                raise ValueError(f"meanings[{index}] needs term, nonblank meaning and confidence in 0..1")
-        return results
-    except (json.JSONDecodeError, TypeError, ValueError) as error:
-        raise ValueError(f"Invalid upkeep result: {error}; response fragment: {fragment!r}") from error
+                    raise ValueError("not an object")
+                kept.append(check(item))
+            except ValueError as error:
+                dropped.append(f"{name}[{index}]: {error}")
+        results[name] = kept
+    effects: dict[int, tuple[str, str]] = {}
+    for entry, reaction, reason in results["effects"]:
+        if entry in effects:
+            dropped.append(f"effects: entry_seq {entry} given twice, kept the first")
+        else:
+            effects[entry] = (reaction, reason)
+    results["effects"] = effects
+    return results, dropped
 
 
-def _sources(item: dict, humans: set[str], label: str) -> list[str]:
+def _sources(item: dict, allowed: set[str]) -> list[str]:
     sources = item.get("sources")
-    if not isinstance(sources, list) or not sources or len(set(map(str, sources))) != len(sources):
-        raise ValueError(f"{label}.sources must be a nonempty list without repeats")
-    keys = [str(source) for source in sources]
-    unknown = [key for key in keys if key not in humans]
-    if unknown:
-        raise ValueError(f"{label}.sources are not group members' messages of this pass: {unknown!r}")
+    if not isinstance(sources, list):
+        raise ValueError("sources must be a list")
+    keys = [key for key in dict.fromkeys(map(str, sources)) if key in allowed]
+    if not keys:
+        raise ValueError(f"no source is a group member's message of this pass: {sources!r}")
     return keys
 
 
-def effect_results(items: list[dict], entries: set[int]) -> dict[int, tuple[str, str]]:
-    results: dict[int, tuple[str, str]] = {}
-    for index, item in enumerate(items):
-        entry, reaction, reason = item.get("entry_seq"), item.get("reaction"), item.get("reason")
-        if type(entry) is not int or entry not in entries or entry in results:
-            raise ValueError(f"effects[{index}].entry_seq is not a new sample of this pass: {entry!r}")
-        if reaction not in REACTIONS:
-            raise ValueError(f"effects[{index}].reaction is not one of {list(REACTIONS)}: {reaction!r}")
-        if not isinstance(reason, str) or not reason.strip():
-            raise ValueError(f"effects[{index}].reason must be nonblank text")
-        results[entry] = (reaction, reason)
-    missing = sorted(entries - set(results))
-    if missing:
-        raise ValueError(f"missing reply effect results for entry_seq {missing}")
-    return results
+def _expression(item: dict, humans: set[str]) -> dict:
+    for name in ("situation", "style"):
+        if not isinstance(item.get(name), str) or not item[name].strip():
+            raise ValueError(f"{name} must be nonblank text")
+    return {"situation": item["situation"], "style": item["style"], "sources": _sources(item, humans)}
+
+
+def _term(item: dict, humans: set[str], texts: dict[str, str]) -> dict:
+    term = item.get("term")
+    if not isinstance(term, str) or not term.strip():
+        raise ValueError("term must be nonblank text")
+    term = term.strip()
+    return {"term": term, "sources": _sources(item, {key for key in humans if term in texts[key]})}
+
+
+def _meaning(item: dict) -> dict:
+    confidence = item.get("confidence")
+    if (not isinstance(item.get("term"), str) or not isinstance(item.get("meaning"), str)
+            or not item["meaning"].strip() or type(confidence) not in {int, float} or not 0 <= confidence <= 1):
+        raise ValueError("needs term, nonblank meaning and confidence in 0..1")
+    return item
+
+
+def _effect(item: dict, entries: set[int]) -> tuple[int, str, str]:
+    entry, reaction, reason = item.get("entry_seq"), item.get("reaction"), item.get("reason")
+    if type(entry) is not int or entry not in entries:
+        raise ValueError(f"entry_seq is not a sample of this pass: {entry!r}")
+    if reaction not in REACTIONS:
+        raise ValueError(f"reaction is not one of {list(REACTIONS)}: {reaction!r}")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("reason must be nonblank text")
+    return entry, reaction, reason
 
 
 def runner_fork(runner, store: Store) -> Fork:

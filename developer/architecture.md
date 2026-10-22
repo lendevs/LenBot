@@ -153,8 +153,8 @@ OneBot／Telegram ──> 平台适配器 ──> 消息入库 ──┬─> 插
 - 请求等于聊天此刻要发的请求去掉最后的回合状态，system、tools 和会话历史逐字节一致，命中服务商的前缀缓存；末尾追加一条整理指令（`next_upkeep*.md`）。
 - 只执行 `memory` 工具，其他工具返回未执行。角色没有开放 `memory` 时不能整理记忆。
 - 已在会话历史里的消息按消息 id 指明范围，不在历史里的（已压缩进回想或还没进会话）附原文。
-- 最后一次回复正文是 JSON，含 `expressions`、`terms`、`meanings`、`effects`，来源必须是本批群友消息。结果写进原有的 `memory_jobs`、`learning_batches`、`jargon_calls` 和 `reply_effect_calls`；请求以 `upkeep` 用途记在 `model_calls`，用量只计一次。
-- 触发沿用 `memory.ingest` 和 `learning` 的阈值，主脑开轮时不取快照，轮次结束后再唤醒；会话压缩前强制整理一次。一批失败时四类结果都不落库，进度不前进，面板重试后再跑。
+- 最后一次回复正文是 JSON，含 `expressions`、`terms`、`meanings`、`effects`，来源必须是本批群友消息；不合格的条目丢掉，其余照常落库，丢掉的原因记在该批的回复记录里。读不出 JSON 时请模型重答一次，工具轮数用完时请模型直接给结果。结果写进原有的 `memory_jobs`、`learning_batches`、`jargon_calls` 和 `reply_effect_calls`；请求以 `upkeep` 用途记在 `model_calls`，用量只计一次。
+- 触发沿用 `memory.ingest` 和 `learning` 的阈值，主脑开轮时不取快照，轮次结束后再唤醒；会话压缩前强制整理一次。一批失败时四类结果都不落库，进度不前进；60 秒后自动重跑同一范围，连续失败 3 次后等面板重试。memory 工具调用出错时把错误交给模型，不让整批失败。工作者遇到意外错误时在面板显示，暂停 60 秒后继续。
 
 说法去重：没有向量时，同一说法且情境字词重合度不低于 0.6 的新候选并入已有说法；有向量时按余弦相似度 0.9 合并。
 
