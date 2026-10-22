@@ -4,7 +4,7 @@ layout: home
 hero:
   name: LenBot
   text: 基于大模型的 QQ 群聊机器人
-  tagline: 通过 OneBot v11 接入 QQ，模型服务自己选择，设置和管理都在网页面板里完成。
+  tagline: 通过 OneBot v11 接入 QQ。一个聊天模型和它的 Key 就能用，设置和管理都在网页面板里完成。
   image:
     src: /lenbot-mark-animated.svg
     alt: LenBot
@@ -22,12 +22,12 @@ hero:
 features:
   - title: 群聊
     details: 每个群各有一段连续的对话。是否接话、回复哪一条由模型判断，回复时可以引用原消息、@ 群友或者只发一个表情。
+  - title: 查资料
+    details: 需要查证的问题，模型会搜索网页并读正文后再回答。默认用免 Key 的 Yahoo，也可以复用 DeepSeek 的 Key 使用 DeepSeek 搜索。
   - title: 角色
-    details: 人物设定和说话方式写在角色包里。默认角色小然安装后即可使用，修改后可以先试聊，满意再保存。
+    details: 最简单的角色只写名字和人物设定。默认角色小然安装后即可使用，修改后可以先试聊，满意再保存。
   - title: 记忆
     details: 记忆是保存在本地的 Markdown 文件，每个群分开存放。面板里可以查看和修改，也可以让 Bot 彻底忘掉某件事。
-  - title: 后台任务
-    details: 写报告和整理资料这类耗时的工作在 Docker 容器里执行，不占用聊天。完成后，生成的文件会发回群里。
   - title: 插件
     details: 插件用 Python 编写，可以添加命令和定时任务，也可以给模型增加工具。修改插件设置不需要重启。
   - title: 网页面板
@@ -48,7 +48,7 @@ features:
   <div class="box">
     <h2>当前状态</h2>
     <p>首个公开版本 0.2.0 尚未发布，部署包和 Docker 镜像要等发布后才能下载。在此之前请<a href="./guide/install-source">从源码运行</a>。</p>
-    <p>目前只支持 QQ，需要另外运行一个 OneBot 实现（例如 NapCat），并准备自己的模型服务。提示词只有中文，面板有中文和英文。</p>
+    <p>主要面向 QQ，需要另外运行一个 OneBot 实现（例如 NapCat），并准备自己的模型服务。也可以<a href="./guide/telegram">接入 Telegram</a>。提示词只有中文，面板有中文和英文。</p>
   </div>
 </div>
 

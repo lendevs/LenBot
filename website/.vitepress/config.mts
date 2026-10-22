@@ -40,13 +40,15 @@ export default defineConfig({
           { text: '接入 QQ（OneBot）', link: '/guide/onebot' },
           { text: '接入 Telegram', link: '/guide/telegram' },
           { text: '首次配置', link: '/guide/first-setup' },
-          { text: '可选服务', link: '/guide/optional-services' },
         ] },
         { text: '日常使用', items: [
           { text: '面板一览', link: '/guide/panel' },
           { text: '角色', link: '/guide/personas' },
           { text: '插件', link: '/guide/plugins' },
           { text: '记忆', link: '/guide/memory' },
+        ] },
+        { text: '可选能力', items: [
+          { text: '可选服务', link: '/guide/optional-services' },
           { text: '后台任务', link: '/guide/tasks' },
         ] },
         { text: '维护', items: [
