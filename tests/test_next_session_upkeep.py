@@ -253,6 +253,11 @@ async def test_the_worker_keeps_running_after_an_unexpected_error(tmp_path, monk
         _group_messages(store)
         working = upkeep.fork
         calls = []
+        recovered = asyncio.Event()
+
+        def updated():
+            if calls and SCENE not in upkeep.errors:
+                recovered.set()
 
         async def flaky(scene):
             calls.append(scene)
@@ -260,12 +265,16 @@ async def test_the_worker_keeps_running_after_an_unexpected_error(tmp_path, monk
                 raise OSError('synthetic database hiccup')
             return await working(scene)
         upkeep.fork = flaky
+        upkeep.on_update = updated
         upkeep.request(SCENE, 'memory')
         upkeep.start()
         try:
-            async with asyncio.timeout(3):
-                while (job := memory.jobs.latest(SCENE)) is None or job['status'] != 'complete':
-                    await asyncio.sleep(.01)
+            # Memory completes before learning; wait for the worker's recovery notification.
+            await asyncio.wait_for(recovered.wait(), timeout=3)
+            assert upkeep.running(SCENE)
+            assert memory.jobs.latest(SCENE)['status'] == 'complete'
+            assert LearningStore(store).latest(SCENE)['status'] == 'complete'
+            assert JargonStore(store).latest(SCENE)['status'] == 'complete'
         finally:
             await upkeep.close()
         assert len(calls) == 2 and SCENE not in upkeep.errors
