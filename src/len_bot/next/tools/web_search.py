@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from ..models.providers import http_client
+from ..models.providers import SEARCH_APIS, http_client
 from ..storage.store import WebPage
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ _yahoo_cookies = httpx.Cookies()
 class WebSearchSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
-    provider: Literal["yahoo", "bing_rss", "deepseek"]
+    provider: Literal["yahoo", "bing_rss", "deepseek", "tavily", "brave", "bocha"]
     connection: str | None = Field(default=None, min_length=1, pattern=r"\S")
     timeout_seconds: float = Field(default=15, gt=0, allow_inf_nan=False)
     max_results: int = Field(default=5, ge=1, le=20, strict=True)
@@ -52,10 +52,10 @@ class WebSearchSettings(BaseModel):
 
     @model_validator(mode="after")
     def search_connection(self):
-        if self.provider == "deepseek" and self.connection is None:
-            raise ValueError("DeepSeek 搜索需要选择连接")
-        if self.provider != "deepseek" and self.connection is not None:
-            raise ValueError("只有 DeepSeek 搜索需要连接")
+        if self.provider in SEARCH_APIS and self.connection is None:
+            raise ValueError(f"{self.provider} 搜索需要选择连接")
+        if self.provider not in SEARCH_APIS and self.connection is not None:
+            raise ValueError(f"{self.provider} 搜索不使用连接")
         return self
 
 
@@ -288,6 +288,59 @@ async def _search_deepseek(connection: Provider, query: str, count: int, timeout
             for row in parsed.results[:count]]
 
 
+async def keyed_request(connection: Provider, method: str, path: str, timeout: float, *, label: str,
+                 json_body: dict | None = None, params: dict | None = None) -> object:
+    """One request to a keyed web service; the key never appears in errors."""
+    async with http_client(base_url=connection.base_url, api_key=connection.api_key, api=connection.api,
+                           proxy=connection.proxy, timeout_seconds=timeout) as client:
+        response = await client.request(method, path, json=json_body, params=params,
+                                        headers={"Accept": "application/json"})
+    raw = response.text.replace(connection.api_key, '[hidden]')
+    if not response.is_success:
+        raise ValueError(f"{label} HTTP {response.status_code}: {raw[:ERROR_BYTES]}")
+    try:
+        return response.json()
+    except ValueError as error:
+        raise ValueError(f"{label} invalid response: {raw[:500]}") from error
+
+
+def _rows(items: object, label: str, fields: tuple[str, str, str, str]) -> list[dict]:
+    """Map a provider's result list onto title, url, snippet and published_at."""
+    if not isinstance(items, list):
+        raise ValueError(f"{label} returned no result list")
+    title, url, snippet, date = fields
+    return [{"title": item.get(title) or "", "url": item[url], "snippet": item.get(snippet) or "",
+             "published_at": item.get(date)} for item in items if isinstance(item, dict) and item.get(url)]
+
+
+async def _search_tavily(connection: Provider, query: str, count: int, timeout: float) -> list[dict]:
+    body = await keyed_request(connection, "POST", "search", timeout, label="web_search Tavily",
+                        json_body={"query": query, "max_results": count})
+    return _rows(body.get("results"), "web_search Tavily", ("title", "url", "content", "published_date"))[:count]
+
+
+async def _search_brave(connection: Provider, query: str, count: int, timeout: float) -> list[dict]:
+    body = await keyed_request(connection, "GET", "web/search", timeout, label="web_search Brave",
+                        params={"q": query, "count": count})
+    web = body.get("web") or {}
+    return _rows(web.get("results", []), "web_search Brave", ("title", "url", "description", "page_age"))[:count]
+
+
+async def _search_bocha(connection: Provider, query: str, count: int, timeout: float) -> list[dict]:
+    body = await keyed_request(connection, "POST", "web-search", timeout, label="web_search 博查",
+                        json_body={"query": query, "count": count, "summary": True})
+    pages = (body.get("data") or body).get("webPages") or {}
+    rows = _rows(pages.get("value", []), "web_search 博查", ("name", "url", "snippet", "datePublished"))
+    for row, item in zip(rows, pages.get("value", []), strict=False):
+        if item.get("summary"):
+            row["summary"] = item["summary"]
+    return rows[:count]
+
+
+KEYED_SEARCH = {"deepseek": _search_deepseek, "tavily": _search_tavily, "brave": _search_brave,
+                "bocha": _search_bocha}
+
+
 async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchArguments, *,
                              recording: RecordedWeb | None = None,
                              connection: Provider | None = None,
@@ -313,10 +366,11 @@ async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchAr
     deadline = asyncio.timeout(settings.timeout_seconds)
     try:
         async with deadline:
-            if settings.provider == "deepseek":
+            if settings.provider in KEYED_SEARCH:
                 if connection is None:
-                    raise ValueError("DeepSeek 搜索连接未提供")
-                rows = await _search_deepseek(connection, arguments.query, count, settings.timeout_seconds)
+                    raise ValueError(f"{settings.provider} 搜索连接未提供")
+                rows = await KEYED_SEARCH[settings.provider](connection, arguments.query, count,
+                                                             settings.timeout_seconds)
             else:
                 async with httpx.AsyncClient(
                     timeout=settings.timeout_seconds, trust_env=False, follow_redirects=False,

@@ -362,6 +362,10 @@ class SceneTools:
             log_event(logger, 'tool_call', result_chars=len(result[0]))
             return result
 
+    def _connection(self, settings):
+        """The provider a web search or read setting names, if it uses one."""
+        return None if settings.connection is None else self.config.models.providers[settings.connection]
+
     async def _execute(self, turn_id: str, call: ToolCall,
                        wait_for_messages: Callable[[float], Awaitable[str]], *,
                        expression_style: str | None, direct: bool,
@@ -421,20 +425,21 @@ class SceneTools:
         if call.name == "web_read":
             return await execute_web_read(self.store, self.config.scene, self.config.web_read,
                                           WebReadArguments.model_validate(call.arguments), recording=self.replay_web,
-                                          fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url), None, None
+                                          fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
+                                          connection=self._connection(self.config.web_read)), None, None
         if call.name == "web_search":
             read_top = None
             if self.replay_web is None and self.config.web_read is not None and "web_read" in self.allowed_tool_names:
                 async def read_top(url: str):
                     return await read_web_page(self.store, self.config.scene, self.config.web_read, url,
                                                fake_ip_networks=self.config.network.networks(),
-                                               public_dns_url=self.config.network.public_dns_url)
+                                               public_dns_url=self.config.network.public_dns_url,
+                                               connection=self._connection(self.config.web_read))
             return await execute_web_search(self.config.web_search, WebSearchArguments.model_validate(call.arguments),
                                             recording=self.replay_web, read_top=read_top,
                                             save_page=(lambda page: self.store.save_web_page(self.config.scene, page))
                                                 if read_top is not None else None,
-                                            connection=(self.config.models.providers[self.config.web_search.connection]
-                                                        if self.config.web_search.connection is not None else None)), None, None
+                                            connection=self._connection(self.config.web_search)), None, None
         if call.name == "memory":
             return await self.memory.execute(self.config.scene, call.arguments), None, None
         if call.name in {"delegate", "task"}:

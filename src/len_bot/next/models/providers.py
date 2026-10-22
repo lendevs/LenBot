@@ -8,7 +8,8 @@ from urllib.parse import urlsplit
 import httpx
 
 ChatAPI = Literal['openai-chat', 'openai-responses', 'anthropic', 'gemini']
-ProviderAPI = Literal['openai-chat', 'openai-responses', 'anthropic', 'gemini', 'openai-audio', 'openai-embeddings', 'deepseek-search']
+ProviderAPI = Literal['openai-chat', 'openai-responses', 'anthropic', 'gemini', 'openai-audio', 'openai-embeddings',
+                      'deepseek-search', 'tavily', 'brave-search', 'bocha', 'jina-reader']
 CHAT_APIS = {'openai-chat', 'openai-responses', 'anthropic', 'gemini'}
 PROTOCOLS = [
     {'api': 'openai-chat', 'title': 'OpenAI 兼容聊天', 'base_url': '',
@@ -27,9 +28,22 @@ PROTOCOLS = [
      'roles': ['asr'], 'description': '仅 audio/transcriptions，不能用于聊天。'},
     {'api': 'openai-embeddings', 'title': 'OpenAI 兼容向量', 'base_url': '',
      'roles': ['embedding'], 'description': '仅 embeddings，不能用于聊天。'},
-    {'api': 'deepseek-search', 'title': 'DeepSeek 搜索', 'base_url': 'https://api.deepseek.com/v1',
-     'roles': ['search'], 'description': '独立网页搜索接口。'},
+    {'api': 'deepseek-search', 'title': 'DeepSeek 搜索与读取', 'base_url': 'https://api.deepseek.com/v1',
+     'roles': ['search', 'read'], 'description': '按次计费的网页搜索和网页读取接口。'},
+    {'api': 'tavily', 'title': 'Tavily', 'base_url': 'https://api.tavily.com',
+     'roles': ['search', 'read'], 'description': '按次计费的网页搜索和网页读取接口。'},
+    {'api': 'brave-search', 'title': 'Brave Search', 'base_url': 'https://api.search.brave.com/res/v1',
+     'roles': ['search'], 'description': '按次计费的网页搜索接口。'},
+    {'api': 'bocha', 'title': '博查', 'base_url': 'https://api.bochaai.com/v1',
+     'roles': ['search'], 'description': '按次计费的网页搜索接口。'},
+    {'api': 'jina-reader', 'title': 'Jina Reader', 'base_url': 'https://r.jina.ai',
+     'roles': ['read'], 'description': '按用量计费的网页读取接口。'},
 ]
+# Web services: which provider APIs each search or read choice accepts as its connection.
+SEARCH_APIS = {'deepseek': {'openai-chat', 'openai-responses', 'deepseek-search'}, 'tavily': {'tavily'},
+               'brave': {'brave-search'}, 'bocha': {'bocha'}}
+READ_APIS = {'deepseek': {'openai-chat', 'openai-responses', 'deepseek-search'}, 'tavily': {'tavily'},
+             'jina': {'jina-reader'}}
 
 
 def valid_url(value: str) -> str:
@@ -45,6 +59,8 @@ def auth_headers(api: ProviderAPI, key: str) -> dict[str, str]:
         return {'x-api-key': key, 'anthropic-version': '2023-06-01'}
     if api == 'gemini':
         return {'x-goog-api-key': key}
+    if api == 'brave-search':
+        return {'X-Subscription-Token': key}
     return {'Authorization': f'Bearer {key}'}
 
 

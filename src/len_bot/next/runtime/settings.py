@@ -21,12 +21,14 @@ class LiveSettings:
     async def apply(self, saved: HostConfig) -> None:
         runtime, running = self.runtime, self.runtime.config
         for name in ('owners', 'permissions', 'timezone', 'max_steps', 'turn_timeout_seconds', 'text_delivery',
-                     'compaction', 'images', 'audio', 'commands', 'web_read'):
+                     'compaction', 'images', 'audio', 'commands'):
             setattr(running, name, deepcopy(getattr(saved, name)))
-        search = saved.web_search
-        if (search is None or search.connection is None
-                or running.models.providers.get(search.connection) == saved.models.providers[search.connection]):
-            running.web_search = deepcopy(search)
+        # A web service whose connection changed waits for the restart that applies the connection.
+        for name in ('web_read', 'web_search'):
+            web = getattr(saved, name)
+            if (web is None or web.connection is None
+                    or running.models.providers.get(web.connection) == saved.models.providers[web.connection]):
+                setattr(running, name, deepcopy(web))
         apply_speech_limits(running, saved)
         if runtime.slots is not None:
             if ((saved.limits.daily_tokens is not None or saved.limits.scene_daily_tokens)

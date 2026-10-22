@@ -41,7 +41,18 @@ class TextDelivery(BaseModel):
 class WebReadSettings(BaseModel):
     model_config = STRICT
 
+    # local fetches the page from this machine; the others read it through a keyed service.
+    provider: Literal["local", "deepseek", "tavily", "jina"] = "local"
+    connection: str | None = Field(default=None, min_length=1, pattern=r"\S")
     timeout_seconds: float = Field(default=20, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def read_connection(self) -> WebReadSettings:
+        if self.provider != "local" and self.connection is None:
+            raise ValueError(f"{self.provider} 读取需要选择连接")
+        if self.provider == "local" and self.connection is not None:
+            raise ValueError("本机读取不使用连接")
+        return self
 
 
 class ImageSettings(BaseModel):

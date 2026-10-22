@@ -8,6 +8,7 @@ import Field from '../../ui/Field.vue'
 import Input from '../../ui/Input.vue'
 import Select from '../../ui/Select.vue'
 import ProbeTools from './ProbeTools.vue'
+import { SERVICE_PROVIDER } from '../../api/webServices'
 import { keyReusable, useForm, type ProviderRow } from './form'
 import { useProtocolTitle } from './protocols'
 
@@ -27,6 +28,8 @@ const apiOptions = computed(() =>
 )
 const errorOf = (field: 'name' | 'url' | 'key') =>
   form.problems.value.find((item) => item.provider === props.id && item.field === field)?.text
+/** Search and read services have no model to test. */
+const WEB_ONLY = Object.values(SERVICE_PROVIDER).map((item) => item.api)
 </script>
 
 <template>
@@ -80,7 +83,7 @@ const errorOf = (field: 'name' | 'url' | 'key') =>
       :error="form.protocols.error.value"
       :retry="form.protocols.refetch"
     />
-    <div v-if="row.api !== 'deepseek-search'" class="flex flex-col gap-3 border-t border-line pt-5">
+    <div v-if="!WEB_ONLY.includes(row.api)" class="flex flex-col gap-3 border-t border-line pt-5">
       <h4 class="text-sm font-semibold">{{ t('models.probe.title') }}</h4>
       <ProbeTools :row="row" />
     </div>

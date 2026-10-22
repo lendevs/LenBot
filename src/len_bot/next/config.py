@@ -22,6 +22,7 @@ from .models.limits import ResourceLimits
 from .configuration.mcp import MCPService, SERVICE_NAME
 from .memory.service import MemorySettings
 from .models.client import ModelSettings
+from .models.providers import READ_APIS, SEARCH_APIS
 from .runtime.logs import LoggingSettings
 from .runtime.retention import RetentionSettings
 from .configuration.tasks import WorkerSettings
@@ -94,12 +95,15 @@ class SharedConfig(BaseModel):
 
     @model_validator(mode="after")
     def memory_provider_exists(self) -> SharedConfig:
-        if self.web_search is not None and self.web_search.connection is not None:
-            alias = self.web_search.connection
+        for name, apis in (("web_search", SEARCH_APIS), ("web_read", READ_APIS)):
+            settings = getattr(self, name)
+            if settings is None or settings.connection is None:
+                continue
+            alias = settings.connection
             if alias not in self.models.providers:
-                raise ValueError(f"web_search.connection references unknown provider {alias!r}")
-            if self.models.providers[alias].api not in {"openai-chat", "openai-responses", "deepseek-search"}:
-                raise ValueError("DeepSeek 搜索需要兼容 API 或 DeepSeek 搜索连接")
+                raise ValueError(f"{name}.connection references unknown provider {alias!r}")
+            if self.models.providers[alias].api not in apis[settings.provider]:
+                raise ValueError(f"{name} 选的 {settings.provider} 不能使用 {self.models.providers[alias].api} 连接 {alias!r}")
         if self.memory is not None and self.memory.local.embedding is not None:
             provider = self.memory.local.embedding.provider
             if provider not in self.models.providers:

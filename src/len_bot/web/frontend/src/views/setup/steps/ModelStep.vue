@@ -17,6 +17,7 @@ import { useProtocolTitle } from '../../models/protocols'
 import MoreFields from '../MoreFields.vue'
 import TestResult from '../TestResult.vue'
 import { useStepErrors, useWizard } from '../wizard'
+import { READ_SERVICES, SEARCH_SERVICES } from '../../../api/webServices'
 
 const { t } = useI18n()
 const wizard = useWizard()
@@ -28,9 +29,12 @@ const presets = computed(() => [
   { value: 'other' as const, label: t('setup.model.other') },
 ])
 const searchOptions = computed(() => [
-  { value: 'deepseek' as const, label: t('capabilities.web.deepseek') },
-  { value: 'yahoo' as const, label: 'Yahoo' },
+  ...SEARCH_SERVICES.map((value) => ({ value, label: t(`capabilities.web.services.${value}`) })),
   { value: 'off' as const, label: t('setup.model.searchOff') },
+])
+const readOptions = computed(() => [
+  ...READ_SERVICES.map((value) => ({ value, label: t(`capabilities.web.services.${value}`) })),
+  { value: 'off' as const, label: t('setup.model.readOff') },
 ])
 /** Replies right after new messages use a low effort; tool results keep the full one. */
 const quickReply = computed({
@@ -204,7 +208,11 @@ const passed = computed(() => {
     </div>
     <div class="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
       <Field :label="t('capabilities.web.provider')">
-        <Select v-model="draft.search" :options="searchOptions" />
+        <Select
+          :model-value="draft.search"
+          :options="searchOptions"
+          @update:model-value="(value) => value && wizard.chooseSearch(value)"
+        />
       </Field>
       <Field
         v-if="draft.search === 'deepseek'"
@@ -213,7 +221,7 @@ const passed = computed(() => {
       >
         <Select v-model="draft.searchConnection" :options="connectionOptions" />
       </Field>
-      <template v-if="draft.search === 'deepseek' && draft.searchConnection === 'separate'">
+      <template v-if="wizard.searchAlias() === 'search'">
         <Field :label="t('models.providers.url')" :error="error('searchBaseUrl')" required wide>
           <Input v-model="draft.searchBaseUrl" type="url" mono />
         </Field>
@@ -224,7 +232,24 @@ const passed = computed(() => {
           <Input v-model="draft.searchProxy" type="url" mono placeholder="http://127.0.0.1:7890" />
         </Field>
       </template>
-      <Field :label="t('capabilities.web.readOn')" inline wide><Switch v-model="draft.readWeb" /></Field>
+      <Field :label="t('capabilities.web.readProvider')">
+        <Select
+          :model-value="draft.read"
+          :options="readOptions"
+          @update:model-value="(value) => value && wizard.chooseRead(value)"
+        />
+      </Field>
+      <template v-if="wizard.readAlias() === 'reader'">
+        <Field :label="t('models.providers.url')" :error="error('readBaseUrl')" required wide>
+          <Input v-model="draft.readBaseUrl" type="url" mono />
+        </Field>
+        <Field :label="t('models.providers.key')" :error="error('readKey')" required>
+          <Input v-model="draft.readKey" type="password" mono autocomplete="off" />
+        </Field>
+        <Field :label="t('models.providers.proxy')" :error="error('readProxy')">
+          <Input v-model="draft.readProxy" type="url" mono placeholder="http://127.0.0.1:7890" />
+        </Field>
+      </template>
     </div>
     <MoreFields v-model="more" :title="t('models.roles.advanced')">
       <Field

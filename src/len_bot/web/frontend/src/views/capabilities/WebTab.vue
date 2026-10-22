@@ -10,6 +10,7 @@ import {
   type WebSearch,
 } from '../../api/capabilities'
 import type { SavedProvider } from '../../api/models'
+import { READ_APIS, READ_SERVICES, SEARCH_APIS, SEARCH_SERVICES } from '../../api/webServices'
 import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
@@ -73,25 +74,38 @@ const changed = computed(() => {
     network: value.fakeIp !== base.fakeIp || value.dns !== base.dns,
   }
 })
-const providers = computed<{ value: WebSearch['provider']; label: string }[]>(() => [
-  { value: 'deepseek', label: t('capabilities.web.deepseek') },
-  { value: 'yahoo', label: 'Yahoo' },
-  { value: 'bing_rss', label: 'Bing RSS' },
-])
-const connections = computed(() =>
+const providers = computed(() =>
+  SEARCH_SERVICES.map((value) => ({ value, label: t(`capabilities.web.services.${value}`) })),
+)
+const readers = computed(() =>
+  READ_SERVICES.map((value) => ({ value, label: t(`capabilities.web.services.${value}`) })),
+)
+const saved = computed(() =>
   Object.entries(
     (settings.data.value?.saved.models as { providers: Record<string, SavedProvider> } | undefined)
       ?.providers ?? {},
-  )
-    .filter(([, value]) => ['openai-chat', 'openai-responses', 'deepseek-search'].includes(value.api))
-    .map(([alias]) => ({ value: alias, label: alias })),
+  ),
 )
-watch(
-  () => draft.value?.search?.provider,
-  (provider) => {
-    if (draft.value?.search && provider !== 'deepseek') draft.value.search.connection = null
-  },
+/** Saved connections whose protocol the chosen service accepts. */
+const usable = (apis: string[] | null | undefined) =>
+  saved.value
+    .filter(([, value]) => apis?.includes(value.api))
+    .map(([alias]) => ({ value: alias, label: alias }))
+const searchConnections = computed(() =>
+  usable(draft.value?.search && SEARCH_APIS[draft.value.search.provider]),
 )
+const readConnections = computed(() => usable(draft.value?.read && READ_APIS[draft.value.read.provider]))
+const searchKeyed = computed(() => Boolean(draft.value?.search && SEARCH_APIS[draft.value.search.provider]))
+const readKeyed = computed(() => Boolean(draft.value?.read && READ_APIS[draft.value.read.provider]))
+// A connection that the newly chosen service cannot use is cleared.
+watch(searchConnections, (options) => {
+  const search = draft.value?.search
+  if (search && !options.some((item) => item.value === search.connection)) search.connection = null
+})
+watch(readConnections, (options) => {
+  const read = draft.value?.read
+  if (read && !options.some((item) => item.value === read.connection)) read.connection = null
+})
 const dirty = computed(() => Object.values(changed.value).some(Boolean))
 useUnsavedChanges(dirty, { keep: ['tab'] })
 const networks = computed(() =>
@@ -104,7 +118,8 @@ const invalid = computed(() => {
   const value = draft.value
   if (!value) return true
   return (
-    (value.search?.provider === 'deepseek' && !value.search.connection) ||
+    (searchKeyed.value && !value.search?.connection) ||
+    (readKeyed.value && !value.read?.connection) ||
     (value.read !== null && value.read.timeout_seconds === null) ||
     (value.search !== null && (value.search.timeout_seconds === null || value.search.max_results === null)) ||
     !/^https?:\/\/[^/?#]+/.test(value.dns.trim())
@@ -155,8 +170,28 @@ async function save() {
         <Field :label="t('capabilities.web.readOn')" inline wide>
           <Switch
             :model-value="draft.read !== null"
-            @update:model-value="(on: boolean) => (draft!.read = on ? { timeout_seconds: 20 } : null)"
+            @update:model-value="
+              (on: boolean) =>
+                (draft!.read = on ? { provider: 'local', connection: null, timeout_seconds: 20 } : null)
+            "
           />
+        </Field>
+        <Field v-if="draft.read" :label="t('capabilities.web.readProvider')">
+          <Select v-model="draft.read.provider" :options="readers" />
+        </Field>
+        <Field v-if="draft.read && readKeyed" :label="t('capabilities.web.readConnection')" required>
+          <div class="flex items-center gap-2">
+            <div class="min-w-0 flex-1">
+              <Select
+                :model-value="draft.read.connection ?? undefined"
+                :options="readConnections"
+                @update:model-value="(value) => (draft!.read!.connection = value ?? null)"
+              />
+            </div>
+            <Button variant="ghost" size="sm" @click="router.push('/models?tab=providers')">
+              {{ t('capabilities.web.manageConnections') }}
+            </Button>
+          </div>
         </Field>
         <Field
           v-if="draft.read"
@@ -188,16 +223,12 @@ async function save() {
           <Field :label="t('capabilities.web.provider')">
             <Select v-model="draft.search.provider" :options="providers" />
           </Field>
-          <Field
-            v-if="draft.search.provider === 'deepseek'"
-            :label="t('capabilities.web.connection')"
-            required
-          >
+          <Field v-if="searchKeyed" :label="t('capabilities.web.connection')" required>
             <div class="flex items-center gap-2">
               <div class="min-w-0 flex-1">
                 <Select
                   :model-value="draft.search.connection ?? undefined"
-                  :options="connections"
+                  :options="searchConnections"
                   @update:model-value="(value) => (draft!.search!.connection = value ?? null)"
                 />
               </div>

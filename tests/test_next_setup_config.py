@@ -305,18 +305,27 @@ def test_docker_smoke_goes_through_the_wizard_port_and_docs_name_the_container_p
             assert '8088' not in path.read_text(encoding='utf-8'), path
 
 
-@pytest.mark.parametrize('mode', ['shared', 'separate', 'yahoo', 'off'])
+@pytest.mark.parametrize('mode', ['shared', 'separate', 'yahoo', 'off', 'tavily', 'jina'])
 def test_setup_search_connection_and_minimal_custom_persona(tmp_path, mode):
     from len_bot.next.panel.setup import FirstSetup, initialize
     source = json.loads((Path(__file__).parents[1] / 'deploy/current/first-setup.example.json').read_text())
     source.update(password='fixture-password', persona_id='new-role', persona_name='新角色', brief='喜欢聊天。',
-                  max_steps=16, web_read=True)
+                  max_steps=16, web_read={})
     source.pop('voice_text', None)
     if mode in {'shared', 'separate'}:
         source['web_search'] = {'provider': 'deepseek', 'connection': 'primary' if mode == 'shared' else 'search'}
         if mode == 'separate':
             source['search_provider'] = {'api': 'deepseek-search', 'base_url': 'https://api.deepseek.com/v1',
                                          'api_key': 'synthetic-search-key'}
+    elif mode == 'tavily':
+        # One paid connection serves both search and reading.
+        source['web_search'] = {'provider': 'tavily', 'connection': 'search'}
+        source['search_provider'] = {'api': 'tavily', 'base_url': 'https://api.tavily.com', 'api_key': 'synthetic-tavily'}
+        source['web_read'] = {'provider': 'tavily', 'connection': 'search'}
+    elif mode == 'jina':
+        source['web_search'] = {'provider': 'yahoo'}
+        source['read_provider'] = {'api': 'jina-reader', 'base_url': 'https://r.jina.ai', 'api_key': 'synthetic-jina'}
+        source['web_read'] = {'provider': 'jina', 'connection': 'reader'}
     else:
         source['web_search'] = {'provider': 'yahoo'} if mode == 'yahoo' else None
     initialize(tmp_path, FirstSetup.model_validate(source))
@@ -329,5 +338,10 @@ def test_setup_search_connection_and_minimal_custom_persona(tmp_path, mode):
         assert config.models.providers[alias].api_key == (source['provider']['api_key'] if mode == 'shared' else 'synthetic-search-key')
     elif mode == 'off':
         assert config.web_search is None
+    elif mode == 'tavily':
+        assert config.web_search.connection == config.web_read.connection == 'search'
+        assert config.models.providers['search'].api == 'tavily'
+    elif mode == 'jina':
+        assert config.web_read.provider == 'jina' and config.models.providers['reader'].api == 'jina-reader'
     else:
         assert config.web_search.provider == 'yahoo' and config.web_search.connection is None

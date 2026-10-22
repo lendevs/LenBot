@@ -23,7 +23,7 @@ features:
   - title: 群聊
     details: 每个群各有一段连续的对话。是否接话、回复哪一条由模型判断，回复时可以引用原消息、@ 群友或者只发一个表情。
   - title: 查资料
-    details: 需要查证的问题，模型会搜索网页并读正文后再回答。默认用免 Key 的 Yahoo，也可以复用 DeepSeek 的 Key 使用 DeepSeek 搜索。
+    details: 需要查证的问题，模型会搜索网页并读正文后再回答。可以选免费的 Yahoo、Bing RSS 和本机读取，也可以接 DeepSeek、Tavily、Brave、博查、Jina 等付费接口。
   - title: 角色
     details: 最简单的角色只写名字和人物设定。默认角色小然安装后即可使用，修改后可以先试聊，满意再保存。
   - title: 记忆

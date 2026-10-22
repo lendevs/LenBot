@@ -9,6 +9,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from email.message import Message
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 from string import Template
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -20,6 +22,10 @@ from .http_read import fetch_public
 from ..storage.store import Store, WebPage
 from ..trials.replay_web import RecordedWeb
 from ..prompt_files import read_prompt
+from .web_search import keyed_request
+
+if TYPE_CHECKING:
+    from ..configuration.models import Provider
 
 
 PAGE_CHARS = 4000
@@ -145,7 +151,8 @@ def _reject_json_constant(value: str) -> None:
 
 async def execute_web_read(store: Store, scene: str, settings: WebReadSettings,
                            arguments: WebReadArguments, *, recording: RecordedWeb | None = None,
-                           fake_ip_networks: tuple, public_dns_url: str | None = None) -> str:
+                           fake_ip_networks: tuple, public_dns_url: str | None = None,
+                           connection: Provider | None = None) -> str:
     if arguments.document is not None:
         page = store.web_page(scene, arguments.document)
         if page is None:
@@ -153,7 +160,8 @@ async def execute_web_read(store: Store, scene: str, settings: WebReadSettings,
         return _page(arguments.document, page, arguments.offset)
     if recording is None:
         document, page = await read_web_page(store, scene, settings, arguments.url,
-                                             fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url)
+                                             fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
+                                             connection=connection)
         return _page(document, page, 0)
     deadline = asyncio.timeout(settings.timeout_seconds)
     try:
@@ -177,12 +185,50 @@ async def execute_web_read(store: Store, scene: str, settings: WebReadSettings,
     return _page(document, page, 0)
 
 
+async def _read_deepseek(connection: Provider, url: str, timeout: float) -> tuple[str, str]:
+    base = connection.base_url.rstrip('/')
+    path = 'tools/fetch' if urlsplit(base).path.rstrip('/').endswith('/v1') else 'v1/tools/fetch'
+    body = await keyed_request(connection, "POST", path, timeout, label="web_read DeepSeek", json_body={"url": url})
+    return url, body["content"]
+
+
+async def _read_tavily(connection: Provider, url: str, timeout: float) -> tuple[str, str]:
+    body = await keyed_request(connection, "POST", "extract", timeout, label="web_read Tavily",
+                        json_body={"urls": [url], "format": "markdown"})
+    results = body.get("results") or []
+    if not results:
+        raise ValueError(f"web_read Tavily could not read {url}: {json.dumps(body.get('failed_results'), ensure_ascii=False)[:500]}")
+    return results[0].get("url") or url, results[0]["raw_content"]
+
+
+async def _read_jina(connection: Provider, url: str, timeout: float) -> tuple[str, str]:
+    # The page address follows the reader's own address; passed alone, httpx would request the page itself.
+    body = await keyed_request(connection, "GET", f"{connection.base_url.rstrip('/')}/{url}", timeout,
+                               label="web_read Jina")
+    data = body.get("data") or {}
+    return data.get("url") or url, data["content"]
+
+
+KEYED_READ = {"deepseek": _read_deepseek, "tavily": _read_tavily, "jina": _read_jina}
+KEYED_NAMES = {"deepseek": "DeepSeek", "tavily": "Tavily", "jina": "Jina Reader"}
+
+
 async def read_web_page(store: Store, scene: str, settings: WebReadSettings, url: str, *,
-                        fake_ip_networks: tuple, public_dns_url: str | None = None) -> tuple[int, WebPage]:
+                        fake_ip_networks: tuple, public_dns_url: str | None = None,
+                        connection: Provider | None = None) -> tuple[int, WebPage]:
     """Fetch one public page live, extract its text and save it as a scene document."""
     deadline = asyncio.timeout(settings.timeout_seconds)
     try:
         async with deadline:
+            if settings.provider != "local":
+                if connection is None:
+                    raise ValueError(f"{settings.provider} 读取连接未提供")
+                final_url, content = await KEYED_READ[settings.provider](connection, url, settings.timeout_seconds)
+                if not content.strip():
+                    raise ValueError(f"web_read {KEYED_NAMES[settings.provider]} returned no text for {url}")
+                page = WebPage(url=url, final_url=final_url, fetched_at=time.time(), media_type="text/markdown",
+                               content=content, notice=f"由 {KEYED_NAMES[settings.provider]} 读取并转为 Markdown。")
+                return store.save_web_page(scene, page), page
             final_url, content_type, body = await fetch_public(url, settings.timeout_seconds, _web_limit,
                                                                fake_ip_networks=fake_ip_networks,
                                                                public_dns_url=public_dns_url)

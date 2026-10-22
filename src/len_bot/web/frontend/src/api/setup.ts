@@ -1,5 +1,5 @@
 import { request } from './client'
-import type { WebSearch } from './capabilities'
+import type { WebRead, WebSearch } from './capabilities'
 import type { ListedModel, Protocol } from './models'
 
 /** Types of the first-run wizard in panel/setup.py; every request carries the token printed at startup. */
@@ -104,7 +104,8 @@ export interface FirstSetup {
   embedding: { provider: SetupProvider | null; model: string; dimensions: number | null } | null
   web_search: WebSearch | null
   search_provider: SetupProvider | null
-  web_read: boolean
+  web_read: WebRead | null
+  read_provider: SetupProvider | null
   max_steps: number
   voice_mode: 'direct'
   compaction: { input_tokens: number }

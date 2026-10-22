@@ -1,4 +1,5 @@
 import { http, request } from './client'
+import type { ReadService, SearchService } from './webServices'
 import type { SettingsSnapshot } from './settings'
 import type { Task } from './tasks'
 
@@ -40,10 +41,12 @@ export interface McpState {
 }
 
 export interface WebRead {
+  provider: ReadService
+  connection: string | null
   timeout_seconds: number | null
 }
 export interface WebSearch {
-  provider: 'yahoo' | 'bing_rss' | 'deepseek'
+  provider: SearchService
   connection: string | null
   timeout_seconds: number | null
   max_results: number | null

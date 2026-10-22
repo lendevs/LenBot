@@ -9,6 +9,13 @@ import type {
   SetupModel,
   SetupProvider,
 } from '../../api/setup'
+import {
+  READ_APIS,
+  SEARCH_APIS,
+  SERVICE_PROVIDER,
+  type ReadService,
+  type SearchService,
+} from '../../api/webServices'
 
 /** Draft, checks and request bodies of the first-run wizard; one instance per page, shared by the steps. */
 
@@ -31,12 +38,15 @@ export interface Draft {
   owner: string
   timezone: string
   preset: 'deepseek' | 'compatible' | 'other'
-  search: 'off' | 'yahoo' | 'deepseek'
+  search: 'off' | SearchService
   searchConnection: 'primary' | 'separate'
   searchBaseUrl: string
   searchKey: string
   searchProxy: string
-  readWeb: boolean
+  read: 'off' | ReadService
+  readBaseUrl: string
+  readKey: string
+  readProxy: string
   quickEffort: string
   imageInput: boolean
   maxSteps: number | null
@@ -72,7 +82,15 @@ export interface Draft {
 
 const DRAFT_KEY = 'lenbot-setup-draft'
 /** Not kept across reloads: they are typed again. */
-const SECRETS = ['password', 'passwordAgain', 'accessToken', 'apiKey', 'vectorKey', 'searchKey'] as const
+const SECRETS = [
+  'password',
+  'passwordAgain',
+  'accessToken',
+  'apiKey',
+  'vectorKey',
+  'searchKey',
+  'readKey',
+] as const
 
 function initial(): Draft {
   return {
@@ -95,7 +113,10 @@ function initial(): Draft {
     searchBaseUrl: 'https://api.deepseek.com/v1',
     searchKey: '',
     searchProxy: '',
-    readWeb: true,
+    read: 'local',
+    readBaseUrl: '',
+    readKey: '',
+    readProxy: '',
     quickEffort: 'low',
     imageInput: true,
     maxSteps: 16,
@@ -313,6 +334,34 @@ export function createWizard() {
     if (api !== 'openai-chat' && draft.vectorMode === 'primary') draft.vectorMode = 'separate'
   }
 
+  function chooseSearch(service: Draft['search']) {
+    draft.search = service
+    if (service === 'off' || !SEARCH_APIS[service]) return
+    const preset = SERVICE_PROVIDER[service as keyof typeof SERVICE_PROVIDER]
+    draft.searchBaseUrl = preset.url
+    draft.searchConnection = service === 'deepseek' && draft.preset === 'deepseek' ? 'primary' : 'separate'
+  }
+
+  function chooseRead(service: Draft['read']) {
+    draft.read = service
+    if (service !== 'off' && READ_APIS[service])
+      draft.readBaseUrl = SERVICE_PROVIDER[service as keyof typeof SERVICE_PROVIDER].url
+  }
+
+  /** The connection search uses: the chat one, a new one of its own, or none for a free service. */
+  function searchAlias(): 'primary' | 'search' | null {
+    if (draft.search === 'off' || !SEARCH_APIS[draft.search]) return null
+    return draft.search === 'deepseek' && draft.searchConnection === 'primary' ? 'primary' : 'search'
+  }
+
+  /** Reading reuses the search or DeepSeek chat connection of the same service, else needs its own. */
+  function readAlias(): 'primary' | 'search' | 'reader' | null {
+    if (draft.read === 'off' || !READ_APIS[draft.read]) return null
+    if ((draft.read as string) === draft.search) return searchAlias()
+    if (draft.read === 'deepseek' && draft.preset === 'deepseek') return 'primary'
+    return 'reader'
+  }
+
   /** Called once the protocols are read: keeps a restored choice, or takes the first protocol. */
   function settleProtocol() {
     if (!protocols.value.some((item) => item.api === draft.api) && protocols.value[0]) {
@@ -370,13 +419,18 @@ export function createWizard() {
       need('inputBudget', draft.inputBudget !== null && draft.inputBudget >= 1)
       need('thinkingBudget', !(draft.effort.trim() && draft.thinkingBudget !== null), 'bothThinking')
       need('maxSteps', draft.maxSteps !== null && draft.maxSteps > 0)
-      if (draft.search === 'deepseek' && draft.searchConnection === 'separate') {
+      if (searchAlias() === 'search') {
         need('searchBaseUrl', httpUrl(draft.searchBaseUrl.trim()), 'httpUrl')
         need('searchKey', Boolean(draft.searchKey.trim()))
         if (draft.searchProxy.trim()) need('searchProxy', httpUrl(draft.searchProxy.trim()), 'httpUrl')
       }
       if (draft.search === 'deepseek' && draft.searchConnection === 'primary')
         need('searchConnection', ['openai-chat', 'openai-responses'].includes(draft.api), 'searchConnection')
+      if (readAlias() === 'reader') {
+        need('readBaseUrl', httpUrl(draft.readBaseUrl.trim()), 'httpUrl')
+        need('readKey', Boolean(draft.readKey.trim()))
+        if (draft.readProxy.trim()) need('readProxy', httpUrl(draft.readProxy.trim()), 'httpUrl')
+      }
       Object.assign(found, problems('vectors'))
     }
     if (step === 'vectors' && draft.vectorMode !== 'skip') {
@@ -435,25 +489,30 @@ export function createWizard() {
           ? null
           : {
               provider: draft.search,
-              connection:
-                draft.search === 'deepseek'
-                  ? draft.searchConnection === 'primary'
-                    ? 'primary'
-                    : 'search'
-                  : null,
+              connection: searchAlias(),
               timeout_seconds: 15,
               max_results: 5,
             },
       search_provider:
-        draft.search === 'deepseek' && draft.searchConnection === 'separate'
+        searchAlias() === 'search'
           ? {
-              api: 'deepseek-search',
+              api: SERVICE_PROVIDER[draft.search as keyof typeof SERVICE_PROVIDER].api,
               base_url: trimUrl(draft.searchBaseUrl),
               api_key: draft.searchKey,
               proxy: trimUrl(draft.searchProxy) || null,
             }
           : null,
-      web_read: draft.readWeb,
+      web_read:
+        draft.read === 'off' ? null : { provider: draft.read, connection: readAlias(), timeout_seconds: 20 },
+      read_provider:
+        readAlias() === 'reader'
+          ? {
+              api: SERVICE_PROVIDER[draft.read as keyof typeof SERVICE_PROVIDER].api,
+              base_url: trimUrl(draft.readBaseUrl),
+              api_key: draft.readKey,
+              proxy: trimUrl(draft.readProxy) || null,
+            }
+          : null,
       max_steps: draft.maxSteps ?? 16,
       voice_mode: 'direct',
       compaction: { input_tokens: draft.inputBudget ?? 0 },
@@ -498,6 +557,10 @@ export function createWizard() {
     vectorBinding,
     choosePreset,
     chooseProtocol,
+    chooseSearch,
+    chooseRead,
+    searchAlias,
+    readAlias,
     settleProtocol,
     problems,
     tried,

@@ -15,7 +15,7 @@ With any option, the first start prints a link to a local web wizard. The wizard
 1. Panel account and port.
 2. Connect OneBot and read the bot's own account from the platform (the connection must work first).
 3. The owner's QQ number and the time zone.
-4. Chat model and web search. The DeepSeek preset reuses its chat key for search; compatible services default to Yahoo. Model testing and embeddings are optional.
+4. Chat model and web access. Search and page reading each take a free option or a paid API; the DeepSeek preset can reuse its chat key, and compatible services default to Yahoo and reading pages directly. Model testing and embeddings are optional.
 5. A persona (Xiaoran by default) and the first group or private chat, with optional plugin installation in an expandable section.
 
 After saving, LenBot starts and the page switches to the panel. For the first run, choose simulated delivery, try a few messages in the panel's chat test, and switch to real delivery once the replies look right. Each step is explained in [first setup (zh)](https://lendevs.github.io/LenBot/guide/first-setup) on the documentation site.

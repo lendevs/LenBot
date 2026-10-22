@@ -222,10 +222,13 @@ export function useModelsForm() {
       ...Object.entries(value.roles)
         .filter(([, item]) => item?.provider === id)
         .map(([role]) => roleTitle(role)),
-      ...((settings.data.value?.saved.web_search as { connection?: string } | null)?.connection ===
-      providerFor(id)?.originalAlias
-        ? [t('capabilities.web.search')]
-        : []),
+      ...(['web_search', 'web_read'] as const)
+        .filter(
+          (name) =>
+            (settings.data.value?.saved[name] as { connection?: string } | null)?.connection ===
+            providerFor(id)?.originalAlias,
+        )
+        .map((name) => t(name === 'web_search' ? 'capabilities.web.search' : 'capabilities.web.read')),
       ...(value.memory_embedding?.provider === id ? [t('models.vectors.memory')] : []),
       ...Object.entries(value.learning_embeddings)
         .filter(([, item]) => item?.provider === id)

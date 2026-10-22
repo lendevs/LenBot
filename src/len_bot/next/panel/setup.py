@@ -21,7 +21,7 @@ from . import responses
 from ..configuration.models import Binding, Provider
 from ..memory.embeddings import EmbeddingBinding
 from ..tools.web_search import WebSearchSettings
-from ..configuration.chat import Compaction
+from ..configuration.chat import Compaction, WebReadSettings
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
 from ..platform.onebot import OneBot
@@ -56,7 +56,8 @@ class FirstSetup(BaseModel):
     embedding: SetupEmbedding | None = None
     web_search: WebSearchSettings | None = None
     search_provider: Provider | None = None
-    web_read: bool = False
+    web_read: WebReadSettings | None = None
+    read_provider: Provider | None = None
     max_steps: int = Field(default=16, gt=0)
     voice_mode: Literal['direct'] = 'direct'
     compaction: Compaction = Field(default_factory=Compaction)
@@ -129,6 +130,8 @@ def setup_source(item: FirstSetup) -> dict:
     providers = {'primary': item.provider.model_dump(mode='json')}
     if item.search_provider is not None:
         providers['search'] = item.search_provider.model_dump(mode='json')
+    if item.read_provider is not None:
+        providers['reader'] = item.read_provider.model_dump(mode='json')
     vector = None
     if item.embedding is not None:
         alias = 'primary'
@@ -143,7 +146,7 @@ def setup_source(item: FirstSetup) -> dict:
         'compaction': item.compaction.model_dump(mode='json'),
         'max_steps': item.max_steps,
         'web_search': None if item.web_search is None else item.web_search.model_dump(mode='json'),
-        'web_read': {} if item.web_read else None,
+        'web_read': None if item.web_read is None else item.web_read.model_dump(mode='json'),
         'models': {'providers': providers,
                    'roles': {'mind': item.mind.model_dump(mode='json')}},
         'memory': {'backend': 'local', 'local': {'directory': 'state/memory', 'embedding': vector}},
