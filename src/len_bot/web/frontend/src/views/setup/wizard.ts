@@ -299,6 +299,16 @@ export function createWizard() {
     const protocol = protocols.value.find((item) => item.api === api)
     draft.api = api
     draft.baseUrl = protocol?.base_url ?? ''
+    // Native protocols all take an effort level and images; a compatible service may take neither.
+    const native = api !== 'openai-chat'
+    Object.assign(draft, {
+      effort: native ? 'high' : '',
+      quickEffort: native ? 'low' : '',
+      thinkingBudget: null,
+      temperature: null,
+      imageInput: native,
+      outputField: 'max_completion_tokens',
+    })
     catalog.value = []
     if (api !== 'openai-chat' && draft.vectorMode === 'primary') draft.vectorMode = 'separate'
   }
