@@ -20,7 +20,9 @@ from .tools import SceneTools
 from ..config import LabConfig
 from .recap import (CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction,
                     recap_source)
+from ..learning.expression_match import select_by_words
 from ..learning.expression_selection import ExpressionService
+from ..learning.store import LearningStore
 from ..tools.external_tools import ExternalTool
 from ..tools.skills import Skill
 from ..models.limits import LimitReached, ModelBudget, SpeechLimitReached, check_speech
@@ -425,19 +427,30 @@ class Chat:
                 phase = None
                 self.expression_ids = None
                 learned = None
-                if self.expression_service is not None and scene in self.expression_service.scenes:
+                vectors = self.expression_service is not None and scene in self.expression_service.scenes
+                if vectors or self.config.learning is not None:
                     recent = await self.store.call(self.store.recent_context_messages, scene, limit=8)
-                    query = "\n".join(self.context.render(message) for message in recent
-                                      if not message.is_self and message.sender.uid not in self.config.attention.other_bot_ids)
-                    if query:
-                        phase = '群内说法向量检索'
-                        selected = await self.expression_service.select(
-                            scene, query, turn_id=turn_id, direct=direct,
-                            exclude_uids=(self.config.bot_id, *self.config.attention.other_bot_ids))
-                        if selected:
-                            self.expression_ids = [item["id"] for item in selected]
-                            learned = Template(read_prompt("next_learned_expressions.md")).substitute(
-                                expressions=encode([{ "情境": item["situation"], "说法": item["style"] } for item in selected]))
+                    others = [message for message in recent
+                              if not message.is_self and message.sender.uid not in self.config.attention.other_bot_ids]
+                    exclude = (self.config.bot_id, *self.config.attention.other_bot_ids)
+                    selected = []
+                    if vectors:
+                        query = "\n".join(self.context.render(message) for message in others)
+                        if query:
+                            phase = '群内说法向量检索'
+                            selected = await self.expression_service.select(
+                                scene, query, turn_id=turn_id, direct=direct, exclude_uids=exclude)
+                    else:
+                        # Without embeddings, rank by the words the recent chat shares with each situation.
+                        query = "\n".join(self.context.render_text(message) for message in others)
+                        if query.strip():
+                            phase = '群内说法检索'
+                            selected = select_by_words(await self.store.call(
+                                LearningStore(self.store).adopted, scene, exclude_uids=exclude), query)
+                    if selected:
+                        self.expression_ids = [item["id"] for item in selected]
+                        learned = Template(read_prompt("next_learned_expressions.md")).substitute(
+                            expressions=encode([{ "情境": item["situation"], "说法": item["style"] } for item in selected]))
                 phase = None
                 style = select_style(self.persona)
                 expression_style = None
