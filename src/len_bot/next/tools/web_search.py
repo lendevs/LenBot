@@ -11,11 +11,17 @@ from html.parser import HTMLParser
 from datetime import datetime, timedelta, timezone
 from string import Template
 from collections.abc import Awaitable, Callable
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from ..models.providers import http_client
+from ..storage.store import WebPage
+
+if TYPE_CHECKING:
+    from ..configuration.models import Provider
+
 from ..trials.replay_web import RecordedWeb
 from ..prompt_files import read_prompt
 
@@ -38,9 +44,19 @@ _yahoo_cookies = httpx.Cookies()
 class WebSearchSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
-    provider: Literal["yahoo", "bing_rss"]
+    provider: Literal["yahoo", "bing_rss", "deepseek"]
+    connection: str | None = Field(default=None, min_length=1, pattern=r"\S")
     timeout_seconds: float = Field(default=15, gt=0, allow_inf_nan=False)
     max_results: int = Field(default=5, ge=1, le=20, strict=True)
+
+
+    @model_validator(mode="after")
+    def search_connection(self):
+        if self.provider == "deepseek" and self.connection is None:
+            raise ValueError("DeepSeek 搜索需要选择连接")
+        if self.provider != "deepseek" and self.connection is not None:
+            raise ValueError("只有 DeepSeek 搜索需要连接")
+        return self
 
 
 class WebSearchArguments(BaseModel):
@@ -236,8 +252,46 @@ async def _top_page(rows: list[dict[str, str | None]],
     return {"skipped": skipped}
 
 
+class DeepSeekResult(BaseModel):
+    model_config = ConfigDict(strict=True)
+    title: str
+    url: str
+    snippet: str
+    summary: str
+    content: str
+    date: str | None
+
+
+class DeepSeekResponse(BaseModel):
+    model_config = ConfigDict(strict=True)
+    results: list[DeepSeekResult]
+
+
+async def _search_deepseek(connection: Provider, query: str, count: int, timeout: float) -> list[dict]:
+    if len(query) > 128:
+        raise ValueError("DeepSeek 搜索词最多 128 个字符，请缩短 query")
+    # The API accepts the host root or a versioned API root, including a gateway prefix.
+    base = connection.base_url.rstrip('/')
+    path = 'tools/search' if urlsplit(base).path.rstrip('/').endswith('/v1') else 'v1/tools/search'
+    async with http_client(base_url=base, api_key=connection.api_key, api='openai-chat',
+                           proxy=connection.proxy, timeout_seconds=timeout) as client:
+        response = await client.post(path, json={'query': query, 'count': count, 'need_content': True})
+    raw = response.text.replace(connection.api_key, '[hidden]')
+    if not response.is_success:
+        raise ValueError(f"web_search DeepSeek HTTP {response.status_code}: {raw[:ERROR_BYTES]}")
+    try:
+        parsed = DeepSeekResponse.model_validate_json(response.content)
+    except ValueError as error:
+        raise ValueError(f"web_search DeepSeek invalid response: {raw[:500]}") from error
+    return [{'title': row.title, 'url': row.url, 'snippet': row.snippet, 'summary': row.summary,
+             'content': row.content, 'published_at': row.date}
+            for row in parsed.results[:count]]
+
+
 async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchArguments, *,
                              recording: RecordedWeb | None = None,
+                             connection: Provider | None = None,
+                             save_page: Callable[[WebPage], int] | None = None,
                              read_top: Callable[[str], Awaitable[tuple[int, object]]] | None = None) -> str:
     """``read_top`` reads the first readable result live and adds its opening text."""
     count = arguments.count if arguments.count is not None else settings.max_results
@@ -259,25 +313,40 @@ async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchAr
     deadline = asyncio.timeout(settings.timeout_seconds)
     try:
         async with deadline:
-            async with httpx.AsyncClient(
-                timeout=settings.timeout_seconds, trust_env=False, follow_redirects=False,
-                headers={"User-Agent": USER_AGENT}, transport=_transport(),
-                cookies=_yahoo_cookies if settings.provider == "yahoo" else None,
-            ) as client:
-                try:
-                    if settings.provider == "yahoo":
-                        rows = await _search_yahoo(client, arguments.query, count, fetched)
-                    else:
-                        rows = await _search_bing_rss(client, arguments.query, count)
-                finally:
-                    if settings.provider == "yahoo":
-                        _yahoo_cookies.update(client.cookies)
+            if settings.provider == "deepseek":
+                if connection is None:
+                    raise ValueError("DeepSeek 搜索连接未提供")
+                rows = await _search_deepseek(connection, arguments.query, count, settings.timeout_seconds)
+            else:
+                async with httpx.AsyncClient(
+                    timeout=settings.timeout_seconds, trust_env=False, follow_redirects=False,
+                    headers={"User-Agent": USER_AGENT}, transport=_transport(),
+                    cookies=_yahoo_cookies if settings.provider == "yahoo" else None,
+                ) as client:
+                    try:
+                        if settings.provider == "yahoo":
+                            rows = await _search_yahoo(client, arguments.query, count, fetched)
+                        else:
+                            rows = await _search_bing_rss(client, arguments.query, count)
+                    finally:
+                        if settings.provider == "yahoo":
+                            _yahoo_cookies.update(client.cookies)
     except TimeoutError as error:
         if deadline.expired():
             raise TimeoutError(f"web_search exceeded {settings.timeout_seconds} seconds") from error
         raise
+    if settings.provider == "deepseek":
+        for row in rows:
+            content = row["content"]
+            if content:
+                if save_page is not None:
+                    row["document"] = save_page(WebPage(url=row["url"], final_url=row["url"],
+                        fetched_at=fetched.timestamp(), media_type="text/markdown", content=content, notice=""))
+                row["total_chars"] = len(content)
+                row["next_offset"] = TOP_PAGE_CHARS if len(content) > TOP_PAGE_CHARS else None
+                row["content"] = content[:TOP_PAGE_CHARS]
     result = {"provider": settings.provider, "query": arguments.query,
               "fetched_at": fetched.strftime("%Y-%m-%dT%H:%MZ"), "results": rows}
-    if read_top is not None and rows:
+    if read_top is not None and rows and settings.provider != "deepseek":
         result["top_page"] = await _top_page(rows, read_top)
     return Template(read_prompt("next_web_search.md")).substitute(result=json.dumps(result, ensure_ascii=False))

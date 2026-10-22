@@ -18,7 +18,7 @@ import OwnerStep from './steps/OwnerStep.vue'
 import PersonaStep from './steps/PersonaStep.vue'
 import PlatformStep from './steps/PlatformStep.vue'
 import PluginsStep from './steps/PluginsStep.vue'
-import VectorStep from './steps/VectorStep.vue'
+import MoreFields from './MoreFields.vue'
 import { createWizard, steps, wizardKey, type Step } from './wizard'
 
 const { t } = useI18n()
@@ -31,9 +31,7 @@ const views: Record<Step, Component> = {
   platform: PlatformStep,
   owner: OwnerStep,
   model: ModelStep,
-  vectors: VectorStep,
   persona: PersonaStep,
-  plugins: PluginsStep,
 }
 
 const token = setupToken()
@@ -75,11 +73,6 @@ function ready(index: number): boolean {
 
 function next() {
   if (ready(current.value)) go(current.value + 1)
-}
-
-function skipVectors() {
-  wizard.draft.vectorMode = 'skip'
-  go(current.value + 1)
 }
 
 const saved = ref<SetupSaved | null>(null)
@@ -212,6 +205,9 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
             <Skeleton v-if="setup.isPending.value" :lines="6" />
             <form v-else :key="step" class="animate-rise" novalidate @submit.prevent>
               <component :is="views[step]" />
+              <MoreFields v-if="last" class="mt-6" :title="t('setup.steps.plugins')">
+                <div class="sm:col-span-2"><PluginsStep /></div>
+              </MoreFields>
             </form>
             <ErrorNote v-if="save.isError.value" :title="t('setup.saveFailed')" :error="save.error.value" />
             <div class="flex flex-wrap items-center gap-2 border-t border-line pt-5">
@@ -225,12 +221,13 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
                 {{ t('setup.previous') }}
               </Button>
               <span class="flex-1" />
-              <Button v-if="step === 'vectors'" variant="ghost" @click="skipVectors">
-                {{ t('setup.skipVectors') }}
-              </Button>
               <!-- On a phone the two ways to save stack under the back button, the main one first. -->
               <div v-if="last" class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
-                <Button :disabled="save.isPending.value" @click="submit(false)">
+                <Button
+                  v-if="wizard.draft.plugins.length"
+                  :disabled="save.isPending.value"
+                  @click="submit(false)"
+                >
                   {{ t('setup.skipPlugins') }}
                 </Button>
                 <Button variant="primary" :icon="Save" :loading="save.isPending.value" @click="submit()">

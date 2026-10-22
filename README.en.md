@@ -52,7 +52,7 @@ On first start the terminal prints a link:
 尚无根配置。请打开 http://127.0.0.1:52811/#token=...
 ```
 
-Open it in a browser and complete the seven steps of the setup wizard: admin account, QQ connection, owner and time zone, chat model, optional vector model, persona and first group, and official plugins. After saving, LenBot starts with the new configuration and the page switches to the panel.
+Open it in a browser and complete the five steps of the setup wizard: admin account, QQ connection, owner and time zone, chat model, and persona and first group. The embedding model and official plugins are optional sections inside those steps. After saving, LenBot starts with the new configuration and the page switches to the panel.
 
 For the first run, choose simulated delivery in the wizard. Replies then appear only in the panel and are not sent to QQ. Try a few rounds in the panel's Playground. Once the results look right, switch delivery to real QQ sending under System → Settings → Connection.
 

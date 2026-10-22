@@ -20,6 +20,7 @@ import yaml
 from . import responses
 from ..configuration.models import Binding, Provider
 from ..memory.embeddings import EmbeddingBinding
+from ..tools.web_search import WebSearchSettings
 from ..configuration.chat import Compaction
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
@@ -53,6 +54,10 @@ class FirstSetup(BaseModel):
     provider: Provider
     mind: Binding
     embedding: SetupEmbedding | None = None
+    web_search: WebSearchSettings | None = None
+    search_provider: Provider | None = None
+    web_read: bool = False
+    max_steps: int = Field(default=16, gt=0)
     voice_mode: Literal['direct'] = 'direct'
     compaction: Compaction = Field(default_factory=Compaction)
     scene: str
@@ -77,8 +82,8 @@ class FirstSetup(BaseModel):
 
     @model_validator(mode='after')
     def matching_password(self):
-        if not self.default_persona and any(value is None for value in (self.persona_name, self.brief, self.voice_text)):
-            raise ValueError('自定义角色需要填写名字、人物设定和说话方式')
+        if not self.default_persona and any(value is None for value in (self.persona_name, self.brief)):
+            raise ValueError('自定义角色需要填写名字和人物设定')
         if not self.password.strip():
             raise ValueError('密码不能全部是空白')
         if self.password_confirmation is not None and self.password != self.password_confirmation:
@@ -122,6 +127,8 @@ class EmbeddingProbe(BaseModel):
 
 def setup_source(item: FirstSetup) -> dict:
     providers = {'primary': item.provider.model_dump(mode='json')}
+    if item.search_provider is not None:
+        providers['search'] = item.search_provider.model_dump(mode='json')
     vector = None
     if item.embedding is not None:
         alias = 'primary'
@@ -134,6 +141,9 @@ def setup_source(item: FirstSetup) -> dict:
         'timezone': item.timezone, 'delivery': item.delivery, 'database': 'state/lenbot.sqlite3',
         'onebot': item.onebot.model_dump(mode='json'),
         'compaction': item.compaction.model_dump(mode='json'),
+        'max_steps': item.max_steps,
+        'web_search': None if item.web_search is None else item.web_search.model_dump(mode='json'),
+        'web_read': {} if item.web_read else None,
         'models': {'providers': providers,
                    'roles': {'mind': item.mind.model_dump(mode='json')}},
         'memory': {'backend': 'local', 'local': {'directory': 'state/memory', 'embedding': vector}},
@@ -160,7 +170,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     persona = (load_persona(DEFAULT_PERSONA_DIRECTORY) if item.default_persona else
                Persona(id=item.persona_id, name=item.persona_name, brief=item.brief,
                        behavior=item.brief, self_reference=['我'], aliases=[], tools='all', skills=[],
-                       styles=[], voice=item.voice_text, boundaries=item.boundaries, examples=[]))
+                       styles=[], voice=item.voice_text or '', boundaries=item.boundaries, examples=[]))
     source = setup_source(item)
     prepared = [p['name'] for p in plugin_choices(root) if p['installed'] or p['prepared']]
     source['plugins'].update(disabled=prepared, **{name: {} for name in prepared})

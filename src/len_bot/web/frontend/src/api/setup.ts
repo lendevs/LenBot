@@ -1,4 +1,5 @@
 import { request } from './client'
+import type { WebSearch } from './capabilities'
 import type { ListedModel, Protocol } from './models'
 
 /** Types of the first-run wizard in panel/setup.py; every request carries the token printed at startup. */
@@ -64,6 +65,8 @@ export interface SetupBinding {
   context_window_tokens: number
   max_output_tokens: number
   temperature: number | null
+  quick_reasoning_effort: string | null
+  image_input: boolean
   reasoning_effort: string | null
   thinking_budget_tokens: number | null
   output_token_field: 'max_completion_tokens' | 'max_tokens'
@@ -99,6 +102,10 @@ export interface FirstSetup {
   provider: SetupProvider
   mind: SetupBinding
   embedding: { provider: SetupProvider | null; model: string; dimensions: number | null } | null
+  web_search: WebSearch | null
+  search_provider: SetupProvider | null
+  web_read: boolean
+  max_steps: number
   voice_mode: 'direct'
   compaction: { input_tokens: number }
   scene: string

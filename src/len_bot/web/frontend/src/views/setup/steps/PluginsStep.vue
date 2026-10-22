@@ -22,7 +22,6 @@ function toggle(name: string, on: boolean | 'indeterminate') {
 
 <template>
   <div class="flex flex-col gap-4">
-    <p class="text-sm text-muted">{{ t('setup.plugins.disabled') }}</p>
     <Skeleton v-if="plugins.isPending.value" :lines="4" />
     <ErrorNote
       v-else-if="plugins.isError.value"
@@ -53,9 +52,6 @@ function toggle(name: string, on: boolean | 'indeterminate') {
             </a>
           </div>
           <p class="text-sm text-ink-2">{{ item.description }}</p>
-          <p v-if="item.capabilities.length" class="text-xs text-muted">
-            {{ item.capabilities.join(' · ') }}
-          </p>
           <p v-if="item.error" class="text-xs break-words text-error">
             {{ t('setup.plugins.lastError', { error: item.error }) }}
           </p>

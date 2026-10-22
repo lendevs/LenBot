@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 import httpx
 
 ChatAPI = Literal['openai-chat', 'openai-responses', 'anthropic', 'gemini']
-ProviderAPI = Literal['openai-chat', 'openai-responses', 'anthropic', 'gemini', 'openai-audio', 'openai-embeddings']
+ProviderAPI = Literal['openai-chat', 'openai-responses', 'anthropic', 'gemini', 'openai-audio', 'openai-embeddings', 'deepseek-search']
 CHAT_APIS = {'openai-chat', 'openai-responses', 'anthropic', 'gemini'}
 PROTOCOLS = [
     {'api': 'openai-chat', 'title': 'OpenAI 兼容聊天', 'base_url': '',
@@ -27,6 +27,8 @@ PROTOCOLS = [
      'roles': ['asr'], 'description': '仅 audio/transcriptions，不能用于聊天。'},
     {'api': 'openai-embeddings', 'title': 'OpenAI 兼容向量', 'base_url': '',
      'roles': ['embedding'], 'description': '仅 embeddings，不能用于聊天。'},
+    {'api': 'deepseek-search', 'title': 'DeepSeek 搜索', 'base_url': 'https://api.deepseek.com/v1',
+     'roles': ['search'], 'description': '独立网页搜索接口。'},
 ]
 
 

@@ -9,6 +9,7 @@ import {
   type WebRead,
   type WebSearch,
 } from '../../api/capabilities'
+import type { SavedProvider } from '../../api/models'
 import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
@@ -16,6 +17,8 @@ import { readPendingRestart } from '../../api/hostStore'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
+import Button from '../../ui/Button.vue'
+import { useRouter } from 'vue-router'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
@@ -27,6 +30,7 @@ import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
 const { t } = useI18n()
+const router = useRouter()
 const client = useQueryClient()
 const settings = useQuery({
   queryKey: keys.host.settings(),
@@ -69,10 +73,25 @@ const changed = computed(() => {
     network: value.fakeIp !== base.fakeIp || value.dns !== base.dns,
   }
 })
-const providers: { value: WebSearch['provider']; label: string }[] = [
+const providers = computed<{ value: WebSearch['provider']; label: string }[]>(() => [
+  { value: 'deepseek', label: t('capabilities.web.deepseek') },
   { value: 'yahoo', label: 'Yahoo' },
   { value: 'bing_rss', label: 'Bing RSS' },
-]
+])
+const connections = computed(() =>
+  Object.entries(
+    (settings.data.value?.saved.models as { providers: Record<string, SavedProvider> } | undefined)
+      ?.providers ?? {},
+  )
+    .filter(([, value]) => ['openai-chat', 'openai-responses', 'deepseek-search'].includes(value.api))
+    .map(([alias]) => ({ value: alias, label: alias })),
+)
+watch(
+  () => draft.value?.search?.provider,
+  (provider) => {
+    if (draft.value?.search && provider !== 'deepseek') draft.value.search.connection = null
+  },
+)
 const dirty = computed(() => Object.values(changed.value).some(Boolean))
 useUnsavedChanges(dirty, { keep: ['tab'] })
 const networks = computed(() =>
@@ -85,6 +104,7 @@ const invalid = computed(() => {
   const value = draft.value
   if (!value) return true
   return (
+    (value.search?.provider === 'deepseek' && !value.search.connection) ||
     (value.read !== null && value.read.timeout_seconds === null) ||
     (value.search !== null && (value.search.timeout_seconds === null || value.search.max_results === null)) ||
     !/^https?:\/\/[^/?#]+/.test(value.dns.trim())
@@ -158,13 +178,33 @@ async function save() {
             :model-value="draft.search !== null"
             @update:model-value="
               (on: boolean) =>
-                (draft!.search = on ? { provider: 'yahoo', timeout_seconds: 15, max_results: 5 } : null)
+                (draft!.search = on
+                  ? { provider: 'yahoo', connection: null, timeout_seconds: 15, max_results: 5 }
+                  : null)
             "
           />
         </Field>
         <template v-if="draft.search">
           <Field :label="t('capabilities.web.provider')">
             <Select v-model="draft.search.provider" :options="providers" />
+          </Field>
+          <Field
+            v-if="draft.search.provider === 'deepseek'"
+            :label="t('capabilities.web.connection')"
+            required
+          >
+            <div class="flex items-center gap-2">
+              <div class="min-w-0 flex-1">
+                <Select
+                  :model-value="draft.search.connection ?? undefined"
+                  :options="connections"
+                  @update:model-value="(value) => (draft!.search!.connection = value ?? null)"
+                />
+              </div>
+              <Button variant="ghost" size="sm" @click="router.push('/models?tab=providers')">
+                {{ t('capabilities.web.manageConnections') }}
+              </Button>
+            </div>
           </Field>
           <Field
             :label="t('capabilities.web.results')"

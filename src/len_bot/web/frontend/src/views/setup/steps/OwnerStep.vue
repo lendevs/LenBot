@@ -30,20 +30,10 @@ const timezone = computed({
 
 <template>
   <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
-    <Field
-      :label="t('setup.owner.owner')"
-      :error="error('owner')"
-      :info="t('setup.owner.ownerInfo')"
-      required
-    >
+    <Field :label="t('setup.owner.owner')" :error="error('owner')" required>
       <Input v-model="draft.owner" mono inputmode="numeric" placeholder="10001" />
     </Field>
-    <Field
-      :label="t('system.connection.timezone')"
-      :error="error('timezone')"
-      :info="t('setup.owner.timezoneInfo')"
-      required
-    >
+    <Field :label="t('system.connection.timezone')" :error="error('timezone')" required>
       <Combobox v-model="timezone" :options="zoneOptions" placeholder="Asia/Shanghai" />
     </Field>
   </div>

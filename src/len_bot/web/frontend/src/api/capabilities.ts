@@ -43,7 +43,8 @@ export interface WebRead {
   timeout_seconds: number | null
 }
 export interface WebSearch {
-  provider: 'yahoo' | 'bing_rss'
+  provider: 'yahoo' | 'bing_rss' | 'deepseek'
+  connection: string | null
   timeout_seconds: number | null
   max_results: number | null
 }

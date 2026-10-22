@@ -37,7 +37,7 @@ const kinds = computed(() => [
       <Field :label="t('setup.persona.brief')" :error="error('brief')" required wide>
         <Textarea v-model="draft.brief" :placeholder="t('setup.persona.briefPlaceholder')" />
       </Field>
-      <Field :label="t('setup.persona.voice')" :error="error('voice')" required wide>
+      <Field :label="t('setup.persona.voice')" :error="error('voice')" wide>
         <Textarea v-model="draft.voice" :placeholder="t('setup.persona.voicePlaceholder')" />
       </Field>
       <Field :label="t('setup.persona.boundaries')" wide>
@@ -49,7 +49,7 @@ const kinds = computed(() => [
       </Field>
     </div>
     <div class="grid gap-x-5 gap-y-5 border-t border-line pt-6 sm:grid-cols-2">
-      <Field :label="t('setup.persona.where')" :info="t('setup.persona.whereInfo')">
+      <Field :label="t('setup.persona.where')">
         <div>
           <SegmentedControl v-model="draft.sceneKind" :options="kinds" :label="t('setup.persona.where')" />
         </div>

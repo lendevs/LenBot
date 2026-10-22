@@ -117,7 +117,7 @@ function test() {
         {{ error('connect') }}
       </p>
     </div>
-    <Field :label="t('system.connection.delivery')" :info="t('setup.platform.deliveryInfo')">
+    <Field :label="t('system.connection.delivery')">
       <div>
         <SegmentedControl
           v-model="draft.delivery"

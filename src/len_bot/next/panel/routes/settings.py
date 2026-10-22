@@ -548,6 +548,9 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                     renames[origin] = alias
                 resolved = provider.resolve(None if origin is None else saved.models.providers[origin])
                 providers[alias] = resolved.model_dump(mode='json')
+            search = source.get('web_search')
+            if search is not None and search.get('connection') is not None:
+                search['connection'] = renames.get(search['connection'], search['connection'])
             memory = source.get('memory')
             if memory is not None and memory['local'].get('embedding') is not None:
                 binding = memory['local']['embedding']

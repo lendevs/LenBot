@@ -12,8 +12,9 @@ import type {
 
 /** Draft, checks and request bodies of the first-run wizard; one instance per page, shared by the steps. */
 
-export const steps = ['account', 'platform', 'owner', 'model', 'vectors', 'persona', 'plugins'] as const
+export const steps = ['account', 'platform', 'owner', 'model', 'persona'] as const
 export type Step = (typeof steps)[number]
+type Section = Step | 'vectors'
 
 export interface Draft {
   username: string
@@ -29,6 +30,16 @@ export interface Draft {
   delivery: 'simulated' | 'onebot'
   owner: string
   timezone: string
+  preset: 'deepseek' | 'compatible' | 'other'
+  search: 'off' | 'yahoo' | 'deepseek'
+  searchConnection: 'primary' | 'separate'
+  searchBaseUrl: string
+  searchKey: string
+  searchProxy: string
+  readWeb: boolean
+  quickEffort: string
+  imageInput: boolean
+  maxSteps: number | null
   api: string
   baseUrl: string
   apiKey: string
@@ -61,7 +72,7 @@ export interface Draft {
 
 const DRAFT_KEY = 'lenbot-setup-draft'
 /** Not kept across reloads: they are typed again. */
-const SECRETS = ['password', 'passwordAgain', 'accessToken', 'apiKey', 'vectorKey'] as const
+const SECRETS = ['password', 'passwordAgain', 'accessToken', 'apiKey', 'vectorKey', 'searchKey'] as const
 
 function initial(): Draft {
   return {
@@ -78,18 +89,28 @@ function initial(): Draft {
     delivery: 'simulated',
     owner: '',
     timezone: 'Asia/Shanghai',
-    api: '',
-    baseUrl: '',
+    preset: 'deepseek',
+    search: 'deepseek',
+    searchConnection: 'primary',
+    searchBaseUrl: 'https://api.deepseek.com/v1',
+    searchKey: '',
+    searchProxy: '',
+    readWeb: true,
+    quickEffort: 'low',
+    imageInput: true,
+    maxSteps: 16,
+    api: 'openai-chat',
+    baseUrl: 'https://api.deepseek.com/v1',
     apiKey: '',
     proxy: '',
-    model: '',
-    contextWindow: null,
+    model: 'deepseek-flash',
+    contextWindow: 1000000,
     inputBudget: 6000,
-    maxOutput: 1024,
+    maxOutput: 8192,
     temperature: null,
-    effort: '',
+    effort: 'high',
     thinkingBudget: null,
-    outputField: 'max_completion_tokens',
+    outputField: 'max_tokens',
     probeKind: 'text',
     vectorMode: 'skip',
     vectorBaseUrl: '',
@@ -205,6 +226,8 @@ export function createWizard() {
       context_window_tokens: draft.contextWindow ?? 0,
       max_output_tokens: draft.maxOutput ?? 0,
       temperature: draft.temperature,
+      quick_reasoning_effort: draft.quickEffort.trim() || null,
+      image_input: draft.imageInput,
       reasoning_effort: draft.effort.trim() || null,
       thinking_budget_tokens: draft.thinkingBudget,
       output_token_field: draft.api === 'openai-chat' ? draft.outputField : 'max_completion_tokens',
@@ -238,6 +261,40 @@ export function createWizard() {
   const platformReady = computed(() => platform.value?.signature === platformSignature.value)
   const modelReady = computed(() => modelPassed.value === modelSignature.value)
 
+  function choosePreset(preset: Draft['preset']) {
+    draft.preset = preset
+    Object.assign(draft, {
+      apiKey: '',
+      proxy: '',
+      thinkingBudget: null,
+      temperature: null,
+      api: 'openai-chat',
+      baseUrl: '',
+      model: '',
+      contextWindow: 128000,
+      maxOutput: 8192,
+      effort: '',
+      quickEffort: '',
+      outputField: 'max_completion_tokens',
+      imageInput: false,
+      search: 'yahoo',
+      searchConnection: 'separate',
+    })
+    if (preset === 'deepseek')
+      Object.assign(draft, {
+        baseUrl: 'https://api.deepseek.com/v1',
+        model: 'deepseek-flash',
+        contextWindow: 1000000,
+        effort: 'high',
+        quickEffort: 'low',
+        outputField: 'max_tokens',
+        imageInput: true,
+        search: 'deepseek',
+        searchConnection: 'primary',
+      })
+    catalog.value = []
+  }
+
   function chooseProtocol(api: string) {
     const protocol = protocols.value.find((item) => item.api === api)
     draft.api = api
@@ -262,7 +319,7 @@ export function createWizard() {
     },
   )
 
-  function problems(step: Step): Problems {
+  function problems(step: Section): Problems {
     const found: Problems = {}
     const need = (field: string, ok: boolean, key = 'required') => {
       if (!ok && !found[field]) found[field] = key
@@ -302,7 +359,15 @@ export function createWizard() {
       need('maxOutput', draft.maxOutput !== null && draft.maxOutput >= 1)
       need('inputBudget', draft.inputBudget !== null && draft.inputBudget >= 1)
       need('thinkingBudget', !(draft.effort.trim() && draft.thinkingBudget !== null), 'bothThinking')
-      if (!Object.keys(found).length) need('probe', modelReady.value, 'probeFirst')
+      need('maxSteps', draft.maxSteps !== null && draft.maxSteps > 0)
+      if (draft.search === 'deepseek' && draft.searchConnection === 'separate') {
+        need('searchBaseUrl', httpUrl(draft.searchBaseUrl.trim()), 'httpUrl')
+        need('searchKey', Boolean(draft.searchKey.trim()))
+        if (draft.searchProxy.trim()) need('searchProxy', httpUrl(draft.searchProxy.trim()), 'httpUrl')
+      }
+      if (draft.search === 'deepseek' && draft.searchConnection === 'primary')
+        need('searchConnection', ['openai-chat', 'openai-responses'].includes(draft.api), 'searchConnection')
+      Object.assign(found, problems('vectors'))
     }
     if (step === 'vectors' && draft.vectorMode !== 'skip') {
       if (draft.vectorMode === 'separate') {
@@ -317,7 +382,6 @@ export function createWizard() {
         need('personaId', PERSONA_ID.test(draft.personaId), 'personaId')
         need('personaName', Boolean(draft.personaName.trim()))
         need('brief', Boolean(draft.brief.trim()))
-        need('voice', Boolean(draft.voice.trim()))
       }
       need('sceneId', ACCOUNT.test(draft.sceneId.trim()), 'account')
     }
@@ -325,8 +389,9 @@ export function createWizard() {
   }
 
   /** Steps whose problems are shown: the ones the operator tried to leave. */
-  const tried = reactive(new Set<Step>())
-  const shown = (step: Step): Problems => (tried.has(step) ? problems(step) : {})
+  const tried = reactive(new Set<Section>())
+  const shown = (step: Section): Problems =>
+    tried.has(step) || (step === 'vectors' && tried.has('model')) ? problems(step) : {}
 
   function body(): FirstSetup {
     const persona =
@@ -336,7 +401,7 @@ export function createWizard() {
             persona_id: draft.personaId,
             persona_name: draft.personaName.trim(),
             brief: draft.brief.trim(),
-            voice_text: draft.voice.trim(),
+            ...(draft.voice.trim() ? { voice_text: draft.voice.trim() } : {}),
             boundaries: draft.boundaries.trim(),
           }
     return {
@@ -355,6 +420,31 @@ export function createWizard() {
               model: vectorBinding().model,
               dimensions: draft.vectorDimensions,
             },
+      web_search:
+        draft.search === 'off'
+          ? null
+          : {
+              provider: draft.search,
+              connection:
+                draft.search === 'deepseek'
+                  ? draft.searchConnection === 'primary'
+                    ? 'primary'
+                    : 'search'
+                  : null,
+              timeout_seconds: 15,
+              max_results: 5,
+            },
+      search_provider:
+        draft.search === 'deepseek' && draft.searchConnection === 'separate'
+          ? {
+              api: 'deepseek-search',
+              base_url: trimUrl(draft.searchBaseUrl),
+              api_key: draft.searchKey,
+              proxy: trimUrl(draft.searchProxy) || null,
+            }
+          : null,
+      web_read: draft.readWeb,
+      max_steps: draft.maxSteps ?? 16,
       voice_mode: 'direct',
       compaction: { input_tokens: draft.inputBudget ?? 0 },
       scene: `onebot:${draft.sceneKind}:${draft.sceneId.trim()}`,
@@ -396,6 +486,7 @@ export function createWizard() {
     binding,
     vectorProvider,
     vectorBinding,
+    choosePreset,
     chooseProtocol,
     settleProtocol,
     problems,
@@ -416,7 +507,7 @@ export function useWizard(): Wizard {
 }
 
 /** The translated problem of one field in a step, once the step was tried. */
-export function useStepErrors(step: Step) {
+export function useStepErrors(step: Section) {
   const wizard = useWizard()
   const { t } = useI18n()
   const current = computed(() => wizard.shown(step))

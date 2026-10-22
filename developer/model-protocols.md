@@ -11,6 +11,7 @@
 | `anthropic` | `https://api.anthropic.com/v1` | 同上 | 保留 Messages 内容块、thinking 和 signature |
 | `gemini` | `https://generativelanguage.googleapis.com/v1beta` | 同上 | Gemini API GenerateContent，保留完整 model parts 与 thoughtSignature |
 | `openai-audio` | 兼容服务的 API 根地址 | asr | audio/transcriptions |
+| `deepseek-search` | `https://api.deepseek.com/v1` | 网页搜索 | 独立 Search JSON 接口 |
 | `openai-embeddings` | 兼容服务的 API 根地址 | 本地记忆、场景学习的 embedding | embeddings |
 
 
@@ -31,7 +32,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 
 连接测试使用尚未保存的草稿。旧密钥留空时由后端读取，不会回传到浏览器。
 
-已有服务商可以改名。保存请求通过 `previous_alias` 指明原名称，一次保存更新用途、本地记忆和场景学习的引用；这个字段不写入根配置。只改名或补上地址末尾的斜杠可以保留旧密钥，修改协议、地址或代理需要重新填写密钥。模型列表显示名称和完整 ID，选择时写入 ID。
+已有服务商可以改名。保存请求通过 `previous_alias` 指明原名称，一次保存更新用途、本地记忆、场景学习和搜索连接的引用；这个字段不写入根配置。只改名或补上地址末尾的斜杠可以保留旧密钥，修改协议、地址或代理需要重新填写密钥。模型列表显示名称和完整 ID，选择时写入 ID。
 
 - 文本测试调用一次模型。
 - 工具测试调用两次，确认工具请求和结果能够续接。
@@ -71,3 +72,17 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 新增工作桥接路由后，现有的任务镜像需要从当前源码重新构建。这不需要修改实例的格式编号，也不会自动发布镜像。真实的服务商和代理网络，以及完整的容器任务，仍然需要在实际环境中验证，本机的协议回归测试不能代替这些结果。
 
 协议依据：[Responses 状态与加密续接](https://developers.openai.com/api/docs/guides/migrate-to-responses)，[Messages](https://platform.claude.com/docs/en/api/messages/create)，[Gemini GenerateContent](https://ai.google.dev/api/generate-content)，[Gemini 签名](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)。
+
+## 独立网页搜索
+
+`web_search.provider` 可选 `yahoo`、`bing_rss`、`deepseek`。DeepSeek 搜索用 `connection` 引用 `models.providers` 中的连接，复用地址、Key 和代理；可以选择兼容聊天、Responses 连接，也可以新增仅用于搜索的 `deepseek-search` 连接。搜索不需要模型绑定。
+
+```json
+{"web_search": {"provider": "deepseek", "connection": "primary", "timeout_seconds": 15, "max_results": 5}}
+```
+
+连接地址以 `/v1` 结尾时请求其下的 `tools/search`，其他地址请求其下的 `v1/tools/search`；支持网关前缀，始终请求所选地址。搜索词最多 128 字符，接口请求携带 `need_content: true`。结果保留标题、URL、短摘要、长摘要、日期和正文开头；开启网页读取时完整正文存为场景网页文档，返回 `document` 和 `next_offset` 供 `web_read` 续读。搜索为空时返回空列表，服务报错原样交给工具调用方。
+
+已有连接可即时切换搜索设置；新增或修改服务商连接沿用模型连接的重启流程，重启前保持原搜索设置。Yahoo 与 Bing RSS 不设置 `connection`。`connection` 默认为空，已有配置不用迁移。
+
+协议依据：[DeepSeek Search 与 Fetch](https://api-docs.deepseek.com/zh-cn/guides/search/)。当前接入 Search，Fetch 及模型内置搜索另行实现。

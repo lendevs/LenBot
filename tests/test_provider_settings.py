@@ -163,3 +163,33 @@ async def test_rename_reuses_existing_vectors_and_address_change_reports_mainten
             pending = (await client.get('/api/host/pending-restart')).json()
             assert pending['maintenance'][0]['command'] == 'python -m len_bot.next.maintenance.memory_reindex'
     assert len(received) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_connection_rename_delete_and_independent_chat_binding(instance):
+    root, app = instance
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://fixture') as client:
+        body = await models_body(client)
+        body['providers']['search'] = {'api': 'deepseek-search', 'base_url': 'http://127.0.0.1:9/v1',
+                                       'api_key': 'synthetic-search-key'}
+        assert (await client.put('/api/host/settings/models', json=body)).status_code == 200
+        response = await client.put('/api/host/settings/web-search', json={'web_search': {
+            'provider': 'deepseek', 'connection': 'search'}})
+        assert response.status_code == 200, response.text
+        body = await models_body(client)
+        body['providers']['renamed'] = body['providers'].pop('search')
+        body['roles']['mind']['model'] = 'another-chat-model'
+        response = await client.put('/api/host/settings/models', json=body)
+        assert response.status_code == 200, response.text
+        source = json.loads((root / 'lenbot.config.json').read_text())
+        assert source['web_search']['connection'] == 'renamed'
+        assert source['models']['providers']['renamed']['api_key'] == 'synthetic-search-key'
+        assert 'synthetic-search-key' not in response.text
+        body = await models_body(client)
+        del body['providers']['renamed']
+        response = await client.put('/api/host/settings/models', json=body)
+        assert response.status_code == 422 and 'web_search.connection' in response.text
+        assert json.loads((root / 'lenbot.config.json').read_text()) == source
+        response = await client.put('/api/host/settings/web-search', json={'web_search': {
+            'provider': 'deepseek', 'connection': 'missing'}})
+        assert response.status_code == 422

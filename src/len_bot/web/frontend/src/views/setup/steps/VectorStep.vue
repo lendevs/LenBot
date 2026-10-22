@@ -56,7 +56,7 @@ const passed = computed(() => {
 
 <template>
   <div class="flex flex-col gap-5">
-    <Field :label="t('setup.vectors.mode')" :info="t('setup.vectors.modeInfo')">
+    <Field :label="t('setup.vectors.mode')">
       <div>
         <SegmentedControl v-model="draft.vectorMode" :options="modes" :label="t('setup.vectors.mode')" />
       </div>

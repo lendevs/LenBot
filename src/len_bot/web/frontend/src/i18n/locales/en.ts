@@ -1550,6 +1550,7 @@ export default {
     readFailed: 'Could not read model settings',
     protocolsFailed: 'Could not read the protocol list',
     protocols: {
+      'deepseek-search': 'DeepSeek Search',
       'openai-chat': 'OpenAI-compatible chat',
       'openai-responses': 'OpenAI Responses',
       anthropic: 'Anthropic Messages',
@@ -2067,6 +2068,9 @@ export default {
       removed: 'Deleted',
     },
     web: {
+      deepseek: 'DeepSeek Search (pay per request)',
+      connection: 'Search connection',
+      manageConnections: 'Manage connections',
       readFailed: 'Could not read web settings',
       read: 'Read web pages',
       readOn: 'Allow reading web pages',
@@ -2615,7 +2619,6 @@ export default {
     },
     previous: 'Back',
     next: 'Next',
-    skipVectors: 'Skip embeddings',
     skipPlugins: 'Save without plugins',
     save: 'Save and open the panel',
     installing: 'Installing plugins',
@@ -2629,8 +2632,6 @@ export default {
       passwordRule: 'At least 8 characters',
       passwordAgain: 'Repeat the password',
       port: 'Panel port',
-      portLocal: 'The panel listens on this machine only; on a server, reach it through SSH port forwarding',
-      portFixed: 'With Docker the panel port is fixed at {port}',
     },
     platform: {
       tokenPlaceholder: 'Same as in OneBot; leave empty if none is set',
@@ -2639,26 +2640,27 @@ export default {
       failed: 'Connection failed',
       simulated: 'Simulated',
       real: 'Send to QQ',
-      deliveryInfo:
-        'Simulated sending receives and replies as usual, but replies only appear in the panel; change it later in System settings',
     },
     owner: {
       owner: 'Owner QQ',
-      ownerInfo:
-        'Owners can change settings by talking to the bot in a group; add more owners later in the panel',
-      timezoneInfo: 'Reminders, quiet hours and panel times use this time zone',
     },
     model: {
+      preset: 'Provider',
+      compatible: 'Other compatible service',
+      other: 'Other provider',
+      searchOff: 'Search off',
+      sameConnection: 'Use chat connection',
+      separateConnection: 'Separate connection',
+      maxSteps: 'Maximum steps per turn',
+      imageInput: 'Chat model accepts images',
       modelPlaceholder: 'Pick from the list or type a name',
       inputBudget: 'Compaction threshold',
-      inputBudgetInfo: 'The session is compacted once its content grows past this length',
       test: 'Test model',
       passed: '{model} replied: {text}',
       passedBefore: 'These settings already passed a test',
     },
     vectors: {
       mode: 'Embedding service',
-      modeInfo: 'Embeddings search memory by meaning; without them, memory uses full-text search',
       skip: 'None',
       primary: 'Chat provider',
       separate: 'Another provider',
@@ -2682,8 +2684,6 @@ export default {
       boundaries: 'Boundaries',
       boundariesPlaceholder: 'Things it never does or says',
       where: 'First chat',
-      whereInfo:
-        "In a group it first answers only {'@'} mentions and replies to it; in a private chat it answers every message. Add more groups later in the panel",
       group: 'Group',
       private: 'Private',
       groupId: 'Group number',
@@ -2718,6 +2718,7 @@ export default {
       open: 'Open the panel',
     },
     problems: {
+      searchConnection: 'Choose a separate search connection',
       required: 'Required',
       spaces: 'No spaces at the start or end',
       passwordShort: 'At least 8 characters',
@@ -2731,7 +2732,6 @@ export default {
       bothThinking: 'Fill in either reasoning effort or thinking budget, not both',
       personaId: 'Lowercase letters, digits and -, not starting or ending with -',
       connectFirst: 'Test the connection and read the bot account first',
-      probeFirst: 'Test the model once before continuing',
     },
   },
   login: {

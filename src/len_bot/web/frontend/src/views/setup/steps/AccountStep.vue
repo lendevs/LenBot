@@ -26,12 +26,7 @@ const error = useStepErrors('account')
     <Field :label="t('setup.account.passwordAgain')" :error="error('passwordAgain')" required>
       <Input v-model="draft.passwordAgain" type="password" autocomplete="new-password" />
     </Field>
-    <Field
-      :label="t('setup.account.port')"
-      :error="error('port')"
-      :info="container ? t('setup.account.portFixed', { port: draft.port }) : t('setup.account.portLocal')"
-      required
-    >
+    <Field :label="t('setup.account.port')" :error="error('port')" required>
       <NumberInput
         v-model="draft.port"
         :min="1"

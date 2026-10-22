@@ -303,3 +303,31 @@ def test_docker_smoke_goes_through_the_wizard_port_and_docs_name_the_container_p
     for path in [*(repo / 'deploy').rglob('*docker*.md'), repo / 'website' / 'guide' / 'install-docker.md']:
         if path.exists():
             assert '8088' not in path.read_text(encoding='utf-8'), path
+
+
+@pytest.mark.parametrize('mode', ['shared', 'separate', 'yahoo', 'off'])
+def test_setup_search_connection_and_minimal_custom_persona(tmp_path, mode):
+    from len_bot.next.panel.setup import FirstSetup, initialize
+    source = json.loads((Path(__file__).parents[1] / 'deploy/current/first-setup.example.json').read_text())
+    source.update(password='fixture-password', persona_id='new-role', persona_name='新角色', brief='喜欢聊天。',
+                  max_steps=16, web_read=True)
+    source.pop('voice_text', None)
+    if mode in {'shared', 'separate'}:
+        source['web_search'] = {'provider': 'deepseek', 'connection': 'primary' if mode == 'shared' else 'search'}
+        if mode == 'separate':
+            source['search_provider'] = {'api': 'deepseek-search', 'base_url': 'https://api.deepseek.com/v1',
+                                         'api_key': 'synthetic-search-key'}
+    else:
+        source['web_search'] = {'provider': 'yahoo'} if mode == 'yahoo' else None
+    initialize(tmp_path, FirstSetup.model_validate(source))
+    config = load_host_config(tmp_path)
+    assert config.max_steps == 16 and config.web_read is not None
+    assert load_persona(config.scenes[source['scene']].persona).voice == ''
+    if mode in {'shared', 'separate'}:
+        alias = config.web_search.connection
+        assert alias == ('primary' if mode == 'shared' else 'search')
+        assert config.models.providers[alias].api_key == (source['provider']['api_key'] if mode == 'shared' else 'synthetic-search-key')
+    elif mode == 'off':
+        assert config.web_search is None
+    else:
+        assert config.web_search.provider == 'yahoo' and config.web_search.connection is None

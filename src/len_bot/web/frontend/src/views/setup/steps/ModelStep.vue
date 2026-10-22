@@ -7,6 +7,8 @@ import { setupApi } from '../../../api/setup'
 import Button from '../../../ui/Button.vue'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
+import Switch from '../../../ui/Switch.vue'
+import VectorStep from './VectorStep.vue'
 import NumberInput from '../../../ui/NumberInput.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Select from '../../../ui/Select.vue'
@@ -20,6 +22,31 @@ const { t } = useI18n()
 const wizard = useWizard()
 const { draft } = wizard
 const error = useStepErrors('model')
+const presets = computed(() => [
+  { value: 'deepseek' as const, label: 'DeepSeek' },
+  { value: 'compatible' as const, label: t('setup.model.compatible') },
+  { value: 'other' as const, label: t('setup.model.other') },
+])
+const searchOptions = computed(() => [
+  { value: 'deepseek' as const, label: t('capabilities.web.deepseek') },
+  { value: 'yahoo' as const, label: 'Yahoo' },
+  { value: 'off' as const, label: t('setup.model.searchOff') },
+])
+const connectionOptions = computed(() => [
+  {
+    value: 'primary' as const,
+    label: t('setup.model.sameConnection'),
+    disabled: !['openai-chat', 'openai-responses'].includes(draft.api),
+  },
+  { value: 'separate' as const, label: t('setup.model.separateConnection') },
+])
+const vectorsOpen = ref(false)
+watch(
+  () => Object.keys(wizard.shown('vectors')).length,
+  (n) => {
+    if (n) vectorsOpen.value = true
+  },
+)
 const protocolTitle = useProtocolTitle()
 
 const protocolOptions = computed(() =>
@@ -39,7 +66,15 @@ const kinds = computed(() => [
   { value: 'tools' as const, label: t('models.probe.tools') },
 ])
 
-const advancedFields = ['inputBudget', 'maxOutput', 'thinkingBudget']
+const advancedFields = [
+  'baseUrl',
+  'proxy',
+  'contextWindow',
+  'inputBudget',
+  'maxOutput',
+  'thinkingBudget',
+  'maxSteps',
+]
 const more = ref(false)
 watch(
   () => advancedFields.some((field) => error(field)),
@@ -47,14 +82,23 @@ watch(
   { immediate: true },
 )
 
+const chatFields = [
+  'api',
+  'baseUrl',
+  'apiKey',
+  'proxy',
+  'model',
+  'contextWindow',
+  'maxOutput',
+  'inputBudget',
+  'thinkingBudget',
+]
+
 const providerSignature = computed(() => JSON.stringify(wizard.provider()))
 /** Requests go out only for settings that pass the checks; otherwise the step shows what is wrong. */
-function checked(fields: string[] | null, run: () => void) {
+function checked(fields: string[], run: () => void) {
   const found = wizard.problems('model')
-  const wrong = fields
-    ? fields.some((field) => found[field])
-    : Object.keys(found).some((key) => key !== 'probe')
-  if (wrong) wizard.tried.add('model')
+  if (fields.some((field) => found[field])) wizard.tried.add('model')
   else run()
 }
 
@@ -98,18 +142,35 @@ const passed = computed(() => {
 <template>
   <div class="flex flex-col gap-5">
     <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
-      <Field :label="t('models.providers.api')" :error="error('api')" required wide>
+      <Field :label="t('setup.model.preset')" wide>
+        <Select
+          :model-value="draft.preset"
+          :options="presets"
+          @update:model-value="(value) => value && wizard.choosePreset(value)"
+        />
+      </Field>
+      <Field
+        v-if="draft.preset === 'other'"
+        :label="t('models.providers.api')"
+        :error="error('api')"
+        required
+        wide
+      >
         <Select v-model="protocol" :options="protocolOptions" />
       </Field>
-      <Field :label="t('models.providers.url')" :error="error('baseUrl')" required wide>
+      <Field
+        v-if="draft.preset === 'compatible'"
+        :label="t('models.providers.url')"
+        :error="error('baseUrl')"
+        required
+        wide
+      >
         <Input v-model="draft.baseUrl" type="url" mono placeholder="https://api.example.com/v1" />
       </Field>
       <Field :label="t('models.providers.key')" :error="error('apiKey')" required>
         <Input v-model="draft.apiKey" type="password" mono autocomplete="off" />
       </Field>
-      <Field :label="t('models.providers.proxy')" :error="error('proxy')">
-        <Input v-model="draft.proxy" type="url" mono placeholder="http://127.0.0.1:7890" />
-      </Field>
+
       <div class="flex flex-col gap-3 sm:col-span-2">
         <div>
           <Button
@@ -134,17 +195,53 @@ const passed = computed(() => {
           :placeholder="t('setup.model.modelPlaceholder')"
         />
       </Field>
-      <Field :label="t('models.roles.context')" :error="error('contextWindow')" required>
-        <NumberInput v-model="draft.contextWindow" :min="2048" :steppers="false" unit="tokens" />
+    </div>
+    <div class="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
+      <Field :label="t('capabilities.web.provider')">
+        <Select v-model="draft.search" :options="searchOptions" />
       </Field>
+      <Field
+        v-if="draft.search === 'deepseek'"
+        :label="t('capabilities.web.connection')"
+        :error="error('searchConnection')"
+      >
+        <Select v-model="draft.searchConnection" :options="connectionOptions" />
+      </Field>
+      <template v-if="draft.search === 'deepseek' && draft.searchConnection === 'separate'">
+        <Field :label="t('models.providers.url')" :error="error('searchBaseUrl')" required wide>
+          <Input v-model="draft.searchBaseUrl" type="url" mono />
+        </Field>
+        <Field :label="t('models.providers.key')" :error="error('searchKey')" required>
+          <Input v-model="draft.searchKey" type="password" mono autocomplete="off" />
+        </Field>
+        <Field :label="t('models.providers.proxy')" :error="error('searchProxy')">
+          <Input v-model="draft.searchProxy" type="url" mono placeholder="http://127.0.0.1:7890" />
+        </Field>
+      </template>
+      <Field :label="t('capabilities.web.readOn')" inline wide><Switch v-model="draft.readWeb" /></Field>
     </div>
     <MoreFields v-model="more" :title="t('models.roles.advanced')">
       <Field
-        :label="t('setup.model.inputBudget')"
-        :error="error('inputBudget')"
-        :info="t('setup.model.inputBudgetInfo')"
+        v-if="draft.preset !== 'compatible'"
+        :label="t('models.providers.url')"
+        :error="error('baseUrl')"
         required
+        wide
       >
+        <Input v-model="draft.baseUrl" type="url" mono placeholder="https://api.example.com/v1" />
+      </Field>
+      <Field :label="t('models.providers.proxy')" :error="error('proxy')">
+        <Input v-model="draft.proxy" type="url" mono placeholder="http://127.0.0.1:7890" />
+      </Field>
+      <Field :label="t('models.roles.context')" :error="error('contextWindow')" required>
+        <NumberInput v-model="draft.contextWindow" :min="2048" :steppers="false" unit="tokens" />
+      </Field>
+      <Field :label="t('models.roles.quickEffort')"><Input v-model="draft.quickEffort" mono /></Field>
+      <Field :label="t('setup.model.maxSteps')" :error="error('maxSteps')">
+        <NumberInput v-model="draft.maxSteps" :min="1" />
+      </Field>
+      <Field :label="t('setup.model.imageInput')" inline><Switch v-model="draft.imageInput" /></Field>
+      <Field :label="t('setup.model.inputBudget')" :error="error('inputBudget')" required>
         <NumberInput v-model="draft.inputBudget" :min="1" :steppers="false" unit="tokens" />
       </Field>
       <Field :label="t('models.roles.maxOutput')" :error="error('maxOutput')" required>
@@ -170,6 +267,9 @@ const passed = computed(() => {
         <Select v-model="draft.outputField" :options="outputFields" />
       </Field>
     </MoreFields>
+    <MoreFields v-model="vectorsOpen" :title="t('setup.steps.vectors')">
+      <div class="sm:col-span-2"><VectorStep /></div>
+    </MoreFields>
     <div class="flex flex-col gap-3 border-t border-line pt-5">
       <div class="flex flex-wrap items-center gap-3">
         <SegmentedControl
@@ -178,14 +278,15 @@ const passed = computed(() => {
           size="sm"
           :label="t('models.probe.kind')"
         />
-        <Button :icon="Zap" :loading="probe.isPending.value" @click="checked(null, () => probe.mutate())">
+        <Button
+          :icon="Zap"
+          :loading="probe.isPending.value"
+          @click="checked(chatFields, () => probe.mutate())"
+        >
           {{ t('setup.model.test') }}
         </Button>
       </div>
       <TestResult :passed="passed" :error="probe.error.value" :failed-title="t('models.probe.failed')" />
-      <p v-if="!passed && !probe.error.value && error('probe')" class="text-sm text-error" role="alert">
-        {{ error('probe') }}
-      </p>
     </div>
   </div>
 </template>

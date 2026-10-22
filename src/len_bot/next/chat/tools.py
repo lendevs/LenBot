@@ -231,6 +231,10 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
                 parameters.pop('$defs')
             allowed[index] = {**tool, "function": {**function, "description": description,
                                                    "parameters": model_schema(parameters)}}
+        elif function["name"] == "web_search" and config.web_search.provider == "deepseek":
+            parameters = WebSearchArguments.model_json_schema()
+            parameters["properties"]["query"]["maxLength"] = 128
+            allowed[index] = {**tool, "function": {**function, "parameters": model_schema(parameters)}}
         elif function["name"] == "react":
             parameters = ReactArguments.model_json_schema()
             catalog = "\n".join(f"{sticker.file}：{sticker.description}"
@@ -426,7 +430,11 @@ class SceneTools:
                                                fake_ip_networks=self.config.network.networks(),
                                                public_dns_url=self.config.network.public_dns_url)
             return await execute_web_search(self.config.web_search, WebSearchArguments.model_validate(call.arguments),
-                                            recording=self.replay_web, read_top=read_top), None, None
+                                            recording=self.replay_web, read_top=read_top,
+                                            save_page=(lambda page: self.store.save_web_page(self.config.scene, page))
+                                                if read_top is not None else None,
+                                            connection=(self.config.models.providers[self.config.web_search.connection]
+                                                        if self.config.web_search.connection is not None else None)), None, None
         if call.name == "memory":
             return await self.memory.execute(self.config.scene, call.arguments), None, None
         if call.name in {"delegate", "task"}:

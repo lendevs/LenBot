@@ -119,3 +119,109 @@ async def test_search_adds_the_opening_text_of_the_first_result_that_reads(yahoo
     assert top['document'] == 7 and top['url'] == tried[1] and len(top['text']) == 2000
     assert top['total_chars'] == 3000 and top['next_offset'] == 2000
     assert top['skipped'] == [{'url': tried[0], 'error': 'TimeoutError: web_read exceeded 20 seconds'}]
+
+
+# Structured fields from the Search API's published response example.
+DEEPSEEK_ROW = {
+    'rerank_score': 2.4, 'title': 'DeepSeek V4 模型发布',
+    'url': 'https://example.com/deepseek-v4', 'snippet': 'DeepSeek V4 已上线。',
+    'summary': '模型支持工具调用与长上下文。', 'content': '网页正文。',
+    'site_name': 'Example News', 'site_icon': None, 'date': None, 'authority': 3,
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('prefix', ['', '/v1', '/gateway/v1'])
+async def test_deepseek_search_uses_selected_connection_and_preserves_page(tmp_path, prefix):
+    from len_bot.next.configuration.models import Provider
+    from len_bot.next.storage.store import Store
+    from len_bot.next.tools.web_read import execute_web_read, WebReadArguments, WebReadSettings
+    from test_next_native_models import peer_server
+    received = []
+    content = '网页正文。' * 600
+    response = {'results': [{**DEEPSEEK_ROW, 'content': content}]}
+    server = await peer_server([(200, 'application/json', json.dumps(response).encode())], received)
+    async with server:
+        connection = Provider(api='deepseek-search', api_key='search-key',
+                              base_url=f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}{prefix}')
+        with Store(tmp_path / 'search.db') as store:
+            scene = 'onebot:group:80001'
+            text = await execute_web_search(WebSearchSettings(provider='deepseek', connection='search'),
+                WebSearchArguments(query='DeepSeek V4', count=2), connection=connection,
+                save_page=lambda page: store.save_web_page(scene, page))
+            row = _payload(text)['results'][0]
+            assert row['summary'] == DEEPSEEK_ROW['summary']
+            assert row['published_at'] is None and row['next_offset'] == 2000
+            assert row['total_chars'] == len(content) and row['content'] == content[:2000]
+            more = await execute_web_read(store, scene, WebReadSettings(),
+                WebReadArguments(document=row['document'], offset=row['next_offset']), fake_ip_networks=())
+            assert _payload(more)['text'] == content[2000:]
+    assert len(received) == 1
+    line, headers, body = received[0]
+    expected = (prefix if prefix.endswith('/v1') else prefix + '/v1') + '/tools/search'
+    assert line == f'POST {expected} HTTP/1.1'
+    assert headers['authorization'] == 'Bearer search-key'
+    assert body == {'query': 'DeepSeek V4', 'count': 2, 'need_content': True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('status', 'body', 'error'), [
+    (200, {'results': []}, None),
+    (200, {'results': [{'title': 'missing fields'}]}, 'invalid response'),
+    (200, {'results': [{**DEEPSEEK_ROW, 'content': 42}]}, 'invalid response'),
+    (200, 'not json', 'invalid response'),
+    (429, {'error': {'message': 'rate limited'}}, 'HTTP 429.*rate limited'),
+    (401, {'error': {'message': 'search-key invalid'}}, r'HTTP 401.*\[hidden\] invalid'),
+])
+async def test_deepseek_empty_and_error_responses(status, body, error):
+    from len_bot.next.configuration.models import Provider
+    from test_next_native_models import peer_server
+    received = []
+    raw = body if isinstance(body, str) else json.dumps(body)
+    server = await peer_server([(status, 'application/json', raw.encode())], received)
+    async with server:
+        connection = Provider(api='openai-chat', api_key='search-key',
+                              base_url=f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1')
+        settings = WebSearchSettings(provider='deepseek', connection='primary')
+        if error:
+            with pytest.raises(ValueError, match=error):
+                await execute_web_search(settings, WebSearchArguments(query='test'), connection=connection)
+        else:
+            result = await execute_web_search(settings, WebSearchArguments(query='test'), connection=connection)
+            assert _payload(result)['results'] == []
+    assert len(received) == 1
+
+
+@pytest.mark.asyncio
+async def test_deepseek_rejects_long_query_before_request():
+    from len_bot.next.configuration.models import Provider
+    connection = Provider(api='deepseek-search', base_url='http://127.0.0.1:9/v1', api_key='search-key')
+    with pytest.raises(ValueError, match='128'):
+        await execute_web_search(WebSearchSettings(provider='deepseek', connection='search'),
+            WebSearchArguments(query='长' * 129), connection=connection)
+
+
+@pytest.mark.parametrize('settings', [
+    {'provider': 'deepseek'}, {'provider': 'deepseek', 'connection': ' '},
+    {'provider': 'yahoo', 'connection': 'search'},
+])
+def test_search_connection_configuration(settings):
+    with pytest.raises(ValueError):
+        WebSearchSettings.model_validate(settings)
+
+
+@pytest.mark.parametrize(('search', 'limit'), [({'provider': 'yahoo'}, 500),
+                                               ({'provider': 'deepseek', 'connection': 'fixture'}, 128)])
+def test_tool_schema_limits_query_for_deepseek(tmp_path, search, limit):
+    from len_bot.next.chat.tools import build_tools
+    from len_bot.next.config import load_host_config
+    from len_bot.next.persona.profile import load_persona
+    from test_next_host_manage_permissions_config import instance
+    source = instance(tmp_path)
+    source['web_search'] = search
+    (tmp_path / 'lenbot.config.json').write_text(json.dumps(source))
+    config = load_host_config(tmp_path).scene_config('onebot:group:80001')
+    persona = load_persona(config.persona).model_copy(update={'tools': ['say', 'web_search', 'tool_search']})
+    tool = next(tool['function'] for tool in build_tools(config, persona, platform=True)
+                if tool['function']['name'] == 'web_search')
+    assert tool['parameters']['properties']['query']['maxLength'] == limit

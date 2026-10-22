@@ -80,7 +80,7 @@ const errorOf = (field: 'name' | 'url' | 'key') =>
       :error="form.protocols.error.value"
       :retry="form.protocols.refetch"
     />
-    <div class="flex flex-col gap-3 border-t border-line pt-5">
+    <div v-if="row.api !== 'deepseek-search'" class="flex flex-col gap-3 border-t border-line pt-5">
       <h4 class="text-sm font-semibold">{{ t('models.probe.title') }}</h4>
       <ProbeTools :row="row" />
     </div>
