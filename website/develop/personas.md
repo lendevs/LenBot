@@ -5,9 +5,9 @@
 ```text
 companion/
   persona.yaml       名字、身份、性格、许可
-  voice.md           说话方式
-  boundaries.md      底线
-  examples.yaml      情境和台词样例（没有样例时写 []）
+  voice.md           说话方式（可选）
+  boundaries.md      底线（可选）
+  examples.yaml      情境和台词样例（可选）
   knowledge/         可检索的资料（可选）
   stickers/          表情图片和 index.yaml（可选）
   avatar.png         头像（可选）
@@ -15,20 +15,27 @@ companion/
 
 ## persona.yaml
 
-| 字段 | 内容 |
-|---|---|
-| `id` | 目录名，只能使用小写英文字母、数字和 `-` |
-| `name` | 名字 |
-| `brief` | 用一两句话说明角色的身份 |
-| `behavior` | 性格和相处方式，包括对什么感兴趣，以及遇到不同情况时如何反应 |
-| `self_reference` | 自称，例如 `[我]` |
-| `aliases` | 其他人对角色的称呼。群里提到这些名字时，Bot 会注意到这条消息 |
-| `tools` | 允许使用的工具，填 `all` 或名字列表。`[]` 表示不使用工具 |
-| `skills` | 允许后台任务使用的技能，填 `all` 或名字列表 |
-| `styles` | 可选的轮换风格。每项包含 `name`、`weight` 和 `note`，权重之和等于 1。不使用时写 `[]` |
-| `example_tags` | 只使用带有这些标签的样例。不填写时使用前 8 条 |
+只有 `name` 和 `brief` 必须填写，最简单的角色包只有一个 `persona.yaml`：
 
-`voice`、`boundaries` 和 `examples` 必须写在各自的文件中，不能放进 `persona.yaml`。
+```yaml
+name: 小一
+brief: 班里爱聊天的同学，说话直接，喜欢接梗。
+```
+
+| 字段 | 内容 | 不填写时 |
+|---|---|---|
+| `name` | 名字 | 必填 |
+| `brief` | 用一两句话说明角色的身份 | 必填 |
+| `id` | 只能使用小写英文字母、数字和 `-` | 目录名 |
+| `behavior` | 性格和相处方式，包括对什么感兴趣，以及遇到不同情况时如何反应 | 空 |
+| `self_reference` | 自称，例如 `[我]` | `[我]` |
+| `aliases` | 其他人对角色的称呼。群里提到这些名字时，Bot 会注意到这条消息 | `[]` |
+| `tools` | 允许使用的工具，填 `all` 或名字列表。`[]` 表示不使用工具 | `all` |
+| `skills` | 允许后台任务使用的技能，填 `all` 或名字列表 | `all` |
+| `styles` | 轮换风格。每项包含 `name`、`weight` 和 `note`，权重之和等于 1 | `[]` |
+| `example_tags` | 只使用带有这些标签的样例 | 使用前 8 条 |
+
+`voice`、`boundaries` 和 `examples` 写在各自的文件中，不能放进 `persona.yaml`。这三个文件不存在时按空内容处理；在面板里保存一次角色后会生成它们。
 
 ## 写法建议
 

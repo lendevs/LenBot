@@ -64,15 +64,15 @@ class Persona(BaseModel):
     id: str
     name: str
     brief: str
-    behavior: str
-    self_reference: list[str]
-    aliases: list[str]
-    tools: Literal["all"] | list[str]
-    skills: Literal["all"] | list[str]
-    styles: list[Style]
-    voice: str
-    boundaries: str
-    examples: list[Example]
+    behavior: str = ""
+    self_reference: list[str] = Field(default_factory=lambda: ["我"])
+    aliases: list[str] = Field(default_factory=list)
+    tools: Literal["all"] | list[str] = "all"
+    skills: Literal["all"] | list[str] = "all"
+    styles: list[Style] = Field(default_factory=list)
+    voice: str = ""
+    boundaries: str = ""
+    examples: list[Example] = Field(default_factory=list)
     example_tags: list[str] = Field(default_factory=list)
     knowledge: dict[str, PersonaDocument] = Field(default_factory=dict, exclude=True, repr=False)
     stickers: dict[str, PersonaSticker] = Field(default_factory=dict, exclude=True, repr=False)
@@ -135,6 +135,8 @@ def select_style(persona: Persona) -> Style | None:
 
 
 PERSONA_FILES = ("persona.yaml", "voice.md", "boundaries.md", "examples.yaml")
+# Only persona.yaml is required; a missing voice, boundaries or examples file reads as empty.
+REQUIRED_FILES = ("persona.yaml",)
 _PROFILE_LOCK = threading.RLock()
 _PENDING_PROFILE = '.persona-pending.json'
 
@@ -148,7 +150,9 @@ def read_persona_files(path: Path) -> dict[str, str]:
                 atomic_text(path / name, previous[name])
             pending.unlink()
             sync_directory(path)
-        return {name: (path / name).read_text(encoding="utf-8") for name in PERSONA_FILES}
+        return {name: (path / name).read_text(encoding="utf-8")
+                if name in REQUIRED_FILES or (path / name).exists() else ""
+                for name in PERSONA_FILES}
 
 
 def save_persona_files(path: Path, files: dict[str, str]) -> None:
@@ -181,10 +185,13 @@ def parse_persona_files(path: Path, files: dict[str, str], *,
         raise ValueError(f"{path / 'persona.yaml'}: voice, boundaries, examples, knowledge, stickers and avatar belong in separate files")
 
     examples = _parse_yaml(path / "examples.yaml", files["examples.yaml"])
+    if examples is None:
+        examples = []
     if not isinstance(examples, list):
         raise ValueError(f"{path / 'examples.yaml'}: expected a YAML list")
     try:
         persona = Persona.model_validate({
+            "id": path.name,
             **metadata,
             "voice": files["voice.md"],
             "boundaries": files["boundaries.md"],

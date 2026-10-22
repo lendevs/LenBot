@@ -64,3 +64,30 @@ def test_profile_form_rewrites_role_files_and_rejects_invalid_values(tmp_path):
                     assert moved.status_code == 422
                     assert {name: (role/name).read_text() for name in before} == before
     asyncio.run(run())
+
+
+def test_minimal_package_needs_only_name_and_brief(tmp_path):
+    import io
+    import zipfile
+    from len_bot.next.persona.packages import export_package, import_package
+    from len_bot.next.runtime.personas import roles
+    package = tmp_path / 'source' / 'tiny'
+    package.mkdir(parents=True)
+    (package / 'persona.yaml').write_text('name: 小一\nbrief: 爱聊天的同学\n', encoding='utf-8')
+    persona = load_persona(package)
+    assert (persona.id, persona.name, persona.brief) == ('tiny', '小一', '爱聊天的同学')
+    assert persona.self_reference == ['我'] and persona.tools == 'all' and persona.skills == 'all'
+    assert (persona.behavior, persona.voice, persona.boundaries, persona.examples) == ('', '', '', [])
+
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, 'w') as archive:
+        archive.writestr('persona.yaml', (package / 'persona.yaml').read_text(encoding='utf-8'))
+    imported = import_package(tmp_path, 'imported', stream.getvalue())
+    assert imported['persona']['id'] == 'imported' and imported['files'] == 1
+    assert load_persona(tmp_path / 'personas/imported').id == 'imported'
+    with zipfile.ZipFile(io.BytesIO(export_package(tmp_path / 'personas/imported'))) as archive:
+        assert archive.namelist() == ['persona.yaml']
+
+    saved = type('Saved', (), {'scenes': {}})()
+    listed = [role for role in roles(tmp_path, saved) if role.key == 'imported']
+    assert len(listed) == 1 and listed[0].id == 'imported' and listed[0].error is None

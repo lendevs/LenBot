@@ -59,8 +59,11 @@ def _metadata(path: Path) -> tuple[dict | None, str | None]:
         data = yaml.safe_load((path / "persona.yaml").read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         return None, error_text(error)
-    if not isinstance(data, dict) or not isinstance(data.get("id"), str) or not isinstance(data.get("name"), str):
-        return None, "persona.yaml 缺少 id 或 name"
+    if not isinstance(data, dict) or not isinstance(data.get("name"), str):
+        return None, "persona.yaml 缺少 name"
+    data.setdefault("id", path.name)
+    if not isinstance(data["id"], str):
+        return None, "persona.yaml 的 id 不是文本"
     return data, None
 
 
