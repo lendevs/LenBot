@@ -32,6 +32,11 @@ const searchOptions = computed(() => [
   { value: 'yahoo' as const, label: 'Yahoo' },
   { value: 'off' as const, label: t('setup.model.searchOff') },
 ])
+/** Replies right after new messages use a low effort; tool results keep the full one. */
+const quickReply = computed({
+  get: () => draft.quickEffort.trim() !== '',
+  set: (on: boolean) => (draft.quickEffort = on ? 'low' : ''),
+})
 const connectionOptions = computed(() => [
   {
     value: 'primary' as const,
@@ -195,6 +200,7 @@ const passed = computed(() => {
           :placeholder="t('setup.model.modelPlaceholder')"
         />
       </Field>
+      <Field :label="t('models.roles.quickReply')" inline wide><Switch v-model="quickReply" /></Field>
     </div>
     <div class="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
       <Field :label="t('capabilities.web.provider')">
@@ -236,7 +242,6 @@ const passed = computed(() => {
       <Field :label="t('models.roles.context')" :error="error('contextWindow')" required>
         <NumberInput v-model="draft.contextWindow" :min="2048" :steppers="false" unit="tokens" />
       </Field>
-      <Field :label="t('models.roles.quickEffort')"><Input v-model="draft.quickEffort" mono /></Field>
       <Field :label="t('setup.model.maxSteps')" :error="error('maxSteps')">
         <NumberInput v-model="draft.maxSteps" :min="1" />
       </Field>

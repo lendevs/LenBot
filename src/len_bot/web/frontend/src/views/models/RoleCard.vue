@@ -44,6 +44,14 @@ const efforts = computed(() =>
 const quickEfforts = computed(() =>
   effortOptions(binding.value?.quick_reasoning_effort, t('models.roles.quickEffortSame')),
 )
+/** On means a low effort for replies right after new messages; the select below keeps other levels. */
+const quickReply = computed({
+  get: () => binding.value?.quick_reasoning_effort != null,
+  set: (on: boolean) => {
+    if (binding.value)
+      binding.value.quick_reasoning_effort = on ? (binding.value.quick_reasoning_effort ?? 'low') : null
+  },
+})
 const histories = computed(() => [
   { value: 'native' as const, label: t('models.roles.history.native') },
   { value: 'omit-reasoning' as const, label: t('models.roles.history.omit') },
@@ -101,6 +109,9 @@ watch(retries, (text) => {
         </Field>
         <Field v-if="role === 'mind' || role === 'vision'" :label="t('models.roles.imageInput')">
           <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
+        </Field>
+        <Field v-if="role === 'mind'" :label="t('models.roles.quickReply')">
+          <Switch v-model="quickReply" :aria-label="t('models.roles.quickReply')" />
         </Field>
       </div>
       <details class="group">

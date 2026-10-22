@@ -1554,6 +1554,7 @@ export default {
       effortDefault: '服务商默认',
       quickEffort: '接话时的思考强度',
       quickEffortSame: '和思考强度相同',
+      quickReply: '接话时少思考，回得更快（推荐）',
       followsMind: '跟随聊天模型',
       imageInput: '能看图',
       mindSees: '聊天模型直接看图',

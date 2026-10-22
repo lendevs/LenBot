@@ -1613,6 +1613,7 @@ export default {
       effortDefault: 'Provider default',
       quickEffort: 'Effort when replying to new messages',
       quickEffortSame: 'Same as reasoning effort',
+      quickReply: 'Think less when replying, answer faster (recommended)',
       followsMind: 'Uses the chat model',
       imageInput: 'Accepts images',
       mindSees: 'The chat model looks at images itself',
