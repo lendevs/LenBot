@@ -257,20 +257,40 @@ def test_container_setup_always_uses_the_published_panel_port(tmp_path: Path):
     asyncio.run(exercise())
 
 
-def test_local_setup_keeps_the_chosen_port_and_page_says_plugins_start_disabled(tmp_path: Path):
+def test_local_setup_keeps_the_chosen_port_and_serves_the_panel_frontend(tmp_path: Path):
+    built = tmp_path / 'dist'
+    (built / 'assets').mkdir(parents=True)
+    (built / 'index.html').write_text('<div id="app"></div>', encoding='utf-8')
+    (built / 'assets' / 'entry.js').write_text('export {}', encoding='utf-8')
+    instance = tmp_path / 'instance'
+    instance.mkdir()
+
     async def exercise():
-        app = create_setup_app(tmp_path, 'fixture-token', asyncio.Event())
+        app = create_setup_app(instance, 'fixture-token', asyncio.Event(), assets_dir=built)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://127.0.0.1',
                                      headers={'X-Setup-Token': 'fixture-token'}) as client:
             page = (await client.get('/api/setup/protocols')).json()
             assert page['container'] is False and page['panel_port'] is None
-            html = (await client.get('/')).text
-            assert '默认是关闭的' in html and "readOnly=true" in html
+            # The page itself needs no token: the token is read from the link by the frontend.
+            del client.headers['X-Setup-Token']
+            assert (await client.get('/api/panel-context')).json() == {'mode': 'setup', 'home': '/setup'}
+            index = await client.get('/')
+            assert index.status_code == 200 and index.text == '<div id="app"></div>'
+            assert (await client.get('/assets/entry.js')).status_code == 200
+            assert (await client.get('/api/setup/protocols')).status_code == 401
+            assert (await client.get('/api/setup/missing')).status_code == 404
+
+        missing = create_setup_app(instance, 'fixture-token', asyncio.Event(), assets_dir=tmp_path / 'absent')
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(missing), base_url='http://127.0.0.1') as client:
+            response = await client.get('/')
+            assert response.status_code == 503
+            message = response.json()['detail']['message']
+            assert str(tmp_path / 'absent' / 'index.html') in message and 'npm run build' in message
     asyncio.run(exercise())
 
 
-def test_docker_smoke_goes_through_the_wizard_port_and_docs_name_the_container_port():
-    """B-1 follow-up: the smoke test must not hardcode the port, docs must not promise 8088 for Docker."""
+def test_docker_smoke_goes_through_the_wizard_port():
+    """B-1 follow-up: the smoke test must not hardcode the port."""
     repo = Path(__file__).parents[1]
     smoke = (repo / 'scripts' / 'smoke_docker_update.py').read_text(encoding='utf-8')
     assert "'panel_port': 11307" not in smoke and "'panel_port': submitted" in smoke
@@ -278,8 +298,45 @@ def test_docker_smoke_goes_through_the_wizard_port_and_docs_name_the_container_p
     assert 'submitted = 8088' in smoke and "saved['panel']['port'] == published" in smoke
     # Review 2 A6: the static HTML always says 8088, so the smoke reads the port from the setup API only.
     assert 'id="port"' not in smoke and "wizard_port = json.loads(text)['panel_port']" in smoke
-    readme = (repo / 'deploy' / 'current' / 'README.md').read_text(encoding='utf-8')
-    assert 'Docker 部署固定为 `http://127.0.0.1:11307`' in readme
-    for path in [*(repo / 'deploy').rglob('*docker*.md'), repo / 'website' / 'guide' / 'install-docker.md']:
-        if path.exists():
-            assert '8088' not in path.read_text(encoding='utf-8'), path
+
+
+@pytest.mark.parametrize('mode', ['shared', 'separate', 'yahoo', 'off', 'tavily', 'jina'])
+def test_setup_search_connection_and_minimal_custom_persona(tmp_path, mode):
+    from len_bot.next.panel.setup import FirstSetup, initialize
+    source = json.loads((Path(__file__).parents[1] / 'deploy/current/first-setup.example.json').read_text())
+    source.update(password='fixture-password', persona_id='new-role', persona_name='新角色', brief='喜欢聊天。',
+                  max_steps=16, web_read={})
+    source.pop('voice_text', None)
+    if mode in {'shared', 'separate'}:
+        source['web_search'] = {'provider': 'deepseek', 'connection': 'primary' if mode == 'shared' else 'search'}
+        if mode == 'separate':
+            source['search_provider'] = {'api': 'deepseek-search', 'base_url': 'https://api.deepseek.com/v1',
+                                         'api_key': 'synthetic-search-key'}
+    elif mode == 'tavily':
+        # One paid connection serves both search and reading.
+        source['web_search'] = {'provider': 'tavily', 'connection': 'search'}
+        source['search_provider'] = {'api': 'tavily', 'base_url': 'https://api.tavily.com', 'api_key': 'synthetic-tavily'}
+        source['web_read'] = {'provider': 'tavily', 'connection': 'search'}
+    elif mode == 'jina':
+        source['web_search'] = {'provider': 'yahoo'}
+        source['read_provider'] = {'api': 'jina-reader', 'base_url': 'https://r.jina.ai', 'api_key': 'synthetic-jina'}
+        source['web_read'] = {'provider': 'jina', 'connection': 'reader'}
+    else:
+        source['web_search'] = {'provider': 'yahoo'} if mode == 'yahoo' else None
+    initialize(tmp_path, FirstSetup.model_validate(source))
+    config = load_host_config(tmp_path)
+    assert config.max_steps == 16 and config.web_read is not None
+    assert load_persona(config.scenes[source['scene']].persona).voice == ''
+    if mode in {'shared', 'separate'}:
+        alias = config.web_search.connection
+        assert alias == ('primary' if mode == 'shared' else 'search')
+        assert config.models.providers[alias].api_key == (source['provider']['api_key'] if mode == 'shared' else 'synthetic-search-key')
+    elif mode == 'off':
+        assert config.web_search is None
+    elif mode == 'tavily':
+        assert config.web_search.connection == config.web_read.connection == 'search'
+        assert config.models.providers['search'].api == 'tavily'
+    elif mode == 'jina':
+        assert config.web_read.provider == 'jina' and config.models.providers['reader'].api == 'jina-reader'
+    else:
+        assert config.web_search.provider == 'yahoo' and config.web_search.connection is None

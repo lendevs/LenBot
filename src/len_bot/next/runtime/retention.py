@@ -26,7 +26,7 @@ class RetentionSettings(BaseModel):
 
 
 def expire_request(request: dict, now: float) -> dict:
-    return {**{key: value for key, value in request.items() if key not in {'messages','tools','texts','request'}},
+    return {**{key: value for key, value in request.items() if key not in {'messages','tools','texts','request','recall_items'}},
             'snapshot_expired_at': now}
 
 
@@ -155,7 +155,7 @@ class Retention:
                   'messages':len(selected_messages), 'notices':len(selected_notices),
                   'protected_latest_mind_requests':len(latest),
                   'memory_snapshots':sum(map(len,memory_calls.values())), 'extraction_jobs':len(extraction_jobs),
-                  'scope':'本批数量；原话仅在无活动上下文时清理；保留未处理输入、显式素材来源和仍被引用的轮次。不等于遗忘记忆或删除备份。'}
+                  'scope':'本批数量；原话仅在无活动上下文时清理；保留未处理输入、显式素材来源和仍被引用的轮次。'}
         if preview:
             return result
         with db:

@@ -16,9 +16,9 @@ uv run --no-sync len-bot   # 启动；没有配置时打开首次向导
 
 仓库根目录就是本机的实例目录。`lenbot.config.json`、数据库、`state/` 和 `personas/` 都放在这里，并且已经被 `.gitignore` 排除。开发和本机运行使用同一份代码，用 `uv` 直接启动，不需要另外安装。
 
-修改前端后，在 `src/len_bot/web/frontend` 执行 `npm run build`。构建产物 `web/static/dist/` 不提交到 Git。开发前端时也可以使用 `npm run dev`。
+修改前端后，在 `src/len_bot/web/frontend` 执行 `npm run typecheck`、`npm run lint` 和 `npm run build`。构建产物 `web/static/dist/` 不提交到 Git。开发前端时也可以使用 `npm run dev`。前端约定见[面板前端](developer/panel.md)。
 
-从 Git 检出运行 `len-bot` 时，启动器会检查前端内容是否变化；缺少面板或内容变化时先执行 `npm ci` 和 `npm run build`，未变化时直接启动。发布包使用打包时构建好的面板，启动不需要 Node.js。
+从 Git 检出运行 `len-bot` 时，启动器会检查前端内容是否变化；缺少面板或内容变化时先执行 `npm ci` 和 `npm run build`，未变化时直接启动。
 
 ### 在副本上测试
 
@@ -66,7 +66,6 @@ cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 | `docker/next-worker/` | 任务镜像 |
 | `deploy/` | 部署资料。`deploy/updater/` 是部署包和 Docker 共用的更新器 |
 | `website/` | 文档站（VitePress），用 `cd website && npm ci && npm run dev` 在本地预览 |
-| `changelogs/` | 每个版本一份版本说明 |
 | `scripts/` | 安装和打包脚本 |
 | `examples/` | 示例角色和公开的回放用例 |
 
@@ -108,7 +107,15 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 2. 在 `maintenance/migrate.py` 的 `BUSINESS` 中增加一步从上一版的升级。
 3. 提高 `storage/store.py` 中的 `FORMAT_VERSION`。
 
-记忆处理库（`migrate_memory_jobs.py`）、本地记忆索引（`migrate_local_memory.py`）和根配置的做法相同，各自的编号见[发行指南](deploy/releasing.md#兼容编号)。升级只在停机时由维护命令执行，运行时的代码不写新旧格式的兼容分支。
+记忆处理库（`migrate_memory_jobs.py`）、本地记忆索引（`migrate_local_memory.py`）和根配置的做法相同。各编号的当前值：
+
+| 编号 | 当前值 | 位置 |
+|---|---|---|
+| 插件接口 | 1 | `plugin.py` 的 `INTERFACE` |
+| 根配置格式 | 3 | `config.py` 的 `CONFIG_VERSION` |
+| 业务数据库 | 7 | `storage/store.py` 的 `FORMAT_VERSION` |
+| 记忆处理库 | 6 | `memory/jobs.py` 的 `FORMAT_VERSION` |
+| 本地记忆索引 | 4 | `memory/local.py` 的 `FORMAT_VERSION` |
 
 三个数据库的升级都由 `maintenance/migrations.py` 执行。
 
@@ -123,15 +130,15 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 
 提高任何一个格式编号之前，先在 `scripts/build_history_fixtures.py` 中登记改动前的最后一个提交，再运行这个脚本生成新的样本（`uv run --no-sync python scripts/build_history_fixtures.py`）。同一输入重新生成的文件逐字节相同。
 
-## 构建与发布
+## 打包
 
 ```sh
 uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 ```
 
-这条命令在副本中重新构建面板，生成源码包、wheel、Linux／macOS／Windows 部署包和发行清单，不启动程序，也不上传。正式发布使用 [Release 工作流](.github/workflows/release.yml)，步骤见[发行指南](deploy/releasing.md)。
+这条命令在副本中重新构建面板，生成源码包、wheel、Linux／macOS／Windows 部署包和发行清单，不启动程序，也不上传。项目尚未发布版本，发行流程定稿后再补充说明。
 
-[CI](.github/workflows/ci.yml) 会编译代码并运行测试，然后构建面板并打包。测试在 Python 3.13 和 3.14 上各运行一遍（[check.yml](.github/workflows/check.yml)）。3.13 是 `pyproject.toml` 中的最低版本，3.14 用来提前发现新解释器上的问题。同一个工作流还用 actionlint 检查所有 workflow 文件。单元测试只在 Linux 上运行，Windows 和 macOS 只有安装冒烟测试覆盖。CI 通过不代表页面交互和真实聊天也没有问题。
+[CI](.github/workflows/ci.yml) 会编译代码并运行测试，然后构建面板并打包。测试在 Python 3.13 和 3.14 上各运行一遍（[check.yml](.github/workflows/check.yml)）。3.13 是 `pyproject.toml` 中的最低版本，3.14 用来提前发现新解释器上的问题。同一个工作流还用 actionlint 检查所有 workflow 文件。单元测试只在 Linux 上运行，Windows 和 macOS 只有安装冒烟测试覆盖。
 
 ## 提交
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 import httpx
 
+from .. import responses
 from ...runtime.releases import CHECK_TIMEOUT_SECONDS, GITHUB_RELEASES, ReleaseCheck, current_version, github_releases
 
 ERRORS = (OSError, ValueError, KeyError, TimeoutError, httpx.HTTPError)
@@ -57,7 +58,7 @@ def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request],
 
     releases = ReleaseCheck(load_releases, enabled=check_enabled)
 
-    @app.get('/api/host/updates')
+    @app.get('/api/host/updates', response_model=responses.UpdateState, response_model_exclude_unset=True)
     async def current(_: str = Depends(user)):
         try:
             reference = control()
@@ -70,7 +71,7 @@ def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request],
         except ERRORS as error:
             raise HTTPException(422, str(error)) from error
 
-    @app.get('/api/host/updates/releases')
+    @app.get('/api/host/updates/releases', response_model=list[responses.JsonObject], response_model_exclude_unset=True)
     async def published(_: str = Depends(user)):
         # An explicit check works even with the background check turned off.
         try:
@@ -78,7 +79,7 @@ def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request],
         except ERRORS as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/host/updates/session')
+    @app.post('/api/host/updates/session', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def session(_: str = Depends(user)):
         try:
             return await request_control('session')

@@ -268,7 +268,7 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
 
     assert config.database == root / "data/isolated-chat.db"
     assert config.persona == external_persona
-    assert config.voice_mode == "direct" and config.max_steps == 8
+    assert config.voice_mode == "direct" and config.max_steps == 16
     assert config.onebot is None and config.delivery == "simulated"
     assert config.panel is None
     assert config.compaction.input_tokens == 6000
@@ -289,7 +289,7 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
     assert config.behavior_addendum is None
     assert config.attention.direct_idle_seconds == 1.5
     assert config.attention.direct_max_seconds == 4.0
-    assert config.attention.max_extensions == 2
+    assert config.attention.max_extensions == 4
     assert config.attention.only_direct is False
     assert config.attention.keywords == []
     assert config.attention.other_bot_ids == []
@@ -312,8 +312,7 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
     assert config.models.roles.vision is None
     assert config.model_settings("mind").model == "sample-mind"
     assert config.model_settings("mind").reasoning_effort == "high"
-    with pytest.raises(ValueError, match="models.roles.vision is not configured"):
-        config.model_settings("vision")
+    assert config.model_settings("vision") == config.model_settings("mind")
     assert "context_window_tokens" not in config.model_settings("mind").model_dump()
     assert "synthetic-secret-marker" not in repr(config)
 
@@ -436,8 +435,7 @@ def test_learning_read_only_embedding_is_explicit_in_host_and_replay_lab(tmp_pat
     assert host.scenes["onebot:group:80001"].learning.embedding.model == "sample-embed"
     assert host.scene_config("onebot:group:80001").learning is host.scenes["onebot:group:80001"].learning
     assert HostConfig.model_validate_json(host.model_dump_json()) == host
-    with pytest.raises(ValueError, match="models.roles.learner is not configured"):
-        host.model_settings("learner")
+    assert host.model_settings("learner") == host.model_settings("mind")
 
     lab_root = tmp_path / "lab"
     lab = _config("personas/example")
@@ -473,8 +471,7 @@ def test_jargon_extraction_has_an_independent_explicit_binding(tmp_path):
     source = _host_config()
     source["scenes"]["onebot:group:80001"]["learning"] = {"extract": False, "jargon_extract": True}
     _write_config(root, source)
-    with pytest.raises(ValueError, match="requires explicit models.roles.learner"):
-        load_host_config(root)
+    assert load_host_config(root).binding("learner").model == "sample-mind"
     source["models"]["roles"]["learner"] = {
         "provider": "sample", "model": "sample-learner", "context_window_tokens": 8192,
     }
@@ -500,8 +497,7 @@ def test_sticker_collection_requires_vision_not_learner(tmp_path):
     source = _host_config()
     source["scenes"]["onebot:group:80001"]["learning"] = {"extract": False, "collect_stickers": True}
     _write_config(root, source)
-    with pytest.raises(ValueError, match="collect_stickers requires explicit models.roles.vision"):
-        load_host_config(root)
+    assert load_host_config(root).binding("vision").model == "sample-mind"
     source["models"]["roles"]["vision"] = {
         "provider": "sample", "model": "sample-vision", "context_window_tokens": 8192,
     }
@@ -524,8 +520,7 @@ def test_reply_effects_require_learner_and_host(tmp_path):
     source = _host_config()
     source["scenes"]["onebot:group:80001"]["learning"] = {"extract": False, "reply_effects": True}
     _write_config(root, source)
-    with pytest.raises(ValueError, match="learning requires explicit models.roles.learner"):
-        load_host_config(root)
+    assert load_host_config(root).binding("learner").model == "sample-mind"
     source["models"]["roles"]["learner"] = {
         "provider": "sample", "model": "sample-learner", "context_window_tokens": 8192,
     }
@@ -555,8 +550,7 @@ def test_learning_requires_explicit_host_group_and_learner_binding(tmp_path):
     source = _host_config()
     source["scenes"]["onebot:group:80001"]["learning"] = {}
     _write_config(root, source)
-    with pytest.raises(ValueError, match="scenes.onebot:group:80001.learning requires explicit models.roles.learner"):
-        load_host_config(root)
+    assert load_host_config(root).binding("learner").model == "sample-mind"
 
     source["models"]["roles"]["learner"] = {
         "provider": "missing", "model": "sample-learner", "context_window_tokens": 8192,
@@ -1036,7 +1030,6 @@ def test_scene_persona_save_rejects_malformed_root_without_writing(tmp_path):
     [
         (lambda source: source.pop("onebot"), "onebot"),
         (lambda source: source.update(onebot=None, delivery="onebot"), "onebot"),
-        (lambda source: source.update(scenes={}), "scenes"),
         (lambda source: source["scenes"].update({"onebot:group:0": {"persona": "personas/invalid"}}), "platform:group:id"),
         (lambda source: source.update(scene="onebot:group:80001"), "scene"),
         (lambda source: source.update(persona="personas/group"), "persona"),
@@ -1967,17 +1960,17 @@ def test_proactive_is_host_group_only_with_local_active_hours(tmp_path):
         load_config(lab_root)
 
 
-def test_local_memory_summaries_require_explicit_memory_model(tmp_path):
+def test_local_memory_summaries_use_the_mind_model_until_memory_has_its_own(tmp_path):
     root = tmp_path / "host"
     source = _host_config()
     source["memory"] = {"backend": "local", "local": {"directory": "memory"}, "summaries": True}
     _write_config(root, source)
-    with pytest.raises(ValueError, match="summaries require explicit models.roles.memory"):
-        load_host_config(root)
+    assert load_host_config(root).binding("memory").model == "sample-mind"
     source["models"]["roles"]["memory"] = {"provider": "sample", "model": "sample-memory",
                                            "context_window_tokens": 8192}
     (root / "lenbot.config.json").write_text(json.dumps(source), encoding="utf-8")
     assert load_host_config(root).memory.summaries is True
+    assert load_host_config(root).binding("memory").model == "sample-memory"
     source["memory"]["summaries"] = "yes"
     (root / "lenbot.config.json").write_text(json.dumps(source), encoding="utf-8")
     with pytest.raises(ValueError, match="summaries"):

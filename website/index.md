@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: LenBot
-  text: 基于大模型的 QQ 群聊机器人
-  tagline: 通过 OneBot v11 接入 QQ，模型服务自己选择，设置和管理都在网页面板里完成。
+  text: 自主决策的群聊 Agent
+  tagline: 何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。支持 QQ 和 Telegram。
   image:
     src: /lenbot-mark-animated.svg
     alt: LenBot
@@ -13,47 +13,75 @@ hero:
       text: 快速开始
       link: /guide/quick-start
     - theme: alt
-      text: 编写插件
-      link: /develop/plugins
+      text: 认识 LenBot
+      link: /guide/introduction
     - theme: alt
       text: GitHub
       link: https://github.com/lendevs/LenBot
 
 features:
-  - title: 群聊
-    details: 每个群各有一段连续的对话。是否接话、回复哪一条由模型判断，回复时可以引用原消息、@ 群友或者只发一个表情。
-  - title: 角色
-    details: 人物设定和说话方式写在角色包里。默认角色小然安装后即可使用，修改后可以先试聊，满意再保存。
-  - title: 记忆
-    details: 记忆是保存在本地的 Markdown 文件，每个群分开存放。面板里可以查看和修改，也可以让 Bot 彻底忘掉某件事。
-  - title: 后台任务
-    details: 写报告和整理资料这类耗时的工作在 Docker 容器里执行，不占用聊天。完成后，生成的文件会发回群里。
-  - title: 插件
-    details: 插件用 Python 编写，可以添加命令和定时任务，也可以给模型增加工具。修改插件设置不需要重启。
-  - title: 网页面板
-    details: 首次配置和之后的设置都在面板里完成。主人也可以在群里直接让 Bot 修改设置。
+  - icon: 💬
+    title: 群聊
+    details: 每个群保持一段连续的对话。是否回复、回复哪一条由模型判断，回复可以引用原消息、@ 群友，或只发送表情。
+    link: /guide/chatting
+    linkText: 在群里聊天
+  - icon: 🔎
+    title: 联网查证
+    details: 需要查证的问题，模型先搜索网页、读取正文或查询聊天记录和记忆。搜索和读网页均可选择免费方式或付费接口。
+    link: /guide/web
+    linkText: 联网与工具
+  - icon: 🎭
+    title: 角色
+    details: 角色包至少包含名字和人物设定。每个群可以使用不同的角色，切换无需重启，修改后可以先试聊再保存。
+    link: /guide/personas
+    linkText: 角色
+  - icon: 🧠
+    title: 记忆与学习
+    details: 记忆以 Markdown 文件按群保存在本地。群内空闲时，聊天模型在同一会话中整理记忆，并学习群内的说法和黑话。
+    link: /guide/memory
+    linkText: 记忆与学习
+  - icon: 🧩
+    title: 插件
+    details: 插件用 Python 编写，可以添加命令、定时推送和模型工具。插件按群启用，修改设置无需重启。
+    link: /guide/plugins
+    linkText: 插件
+  - icon: 🖥️
+    title: 网页面板
+    details: 面板实时显示每一轮回复的经过，包括查询的内容、模型的想法和发出的消息。设置、日志和试聊也在面板中完成。
+    link: /guide/panel
+    linkText: 面板一览
 ---
 
 <div class="home-section">
-  <h2>从安装到进群</h2>
+  <h2>一轮回复的过程</h2>
+  <p class="lead">Bot 被唤醒后，判断、查询和回复由同一个聊天模型完成，不使用固定的回复模板。</p>
+  <ol class="flow">
+    <li><strong>唤醒</strong><span>被 @、被回复或被叫到名字时唤醒。开启参与群聊后，群内讨论活跃时也会唤醒。</span></li>
+    <li><strong>判断</strong><span>模型读取最近的聊天，判断是否回复以及回复哪一条。不回复时继续旁听。</span></li>
+    <li><strong>查询</strong><span>按需搜索网页、读取正文、查询聊天记录和记忆，或调用插件提供的工具。</span></li>
+    <li><strong>回复</strong><span>发送一条或多条消息，可以引用原消息、附带表情，也可以只给消息贴表情。</span></li>
+  </ol>
+</div>
+
+<div class="shots">
+  <figure class="wide"><img src="/screenshots/live.gif" alt="群聊现场：群友 @ Bot 后，回合卡片逐步展开，先查询聊天记录，再分两条回复"><figcaption>群聊现场。Bot 被 @ 后先查询聊天记录，再分两条回复，每一步实时显示。</figcaption></figure>
+  <figure><img src="/screenshots/home.png" alt="面板总览，显示 QQ 连接状态、今天的消息量和群列表"><figcaption>总览：连接状态、当日统计、待处理事项和各群动态。</figcaption></figure>
+  <figure><img src="/screenshots/persona.png" alt="角色编辑页"><figcaption>角色编辑：修改设定后可以先试聊，确认后再保存。</figcaption></figure>
+</div>
+
+<div class="home-section">
+  <h2>开始使用</h2>
   <ol class="steps">
-    <li><strong>安装</strong><span>用部署包或 Docker 安装，也可以从源码运行。三种方式运行的是同一个程序。</span></li>
-    <li><strong>首次配置</strong><span>启动后在浏览器里打开终端给出的链接，按向导连接 QQ 并选择模型。</span></li>
-    <li><strong>试聊</strong><span>先用模拟发送，在面板的对话测试页和 Bot 聊几轮，回复不会发到 QQ。</span></li>
-    <li><strong>进群</strong><span>效果满意后改为真实发送，在群里 @ Bot 试一下。</span></li>
+    <li><strong>准备</strong><span>一个已登录 QQ 的 OneBot 实现（例如 NapCat），以及模型服务的 API Key。</span></li>
+    <li><strong>启动</strong><span>克隆仓库，执行安装脚本，用 <code>uv</code> 启动。终端输出首次配置的链接。</span></li>
+    <li><strong>首次配置</strong><span>按五步向导连接 QQ、选择模型和角色。发送方式建议先选模拟发送。</span></li>
+    <li><strong>试聊与上线</strong><span>在面板中试聊，确认效果后改为真实发送。</span></li>
   </ol>
 </div>
 
 <div class="home-section">
   <div class="box">
     <h2>当前状态</h2>
-    <p>首个公开版本 0.2.0 尚未发布，部署包和 Docker 镜像要等发布后才能下载。在此之前请<a href="./guide/install-source">从源码运行</a>。</p>
-    <p>目前只支持 QQ，需要另外运行一个 OneBot 实现（例如 NapCat），并准备自己的模型服务。提示词和面板只有中文。</p>
+    <p>LenBot 仍在开发中，尚未发布版本，请<a href="./guide/quick-start">从源码运行</a>。主要面向 QQ，也可以<a href="./guide/telegram">接入 Telegram</a>。提示词只有中文，面板支持中文和英文。</p>
   </div>
-</div>
-
-<div class="shots">
-  <figure class="wide"><img src="/screenshots/home.png" alt="面板首页，显示 QQ 连接状态、今天的消息量和群列表"><figcaption>面板首页。这里显示 QQ 的连接状态和今天的消息量，以及模型用量和需要处理的事项。</figcaption></figure>
-  <figure><img src="/screenshots/persona.png" alt="角色编辑页"><figcaption>角色编辑页。修改设定和样例后可以先试聊。</figcaption></figure>
-  <figure><img src="/screenshots/plugins.png" alt="插件页的插件目录"><figcaption>插件目录。安装后可以选择在哪些群启用。</figcaption></figure>
 </div>

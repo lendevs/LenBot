@@ -91,7 +91,7 @@ SCHEDULE_TOOLS = [
         "星期 0-6（0 为周日），日与星期不能同时限制，不支持英文名、L、W、#。"
         "缺失/重复时刻明确报错或阻止后续，不自动顺延、选偏移。"
         "for=self 是未来自己要做的事，for=账号 是提醒对象；source_message_id 是实际请求消息，宿主读取其发送者作为请求人，Bot 自主安排用 null。"
-        "相对时间请结合原话和当前时刻理解；返回已保存不等于提醒已发。",
+        "相对时间请结合原话和当前时刻理解。",
         "parameters": source_schema(ScheduleArguments.model_json_schema()),
     }},
     {"type": "function", "function": {
@@ -184,7 +184,7 @@ def describe(item: Schedule, *, preview: bool = False) -> str:
               f"创建者：{creator}；对象：{item.target}\n{note}")
     if item.delivered_at is not None:
         prior = "上次已交付会话" if item.interval_seconds is not None or item.cron is not None else "已交付会话"
-        result += f"\n{prior}：{display_time(item.delivered_at, item.timezone)}（不代表已发送提醒）"
+        result += f"\n{prior}：{display_time(item.delivered_at, item.timezone)}"
     if item.reason is not None:
         result += "\n阻止原因：" + item.reason
     return result
@@ -202,7 +202,7 @@ def wake_text(item: Schedule, now: float) -> str:
                   "离线错过多次也只补交一次；本次交付后用 schedule_list 查看持久化的下一时刻。\n")
         if item.delivered_at is not None:
             timing += (f"上次已交付会话：{display_time(item.delivered_at, item.timezone)}"
-                       "（不代表已发送提醒）。\n")
+                       "。\n")
     due_label = "本期原定" if recurring else "原定"
     return (f"[定时唤醒] #{item.id}；已交付当前会话，尚未发送提醒\n"
             f"创建者：{creator}；对象：{item.target}；创建于 {display_time(item.created, item.timezone)}\n"

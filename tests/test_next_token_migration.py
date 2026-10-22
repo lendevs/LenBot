@@ -31,6 +31,9 @@ def _business_format1(path: Path) -> None:
     with Store(path):
         pass
     with sqlite3.connect(path) as db:
+        db.execute('DROP INDEX expression_messages')
+        db.execute('ALTER TABLE messages DROP COLUMN wake_verdict')
+        db.execute('ALTER TABLE messages DROP COLUMN expression_entry_seq')
         db.execute('DROP INDEX message_overview')
         db.execute('DROP INDEX message_failed_sends')
         db.execute('DROP INDEX model_call_usage')

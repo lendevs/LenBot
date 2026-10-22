@@ -449,3 +449,27 @@ async def test_hung_plugin_start_and_stop_are_cut_off(tmp_path, monkeypatch):
             await host.close()
     assert [str(error) for error in failure.value.exceptions] == ["插件 stop() 超过 0.1 秒没有返回，已取消"]
     assert host.plugins["slowstop"].status == "failed"
+
+
+def test_scene_being_added_has_no_runner_and_is_not_paused():
+    """Adding a group from the panel builds its chat, and asks plugins for tools, before the runner exists."""
+    from types import SimpleNamespace
+
+    paused = SimpleNamespace(state=SimpleNamespace(paused=True))
+    host = SimpleNamespace(runtime=SimpleNamespace(runners={"onebot:group:80001": paused}))
+    assert PluginHost.scene_paused(host, "onebot:group:80001")
+    assert not PluginHost.scene_paused(host, "onebot:group:80002")
+    assert not PluginHost.scene_paused(SimpleNamespace(runtime=None), "onebot:group:80002")
+
+
+def test_home_page_counts_only_recent_plugin_errors():
+    """Errors read back from older logs stay on the plugin page, not in what needs attention today."""
+    from len_bot.next.panel.app import attention
+
+    now = 1_800_000_000
+    item = {"name": "sample", "status": "running", "error": None,
+            "errors": [{"at": now - 60, "where": "后台", "error": "新错误"},
+                       {"at": now - 5 * 86400, "where": "后台", "error": "旧错误"}]}
+    assert attention(item, now) == {"name": "sample", "status": "running", "error": None,
+                                    "error_count": 1, "latest_error": item["errors"][0]}
+    assert attention({**item, "errors": item["errors"][1:]}, now)["latest_error"] is None

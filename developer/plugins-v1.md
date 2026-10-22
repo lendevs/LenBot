@@ -12,6 +12,7 @@
 name = "counter"
 version = "1.0.0"
 interface = 1
+permissions = ["send"]
 requires_lenbot = ">=0.2,<1"
 requires_python = ">=3.13"
 platforms = ["linux", "darwin", "win32"]
@@ -32,7 +33,7 @@ description = "每群独立计数"
 
 ### 权限声明
 
-可选的 `permissions` 列出插件需要的宿主能力。声明了这个字段，插件就只能使用列出的能力，其余调用抛出 `PermissionError`，并说明缺少哪一项。
+可选的 `permissions` 列出插件需要的宿主能力。声明了这个字段，插件就只能通过宿主接口使用列出的能力，其余调用抛出 `PermissionError`，并说明缺少哪一项。
 
 ```toml
 permissions = ["send", "history"]
@@ -49,7 +50,7 @@ permissions = ["send", "history"]
 | `network` | `fetch_image` 从公网获取图片 |
 | `schedule` | `ctx.cron` 登记定点任务 |
 
-插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的插件保留全部能力，面板显示为「未声明」；新插件建议总是声明。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
+插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的旧插件保留全部能力，面板显示为「未声明」。新插件和官方插件应明确声明实际调用的宿主能力；模板也按此编写。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
 
 ### 进程隔离
 
@@ -155,7 +156,9 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 | `@tool("plugin_read", "完整说明", summary="发现简介", needs_source=False)` | `self, ctx: Invocation, ...` | 根据参数类型生成 schema，返回文本或 JSON 值 |
 | `@background(every="5m")` | `self, ctx: PluginContext` | 本次执行完成后再等待一个周期，最短 10 秒。它按间隔执行，与定点的 cron 不同 |
 
-每个方法只使用一个入口装饰器。匹配的优先级依次为命令、全文、正则，正则之间按 priority 降序匹配。同一条消息最多由一个处理器接管，并且不唤醒聊天模型。匹配只针对纯文本，开头的回复段和 @Bot 自己的部分可以去掉。
+每个方法只使用一个入口装饰器。匹配的优先级依次为命令、全文、正则，正则之间按 priority 降序匹配。同一条消息最多由一个处理器接管，并且不唤醒聊天模型。默认匹配只针对纯文本，开头的回复段和 @Bot 自己的部分可以去掉。命令可用 `@command("转发", "说明", allow_mentions=True)` 明确接收正文中的提及；提及保留在 `ctx.message.segments`，文字参数中的提及位置替换为一个空格，插件从真实消息读取目标账号。图片、语音等其他段仍不接管。全文和正则规则继续只匹配纯文本，不把提及或媒体悄悄拼接进去。
+
+插件先于宿主命令匹配。插件显式注册 `/角色` 等同名命令时由插件处理；否则 `/角色` 交给宿主，只有主人和全局管理员可以切换角色。需要保留宿主命令时，不要给插件注册同名命令。
 
 部署方可以只关掉插件的某几条规则，插件其余功能照常：在 `plugins.disabled_rules` 里按插件名列出，命令写 `/日程`，全文写原文，正则写模式字符串，例如 `"disabled_rules": {"asoul": ["今日直播"]}`。被关掉的文本当普通聊天处理。写了插件没有的规则时，日志里有一条警告。
 
@@ -165,26 +168,26 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 
 面板按 `[config.<字段名>]` 的声明生成表单，运营者不需要手写 JSON。每个字段的 `type` 和 `description` 必填。写了 `default` 的字段可以省略，否则为必填。宿主只解析一次，`ctx.config` 中是已经校验过的普通值。
 
-| 类型 | 值 | 面板控件 |
-| --- | --- | --- |
-| `string` | 文字 | 输入框。`multiline = true` 时为多行文本框 |
-| `secret` | 文字，面板不回显 | 密码框，已保存时留空表示不修改 |
-| `integer`、`number` | 整数、数字 | 数字输入框 |
-| `boolean` | 开关 | 开关 |
-| `string_list` | 文字列表 | 多行文本框，每行一项 |
-| `scene` | 一个群，例如 `onebot:group:123` | 从宿主已配置的群中选择，显示群名 |
-| `scene_list` | 多个群 | 多选，显示群名 |
-| `path` | 绝对路径 | 输入框 |
-| `url` | http 或 https 地址 | 输入框 |
-| `object_list` | 对象列表 | 每一项显示为一张卡片，卡片标题显示前几个已填写的值 |
+| 类型 | 值 | 面板控件 | 宽度 |
+| --- | --- | --- | --- |
+| `string` | 文字 | 单行输入框。`multiline = true` 时为多行文本框 | 半行；多行时整行 |
+| `secret` | 文字，面板不回显 | 密码框，可以临时显示明文。已保存过的字段标有已保存，留空表示不修改 | 半行 |
+| `integer`、`number` | 整数、数字 | 数字输入框，框内右侧显示取值范围。上下限都写了且跨度不超过 100 的 integer 带加减按钮 | 半行 |
+| `boolean` | 开关 | 一行开关，名称在左，开关在右 | 半行 |
+| `string_list` | 文字列表 | 标签输入框，回车添加一项，粘贴多行文字时每行成为一项 | 整行 |
+| `scene` | 一个群，例如 `onebot:group:123` | 群选择器，从宿主已配置的群中选，显示群头像和群名 | 半行 |
+| `scene_list` | 多个群 | 群选择器，可以全选和清空，群超过 6 个时可以搜索，收起时显示前两个群名和总数 | 整行 |
+| `path` | 绝对路径 | 等宽字体的输入框 | 整行 |
+| `url` | http 或 https 地址 | 输入框 | 整行 |
+| `object_list` | 对象列表 | 每一项收起为一行摘要，点开后编辑子字段 | 整行 |
 
 通用的可选属性如下。
 
 - `label` 是表单中显示的名称，不填时显示字段名。建议写成运营者能看懂的中文。
 - `group` 是分组标题，只用于顶层字段。同组的字段放在一起，没有分组的字段排在最前面。
 - `placeholder` 是输入框中的示例文字，用于 string、secret、integer、number、path 和 url。
-- `options` 是 string／integer／number 的候选值，面板显示为下拉框。可以直接写值，也可以写成 `{ value = "auto", label = "自动" }`，保存 value，显示 label。
-- `minimum` 和 `maximum` 是 integer／number 的范围，后端同样会校验。
+- `options` 是 string／integer／number 的候选值。可以直接写值，也可以写成 `{ value = "auto", label = "自动" }`，保存 value，显示 label。候选值不超过 3 个、且每个 label 不超过 8 个字时，面板显示为分段按钮，其余情况显示为下拉框。
+- `minimum` 和 `maximum` 是 integer／number 的范围，后端同样会校验。面板在输入框内显示范围；只写了下限且下限是 0 或 1 时不显示。
 - `object_list.fields` 定义一层对象子字段。子字段可以使用除 secret 和 object_list 以外的类型，不能设置 `group`。没有声明子字段的对象列表只能按 JSON 编辑，面板会提示补充声明。
 
 `path` 和 `url` 写了 `default = ""` 时允许留空，表示不填写。没有写默认值时，必须填写有效的值。
@@ -226,6 +229,27 @@ label = "推送到的群"
 description = "开播时在这些群里提醒"
 default = []
 ```
+
+### 面板如何排布参数
+
+插件详情页的设置页签按以下规则排布表单，插件作者无法另外指定位置或样式。
+
+- 每个 `group` 是一张卡片，卡片标题就是 group 的值。各组按第一次出现的顺序排列。
+- 没有 `group` 的普通字段合成一张不带标题的卡片，排在最前面。没有 `group` 的 `object_list` 单独成一张卡片，标题是它的 `label`，标题旁显示条数。
+- 卡片内分两列，宽度见上表。半行的字段按声明顺序两两并排；窄屏时改为一列。
+- 卡片有 4 张或更多时，宽屏左侧显示分组目录，点击后跳到对应的卡片。
+- 字段名显示在控件上方。`description` 收在字段名旁的提示图标里，鼠标悬停或聚焦时显示。必填字段（没有写 `default`）的名称后有红色星号；必填的 secret 保存过一次后不再标星号。表单改动后，或点了启用时，没填的必填项、超出范围的数字和格式不对的 JSON 在字段下方显示原因；对象列表里有问题的一项收起时边框标红。
+- `object_list` 的每一项收起时显示一行摘要。第一个有值的 `string` 子字段作为这一项的标题，没有时用第一个有值的数字字段，其余的数字和文字子字段以名称加值的形式排在标题下方，例如 `房间号 22637261`。`scene_list` 子字段显示为群数，值为 true 的 `boolean` 和选中的 `options` 显示为标签。点开后编辑全部子字段，删除按钮也在展开的区域里。
+- 设置有改动时，页面底部出现保存栏。插件处于停用状态时，保存按钮写作保存并启用，因为宿主只在启用时保存参数。
+
+### 声明建议
+
+- `label` 写得短一些，保证在半行宽度内放得下。单位写进 `label`，例如 `超时（秒）`。
+- 取值的含义和限制写进 `description`，例如 0 表示关闭、需要先填写 SESSDATA。
+- `object_list` 中，把能代表这一项的 `string` 子字段（名称、备注名）放在最前面，摘要才能一眼认出是哪一项。不需要名称时，把最有辨识度的数字字段放在最前面。
+- 字段超过 6 个时用 `group` 分组。同一组内常改的字段放前面，很少修改的放进单独的一组，例如 `高级`。
+- 几种互斥的方式（例如 `文字`／`图片`）用一个带 `options` 的字段声明，不要拆成几个 `boolean`。候选值少且短时显示为分段按钮，全部选项一眼可见。
+- 半行字段尽量成对声明，避免一行只放一个短字段、另一半空着。
 
 运行参数仍然只保存在根目录的 `lenbot.config.json` 中。不要把 KV 当作第二份配置，也不要用环境变量覆盖面板中的值。
 
@@ -424,7 +448,7 @@ task = await ctx.delegate("整理刚才的活动", "CSV 文件", context="实际
 
 ### generate
 
-`generate` 的 role 只能是现有的 `mind` 或 `learner` 用途绑定。用途没有配置时直接报错。请求只发给这个用途绑定的服务商和模型，出错时不会更换模型或服务。`PluginContext.generate` 需要先传入 scene。
+`generate` 的 role 只能是 `mind` 或 `learner`。没有单独配置 `learner` 时使用 `mind` 的绑定。请求只发给这个用途绑定的服务商和模型，出错时不会更换模型或服务。`PluginContext.generate` 需要先传入 scene。
 
 调用使用 ModelSlots，以及原有的预算和用量记录。插件来源写入 `model_calls.plugin`，不会产生虚假的聊天轮次。完整的系统提示和输入都由插件提供，宿主不自动注入角色或历史。
 
@@ -436,7 +460,7 @@ task = await ctx.delegate("整理刚才的活动", "CSV 文件", context="实际
 - `needs_source=True` 的工具可以沿用真实消息的发送者委派任务，不要传入伪造的 requester。
 - 任务按已有的场景、发送者权限和角色技能许可执行。
 
-返回值只表示任务已经被接受，结果事件由宿主送回群会话。不要用 `wait` 轮询而长时间占用聊天。
+返回值表示任务已经被接受，结果事件由宿主送回群会话。不要用 `wait` 轮询而长时间占用聊天。
 
 ### 定点任务
 
@@ -479,7 +503,7 @@ async def publish(self, ctx):
 
 处理器的一次报错只会结束这一次调用。原始错误由宿主写入运行日志（`plugin_error`），宿主不会自动重试、更换服务，也不会停用整个插件。
 
-插件自己的日志使用 `self.ctx.log`（标准的 `logging.Logger`），写入宿主的 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前的回复轮次和工具调用 ID。面板的日志页可以按插件筛选。需要特殊权限的入口可以使用 `ctx.require_owner()`，普通查询不需要加上主人限制。
+插件自己的日志使用 `self.ctx.log`（标准的 `logging.Logger`），写入宿主的 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前的回复轮次和工具调用 ID。面板的系统日志可以按插件筛选。需要特殊权限的入口可以使用 `ctx.require_owner()`，普通查询不需要加上主人限制。
 
 默认的插件是同进程的代码，与宿主共享依赖环境，不能声称具备沙箱隔离；`isolation = "process"` 只隔离崩溃，不限制文件和网络访问。
 
@@ -502,11 +526,13 @@ async def check():
 ```
 
 - `scenes` 和 `owners` 可以在构造时指定，`scene`／`scene_list` 参数按 `scenes` 校验。
-- `message(text, scene=..., sender=...)` 模拟真实的身份，返回消息是否被插件接管。
+- `message(text, scene=..., sender=..., parts=...)` 模拟身份和消息，返回是否被接管。`parts` 是追加在文字之后的公开 `Segment` 列表，可验证提及或媒体的接管边界。
 - `deliveries` 包含插件、场景、组合内容、reply_to 和 simulated 状态。
 - `events()` 用于查看实际记录的插件事件。
 
 处理器或启动失败时，本次测试会报错。退出上下文时会停止插件并删除临时实例。
+
+当前官方业务插件和模板都有工具，部分还使用 cron 或 start_task，保持 inline；它们不能只改 isolation 就切到进程模式。进程模式的限制是当前接口的明确范围。
 
 模型默认关闭。通过 `models=` 明确配置测试模型后，generate 会经过真实的宿主协议、预算和用量记录。记忆服务和工作服务仍然会明确报错。插件自行访问外部网络的调用仍然会执行，同进程测试并非沙箱。
 
@@ -531,7 +557,7 @@ async with PluginTest(package, models=models, now=lambda: fixed_time) as bot:
     print(bot.preview_tools())
 ```
 
-模型配置不提供网络隔离。请用本机的协议服务验证，不要填写生产环境的凭据。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。四个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。协议测试通过，不代表真实模型的选择或平台送达已经实测。
+模型配置不提供网络隔离。请用本机的协议服务验证，不要填写生产环境的凭据。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。四个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。
 
 在 GitHub 上打开[插件模板仓库](https://github.com/lendevs/lenbot-plugin-template)，点击 Use this template 生成自己的仓库。
 

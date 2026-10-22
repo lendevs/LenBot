@@ -13,9 +13,10 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import field_validator
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...config import HostConfig, load_host_config
-from .persona import PersonaFileChange, finish_role_write, validate_dependencies
+from .persona import PersonaFileChange, apply_saved, finish_role_write, validate_dependencies
 from ....image_assets import MAX_IMAGE_BYTES, inspect_image
 from ...runtime.network import NetworkRuntime
 from ...persona.profile import PersonaTarget, parse_persona_files, read_persona_files, require_persona_target
@@ -86,21 +87,17 @@ def atomic_file(target: Path, content: bytes, *, create: bool) -> None:
 
 def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                                    user: Callable[[Request], str], write_lock: asyncio.Lock) -> None:
-    def configured(scene: str) -> tuple[HostConfig, Path]:
-        if scene not in runtime.chats:
-            raise HTTPException(404, '当前运行宿主没有这一场景')
+    def configured(key: str) -> tuple[HostConfig, Path]:
         config = load_host_config(root)
-        if scene not in config.scenes:
-            raise ValueError('场景已从保存配置移除，不能操作其表情文件')
-        return config, config.scenes[scene].persona
+        return config, runtime.personas.find(key, config).path
 
-    def selected(scene: str, directory: str) -> tuple[HostConfig, Path]:
-        config, path = configured(scene)
+    def selected(key: str, directory: str) -> tuple[HostConfig, Path]:
+        config, path = configured(key)
         require_persona_target(path, directory)
         return config, path
 
-    def state(scene: str) -> dict:
-        config, persona = configured(scene)
+    def state(key: str) -> dict:
+        config, persona = configured(key)
         index = source_index(persona)
         files = []
         directory = persona / 'stickers'
@@ -123,31 +120,23 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
                         raise ValueError(f'表情资源不是常规文件：{actual}')
                     if relative != 'index.yaml':
                         files.append({'file': relative, 'bytes': actual.stat().st_size})
-        running = runtime.chats[scene]
-        return {'scene': scene, 'saved_path': str(persona), 'running_path': str(running.config.persona),
+        return {'key': key, 'saved_path': str(persona),
                 'index_content': index, 'files': sorted(files, key=lambda item: item['file']),
                 'entries': None if index is None else [entry.model_dump() for entry in
                                                        sticker_entries(directory / 'index.yaml', index)],
-                'affected_scenes': [key for key, value in config.scenes.items() if value.persona == persona],
-                'running_entries': [{'file': item.file, 'description': item.description,
-                                     'emotions': item.emotions, 'tags': item.tags}
-                                    for item in running.persona.stickers.values()],
-                'restart_required': None}
+                'affected_scenes': [scene for scene, value in config.scenes.items() if value.persona == persona]}
 
-    def save_index(scene: str, directory: str, content: str) -> dict:
-        config, persona = selected(scene, directory)
+    def save_index(key: str, directory: str, content: str) -> dict:
+        config, persona = selected(key, directory)
         images = parse_sticker_index(persona, content)
         candidate = parse_persona_files(persona, read_persona_files(persona), stickers=images)
         validate_dependencies(config, persona, candidate)
         target = asset_target(persona, 'index.yaml')
         atomic_file(target, content.encode('utf-8'), create=not target.exists())
-        result = state(scene)
-        running = runtime.chats[scene]
-        result['restart_required'] = candidate.stickers != running.persona.stickers or persona != running.config.persona
-        return result
+        return state(key)
 
-    def upload(scene: str, item: StickerAssetName, data: bytes) -> dict:
-        _, persona = selected(scene, item.directory)
+    def upload(key: str, item: StickerAssetName, data: bytes) -> dict:
+        _, persona = selected(key, item.directory)
         index = source_index(persona)
         if index is None:
             raise ValueError('尚无stickers/index.yaml；先明确保存索引（可为[]），再上传原件')
@@ -161,8 +150,8 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
                 'height': height, 'animated': animated, 'registered_automatically': False,
                 'notice': '原件已存到宿主角色包；未改索引、运行表情或向平台发送。请明确编辑索引后保存。'}
 
-    def delete(scene: str, item: StickerAssetName) -> dict:
-        _, persona = selected(scene, item.directory)
+    def delete(key: str, item: StickerAssetName) -> dict:
+        _, persona = selected(key, item.directory)
         index = source_index(persona)
         if index is None:
             raise ValueError('无表情索引，不能确认原件是否被引用；先明确建立索引')
@@ -172,12 +161,14 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
         if not stat.S_ISREG(target.stat(follow_symlinks=False).st_mode):
             raise ValueError(f'只删除常规表情原件，不删除目录：{target}')
         target.unlink()
-        return {'file': item.file, 'deleted': True, 'notice': '未引用原件已删除；运行内存表情快照未改。'}
+        return {'file': item.file, 'deleted': True, 'notice': '未引用原件已删除。'}
 
     async def operation(function: Callable[..., dict], *args: object, writing: bool = False) -> dict:
         try:
             async with write_lock:
                 return await finish_role_write(function, *args) if writing else await asyncio.to_thread(function, *args)
+        except LookupError as error:
+            raise HTTPException(404, '角色库里没有这个角色') from error
         except FileExistsError as error:
             raise HTTPException(409, str(error)) from error
         except FileNotFoundError as error:
@@ -186,22 +177,24 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/host/scenes/{scene}/persona-sticker-files')
-    async def listing(scene: str, response: Response, _: str = Depends(user)):
+    @app.get('/api/host/personas/{key}/sticker-files', response_model=responses.RoleStickers, response_model_exclude_unset=True)
+    async def listing(key: str, response: Response, _: str = Depends(user)):
         response.headers['Cache-Control'] = 'no-store'
-        return await operation(state, scene)
+        return await operation(state, key)
 
-    @app.put('/api/host/scenes/{scene}/persona-sticker-files/index')
-    async def index_write(scene: str, item: PersonaFileChange, _: str = Depends(user)):
-        return await operation(save_index, scene, item.directory, item.content, writing=True)
+    @app.put('/api/host/personas/{key}/sticker-files/index', response_model=responses.RoleStickers, response_model_exclude_unset=True)
+    async def index_write(key: str, item: PersonaFileChange, _: str = Depends(user)):
+        result = await operation(save_index, key, item.directory, item.content, writing=True)
+        return {**result, **await apply_saved(runtime, Path(result['saved_path']))}
 
-    @app.put('/api/host/scenes/{scene}/persona-sticker-files/entries')
-    async def entries_write(scene: str, item: StickerEntries, _: str = Depends(user)):
+    @app.put('/api/host/personas/{key}/sticker-files/entries', response_model=responses.RoleStickers, response_model_exclude_unset=True)
+    async def entries_write(key: str, item: StickerEntries, _: str = Depends(user)):
         content = yaml.safe_dump([entry.model_dump() for entry in item.entries], allow_unicode=True, sort_keys=False)
-        return await operation(save_index, scene, item.directory, content, writing=True)
+        result = await operation(save_index, key, item.directory, content, writing=True)
+        return {**result, **await apply_saved(runtime, Path(result['saved_path']))}
 
-    @app.post('/api/host/scenes/{scene}/persona-sticker-files/image')
-    async def image_upload(scene: str, file: UploadFile, name: str = Form(), directory: str = Form(min_length=1), _: str = Depends(user)):
+    @app.post('/api/host/personas/{key}/sticker-files/image')
+    async def image_upload(key: str, file: UploadFile, name: str = Form(), directory: str = Form(min_length=1), _: str = Depends(user)):
         try:
             data = await file.read(MAX_IMAGE_BYTES + 1)
             if len(data) > MAX_IMAGE_BYTES:
@@ -210,18 +203,18 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
                 item = StickerAssetName.model_validate({'file': name, 'directory': directory})
             except ValueError as error:
                 raise HTTPException(422, f'{error}; raw file={name!r}') from error
-            return await operation(upload, scene, item, data, writing=True)
+            return await operation(upload, key, item, data, writing=True)
         finally:
             await file.close()
 
-    @app.delete('/api/host/scenes/{scene}/persona-sticker-files/image')
-    async def image_delete(scene: str, item: StickerAssetName, _: str = Depends(user)):
-        return await operation(delete, scene, item, writing=True)
+    @app.delete('/api/host/personas/{key}/sticker-files/image')
+    async def image_delete(key: str, item: StickerAssetName, _: str = Depends(user)):
+        return await operation(delete, key, item, writing=True)
 
-    @app.get('/api/host/scenes/{scene}/persona-sticker-files/image')
-    async def image_read(scene: str, item: Annotated[StickerAssetName, Query()], _: str = Depends(user)):
+    @app.get('/api/host/personas/{key}/sticker-files/image')
+    async def image_read(key: str, item: Annotated[StickerAssetName, Query()], _: str = Depends(user)):
         def read() -> dict:
-            _, persona = selected(scene, item.directory)
+            _, persona = selected(key, item.directory)
             target = asset_target(persona, item.file)
             if not stat.S_ISREG(target.stat(follow_symlinks=False).st_mode):
                 raise ValueError(f'表情原件不是常规文件：{target}')

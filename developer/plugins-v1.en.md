@@ -8,6 +8,7 @@ A plugin is a Python package containing `plugin.toml`, `__init__.py`, and exactl
 name = "counter"
 version = "1.0.0"
 interface = 1
+permissions = ["send"]
 requires_lenbot = ">=0.2,<1"
 requires_python = ">=3.13"
 platforms = ["linux", "darwin", "win32"]
@@ -43,6 +44,8 @@ class Example(Plugin):
 
 Methods are async and use one decorator each. Command, exact-text, then regex matching takes precedence; regex priority sorts descending. At most one handler consumes a message, without waking the chat model. Returning text records a result; sending requires `ctx.reply`. A model selecting a plugin tool and the tool itself calling a model are separate actions.
 
+Plugin commands are matched first. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
+
 A deployment can switch off single rules while the rest of a plugin keeps working: list them under `plugins.disabled_rules` by plugin name, as `/command`, the exact text, or the regex pattern string, for example `"disabled_rules": {"asoul": ["今日直播"]}`. Switched-off text is handled as ordinary chat. A rule the plugin does not have is reported as a log warning.
 
 `start()` acquires resources and `stop()` releases them. Register background coroutines through `self.ctx.start_task(name, coroutine)`. The host cancels and waits for owned calls before stop. Keep blocking operations out of the event loop.
@@ -54,11 +57,22 @@ Time limits:
 - Slow preparation, such as waiting for the network or warming a cache, belongs in `start_task` rather than being awaited in `start()`.
 - `migrate_data` has no time limit.
 
-A handler error ends that call. The host writes the original error to the run log (`plugin_error`) and does not retry. Use `self.ctx.log` (a standard `logging.Logger`) for the plugin's own records. They are written to the host's `logs/lenbot.jsonl` with the plugin name and the current scene, turn and tool call IDs, and the panel log page can filter by plugin.
+A handler error ends that call. The host writes the original error to the run log (`plugin_error`) and does not retry. Use `self.ctx.log` (a standard `logging.Logger`) for the plugin's own records. They are written to the host's `logs/lenbot.jsonl` with the plugin name and the current scene, turn and tool call IDs, and the system log in the panel can filter by plugin.
 
 ## Configuration and data
 
-The panel builds a form from `[config.field]` declarations, so operators do not write JSON. Each field needs `type` and `description`. A field with `default` is optional; otherwise required. Supported types: string (`multiline = true` for a text area), secret, integer, number, boolean, string_list (one item per line), `scene` (one configured group, picked by name), `scene_list` (several), `path` (absolute path), `url` (http or https) and object_list. Optional attributes: `label` (display name, defaults to the key), `group` (section heading, top-level fields only), `placeholder`, `options` for string/integer/number as plain values or `{ value = "auto", label = "Auto" }`, and `minimum`/`maximum` for numbers. Object lists can declare one level of child fields of any type except secret and object_list; each row is shown as a card. Undeclared object lists fall back to JSON editing. `path` and `url` may stay empty only when declared with `default = ""`. Scene values are checked against the host's configured scenes when saving and loading; `scene` cannot have a default and `scene_list` defaults only to `[]`. Unknown or invalid values are rejected.
+The panel builds a form from `[config.field]` declarations, so operators do not write JSON. Each field needs `type` and `description`. A field with `default` is optional; otherwise required. Supported types: string (`multiline = true` for a text area), secret, integer, number, boolean, string_list (a tag input: Enter adds an item, pasted lines become items), `scene` (one configured group, picked by name), `scene_list` (several), `path` (absolute path), `url` (http or https) and object_list. Optional attributes: `label` (display name, defaults to the key), `group` (section heading, top-level fields only), `placeholder`, `options` for string/integer/number as plain values or `{ value = "auto", label = "Auto" }` (up to three options whose labels have at most eight characters show as a segmented control, more as a dropdown), and `minimum`/`maximum` for numbers. Object lists can declare one level of child fields of any type except secret and object_list; each row collapses to a one-line summary and opens to edit its fields. Undeclared object lists fall back to JSON editing. `path` and `url` may stay empty only when declared with `default = ""`. Scene values are checked against the host's configured scenes when saving and loading; `scene` cannot have a default and `scene_list` defaults only to `[]`. Unknown or invalid values are rejected.
+
+How the panel lays out the form (plugins cannot override placement or styling):
+
+- Each `group` is a card titled with the group name, in order of first appearance. Ungrouped plain fields share an untitled card that comes first; an ungrouped object_list gets a card of its own, titled with its `label` and showing the row count.
+- Cards have two columns. Half-width: single-line string, secret, integer, number, boolean (a switch row), dropdown or segmented options, and `scene`. Full-width: multiline string, string_list, `scene_list`, path, url and object_list. Narrow screens use one column. Numbers show their range inside the input, except a lone lower bound of 0 or 1; an integer with both bounds no more than 100 apart also gets − and + buttons.
+- With four or more cards, wide screens show a section index on the left.
+- The label sits above the control; `description` lives in an info tooltip next to it. Required fields (no `default`) get a red asterisk; a required secret loses it once saved. Secrets that are already saved are marked as saved. After an edit, or when enabling is tried, a missing required value, an out-of-range number or invalid JSON shows its reason under the field, and an object_list row with a problem gets a red border while collapsed.
+- A collapsed object_list row is titled by its first filled string child, falling back to the first filled number; the other numbers and strings follow as `label value`, a `scene_list` child shows its group count, and true booleans and chosen options show as badges.
+- Edits raise a save bar at the bottom of the page. While the plugin is stopped the button reads save and enable, since the host stores parameters only when enabling.
+
+Declaring for a tidy form: keep labels short enough for half a row and put units in them (`超时（秒）`); put meanings and limits in `description` (0 turns it off, needs SESSDATA first); declare the string that names an object_list row first; split more than six fields into groups and move rarely changed ones into their own group such as `高级`; declare mutually exclusive modes as one field with `options` rather than several booleans; and pair half-width fields so a row is not left half empty.
 
 Validated values are in `ctx.config`. Runtime configuration, enabled state and scenes live only in root `lenbot.config.json`. Secrets are masked in the panel; null preserves an existing secret when saving. Do not use KV or environment variables as alternate runtime configuration.
 
@@ -93,7 +107,7 @@ Scene IDs are qualified, for example `onebot:group:80001`; accounts use `onebot:
 | Time | `ctx.now()`, `ctx.timezone()` |
 | Owner permission | `ctx.require_owner()` |
 
-`generate` uses an explicitly configured mind or learner binding, without tools, history injection or automatic sending; the request goes only to that binding's provider and model and never switches on failure. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. A returned task record confirms only that the task was submitted; it says nothing about delivery.
+`generate` uses the mind or learner binding (learner falls back to mind when it has none of its own), without tools, history injection or automatic sending; the request goes only to that binding's provider and model and never switches on failure. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. A returned task record confirms only that the task was submitted; it says nothing about delivery.
 
 `self.ctx` is a `PluginContext`; scene-specific capabilities require a scene argument. Calls are limited to enabled scenes. `self.ctx.scenes` lists enabled scenes whose chat is on: when an operator switches a group's chat off in the panel, that group drops out of the list, commands and notices there are not dispatched, and sending or emitting events to it raises an error. Sends return `Sent` with sent, failed, unconfirmed, simulated or partial status. Only sent means platform confirmation.
 
@@ -153,3 +167,13 @@ Use `await ctx.fetch_image(url, timeout_seconds=15)` for verified public image b
 `PluginTest.preview_tools()` shows the model-facing summaries, schemas, shared guides and availability. Inject a clock with `now=...`, save a source with `add_message(...)`, and explicitly configure `models=...` only for model protocol tests. Sending stays simulated. The template includes native JSON lookup and background generation/delivery examples. See the [Chinese guide](plugins-v1.md) for full examples and compatibility details.
 
 Group related search/detail operations into a single capability using strict discriminated request models; keep data queries separate from sending and account writes. Model schemas omit generated titles while preserving property names, descriptions, examples and constraints. Check context size as well as tool count. Development continues without a version tag or Release.
+
+## Command mentions and precedence
+
+Commands use text-only matching by default. Opt in to body mentions with `@command("forward", "Forward a command", allow_mentions=True)`. Real targets remain in `ctx.message.segments`; each body mention becomes one space in `args`. Other media segments are not accepted. Full-text and regex rules remain text-only. An initial reply or mention of the bot may still precede a command.
+
+Plugin commands run before host commands. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
+
+Declare the host APIs actually used in `permissions`. The current official plugin updates and template do so; older manifests without this field retain the documented unrestricted host capabilities. This is not a Python or network sandbox. The official plugins use tools, and some use cron or start_task, so they remain inline.
+
+`PluginTest.message(..., parts=[Segment(...)])` and `add_message(..., parts=...)` append real message segments after the text to test mention and media matching. The harness does not provide memory or task workers: verify those capabilities in a temporary host instance. Simulated sends and protocol fixtures do not establish live delivery or model quality.

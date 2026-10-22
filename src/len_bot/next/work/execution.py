@@ -115,7 +115,7 @@ class TaskExecution:
 
     async def _run(self) -> None:
         item = self.item
-        binding = self.config.models.roles.worker
+        binding = self.config.binding("worker")
         status, summary, error_text = "failed", None, None
         def bind_proxy(proxy: WorkerModelProxy) -> None:
             self._proxy = proxy

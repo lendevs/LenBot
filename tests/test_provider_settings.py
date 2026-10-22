@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 import httpx
 import pytest
+import pytest_asyncio
 
 from len_bot.next.config import load_host_config
 from len_bot.next.panel.routes.settings import register_host_settings
@@ -14,13 +15,17 @@ from len_bot.next.panel.setup import FirstSetup, initialize
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.memory.local import LocalMemory
 from len_bot.next.memory.embeddings import EmbeddingClient, EmbeddingSettings
+from len_bot.next.memory.service import open_memory
+from len_bot.next.models.client import ChatModel
+from len_bot.next.runtime.network import NetworkRuntime
+from len_bot.next.storage.store import Store
 from test_next_native_models import peer_server
 
 SCENE = 'onebot:group:80001'
 
 
-@pytest.fixture
-def instance(tmp_path: Path):
+@pytest_asyncio.fixture
+async def instance(tmp_path: Path):
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
         'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
@@ -45,9 +50,12 @@ def instance(tmp_path: Path):
     def user(request: Request) -> str:
         return 'fixture'
 
-    register_host_settings(app, root=tmp_path, running=config, personas=lambda: {SCENE: persona},
-                           user=user, write_lock=asyncio.Lock())
-    return tmp_path, app
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as mind, open_memory(config, store) as memory:
+            runtime = NetworkRuntime(config, [(config.scene_config(SCENE), persona)], store, mind, memory=memory)
+            register_host_settings(app, root=tmp_path, running=config, runtime=runtime, personas=lambda: {SCENE: persona},
+                                   user=user, write_lock=asyncio.Lock())
+            yield tmp_path, app
 
 
 async def models_body(client) -> dict:
@@ -155,3 +163,33 @@ async def test_rename_reuses_existing_vectors_and_address_change_reports_mainten
             pending = (await client.get('/api/host/pending-restart')).json()
             assert pending['maintenance'][0]['command'] == 'python -m len_bot.next.maintenance.memory_reindex'
     assert len(received) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_connection_rename_delete_and_independent_chat_binding(instance):
+    root, app = instance
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://fixture') as client:
+        body = await models_body(client)
+        body['providers']['search'] = {'api': 'deepseek-search', 'base_url': 'http://127.0.0.1:9/v1',
+                                       'api_key': 'synthetic-search-key'}
+        assert (await client.put('/api/host/settings/models', json=body)).status_code == 200
+        response = await client.put('/api/host/settings/web-search', json={'web_search': {
+            'provider': 'deepseek', 'connection': 'search'}})
+        assert response.status_code == 200, response.text
+        body = await models_body(client)
+        body['providers']['renamed'] = body['providers'].pop('search')
+        body['roles']['mind']['model'] = 'another-chat-model'
+        response = await client.put('/api/host/settings/models', json=body)
+        assert response.status_code == 200, response.text
+        source = json.loads((root / 'lenbot.config.json').read_text())
+        assert source['web_search']['connection'] == 'renamed'
+        assert source['models']['providers']['renamed']['api_key'] == 'synthetic-search-key'
+        assert 'synthetic-search-key' not in response.text
+        body = await models_body(client)
+        del body['providers']['renamed']
+        response = await client.put('/api/host/settings/models', json=body)
+        assert response.status_code == 422 and 'web_search.connection' in response.text
+        assert json.loads((root / 'lenbot.config.json').read_text()) == source
+        response = await client.put('/api/host/settings/web-search', json={'web_search': {
+            'provider': 'deepseek', 'connection': 'missing'}})
+        assert response.status_code == 422

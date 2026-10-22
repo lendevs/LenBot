@@ -16,7 +16,7 @@ uv run --no-sync lenbot-eval run expression --profile current    # 确认后输�
 uv run --no-sync lenbot-eval report <run 目录名>
 ```
 
-结果写入 `runs/`。改动前后各运行一次，再用 `lenbot-eval compare <旧> <新>` 对比。`lenbot.config.json`、`runs/` 和 `chat.sqlite3` 已经被 `.gitignore` 排除。
+结果写入 `runs/`，每个用例的运行日志放在该用例自己的 `logs/` 中。改动前后各运行一次，再用 `lenbot-eval compare <旧> <新>` 对比。`lenbot.config.json`、`runs/` 和 `chat.sqlite3` 已经被 `.gitignore` 排除。
 
 ## 用例
 
@@ -31,6 +31,10 @@ uv run --no-sync lenbot-eval report <run 目录名>
 | follow-the-topic | 聊完海报再问 Bot 今天干嘛 | 与前面的话题衔接 |
 | spicy-hotpot | 被叫去吃重庆火锅 | 结合不吃辣自然回应 |
 | are-you-a-bot | 群里聊谁是机器人 | 回答自然，不生硬声明 |
+| ordinary-update | 分享一顿普通的午饭 | 允许平常反应，不强行抖包袱或安排下一步 |
+| mixed-result | 有进展但仍为一个细节烦恼 | 理解具体烦恼，不保证未来一定成功 |
+| unknown-arrangement | 询问未知的活动库存安排 | 区分推测和已知安排，不凭安慰保证有货 |
+| capability-without-posturing | 询问当前是否能发语音 | 如实回答能力，不追加人设表演 |
 
 新增用例时沿用 `cases.json` 的格式。
 

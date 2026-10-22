@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -81,9 +82,9 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                     assert (await client.get("/api/panel-context")).json() == {
-                        "mode": "isolated-multi", "home": "/host/overview",
+                        "mode": "isolated-multi", "home": "/overview",
                     }
-                    for path in ("/api/auth/me", "/api/host/state", "/api/host/memory/state", "/api/host/retention", "/api/host/limits", "/api/host/scenes/onebot:group:80001/control", "/api/host/scenes/onebot:group:80001",
+                    for path in ("/api/auth/me", "/api/host/state", "/api/host/memory/state", "/api/host/retention", "/api/host/limits", "/api/host/scenes/onebot:group:80001/control", "/api/host/scenes/onebot:group:80001/timeline",
                                  f"/api/host/scenes/onebot:group:80001/turns/{configured_turn}"):
                         assert (await client.get(path)).status_code == 401
                     # The setup page on another loopback port may read readiness; other origins may not.
@@ -112,7 +113,16 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                         "retention": {"timeline_days": 31},
                     })).status_code == 422
                     assert (root / "lenbot.config.json").read_bytes() == saved
+                    if onebot is not None:
+                        # A reverse WebSocket server reports socket names as tuples; the panel sends text.
+                        runtime.platform._server = SimpleNamespace(sockets=[
+                            SimpleNamespace(getsockname=lambda: ("0.0.0.0", 8080)),
+                            SimpleNamespace(getsockname=lambda: ("::", 8080, 0, 0)),
+                        ])
                     state = (await client.get("/api/host/state")).json()
+                    if onebot is not None:
+                        assert state["connection"]["addresses"] == ["0.0.0.0:8080", "[::]:8080"]
+                        runtime.platform._server = None
                     assert state["delivery"] == "simulated"
                     assert [item["scene"] for item in state["scenes"]] == ["onebot:group:80001", "onebot:group:80002"]
                     assert state["connection"]["connected"] is False
@@ -122,19 +132,19 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     assert str(root) in memory_state['reindex_command']
                     assert 'uv run' not in memory_state['reindex_command']
 
-                    scene = (await client.get("/api/host/scenes/onebot:group:80001")).json()
+                    scene = (await client.get("/api/host/scenes/onebot:group:80001/timeline")).json()
                     assert scene["scene"] == "onebot:group:80001"
-                    assert scene["persona"] == {"id": "synthetic-host", "name": "合成角色"}
-                    assert len(scene["messages"]) == 1
-                    assert scene["messages"][0]["rendered"]
-                    assert [turn["id"] for turn in scene["turns"]] == [configured_turn]
+                    messages = [item for item in scene["items"] if item["type"] == "message"]
+                    turns = [item for item in scene["items"] if item["type"] == "turn"]
+                    assert len(messages) == 1 and messages[0]["text"]
+                    assert [turn["turn_id"] for turn in turns] == [configured_turn]
                     assert (await client.get(f"/api/host/scenes/onebot:group:80001/turns/{configured_turn}")).status_code == 200
-                    assert (await client.get("/api/host/scenes/onebot:group:89999")).status_code == 404
+                    assert (await client.get("/api/host/scenes/onebot:group:89999/timeline")).status_code == 404
                     assert (await client.get(f"/api/host/scenes/onebot:group:89999/turns/{leftover_turn}")).status_code == 404
                     assert (await client.get(f"/api/host/scenes/onebot:group:80001/turns/{other_turn}")).status_code == 404
                     for method, path in (("POST", "/api/host/scenes/onebot:group:80001/messages"),
-                                         ("PUT", "/api/host/scenes/onebot:group:80001"),
-                                         ("DELETE", "/api/host/scenes/onebot:group:80001")):
+                                         ("PUT", "/api/host/scenes/onebot:group:80001/timeline"),
+                                         ("DELETE", "/api/host/scenes/onebot:group:80001/timeline")):
                         assert (await client.request(method, path)).status_code in {404, 405}
                     browser_settings = {'socket':str(root/'browser.sock'), 'browser_instance_id':None,
                                         'binary':str(root/'bsk'), 'home':str(root/'browser-home'),
@@ -153,14 +163,14 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     change['task_identities'] = {'owner':'onebot:70006', 'admins':['onebot:70007'], 'whitelist':[]}
                     saved = await client.put('/api/host/permissions?scene=onebot:group:80001', json=change)
                     assert saved.status_code == 200, saved.text
-                    assert saved.json()['restart_required'] is True
-                    assert saved.json()['running']['global_identities']['admins'] == []
+                    assert saved.json()['restart_required'] is False
+                    assert saved.json()['running']['global_identities']['admins'] == ['onebot:70003']
                     assert load_host_config(root).scene_config('onebot:group:80001').permissions.admins == ['onebot:70003']
                     saved_tasks = load_host_config(root).scenes['onebot:group:80001'].tasks
                     assert (saved_tasks.owner, saved_tasks.admins) == ('onebot:70006', ['onebot:70007'])
                     pending = (await client.get('/api/host/pending-restart')).json()
-                    assert {'permissions', 'account_browser'} <= set(pending['sections'])
-                    assert pending['scenes'] == ['onebot:group:80001'] and pending['personas'] == []
+                    assert pending['sections'] == ['account_browser']
+                    assert pending['scenes'] == [] and pending['personas'] == []
                     scene_saved = (await client.get('/api/host/settings')).json()['saved']['scenes']['onebot:group:80001']
                     scene_body = {'timezone': None, 'voice_mode': 'direct',  'attention': scene_saved['attention'],
                                   'schedules': {'enabled': True, 'max_pending': 9, 'autonomous': False},
@@ -199,6 +209,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     prefix = f"/api/host/trials/{trial.json()['id']}"
                     try:
                         assert (await client.get(f"{prefix}/turns/{configured_turn}")).status_code == 404
+                        assert (await client.get(f"{prefix}/turns/{configured_turn}/steps")).status_code == 404
                         assert (await client.post(f"{prefix}/messages", json={
                             "uid": 'onebot:90001', "nickname": "虚拟", "text": "合成消息",
                         })).status_code == 422
@@ -207,7 +218,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                             "reply_to": "10001",
                         })).status_code == 422
                         assert (await client.post("/api/auth/logout")).status_code == 200
-                        for method, path in (("GET", prefix + "/state"),
+                        for method, path in (("GET", prefix + "/state"), ("GET", prefix + "/turns/x/steps"),
                                              ("POST", prefix + "/stop"),
                                              ("GET", "/api/host/trials"), ("GET", "/api/host/permissions?scene=onebot:group:80001")):
                             assert (await client.request(method, path)).status_code == 401

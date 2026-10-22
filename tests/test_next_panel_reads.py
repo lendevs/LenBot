@@ -12,6 +12,7 @@ from test_next_panel_acts_as_owner import exercise, write_instance, SCENE
 @pytest.mark.parametrize('path,status', [
     ('/api/host/overview', 200),
     ('/api/host/usage', 200),
+    (f'/api/host/scenes/{SCENE}/timeline', 200),
     (f'/api/host/scenes/{SCENE}/turns/missing', 404),
     (f'/api/host/scenes/{SCENE}/turns/missing/export', 404),
 ])

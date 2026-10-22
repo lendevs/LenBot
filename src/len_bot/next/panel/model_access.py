@@ -70,7 +70,7 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
         replies.append(reply)
         if kind == 'tools':
             if len(reply.tool_calls) != 1 or reply.tool_calls[0].name != 'connection_check' or reply.tool_calls[0].arguments != {}:
-                raise ValueError('模型未按测试请求调用 connection_check；普通文本成功不能证明工具可用')
+                raise ValueError('模型没有按测试请求调用 connection_check，工具调用不可用')
             messages.extend([reply.message, {'role': 'tool', 'tool_call_id': reply.tool_calls[0].id,
                                             'content': '连接成功，工具结果已收到。'}])
             reply = await model.complete(messages, tools)

@@ -4,6 +4,7 @@ import json
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 
+from .. import responses
 from ...media.audio import TranscribeArguments
 from .settings import _body
 
@@ -20,7 +21,7 @@ def register_host_audio(app: FastAPI, *, runtime, user) -> None:
         if scene not in runtime.chats:
             raise HTTPException(404, "当前宿主未配置此场景")
 
-    @app.get('/api/host/scenes/{scene}/audio')
+    @app.get('/api/host/scenes/{scene}/audio', response_model=responses.AudioPage, response_model_exclude_unset=True)
     async def listing(scene: str, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=50),
                       _: str = Depends(user)):
         check(scene)
@@ -41,14 +42,14 @@ def register_host_audio(app: FastAPI, *, runtime, user) -> None:
             raise HTTPException(404, "本场景尚未保存此语音原件")
         return Response(item['wav'], media_type='audio/wav', headers={'Cache-Control': 'no-store'})
 
-    @app.get('/api/host/scenes/{scene}/audio/{message}/{audio_index}/calls')
+    @app.get('/api/host/scenes/{scene}/audio/{message}/{audio_index}/calls', response_model=list[responses.JsonObject], response_model_exclude_unset=True)
     async def calls(scene: str, message: str, audio_index: int = Path(ge=1), _: str = Depends(user)):
         check(scene)
         if service.records.item(scene, message, audio_index) is None:
             raise HTTPException(404, "本场景没有此语音处理记录")
         return service.records.calls(scene, message, audio_index)
 
-    @app.post('/api/host/scenes/{scene}/audio/{message}/{audio_index}/transcribe')
+    @app.post('/api/host/scenes/{scene}/audio/{message}/{audio_index}/transcribe', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def transcribe(scene: str, message: str, request: Request,
                          audio_index: int = Path(ge=1), _: str = Depends(user)):
         check(scene)

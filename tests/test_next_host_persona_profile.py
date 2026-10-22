@@ -1,4 +1,4 @@
-"""The panel role form writes the four role files through the authenticated HTTP boundary."""
+"""The panel role form writes the four role files and the running scene picks them up."""
 import asyncio
 import json
 
@@ -34,7 +34,7 @@ def test_profile_form_rewrites_role_files_and_rejects_invalid_values(tmp_path):
                 runtime = NetworkRuntime(config, [(config.scene_config('onebot:group:80001'), load_persona(config.scenes['onebot:group:80001'].persona))], store, mind, memory=memory)
                 app = create_app(config, runtime, root=tmp_path)
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
-                    endpoint = '/api/host/scenes/onebot:group:80001/persona-profile'
+                    endpoint = '/api/host/personas/fixture/profile'
                     assert (await client.get(endpoint)).status_code == 401
                     assert (await client.post('/api/auth/login', json={'username': 'fixture', 'password': 'synthetic-password'})).status_code == 200
                     current = (await client.get(endpoint)).json()
@@ -50,7 +50,10 @@ def test_profile_form_rewrites_role_files_and_rejects_invalid_values(tmp_path):
                     assert metadata['name'] == '新名字' and metadata['id'] == 'fixture' and metadata['tools'] == tools
                     assert (role/'voice.md').read_text() == '说话慢一点。\n'
                     assert yaml.safe_load((role/'examples.yaml').read_text()) == [{'context': '有人问好', 'line': '你好呀'}]
-                    assert runtime.chats['onebot:group:80001'].persona.name == '合成角色'
+                    # A saved edit reaches the scene running the role without a restart.
+                    assert saved.json()['applied'] is True
+                    assert runtime.chats['onebot:group:80001'].persona.name == '新名字'
+                    assert '新名字' in runtime.chats['onebot:group:80001'].context.system
                     draft = await client.post(endpoint + '/draft', json={'directory': current['directory'], 'profile': {**profile, 'name': '草稿名'}})
                     assert draft.status_code == 200 and yaml.safe_load(draft.json()['files']['persona.yaml'])['name'] == '草稿名'
                     assert yaml.safe_load((role/'persona.yaml').read_text())['name'] == '新名字'
@@ -61,3 +64,30 @@ def test_profile_form_rewrites_role_files_and_rejects_invalid_values(tmp_path):
                     assert moved.status_code == 422
                     assert {name: (role/name).read_text() for name in before} == before
     asyncio.run(run())
+
+
+def test_minimal_package_needs_only_name_and_brief(tmp_path):
+    import io
+    import zipfile
+    from len_bot.next.persona.packages import export_package, import_package
+    from len_bot.next.runtime.personas import roles
+    package = tmp_path / 'source' / 'tiny'
+    package.mkdir(parents=True)
+    (package / 'persona.yaml').write_text('name: 小一\nbrief: 爱聊天的同学\n', encoding='utf-8')
+    persona = load_persona(package)
+    assert (persona.id, persona.name, persona.brief) == ('tiny', '小一', '爱聊天的同学')
+    assert persona.self_reference == ['我'] and persona.tools == 'all' and persona.skills == 'all'
+    assert (persona.behavior, persona.voice, persona.boundaries, persona.examples) == ('', '', '', [])
+
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, 'w') as archive:
+        archive.writestr('persona.yaml', (package / 'persona.yaml').read_text(encoding='utf-8'))
+    imported = import_package(tmp_path, 'imported', stream.getvalue())
+    assert imported['persona']['id'] == 'imported' and imported['files'] == 1
+    assert load_persona(tmp_path / 'personas/imported').id == 'imported'
+    with zipfile.ZipFile(io.BytesIO(export_package(tmp_path / 'personas/imported'))) as archive:
+        assert archive.namelist() == ['persona.yaml']
+
+    saved = type('Saved', (), {'scenes': {}})()
+    listed = [role for role in roles(tmp_path, saved) if role.key == 'imported']
+    assert len(listed) == 1 and listed[0].id == 'imported' and listed[0].error is None

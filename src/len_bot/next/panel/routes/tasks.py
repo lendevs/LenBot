@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, ValidationError
 
+from .. import responses
 from ...configuration.types import STRICT
 from ..task_models import TaskDetail, TaskPage
 from ...runtime.network import NetworkRuntime
@@ -71,7 +72,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         if scene not in runtime.chats:
             raise HTTPException(404, "当前宿主未配置这一场景")
 
-    @app.get("/api/host/tasks/state")
+    @app.get("/api/host/tasks/state", response_model=responses.TaskState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         service = runtime.tasks
         return {"configured": service is not None,
@@ -115,7 +116,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
 
-    @app.get("/api/host/tasks/{id}/events/{event_id}")
+    @app.get("/api/host/tasks/{id}/events/{event_id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def event(id: int, event_id: int, scene: str, _: str = Depends(user)):
         scene_exists(scene)
         try:
@@ -123,7 +124,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
 
-    @app.post('/api/host/tasks/{id}/workspace-discard')
+    @app.post('/api/host/tasks/{id}/workspace-discard', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def discard(id: int, scene: str, body: WorkspaceDiscard, request: Request, _: str = Depends(user)):
         scene_exists(scene)
         if runtime.tasks is None:
@@ -242,7 +243,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
             receiving.cancel()
             await asyncio.gather(pushing, receiving, return_exceptions=True)
 
-    @app.post("/api/host/tasks/delegate")
+    @app.post("/api/host/tasks/delegate", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def delegate(scene: str, body: PanelDelegate, _: str = Depends(user)):
         scene_exists(scene)
         if runtime.tasks is None:
@@ -257,7 +258,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         except OSError as error:
             raise HTTPException(500, ''.join(traceback.format_exception_only(error)).strip()) from error
 
-    @app.post("/api/host/tasks/action")
+    @app.post("/api/host/tasks/action", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def action(scene: str, body: dict = Body(), _: str = Depends(user)):
         scene_exists(scene)
         if runtime.tasks is None:

@@ -11,8 +11,9 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .. import responses
 from ...configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings
-from ...plugins.catalog import CatalogView, MarketEntry, MarketView, PluginCatalog, market
+from ...plugins.catalog import CatalogView, MarketView, PluginCatalog, market
 from ...config import HostConfig, _read_root
 from .settings import _body
 from ...configuration.editing import _read_saved
@@ -102,8 +103,10 @@ def _entry(directory: Path) -> dict:
         manifest = read_manifest(directory)
         return {"directory": str(directory), "error": None, "version": manifest.version,
                 "description": manifest.description, "authors": manifest.authors,
-                "license": manifest.license, "repository": manifest.repository,
-                "homepage": manifest.homepage, "dependencies": manifest.dependencies,
+                "license": manifest.license,
+                "repository": None if manifest.repository is None else str(manifest.repository),
+                "homepage": None if manifest.homepage is None else str(manifest.homepage),
+                "dependencies": manifest.dependencies,
                 "requires_lenbot": manifest.requires_lenbot, "requires_python": manifest.requires_python,
                 "platforms": manifest.platforms, "reload": manifest.reload,
                 "fields": _field_info(manifest),
@@ -237,7 +240,6 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
     async def read_market(query: str = '', category: str | None = None, _: str = Depends(user)):
         return await market_view(query, category)
 
-    @app.get('/api/host/plugin-market/{name}', response_model=MarketEntry)
     async def read_market_entry(name: str, _: str = Depends(user)):
         require_name(name)
         found = [entry for entry in (await market_view('', None)).entries if entry.name == name]
@@ -245,7 +247,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             raise HTTPException(404, f'插件目录里没有 {name}')
         return found[0]
 
-    @app.post('/api/host/plugin-market/{name}/install')
+    @app.post('/api/host/plugin-market/{name}/install', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def install_from_market(name: str, _: str = Depends(user)):
         require_name(name)
         entry = await read_market_entry(name)
@@ -257,7 +259,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
         return await operate(lambda: manager.install(entry.repository, ref=entry.ref, expected_name=entry.name,
                                                      expected_permissions=entry.permissions))
 
-    @app.get('/api/host/plugins/health')
+    @app.get('/api/host/plugins/health', response_model=responses.PluginHealth, response_model_exclude_unset=True)
     async def plugins_health(_: str = Depends(user)):
         if runtime.plugins is None:
             return {'plugins': []}
@@ -303,12 +305,12 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                 raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                     f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/host/plugins/install')
+    @app.post('/api/host/plugins/install', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def install(request: Request, _: str = Depends(user)):
         change = await _body(request, PluginInstall)
         return await operate(lambda: manager.install(change.url, ref=change.ref, switch_source=change.switch_source))
 
-    @app.post('/api/host/plugins/zip')
+    @app.post('/api/host/plugins/zip', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def import_zip(file: UploadFile = File(...), switch_source: bool = Form(False), _: str = Depends(user)):
         if file.filename is None:
             raise HTTPException(422, 'ZIP 文件需要文件名')
@@ -318,43 +320,43 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             raise HTTPException(413, '插件 ZIP 上传不能超过 200 MiB')
         return await operate(lambda: manager.import_zip(data, file.filename, switch_source=switch_source))
 
-    @app.post('/api/host/plugins/{name}/apply')
+    @app.post('/api/host/plugins/{name}/apply', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def apply_candidate(name: str, _: str = Depends(user)):
         require_name(name)
         return await operate(lambda: manager.apply_candidate(name))
 
-    @app.post('/api/host/plugins/{name}/cancel')
+    @app.post('/api/host/plugins/{name}/cancel', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def cancel(name: str, _: str = Depends(user)):
         require_name(name)
         return await operate(lambda: manager.cancel(name))
 
-    @app.post('/api/host/plugins/{name}/rollback')
+    @app.post('/api/host/plugins/{name}/rollback', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def rollback(name: str, _: str = Depends(user)):
         require_name(name)
         return await operate(lambda: manager.rollback(name))
 
-    @app.post('/api/host/plugins/{name}/reload')
+    @app.post('/api/host/plugins/{name}/reload', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def reload(name: str, _: str = Depends(user)):
         require_name(name)
         return await operate(lambda: manager.reload(name))
 
-    @app.post('/api/host/plugins/{name}/update')
+    @app.post('/api/host/plugins/{name}/update', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def update(name: str, request: Request, _: str = Depends(user)):
         require_name(name)
         change = await _body(request, PluginVersion)
         return await operate(lambda: manager.update(name, ref=change.ref))
 
-    @app.delete('/api/host/plugins/{name}')
+    @app.delete('/api/host/plugins/{name}', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def uninstall(name: str, _: str = Depends(user)):
         require_name(name)
         return await operate(lambda: manager.uninstall(name))
 
-    @app.delete('/api/host/plugin-data/{name}')
+    @app.delete('/api/host/plugin-data/{name}', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def delete_data(name: str, _: str = Depends(user)):
         require_name(name)
         return await operate(lambda: manager.delete_data(name))
 
-    @app.get("/api/host/plugins")
+    @app.get("/api/host/plugins", response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def plugins(_: str = Depends(user)):
         async with write_lock:
             try:
@@ -363,7 +365,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                 raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                     f"{type(error).__name__}: {error}") from error
 
-    @app.put("/api/host/plugins/{name}")
+    @app.put("/api/host/plugins/{name}", response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def put_plugin(name: str, request: Request, _: str = Depends(user)):
         require_name(name)
         change = await _body(request, PluginChange)
@@ -406,7 +408,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
 
         return await save(edit, [name])
 
-    @app.put("/api/host/scenes/{scene}/plugins")
+    @app.put("/api/host/scenes/{scene}/plugins", response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def put_scene_plugins(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
             raise HTTPException(404, "当前宿主未配置这一场景")
@@ -425,7 +427,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
 
         return await save(edit, changed)
 
-    @app.put("/api/host/plugin-paths")
+    @app.put("/api/host/plugin-paths", response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def put_paths(request: Request, _: str = Depends(user)):
         change = await _body(request, PluginPaths)
 

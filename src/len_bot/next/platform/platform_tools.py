@@ -223,6 +223,25 @@ async def scene_title(scene: str, call: PlatformCall) -> tuple[str, int | None]:
         raise ValueError(f"{action} 返回无法解析：{error}; raw={repr(raw)[:500]}") from error
 
 
+async def joined_groups(call: PlatformCall) -> list[dict]:
+    raw = await call('get_group_list', {})
+    try:
+        if raw['status'] != 'ok' or type(raw['retcode']) is not int or raw['retcode'] != 0:
+            raise ValueError('get_group_list did not succeed')
+        if not isinstance(raw['data'], list):
+            raise ValueError('data must be a group list')
+        groups = []
+        for item in raw['data']:
+            group_id = _id(item['group_id'], 'group_id')
+            if not isinstance(item['group_name'], str):
+                raise ValueError('group_name must be text')
+            groups.append({'scene': f'onebot:group:{group_id}', 'name': item['group_name'],
+                           'members': item.get('member_count'), 'last_seen': None})
+        return groups
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f'get_group_list 返回无法解析：{error}; raw={repr(raw)[:500]}') from error
+
+
 def parse_member(raw: object, *, group_id: str, qq: str) -> dict:
     """Parse get_group_member_info once; identity fields must match the request."""
     try:

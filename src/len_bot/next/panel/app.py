@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
-from dataclasses import asdict
 from datetime import datetime, timedelta
 import time
 from pathlib import Path
@@ -14,6 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket
 
 from len_bot.web.shell import mount_panel
+from . import responses
 from ..config import HostConfig
 from ..configuration.editing import _read_saved
 from ..models.limits import speech_quota
@@ -38,6 +38,7 @@ from .routes.updates import register_host_updates
 from .routes.prompts import register_host_prompts
 from .routes.operations import register_host_operations
 from .routes.diagnostics import register_host_diagnostics
+from .routes.timeline import register_host_timeline
 from .routes.memory import register_host_memory
 from .routes.tasks import register_host_tasks
 from .routes.task_storage import register_host_task_storage
@@ -50,7 +51,25 @@ from .routes.jargon import register_host_jargon
 from .routes.stickers import register_host_stickers
 from .routes.reply_effects import register_host_reply_effects
 from ..runtime.network import NetworkRuntime
-from .auth import changes_socket, install_panel_auth
+from .auth import event_socket, install_panel_auth
+
+
+def listen_address(sockname: tuple) -> str:
+    """``host:port`` of a listening socket; IPv6 hosts in brackets."""
+    host, port = sockname[0], sockname[1]
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+# Older errors stay on the plugin and MCP pages but no longer ask for attention on the home page.
+ATTENTION_SECONDS = 86400
+
+
+def attention(item: dict, now: float | None = None) -> dict:
+    """One plugin or MCP service for the home page, counting only its recent errors (newest first)."""
+    since = (time.time() if now is None else now) - ATTENTION_SECONDS
+    recent = [error for error in item["errors"] if error["at"] >= since]
+    return {"name": item["name"], "status": item["status"], "error": item["error"],
+            "error_count": len(recent), "latest_error": recent[0] if recent else None}
 
 
 def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
@@ -86,6 +105,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
 
     runtime.on_update = notify
     def logged_out() -> None:
+        runtime.events.publish("host.state")
         notify()
         trials.notify()
 
@@ -95,6 +115,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                           user=user, write_lock=write_lock)
     register_host_operations(app, runtime=runtime, user=user)
     register_host_diagnostics(app, user=user)
+    register_host_timeline(app, runtime=runtime, user=user)
     register_host_trials(app, trials, user)
     register_host_browser(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
@@ -106,7 +127,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             runner.changed.set()
         notify()
 
-    register_host_settings(app, root=root, running=config, user=user, write_lock=write_lock,
+    register_host_settings(app, root=root, running=config, runtime=runtime, user=user, write_lock=write_lock,
                            personas=lambda: {scene: chat.persona for scene, chat in runtime.chats.items()},
                            on_speech_limits=speech_limits_changed)
     register_host_persona(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
@@ -131,7 +152,11 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         if scene not in config.scenes:
             raise HTTPException(404, "当前宿主未配置这一场景")
 
-    @app.get("/api/host/state")
+    def switching(scene: str) -> dict | None:
+        role = None if runtime.personas is None else runtime.personas.switching.get(scene)
+        return None if role is None else {"key": role.key, "name": role.name or role.key}
+
+    @app.get("/api/host/state", response_model=responses.HostState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         return {
             "bot_id": config.bot_id,
@@ -142,7 +167,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                          else config.onebot.mode),
                 "connected": False if runtime.platform is None else runtime.platform.connected,
                 "status": runtime.status,
-                "addresses": [] if runtime.platform is None else runtime.platform.addresses,
+                "addresses": [] if runtime.platform is None else [
+                    listen_address(item) for item in runtime.platform.addresses],
                 "last_error": runtime.last_runtime_error or runtime.last_platform_error,
                 "can_connect": runtime.can_connect,
                 "can_disconnect": runtime.can_disconnect,
@@ -153,27 +179,21 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 {"scene": scene, "persona": {"id": runtime.chats[scene].persona.id,
                                               "name": runtime.chats[scene].persona.name},
                  "persona_path": str(settings.persona),
+                 "persona_switch": switching(scene),
                  "voice_mode": settings.voice_mode, "timezone": config.scene_timezone(scene),
-                 "chat_enabled": not runtime.runners[scene].state.paused}
+                 "chat_enabled": not runtime.runners[scene].state.paused,
+                 "chat_status": runtime.runners[scene].chat_status()}
                 for scene, settings in config.scenes.items()
             ],
             "send_hold": runtime.send_hold.enabled,
             "memory_backend": None if config.memory is None else config.memory.backend,
             # Only what needs attention on the home page; details live on the capabilities page.
             "plugins": None if runtime.plugins is None else [
-                {"name": item["name"], "status": item["status"], "error": item["error"],
-                 "error_count": len(item["errors"]),
-                 "latest_error": item["errors"][0] if item["errors"] else None}
-                for item in runtime.plugins.state()["plugins"]
-            ],
-            "mcp": [] if runtime.mcp is None else [
-                {"name": item["name"], "status": item["status"], "error": item["error"],
-                 "error_count": len(item["errors"]),
-                 "latest_error": item["errors"][0] if item["errors"] else None} for item in runtime.mcp.state()
-            ],
+                attention(item) for item in runtime.plugins.state()["plugins"]],
+            "mcp": [] if runtime.mcp is None else [attention(item) for item in runtime.mcp.state()],
         }
 
-    @app.get("/api/host/scene-titles")
+    @app.get("/api/host/scene-titles", response_model=responses.SceneTitles, response_model_exclude_unset=True)
     async def scene_titles(_: str = Depends(user)):
         try:
             saved = list((await asyncio.to_thread(_read_saved, root)).scenes)
@@ -184,7 +204,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 "members": {scene: runtime.scene_titles.members[scene] for scene in titles
                             if scene in runtime.scene_titles.members}}
 
-    @app.post("/api/host/connection/connect", status_code=202)
+    @app.post("/api/host/connection/connect", status_code=202, response_model=responses.Status, response_model_exclude_unset=True)
     async def connect(_: str = Depends(user)):
         try:
             runtime.request_connection()
@@ -192,7 +212,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             raise HTTPException(409, str(error)) from error
         return {"status": runtime.status}
 
-    @app.post("/api/host/connection/disconnect")
+    @app.post("/api/host/connection/disconnect", response_model=responses.Status, response_model_exclude_unset=True)
     async def disconnect(_: str = Depends(user)):
         try:
             await runtime.disconnect()
@@ -200,7 +220,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             raise HTTPException(409, str(error)) from error
         return {"status": runtime.status}
 
-    @app.get("/api/host/logs")
+    @app.get("/api/host/logs", response_model=responses.LogPage, response_model_exclude_unset=True)
     async def logs(level: Literal["INFO", "WARNING", "ERROR"] | None = None, source: str | None = None,
                    event: str | None = None, scene: str | None = None, turn_id: str | None = None,
                    tool_call_id: str | None = None, plugin: str | None = None, task_id: str | None = None,
@@ -243,7 +263,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                                     for until in [speech_quota(store, chat.config).until(direct=False)] if until is not None},
                     "memory_index": None if runtime.memory is None else runtime.memory.backend.index_status()}
 
-    @app.get("/api/host/overview")
+    @app.get("/api/host/overview", response_model=responses.Overview, response_model_exclude_unset=True)
     async def overview(_: str = Depends(user)):
         nonlocal overview_cached, overview_read_at
         async with overview_lock:
@@ -251,26 +271,6 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 overview_cached = await asyncio.to_thread(read_overview)
                 overview_read_at = time.monotonic()
             return overview_cached
-
-    @app.get("/api/host/scenes/{scene}")
-    async def scene_state(scene: str, _: str = Depends(user)):
-        configured_scene(scene)
-        chat = runtime.chats[scene]
-        return {
-            "scene": scene,
-            "timezone": config.scene_timezone(scene),
-            "bot_id": config.bot_id,
-            "persona": {"id": chat.persona.id, "name": chat.persona.name},
-            "delivery": config.delivery,
-            "voice_mode": config.scenes[scene].voice_mode,
-            "models": {"mind": config.models.roles.mind.model},
-            "messages": [
-                {"seq": seq, "rendered": chat.context.render(message), "text": chat.context.render_text(message), **asdict(message),
-                 "images": runtime.store.message_media(scene, seq)}
-                for seq, message in runtime.store.recent_records(scene)
-            ],
-            "turns": runtime.store.recent_turns(scene),
-        }
 
     @app.get("/api/host/scenes/{scene}/messages/{seq}/images/{image_index}")
     async def original_image(scene: str, seq: int, image_index: int, _: str = Depends(user)):
@@ -282,18 +282,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         mime_type, data = image
         return Response(data, media_type=mime_type, headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/host/scenes/{scene}/turns/{turn_id}")
-    async def turn(scene: str, turn_id: str, _: str = Depends(user)):
-        configured_scene(scene)
-        def read():
-            with Store(config.database, readonly=True) as store:
-                return store.turn_detail(scene, turn_id)
-        result = await asyncio.to_thread(read)
-        if result is None:
-            raise HTTPException(404, "当前场景没有这一轮")
-        return result
-
-    @app.get("/api/host/scenes/{scene}/history")
+    @app.get("/api/host/scenes/{scene}/history", response_model=responses.SessionPage, response_model_exclude_unset=True)
     async def history(scene: str, before: int | None = Query(default=None, ge=1),
                       limit: int = Query(default=50, ge=1, le=200), active_only: bool = True,
                       _: str = Depends(user)):
@@ -302,9 +291,9 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 **runtime.store.mind_history_page(scene, before=before, limit=limit,
                                                  active_only=active_only)}
 
-    @app.websocket("/api/host/events")
-    async def events(websocket: WebSocket):
-        await changes_socket(websocket, listeners)
+    @app.websocket("/api/host/stream")
+    async def stream(websocket: WebSocket):
+        await event_socket(websocket, runtime.events)
 
-    mount_panel(app, mode="isolated-multi", home="/host/overview", assets_dir=config.panel.assets_dir)
+    mount_panel(app, mode="isolated-multi", home="/overview", assets_dir=config.panel.assets_dir)
     return app

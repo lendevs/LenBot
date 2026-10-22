@@ -26,6 +26,25 @@ jobs:
       - run: uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package tests
       - run: uv run --no-sync pytest -q
 
+  panel:
+    name: panel (typecheck, lint, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/len_bot/web/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/len_bot/web/frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
   workflows:
     # Static check of the workflow files themselves (expressions, needs, shell in run blocks).
     runs-on: ubuntu-24.04

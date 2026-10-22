@@ -1,0 +1,5 @@
+# Generated or vendored
+node_modules
+package-lock.json
+../static/dist
+

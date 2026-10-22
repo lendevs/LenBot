@@ -122,7 +122,7 @@ MEMORY_ARGUMENTS = TypeAdapter(Annotated[
 ])
 MEMORY_TOOL = {"type": "function", "function": {
     "name": "memory", "description": "浏览、检索、读写当前场景长期记忆；公共分区只读。"
-    "普通删除保留修改历史；forget 清除该文件及其历史，不能据此宣称聊天和备份已删除。",
+    "普通删除保留修改历史；forget 清除该文件及其历史。",
     "parameters": {
         "type": "object", "additionalProperties": False, "required": ["action"],
         "properties": {
@@ -134,7 +134,7 @@ MEMORY_TOOL = {"type": "function", "function": {
             "reason": {"type": "string", "description": "write/delete/forget 必填的实际原因。"},
             "exclude_records": {"type": "array", "items": {"type": "integer", "minimum": 1},
                                 "maxItems": 500, "description": "仅 forget 必填：选中的 recall_chat 原话 record 此后不再后台抽取。"
-                                "显式 [] 表示不排除旧输入；不扩大到未选择的消息或未来再次讲述。"},
+                                "显式 [] 表示不排除旧输入。"},
             "offset": {"type": "integer", "minimum": 0, "description": "仅 browse 的分页起点，默认 0。"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100,
                       "description": "browse 默认 20、最多 100；search 默认 5、最多 20。"},
@@ -193,10 +193,18 @@ class MemoryService:
         return ["browse", "read", "search", "write", "delete", "history", "forget"]
 
     async def search(self, scene: str, query: str, limit: int, *, automatic: bool = False,
-                     text_query: str | None = None) -> list[dict]:
+                     text_query: str | None = None, persona: str | None = None) -> list[dict]:
+        """``persona`` hides other roles' Bot records; the panel searches without it."""
         hits = await self.backend.search(scene, query, limit, exclude_pending=automatic,
-                                         automatic=automatic, text_query=text_query)
+                                         automatic=automatic, text_query=text_query, bot_persona=persona)
         return [{**asdict(hit), "score": None} for hit in hits]
+
+    def own_bot_path(self, scene: str, path: str) -> None:
+        """The current role reads and writes only its own ``bot/<id>/`` records."""
+        persona = self.active_personas.get(scene)
+        parts = path.strip('/').split('/')
+        if persona is not None and parts[0] == 'bot' and len(parts) > 1 and parts[1] != persona:
+            raise ValueError(f'{path!r} 是另一个角色的记录；当前角色只读写 bot/{persona}/ 下的文件')
 
     async def write(self, scene: str, path: str, content: str, reason: str, *,
                     scope: Scope = "scene") -> dict:
@@ -262,13 +270,16 @@ class MemoryService:
             item = MEMORY_ARGUMENTS.validate_python(arguments)
         except ValidationError as error:
             raise ValueError(f"Invalid memory arguments: {repr(arguments)[:500]}; {error}") from error
+        persona = self.active_personas.get(scene)
+        if not isinstance(item, SearchMemory):
+            self.own_bot_path(scene, item.path)
         if isinstance(item, BrowseMemory):
             result = asdict(await self.backend.browse(scene, item.path, scope=item.scope,
-                                                     offset=item.offset, limit=item.limit))
+                                                     offset=item.offset, limit=item.limit, bot_persona=persona))
         elif isinstance(item, ReadMemory):
             result = asdict(await self.backend.read(scene, item.path, scope=item.scope))
         elif isinstance(item, SearchMemory):
-            result = {"hits": await self.search(scene, item.query, item.limit)}
+            result = {"hits": await self.search(scene, item.query, item.limit, persona=persona)}
         elif isinstance(item, WriteMemory):
             result = await self.write(scene, item.path, item.content, item.reason)
         elif isinstance(item, (DeleteMemory, ForgetMemory)):
@@ -291,7 +302,7 @@ class MemoryService:
         seen: set[tuple[str, str]] = set()
 
         def append(scope: str, path: str, content: str, limit: int, *,
-                   kind: str = "file", source_chars: int | None = None) -> None:
+                   kind: str = "file", source_chars: int | None = None, sections: tuple[dict, ...] = ()) -> None:
             nonlocal budget
             if not content.strip() or limit == 0 or (scope, path) in seen or budget <= 0:
                 return
@@ -299,6 +310,8 @@ class MemoryService:
             items.append({"scope": scope, "path": path, "content": shown, "kind": kind,
                           "truncated": len(shown) < len(content) or (
                               source_chars is not None and len(shown) < source_chars)})
+            if sections:
+                items[-1]['sections'] = sections
             seen.add((scope, path))
             budget -= len(shown)
 
@@ -312,10 +325,11 @@ class MemoryService:
         text_query = "\n".join(plain_text(message) for message in messages
                                if plain_text(message).strip() and message.send_status in {"received", "sent", "simulated"})[-1200:]
         if query and budget > 0:
-            for hit in await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query):
+            for hit in await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query,
+                                         persona=self.active_personas.get(scene)):
                 append(hit["scope"], hit["path"], hit["preview"], budget,
                        kind="excerpt",
-                       source_chars=hit["total_chars"])
+                       source_chars=hit["total_chars"], sections=hit["sections"])
         return {"backend": self.settings.backend, "query": query, "items": items,
                 "content_chars": self.settings.recall_budget_chars - budget,
                 "budget_chars": self.settings.recall_budget_chars}

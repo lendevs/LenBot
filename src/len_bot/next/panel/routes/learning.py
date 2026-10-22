@@ -9,6 +9,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...learning.store import LearningStore
 from ...maintenance.commands import maintenance_command
@@ -70,7 +71,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return {"requested": action, "state": service_state(scene)}
 
-    @app.get("/api/host/scenes/{scene}/learning")
+    @app.get("/api/host/scenes/{scene}/learning", response_model=responses.LearningState, response_model_exclude_unset=True)
     async def state(scene: str, _: str = Depends(user)):
         chat = chat_for(scene)
         latest = learning.latest(scene)
@@ -89,13 +90,13 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
                 "expression_counts": learning.counts(scene),
                 "service_state": service_state(scene)}
 
-    @app.get("/api/host/scenes/{scene}/learning/batches")
+    @app.get("/api/host/scenes/{scene}/learning/batches", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def batches(scene: str, limit: int = Query(20, ge=1, le=20),
                       offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
         return learning.batches(scene, limit=limit, offset=offset)
 
-    @app.post('/api/host/scenes/{scene}/learning/reindex')
+    @app.post('/api/host/scenes/{scene}/learning/reindex', response_model=responses.ReindexedExpressions, response_model_exclude_unset=True)
     async def reindex(scene: str, _: str = Depends(user)):
         chat_for(scene)
         if not selection_enabled(scene):
@@ -112,7 +113,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
         finally:
             runtime.notify()
 
-    @app.get("/api/host/scenes/{scene}/learning/batches/{id}")
+    @app.get("/api/host/scenes/{scene}/learning/batches/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def batch(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         item = learning.batch(scene, id)
@@ -120,13 +121,13 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
             raise HTTPException(404, "当前场景没有这一学习批次")
         return item
 
-    @app.get("/api/host/scenes/{scene}/learning/embedding-calls")
+    @app.get("/api/host/scenes/{scene}/learning/embedding-calls", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def embedding_calls(scene: str, limit: int = Query(20, ge=1, le=20),
                               offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
         return learning.embedding_calls(scene, limit=limit, offset=offset)
 
-    @app.get("/api/host/scenes/{scene}/learning/embedding-calls/{id}")
+    @app.get("/api/host/scenes/{scene}/learning/embedding-calls/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def embedding_call(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         item = learning.embedding_call(scene, id)
@@ -134,22 +135,22 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
             raise HTTPException(404, "当前场景没有这一表达向量请求")
         return item
 
-    @app.post("/api/host/scenes/{scene}/learning/request")
+    @app.post("/api/host/scenes/{scene}/learning/request", response_model=responses.LearningRequested, response_model_exclude_unset=True)
     async def request(scene: str, _: str = Depends(user)):
         return trigger(scene, "run")
 
-    @app.post("/api/host/scenes/{scene}/learning/retry")
+    @app.post("/api/host/scenes/{scene}/learning/retry", response_model=responses.LearningRequested, response_model_exclude_unset=True)
     async def retry(scene: str, _: str = Depends(user)):
         return trigger(scene, "retry")
 
-    @app.get("/api/host/scenes/{scene}/learning/expressions")
+    @app.get("/api/host/scenes/{scene}/learning/expressions", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def expressions(scene: str, status: Literal["pending", "adopted", "rejected"] | None = None,
                           limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
                           _: str = Depends(user)):
         chat_for(scene)
         return learning.expressions(scene, status=status, limit=limit, offset=offset)
 
-    @app.get("/api/host/scenes/{scene}/learning/expressions/{id}")
+    @app.get("/api/host/scenes/{scene}/learning/expressions/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def expression(scene: str, id: int, _: str = Depends(user)):
         chat = chat_for(scene)
         item = learning.expression(scene, id)
@@ -163,7 +164,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
                             "message": None if message is None else asdict(message)})
         return {**item, "source_messages": sources}
 
-    @app.put("/api/host/scenes/{scene}/learning/expressions/{id}")
+    @app.put("/api/host/scenes/{scene}/learning/expressions/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def update_expression(scene: str, id: int, change: ExpressionChange,
                                 _: str = Depends(user)):
         chat_for(scene)
@@ -191,7 +192,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
         runtime.notify()
         return item
 
-    @app.delete("/api/host/scenes/{scene}/learning/expressions/{id}")
+    @app.delete("/api/host/scenes/{scene}/learning/expressions/{id}", response_model=responses.Deleted, response_model_exclude_unset=True)
     async def delete_expression(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         service = runtime.expression_service if selection_enabled(scene) else None

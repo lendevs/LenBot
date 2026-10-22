@@ -145,10 +145,11 @@ class AudioService:
         self.records = AudioStore(store)
         self.on_update = on_update
         self.changed = {scene: asyncio.Event() for scene, cfg in configs.items() if cfg.transcribe_audio}
-        self.workers: list[asyncio.Task] = []
+        self.workers: dict[str, asyncio.Task] = {}
+        self.started = False
         self.errors: dict[str, str] = {}
         self.locks = WeakValueDictionary()
-        self.active: set[asyncio.Task] = set()
+        self.active: dict[asyncio.Task, str] = {}
         self.closing = False
         for scene, config in configs.items():
             self.records.recover(scene, config.transcribe_audio)
@@ -164,18 +165,56 @@ class AudioService:
         return 0 if since is None else max(0, since + self.configs[scene].audio.wait_seconds - now)
 
     def start(self) -> None:
-        self.workers = []
+        self.started = True
         for scene in self.changed:
-            with log_context(scene=scene, job='audio'):
-                self.workers.append(asyncio.create_task(self.run(scene), name=f"audio:{scene}"))
+            self._start_scene(scene)
 
-    async def close(self) -> None:
-        self.closing = True
-        tasks = set(self.workers) | self.active
+    def _start_scene(self, scene: str) -> None:
+        with log_context(scene=scene, job='audio'):
+            self.workers[scene] = asyncio.create_task(self.run(scene), name=f"audio:{scene}")
+
+    def add_scene(self, config: LabConfig) -> None:
+        scene = config.scene
+        self.configs[scene] = config
+        self.records.recover(scene, config.transcribe_audio)
+        if config.transcribe_audio:
+            self.changed[scene] = asyncio.Event()
+            if self.started:
+                self._start_scene(scene)
+
+    async def set_automatic(self, scene: str, enabled: bool) -> None:
+        if enabled and scene not in self.changed:
+            self.changed[scene] = asyncio.Event()
+            if self.started:
+                self._start_scene(scene)
+        elif not enabled and scene in self.changed:
+            worker = self.workers.pop(scene, None)
+            if worker is not None:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+            self.changed.pop(scene)
+            self.errors.pop(scene, None)
+
+    async def remove_scene(self, scene: str) -> None:
+        worker = self.workers.pop(scene, None)
+        tasks = [task for task, owner in self.active.items() if owner == scene]
+        if worker is not None:
+            tasks.append(worker)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        self.workers = []
+        self.changed.pop(scene, None)
+        self.errors.pop(scene, None)
+        self.configs.pop(scene)
+
+    async def close(self) -> None:
+        self.closing = True
+        self.started = False
+        tasks = set(self.workers.values()) | self.active.keys()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.workers.clear()
 
     async def run(self, scene: str) -> None:
         try:
@@ -203,7 +242,7 @@ class AudioService:
         if self.closing:
             raise RuntimeError("Audio processing is stopping")
         task = asyncio.create_task(self.process(scene, arguments, turn_id=turn_id, direct=direct, automatic=automatic))
-        self.active.add(task)
+        self.active[task] = scene
         try:
             return await task
         except asyncio.CancelledError as error:
@@ -211,7 +250,7 @@ class AudioService:
                 raise RuntimeError("Audio processing stopped; unfinished recognition was cancelled, not replayed") from error
             raise
         finally:
-            self.active.discard(task)
+            self.active.pop(task)
 
     async def process(self, scene: str, arguments: TranscribeArguments, *,
                       turn_id: str | None, direct: bool, automatic: bool) -> str | None:

@@ -24,8 +24,7 @@ class SendFileArguments(BaseModel):
 SEND_FILE_TOOL = {"type": "function", "function": {
     "name": "send_file",
     "description": "把当前场景任务已登记的交付文件上传到本场景 QQ 群或私聊。"
-    "仅接受 task_id 和 file_id，不接受路径；成功回执只表示上传接口返回 file_id，"
-    "不证明接收方 QQ 客户端已收到或下载。未知结果不自动重发。",
+    "只接受 task_id 和 file_id；成功回执表示上传接口返回了 file_id。未知结果不自动重发。",
     "parameters": SendFileArguments.model_json_schema(),
 }}
 

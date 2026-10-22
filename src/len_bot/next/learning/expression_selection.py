@@ -181,10 +181,13 @@ class ExpressionService:
             return deleted
 
     async def complete(self, scene: str, batch_id: int,
-                       candidates: list[tuple[str, str, list[int]]], *, auto_adopt: bool) -> None:
+                       candidates: list[tuple[str, str, list[int]]], *, auto_adopt: bool,
+                       same_situation: float | None = None) -> None:
+        """``same_situation`` joins a new expression to an adopted one with the same wording whose
+        situation vector is at least this similar."""
         async with self._lock(scene):
             vectors: dict[tuple[str, str], StoredVector] = {}
-            if auto_adopt and scene in self.clients:
+            if scene in self.clients and (auto_adopt or same_situation is not None):
                 new = list(dict.fromkeys((situation, style) for situation, style, _ in candidates
                                          if self.records.find_expression(scene, situation, style) is None))
                 if new:
@@ -193,11 +196,39 @@ class ExpressionService:
                     if dimensions is not None and batch.dimensions != dimensions:
                         raise ValueError(f"scene {scene} new expression dimension {batch.dimensions} differs "
                                          f"from current index dimension {dimensions}; rebuild the expression index from the learning page")
-                    vectors = {key: self._stored(scene, vector, batch.dimensions)
-                               for key, vector in zip(new, batch.vectors, strict=True)}
+                    embedded = dict(zip(new, batch.vectors, strict=True))
+                    if same_situation is not None:
+                        joined = self._join_similar(scene, embedded, batch.dimensions, same_situation)
+                        candidates = [(joined.get((situation, style), situation), style, sources)
+                                      for situation, style, sources in candidates]
+                        embedded = {key: vector for key, vector in embedded.items() if key not in joined}
+                    if auto_adopt:
+                        vectors = {key: self._stored(scene, vector, batch.dimensions)
+                                   for key, vector in embedded.items()}
             self.records.complete(batch_id, candidates, auto_adopt=auto_adopt, vectors=vectors)
             if self.on_update is not None:
                 self.on_update()
+
+    def _join_similar(self, scene: str, embedded: dict[tuple[str, str], tuple[float, ...]], dimensions: int,
+                      threshold: float) -> dict[tuple[str, str], str]:
+        """New (situation, style) pairs mapped to the situation of a close adopted expression."""
+        adopted = [(item["situation"], item["style"], struct.unpack(f"<{dimensions}f", item["vector"]))
+                   for item in self.records.adopted(scene)
+                   if item["vector"] is not None and item["vector_dimensions"] == dimensions]
+        joined = {}
+        for (situation, style), vector in embedded.items():
+            norm = math.sqrt(math.fsum(value * value for value in vector))
+            best, target = threshold, None
+            for old_situation, old_style, old in adopted:
+                if old_style != style:
+                    continue
+                similarity = math.fsum(a * b for a, b in zip(vector, old, strict=True)) / (
+                    norm * math.sqrt(math.fsum(value * value for value in old)))
+                if similarity >= best:
+                    best, target = similarity, old_situation
+            if target is not None:
+                joined[(situation, style)] = target
+        return joined
 
     async def rebuild(self, scene: str) -> int:
         """Explicit replacement, with edits queued and optional recall paused."""

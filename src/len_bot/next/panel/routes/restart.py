@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from starlette.background import BackgroundTask
 from starlette.responses import JSONResponse
 
+from .. import responses
 from ...config import HostConfig
 from ...runtime.lifecycle import HostLifecycle
 from ...configuration.editing import _read_saved, restart_summary
@@ -23,7 +24,7 @@ LOOPBACK = {'127.0.0.1', 'localhost', '::1'}
 def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
                           runtime: NetworkRuntime, trials: HostTrials, lifecycle: HostLifecycle,
                           user: Callable[[Request], str], write_lock: asyncio.Lock) -> None:
-    @app.get('/api/host/ready')
+    @app.get('/api/host/ready', response_model=responses.Ready, response_model_exclude_unset=True)
     async def ready(request: Request, response: Response):
         # Login sessions expire with a process, so reconnect only needs public process identity.
         response.headers['Cache-Control'] = 'no-store'
@@ -59,7 +60,7 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
                        if item.stopped is None],
         }
 
-    @app.get('/api/host/restart')
+    @app.get('/api/host/restart', response_model=responses.RestartPreview, response_model_exclude_unset=True)
     async def read_restart(_: str = Depends(user)):
         async with write_lock:
             try:
@@ -67,7 +68,7 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
             except (ValueError, OSError) as error:
                 raise HTTPException(422, str(error)) from error
 
-    @app.post('/api/host/restart')
+    @app.post('/api/host/restart', response_model=responses.RestartPreview, response_model_exclude_unset=True)
     async def restart(_: str = Depends(user)):
         async with write_lock:
             try:

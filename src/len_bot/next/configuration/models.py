@@ -48,7 +48,11 @@ class Binding(BaseModel):
     max_output_tokens: int = Field(default=1024, gt=0)
     timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     reasoning_effort: str | None = None
+    # Effort of a request that answers new messages rather than tool results; empty means reasoning_effort.
+    quick_reasoning_effort: str | None = None
     thinking_budget_tokens: int | None = Field(default=None, ge=0)
+    # The model accepts images; without a separate vision model, look shows the chat model the pixels.
+    image_input: bool = True
     output_token_field: Literal["max_completion_tokens", "max_tokens"] = "max_completion_tokens"
     history_policy: Literal["native", "omit-reasoning"] = "native"
     # Waits before resending the same request after HTTP 429, 5xx or a dropped connection; empty means no retry.
@@ -61,7 +65,7 @@ class Binding(BaseModel):
             raise ValueError("must not be blank")
         return value
 
-    @field_validator("reasoning_effort")
+    @field_validator("reasoning_effort", "quick_reasoning_effort")
     @classmethod
     def valid_reasoning_effort(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():
@@ -132,7 +136,9 @@ class Models(BaseModel):
                 raise ValueError(f"models.roles.{role} requires a chat protocol provider")
             if role != "asr":
                 provider = self.providers[provider_name]
-                ModelSettings.from_binding(provider, binding)
+                settings = ModelSettings.from_binding(provider, binding)
+                if binding.quick_reasoning_effort is not None:
+                    settings.with_effort(binding.quick_reasoning_effort)
                 if provider.api != 'openai-chat' and binding.history_policy != 'native':
                     raise ValueError('原生协议必须保留原生历史续接')
             if role == "asr" and self.providers[provider_name].api not in {"openai-chat", "openai-audio"}:

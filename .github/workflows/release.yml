@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Push versioned images and create a Release (requires the matching existing tag)
+        description: Publish or resume the tagged Release (reuse the same run for interrupted uploads)
         type: boolean
         default: false
 
@@ -66,20 +66,6 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'version={version}\nimage=ghcr.io/{os.environ["GITHUB_REPOSITORY"].lower()}\npublish={str(publish).lower()}\n')
               output.write(f'prerelease={str(bool(re.search(r"(a|b|rc)\d+$", version))).lower()}\ndockerhub=docker.io/{os.environ["DOCKERHUB_NAMESPACE"]}/lenbot\n')
-          PY
-      - name: Refuse an already published version
-        if: steps.version.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name' > "$RUNNER_TEMP/existing-tags"
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          tags = Path(os.environ['RUNNER_TEMP'], 'existing-tags').read_text().splitlines()
-          if 'v' + os.environ['VERSION'] in tags:
-              raise ValueError('This Release already exists; do not rebuild or overwrite its version')
           PY
       - name: Build corresponding packages and deployment bundles
         run: uv run --no-project --python 3.13 python scripts/build_release.py "$RUNNER_TEMP/release"
@@ -313,7 +299,8 @@ jobs:
           PY
           cp images.json artifacts/images.json
           python3 scripts/release_metadata.py artifacts --images images.json
-      - name: Publish the existing tag and immutable assets
+      # Re-running this job downloads the same successful build artifacts; matching uploads are retained.
+      - name: Publish or complete the existing tag and immutable assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/publish_release.py artifacts

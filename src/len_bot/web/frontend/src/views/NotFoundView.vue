@@ -1,15 +1,18 @@
-<script setup>
-import { useAuth } from '../composables/useAuth.js'
-import HostPage from '../host/ui/HostPage.vue'
-import Panel from '../host/ui/Panel.vue'
-import EmptyState from '../host/ui/EmptyState.vue'
+<script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import { Home } from '@lucide/vue'
+import { useAuth } from '../composables/useAuth'
+import Button from '../ui/Button.vue'
+import EmptyState from '../ui/EmptyState.vue'
+
+const { t } = useI18n()
 const auth = useAuth()
 </script>
 
 <template>
-  <HostPage title="页面未找到">
-    <Panel>
-      <EmptyState text="这个地址没有对应的页面。"><v-btn color="primary" :to="auth.panelContext.home">返回首页</v-btn></EmptyState>
-    </Panel>
-  </HostPage>
+  <EmptyState :title="t('shell.notFound.message')">
+    <Button variant="primary" :icon="Home" :to="auth.panelContext?.home ?? '/'">
+      {{ t('shell.notFound.home') }}
+    </Button>
+  </EmptyState>
 </template>

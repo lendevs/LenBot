@@ -1,0 +1,374 @@
+/*
+ * Tailwind for the panel:
+ * - Preflight sits in the base layer, so every component style and utility outranks it.
+ * - Utilities are imported without a layer, as they were next to Vuetify; scoped component styles
+ *   still decide by specificity and order, not by layer.
+ */
+@layer theme, base;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+@import 'tailwindcss/utilities.css';
+
+@layer base {
+  /* Container widths such as max-w-lg are in rem; the panel has always been laid out on a 14px root. */
+  html {
+    font-size: 14px;
+  }
+  body {
+    min-width: 320px;
+    font-family: var(--font-sans);
+    color: var(--ink);
+    background: var(--page);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--selected);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
+
+@theme inline {
+  --color-*: initial;
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-bg: var(--primary-bg);
+  --color-on-primary: var(--on-primary);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-page: var(--page);
+  --color-sidebar: var(--sidebar);
+  --color-fill: var(--fill);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-hover: var(--hover);
+  --color-track: var(--track);
+  --color-selected: var(--selected);
+  --color-overlay: var(--overlay);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-error: var(--error);
+  --color-error-bg: var(--error-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-idle: var(--idle);
+  --color-code: var(--code-bg);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--mono);
+
+  /* Pixel values keep the type and spacing scale independent of the root font size. */
+  --spacing: 4px;
+  --text-*: initial;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 20px;
+  --text-base: 14px;
+  --text-base--line-height: 22px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 38px;
+
+  --radius-*: initial;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --shadow-*: initial;
+  --shadow-card: var(--shadow-card);
+  --shadow-hover: var(--shadow-hover);
+  --shadow-float: var(--shadow-float);
+  --shadow-dialog: var(--shadow-dialog);
+
+  --ease-*: initial;
+  --ease-out: var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
+  --ease-spring: var(--ease-spring);
+
+  --breakpoint-*: initial;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+
+  --animate-*: initial;
+  --animate-spin: spin 0.8s linear infinite;
+  --animate-pulse-dot: pulse-dot 2s var(--ease-out) infinite;
+  --animate-rise: rise var(--dur-2) var(--ease-out) both;
+  --animate-fade: fade var(--dur-2) var(--ease-out) both;
+  --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes pulse-dot {
+    0% {
+      box-shadow: 0 0 0 0 currentColor;
+    }
+    70%,
+    100% {
+      box-shadow: 0 0 0 5px transparent;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 100% 0;
+    }
+    100% {
+      background-position: -100% 0;
+    }
+  }
+}
+
+@utility focus-ring {
+  outline: 2px solid transparent;
+  box-shadow:
+    0 0 0 1.5px var(--primary),
+    0 0 0 5px var(--focus-ring);
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* Links styled as buttons or nav items: never underlined, also on hover (the hover: variant only applies on
+   devices that can hover, so the reset has its own selector). */
+@utility link-plain {
+  text-decoration: none;
+  &:hover {
+    text-decoration: none;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dark mode follows the data-theme attribute set by the theme switcher, not the system setting directly. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * Motion for Reka UI layers. Reka keeps a layer mounted while data-state is closed until its animation ends,
+ * so exit animations run without extra code. Floating layers grow from the side they are attached to.
+ */
+.ui-pop {
+  --ui-pop-x: 0;
+  --ui-pop-y: 0;
+  transform-origin: var(--reka-popper-transform-origin, center);
+}
+.ui-pop[data-side='top'] {
+  --ui-pop-y: 4px;
+}
+.ui-pop[data-side='bottom'] {
+  --ui-pop-y: -4px;
+}
+.ui-pop[data-side='left'] {
+  --ui-pop-x: 4px;
+}
+.ui-pop[data-side='right'] {
+  --ui-pop-x: -4px;
+}
+.ui-pop[data-state='open'],
+.ui-pop[data-state='delayed-open'] {
+  animation: ui-pop-in var(--dur-2) var(--ease-out);
+}
+.ui-pop[data-state='closed'] {
+  animation: ui-pop-out var(--dur-1) ease-in forwards;
+}
+@keyframes ui-pop-in {
+  from {
+    opacity: 0;
+    transform: translate(var(--ui-pop-x), var(--ui-pop-y)) scale(0.96);
+  }
+}
+@keyframes ui-pop-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+.ui-overlay[data-state='open'] {
+  animation: fade var(--dur-3) var(--ease-out);
+}
+.ui-overlay[data-state='closed'] {
+  animation: ui-fade-out var(--dur-2) ease-in forwards;
+}
+.ui-dialog[data-state='open'] {
+  animation: ui-dialog-in var(--dur-3) var(--ease-out);
+}
+.ui-dialog[data-state='closed'] {
+  animation: ui-dialog-out var(--dur-2) ease-in forwards;
+}
+@keyframes ui-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
+@keyframes ui-dialog-out {
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@keyframes ui-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.ui-sheet {
+  --ui-sheet-from: translateX(100%);
+}
+.ui-sheet[data-side='left'] {
+  --ui-sheet-from: translateX(-100%);
+}
+.ui-sheet[data-side='bottom'] {
+  --ui-sheet-from: translateY(100%);
+}
+.ui-sheet[data-state='open'] {
+  animation: ui-sheet-in var(--dur-4) var(--ease-out);
+}
+.ui-sheet[data-state='closed'] {
+  animation: ui-sheet-out var(--dur-3) var(--ease-in-out) forwards;
+}
+@keyframes ui-sheet-in {
+  from {
+    transform: var(--ui-sheet-from);
+  }
+}
+@keyframes ui-sheet-out {
+  to {
+    transform: var(--ui-sheet-from);
+  }
+}
+
+/* Toasts enter from the viewport edge and follow the finger while being swiped away. */
+.ui-toast[data-state='open'] {
+  animation: ui-toast-in var(--dur-3) var(--ease-out);
+}
+.ui-toast[data-state='closed'] {
+  animation: ui-fade-out var(--dur-2) ease-in forwards;
+}
+.ui-toast[data-swipe='move'] {
+  transform: translateX(var(--reka-toast-swipe-move-x));
+}
+.ui-toast[data-swipe='cancel'] {
+  transform: translateX(0);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.ui-toast[data-swipe='end'] {
+  animation: ui-toast-swipe-out var(--dur-2) ease-out forwards;
+}
+@keyframes ui-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+@keyframes ui-toast-swipe-out {
+  from {
+    transform: translateX(var(--reka-toast-swipe-end-x));
+  }
+  to {
+    transform: translateX(110%);
+  }
+}
+
+/* Vue <Transition name="ui-rise">: small inline messages and bars that appear and disappear. */
+.ui-rise-enter-active,
+.ui-rise-leave-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.ui-rise-enter-from,
+.ui-rise-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+@keyframes ui-shake {
+  20%,
+  60% {
+    transform: translateX(-6px);
+  }
+  40%,
+  80% {
+    transform: translateX(6px);
+  }
+}
+
+/* Vue <Transition name="page">: switching between pages of the shell. */
+.page-enter-active {
+  transition:
+    opacity var(--dur-3) var(--ease-out),
+    transform var(--dur-3) var(--ease-out);
+}
+.page-leave-active {
+  transition: opacity var(--dur-1) ease-in;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
+}

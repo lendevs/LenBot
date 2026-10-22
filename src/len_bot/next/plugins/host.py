@@ -110,6 +110,7 @@ class Loaded:
     instance: Plugin | None = None
     context: PluginContext | None = None
     commands: dict[str, tuple[str, str]] = field(default_factory=dict)     # name -> (description, method)
+    mention_commands: set[str] = field(default_factory=set)
     fullmatches: dict[str, tuple[str, str]] = field(default_factory=dict)
     patterns: list[Pattern] = field(default_factory=list)
     notices: dict[str, str] = field(default_factory=dict)                   # type -> method
@@ -245,6 +246,8 @@ class PluginHost:
                 if mark[1] in self.commands or mark[1] in record.commands:
                     raise ValueError(f"命令 /{mark[1]} 已由插件 {self.commands.get(mark[1], record.name)} 注册")
                 record.commands[mark[1]] = (mark[2], attribute)
+                if mark[3]:
+                    record.mention_commands.add(mark[1])
             elif mark[0] == "fullmatch":
                 if mark[1] in self.fullmatches or mark[1] in record.fullmatches:
                     raise ValueError(f"全文规则 {mark[1]!r} 已注册")
@@ -356,8 +359,12 @@ class PluginHost:
         return self.config.scene_timezone(scene)
 
     def scene_paused(self, scene: str) -> bool:
-        """Whether the operator switched this scene's chat off; plugins stay silent there too."""
-        return self.runtime is not None and self.runtime.runners[scene].state.paused
+        """Whether the operator switched this scene's chat off; plugins stay silent there too.
+
+        A scene being added from the panel has no runner yet while its chat is built, and is not paused.
+        """
+        runner = None if self.runtime is None else self.runtime.runners.get(scene)
+        return runner is not None and runner.state.paused
 
     def _speaking(self, plugin: str, scene: str) -> Loaded:
         record = self._active(plugin, scene)
@@ -628,9 +635,9 @@ class PluginHost:
         if (self.closing or message.is_self or message.sender.uid in other_bots
                 or message.sender.uid in self.config.scene_config(message.scene).permissions.blacklist):
             return None
-        # Only transport prefixes may precede text. Media/other mentions are not invisible glue.
+        # Body mentions are accepted only by commands that explicitly opt in.
         pieces = []
-        started = False
+        started = mentions = False
         for segment in message.segments:
             if segment.type == "text":
                 pieces.append(segment.data["text"])
@@ -638,6 +645,9 @@ class PluginHost:
             elif not started and (segment.type == "reply" or
                                   (segment.type == "mention" and str(segment.data["user"]) == self.bot_id)):
                 continue
+            elif started and segment.type == "mention":
+                mentions = True
+                pieces.append(" ")
             else:
                 return None
         text = "".join(pieces).strip()
@@ -645,7 +655,11 @@ class PluginHost:
                     if item.status in {"loaded", "running"} and message.scene in item.scenes}
         match = re.fullmatch(r"/(\S+)(?:\s+(.*))?", text, re.DOTALL)
         if match is not None and (record := eligible.get(self.commands.get(match[1]))) is not None:
+            if mentions and match[1] not in record.mention_commands:
+                return None
             return Matched(record, f"命令 /{match[1]}", record.commands[match[1]][1], ((match[2] or "").strip(),))
+        if mentions:
+            return None
         if (record := eligible.get(self.fullmatches.get(text))) is not None:
             return Matched(record, f"全文 {text!r}", record.fullmatches[text][1])
         patterns = sorted(((record, item) for record in eligible.values() for item in record.patterns),

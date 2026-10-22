@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 import zlib
 
-from .profile import PERSONA_FILES, load_persona
+from .profile import PERSONA_FILES, REQUIRED_FILES, load_persona
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 MAX_EXPANDED_BYTES = 128 * 1024 * 1024
@@ -65,7 +65,7 @@ def read_zip(data: bytes) -> dict[str, bytes]:
                 for parent in Path(name).parents:
                     if parent.as_posix() in names and not names[parent.as_posix()]:
                         raise ValueError(f'Role ZIP file is also a parent directory: {parent.as_posix()!r}')
-            missing = set(PERSONA_FILES) - {name for name, directory in names.items() if not directory}
+            missing = set(REQUIRED_FILES) - {name for name, directory in names.items() if not directory}
             if missing:
                 raise ValueError(f'Role ZIP lacks required root files: {sorted(missing)!r}')
             files = {entry.filename: archive.read(entry) for entry in entries if not entry.is_dir()}
@@ -99,7 +99,7 @@ def export_package(directory: Path) -> bytes:
                 if total > MAX_EXPANDED_BYTES or len(files) >= MAX_ENTRIES:
                     raise ValueError('Role package exceeds the ZIP expanded-size or entry limit')
                 files[relative] = path.read_bytes()
-    missing = set(PERSONA_FILES) - files.keys()
+    missing = set(REQUIRED_FILES) - files.keys()
     if missing:
         raise ValueError(f'Role package lost required files during export: {sorted(missing)!r}')
     load_persona(directory)
@@ -125,7 +125,8 @@ def import_package(root: Path, name: str, data: bytes) -> dict:
     if destination.exists() or destination.is_symlink():
         raise FileExistsError(f'Role import never overwrites an existing directory: {destination}')
     with tempfile.TemporaryDirectory(prefix='.persona-import-', dir=collection) as temporary:
-        package = Path(temporary) / 'package'
+        # Named like the destination so a package without an id reads the id it will have.
+        package = Path(temporary) / name
         package.mkdir()
         for filename, content in files.items():
             path = package / filename

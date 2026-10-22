@@ -13,18 +13,21 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .. import responses
 from ...chat.tools import tool_catalog, tool_unavailable_reasons
 from ...config import HostConfig, LabConfig, load_host_config
 from .persona import finish_role_write
+from .timeline import TurnDetail, read_turn
 from ...instance_lock import InstanceBusyError, instance_lock
 from ...runtime.logs import LoggingSettings
 from ...memory.service import LocalMemoryConfig, open_memory
 from ...models.client import ChatModel
 from ...runtime.identity import IdentitySettings
 from ...runtime.network import NetworkRuntime
+from ...runtime.personas import roles
 from ...trials.panel import PanelSession, TestMessage, stored_image
 from ..auth import changes_socket, cookie_name
-from ...persona.profile import PERSONA_FILES, Persona, PersonaTarget, parse_persona_files, require_persona_target
+from ...persona.profile import PERSONA_FILES, Persona, PersonaTarget, parse_persona_files
 from ...storage.store import Store
 from len_bot.web.auth import session_user
 from ...prompt_files import read_prompt
@@ -135,11 +138,14 @@ def write_trial_files(config: LabConfig, persona: Persona, draft: PersonaDraft |
 
 
 def load_draft_persona(root: Path, scene: str, draft: PersonaDraft) -> Persona:
+    """A draft of any role in the library may be tried against this scene's recent chat."""
     saved = load_host_config(root)
     if scene not in saved.scenes:
         raise ValueError('场景已从保存配置移除，不能读取其角色资料用于新草稿试聊')
-    require_persona_target(saved.scenes[scene].persona, draft.directory)
-    return parse_persona_files(saved.scenes[scene].persona, draft.files)
+    path = next((role.path for role in roles(root, saved) if str(role.path) == draft.directory), None)
+    if path is None:
+        raise ValueError(f'试聊草稿须来自角色库里的角色；directory={draft.directory!r}')
+    return parse_persona_files(path, draft.files)
 
 
 class HostTrials:
@@ -239,11 +245,11 @@ class HostTrials:
 
 
 def register_host_trials(app: FastAPI, trials: HostTrials, user):
-    @app.get('/api/host/trials')
+    @app.get('/api/host/trials', response_model=responses.TrialList, response_model_exclude_unset=True)
     async def listing(_: str = Depends(user)):
         return {'items':[trial.info() for trial in trials.records.values()]}
 
-    @app.post('/api/host/trials')
+    @app.post('/api/host/trials', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def start(item: TrialStart, _: str = Depends(user)):
         if not item.acknowledge_model_cost:
             raise HTTPException(422, '开始前需明确知道模型请求仍会计费；平台发送始终模拟')
@@ -254,18 +260,18 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
         except (ValueError, OSError) as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/host/trials/{trial_id}/stop')
+    @app.post('/api/host/trials/{trial_id}/stop', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def stop(trial_id: str, _: str = Depends(user)):
         async with trials.lock:
             trial = trials.get(trial_id)
             await trial.stop()
             return trial.info()
 
-    @app.get('/api/host/trials/{trial_id}/state')
+    @app.get('/api/host/trials/{trial_id}/state', response_model=responses.TrialState, response_model_exclude_unset=True)
     async def state(trial_id: str, _: str = Depends(user)):
         return trials.get(trial_id).snapshot()
 
-    @app.post('/api/host/trials/{trial_id}/messages')
+    @app.post('/api/host/trials/{trial_id}/messages', response_model=responses.MessageReceipt, response_model_exclude_unset=True)
     async def message(trial_id: str, item: TestMessage, _: str = Depends(user)):
         trial = trials.get(trial_id)
         if trial.stopped is not None:
@@ -284,12 +290,24 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     async def avatar(trial_id: str, _: str = Depends(user)):
         return trials.get(trial_id).session.avatar()
 
-    @app.get('/api/host/trials/{trial_id}/turns/{turn_id}')
+    @app.get('/api/host/trials/{trial_id}/turns/{turn_id}', response_model=responses.StoredTurn, response_model_exclude_unset=True)
     async def turn(trial_id: str, turn_id: str, _: str = Depends(user)):
         trial = trials.get(trial_id)
         def read():
             with Store(trial.config.database, readonly=True) as store:
                 return store.turn_detail(trial.scene, turn_id)
+        result = await asyncio.to_thread(read)
+        if result is None:
+            raise HTTPException(404, '这一轮不属于当前试聊')
+        return result
+
+    @app.get('/api/host/trials/{trial_id}/turns/{turn_id}/steps', response_model=TurnDetail)
+    async def turn_steps(trial_id: str, turn_id: str, _: str = Depends(user)):
+        """The same step view as a group's live timeline, read from the trial's own database."""
+        trial = trials.get(trial_id)
+        def read():
+            with Store(trial.config.database, readonly=True) as store:
+                return read_turn(store, trial.scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
             raise HTTPException(404, '这一轮不属于当前试聊')

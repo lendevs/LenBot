@@ -7,11 +7,12 @@ import logging
 import sqlite3
 import os
 import stat
+from .. import responses
 from ...work.materials import finish_file_operation
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, HTTPException, Query, Response
+from fastapi import Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...runtime.logs import log_event, log_files, read_records
@@ -65,7 +66,7 @@ def register_host_operations(app, *, runtime, user):
                         headers={'Content-Disposition': 'attachment; filename="diagnostic.zip"',
                                  'Cache-Control': 'no-store'})
 
-    @app.post('/api/host/scenes/{scene}/history/{action}')
+    @app.post('/api/host/scenes/{scene}/history/{action}', response_model=responses.HistoryAction, response_model_exclude_unset=True)
     async def history_operation(scene: str, action: Literal['compact', 'new-context'],
                                 confirmed: bool = False, _: str = Depends(user)):
         scene_exists(scene)
@@ -87,30 +88,34 @@ def register_host_operations(app, *, runtime, user):
             except (ValueError, TimeoutError, ModelHTTPError, ModelProtocolError) as error:
                 raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/host/scenes/{scene}/control')
+    @app.get('/api/host/scenes/{scene}/control', response_model=responses.SceneControl, response_model_exclude_unset=True)
     async def scene_control(scene: str, _: str = Depends(user)):
         scene_exists(scene)
         return runtime.runners[scene].control_state()
 
-    @app.post('/api/host/scenes/{scene}/control/quiet')
+    @app.post('/api/host/scenes/{scene}/control/quiet', response_model=responses.SceneControl, response_model_exclude_unset=True)
     async def scene_quiet(scene: str, change: QuietChange, _: str = Depends(user)):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if runner.execution.locked() or not runtime.accepting:
             raise HTTPException(409, '场景正在执行或宿主正在停止，临时状态未改变')
         async with runner.execution:
-            return runner.set_temporary_quiet(change.seconds, change.direct, None)
+            result = runner.set_temporary_quiet(change.seconds, change.direct, None)
+            runtime.events.publish("host.state", scene=scene)
+            return result
 
-    @app.post('/api/host/scenes/{scene}/control/resume')
+    @app.post('/api/host/scenes/{scene}/control/resume', response_model=responses.SceneControl, response_model_exclude_unset=True)
     async def scene_resume(scene: str, _: str = Depends(user)):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if runner.execution.locked() or not runtime.accepting:
             raise HTTPException(409, '场景正在执行或宿主正在停止，临时状态未改变')
         async with runner.execution:
-            return runner.set_temporary_quiet(None, 'allow', None)
+            result = runner.set_temporary_quiet(None, 'allow', None)
+            runtime.events.publish("host.state", scene=scene)
+            return result
 
-    @app.put('/api/host/scenes/{scene}/control/chat')
+    @app.put('/api/host/scenes/{scene}/control/chat', response_model=responses.SceneControl, response_model_exclude_unset=True)
     async def scene_chat(scene: str, change: ChatSwitch, _: str = Depends(user)):
         scene_exists(scene)
         runner = runtime.runners[scene]
@@ -118,9 +123,11 @@ def register_host_operations(app, *, runtime, user):
             raise HTTPException(409, '宿主没有在运行，聊天开关未改变')
         # Waits for a running turn to finish so its saved attention state cannot overwrite the switch.
         async with runner.execution:
-            return runner.set_paused(not change.enabled)
+            result = runner.set_paused(not change.enabled)
+            runtime.events.publish("host.state", scene=scene)
+            return result
 
-    @app.put('/api/host/control/chat')
+    @app.put('/api/host/control/chat', response_model=responses.AllChatControl, response_model_exclude_unset=True)
     async def all_chat(change: ChatSwitch, _: str = Depends(user)):
         """Every scene at once, e.g. when model quota runs out; messages are still stored."""
         if not runtime.accepting:
@@ -129,22 +136,18 @@ def register_host_operations(app, *, runtime, user):
             async with runner.execution:
                 return runner.set_paused(not change.enabled)
         states = await asyncio.gather(*(switch(runner) for runner in runtime.runners.values()))
+        runtime.events.publish("host.state")
         log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
         return {'enabled': change.enabled, 'scenes': len(states)}
 
-    @app.put('/api/host/control/send-hold')
+    @app.put('/api/host/control/send-hold', response_model=responses.Enabled, response_model_exclude_unset=True)
     async def send_hold(change: ChatSwitch, _: str = Depends(user)):
         """enabled=true: turns run and are recorded as simulated sends; nothing reaches QQ."""
         runtime.send_hold.set(change.enabled, at=store.now())
+        runtime.events.publish("host.state")
         return {'enabled': runtime.send_hold.enabled}
 
-    @app.get('/api/host/scenes/{scene}/notices')
-    async def notices(scene: str, before: int | None = Query(None, ge=1),
-                      limit: int = Query(50, ge=1, le=200), _: str = Depends(user)):
-        scene_exists(scene)
-        return store.notice_page(scene, before=before, limit=limit)
-
-    @app.get('/api/host/scenes/{scene}/turns/{turn_id}/export')
+    @app.get('/api/host/scenes/{scene}/turns/{turn_id}/export', response_class=Response)
     async def turn_export(scene: str, turn_id: str, _: str = Depends(user)):
         scene_exists(scene)
         def read():
@@ -157,7 +160,7 @@ def register_host_operations(app, *, runtime, user):
         return await archive({'turn': detail, 'log': list(reversed(logs)),
                         'scope': '实际轮次与调用，以及同一轮 ID 的运行日志；输入原话以保存的请求为准'})
 
-    @app.get('/api/host/tasks/{task_id}/export')
+    @app.get('/api/host/tasks/{task_id}/export', response_class=Response)
     async def task_export(task_id: int, scene: str, _: str = Depends(user)):
         scene_exists(scene)
         tasks = TaskStore(store)
@@ -182,14 +185,14 @@ def register_host_operations(app, *, runtime, user):
                         'log': list(reversed(logs)), 'container_stderr_tail': stderr,
                         'scope': '已保存任务事件、文件清单、同一任务的运行日志和容器进程 stderr 末尾 64 KiB；不包含文件字节或原生会话文件'})
 
-    @app.get('/api/host/retention')
+    @app.get('/api/host/retention', response_model=responses.RetentionState, response_model_exclude_unset=True)
     async def retention_state(_: str = Depends(user)):
         manager = runtime.retention
         return {'enabled': config.retention is not None, 'busy': manager.lock.locked(),
                 'last_result': manager.last_result, 'error': manager.error,
                 'preview': None if config.retention is None else await manager.batch_async(preview=True)}
 
-    @app.post('/api/host/retention')
+    @app.post('/api/host/retention', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def retention_run(confirmed: bool = False, _: str = Depends(user)):
         if not confirmed:
             raise HTTPException(422, '清理不可撤销，请先预览并明确确认')
@@ -225,13 +228,13 @@ def register_host_operations(app, *, runtime, user):
                 return [limit_state(scene, chat, source) for scene, chat in chats]
         return await asyncio.to_thread(read)
 
-    @app.get('/api/host/limits')
+    @app.get('/api/host/limits', response_model=responses.Limits, response_model_exclude_unset=True)
     async def limits_state(_: str = Depends(user)):
         return {'limits': config.limits.model_dump(mode='json'),
                 'scenes': await limit_states(list(runtime.chats.items())),
                 'scope': '宿主代理的模型请求，含保留试聊及已移除场景；不含远端服务内部调用'}
 
-    @app.post('/api/host/scenes/{scene}/speech/reset')
+    @app.post('/api/host/scenes/{scene}/speech/reset', response_model=responses.SceneLimit, response_model_exclude_unset=True)
     async def speech_reset(scene: str, operator: str = Depends(user)):
         scene_exists(scene)
         chat = runtime.chats[scene]
@@ -241,7 +244,7 @@ def register_host_operations(app, *, runtime, user):
         runtime.notify()
         return (await limit_states([(scene, chat)]))[0]
 
-    @app.get('/api/host/usage')
+    @app.get('/api/host/usage', response_model=responses.Usage, response_model_exclude_unset=True)
     async def costs(period: Literal['day', 'month'] = 'day', scene: str | None = None,
                     _: str = Depends(user)):
         if scene is not None:
@@ -273,7 +276,7 @@ def register_host_operations(app, *, runtime, user):
     def log_paths():
         return log_files(config.logging.directory)
 
-    @app.get('/api/host/log-files')
+    @app.get('/api/host/log-files', response_model=responses.LogFiles, response_model_exclude_unset=True)
     async def files(_: str = Depends(user)):
         return {'enabled': True, 'timezone': 'UTC',
                 'items': [{'name': p.name, 'bytes': p.stat().st_size} for p in log_paths()]}

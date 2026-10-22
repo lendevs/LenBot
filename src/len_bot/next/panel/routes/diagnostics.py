@@ -6,11 +6,12 @@ from collections.abc import Callable
 
 from fastapi import Depends, FastAPI, Request
 
+from .. import responses
 from ...runtime.loop_monitor import MONITOR, LoopMonitor
 
 
 def register_host_diagnostics(app: FastAPI, *, user: Callable[[Request], str],
                               monitor: LoopMonitor = MONITOR) -> None:
-    @app.get('/api/host/event-loop')
+    @app.get('/api/host/event-loop', response_model=responses.LoopHealth, response_model_exclude_unset=True)
     async def event_loop(_: str = Depends(user)) -> dict:
         return monitor.state()

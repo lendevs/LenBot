@@ -101,15 +101,15 @@ def test_market_lists_filters_and_guards_installation(tmp_path):
 
             tools = (await client.get('/api/host/plugin-market', params={'category': '工具', 'query': '约定'})).json()
             assert [item['name'] for item in tools['entries']] == ['notes'] and tools['total'] == 3
-            notes = (await client.get('/api/host/plugin-market/notes')).json()
+            notes = view['notes']
             assert notes['version'] == '0.3.0' and notes['permissions'] == ['send']
             assert view['weather']['permissions'] is None
             assert (await client.get('/api/host/plugin-market/missing')).status_code == 404
 
             installed = await client.post('/api/host/plugin-market/sample/install')
-            assert installed.status_code == 409 and '更新' in installed.json()['detail']
+            assert installed.status_code == 409 and '更新' in installed.json()['detail']['message']
             incompatible = await client.post('/api/host/plugin-market/weather/install')
-            assert incompatible.status_code == 422 and '接口版本' in incompatible.json()['detail']
+            assert incompatible.status_code == 422 and '接口版本' in incompatible.json()['detail']['message']
 
             status = (await client.get('/api/host/plugins/health')).json()['plugins']
             assert [item['name'] for item in status] == ['sample']
@@ -159,7 +159,7 @@ def test_market_install_requires_the_manifest_to_be_the_catalog_entry(tmp_path, 
         async with market_client(root, server) as client:
             refused = await client.post('/api/host/plugin-market/notes/install')
             assert refused.status_code == 422, refused.text
-            assert '仓库清单的插件名是 sample_other，不是 notes' in refused.json()['detail']
+            assert '仓库清单的插件名是 sample_other，不是 notes' in refused.json()['detail']['message']
             assert not (root / 'plugins/.candidates/sample_other').exists()
             assert not list((root / 'plugins').glob('**/sample_other.json'))
             # A manifest that declares other permissions than the entry shows is refused the same way.
@@ -167,7 +167,7 @@ def test_market_install_requires_the_manifest_to_be_the_catalog_entry(tmp_path, 
             manifest = (fixed / 'plugin.toml').read_text(encoding='utf-8').replace('sample_other', 'notes')
             commit(fixed, manifest.replace('[config', 'permissions = ["send", "history"]\n\n[config', 1))
             refused = await client.post('/api/host/plugin-market/notes/install')
-            assert refused.status_code == 422 and '声明的权限' in refused.json()['detail']
+            assert refused.status_code == 422 and '声明的权限' in refused.json()['detail']['message']
             assert not (root / 'plugins/.candidates/notes').exists()
             # The entry installs once its repository holds the plugin it names, as it describes it.
             commit(fixed, manifest.replace('[config', 'permissions = ["send"]\n\n[config', 1))

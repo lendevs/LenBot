@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -13,11 +14,11 @@ from len_bot.media.images import image_block
 
 from ..media.audio import TRANSCRIBE_TOOL, AudioService, TranscribeArguments
 from ..config import LabConfig
-from ..tools.discovery import DISCOVERY_REQUIRED_NAMES, DEFERRED_NAMES, TOOL_SEARCH, ToolSearchArguments, discovery_view, model_schema, search_tools
+from ..tools.discovery import DISCOVERY_REQUIRED_NAMES, TOOL_SEARCH, deferred_names, ToolSearchArguments, discovery_view, model_schema, search_tools
 from ..platform.delivery import Expression
 from ..tools.external_tools import ExternalTool
 from ..platform.file_delivery import SEND_FILE_TOOL, SendFileArguments, execute_send_file
-from ..media.images import LOOK_TOOL, LookArguments, execute_look
+from ..media.images import LOOK_TOOL, LookArguments, execute_look, load_look_image, shown_image
 from ..memory.service import MEMORY_TOOL, MemoryService
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ToolCall
@@ -40,7 +41,7 @@ from .schedule import SCHEDULE_TOOLS, execute_schedule
 from ..storage.store import ImageAsset, Store, encode
 from ..work.store import TaskStore
 from ..work.tools import DELEGATE_TOOL, TASK_TOOL, execute_tasks
-from ..tools.web_read import WEB_READ_TOOL, WebReadArguments, execute_web_read
+from ..tools.web_read import WEB_READ_TOOL, WebReadArguments, execute_web_read, read_web_page
 from ..tools.web_search import WEB_SEARCH_TOOL, WebSearchArguments, execute_web_search
 from ..prompt_files import read_prompt
 
@@ -76,7 +77,7 @@ class SayArguments(BaseModel):
     mention: str | None = Field(default=None, pattern=r"^(?:onebot|telegram):[1-9][0-9]*$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
-        description="与正文一起发送在同一条消息里的表情；file、emotion、query 三选一，素材目录见 react。")
+        description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query 三选一，素材目录见 react。")
 
 
 class ReactArguments(StickerChoice):
@@ -104,7 +105,8 @@ SAY_TOOL = {"type": "function", "function": {
 
 
 REACT_TOOL = {"type": "function", "function": {
-    "name": "react", "description": "在当前场景发送一张表情，角色匹配优先，其次是启用的本群已采用表情；"
+    "name": "react", "description": "在当前场景单独发一张表情包图片，不带文字，这张图就是一条完整的回复；"
+        "角色素材优先，其次是启用的本群已采用表情；"
         "file 直接选择目录中的角色素材，emotion 精确匹配情绪标签，query 按描述、标签字面检索，三选一；"
         "结果返回实际来源与发送状态。",
     "parameters": ReactArguments.model_json_schema(),
@@ -116,6 +118,9 @@ WAIT_TOOL = {"type": "function", "function": {
         "后台任务由已有追问和结束事件唤醒，委托后结束本轮，不用此工具轮询任务。",
     "parameters": WaitArguments.model_json_schema(),
 }}
+
+
+LOOKED_IMAGES = 4
 
 
 def tool_catalog(*, platform: bool) -> list[dict]:
@@ -152,7 +157,7 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
         reasons.append("还没有设置记忆")
     if name == 'attention' and config.attention.declarations is None:
         reasons.append('本群没有开启持续关注')
-    if name == "look" and config.models.roles.vision is None:
+    if name == "look" and not config.binding("vision").image_input:
         reasons.append("还没有设置看图模型")
     if name == "transcribe" and config.models.roles.asr is None:
         reasons.append("还没有设置语音转写模型")
@@ -176,6 +181,18 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
     if name in {"member_info", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
         reasons.append("只能在群里用")
     return reasons
+
+
+def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
+                    memory: MemoryService | None) -> list[dict]:
+    """Chat-data tools a task worker may call for the scene, as far as the role allows."""
+    selected = [deepcopy(tool["function"]) for tool in build_tools(config, persona, platform=platform)
+                if tool["function"]["name"] in {"recall_chat", "memory", "transcribe"}]
+    for tool in selected:
+        if tool["name"] == "memory":
+            tool["parameters"]["properties"]["action"]["enum"] = memory.actions
+            tool["description"] += "\n" + read_prompt(f"next_memory_{memory.settings.backend}.md")
+    return selected
 
 
 def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_management: bool = False) -> list[dict]:
@@ -208,12 +225,16 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
                 f"例如 {scene_platform}:70001。")
             description = function['description']
             if 'react' in names:
-                description += ' 同时需要说话和表情时，优先设置 sticker 合成一条消息；只用图像回应时使用 react。'
+                description += ' 一句话带一张表情包图片时设置 sticker；只发图、不说话时用 react。'
             else:
                 parameters['properties'].pop('sticker')
                 parameters.pop('$defs')
             allowed[index] = {**tool, "function": {**function, "description": description,
                                                    "parameters": model_schema(parameters)}}
+        elif function["name"] == "web_search" and config.web_search.provider == "deepseek":
+            parameters = WebSearchArguments.model_json_schema()
+            parameters["properties"]["query"]["maxLength"] = 128
+            allowed[index] = {**tool, "function": {**function, "parameters": model_schema(parameters)}}
         elif function["name"] == "react":
             parameters = ReactArguments.model_json_schema()
             catalog = "\n".join(f"{sticker.file}：{sticker.description}"
@@ -243,6 +264,8 @@ class SceneTools:
                  platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float]):
         self.config, self.persona, self.store = config, persona, store
         self.expression, self.request, self.vision = expression, request, vision
+        # Images the mind model looked at itself in the current turn, newest last.
+        self.looked: list[tuple[str, bytes]] = []
         self.memory, self.tasks, self.audio = memory, tasks, audio
         self.upload_file, self.platform_call = upload_file, platform_call
         self.notify, self.now = notify, now
@@ -282,7 +305,7 @@ class SceneTools:
             raise ValueError("平台查询工具已启用但未接入实际 OneBot 调用")
         if "transcribe" in self.allowed_tool_names and self.audio is None:
             raise ValueError("语音工具已启用但未接入实际语音处理服务")
-        self.deferred_names = (DEFERRED_NAMES if "tool_search" in self.allowed_tool_names else frozenset()) | set(self.external)
+        self.deferred_names = deferred_names(self.allowed_tool_names, config) | set(self.external)
         self.core_tools = [tool for tool in allowed if tool["function"]["name"] not in self.deferred_names]
         self.deferred_tools = ([tool for tool in allowed if tool["function"]["name"] in self.deferred_names]
                                + [tool.definition for tool in self.external.values()])
@@ -338,6 +361,10 @@ class SceneTools:
                 self.turn_disposition = disposition
             log_event(logger, 'tool_call', result_chars=len(result[0]))
             return result
+
+    def _connection(self, settings):
+        """The provider a web search or read setting names, if it uses one."""
+        return None if settings.connection is None else self.config.models.providers[settings.connection]
 
     async def _execute(self, turn_id: str, call: ToolCall,
                        wait_for_messages: Callable[[float], Awaitable[str]], *,
@@ -398,10 +425,21 @@ class SceneTools:
         if call.name == "web_read":
             return await execute_web_read(self.store, self.config.scene, self.config.web_read,
                                           WebReadArguments.model_validate(call.arguments), recording=self.replay_web,
-                                          fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url), None, None
+                                          fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
+                                          connection=self._connection(self.config.web_read)), None, None
         if call.name == "web_search":
-            return await execute_web_search(self.config.web_search,
-                                            WebSearchArguments.model_validate(call.arguments), recording=self.replay_web), None, None
+            read_top = None
+            if self.replay_web is None and self.config.web_read is not None and "web_read" in self.allowed_tool_names:
+                async def read_top(url: str):
+                    return await read_web_page(self.store, self.config.scene, self.config.web_read, url,
+                                               fake_ip_networks=self.config.network.networks(),
+                                               public_dns_url=self.config.network.public_dns_url,
+                                               connection=self._connection(self.config.web_read))
+            return await execute_web_search(self.config.web_search, WebSearchArguments.model_validate(call.arguments),
+                                            recording=self.replay_web, read_top=read_top,
+                                            save_page=(lambda page: self.store.save_web_page(self.config.scene, page))
+                                                if read_top is not None else None,
+                                            connection=self._connection(self.config.web_search)), None, None
         if call.name == "memory":
             return await self.memory.execute(self.config.scene, call.arguments), None, None
         if call.name in {"delegate", "task"}:
@@ -426,6 +464,13 @@ class SceneTools:
             async with self.expression.outlet:
                 self.expression.check_send_available()
                 return await message_reaction(self.store, self.config.scene, arguments, self.platform_call), None, None
+        if call.name == "look" and self.vision is None:
+            arguments = LookArguments.model_validate(call.arguments)
+            asset, reused, source = await load_look_image(
+                self.store, self.config.scene, arguments, self.config.images, recording=self.replay_images,
+                fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url)
+            self.looked = [*self.looked, (f"消息 {arguments.message} 的第 {arguments.image} 张图片", asset.jpeg)][-LOOKED_IMAGES:]
+            return shown_image(self.config.scene, arguments, asset, pixels_reused=reused, pixels_source=source), None, None
         if call.name == "look":
             return await execute_look(
                 self.store, self.config.scene, LookArguments.model_validate(call.arguments), self.config.images,

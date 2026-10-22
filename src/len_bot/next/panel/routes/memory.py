@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .. import responses
+from ...memory.types import MemoryDocument, MemoryPage
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -84,7 +86,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         try:
             with processing_records(runtime.config.database, None if runtime.memory is None else runtime.memory.jobs) as records:
                 if records is None:
-                    raise FileNotFoundError('本根未见现有记忆处理库；未创建记录源或启用服务，不能据此判断历史费用为零')
+                    raise FileNotFoundError('本根没有记忆处理库')
                 yield records
         except Exception as error:
             logger.exception('记忆调用记录读取失败，场景 %s：%s', scene, error)
@@ -106,7 +108,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                     422 if isinstance(error, ValueError) else 500)
             raise HTTPException(code, redact(f"{type(error).__name__}: {error}", secrets)) from error
 
-    @app.get("/api/host/memory/state")
+    @app.get("/api/host/memory/state", response_model=responses.MemoryState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         memory = runtime.memory
         return {
@@ -128,7 +130,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                                                      for scene in runtime.chats},
         }
 
-    @app.post('/api/host/memory/reindex')
+    @app.post('/api/host/memory/reindex', response_model=responses.ReindexedFiles, response_model_exclude_unset=True)
     async def reindex(_: str = Depends(user)):
         if runtime.memory is None:
             raise HTTPException(409, '当前运行配置未启用长期记忆后端')
@@ -144,14 +146,14 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         finally:
             runtime.notify()
 
-    @app.get("/api/host/memory/browse")
+    @app.get("/api/host/memory/browse", response_model=MemoryPage, response_model_exclude_unset=True)
     async def browse(scene: str, path: str = "", scope: Literal["scene", "public"] = "scene",
                      offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100),
                      _: str = Depends(user)):
         async with operation(scene) as memory:
             return asdict(await memory.backend.browse(scene, path, scope=scope, offset=offset, limit=limit))
 
-    @app.get('/api/host/memory/embedding-calls')
+    @app.get('/api/host/memory/embedding-calls', response_model=responses.EmbeddingCalls, response_model_exclude_unset=True)
     async def embedding_calls(scene: str, scope: Literal['scene', 'public'] = 'scene',
                               offset: int = Query(default=0, ge=0), limit: int = Query(default=20, ge=1, le=100),
                               snapshot: int | None = Query(default=None, ge=0), _: str = Depends(user)):
@@ -160,47 +162,45 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                                              limit=limit, snapshot=snapshot)
             return clean_embedding({**result, 'read_at': runtime.store.now()})
 
-    @app.get('/api/host/memory/embedding-calls/{id}')
+    @app.get('/api/host/memory/embedding-calls/{id}', response_model=responses.EmbeddingCall, response_model_exclude_unset=True)
     async def embedding_call(id: int, scene: str, scope: Literal['scene', 'public'] = 'scene', _: str = Depends(user)):
         async with record_operation(scene) as records:
             record = records.embedding_call('public' if scope == 'public' else scene, id)
             return clean_embedding({'read_at': runtime.store.now(), 'call': record})
 
-    @app.get("/api/host/memory/read")
+    @app.get("/api/host/memory/read", response_model=MemoryDocument, response_model_exclude_unset=True)
     async def read(scene: str, path: str, scope: Literal["scene", "public"] = "scene", _: str = Depends(user)):
         async with operation(scene) as memory:
             return asdict(await memory.backend.read(scene, path, scope=scope))
 
-    @app.get("/api/host/memory/history")
+    @app.get("/api/host/memory/history", response_model=responses.MemoryHistory, response_model_exclude_unset=True)
     async def history(scene: str, path: str, _: str = Depends(user)):
         async with operation(scene) as memory:
             return {"changes": await memory.history(scene, path)}
 
-
-    @app.post("/api/host/memory/search")
+    @app.post("/api/host/memory/search", response_model=responses.MemorySearch, response_model_exclude_unset=True)
     async def search(body: SearchRequest, _: str = Depends(user)):
         async with operation(body.scene) as memory:
             return {"hits": await memory.search(body.scene, body.query, body.limit)}
 
-    @app.put("/api/host/memory/file")
+    @app.put("/api/host/memory/file", response_model=responses.MemoryChange, response_model_exclude_unset=True)
     async def write(body: WriteRequest, _: str = Depends(user)):
         async with operation(body.scene) as memory:
             return await memory.write(body.scene, body.path, body.content, body.reason, scope=body.scope)
 
-    @app.post('/api/host/memory/adopt-pending')
+    @app.post('/api/host/memory/adopt-pending', response_model=responses.MemoryAdopted, response_model_exclude_unset=True)
     async def adopt_pending(body: PendingAdoption, _: str = Depends(user)):
         async with operation(body.scene) as memory:
             return await memory.adopt_pending(body.scene, body.source, body.original, body.target,
                                               body.content, body.reason, remove_source=body.remove_source)
 
-    @app.post("/api/host/memory/delete")
+    @app.post("/api/host/memory/delete", response_model=responses.MemoryChange | responses.MemoryForgotten, response_model_exclude_unset=True)
     async def delete(body: DeleteRequest, _: str = Depends(user)):
         async with operation(body.scene) as memory:
             return await memory.delete(body.scene, body.path, body.reason, forget=body.forget,
                                        exclude_records=body.exclude_records)
 
-
-    @app.get("/api/host/memory/summary")
+    @app.get("/api/host/memory/summary", response_model=responses.MemorySummary, response_model_exclude_unset=True)
     async def summary(scene: str, path: str = "", scope: Literal["scene", "public"] = "scene",
                       _: str = Depends(user)):
         async with operation(scene) as memory:
@@ -208,7 +208,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
             return {"enabled": memory.summarizer is not None, "summary": asdict(current),
                     "runs": memory.jobs.summary_runs("public" if scope == "public" else scene, path)}
 
-    @app.post("/api/host/memory/summary")
+    @app.post("/api/host/memory/summary", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def summarize(body: SummaryRequest, _: str = Depends(user)):
         async with operation(body.scene) as memory:
             if memory.summarizer is None:
@@ -216,7 +216,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
             async with memory.write_lock("public" if body.scope == "public" else body.scene):
                 return await memory.summarizer.summarize(body.scene, body.path, scope=body.scope)
 
-    @app.get("/api/host/memory/summary-runs/{id}")
+    @app.get("/api/host/memory/summary-runs/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def summary_run(id: int, scene: str, _: str = Depends(user)):
         async with operation(scene) as memory:
             run = memory.jobs.summary_run(id)
@@ -224,7 +224,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                 raise FileNotFoundError(f"当前场景没有目录摘要记录 {id}")
             return run
 
-    @app.get("/api/host/memory/sources")
+    @app.get("/api/host/memory/sources", response_model=responses.MemorySources, response_model_exclude_unset=True)
     async def sources(scene: str, query: str | None = None, who: str | None = None,
                       snapshot: int | None = Query(default=None, ge=0), offset: int = Query(default=0, ge=0),
                       _: str = Depends(user)):
@@ -243,7 +243,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                     "previews": [{**message_page(seq, message, runtime.config.scene_timezone(scene), offset=0, size=500),
                                   "excluded": seq in excluded} for seq, message in rows[:10]]}
 
-    @app.get("/api/host/memory/ingest")
+    @app.get("/api/host/memory/ingest", response_model=responses.IngestState, response_model_exclude_unset=True)
     async def ingest_state(_: str = Depends(user)):
         ingestor = runtime.ingestor
         return {"enabled": ingestor is not None, "scenes": [] if ingestor is None else [
@@ -252,7 +252,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                 if scene in ingestor.errors else None)} for scene in runtime.chats
         ]}
 
-    @app.post("/api/host/memory/ingest/{scene}/{action}")
+    @app.post("/api/host/memory/ingest/{scene}/{action}", response_model=responses.IngestAction, response_model_exclude_unset=True)
     async def ingest(scene: str, action: Literal["run", "retry"], _: str = Depends(user)):
         async with operation(scene):
             ingestor = runtime.ingestor

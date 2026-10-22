@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 import logging
+import time
 from contextlib import nullcontext
 from typing import Literal, Protocol
 
@@ -32,7 +33,7 @@ class ChatRequest(Protocol):
 def request_estimate(config: SharedConfig, store: Store, model: ChatModel, *, scene: str, role: str,
                      messages: list[dict], tools: list[dict], output_tokens: int) -> tuple[int, str]:
     """Actual prior input plus changed-material estimates, never cached-token discounts."""
-    binding = getattr(config.models.roles, "mind" if role == "recap" else role)
+    binding = config.binding(role)
     messages = project_messages(messages, binding.history_policy)
     estimated = estimate_text_request(messages, tools, output_tokens)
     images = any(isinstance(message.get('content'), list) and any(
@@ -68,13 +69,16 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         append_to_scene: bool = False, recap_for: tuple[str, int] | None = None,
                         expression_ids: list[int] | None = None,
                         input_estimate: tuple[int, str] | None = None,
-                        notify: Callable[[], None] | None = None) -> ModelReply:
-    binding = getattr(config.models.roles, "mind" if role == "recap" else role)
+                        notify: Callable[[], None] | None = None,
+                        trace: Callable[[dict], None] | None = None,
+                        recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
+    binding = config.binding(role)
     messages = project_messages(messages, binding.history_policy)
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
     session_id = None
     if binding.history_policy == "omit-reasoning":
-        session_id = sha256(f"{config.database.resolve()}:{scene}:{role}".encode()).hexdigest()
+        # Upkeep continues the mind session, so it shares the mind's cache affinity.
+        session_id = sha256(f"{config.database.resolve()}:{scene}:{'mind' if role == 'upkeep' else role}".encode()).hexdigest()
     if input_estimate is None:
         estimated, method = request_estimate(config, store, model, scene=scene, role=role,
                                              messages=messages, tools=tools, output_tokens=tokens)
@@ -85,22 +89,31 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         scope = "文本部分" if role == "vision" else "请求"
         raise ContextBudgetError(
             f"{role} {scope}含预留输出估算 {estimated} token，超过配置窗口 {binding.context_window_tokens}；未调用模型")
-    settings = {**model.settings.model_dump(exclude={"api_key"}), "max_output_tokens": tokens}
+    effective = model.settings
+    if quick and getattr(binding, "quick_reasoning_effort", None) is not None:
+        effective = effective.with_effort(binding.quick_reasoning_effort)
+    settings = {**effective.model_dump(exclude={"api_key"}), "max_output_tokens": tokens}
     async with (slots.slot(direct=direct, scene=scene) if slots is not None else nullcontext()):
         request = {"settings": settings, "messages": messages, "tools": tools, "provider": binding.provider,
+                   **({"recall_items": recall_items} if recall_items is not None else {}),
                    "estimate_method": method,
                    **({"expression_ids": expression_ids} if expression_ids is not None else {}),
                    **({"estimated_text_tokens": estimated, "estimated_total_tokens": None} if role == "vision"
                       else {"estimated_total_tokens": estimated}),
                    "context_window_tokens": binding.context_window_tokens,
                    "history_policy": binding.history_policy, "session_id": session_id}
-        call_id = (store.start_call(turn_id, role, request) if plugin is None
-                   else PluginStore(store).start_plugin_call(scene, plugin, role, request))
+        call_id = (PluginStore(store).start_plugin_call(scene, plugin, role, request) if plugin is not None
+                   else store.start_scene_call(scene, role, request) if turn_id is None
+                   else store.start_call(turn_id, role, request))
+        started = time.monotonic()
+        if trace is not None:
+            trace({'kind': 'model', 'phase': 'start', 'call_id': call_id, 'role': role})
         if notify is not None:
             notify()
         reply = None
         try:
-            reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id)
+            reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id,
+                                         settings=None if effective is model.settings else effective)
             if validate is not None:
                 validate(reply)
         except BaseException as error:
@@ -116,6 +129,10 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                       error=error if isinstance(error, Exception) else None)
             if notify is not None:
                 notify()
+            if trace is not None:
+                trace({'kind': 'model', 'phase': 'end', 'call_id': call_id, 'role': role,
+                       'elapsed_seconds': time.monotonic() - started, 'tokens': token_record(token_usage),
+                       'error': f'{type(error).__name__}: {error}'})
             raise
         # The reply is saved on the database thread; a cancellation here still leaves the call recorded as ended.
         await store.call(store.end_call, call_id,
@@ -126,4 +143,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                   **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage))
         if notify is not None:
             notify()
+        if trace is not None:
+            trace({'kind': 'model', 'phase': 'end', 'call_id': call_id, 'role': role,
+                   'elapsed_seconds': time.monotonic() - started, 'tokens': token_record(reply.token_usage), 'error': None})
         return reply

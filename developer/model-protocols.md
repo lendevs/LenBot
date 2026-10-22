@@ -11,9 +11,9 @@
 | `anthropic` | `https://api.anthropic.com/v1` | 同上 | 保留 Messages 内容块、thinking 和 signature |
 | `gemini` | `https://generativelanguage.googleapis.com/v1beta` | 同上 | Gemini API GenerateContent，保留完整 model parts 与 thoughtSignature |
 | `openai-audio` | 兼容服务的 API 根地址 | asr | audio/transcriptions |
+| `deepseek-search` | `https://api.deepseek.com/v1` | 网页搜索 | 独立 Search JSON 接口 |
 | `openai-embeddings` | 兼容服务的 API 根地址 | 本地记忆、场景学习的 embedding | embeddings |
 
-协议能够表达工具和图片，并不代表所选的模型具备相应的能力。
 
 暂不接入以下功能。
 
@@ -32,7 +32,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 
 连接测试使用尚未保存的草稿。旧密钥留空时由后端读取，不会回传到浏览器。
 
-已有服务商可以改名。保存请求通过 `previous_alias` 指明原名称，一次保存更新用途、本地记忆和场景学习的引用；这个字段不写入根配置。只改名或补上地址末尾的斜杠可以保留旧密钥，修改协议、地址或代理需要重新填写密钥。模型列表显示名称和完整 ID，选择时写入 ID。
+已有服务商可以改名。保存请求通过 `previous_alias` 指明原名称，一次保存更新用途、本地记忆、场景学习和搜索连接的引用；这个字段不写入根配置。只改名或补上地址末尾的斜杠可以保留旧密钥，修改协议、地址或代理需要重新填写密钥。模型列表显示名称和完整 ID，选择时写入 ID。
 
 - 文本测试调用一次模型。
 - 工具测试调用两次，确认工具请求和结果能够续接。
@@ -72,3 +72,29 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 新增工作桥接路由后，现有的任务镜像需要从当前源码重新构建。这不需要修改实例的格式编号，也不会自动发布镜像。真实的服务商和代理网络，以及完整的容器任务，仍然需要在实际环境中验证，本机的协议回归测试不能代替这些结果。
 
 协议依据：[Responses 状态与加密续接](https://developers.openai.com/api/docs/guides/migrate-to-responses)，[Messages](https://platform.claude.com/docs/en/api/messages/create)，[Gemini GenerateContent](https://ai.google.dev/api/generate-content)，[Gemini 签名](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)。
+
+## 网页搜索和读取服务
+
+`web_search.provider` 可选 `yahoo`、`bing_rss`、`deepseek`、`tavily`、`brave`、`bocha`；`web_read.provider` 可选 `local`（默认，本机抓取）、`deepseek`、`tavily`、`jina`。付费服务用 `connection` 引用 `models.providers` 中的连接，复用地址、Key 和代理；免费服务不设置 `connection`。可用的连接协议：
+
+| 服务 | 连接协议 | 请求 |
+|---|---|---|
+| DeepSeek 搜索 | `openai-chat`、`openai-responses`、`deepseek-search` | `POST tools/search` |
+| DeepSeek 读取 | 同上 | `POST tools/fetch`，`{"url"}`，返回 `title`、`content`（Markdown） |
+| Tavily 搜索 | `tavily` | `POST search`，`{"query", "max_results"}` |
+| Tavily 读取 | `tavily` | `POST extract`，`{"urls": [url], "format": "markdown"}` |
+| Brave Search | `brave-search` | `GET web/search?q=&count=`，Key 放在 `X-Subscription-Token` |
+| 博查 | `bocha` | `POST web-search`，`{"query", "count", "summary": true}` |
+| Jina Reader | `jina-reader` | `GET <地址>/<网页地址>`，`Accept: application/json` |
+
+除 Brave 外都用 `Authorization: Bearer`。读取服务返回的正文按 Markdown 存为场景网页文档，`web_read` 照常用 `document` 和 `offset` 续读。
+
+```json
+{"web_search": {"provider": "deepseek", "connection": "primary", "timeout_seconds": 15, "max_results": 5}}
+```
+
+连接地址以 `/v1` 结尾时请求其下的 `tools/search`，其他地址请求其下的 `v1/tools/search`；支持网关前缀，始终请求所选地址。搜索词最多 128 字符，接口请求携带 `need_content: true`。结果保留标题、URL、短摘要、长摘要、日期和正文开头；开启网页读取时完整正文存为场景网页文档，返回 `document` 和 `next_offset` 供 `web_read` 续读。搜索为空时返回空列表，服务报错原样交给工具调用方。
+
+已有连接可即时切换搜索和读取设置；新增或修改服务商连接沿用模型连接的重启流程，重启前保持原设置。`connection` 默认为空，已有配置不用迁移。
+
+协议依据：[DeepSeek Search 与 Fetch](https://api-docs.deepseek.com/zh-cn/guides/search/)，[Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)，[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)，[Brave Web Search](https://api-dashboard.search.brave.com/api-reference/web/search/get)，[博查开放平台](https://open.bochaai.com/)，[Jina Reader](https://jina.ai/reader/)。Tavily、Brave、博查、Jina 没有用真实 Key 调用过。

@@ -1,4 +1,4 @@
-"""Edit actual configured role files without replacing the running role."""
+"""The role library and the files of its packages; a saved edit reaches the scenes running that role."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Respo
 from pydantic import BaseModel, Field, field_validator
 import yaml
 
+from .. import responses
 from ...chat.tools import build_tools
 from ...configuration.types import STRICT
 from ...config import HostConfig, load_host_config
@@ -23,7 +24,9 @@ from ...plugins.manifest import scene_skill_catalog
 from ...persona.profile import (Example, Persona, PersonaTarget, Style, load_persona, parse_persona_files,
                       read_persona_files, require_persona_target, save_persona_files)
 from ...persona.knowledge import parse_knowledge_document
-from ...persona.packages import MAX_UPLOAD_BYTES, export_package, import_package
+from ...persona.packages import MAX_UPLOAD_BYTES, export_package
+from ...runtime.logs import error_text
+from ...runtime.personas import copy_role, create_role, delete_role, import_role
 
 
 PersonaFilename = Literal["persona.yaml", "voice.md", "boundaries.md", "examples.yaml"]
@@ -184,32 +187,140 @@ def append_example(content: str, example: dict) -> str:
     return updated
 
 
+class RoleCreate(BaseModel):
+    model_config = STRICT
+    folder: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=64)
+
+
+class RoleScenes(BaseModel):
+    model_config = STRICT
+    scenes: list[str] = Field(min_length=1)
+
+
+def role_failure(error: Exception) -> HTTPException:
+    if isinstance(error, LookupError):
+        return HTTPException(404, '角色库里没有这个角色')
+    if isinstance(error, FileExistsError):
+        return HTTPException(409, str(error))
+    if isinstance(error, FileNotFoundError):
+        return HTTPException(404, str(error))
+    return HTTPException(422 if isinstance(error, ValueError) else 500, f'{type(error).__name__}: {error}')
+
+
+async def apply_saved(runtime: NetworkRuntime, path: Path) -> dict:
+    """Hand a saved role edit to the scenes running it; one busy in a turn takes it afterwards."""
+    try:
+        done, _ = await runtime.personas.settle(runtime.personas.reload(path))
+    except Exception as error:
+        return {'applied': False, 'apply_error': f'已保存；运行中的群没能用上：{error_text(error)}'}
+    return {'applied': done, 'apply_error': None}
+
+
 def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                           user: Callable[[Request], str], write_lock: asyncio.Lock) -> None:
+    personas = runtime.personas
+
     def require_scene(scene: str) -> None:
         if scene not in runtime.chats:
             raise HTTPException(404, "当前宿主未配置这一场景")
 
-    @app.get('/api/host/scenes/{scene}/persona-package')
-    async def download_package(scene: str, _: str = Depends(user)):
-        require_scene(scene)
+    def located(key: str) -> tuple[HostConfig, Path]:
+        config = load_host_config(root)
+        return config, personas.find(key, config).path
 
-        def read() -> bytes:
+    def running_persona(path: Path) -> Persona | None:
+        return next((chat.persona for chat in runtime.chats.values() if chat.config.persona == path), None)
+
+    def affected(config: HostConfig, path: Path) -> list[str]:
+        return [key for key, value in config.scenes.items() if value.persona == path]
+
+    def describe(key: str) -> dict:
+        saved = load_host_config(root)
+        listing = personas.library(saved)
+        role = next((item for item in listing if item.key == key), None)
+        if role is None:
+            raise KeyError(key)
+        return personas.describe(role, saved, listing)
+
+    @app.get('/api/host/personas', response_model=responses.RoleLibrary, response_model_exclude_unset=True)
+    async def library(response: Response, _: str = Depends(user)):
+        response.headers['Cache-Control'] = 'no-store'
+
+        def read() -> dict:
             saved = load_host_config(root)
-            if scene not in saved.scenes:
-                raise ValueError('所选场景已从保存配置移除，不能导出其角色文件')
-            return export_package(saved.scenes[scene].persona)
+            listing = personas.library(saved)
+            return {'roles': [personas.describe(role, saved, listing) for role in listing]}
 
         try:
             async with write_lock:
-                data = await asyncio.to_thread(read)
+                return await asyncio.to_thread(read)
         except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f'{type(error).__name__}: {error}') from error
-        return Response(data, media_type='application/zip', headers={
-            'Content-Disposition': 'attachment; filename="persona.zip"', 'Cache-Control': 'no-store'})
+            raise role_failure(error) from error
 
-    @app.post('/api/host/personas/import')
+    @app.post('/api/host/personas', response_model=responses.Role, response_model_exclude_unset=True)
+    async def create(item: RoleCreate, _: str = Depends(user)):
+        try:
+            async with write_lock:
+                await finish_role_write(lambda: create_role(root, load_host_config(root), item.folder, item.name))
+                return await asyncio.to_thread(describe, item.folder)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+
+    @app.post('/api/host/personas/{key}/copy', response_model=responses.Role, response_model_exclude_unset=True)
+    async def copy(key: str, item: RoleCreate, _: str = Depends(user)):
+        def write() -> None:
+            saved = load_host_config(root)
+            copy_role(root, saved, personas.find(key, saved), item.folder, item.name)
+
+        try:
+            async with write_lock:
+                await finish_role_write(write)
+                return await asyncio.to_thread(describe, item.folder)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+
+    @app.delete('/api/host/personas/{key}', response_model=responses.RoleDeleted, response_model_exclude_unset=True)
+    async def delete(key: str, _: str = Depends(user)):
+        def remove() -> dict:
+            saved = load_host_config(root)
+            role = personas.find(key, saved)
+            running = {chat.config.persona for chat in runtime.chats.values()}
+            return {'moved_to': str(delete_role(root, saved, role, running))}
+
+        try:
+            async with write_lock:
+                return await finish_role_write(remove)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+
+    @app.post('/api/host/personas/{key}/scenes', response_model=responses.RoleScenes, response_model_exclude_unset=True)
+    async def use_in(key: str, item: RoleScenes, _: str = Depends(user)):
+        for scene in item.scenes:
+            require_scene(scene)
+
+        async def one(scene: str) -> dict:
+            try:
+                done, result = await personas.settle(personas.switch(scene, key))
+            except LookupError:
+                return {'scene': scene, 'status': 'failed', 'error': '角色库里没有这个角色'}
+            except Exception as error:
+                return {'scene': scene, 'status': 'failed', 'error': error_text(error)}
+            return result if done else {'scene': scene, 'status': 'pending'}
+
+        return {'results': list(await asyncio.gather(*(one(scene) for scene in dict.fromkeys(item.scenes))))}
+
+    @app.get('/api/host/personas/{key}/package')
+    async def download_package(key: str, _: str = Depends(user)):
+        try:
+            async with write_lock:
+                data = await asyncio.to_thread(lambda: export_package(located(key)[1]))
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+        return Response(data, media_type='application/zip', headers={
+            'Content-Disposition': f'attachment; filename="persona-{key}.zip"', 'Cache-Control': 'no-store'})
+
+    @app.post('/api/host/personas/import', response_model=responses.RoleImported, response_model_exclude_unset=True)
     async def upload_package(file: UploadFile, name: str = Form(min_length=1, max_length=64),
                              _: str = Depends(user)):
         try:
@@ -217,7 +328,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             if len(data) > MAX_UPLOAD_BYTES:
                 raise HTTPException(413, '角色ZIP上传超过64MiB')
             async with write_lock:
-                return await finish_role_write(import_package, root, name, data)
+                return await finish_role_write(lambda: import_role(root, load_host_config(root), name, data))
         except FileExistsError as error:
             raise HTTPException(409, str(error)) from error
         except (ValueError, OSError) as error:
@@ -226,7 +337,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         finally:
             await file.close()
 
-    @app.get('/api/host/scenes/{scene}/persona-location')
+    @app.get('/api/host/scenes/{scene}/persona-location', response_model=responses.RoleLocation, response_model_exclude_unset=True)
     async def location(scene: str, response: Response, _: str = Depends(user)):
         require_scene(scene)
         response.headers['Cache-Control'] = 'no-store'
@@ -236,25 +347,26 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 raise ValueError('场景已从保存配置移除，不能读取其角色位置')
             path = saved.scenes[scene].persona
             return {'saved_path': str(path), 'running_path': str(runtime.chats[scene].config.persona),
-                    'affected_scenes': [key for key, value in saved.scenes.items() if value.persona == path]}
+                    'affected_scenes': affected(saved, path)}
         try:
             async with write_lock:
                 return await asyncio.to_thread(read)
         except (ValueError, OSError) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500, f'{type(error).__name__}: {error}') from error
 
-    def files_state(scene: str, edit: tuple[str, str, str] | None = None) -> dict:
-        config = load_host_config(root)
-        if scene not in config.scenes:
-            raise ValueError("此场景已从保存配置移除；当前运行角色保留到重启，不再编辑其文件")
-        path = config.scenes[scene].persona
+    def files_state(key: str, edit: tuple[str, str, str] | None = None, *, path: Path | None = None) -> dict:
+        config, located_path = located(key) if path is None else (load_host_config(root), path)
+        path = located_path
         if edit is not None:
             require_persona_target(path, edit[2])
         files = read_persona_files(path)
         if edit is not None:
             files[edit[0]] = edit[1]
         candidate = parse_persona_files(path, files)
-        affected = validate_dependencies(config, path, candidate)
+        current = running_persona(path)
+        if edit is not None and current is not None and candidate.id != current.id:
+            raise ValueError('有群正在用这个角色，不能改角色 ID；要换 ID 请复制一份角色')
+        scenes = validate_dependencies(config, path, candidate)
         if edit is not None:
             descriptor, name = tempfile.mkstemp(prefix=".persona-", dir=path)
             temporary = Path(name)
@@ -264,25 +376,12 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 temporary.replace(path / edit[0])
             finally:
                 temporary.unlink(missing_ok=True)
-        running_persona = runtime.chats[scene].persona
-        running = running_persona.model_dump()
-        stickers_restart_required = candidate.stickers != running_persona.stickers
-        return {"saved": files, "running": running, 'saved_path': str(path),
-                'running_path': str(runtime.chats[scene].config.persona),
-                "restart_required": candidate.model_dump() != running or stickers_restart_required
-                                    or candidate.knowledge != running_persona.knowledge
-                                    or candidate.avatar != running_persona.avatar
-                                    or path != runtime.chats[scene].config.persona,
-                "stickers_restart_required": stickers_restart_required,
-                'avatar_restart_required': candidate.avatar != running_persona.avatar,
-                "affected_scenes": affected}
+        return {"saved": files, "running": None if current is None else current.model_dump(),
+                'saved_path': str(path), "affected_scenes": scenes}
 
-    def knowledge_state(scene: str, change: KnowledgeChange | KnowledgeFilename | None = None,
+    def knowledge_state(key: str, change: KnowledgeChange | KnowledgeFilename | None = None,
                         action: Literal['create', 'write', 'delete'] | None = None) -> dict:
-        config = load_host_config(root)
-        if scene not in config.scenes:
-            raise ValueError('场景已从保存配置移除，不能编辑其角色资料')
-        path = config.scenes[scene].persona
+        config, path = located(key)
         if change is not None:
             require_persona_target(path, change.directory)
         candidate = load_persona(path)
@@ -299,7 +398,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             else:
                 del documents[change.filename]
             candidate = candidate.model_copy(update={'knowledge': documents})
-        affected = validate_dependencies(config, path, candidate)
+        scenes = validate_dependencies(config, path, candidate)
         if change is not None:
             if isinstance(change, KnowledgeChange):
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -316,90 +415,69 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                     temporary.unlink(missing_ok=True)
             else:
                 target.unlink()
-        running = runtime.chats[scene]
         current_document = None
         if isinstance(change, KnowledgeChange):
             saved_document = candidate.knowledge[change.filename]
-            running_document = running.persona.knowledge.get(change.filename)
             current_document = {'filename': change.filename, 'saved_path': str(path), 'content': saved_document.content,
-                                'tags': saved_document.tags, 'running_content':
-                                None if running_document is None else running_document.content}
-        return {'scene': scene, 'saved_path': str(path), 'running_path': str(running.config.persona),
+                                'tags': saved_document.tags}
+        return {'key': key, 'saved_path': str(path),
                 'saved_persona': {'id': candidate.id, 'name': candidate.name},
-                'running_persona': {'id': running.persona.id, 'name': running.persona.name},
-                'restart_required': candidate.knowledge != running.persona.knowledge or path != running.config.persona,
-                'affected_scenes': affected,
+                'affected_scenes': scenes,
                 'document': current_document,
                 'files': [{'filename': filename, 'tags': document.tags, 'chars': len(document.content)}
                           for filename, document in sorted(candidate.knowledge.items())]}
 
-    @app.get('/api/host/scenes/{scene}/persona-knowledge')
-    async def knowledge_listing(scene: str, response: Response, _: str = Depends(user)):
-        require_scene(scene)
+    @app.get('/api/host/personas/{key}/knowledge', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
+    async def knowledge_listing(key: str, response: Response, _: str = Depends(user)):
         response.headers['Cache-Control'] = 'no-store'
         try:
             async with write_lock:
-                return await asyncio.to_thread(knowledge_state, scene)
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f'{type(error).__name__}: {error}') from error
+                return await asyncio.to_thread(knowledge_state, key)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
 
-    @app.get('/api/host/scenes/{scene}/persona-knowledge/document')
-    async def knowledge_document(scene: str, response: Response,
+    @app.get('/api/host/personas/{key}/knowledge/document', response_model=responses.KnowledgeDocument, response_model_exclude_unset=True)
+    async def knowledge_document(key: str, response: Response,
                                  item: Annotated[KnowledgeFilename, Query()], _: str = Depends(user)):
-        require_scene(scene)
         response.headers['Cache-Control'] = 'no-store'
 
         def read() -> dict:
-            config = load_host_config(root)
-            if scene not in config.scenes:
-                raise ValueError('场景已从保存配置移除，不能读取其角色资料')
-            path = config.scenes[scene].persona
+            _, path = located(key)
             require_persona_target(path, item.directory)
             candidate = load_persona(path)
             if item.filename not in candidate.knowledge:
                 raise FileNotFoundError(f'保存角色包没有此资料：{item.filename!r}')
             saved = candidate.knowledge[item.filename]
-            running = runtime.chats[scene].persona.knowledge.get(item.filename)
-            return {'filename': item.filename, 'saved_path': str(path), 'content': saved.content, 'tags': saved.tags,
-                    'running_content': None if running is None else running.content}
+            return {'filename': item.filename, 'saved_path': str(path), 'content': saved.content, 'tags': saved.tags}
 
         try:
             async with write_lock:
                 return await asyncio.to_thread(read)
-        except FileNotFoundError as error:
-            raise HTTPException(404, str(error)) from error
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f'{type(error).__name__}: {error}') from error
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
 
-    async def write_knowledge(scene: str, item: KnowledgeChange | KnowledgeFilename,
+    async def write_knowledge(key: str, item: KnowledgeChange | KnowledgeFilename,
                               action: Literal['create', 'write', 'delete']):
-        require_scene(scene)
         try:
             async with write_lock:
-                return await finish_role_write(knowledge_state, scene, item, action)
-        except FileExistsError as error:
-            raise HTTPException(409, str(error)) from error
-        except FileNotFoundError as error:
-            raise HTTPException(404, str(error)) from error
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f'{type(error).__name__}: {error}') from error
+                result = await finish_role_write(knowledge_state, key, item, action)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+        return {**result, **await apply_saved(runtime, Path(result['saved_path']))}
 
-    @app.post('/api/host/scenes/{scene}/persona-knowledge/document')
-    async def knowledge_create(scene: str, item: KnowledgeChange, _: str = Depends(user)):
-        return await write_knowledge(scene, item, 'create')
+    @app.post('/api/host/personas/{key}/knowledge/document', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
+    async def knowledge_create(key: str, item: KnowledgeChange, _: str = Depends(user)):
+        return await write_knowledge(key, item, 'create')
 
-    @app.put('/api/host/scenes/{scene}/persona-knowledge/document')
-    async def knowledge_write(scene: str, item: KnowledgeChange, _: str = Depends(user)):
-        return await write_knowledge(scene, item, 'write')
+    @app.put('/api/host/personas/{key}/knowledge/document', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
+    async def knowledge_write(key: str, item: KnowledgeChange, _: str = Depends(user)):
+        return await write_knowledge(key, item, 'write')
 
-    @app.delete('/api/host/scenes/{scene}/persona-knowledge/document')
-    async def knowledge_delete(scene: str, item: KnowledgeFilename, _: str = Depends(user)):
-        return await write_knowledge(scene, item, 'delete')
+    @app.delete('/api/host/personas/{key}/knowledge/document', response_model=responses.RoleKnowledge, response_model_exclude_unset=True)
+    async def knowledge_delete(key: str, item: KnowledgeFilename, _: str = Depends(user)):
+        return await write_knowledge(key, item, 'delete')
 
-    @app.post("/api/host/scenes/{scene}/persona-examples")
+    @app.post("/api/host/scenes/{scene}/persona-examples", response_model=responses.RoleFiles, response_model_exclude_unset=True)
     async def add_example(scene: str, item: ExpressionExample, _: str = Depends(user)):
         require_scene(scene)
         expression = LearningStore(runtime.store).expression(scene, item.expression_id)
@@ -416,44 +494,18 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             path = saved.scenes[scene].persona
             require_persona_target(path, item.directory)
             content = append_example(read_persona_files(path)["examples.yaml"], example)
-            return {**files_state(scene, ("examples.yaml", content, item.directory)), "appended": example}
+            return {**files_state('', ("examples.yaml", content, item.directory), path=path), "appended": example}
 
         try:
             async with write_lock:
-                return await finish_role_write(write)
+                result = await finish_role_write(write)
         except (ValueError, OSError) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error
+        return {**result, **await apply_saved(runtime, Path(result['saved_path']))}
 
-    @app.get("/api/host/scenes/{scene}/persona-stickers")
-    async def stickers(scene: str, response: Response, _: str = Depends(user)):
-        require_scene(scene)
-        response.headers["Cache-Control"] = "no-store"
-        persona = runtime.chats[scene].persona
-        uses = runtime.store.sticker_usage(scene, persona.id)
-        return {"scene": scene, "persona": {"id": persona.id, "name": persona.name},
-                "stickers": [{"file": sticker.file, "description": sticker.description,
-                              "emotions": sticker.emotions, "tags": sticker.tags,
-                              "mime_type": sticker.mime_type, "width": sticker.width,
-                              "height": sticker.height, "animated": sticker.animated,
-                              "bytes": len(sticker.data), "confirmed_uses": uses.get(sticker.file, 0)}
-                             for sticker in persona.stickers.values()]}
-
-    @app.get("/api/host/scenes/{scene}/persona-stickers/image")
-    async def sticker_image(scene: str, file: str, _: str = Depends(user)):
-        require_scene(scene)
-        sticker = runtime.chats[scene].persona.stickers.get(file)
-        if sticker is None:
-            raise HTTPException(404, "当前运行角色没有这张表情",
-                                headers={"Cache-Control": "no-store"})
-        return Response(sticker.data, media_type=sticker.mime_type,
-                        headers={"Cache-Control": "no-store"})
-
-    def profile_state(scene: str, change: PersonaProfileChange | None = None) -> dict:
-        config = load_host_config(root)
-        if scene not in config.scenes:
-            raise ValueError('此场景已从保存配置移除；当前运行角色保留到重启，不再编辑其文件')
-        path = config.scenes[scene].persona
+    def profile_state(key: str, change: PersonaProfileChange | None = None) -> dict:
+        config, path = located(key)
         files = read_persona_files(path)
         if change is not None:
             require_persona_target(path, change.directory)
@@ -463,66 +515,55 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         persona = parse_persona_files(path, files)
         return {'directory': str(path), 'id': persona.id,
                 'profile': PersonaProfile.model_validate(persona.model_dump(include={*PROFILE_METADATA, 'voice', 'boundaries', 'examples'})).model_dump(),
-                'affected_scenes': [key for key, value in config.scenes.items() if value.persona == path]}
+                'affected_scenes': affected(config, path)}
 
-    @app.get('/api/host/scenes/{scene}/persona-profile')
-    async def profile(scene: str, _: str = Depends(user)):
-        require_scene(scene)
+    @app.get('/api/host/personas/{key}/profile', response_model=responses.RoleProfile, response_model_exclude_unset=True)
+    async def profile(key: str, _: str = Depends(user)):
         try:
             async with write_lock:
-                return await asyncio.to_thread(profile_state, scene)
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f'{type(error).__name__}: {error}') from error
+                return await asyncio.to_thread(profile_state, key)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
 
-    @app.put('/api/host/scenes/{scene}/persona-profile')
-    async def save_profile(scene: str, change: PersonaProfileChange, _: str = Depends(user)):
-        require_scene(scene)
+    @app.put('/api/host/personas/{key}/profile', response_model=responses.RoleProfile, response_model_exclude_unset=True)
+    async def save_profile(key: str, change: PersonaProfileChange, _: str = Depends(user)):
         try:
             async with write_lock:
-                return await finish_role_write(profile_state, scene, change)
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f'{type(error).__name__}: {error}') from error
+                result = await finish_role_write(profile_state, key, change)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+        return {**result, **await apply_saved(runtime, Path(result['directory']))}
 
-    def draft_files(scene: str, change: PersonaProfileChange) -> dict:
-        config = load_host_config(root)
-        if scene not in config.scenes:
-            raise ValueError('此场景已从保存配置移除，不能用它试聊角色草稿')
-        path = config.scenes[scene].persona
+    def draft_files(key: str, change: PersonaProfileChange) -> dict:
+        _, path = located(key)
         require_persona_target(path, change.directory)
         files = profile_files(read_persona_files(path), change.profile)
         parse_persona_files(path, files)
         return {'directory': str(path), 'files': files, 'profile': change.profile.model_dump()}
 
-    @app.post('/api/host/scenes/{scene}/persona-profile/draft')
-    async def profile_draft(scene: str, change: PersonaProfileChange, _: str = Depends(user)):
+    @app.post('/api/host/personas/{key}/profile/draft', response_model=responses.RoleDraft, response_model_exclude_unset=True)
+    async def profile_draft(key: str, change: PersonaProfileChange, _: str = Depends(user)):
         """Return normalized form and role files for import/export or trial; nothing is saved."""
-        require_scene(scene)
         try:
             async with write_lock:
-                return await asyncio.to_thread(draft_files, scene, change)
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f'{type(error).__name__}: {error}') from error
+                return await asyncio.to_thread(draft_files, key, change)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
 
-    @app.get("/api/host/scenes/{scene}/persona-files")
-    async def files(scene: str, _: str = Depends(user)):
-        require_scene(scene)
+    @app.get("/api/host/personas/{key}/files", response_model=responses.RoleFiles, response_model_exclude_unset=True)
+    async def files(key: str, _: str = Depends(user)):
         try:
             async with write_lock:
-                return await asyncio.to_thread(files_state, scene)
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f"{type(error).__name__}: {error}") from error
+                return await asyncio.to_thread(files_state, key)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
 
-    @app.put("/api/host/scenes/{scene}/persona-files/{filename}")
-    async def save(scene: str, filename: PersonaFilename, item: PersonaFileChange,
+    @app.put("/api/host/personas/{key}/files/{filename}", response_model=responses.RoleFiles, response_model_exclude_unset=True)
+    async def save(key: str, filename: PersonaFilename, item: PersonaFileChange,
                    _: str = Depends(user)):
-        require_scene(scene)
         try:
             async with write_lock:
-                return await finish_role_write(files_state, scene, (filename, item.content, item.directory))
-        except (ValueError, OSError) as error:
-            raise HTTPException(422 if isinstance(error, ValueError) else 500,
-                                f"{type(error).__name__}: {error}") from error
+                result = await finish_role_write(files_state, key, (filename, item.content, item.directory))
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+        return {**result, **await apply_saved(runtime, Path(result['saved_path']))}

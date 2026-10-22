@@ -27,8 +27,10 @@ from ..instance_lock import instance_lock
 from ..prompt_files import activate as activate_prompts
 from ..models.client import ChatModel
 from ..memory.service import MemoryService, open_memory
-from ..memory.ingest import MemoryIngestor, open_memory_ingestor
+from ..chat.upkeep import SessionUpkeep, open_session_upkeep, runner_fork
+from ..panel import responses
 from ..panel.auth import changes_socket, install_panel_auth
+from ..panel.routes.timeline import TurnDetail, read_turn
 from ..persona.profile import Persona, load_persona, select_examples
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
@@ -67,7 +69,7 @@ def stored_image(store: Store, scene: str, seq: int, image_index: int) -> Respon
 class PanelSession:
     def __init__(self, config: LabConfig, store: Store, mind: ChatModel,
                  *, vision: ChatModel | None = None, memory: MemoryService | None = None,
-                 ingestor: MemoryIngestor | None = None, persona: Persona | None = None,
+                 upkeep: SessionUpkeep | None = None, persona: Persona | None = None,
                  slots: ModelSlots | None = None):
         self.config, self.store = config, store
         if slots is None:
@@ -77,10 +79,19 @@ class PanelSession:
         self.closing = False
         self.chat = Chat(config, load_persona(config.persona) if persona is None else persona, store, mind, vision=vision,
                          memory=memory, slots=slots, on_update=self.notify,
-                         on_compaction=None if ingestor is None else lambda: ingestor.request(config.scene))
-        self.runner = SceneRunner(self.chat, lambda _: self.notify())
+                         on_compaction=None if upkeep is None else lambda: upkeep.compacted(config.scene))
+        self.runner = SceneRunner(self.chat, lambda _: self.turn_done())
+        self.upkeep = upkeep
+        if upkeep is not None:
+            upkeep.fork = runner_fork(self.runner, store)
+            upkeep.start()
         self.task = asyncio.create_task(self.runner.run())
         self.task.add_done_callback(lambda _: self.notify())
+
+    def turn_done(self) -> None:
+        if self.upkeep is not None:
+            self.upkeep.wake(self.config.scene)
+        self.notify()
 
     def notify(self) -> None:
         for changed in self.listeners:
@@ -160,10 +171,10 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                 (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
                  else nullcontext(None)) as vision,
                 open_memory(config, store, active_personas={config.scene: persona.id}, slots=slots) as memory,
-                open_memory_ingestor(config, store, memory, [config.scene], slots=slots) as ingestor,
+                open_session_upkeep(config, store, mind, memory=memory, slots=slots) as upkeep,
             ):
                 budget.memory = memory
-                session = PanelSession(config, store, mind, vision=vision, memory=memory, ingestor=ingestor, slots=slots,
+                session = PanelSession(config, store, mind, vision=vision, memory=memory, upkeep=upkeep, slots=slots,
                                        persona=persona)
                 app.state.session = session
                 try:
@@ -175,11 +186,11 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
     config_write_lock = Lock()
     user = install_panel_auth(app, config.panel, on_logout=lambda: app.state.session.notify())
 
-    @app.get("/api/chat-test/state")
+    @app.get("/api/chat-test/state", response_model=responses.TrialState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         return app.state.session.snapshot()
 
-    @app.get("/api/chat-test/settings")
+    @app.get("/api/chat-test/settings", response_model=responses.TrialSettings, response_model_exclude_unset=True)
     async def settings(_: str = Depends(user)):
         session: PanelSession = app.state.session
         config, chat = session.config, session.chat
@@ -209,7 +220,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
         loaded = {field: getattr(config, field) for field in ScenePersona.model_fields}
         return {"saved": values, "restart_required": values != loaded}
 
-    @app.get("/api/chat-test/scene-persona")
+    @app.get("/api/chat-test/scene-persona", response_model=responses.ScenePersonaResult, response_model_exclude_unset=True)
     def scene_persona(_: str = Depends(user)):
         try:
             with config_write_lock:
@@ -220,7 +231,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                                 f"{type(error).__name__}: {error}") from error
         return scene_persona_result(saved)
 
-    @app.put("/api/chat-test/scene-persona")
+    @app.put("/api/chat-test/scene-persona", response_model=responses.ScenePersonaResult, response_model_exclude_unset=True)
     def put_scene_persona(item: ScenePersona, _: str = Depends(user)):
         try:
             with config_write_lock:
@@ -231,7 +242,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                                 f"{type(error).__name__}: {error}") from error
         return scene_persona_result(item)
 
-    @app.post("/api/chat-test/messages")
+    @app.post("/api/chat-test/messages", response_model=responses.MessageReceipt, response_model_exclude_unset=True)
     async def message(item: TestMessage, _: str = Depends(user)):
         return app.state.session.receive(item)
 
@@ -243,9 +254,17 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
     async def avatar(_: str = Depends(user)):
         return app.state.session.avatar()
 
-    @app.get("/api/chat-test/turns/{turn_id}")
+    @app.get("/api/chat-test/turns/{turn_id}", response_model=responses.StoredTurn, response_model_exclude_unset=True)
     async def turn(turn_id: str, _: str = Depends(user)):
         result = app.state.session.store.turn_detail(config.scene, turn_id)
+        if result is None:
+            raise HTTPException(404, "当前测试场景没有这一轮")
+        return result
+
+    @app.get("/api/chat-test/turns/{turn_id}/steps", response_model=TurnDetail)
+    async def turn_steps(turn_id: str, _: str = Depends(user)):
+        """The same step view as a group's live timeline."""
+        result = read_turn(app.state.session.store, config.scene, turn_id)
         if result is None:
             raise HTTPException(404, "当前测试场景没有这一轮")
         return result

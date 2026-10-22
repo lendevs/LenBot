@@ -9,18 +9,18 @@ from urllib.parse import urlsplit
 from collections.abc import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.requests import HTTPConnection
 
+from len_bot.web.errors import error_response, install_panel_errors
 from len_bot.web.auth import (
     clear_login_failures, create_session, login_blocked, record_login_failure,
     revoke_session, session_user, verify_password,
 )
+from . import responses
 from ..configuration.maintenance import PanelSettings
 from ..configuration.types import STRICT
+from ..runtime.events import EventHub
 
 
 class Login(BaseModel):
@@ -49,6 +49,7 @@ def require_panel_origin(connection: HTTPConnection) -> None:
 
 def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
                        on_logout: Callable[[], None]) -> Callable[[Request], str]:
+    install_panel_errors(app)
     last_login_at: float | None = None
 
     @app.middleware('http')
@@ -57,22 +58,13 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
             try:
                 require_panel_origin(request)
             except HTTPException as error:
-                return JSONResponse({'detail': error.detail}, status_code=error.status_code)
+                return error_response(error.status_code, error.detail, headers=error.headers)
         return await call_next(request)
-
-    @app.exception_handler(RequestValidationError)
-    async def validation_error(request: Request, error: RequestValidationError):
-        if request.url.path == "/api/auth/login":
-            # A missing field otherwise echoes the complete password-bearing body.
-            return JSONResponse(status_code=422, content={"detail": [
-                {key: item[key] for key in ("type", "loc", "msg")} for item in error.errors()
-            ]})
-        return await request_validation_exception_handler(request, error)
 
     def user(request: Request) -> str:
         return session_user(request.cookies.get(cookie_name(request)))
 
-    @app.post("/api/auth/login")
+    @app.post("/api/auth/login", response_model=responses.LoginResult, response_model_exclude_unset=True)
     async def login(item: Login, request: Request, response: Response):
         nonlocal last_login_at
         key = f"isolated:{request.client.host if request.client is not None else 'local'}"
@@ -91,11 +83,11 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
                             secure=settings.cookie_secure, max_age=7 * 86400)
         return {"success": True, "username": item.username, "is_default_password": False}
 
-    @app.get("/api/auth/me")
+    @app.get("/api/auth/me", response_model=responses.CurrentUser, response_model_exclude_unset=True)
     async def me(current: str = Depends(user)):
         return {"username": current, "is_default_password": False, "last_login_at": last_login_at}
 
-    @app.post("/api/auth/logout")
+    @app.post("/api/auth/logout", response_model=responses.Success, response_model_exclude_unset=True)
     async def logout(request: Request, response: Response, _: str = Depends(user)):
         name = cookie_name(request)
         revoke_session(request.cookies[name])
@@ -140,6 +132,43 @@ async def changes_socket(websocket: WebSocket, listeners: set[asyncio.Event]) ->
         pass
     finally:
         listeners.remove(changed)
+        pushing.cancel()
+        receiving.cancel()
+        await asyncio.gather(pushing, receiving, return_exceptions=True)
+
+
+async def event_socket(websocket: WebSocket, hub: EventHub) -> None:
+    token = websocket.cookies.get(cookie_name(websocket))
+    try:
+        require_panel_origin(websocket)
+        session_user(token)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    reader, hello = hub.subscribe()
+
+    async def push():
+        await websocket.send_json(hello)
+        while True:
+            event = await reader.get()
+            session_user(token)
+            await websocket.send_json(event)
+
+    pushing = asyncio.create_task(push())
+    receiving = asyncio.create_task(websocket.receive())
+    try:
+        done, _ = await asyncio.wait({pushing, receiving}, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            result = await task
+            if task is receiving and result["type"] != "websocket.disconnect":
+                await websocket.close(code=1003, reason="This stream only reports events")
+    except HTTPException:
+        await websocket.close(code=1008)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        reader.close()
         pushing.cancel()
         receiving.cancel()
         await asyncio.gather(pushing, receiving, return_exceptions=True)

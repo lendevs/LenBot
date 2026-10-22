@@ -22,13 +22,13 @@ REQUIRED_SOURCE = (
     'scripts/install.sh', 'scripts/build_release.py', 'scripts/build_deployment.py', 'scripts/release_metadata.py',
     'deploy/updater/controller.py', 'deploy/updater/native.py', 'deploy/updater/common.py', 'deploy/updater/recovery.html',
     'deploy/package/install.ps1',
-    'deploy/package/install.sh', 'deploy/package/install.py', 'deploy/package/README.md',
-    'deploy/components.json', 'deploy/releasing.md', 'scripts/prepare_release.py', 'deploy/updater/init.py', 'deploy/browser/README.md',
+    'deploy/package/install.sh', 'deploy/package/install.py',
+    'deploy/components.json', 'scripts/prepare_release.py', 'deploy/updater/init.py', 'deploy/browser/README.md',
     '.github/workflows/release.yml', '.github/workflows/install-smoke.yml', 'scripts/smoke_install.py', 'scripts/prepare_component.py', 'scripts/package_browser.py',
     'scripts/collect_python_licenses.py',
     'scripts/collect_frontend_licenses.cjs', 'deploy/current/README.md',
     'deploy/current/lenbot.service', 'deploy/current/Dockerfile',
-    'deploy/current/docker.md', 'deploy/current/host.compose.yaml', 'deploy/current/host.tasks.compose.yaml',
+    'deploy/current/host.compose.yaml', 'deploy/current/host.tasks.compose.yaml',
     'deploy/current/first-setup.example.json',
     'deploy/current/services.compose.yaml',
     'deploy/current/start-asr.sh', 'deploy/current/asr.md',
@@ -102,7 +102,8 @@ def inspect_packages(artifacts: Path, stage: Path) -> dict:
     missing = [name for name in REQUIRED_SOURCE if name not in files]
     leaked = [name for name in files if name == 'lenbot.config.json'
               or PurePosixPath(name).name == '.lenbot-instance.lock' or name.startswith(FORBIDDEN_SOURCE)
-              or '/node_modules/' in name or '/__pycache__/' in name or name.endswith('.pyc')]
+              or ('/node_modules/' in name and not name.startswith('src/len_bot/web/static/dist/assets/licenses/frontend/'))
+              or '/__pycache__/' in name or name.endswith('.pyc')]
     if missing or leaked:
         raise ValueError(f'Release source lacks required files or contains local data: missing={missing!r}, local={leaked!r}')
     panel = stage / 'src/len_bot/web/static/dist'
@@ -114,7 +115,7 @@ def inspect_packages(artifacts: Path, stage: Path) -> dict:
         raise ValueError('The built panel must retain this npm installation\'s notice inventory')
     frontend_notices = json.loads(built[notice_index])
     packages = {item['installed_path']: item for item in frontend_notices['packages']}
-    for name in ('vue', 'vuetify', '@mdi/js'):
+    for name in ('vue', 'reka-ui', '@lucide/vue'):
         item = packages[name]
         if item['license'] is None or not item['notice_files']:
             raise ValueError(f'Panel dependency lacks its declared license or original notices: {name}')

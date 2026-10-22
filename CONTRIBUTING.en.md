@@ -16,9 +16,9 @@ uv run --no-sync len-bot   # start; opens the setup wizard if there is no config
 
 The repository root is your local instance: `lenbot.config.json`, the database, `state/` and `personas/` live there and are ignored by Git. Development and local use share one checkout started with `uv`; there is no separate install.
 
-After changing the frontend, run `npm run build` in `src/len_bot/web/frontend`. The output in `web/static/dist/` is not committed. `npm run dev` works for frontend work too.
+After changing the frontend, run `npm run typecheck`, `npm run lint` and `npm run build` in `src/len_bot/web/frontend`. The output in `web/static/dist/` is not committed. `npm run dev` works for frontend work too. Frontend conventions are in the [panel frontend guide (zh)](developer/panel.md).
 
-When `len-bot` starts from a Git checkout, the launcher checks whether the frontend content has changed. A missing or outdated panel is rebuilt with `npm ci` and `npm run build`; unchanged content starts directly. Release packages use the panel built during packaging and do not need Node.js at runtime.
+When `len-bot` starts from a Git checkout, the launcher checks whether the frontend content has changed. A missing or outdated panel is rebuilt with `npm ci` and `npm run build`; unchanged content starts directly.
 
 ### Testing on a copy
 
@@ -66,7 +66,6 @@ Other directories:
 | `docker/next-worker/` | The task image |
 | `deploy/` | Deployment material. `deploy/updater/` is the updater shared by packages and Docker |
 | `website/` | Documentation site (VitePress); preview with `cd website && npm ci && npm run dev` |
-| `changelogs/` | One release notes file per version |
 | `scripts/` | Install and packaging scripts |
 | `examples/` | The example persona and public replay cases |
 
@@ -108,7 +107,15 @@ The business database starts from public baseline v1. To change the schema:
 2. Add a step to `BUSINESS` in `maintenance/migrate.py` that upgrades the previous version.
 3. Bump `FORMAT_VERSION` in `storage/store.py`.
 
-The memory job database, local memory index and root configuration work the same way; their numbers are listed in the [release guide (zh)](deploy/releasing.md#兼容编号). Upgrades run only from the maintenance command while stopped; the runtime has no old/new compatibility branches.
+The memory job database (`migrate_memory_jobs.py`), local memory index (`migrate_local_memory.py`) and root configuration work the same way. Current numbers:
+
+| Number | Value | Where |
+|---|---|---|
+| Plugin interface | 1 | `INTERFACE` in `plugin.py` |
+| Root configuration | 3 | `CONFIG_VERSION` in `config.py` |
+| Business database | 7 | `FORMAT_VERSION` in `storage/store.py` |
+| Memory job database | 6 | `FORMAT_VERSION` in `memory/jobs.py` |
+| Local memory index | 4 | `FORMAT_VERSION` in `memory/local.py` |
 
 All three databases upgrade through `maintenance/migrations.py`:
 
@@ -121,15 +128,15 @@ JSON bodies stored in the databases decode strictly into dataclasses (`ChatMessa
 
 `tests/fixtures/history/` holds small instances written by older formats' own code; `tests/test_history_migrations.py` upgrades them and requires the same schema as a fresh instance and that every body decodes. Before bumping any format number, register the last commit before the change in `scripts/build_history_fixtures.py` and run it (`uv run --no-sync python scripts/build_history_fixtures.py`); rebuilding the same input gives byte-identical files.
 
-## Build and release
+## Packaging
 
 ```sh
 uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 ```
 
-This rebuilds the panel in a copy and produces the sdist, the wheel, the Linux/macOS/Windows packages and the release manifest, without starting or uploading anything. Releases go through the [Release workflow](.github/workflows/release.yml); see the [release guide (zh)](deploy/releasing.md).
+This rebuilds the panel in a copy and produces the sdist, the wheel, the Linux/macOS/Windows packages and the release manifest, without starting or uploading anything. The project has no release yet; the release process will be documented once it is settled.
 
-[CI](.github/workflows/ci.yml) compiles, runs tests, builds the panel and packages. Tests run on both Python 3.13 and 3.14 ([check.yml](.github/workflows/check.yml)): 3.13 is the minimum in `pyproject.toml`, and 3.14 catches problems on the next interpreter early. The same workflow runs actionlint over every workflow file. Unit tests run on Linux only; Windows and macOS are covered by the install smoke tests alone. Passing CI does not mean panel interactions or real chats were checked.
+[CI](.github/workflows/ci.yml) compiles, runs tests, builds the panel and packages. Tests run on both Python 3.13 and 3.14 ([check.yml](.github/workflows/check.yml)): 3.13 is the minimum in `pyproject.toml`, and 3.14 catches problems on the next interpreter early. The same workflow runs actionlint over every workflow file. Unit tests run on Linux only; Windows and macOS are covered by the install smoke tests alone.
 
 ## Submitting changes
 

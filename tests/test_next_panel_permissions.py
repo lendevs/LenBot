@@ -129,7 +129,7 @@ def test_unauthed_http_and_websocket_are_rejected(panel_config, panel_root):
         }
         for path in ("/api/auth/me", "/api/chat-test/state", "/api/chat-test/settings",
                      "/api/chat-test/scene-persona",
-                     "/api/chat-test/turns/no-turn"):
+                     "/api/chat-test/turns/no-turn", "/api/chat-test/turns/no-turn/steps"):
             assert client.get(path).status_code == 401
         assert client.put("/api/chat-test/scene-persona", json={
             "persona_aliases": [], "relationships": {}, "behavior_addendum": None,
@@ -171,7 +171,7 @@ def test_login_validation_names_missing_username_without_echoing_password(panel_
         assert password not in response.text
         assert any(item["loc"] == ["body", "username"]
                    and item["type"] == "missing" and item["msg"]
-                   for item in response.json()["detail"])
+                   for item in response.json()["detail"]["data"]["errors"])
 
 
 def test_virtual_sender_cannot_use_configured_bot_identity(panel_config, panel_root):
@@ -181,7 +181,7 @@ def test_virtual_sender_cannot_use_configured_bot_identity(panel_config, panel_r
             "uid": panel_config.bot_id, "nickname": "伪装自身", "text": "不能保存的虚拟消息",
         })
         assert response.status_code == 422
-        assert "Bot" in response.json()["detail"]
+        assert "Bot" in response.json()["detail"]["message"]
         assert client.get("/api/chat-test/state").json()["messages"] == []
         assert client.post("/api/auth/logout").status_code == 200
     with Store(panel_config.database) as store:
@@ -343,6 +343,13 @@ def test_turn_lookup_is_scoped_to_configured_scene(panel_config, panel_root):
         assert "本场景的合成结果" in local.text
         assert "其他场景不可见的合成结果" not in local.text
         assert client.get(f"/api/chat-test/turns/{other_turn}").status_code == 404
+        steps = client.get(f"/api/chat-test/turns/{local_turn}/steps")
+        assert steps.status_code == 200
+        step, = steps.json()["steps"]
+        tool, = step["tools"]
+        assert tool["name"] == "say" and tool["arguments"] == {"content": "合成表达"}
+        assert tool["result"] == "本场景的合成结果" and tool["status"] == "complete"
+        assert client.get(f"/api/chat-test/turns/{other_turn}/steps").status_code == 404
         assert client.post("/api/auth/logout").status_code == 200
 
 

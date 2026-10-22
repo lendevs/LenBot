@@ -4,6 +4,7 @@ import argparse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -52,6 +53,13 @@ def baseline(artifacts: Path, work: Path, *, version: str = '0.0.0', broken: boo
     return output
 
 
+def next_patch(artifacts: Path) -> str:
+    """The version after the built release; the synthetic broken release takes it."""
+    version = json.loads((artifacts / 'release-manifest.json').read_text(encoding='utf-8'))['version']
+    major, minor, patch = map(int, re.match(r'(\d+)\.(\d+)\.(\d+)', version).groups())
+    return f'{major}.{minor}.{patch + 1}'
+
+
 def run(artifacts: Path, work: Path) -> dict:
     work.mkdir(parents=True, exist_ok=False)
     old = baseline(artifacts, work)
@@ -60,9 +68,7 @@ def run(artifacts: Path, work: Path) -> dict:
     fixture = work / 'release-server'
     shutil.copytree(artifacts, fixture)
     manifest = json.loads((fixture / 'release-manifest.json').read_text(encoding='utf-8'))
-    import re
-    major, minor, patch = map(int, re.match(r'(\d+)\.(\d+)\.(\d+)', manifest['version']).groups())
-    broken = baseline(artifacts, work, version=f'{major}.{minor}.{patch + 1}', broken=True)
+    broken = baseline(artifacts, work, version=next_patch(artifacts), broken=True)
     broken_manifest = json.loads((broken / 'release-manifest.json').read_text(encoding='utf-8'))
     shutil.copytree(broken, fixture / 'broken')
     # The real HTTP fixture serves the actual built package, including its original checksums.
@@ -162,10 +168,13 @@ def main() -> None:
     parser.add_argument('artifacts', type=Path)
     parser.add_argument('work', type=Path)
     parser.add_argument('--baseline-only', action='store_true')
+    parser.add_argument('--broken-only', action='store_true', help='Only build the next patch version that fails during startup')
     args = parser.parse_args()
-    if args.baseline_only:
+    if args.baseline_only or args.broken_only:
         args.work.mkdir(parents=True, exist_ok=False)
-        print(baseline(args.artifacts.resolve(), args.work.resolve()))
+        artifacts = args.artifacts.resolve()
+        print(baseline(artifacts, args.work.resolve()) if args.baseline_only
+              else baseline(artifacts, args.work.resolve(), version=next_patch(artifacts), broken=True))
     else:
         print(json.dumps(run(args.artifacts.resolve(), args.work.resolve()), indent=2, ensure_ascii=False))
 

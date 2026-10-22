@@ -12,16 +12,16 @@ import shutil
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 import yaml
 
+from . import responses
 from ..configuration.models import Binding, Provider
 from ..memory.embeddings import EmbeddingBinding
-from ..configuration.chat import Compaction
+from ..tools.web_search import WebSearchSettings
+from ..configuration.chat import Compaction, WebReadSettings
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
 from ..platform.onebot import OneBot
@@ -30,6 +30,8 @@ from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
 from ..persona.profile import Persona, load_persona
 from len_bot.web.auth import hash_password
+from len_bot.web.errors import install_panel_errors
+from len_bot.web.shell import BUILT_PANEL, missing_build, mount_panel
 from ..storage.files import sync_directory
 
 DEFAULT_PERSONA_DIRECTORY = Path(__file__).resolve().parents[2] / 'default_personas' / 'companion'
@@ -52,6 +54,11 @@ class FirstSetup(BaseModel):
     provider: Provider
     mind: Binding
     embedding: SetupEmbedding | None = None
+    web_search: WebSearchSettings | None = None
+    search_provider: Provider | None = None
+    web_read: WebReadSettings | None = None
+    read_provider: Provider | None = None
+    max_steps: int = Field(default=16, gt=0)
     voice_mode: Literal['direct'] = 'direct'
     compaction: Compaction = Field(default_factory=Compaction)
     scene: str
@@ -76,8 +83,8 @@ class FirstSetup(BaseModel):
 
     @model_validator(mode='after')
     def matching_password(self):
-        if not self.default_persona and any(value is None for value in (self.persona_name, self.brief, self.voice_text)):
-            raise ValueError('自定义角色需要填写名字、人物设定和说话方式')
+        if not self.default_persona and any(value is None for value in (self.persona_name, self.brief)):
+            raise ValueError('自定义角色需要填写名字和人物设定')
         if not self.password.strip():
             raise ValueError('密码不能全部是空白')
         if self.password_confirmation is not None and self.password != self.password_confirmation:
@@ -121,6 +128,10 @@ class EmbeddingProbe(BaseModel):
 
 def setup_source(item: FirstSetup) -> dict:
     providers = {'primary': item.provider.model_dump(mode='json')}
+    if item.search_provider is not None:
+        providers['search'] = item.search_provider.model_dump(mode='json')
+    if item.read_provider is not None:
+        providers['reader'] = item.read_provider.model_dump(mode='json')
     vector = None
     if item.embedding is not None:
         alias = 'primary'
@@ -133,6 +144,9 @@ def setup_source(item: FirstSetup) -> dict:
         'timezone': item.timezone, 'delivery': item.delivery, 'database': 'state/lenbot.sqlite3',
         'onebot': item.onebot.model_dump(mode='json'),
         'compaction': item.compaction.model_dump(mode='json'),
+        'max_steps': item.max_steps,
+        'web_search': None if item.web_search is None else item.web_search.model_dump(mode='json'),
+        'web_read': None if item.web_read is None else item.web_read.model_dump(mode='json'),
         'models': {'providers': providers,
                    'roles': {'mind': item.mind.model_dump(mode='json')}},
         'memory': {'backend': 'local', 'local': {'directory': 'state/memory', 'embedding': vector}},
@@ -159,7 +173,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     persona = (load_persona(DEFAULT_PERSONA_DIRECTORY) if item.default_persona else
                Persona(id=item.persona_id, name=item.persona_name, brief=item.brief,
                        behavior=item.brief, self_reference=['我'], aliases=[], tools='all', skills=[],
-                       styles=[], voice=item.voice_text, boundaries=item.boundaries, examples=[]))
+                       styles=[], voice=item.voice_text or '', boundaries=item.boundaries, examples=[]))
     source = setup_source(item)
     prepared = [p['name'] for p in plugin_choices(root) if p['installed'] or p['prepared']]
     source['plugins'].update(disabled=prepared, **{name: {} for name in prepared})
@@ -201,16 +215,12 @@ def initialize(root: Path, item: FirstSetup) -> dict:
 CONTAINER_PANEL_PORT = 11307
 
 
-def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, container: bool = False) -> FastAPI:
+def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, container: bool = False,
+                     assets_dir: Path | None = None) -> FastAPI:
     app = FastAPI(title='LenBot 首次配置')
+    install_panel_errors(app)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['*'] if container else ['127.0.0.1', 'localhost'])
     lock = asyncio.Lock()
-
-    @app.exception_handler(RequestValidationError)
-    async def invalid_input(request, error: RequestValidationError):
-        return JSONResponse(status_code=422, content={'detail': [
-            {key: item[key] for key in ('loc', 'msg', 'type')} for item in error.errors()
-        ]})
 
     def config_exists():
         return (root / "lenbot.config.json").exists()
@@ -221,11 +231,7 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         if not secrets.compare_digest(x_setup_token, token):
             raise HTTPException(401, '请使用本次启动在终端显示的初始化链接')
 
-    @app.get('/', response_class=HTMLResponse)
-    async def page():
-        return (Path(__file__).with_name('setup.html')).read_text(encoding='utf-8')
-
-    @app.post('/api/setup/platform', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/platform', dependencies=[Depends(authorize)], response_model=responses.SetupPlatform, response_model_exclude_unset=True)
     async def probe_platform(item: PlatformProbe):
         def failed(error: str) -> None:
             raise ValueError(error)
@@ -235,37 +241,37 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/setup/model', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/model', dependencies=[Depends(authorize)], response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def probe_model(item: ModelProbe):
         try:
             return await run_model_probe(item.provider, item.mind, item.kind)
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/setup/protocols', dependencies=[Depends(authorize)])
+    @app.get('/api/setup/protocols', dependencies=[Depends(authorize)], response_model=responses.SetupProtocols, response_model_exclude_unset=True)
     async def protocols():
         return {'protocols': [p for p in PROTOCOLS if 'mind' in p['roles']], 'container': container,
                 'panel_port': CONTAINER_PANEL_PORT if container else None}
 
-    @app.post('/api/setup/embedding', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/embedding', dependencies=[Depends(authorize)], response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def probe_embedding(item: EmbeddingProbe):
         try:
             return await run_model_probe(item.provider, item.binding, 'embedding')
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.post('/api/setup/models', dependencies=[Depends(authorize)])
+    @app.post('/api/setup/models', dependencies=[Depends(authorize)], response_model=responses.ModelList, response_model_exclude_unset=True)
     async def models(item: ProviderList):
         try:
             return {'models': await list_models(item.provider)}
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
-    @app.get('/api/setup/plugins', dependencies=[Depends(authorize)])
+    @app.get('/api/setup/plugins', dependencies=[Depends(authorize)], response_model=responses.SetupPlugins, response_model_exclude_unset=True)
     async def plugins():
         return {'plugins': await asyncio.to_thread(plugin_choices, root)}
 
-    @app.post('/api/setup', dependencies=[Depends(authorize)])
+    @app.post('/api/setup', dependencies=[Depends(authorize)], response_model=responses.SetupSaved, response_model_exclude_unset=True)
     async def save(item: FirstSetup):
         async with lock:
             if container:
@@ -301,6 +307,8 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
             completed.set()
             return result
 
+    # The wizard is a page of the panel frontend; registered last so its fallback route comes after the API.
+    mount_panel(app, mode='setup', home='/setup', assets_dir=assets_dir)
     return app
 
 
@@ -316,6 +324,10 @@ async def run_setup(root: Path, *, container: bool = False) -> None:
         server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False))
         print(f'尚无根配置。请打开 http://127.0.0.1:{port}/#token={token}\n'
               '保存后直接启动，按新配置连接 OneBot 并打开面板。', flush=True)
+        problem = missing_build(BUILT_PANEL)
+        if problem is not None:
+            # The wizard page is the built panel; without it the link only shows this error.
+            print(f'无法显示首次配置页面。{problem}', flush=True)
         serving = asyncio.create_task(server.serve(sockets=[listener]))
         saving = asyncio.create_task(completed.wait())
         try:

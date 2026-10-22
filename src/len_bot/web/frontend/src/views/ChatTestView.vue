@@ -1,10 +1,8 @@
-<script setup>
-import HostPage from '../host/ui/HostPage.vue'
-import ChatPanel from '../host/components/ChatPanel.vue'
+<script setup lang="ts">
+import { isolatedSource } from '../api/trials'
+import ChatPanel from './playground/chat/ChatPanel.vue'
 </script>
 
 <template>
-  <HostPage title="对话测试" wide>
-    <ChatPanel api-base="/api/chat-test" />
-  </HostPage>
+  <ChatPanel :source="isolatedSource" />
 </template>

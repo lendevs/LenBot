@@ -149,15 +149,16 @@ class PluginTest:
             self.temporary.cleanup()
 
     def add_message(self, text: str, *, scene: str = 'onebot:group:80001', sender: str = 'onebot:70001',
-                    message_id: str | None = None, timestamp: float | None = None) -> ChatMessage:
-        """Store a synthetic received message and return its actual ID for source calls."""
+                    message_id: str | None = None, timestamp: float | None = None,
+                    parts: Sequence[Segment] = ()) -> ChatMessage:
+        """Store text followed by optional message parts; return its actual ID for source calls."""
         scene = validate_scene(scene)
         HostConfig.valid_bot_id(sender)
         identifier = uuid4().hex if message_id is None else message_id
         message = ChatMessage(id=identifier, platform=scene.split(':', 1)[0], bot_id=self.host.bot_id,
                               scene=scene, platform_message_id=identifier, sender=Sender(sender, 'Test user', None, None),
                               time=self.host.now() if timestamp is None else timestamp,
-                              segments=[Segment('text', {'text': text})], reply_to=None,
+                              segments=[Segment('text', {'text': text}), *parts], reply_to=None,
                               mentions_bot=False, is_self=sender == self.host.bot_id, send_status='received')
         self.host.messages.append(message)
         self.host.runtime.store.enqueue(message, {}, message.time)
@@ -177,9 +178,10 @@ class PluginTest:
         if record.errors and record.errors[-1] is not previous_error:
             raise RuntimeError(record.errors[-1]['error'])
 
-    async def message(self, text: str, *, scene: str = 'onebot:group:80001', sender: str = 'onebot:70001') -> bool:
-        """Return whether a real handler consumed this synthetic plain-text message."""
-        message = self.add_message(text, scene=scene, sender=sender)
+    async def message(self, text: str, *, scene: str = 'onebot:group:80001', sender: str = 'onebot:70001',
+                      parts: Sequence[Segment] = ()) -> bool:
+        """Return whether a real handler consumed this text and its optional message parts."""
+        message = self.add_message(text, scene=scene, sender=sender, parts=parts)
         matched = self.host.match_message(message, ())
         if matched is None:
             return False

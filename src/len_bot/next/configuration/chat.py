@@ -41,7 +41,18 @@ class TextDelivery(BaseModel):
 class WebReadSettings(BaseModel):
     model_config = STRICT
 
+    # local fetches the page from this machine; the others read it through a keyed service.
+    provider: Literal["local", "deepseek", "tavily", "jina"] = "local"
+    connection: str | None = Field(default=None, min_length=1, pattern=r"\S")
     timeout_seconds: float = Field(default=20, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def read_connection(self) -> WebReadSettings:
+        if self.provider != "local" and self.connection is None:
+            raise ValueError(f"{self.provider} 读取需要选择连接")
+        if self.provider == "local" and self.connection is not None:
+            raise ValueError("本机读取不使用连接")
+        return self
 
 
 class ImageSettings(BaseModel):
@@ -189,7 +200,7 @@ class Attention(BaseModel):
     ambient_score_in_reason: bool = True
     # Per message outside focus that the participation rule does not admit; batches like focus.
     explore_probability: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
-    max_extensions: int = Field(default=2, ge=0)
+    max_extensions: int = Field(default=4, ge=0)
     quiet_hours: QuietHours | None = None
     declarations: AttentionDeclarations | None = None
     disposition: TurnDisposition | None = None
@@ -286,6 +297,8 @@ class SceneSettings(ScenePersona):
     simulated_delivery: bool = False
     # Plugins enabled in this scene; each must be loaded by root ``plugins``.
     plugins: list[str] = Field(default_factory=list)
+    # Scene aliases, relationships and addendum of roles not in use here, by role id; switching back restores them.
+    inactive_personas: dict[str, ScenePersona] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def proactive_requirements(self) -> SceneSettings:

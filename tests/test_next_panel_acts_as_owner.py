@@ -82,6 +82,6 @@ def test_panel_without_owner_refuses_owned_actions(tmp_path: Path) -> None:
     async def check(client: httpx.AsyncClient) -> None:
         response = await client.post(f"/api/host/schedules?scene={SCENE}", json=REMINDER)
         assert response.status_code == 409
-        assert "主人账号" in response.json()["detail"]
+        assert "主人账号" in response.json()["detail"]["message"]
 
     exercise(tmp_path, check)

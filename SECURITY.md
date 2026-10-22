@@ -9,11 +9,11 @@
 - 首选方式是在仓库的 Security 页面点击 **Report a vulnerability**，通过 GitHub 私下提交。
 - 也可以发送邮件到 [1649211052@qq.com](mailto:1649211052@qq.com)。
 
-这是个人维护的项目，目前不承诺固定的回复时间或修复时间，收到报告后会尽快确认。
+收到报告后会尽快确认。
 
 ## 报告内容
 
-- 受影响的版本或提交，以及运行方式（部署包、Docker 或源码）。
+- 受影响的提交，以及运行环境（系统、Python 版本、OneBot 实现）。
 - 问题经过。请写明谁通过什么入口（面板、群聊、插件、任务等）做了什么操作，预期的结果是什么，实际发生了什么。
 - 复现步骤。不确定的地方请注明。
 - 问题是否导致了真实发送、外部请求或任务执行。
@@ -24,7 +24,7 @@
 - 完整的配置文件和数据库
 - 聊天记录和媒体文件
 
-面板导出的诊断材料会保留模型请求、回复和任务事件中的文字，可能包含昵称、私人事实和聊天内容。已知配置凭据、媒体负载和部分数字会被遮盖，这不等于匿名化；发送前请逐项检查。确认问题后请停止操作，不要为了收集证据继续访问他人的数据。
+面板导出的诊断材料会保留模型请求、回复和任务事件中的文字，可能包含昵称、私人事实和聊天内容。已知配置凭据、媒体负载和部分数字会被遮盖。确认问题后请停止操作，不要为了收集证据继续访问他人的数据。
 
 ## 范围
 
@@ -48,16 +48,16 @@ Please report security issues privately, not in a public issue.
 - Preferred: open the repository's Security tab and click **Report a vulnerability** to submit privately through GitHub.
 - Or email [1649211052@qq.com](mailto:1649211052@qq.com).
 
-LenBot is maintained by one person, so there is no fixed response time yet. Reports are acknowledged as soon as possible.
+Reports are acknowledged as soon as possible.
 
 A report should include:
 
-- the affected version or commit, and how LenBot is run (package, Docker or source);
+- the affected commit and the environment (OS, Python version, OneBot implementation);
 - what happened, through which entry point (panel, chat, plugin, task), and what was expected;
 - steps to reproduce.
 
 Do not send keys, tokens, cookies, full configuration files, databases, chat logs or media. Once an issue is confirmed, stop. Do not access other people's data to gather more evidence.
 
-Dashboard diagnostic exports retain text from model requests, replies and task events, which may contain names, private facts and chat content. Known credentials, media payloads and some numbers are masked; the export is not anonymous. Review its contents before sharing.
+Dashboard diagnostic exports retain text from model requests, replies and task events, which may contain names, private facts and chat content. Known credentials, media payloads and some numbers are masked.
 
 In scope: the LenBot host, the panel, built-in plugins, deployment scripts and image recipes. Problems in third-party plugins, OneBot implementations, model services or other separate services belong with their own maintainers. Plugins run in the host process with the host's permissions, so only trusted plugins should be installed. That by itself is not a vulnerability.

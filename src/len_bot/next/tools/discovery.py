@@ -9,6 +9,15 @@ DISCOVERY_REQUIRED_NAMES = frozenset({"scene_control", "host_manage", "schedule_
 DEFERRED_NAMES = frozenset({"schedule", "memory", "delegate", "task", "send_file", "web_search", "web_read", "scene_control", "host_manage", "schedule_list", "schedule_cancel", "persona_knowledge", "open_forward", "member_info", "transcribe", "message_reaction"})
 
 
+def deferred_names(allowed_names: set[str], config) -> frozenset[str]:
+    """Tools offered through tool_search; memory stays loaded while session upkeep writes with it."""
+    if "tool_search" not in allowed_names:
+        return frozenset()
+    if config.memory is not None and config.memory.ingest is not None:
+        return DEFERRED_NAMES - {"memory"}
+    return DEFERRED_NAMES
+
+
 def model_schema(schema: dict | bool) -> dict | bool:
     """Remove generated titles from owned schema nodes, not business data/maps."""
     if isinstance(schema, bool):

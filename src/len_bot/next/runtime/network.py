@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from .signals import install_stop
+from .events import EventHub
+from .scenes import SceneService
+from .settings import LiveSettings
 import logging
 import sqlite3
 from collections.abc import Callable
@@ -28,11 +31,8 @@ from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
 from .retention import Retention
 from ..memory.service import MemoryService
-from ..memory.ingest import MemoryIngestor
-from ..learning.expressions import ExpressionLearner
-from ..learning.jargon import JargonLearner
+from ..chat.upkeep import SessionUpkeep, UpkeepPart, runner_fork, upkeep_parts
 from ..learning.sticker_collection import StickerCollector
-from ..learning.reply_effects import ReplyEffectTracker
 from ..learning.expression_selection import ExpressionService
 from ..platform.adapter import PlatformCallError, open_platform
 from ..persona.profile import Persona
@@ -42,6 +42,7 @@ from ..storage.store import Store
 from ..work.service import WorkTasks
 
 if TYPE_CHECKING:
+    from .personas import PersonaService
     from .management import HostManagement
 
 logger = logging.getLogger(__name__)
@@ -53,18 +54,20 @@ class NetworkRuntime:
                  vision: ChatModel | None = None, slots: ModelSlots | None = None,
                  memory: MemoryService | None = None,
                  budget: ModelBudget | None = None,
-                 ingestor: MemoryIngestor | None = None,
+                 ingestor: UpkeepPart | None = None,
                  tasks: WorkTasks | None = None,
-                 learning: ExpressionLearner | None = None,
-                 jargon: JargonLearner | None = None,
+                 learning: UpkeepPart | None = None,
+                 jargon: UpkeepPart | None = None,
                  sticker_collection: StickerCollector | None = None,
-                 reply_effects: ReplyEffectTracker | None = None,
+                 reply_effects: UpkeepPart | None = None,
                  expression_service: ExpressionService | None = None,
                  plugins: PluginHost | None = None,
                  mcp: MCPHost | None = None,
                  lifecycle: HostLifecycle | None = None,
                  on_update: Callable[[], None] | None = None):
         self.config, self.store = config, store
+        self.mind, self.vision = mind, vision
+        self.events = EventHub()
         self.log_secrets = credentials(config)
         self.memory = memory
         self.budget = ModelBudget(config, store, memory, root=config._instance_root) if budget is None else budget
@@ -87,6 +90,10 @@ class NetworkRuntime:
             reply_effects.connected_since = lambda: self.connected_since
         if jargon is not None:
             jargon.on_update = self.notify
+        self.upkeep = next((part.upkeep for part in (ingestor, learning, jargon, reply_effects)
+                            if isinstance(part, UpkeepPart)), None)
+        if self.upkeep is not None:
+            self.upkeep.fork = self.upkeep_fork
         self.expression_service = expression_service
         if expression_service is not None:
             expression_service.on_update = self.notify
@@ -108,6 +115,7 @@ class NetworkRuntime:
         self.retention = Retention(self)
         self.config_write_lock = asyncio.Lock()
         self.management: HostManagement | None = None
+        self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
         self.accepting = config.onebot is None and config.telegram is None
@@ -126,34 +134,41 @@ class NetworkRuntime:
             scene = scene_config.scene
             if scene in self.chats:
                 raise ValueError(f"Duplicate network scene {scene}")
-            self.chats[scene] = Chat(
-                scene_config, persona, store, mind, vision=vision, slots=slots, memory=memory,
-                tasks=tasks, expression_service=expression_service,
-                on_compaction=lambda scene=scene: self.compacted(scene),
-                on_reply_sample=(None if reply_effects is None else
-                                 lambda scene=scene: reply_effects.wake(scene)),
-                send_message=self.send_message if config.delivery != "simulated" else None,
-                upload_file=self.upload_file if config.delivery != "simulated" else None,
-                platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
-                               if config.delivery == "onebot" else None),
-                external_tools=(([] if plugins is None else plugins.tools_for(scene, preparing=True))
-                                + ([] if mcp is None else mcp.tools_for(scene))),
-                audio_service=self.audio,
-                on_update=self.notify,
-            )
+            self.chats[scene] = self.create_chat(scene_config, persona)
         if lifecycle is not None:
             self.bind_management(config._instance_root, lifecycle)
+        self.scene_service = SceneService(self)
+        self.settings = LiveSettings(self)
         self.runners: dict[str, SceneRunner] = {}
         for scene, chat in self.chats.items():
             self.runners[scene] = SceneRunner(
                 chat, lambda result, scene=scene: self._emit({"type": "turn", **result, "scene": scene}),
-                ready_for_turn=self._ready,
+                ready_for_turn=lambda wait, scene=scene: self.scene_service.ready(scene, wait),
                 connected_since=lambda: self.connected_since,
             )
         if plugins is not None:
             plugins.bind(self)
         if mcp is not None:
             mcp.on_update = self.refresh_external_tools
+
+    def create_chat(self, scene_config: LabConfig, persona: Persona) -> Chat:
+        scene = scene_config.scene
+        return Chat(
+            scene_config, persona, self.store, self.mind, vision=self.vision, slots=self.slots, memory=self.memory,
+            tasks=self.tasks, expression_service=self.expression_service,
+            on_compaction=lambda scene=scene: self.compacted(scene),
+            on_reply_sample=(None if self.reply_effects is None else
+                             lambda scene=scene: self.reply_effects.wake(scene)),
+            send_message=self.send_message if self.config.delivery != "simulated" else None,
+            upload_file=self.upload_file if self.config.delivery != "simulated" else None,
+            platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
+                           if self.config.delivery == "onebot" else None),
+            external_tools=(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=True))
+                            + ([] if self.mcp is None else self.mcp.tools_for(scene))),
+            audio_service=self.audio,
+            on_update=self.notify,
+            on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
+        )
 
     def held(self, scene: str | None) -> bool:
         """The host-wide send hold, or a scene configured to simulate its delivery."""
@@ -177,7 +192,9 @@ class NetworkRuntime:
 
     def bind_management(self, root: Path, lifecycle: HostLifecycle) -> None:
         from .management import HostManagement
+        from .personas import PersonaService
 
+        self.personas = PersonaService(root, self)
         self.management = HostManagement(root, self, lifecycle)
         for chat in self.chats.values():
             chat.toolset.host_management = self.management
@@ -202,33 +219,29 @@ class NetworkRuntime:
         self.notify()
 
     def compacted(self, scene: str) -> None:
-        if self.ingestor is not None:
-            self.ingestor.request(scene)
-        if self.learning is not None and scene in self.learning.scenes:
-            state = self.learning.state(scene)
-            latest = state["latest"]
-            if (state["running"] and state["worker_error"] is None
-                    and (latest is None or latest["status"] == "complete")):
-                self.learning.request(scene)
-        if self.jargon is not None and scene in self.jargon.scenes:
-            state = self.jargon.state(scene)
-            latest = state["latest"]
-            if (state["running"] and state["worker_error"] is None
-                    and (latest is None or latest["status"] == "complete")):
-                self.jargon.request(scene)
+        if self.upkeep is not None:
+            self.upkeep.compacted(scene)
+
+    async def upkeep_fork(self, scene: str) -> tuple[list[dict], list[dict]] | None:
+        """The scene's chat request without turn state, taken only while no turn is open."""
+        runner = self.runners.get(scene)
+        return None if runner is None else await runner_fork(runner, self.store)(scene)
 
     def notify(self) -> None:
+        self.events.publish("host.changed")
         if self.on_update is not None:
             self.on_update()
 
     def _connection_changed(self) -> None:
         self.connected_since = self.store.now() if self.platform.connected else None
         self.accepting = self.status == "running" and self.platform.connected
+        self.events.publish("host.state")
         self.notify()
 
     def _status(self, status: str) -> None:
         if self.status != status:
             self.status = status
+            self.events.publish("host.state")
             self.notify()
 
     def _emit(self, result: dict, *, error: BaseException | None = None) -> None:
@@ -241,6 +254,10 @@ class NetworkRuntime:
         fields = {key: value for key, value in result.items() if key not in {'type', 'error'}}
         failed = error if error is not None else result.get('error')
         log_event(logger, result['type'], level=logging.ERROR if failed else logging.INFO, error=failed, **fields)
+        self.events.publish(result['type'], **fields, error=None if failed is None else str(failed))
+        if result['type'] == 'turn' and self.upkeep is not None:
+            # Upkeep skips a scene while it is in a turn; the turn's end lets it look again.
+            self.upkeep.wake(result['scene'])
         self.notify()
 
     def _platform_error(self, error: str) -> None:
@@ -276,6 +293,7 @@ class NetworkRuntime:
                 raise
             self._emit({"type": "platform_event", "notice_type": message.notice_type,
                         "plugin_handlers": handled})
+            self.events.publish('notice.received', scene=message.scene, kind=message.notice_type)
             return
         with log_context(scene=message.scene, platform_message_id=message.platform_message_id):
             self._receive_message(message, raw)
@@ -286,7 +304,9 @@ class NetworkRuntime:
                         "status": "not_accepted", "reason": self.status})
             return
         runner = self.runners.get(message.scene)
-        if runner is None:
+        if runner is None or message.scene in self.scene_service.retiring:
+            if message.scene.split(':', 2)[1] == 'group':
+                self.scene_service.observe(message.scene, raw)
             self._emit({"type": "receipt", "scene": message.scene, "status": "ignored",
                         "platform_message_id": message.platform_message_id})
             return
@@ -319,6 +339,8 @@ class NetworkRuntime:
             receipt["command"] = "/" + command.command.name
         if receipt["status"] != "duplicate":
             self.audio.request(message.scene)
+            self.events.publish('message.received', scene=message.scene, message_seq=receipt['message_seq'],
+                                verdict=receipt['wake_verdict'])
         self._emit({"type": "receipt", **receipt, "scene": message.scene})
 
     async def _ready(self, wait: bool) -> bool:
@@ -440,15 +462,11 @@ class NetworkRuntime:
                     if self.tasks is not None:
                         await self.tasks.start()
                         pending.append(group.create_task(self.tasks.wait_failure()))
-                    if self.learning is not None:
-                        self.learning.start()
+                    if self.upkeep is not None:
+                        self.upkeep.start()
                     self.audio.start()
-                    if self.jargon is not None:
-                        self.jargon.start()
                     if self.sticker_collection is not None:
                         self.sticker_collection.start()
-                    if self.reply_effects is not None:
-                        self.reply_effects.start()
                     if self.plugins is not None:
                         await self.plugins.start()
                     self.refresh_external_tools()
@@ -458,9 +476,10 @@ class NetworkRuntime:
                     self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
                                 "delivery": self.config.delivery})
                     pending.append(group.create_task(self.retention.run()))
-                    running = [group.create_task(runner.run()) for runner in self.runners.values()]
-                    pending.extend(running)
-                    done, _ = await asyncio.wait({*running, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
+                    self.scene_service.start(group)
+                    scenes_ended = group.create_task(self.scene_service.wait_stopped())
+                    pending.append(scenes_ended)
+                    done, _ = await asyncio.wait({scenes_ended, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
                     self.accepting = False
                     reason = ("storage_error" if self.storage_error is not None else
                               "signal" if stopping in done
@@ -473,21 +492,18 @@ class NetworkRuntime:
                     if self.plugins is not None:
                         await self.plugins.close()
                     await self.audio.close()
-                    if self.reply_effects is not None:
-                        await self.reply_effects.close()
                     if self.sticker_collection is not None:
                         await self.sticker_collection.close()
-                    if self.jargon is not None:
-                        await self.jargon.close()
-                    if self.learning is not None:
-                        await self.learning.close()
+                    if self.upkeep is not None:
+                        await self.upkeep.close()
                     if self.tasks is not None:
                         await self.tasks.close()
                     for runner in self.runners.values():
                         runner.close_input()
-                    await asyncio.gather(*running)
+                    await self.scene_service.join()
                 finally:
                     self.accepting = False
+                    self.scene_service.group = None
                     for task in pending:
                         task.cancel()
         finally:
@@ -499,29 +515,21 @@ class NetworkRuntime:
                         await self.tasks.close()
                 finally:
                     try:
-                        if self.learning is not None:
-                            await self.learning.close()
+                        if self.upkeep is not None:
+                            await self.upkeep.close()
                     finally:
                         try:
-                            if self.jargon is not None:
-                                await self.jargon.close()
+                            if self.sticker_collection is not None:
+                                await self.sticker_collection.close()
                         finally:
                             try:
-                                if self.sticker_collection is not None:
-                                    await self.sticker_collection.close()
+                                if self.mcp is not None:
+                                    await self.mcp.close()
                             finally:
                                 try:
-                                    if self.reply_effects is not None:
-                                        await self.reply_effects.close()
+                                    await self.audio.close()
                                 finally:
-                                    try:
-                                        if self.mcp is not None:
-                                            await self.mcp.close()
-                                    finally:
-                                        try:
-                                            await self.audio.close()
-                                        finally:
-                                            await self.platform.close()
+                                    await self.platform.close()
                     self._status("stopped")
                     self._emit({"type": "runtime", "status": "stopped"})
             finally:
@@ -534,8 +542,9 @@ class NetworkRuntime:
 async def run_network(config: SharedConfig, scene_configs: list[tuple[LabConfig, Persona]],
                       store: Store, mind: ChatModel, *,
                       vision: ChatModel | None = None, slots: ModelSlots | None = None,
-                      memory: MemoryService | None = None, ingestor: MemoryIngestor | None = None,
+                      memory: MemoryService | None = None, upkeep: SessionUpkeep | None = None,
                       expression_service: ExpressionService | None = None, budget: ModelBudget | None = None) -> None:
-    runtime = NetworkRuntime(config, scene_configs, store, mind, vision=vision, slots=slots,
-                             memory=memory, ingestor=ingestor, expression_service=expression_service, budget=budget)
+    runtime = NetworkRuntime(config, scene_configs, store, mind, vision=vision, slots=slots, memory=memory,
+                             **({} if upkeep is None else upkeep_parts(upkeep)),
+                             expression_service=expression_service, budget=budget)
     await runtime.run()

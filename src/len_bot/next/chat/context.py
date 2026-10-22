@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime
+import json
+import math
 from pathlib import Path
+import re
 from string import Template
 from zoneinfo import ZoneInfo
 
@@ -14,7 +18,7 @@ from .declarations import Declared
 from .recap import project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
-from ..tools.discovery import DEFERRED_NAMES, discovery_view
+from ..tools.discovery import deferred_names, discovery_view
 from ..learning.jargon_store import JargonStore
 from ..memory.service import MemoryService
 from ..platform.messages import ChatMessage, plain_text, render_batch, render_message, render_text
@@ -59,10 +63,10 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
                  external_info: Sequence[dict] = ()) -> str:
     """Render the actual stable mind system text for this scene and outlet."""
     allowed_names = {tool["function"]["name"] for tool in allowed}
-    deferred_names = DEFERRED_NAMES if "tool_search" in allowed_names else frozenset()
-    names = (allowed_names - deferred_names) | (set(discovered) & allowed_names)
+    deferred = deferred_names(allowed_names, config)
+    names = (allowed_names - deferred) | (set(discovered) & allowed_names)
     info_by_name = {info["discovery"]["name"]: info for info in external_info}
-    deferred = [tool for tool in allowed if tool["function"]["name"] in deferred_names] + list(external)
+    deferred = [tool for tool in allowed if tool["function"]["name"] in deferred] + list(external)
     system = Template(read_prompt("next_mind.md")).substitute(
         name=persona.name, scene=config.scene, bot_id=config.bot_id,
         character=character_material(config, persona),
@@ -178,6 +182,73 @@ def turn_state(config: LabConfig, store: Store, *, now: float,
     return state
 
 
+HABIT_WINDOW = 8
+# Interjections and sentence particles: the only single characters worth naming as a habit.
+HABIT_CHARACTERS = frozenset("草哼啦呀嘛呜哇诶欸嘿喵捏哈啊呢吧哦噢嗷嘻")
+HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()) -> str | None:
+    """Name what the latest own expressions in the history keep repeating, for the next one to vary.
+
+    The model reads its earlier lines as the strongest example of how it talks, so a phrase that
+    slipped in a few times tends to stay. ``heard`` is what others said recently; words they use
+    belong to the topic and are not named. Punctuation and pictures sent with text are part of the
+    persona's voice and are not counted.
+    """
+    expressions = []
+    for _, message in reversed(entries):
+        if message["role"] != "assistant":
+            continue
+        for call in reversed(message.get("tool_calls") or []):
+            if call["function"]["name"] not in ("say", "react"):
+                continue
+            try:
+                arguments = json.loads(call["function"]["arguments"] or "{}")
+            except ValueError:
+                continue
+            if isinstance(arguments, dict):
+                expressions.append((call["function"]["name"], arguments))
+        if len(expressions) >= HABIT_WINDOW:
+            break
+    expressions = expressions[:HABIT_WINDOW]
+    if len(expressions) < 5:
+        return None
+    texts = [arguments["content"] for name, arguments in expressions
+             if name == "say" and isinstance(arguments.get("content"), str)]
+    habits = []
+    if texts:
+        enough = max(4, math.ceil(len(texts) * 0.6))
+        frequency = Counter()
+        for text in texts:
+            grams = set()
+            for run in HAN_RUN.findall(text):
+                for size in range(1, 5):
+                    grams.update(run[start:start + size] for start in range(len(run) - size + 1)
+                                 if size > 1 or run[start] in HABIT_CHARACTERS)
+            frequency.update(grams)
+        others = "\n".join(heard)
+        chosen = []
+        for gram, count in sorted(frequency.items(), key=lambda item: (-item[1], -len(item[0]), item[0])):
+            if count < enough or len(chosen) == 3:
+                break
+            if gram in others or any(gram in other or other in gram for other, _ in chosen):
+                continue
+            chosen.append((gram, count))
+        habits.extend(f"{count} 条用了「{gram}」" for gram, count in chosen)
+    files = Counter()
+    for name, arguments in expressions:
+        choice = arguments.get("sticker") if name == "say" else arguments
+        if isinstance(choice, dict) and isinstance(choice.get("file"), str):
+            files[choice["file"]] += 1
+    if files and (uses := files.most_common(1)[0][1]) >= 3:
+        habits.append(f"同一张图用了 {uses} 次")
+    if not habits:
+        return None
+    return Template(read_prompt("next_recent_habits.md")).substitute(
+        count=len(expressions), habits="，".join(habits))
+
+
 def current_attention(config: LabConfig, store: Store) -> str:
     attention = store.load_attention(config.scene)
     last = None if attention is None else attention.get('last_contact_at')
@@ -198,7 +269,7 @@ def current_attention(config: LabConfig, store: Store) -> str:
         if settings is not None and settings.mode != 'context' and attention.get('declared') is not None:
             declared = Declared.load(attention['declared'])
             text += '\n持续关注：' + encode(declared.view(store.now()))
-            text += '\n本轮候选（不表示完成）：' + encode(declared.turn_matches)
+            text += '\n本轮候选：' + encode(declared.turn_matches)
     return '<当前关注>\n' + text + '\n</当前关注>'
 
 
@@ -265,4 +336,9 @@ class ChatContext:
             state = {**state, "content": state["content"] + "\n" + Template(
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
         state = {**state, 'content': state['content'] + '\n' + current_attention(self.config, self.store)}
+        heard = [plain_text(message) for message in self.store.recent_context_messages(self.config.scene, limit=50)
+                 if not message.is_self]
+        habits = recent_habits(entries, heard)
+        if habits is not None:
+            state = {**state, 'content': state['content'] + '\n' + habits}
         return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]

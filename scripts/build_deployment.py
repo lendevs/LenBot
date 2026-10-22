@@ -20,9 +20,6 @@ def build_deployments(wheel: Path, project: Path, output: Path, requirements: Pa
         with tempfile.TemporaryDirectory() as temporary:
             bundle = Path(temporary) / name
             shutil.copytree(project / 'deploy/package', bundle, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-            guide = (bundle / 'README.md').read_text(encoding='utf-8')
-            (bundle / 'README.md').write_text(guide.replace('](../current/', '](deploy/current/').replace(
-                '](../current)', '](deploy/current)'), encoding='utf-8')
             shutil.copy2(wheel, bundle / wheel.name)
             shutil.copy2(requirements, bundle / 'requirements.txt')
             shutil.copytree(project / 'deploy', bundle / 'deploy', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))

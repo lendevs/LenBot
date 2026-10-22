@@ -29,7 +29,7 @@ from .schema import create_database
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 6
+FORMAT_VERSION = 7
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -382,10 +382,12 @@ class Store:
         return {"since": since, "hours": hours, "received": received, "spoke": spoke, "turns": turns, "tokens": tokens}
 
     def recent_activity(self, scenes: Sequence[str], limit: int) -> list[dict]:
-        """Latest reply turns, finished tasks and failed sends, newest first."""
+        """Latest turns (whether they sent anything), finished tasks and failed sends, newest first."""
         placeholders = ",".join("?" for _ in scenes)
-        items = [{"kind": "turn", "scene": row[0], "at": row[1], "id": row[2], "status": row[3]} for row in self.db.execute(
-            f"SELECT scene,started,id,status FROM turns WHERE scene IN ({placeholders}) ORDER BY started DESC LIMIT ?",
+        items = [{"kind": "turn", "scene": row[0], "at": row[1], "id": row[2], "status": row[3], "spoke": bool(row[4])}
+                 for row in self.db.execute(
+            f"SELECT scene,started,id,status,first_expression_at IS NOT NULL FROM turns WHERE scene IN ({placeholders}) "
+            "ORDER BY started DESC LIMIT ?",
             (*scenes, limit))]
         items += [{"kind": "task", "scene": row[0], "at": row[1], "id": row[2], "status": row[3], "goal": row[4]}
                   for row in self.db.execute(
@@ -553,11 +555,14 @@ class Store:
 
     def enqueue(self, message: ChatMessage, raw: dict, received_at: float,
                 *, attention_state: dict | None = None,
+                wake_verdict: dict | None = None,
                 collect_stickers: bool = False, transcribe_audio: bool = False,
                 plugin_claim: tuple[str, str] | None = None) -> int:
         """Store one received platform message without adding it to the mind yet."""
         with self.db:
             seq = self._save_message(message, raw, received_at)
+            if wake_verdict is not None:
+                self.db.execute('UPDATE messages SET wake_verdict=? WHERE seq=?', (encode(wake_verdict), seq))
             if plugin_claim is not None:
                 plugin, content = plugin_claim
                 self.db.execute(
@@ -696,6 +701,7 @@ class Store:
         """Only attempted parts become chat messages; the remainder stays in the result."""
         with self.db:
             message_seq = self._save_message(expression, None, persona_id=persona_id)
+            self.db.execute('UPDATE messages SET expression_entry_seq=? WHERE seq=?', (entry_seq, message_seq))
             if sticker is not None:
                 if isinstance(sticker, CollectedSticker):
                     self._save_collected_sticker(message_seq, sticker)
@@ -748,8 +754,9 @@ class Store:
                 if (not received.is_self or received.sender.uid != expression.sender.uid
                         or echo[0] <= message_seq or received.send_status != "received"):
                     raise ValueError(f"Send receipt conflicts with an existing message: {expression.platform_message_id}")
-                self.db.execute("UPDATE messages SET body=?,persona_id=(SELECT persona_id FROM messages WHERE seq=?) WHERE seq=?",
-                                (encode(asdict(replace(received, send_status="sent"))), message_seq, echo[0]))
+                self.db.execute("UPDATE messages SET body=?,persona_id=(SELECT persona_id FROM messages WHERE seq=?),"
+                                "expression_entry_seq=(SELECT expression_entry_seq FROM messages WHERE seq=?) WHERE seq=?",
+                                (encode(asdict(replace(received, send_status="sent"))), message_seq, message_seq, echo[0]))
                 self.db.execute("UPDATE message_media SET message_seq=? WHERE message_seq=?",
                                 (echo[0], message_seq))
                 self.db.execute("UPDATE media SET source_message_seq=? WHERE source_message_seq=?",
@@ -1209,6 +1216,15 @@ class Store:
         return cursor.lastrowid
 
 
+    def start_scene_call(self, scene: str, role: str, request: dict) -> int:
+        """A host call outside any turn, such as session upkeep."""
+        with self.db:
+            cursor = self.db.execute(
+                "INSERT INTO model_calls(role,started,request,scene) VALUES (?,?,?,?)",
+                (role, self.now(), encode(request), scene),
+            )
+        return cursor.lastrowid
+
     def end_call(self, call_id: int, response: dict | None, usage: dict | None,
                  error: str | None = None, *, tokens: dict | None = None, append_to_scene: str | None = None,
                  recap_for: tuple[str, int] | None = None) -> None:
@@ -1273,6 +1289,10 @@ class Store:
                                  if name == "send_file" else "")
                 self._append(scene, {"role": "tool", "tool_call_id": call_id,
                                      "content": f"{name} 中断：{reason}。未重放此调用。{upload_notice}"})
+
+    def has_open_turn(self, scene: str) -> bool:
+        return self.db.execute("SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1",
+                               (scene,)).fetchone() is not None
 
     def recover(self, scene: str) -> bool:
         needs_resume = self.db.execute(

@@ -73,8 +73,9 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
                     keep_recent_tokens: int, summary_output_tokens: int,
                     recap: str | None, summary_template: str, window_tokens: int,
                     source_entries: list[Entry] | None = None,
-                    token_scale: float = 1.0) -> CompactionPlan:
-    boundaries = [cut for cut in complete_boundaries(entries) if cut < len(entries)]
+                    token_scale: float = 1.0, include_latest: bool = False) -> CompactionPlan:
+    """``include_latest`` may fold every entry into the recap, as a role handover does."""
+    boundaries = [cut for cut in complete_boundaries(entries) if cut < len(entries) or include_latest]
     if not boundaries:
         required = estimate_request([system] + project_history(recap, entries) + [state], tools, output_tokens)
         raise ContextBudgetError(

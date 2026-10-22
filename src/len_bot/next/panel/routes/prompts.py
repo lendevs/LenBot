@@ -9,6 +9,7 @@ from string import Template
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
+from .. import responses
 from ...configuration.types import STRICT
 from ... import prompt_files
 from ...runtime.releases import current_version
@@ -38,14 +39,14 @@ def register_host_prompts(app: FastAPI, *, root: Path, user: Callable[[Request],
         if name not in prompt_files.names():
             raise HTTPException(404, f'没有名为 {name} 的框架提示词')
 
-    @app.get('/api/host/prompts')
+    @app.get('/api/host/prompts', response_model=responses.PromptSummary, response_model_exclude_unset=True)
     async def overview(_: str = Depends(user)):
         try:
             return summary()
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
-    @app.get('/api/host/prompts/{name}')
+    @app.get('/api/host/prompts/{name}', response_model=responses.PromptDocument, response_model_exclude_unset=True)
     async def detail(name: str, _: str = Depends(user)):
         known(name)
         default = prompt_files.bundled(name)
@@ -55,7 +56,7 @@ def register_host_prompts(app: FastAPI, *, root: Path, user: Callable[[Request],
                 'edited': edited.is_file(),
                 'placeholders': sorted(Template(default).get_identifiers())}
 
-    @app.put('/api/host/prompts/{name}')
+    @app.put('/api/host/prompts/{name}', response_model=responses.PromptSummary, response_model_exclude_unset=True)
     async def save(name: str, body: PromptText, _: str = Depends(user)):
         known(name)
         try:
@@ -67,13 +68,13 @@ def register_host_prompts(app: FastAPI, *, root: Path, user: Callable[[Request],
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
-    @app.delete('/api/host/prompts/{name}')
+    @app.delete('/api/host/prompts/{name}', response_model=responses.PromptSummary, response_model_exclude_unset=True)
     async def reset(name: str, _: str = Depends(user)):
         known(name)
         prompt_files.reset(root, name)
         return summary()
 
-    @app.put('/api/host/prompt-settings')
+    @app.put('/api/host/prompt-settings', response_model=responses.PromptSummary, response_model_exclude_unset=True)
     async def settings(body: PromptSettings, _: str = Depends(user)):
         try:
             state = prompt_files.load_state(folder)
