@@ -2045,7 +2045,7 @@ def test_old_configuration_format_names_the_offline_upgrade(tmp_path, mode):
     with pytest.raises(ValueError) as failure:
         load_instance_config(root)
     message = str(failure.value)
-    assert "配置格式 2 早于当前程序使用的格式 3" in message
+    assert "配置格式 2 需要升级到 3" in message
     assert "python -m len_bot.next.maintenance.migrate_config" in message
     assert "synthetic-secret-marker" not in message
 

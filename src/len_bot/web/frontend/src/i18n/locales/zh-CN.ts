@@ -136,7 +136,7 @@ export default {
         movedInLog: '已开始重启。面板的新地址见启动日志。',
         unreachable: '还连不上：{error}',
         unavailable:
-          '尚未连接到新宿主。查看启动终端、systemd journal 或容器日志；配置已经保存。可以再次检查连接，不会重复发起重启。',
+          '配置已保存，正在等待新宿主连接。可再次检查连接，或查看启动终端、systemd journal、容器日志。',
         badReady: '宿主进程响应无效',
       },
       sections: {
@@ -754,7 +754,7 @@ export default {
       learnNow: '现在学一次',
       started: '已开始学习，结果稍后出现',
       startFailed: '没有开始学习',
-      needsRebuild: '说法索引需要重建，重建前不会按情境挑选说法。',
+      needsRebuild: '请重建说法索引，以便按情境挑选说法。',
       reindex: '重建索引',
       reindexed: '已重建 {n} 条说法的索引',
       reindexFailed: '索引没有重建',
@@ -969,7 +969,7 @@ export default {
         noModel: '目录摘要需要先在模型页设置记忆摘要模型',
       },
       adopt: {
-        notice: '这是从旧版导入的资料，Bot 还不会用到，整理成正式记忆后才会生效。',
+        notice: '这是从旧版导入的资料，整理成正式记忆后生效。',
         action: '整理成正式记忆',
         original: '原资料',
         target: '保存为',

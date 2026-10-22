@@ -33,4 +33,4 @@ def test_an_empty_fallbacks_list_is_inert_and_dropped():
 def test_backup_settings_are_rejected_by_name(source, named):
     with pytest.raises(ValidationError) as error:
         Models.model_validate(source)
-    assert named in str(error.value) and '不会自动更换模型或服务' in str(error.value)
+    assert named in str(error.value) and '已移除，请从配置中删除' in str(error.value)

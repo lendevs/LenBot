@@ -164,7 +164,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     config_path = root / 'lenbot.config.json'
     role_path = root / 'personas' / item.persona_id
     if config_path.exists():
-        raise FileExistsError('根配置已经存在；初始化不覆盖，继续使用正常管理面板')
+        raise FileExistsError('根配置已经存在，请使用管理面板')
     if role_path.exists():
         raise FileExistsError(f'角色目录已经存在，请换一个新角色目录名：{role_path}')
     installed = {p['name'] for p in plugin_choices(root) if p['installed']}

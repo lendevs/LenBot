@@ -58,11 +58,11 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
             result = await client.embed(['向量连接测试'])
         return {'model': binding.model, 'kind': kind, 'calls': 1,
                 'text': f'向量接口连接成功，返回 {result.dimensions} 维向量。', 'dimensions': result.dimensions,
-                'usage': [result.usage], 'scope': '验证一次 embeddings 请求；不修改记忆和学习索引'}
+                'usage': [result.usage], 'scope': '验证一次 embeddings 请求'}
     settings = ModelSettings.from_binding(provider, binding)
     messages = [{'role': 'user', 'content': '请回复连接成功。' if kind == 'text' else '请调用 connection_check 工具完成连接测试。不要自行假设工具结果。'}]
     tools = [] if kind == 'text' else [{'type': 'function', 'function': {
-        'name': 'connection_check', 'description': '返回本次连接测试的固定结果，不执行任何外部操作。',
+        'name': 'connection_check', 'description': '返回本次连接测试的固定结果。',
         'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False}}}]
     replies = []
     async with ChatModel(settings) as model:
@@ -79,4 +79,4 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
             raise ValueError('模型未返回完整文本；不能把工具请求或空响应当成连接成功')
     return {'model': binding.model, 'text': reply.text, 'kind': kind, 'calls': len(replies),
             'usage': [item.usage for item in replies],
-            'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接；未验证图片或长上下文'}
+            'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接'}

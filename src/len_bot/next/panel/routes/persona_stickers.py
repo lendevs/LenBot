@@ -143,12 +143,12 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
         sticker_entries(persona / 'stickers' / 'index.yaml', index)
         target = asset_target(persona, item.file)
         if target.exists():
-            raise FileExistsError(f'上传原件不覆盖已有文件：{target}')
+            raise FileExistsError(f'文件已存在，请换一个文件名：{target}')
         mime, width, height, animated = inspect_image(data)
         atomic_file(target, data, create=True)
         return {'file': item.file, 'bytes': len(data), 'mime_type': mime, 'width': width,
                 'height': height, 'animated': animated, 'registered_automatically': False,
-                'notice': '原件已存到宿主角色包；未改索引、运行表情或向平台发送。请明确编辑索引后保存。'}
+                'notice': '原件已存到角色包，请编辑并保存表情索引。'}
 
     def delete(key: str, item: StickerAssetName) -> dict:
         _, persona = selected(key, item.directory)

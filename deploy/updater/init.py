@@ -83,7 +83,7 @@ def main() -> None:
         'host_image': image, 'worker_image': prefix + '-worker:' + args.version, 'python_volume': python_volume})
     (root / 'backups').mkdir(mode=0o700)
     owned_like_parent(root / 'backups')
-    print('已创建配方和新卷，未启动。使用以下命令显式启动：')
+    print('已创建配方和新卷。启动：')
     print(f'docker compose -p {args.project} -f host.compose.yaml -f host.version.compose.yaml -f host.updater.compose.yaml up -d')
     print('后台任务另按任务挂载配方与根配置启用；更新器从根配置判断是否需要同步任务镜像。')
 

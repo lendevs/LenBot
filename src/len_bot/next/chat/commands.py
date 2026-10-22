@@ -274,7 +274,7 @@ async def _model(call: CommandCall) -> str:
     if call.arguments:
         raise CommandError("用法：/model。更换主脑服务请在面板的模型页修改")
     binding = call.runtime.config.models.roles.mind
-    return f"主脑服务：{binding.provider} / {binding.model}\n出错时不会自动更换模型或服务"
+    return f"主脑服务：{binding.provider} / {binding.model}"
 
 
 async def _limit(call: CommandCall) -> str:

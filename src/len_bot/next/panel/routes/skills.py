@@ -134,7 +134,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 skills = await asyncio.to_thread(load_task_skills, task_workspace(scene, id))
                 unchanged_task(item)
                 return {'task_id': id, 'scene': scene, 'items': [skill_info(skill) for skill in skills],
-                        'notice': '来自该任务实际 skills 目录；不是已采用或已执行记录。采用将移动原目录。'}
+                        'notice': '来自该任务的 skills 目录，采用时将移动原目录。'}
             except (ValueError, OSError) as error:
                 raise _failure(error) from error
 

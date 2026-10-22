@@ -257,10 +257,9 @@ class MemoryService:
                     await self.backend.delete(scene, source, reason)
                 except Exception as error:
                     raise RuntimeError(f'正式文件{target!r}已保存，但待确认原件{source!r}删除失败：'
-                                       f'{type(error).__name__}: {error}。请核对两边，不自动重试。') from error
+                                       f'{type(error).__name__}: {error}。请检查原件并手动清理。') from error
             return {'source': source, 'target': target, 'target_saved': True, 'source_removed': remove_source,
-                    'change': asdict(change), 'notice': '仅本场景正式正文采用；源普通删除仍留历史，不是完整遗忘。'
-                    '原聊天、抽取位置/排除与角色样例未改，无公共提升。'}
+                    'change': asdict(change), 'notice': '已保存为本群正式记忆，文件变更可在历史中查看。'}
 
     async def history(self, scene: str, path: str) -> list[dict]:
         return [asdict(change) for change in await self.backend.history(scene, path)]

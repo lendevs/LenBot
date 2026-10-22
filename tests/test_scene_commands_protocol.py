@@ -330,8 +330,7 @@ async def test_reset_refuses_while_a_turn_is_unfinished(tmp_path):
 async def test_model_shows_the_primary_binding_only(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
         owner = {'user': OWNER, 'role': 'member'}
-        assert (await ask(peer, '/model', **owner)).splitlines() == [
-            '主脑服务：fixture / synthetic-unused', '出错时不会自动更换模型或服务']
+        assert await ask(peer, '/model', **owner) == '主脑服务：fixture / synthetic-unused'
         assert await ask(peer, '/model use 2', **owner) == '用法：/model。更换主脑服务请在面板的模型页修改'
 
 

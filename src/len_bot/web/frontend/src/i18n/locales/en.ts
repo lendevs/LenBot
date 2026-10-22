@@ -147,7 +147,7 @@ export default {
         movedInLog: 'Restart started. The startup log shows the new panel address.',
         unreachable: 'Still unreachable: {error}',
         unavailable:
-          'The new host is not answering yet. Check the startup terminal, the systemd journal or the container log; the settings are saved. You can check again, which does not restart a second time.',
+          'Settings saved. Waiting for the new host to connect. Check the connection again, or view the startup terminal, systemd journal or container log.',
         badReady: 'Invalid host process answer',
       },
       sections: {
@@ -781,7 +781,7 @@ export default {
       learnNow: 'Learn now',
       started: 'Learning started; results appear shortly',
       startFailed: 'Learning not started',
-      needsRebuild: 'The phrasing index needs a rebuild; phrasing is not picked by situation until then.',
+      needsRebuild: 'Rebuild the phrasing index to pick phrasing by situation.',
       reindex: 'Rebuild index',
       reindexed: 'Index rebuilt for {n} phrasings',
       reindexFailed: 'Index not rebuilt',
@@ -1002,8 +1002,7 @@ export default {
         noModel: 'Directory summaries need a memory summary model on the models page first',
       },
       adopt: {
-        notice:
-          'This material was imported from the old version. The bot does not use it until it becomes a real memory.',
+        notice: 'This material was imported from the old version. File it as a memory for the bot to use it.',
         action: 'Turn into memory',
         original: 'Original material',
         target: 'Save as',

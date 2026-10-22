@@ -77,8 +77,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
                 result = await finish_file_operation(list_materials, material_directory(worker.workspace_root, scene))
                 user(request)
                 return {**result, 'scene': scene,
-                        'notice': '当前运行配置的本场景普通共享文件；不是共享技能或公共资料。'
-                                  '当前只保全/下载，未自动挂入任务、读取内容或上传平台。'}
+                        'notice': '本群共享文件，可下载或供任务使用。'}
             except (ValueError, OSError) as error:
                 raise failure(error) from error
 
@@ -102,7 +101,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
             except (ValueError, OSError, RuntimeError) as error:
                 raise failure(error) from error
             user(request)
-            return {**result, 'scene': scene, 'notice': '共享原件已复制，源交付副本保留；未挂入任务或上传平台。'}
+            return {**result, 'scene': scene, 'notice': '文件已复制到本群共享目录。'}
 
     @app.get('/api/host/materials/file')
     async def download(scene: str, name: Annotated[MaterialName, Query()], _: str = Depends(user)):

@@ -142,4 +142,4 @@ def import_package(root: Path, name: str, data: bytes) -> dict:
             'persona': {'id': persona.id, 'name': persona.name, 'brief': persona.brief},
             'files': len(files), 'examples': len(persona.examples), 'knowledge': len(persona.knowledge),
             'stickers': len(persona.stickers), 'bound': False,
-            'notice': '仅创建独立角色包；未修改场景绑定、根配置或运行人格。请核对后在场景配置中明确采用。'}
+            'notice': '角色包已创建，可在群设置中选用。'}

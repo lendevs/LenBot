@@ -389,7 +389,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             target = knowledge_target(path, change.filename)
             if action == 'create':
                 if target.exists():
-                    raise FileExistsError(f'角色资料新建不覆盖已有文件：{target}')
+                    raise FileExistsError(f'角色资料已存在，请换一个文件名：{target}')
             elif change.filename not in candidate.knowledge:
                 raise FileNotFoundError(f'角色包没有此知识文件：{target}')
             documents = dict(candidate.knowledge)

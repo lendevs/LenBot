@@ -190,7 +190,7 @@ def main() -> None:
     if args.action != 'prepare':
         write_json(root / 'current.json', metadata)
         entrypoints(root, metadata['platform'], uv)
-    print(f'已准备 {metadata["version"]}，未启动宿主。实例：{root / "instance"}')
+    print(f'已准备 {metadata["version"]}。实例：{root / "instance"}')
     print(f'启动：{root / ("run.cmd" if sys.platform == "win32" else "run")}')
 
 

@@ -76,16 +76,15 @@ def parse_arguments(argv: list[str] | None, *, container: bool = False) -> None:
         current = 'unknown'
     parser = argparse.ArgumentParser(
         prog='lenbot-container' if container else 'len-bot',
-        description='启动 LenBot 宿主。当前目录就是实例根目录：读取其中的 lenbot.config.json；'
-                    '还没有配置时，在当前目录开始首次配置向导。所有设置都写在根配置里，没有其他命令行参数。')
+        description='启动 LenBot。当前目录为实例根目录，设置保存在 lenbot.config.json；'
+                    '首次启动时打开配置向导。')
     parser.add_argument('--version', action='version', version=f'LenBot {current}')
     parser.parse_args(argv)
 
 
 def announce_root(root: Path) -> None:
     if not (root / 'lenbot.config.json').exists():
-        print(f'LenBot：实例根目录是 {root}，这里还没有 lenbot.config.json，将在此目录开始首次配置。'
-              '如果目录不对，请按 Ctrl+C 停止，换到实例目录后再启动。', flush=True)
+        print(f'LenBot：首次配置，实例目录：{root}', flush=True)
 
 
 def main(argv: list[str] | None = None) -> None:

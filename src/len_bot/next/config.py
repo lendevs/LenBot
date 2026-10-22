@@ -424,7 +424,7 @@ def _check_format(path: Path, source: dict) -> None:
     if type(version) is not int:
         raise ValueError(f"{path}: config_version must be an integer, got {version!r}")
     if version < CONFIG_VERSION:
-        raise ValueError(f"{path}: 配置格式 {version} 早于当前程序使用的格式 {CONFIG_VERSION}，启动时不会自动改写。"
+        raise ValueError(f"{path}: 配置格式 {version} 需要升级到 {CONFIG_VERSION}。"
                          + UPGRADE_HINT)
     raise ValueError(f"{path}: 配置格式 {version} 由更新的 LenBot 写入，当前程序只能读取格式 {CONFIG_VERSION}；"
                      "请换回写入它的版本，或恢复升级前的快照")

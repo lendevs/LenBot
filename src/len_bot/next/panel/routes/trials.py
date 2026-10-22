@@ -162,7 +162,7 @@ class HostTrials:
 
     def get(self, trial_id: str) -> Trial:
         if trial_id not in self.records:
-            raise HTTPException(404, '本次宿主启动中没有这个试聊；不会自动恢复旧试聊')
+            raise HTTPException(404, '本次运行中找不到此试聊，请新建试聊')
         return self.records[trial_id]
 
     async def start(self, scene: str, context_messages: int = 0,
@@ -173,7 +173,7 @@ class HostTrials:
             if scene not in self.config.scenes:
                 raise HTTPException(404, '未配置此场景')
             if any(trial.stopped is None for trial in self.records.values()):
-                raise HTTPException(409, '已有活动试聊，请先停止；切换页面不会自动停止或重开')
+                raise HTTPException(409, '已有活动试聊，请先停止再新建')
             if persona_draft is None:
                 persona = self.runtime.chats[scene].persona.model_copy(deep=True)
             else:

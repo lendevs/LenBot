@@ -42,7 +42,7 @@ def index_maintenance(config: HostConfig) -> list[dict]:
                          changed(stored, binding) if stored is not None else
                          db.execute('SELECT 1 FROM memory_files LIMIT 1').fetchone() is not None)
             if needs:
-                notes.append({'component': '记忆向量', 'message': '记忆索引与保存的向量配置不同，普通重启不会重建索引。',
+                notes.append({'component': '记忆向量', 'message': '记忆索引与保存的向量配置不同，需要停机重建。',
                               'command': 'python -m len_bot.next.maintenance.memory_reindex'})
     if config.database.is_file():
         with closing(connect(config.database, readonly=True)) as db:

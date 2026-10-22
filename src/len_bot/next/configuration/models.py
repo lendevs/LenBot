@@ -119,8 +119,7 @@ class Models(BaseModel):
                 cleaned[role] = binding
             data = {**data, "roles": cleaned}
         if removed:
-            raise ValueError(f"{'、'.join(removed)} 已移除：LenBot 出错时不会自动更换模型或服务，"
-                             "这些备用模型设置不会生效，请从配置中删除")
+            raise ValueError(f"{'、'.join(removed)} 已移除，请从配置中删除")
         return data
 
     @model_validator(mode="after")
