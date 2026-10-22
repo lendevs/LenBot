@@ -77,7 +77,8 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
     session_id = None
     if binding.history_policy == "omit-reasoning":
-        session_id = sha256(f"{config.database.resolve()}:{scene}:{role}".encode()).hexdigest()
+        # Upkeep continues the mind session, so it shares the mind's cache affinity.
+        session_id = sha256(f"{config.database.resolve()}:{scene}:{'mind' if role == 'upkeep' else role}".encode()).hexdigest()
     if input_estimate is None:
         estimated, method = request_estimate(config, store, model, scene=scene, role=role,
                                              messages=messages, tools=tools, output_tokens=tokens)
@@ -101,8 +102,9 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                       else {"estimated_total_tokens": estimated}),
                    "context_window_tokens": binding.context_window_tokens,
                    "history_policy": binding.history_policy, "session_id": session_id}
-        call_id = (store.start_call(turn_id, role, request) if plugin is None
-                   else PluginStore(store).start_plugin_call(scene, plugin, role, request))
+        call_id = (PluginStore(store).start_plugin_call(scene, plugin, role, request) if plugin is not None
+                   else store.start_scene_call(scene, role, request) if turn_id is None
+                   else store.start_call(turn_id, role, request))
         started = time.monotonic()
         if trace is not None:
             trace({'kind': 'model', 'phase': 'start', 'call_id': call_id, 'role': role})

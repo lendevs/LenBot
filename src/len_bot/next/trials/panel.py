@@ -27,7 +27,7 @@ from ..instance_lock import instance_lock
 from ..prompt_files import activate as activate_prompts
 from ..models.client import ChatModel
 from ..memory.service import MemoryService, open_memory
-from ..memory.ingest import MemoryIngestor, open_memory_ingestor
+from ..chat.upkeep import SessionUpkeep, open_session_upkeep, runner_fork
 from ..panel import responses
 from ..panel.auth import changes_socket, install_panel_auth
 from ..panel.routes.timeline import TurnDetail, read_turn
@@ -69,7 +69,7 @@ def stored_image(store: Store, scene: str, seq: int, image_index: int) -> Respon
 class PanelSession:
     def __init__(self, config: LabConfig, store: Store, mind: ChatModel,
                  *, vision: ChatModel | None = None, memory: MemoryService | None = None,
-                 ingestor: MemoryIngestor | None = None, persona: Persona | None = None,
+                 upkeep: SessionUpkeep | None = None, persona: Persona | None = None,
                  slots: ModelSlots | None = None):
         self.config, self.store = config, store
         if slots is None:
@@ -79,10 +79,19 @@ class PanelSession:
         self.closing = False
         self.chat = Chat(config, load_persona(config.persona) if persona is None else persona, store, mind, vision=vision,
                          memory=memory, slots=slots, on_update=self.notify,
-                         on_compaction=None if ingestor is None else lambda: ingestor.request(config.scene))
-        self.runner = SceneRunner(self.chat, lambda _: self.notify())
+                         on_compaction=None if upkeep is None else lambda: upkeep.compacted(config.scene))
+        self.runner = SceneRunner(self.chat, lambda _: self.turn_done())
+        self.upkeep = upkeep
+        if upkeep is not None:
+            upkeep.fork = runner_fork(self.runner, store)
+            upkeep.start()
         self.task = asyncio.create_task(self.runner.run())
         self.task.add_done_callback(lambda _: self.notify())
+
+    def turn_done(self) -> None:
+        if self.upkeep is not None:
+            self.upkeep.wake(self.config.scene)
+        self.notify()
 
     def notify(self) -> None:
         for changed in self.listeners:
@@ -162,10 +171,10 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                 (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
                  else nullcontext(None)) as vision,
                 open_memory(config, store, active_personas={config.scene: persona.id}, slots=slots) as memory,
-                open_memory_ingestor(config, store, memory, [config.scene], slots=slots) as ingestor,
+                open_session_upkeep(config, store, mind, memory=memory, slots=slots) as upkeep,
             ):
                 budget.memory = memory
-                session = PanelSession(config, store, mind, vision=vision, memory=memory, ingestor=ingestor, slots=slots,
+                session = PanelSession(config, store, mind, vision=vision, memory=memory, upkeep=upkeep, slots=slots,
                                        persona=persona)
                 app.state.session = session
                 try:

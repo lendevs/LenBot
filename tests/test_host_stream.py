@@ -14,16 +14,13 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 from len_bot.next.config import load_host_config
 from len_bot.next.models.client import ChatModel
 from len_bot.next.memory.service import open_memory
-from len_bot.next.memory.ingest import open_memory_ingestor
+from len_bot.next.chat.upkeep import open_session_upkeep, upkeep_parts
 from len_bot.next.panel.app import create_app
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.runtime.network import NetworkRuntime
 from len_bot.next.storage.store import Store
 from len_bot.next.models.slots import ModelSlots
-from len_bot.next.learning.expressions import ExpressionLearner
-from len_bot.next.learning.jargon import JargonLearner
 from len_bot.next.learning.sticker_collection import StickerCollector
-from len_bot.next.learning.reply_effects import ReplyEffectTracker
 from test_next_panel_acts_as_owner import SCENE, write_instance
 
 
@@ -36,16 +33,12 @@ async def panel(root, configure=None):
     with Store(config.database) as store:
         slots = ModelSlots(config.max_model_requests)
         async with (ChatModel(config.model_settings('mind')) as model,
-                    (ChatModel(config.model_settings('learner')) if config.models.roles.learner is not None else nullcontext(None)) as learner,
                     (ChatModel(config.model_settings('vision')) if config.models.roles.vision is not None else nullcontext(None)) as vision,
                     open_memory(config, store) as memory,
-                    open_memory_ingestor(config, store, memory, list(config.scenes)) as ingestor):
+                    open_session_upkeep(config, store, model, memory=memory, slots=slots) as upkeep):
             runtime = NetworkRuntime(config, [(config.scene_config(scene), load_persona(settings.persona))
                                               for scene, settings in config.scenes.items()],
-                                     store, model, memory=memory, ingestor=ingestor, slots=slots, vision=vision,
-                                     learning=None if learner is None else ExpressionLearner(config, store, learner, slots=slots),
-                                     jargon=None if learner is None else JargonLearner(config, store, learner, slots=slots),
-                                     reply_effects=None if learner is None else ReplyEffectTracker(config, store, learner, slots=slots),
+                                     store, model, memory=memory, slots=slots, vision=vision, **upkeep_parts(upkeep),
                                      sticker_collection=None if vision is None else StickerCollector(config, store, vision, slots=slots,
                                          recording=lambda scene: runtime.chats[scene].toolset.replay_images))
             app = create_app(config, runtime, root=root)

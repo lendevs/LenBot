@@ -42,8 +42,6 @@ class LiveSettings:
                 setattr(running.memory, name, getattr(saved.memory, name))
             if running.memory.ingest is not None and saved.memory.ingest is not None:
                 running.memory.ingest = deepcopy(saved.memory.ingest)
-                if runtime.ingestor is not None:
-                    runtime.ingestor.settings = running.memory.ingest
         for scene, current in running.scenes.items():
             if scene not in saved.scenes:
                 continue

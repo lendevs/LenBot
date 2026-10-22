@@ -19,7 +19,7 @@ from ..models.client import ChatModel
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
 from ..memory.service import open_memory
-from ..memory.ingest import open_memory_ingestor
+from ..chat.upkeep import open_session_upkeep, runner_fork
 from ..learning.expression_selection import open_expression_service
 from ..runtime.network import run_network
 from ..persona.profile import load_persona
@@ -48,18 +48,25 @@ async def run() -> None:
              else nullcontext(None)) as vision,
             open_expression_service(config, store, slots=slots) as expression_service,
             open_memory(config, store, active_personas={config.scene: persona.id}, slots=slots) as memory,
-            open_memory_ingestor(config, store, memory, [config.scene], slots=slots) as ingestor,
+            open_session_upkeep(config, store, mind, memory=memory, expression_service=expression_service,
+                                slots=slots) as upkeep,
         ):
             budget.memory = memory
             if config.onebot is not None:
                 await run_network(config, [(config, persona)], store, mind,
-                                  vision=vision, memory=memory, ingestor=ingestor, slots=slots, budget=budget,
+                                  vision=vision, memory=memory, upkeep=upkeep, slots=slots, budget=budget,
                                   expression_service=expression_service)
                 return
             chat = Chat(config, persona, store, mind, vision=vision, memory=memory, now=now, slots=slots,
                         expression_service=expression_service,
-                        on_compaction=None if ingestor is None else lambda: ingestor.request(config.scene))
-            runner = SceneRunner(chat, lambda result: print(encode({"type": "turn", **result}), flush=True))
+                        on_compaction=lambda: upkeep.compacted(config.scene))
+
+            def turn(result: dict) -> None:
+                print(encode({"type": "turn", **result}), flush=True)
+                upkeep.wake(config.scene)
+            runner = SceneRunner(chat, turn)
+            upkeep.fork = runner_fork(runner, store)
+            upkeep.start()
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(runner.run())
                 async for line in input_lines():

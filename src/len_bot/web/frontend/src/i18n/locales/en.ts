@@ -542,7 +542,7 @@ export default {
         voice: 'Legacy voice',
         recap: 'Recap',
         vision: 'Vision',
-        learner: 'Learning',
+        learner: 'Plugin generation',
         worker: 'Background task',
         asr: 'Transcription',
         plugin: 'Plugin {name}',
@@ -551,6 +551,7 @@ export default {
         sticker: 'Sticker collecting',
         reply_effects: 'Reply effects',
         expression_embedding: 'Phrase embeddings',
+        upkeep: 'Memory and learning upkeep',
         memory: 'Memory filing',
         memory_summary: 'Memory summary',
         memory_embedding: 'Memory embeddings',
@@ -841,8 +842,6 @@ export default {
       settings: {
         title: 'Learning settings',
         enabled: 'Turn on learning',
-        noLearner: 'No model is assigned to learning yet.',
-        toModels: 'Set it on the models page',
         extract: 'Learn phrasing',
         jargon_extract: 'Learn slang',
         collect_stickers: 'Collect stickers from the group',
@@ -1000,7 +999,7 @@ export default {
         listFailed: 'Model list not loaded',
         probe: 'Test embedding endpoint',
         probeFailed: 'Embedding test failed',
-        noModel: 'Background filing and summaries need a memory filing model on the models page first',
+        noModel: 'Directory summaries need a memory summary model on the models page first',
       },
       adopt: {
         notice:
@@ -1596,8 +1595,8 @@ export default {
       names: {
         mind: 'Chat',
         vision: 'Vision',
-        memory: 'Memory filing',
-        learner: 'Learning',
+        memory: 'Memory summaries',
+        learner: 'Plugin generation',
         worker: 'Background task',
         asr: 'Transcription',
       },

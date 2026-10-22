@@ -1216,6 +1216,15 @@ class Store:
         return cursor.lastrowid
 
 
+    def start_scene_call(self, scene: str, role: str, request: dict) -> int:
+        """A host call outside any turn, such as session upkeep."""
+        with self.db:
+            cursor = self.db.execute(
+                "INSERT INTO model_calls(role,started,request,scene) VALUES (?,?,?,?)",
+                (role, self.now(), encode(request), scene),
+            )
+        return cursor.lastrowid
+
     def end_call(self, call_id: int, response: dict | None, usage: dict | None,
                  error: str | None = None, *, tokens: dict | None = None, append_to_scene: str | None = None,
                  recap_for: tuple[str, int] | None = None) -> None:
@@ -1280,6 +1289,10 @@ class Store:
                                  if name == "send_file" else "")
                 self._append(scene, {"role": "tool", "tool_call_id": call_id,
                                      "content": f"{name} 中断：{reason}。未重放此调用。{upload_notice}"})
+
+    def has_open_turn(self, scene: str) -> bool:
+        return self.db.execute("SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1",
+                               (scene,)).fetchone() is not None
 
     def recover(self, scene: str) -> bool:
         needs_resume = self.db.execute(

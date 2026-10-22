@@ -139,7 +139,7 @@ const errors = computed<Record<string, string>>(() => {
 })
 const problem = computed(() => {
   if (Object.values(errors.value)[0]) return Object.values(errors.value)[0]
-  if (draft.value && (draft.value.ingest || draft.value.summaries) && noMemoryModel.value)
+  if (draft.value?.summaries && noMemoryModel.value)
     return t('groups.memory.settings.noModel')
   return null
 })

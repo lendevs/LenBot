@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { learningApi, type LearningSettings } from '../../../api/learning'
 import { keys } from '../../../api/query'
-import { settingsApi } from '../../../api/settings'
 import { readPendingRestart } from '../../../api/hostStore'
 import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
@@ -25,15 +24,6 @@ const client = useQueryClient()
 const config = useQuery({
   queryKey: computed(() => keys.scene.learning(props.scene, 'config')),
   queryFn: ({ signal }) => learningApi.config(props.scene, signal),
-})
-// Learning needs a model bound to the learner role.
-const settings = useQuery({
-  queryKey: keys.host.settings(),
-  queryFn: ({ signal }) => settingsApi.read(signal),
-})
-const noLearner = computed(() => {
-  const roles = (settings.data.value?.saved.models as { roles?: Record<string, unknown> } | undefined)?.roles
-  return Boolean(roles) && !roles!.learner
 })
 
 const draft = ref<LearningSettings | null>(null)
@@ -119,15 +109,6 @@ async function close() {
       <Field :label="t('groups.learning.settings.enabled')" inline>
         <Switch v-model="enabled" />
       </Field>
-      <p
-        v-if="draft && (draft.extract || draft.jargon_extract) && noLearner"
-        class="flex flex-wrap items-center gap-x-2 rounded-lg bg-warning-bg px-3 py-2.5 text-sm text-warning"
-      >
-        {{ t('groups.learning.settings.noLearner') }}
-        <RouterLink :to="{ name: 'host-models', query: { tab: 'roles' } }" class="font-medium underline">
-          {{ t('groups.learning.settings.toModels') }}
-        </RouterLink>
-      </p>
       <template v-if="draft">
         <Field v-for="key in switches" :key="key" :label="t(`groups.learning.settings.${key}`)" inline>
           <Switch v-model="draft[key]" />

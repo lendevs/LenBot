@@ -188,9 +188,10 @@ class SharedConfig(BaseModel):
             )
         return self
 
-    def binding(self, role: Literal["mind", "recap", "vision", "memory", "worker", "learner"]) -> Binding:
-        """A role's binding; vision, memory, worker and learner without their own use the mind binding."""
-        binding = None if role == "recap" else getattr(self.models.roles, role)
+    def binding(self, role: Literal["mind", "recap", "upkeep", "vision", "memory", "worker", "learner"]) -> Binding:
+        """A role's binding; recap and upkeep continue the mind session, and vision, memory, worker and
+        learner without their own use the mind binding."""
+        binding = None if role in {"recap", "upkeep"} else getattr(self.models.roles, role)
         return self.models.roles.mind if binding is None else binding
 
     def model_settings(self, role: Literal["mind", "vision", "memory", "worker", "learner"]) -> ModelSettings:

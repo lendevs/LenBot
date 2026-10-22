@@ -23,7 +23,7 @@ async def test_settings_apply_to_wake_learning_permissions_and_preserve_cold_bin
         fields = dict(line.lower().split(':', 1) for line in header.split('\r\n')[1:] if ':' in line)
         request = json.loads(await reader.readexactly(int(fields['content-length'])))
         requests.append(request)
-        if request['model'] == 'synthetic-learner':
+        if '<整理>' in str(request['messages'][-1]['content']):
             body = json.dumps({'choices': [{'message': {'role': 'assistant', 'content': '{"expressions": []}'},
                                            'finish_reason': 'stop'}],
                                'usage': {'prompt_tokens': 100, 'completion_tokens': 20}}).encode()
@@ -52,7 +52,6 @@ async def test_settings_apply_to_wake_learning_permissions_and_preserve_cold_bin
             source['delivery'] = 'onebot'
             source['models']['providers']['local']['base_url'] = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
             source['models']['roles']['mind']['context_window_tokens'] = 64000
-            source['models']['roles']['learner'] = {**source['models']['roles']['mind'], 'model': 'synthetic-learner'}
             source['compaction']['input_tokens'] = 30000
             source['scenes'][SCENE]['attention'] = {'only_direct': True, 'keywords': ['合成角色'],
                                                     'activity': 0, 'direct_idle_seconds': 0, 'named_idle_seconds': 0}
@@ -120,7 +119,10 @@ async def test_settings_apply_to_wake_learning_permissions_and_preserve_cold_bin
                         while (latest := runtime.learning.state(SCENE)['latest']) is None or latest['status'] == 'running':
                             await asyncio.sleep(.01)
                     assert latest['status'] == 'complete'
-                    assert requests[-1]['model'] == 'synthetic-learner'
+                    # The upkeep request continues the chat request: same tools, an instruction appended.
+                    assert requests[-1]['tools'] == requests[-2]['tools']
+                    chat = requests[-2]['messages'][:-1]
+                    assert requests[-1]['messages'][:len(chat)] == chat
                     disabled = await client.put(learning_url, json={'learning': None})
                     assert disabled.status_code == 200 and not disabled.json()['restart_required']
                     assert SCENE not in runtime.learning.scenes

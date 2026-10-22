@@ -31,11 +31,8 @@ from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
 from .retention import Retention
 from ..memory.service import MemoryService
-from ..memory.ingest import MemoryIngestor
-from ..learning.expressions import ExpressionLearner
-from ..learning.jargon import JargonLearner
+from ..chat.upkeep import SessionUpkeep, UpkeepPart, runner_fork, upkeep_parts
 from ..learning.sticker_collection import StickerCollector
-from ..learning.reply_effects import ReplyEffectTracker
 from ..learning.expression_selection import ExpressionService
 from ..platform.adapter import PlatformCallError, open_platform
 from ..persona.profile import Persona
@@ -57,12 +54,12 @@ class NetworkRuntime:
                  vision: ChatModel | None = None, slots: ModelSlots | None = None,
                  memory: MemoryService | None = None,
                  budget: ModelBudget | None = None,
-                 ingestor: MemoryIngestor | None = None,
+                 ingestor: UpkeepPart | None = None,
                  tasks: WorkTasks | None = None,
-                 learning: ExpressionLearner | None = None,
-                 jargon: JargonLearner | None = None,
+                 learning: UpkeepPart | None = None,
+                 jargon: UpkeepPart | None = None,
                  sticker_collection: StickerCollector | None = None,
-                 reply_effects: ReplyEffectTracker | None = None,
+                 reply_effects: UpkeepPart | None = None,
                  expression_service: ExpressionService | None = None,
                  plugins: PluginHost | None = None,
                  mcp: MCPHost | None = None,
@@ -93,6 +90,10 @@ class NetworkRuntime:
             reply_effects.connected_since = lambda: self.connected_since
         if jargon is not None:
             jargon.on_update = self.notify
+        self.upkeep = next((part.upkeep for part in (ingestor, learning, jargon, reply_effects)
+                            if isinstance(part, UpkeepPart)), None)
+        if self.upkeep is not None:
+            self.upkeep.fork = self.upkeep_fork
         self.expression_service = expression_service
         if expression_service is not None:
             expression_service.on_update = self.notify
@@ -218,20 +219,13 @@ class NetworkRuntime:
         self.notify()
 
     def compacted(self, scene: str) -> None:
-        if self.ingestor is not None:
-            self.ingestor.request(scene)
-        if self.learning is not None and scene in self.learning.scenes:
-            state = self.learning.state(scene)
-            latest = state["latest"]
-            if (state["running"] and state["worker_error"] is None
-                    and (latest is None or latest["status"] == "complete")):
-                self.learning.request(scene)
-        if self.jargon is not None and scene in self.jargon.scenes:
-            state = self.jargon.state(scene)
-            latest = state["latest"]
-            if (state["running"] and state["worker_error"] is None
-                    and (latest is None or latest["status"] == "complete")):
-                self.jargon.request(scene)
+        if self.upkeep is not None:
+            self.upkeep.compacted(scene)
+
+    async def upkeep_fork(self, scene: str) -> tuple[list[dict], list[dict]] | None:
+        """The scene's chat request without turn state, taken only while no turn is open."""
+        runner = self.runners.get(scene)
+        return None if runner is None else await runner_fork(runner, self.store)(scene)
 
     def notify(self) -> None:
         self.events.publish("host.changed")
@@ -261,6 +255,9 @@ class NetworkRuntime:
         failed = error if error is not None else result.get('error')
         log_event(logger, result['type'], level=logging.ERROR if failed else logging.INFO, error=failed, **fields)
         self.events.publish(result['type'], **fields, error=None if failed is None else str(failed))
+        if result['type'] == 'turn' and self.upkeep is not None:
+            # Upkeep skips a scene while it is in a turn; the turn's end lets it look again.
+            self.upkeep.wake(result['scene'])
         self.notify()
 
     def _platform_error(self, error: str) -> None:
@@ -465,15 +462,11 @@ class NetworkRuntime:
                     if self.tasks is not None:
                         await self.tasks.start()
                         pending.append(group.create_task(self.tasks.wait_failure()))
-                    if self.learning is not None:
-                        self.learning.start()
+                    if self.upkeep is not None:
+                        self.upkeep.start()
                     self.audio.start()
-                    if self.jargon is not None:
-                        self.jargon.start()
                     if self.sticker_collection is not None:
                         self.sticker_collection.start()
-                    if self.reply_effects is not None:
-                        self.reply_effects.start()
                     if self.plugins is not None:
                         await self.plugins.start()
                     self.refresh_external_tools()
@@ -499,14 +492,10 @@ class NetworkRuntime:
                     if self.plugins is not None:
                         await self.plugins.close()
                     await self.audio.close()
-                    if self.reply_effects is not None:
-                        await self.reply_effects.close()
                     if self.sticker_collection is not None:
                         await self.sticker_collection.close()
-                    if self.jargon is not None:
-                        await self.jargon.close()
-                    if self.learning is not None:
-                        await self.learning.close()
+                    if self.upkeep is not None:
+                        await self.upkeep.close()
                     if self.tasks is not None:
                         await self.tasks.close()
                     for runner in self.runners.values():
@@ -526,29 +515,21 @@ class NetworkRuntime:
                         await self.tasks.close()
                 finally:
                     try:
-                        if self.learning is not None:
-                            await self.learning.close()
+                        if self.upkeep is not None:
+                            await self.upkeep.close()
                     finally:
                         try:
-                            if self.jargon is not None:
-                                await self.jargon.close()
+                            if self.sticker_collection is not None:
+                                await self.sticker_collection.close()
                         finally:
                             try:
-                                if self.sticker_collection is not None:
-                                    await self.sticker_collection.close()
+                                if self.mcp is not None:
+                                    await self.mcp.close()
                             finally:
                                 try:
-                                    if self.reply_effects is not None:
-                                        await self.reply_effects.close()
+                                    await self.audio.close()
                                 finally:
-                                    try:
-                                        if self.mcp is not None:
-                                            await self.mcp.close()
-                                    finally:
-                                        try:
-                                            await self.audio.close()
-                                        finally:
-                                            await self.platform.close()
+                                    await self.platform.close()
                     self._status("stopped")
                     self._emit({"type": "runtime", "status": "stopped"})
             finally:
@@ -561,8 +542,9 @@ class NetworkRuntime:
 async def run_network(config: SharedConfig, scene_configs: list[tuple[LabConfig, Persona]],
                       store: Store, mind: ChatModel, *,
                       vision: ChatModel | None = None, slots: ModelSlots | None = None,
-                      memory: MemoryService | None = None, ingestor: MemoryIngestor | None = None,
+                      memory: MemoryService | None = None, upkeep: SessionUpkeep | None = None,
                       expression_service: ExpressionService | None = None, budget: ModelBudget | None = None) -> None:
-    runtime = NetworkRuntime(config, scene_configs, store, mind, vision=vision, slots=slots,
-                             memory=memory, ingestor=ingestor, expression_service=expression_service, budget=budget)
+    runtime = NetworkRuntime(config, scene_configs, store, mind, vision=vision, slots=slots, memory=memory,
+                             **({} if upkeep is None else upkeep_parts(upkeep)),
+                             expression_service=expression_service, budget=budget)
     await runtime.run()

@@ -199,6 +199,14 @@ class Chat:
             input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick,
             trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
 
+    async def upkeep_fork(self) -> tuple[list[dict], list[dict]]:
+        """The chat request's system, tools and history without the turn state; caller owns the scene lock."""
+        recap, entries = await self.store.read(self.store.active_history, self.config.scene)
+        self.toolset.discovered_tools = set(await self.store.call(self.store.load_discovered_tools, self.config.scene))
+        state = await self.store.call(turn_state, self.config, self.store, now=self.now())
+        messages = await self.context.project(recap, entries, state)
+        return messages[:-1], self.toolset.tools
+
     async def compact_now(self) -> dict:
         """One explicit operator-requested compaction; caller owns the scene lock."""
         turn_id = self.store.start_turn(self.config.scene)
