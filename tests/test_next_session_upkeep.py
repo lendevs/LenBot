@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 import json
 
@@ -172,3 +173,27 @@ def test_results_must_cite_member_messages_of_the_pass():
     assert effect_results([{'entry_seq': 5, 'reaction': 'agree', 'reason': '接话了'}], {5}) == {5: ('agree', '接话了')}
     with pytest.raises(ValueError, match='missing reply effect'):
         effect_results([], {5})
+
+
+@pytest.mark.parametrize('ingest', [True, False])
+def test_memory_stays_loaded_while_upkeep_writes_with_it(tmp_path, ingest):
+    write_instance(tmp_path, ['onebot:70001'])
+    path = tmp_path / 'lenbot.config.json'
+    source = json.loads(path.read_text())
+    source['memory'] = {'backend': 'local', 'local': {'directory': 'memory'}, **({'ingest': {}} if ingest else {})}
+    path.write_text(json.dumps(source, ensure_ascii=False))
+    persona = tmp_path / 'persona/persona.yaml'
+    persona.write_text(persona.read_text().replace(
+        'tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [tool_search, say, memory]'))
+    config = load_host_config(tmp_path)
+
+    async def tools():
+        with Store(config.database) as store:
+            async with (ChatModel(config.model_settings('mind')) as mind,
+                        open_memory(config, store, active_personas={SCENE: 'synthetic-owner'}) as memory):
+                chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, mind,
+                            memory=memory)
+                return {tool['function']['name'] for tool in chat.toolset.tools}, chat.context.system
+    names, system = asyncio.run(tools())
+    assert ('memory' in names) is ingest
+    assert ('长期记忆用 memory 工具读写' in system) is ingest

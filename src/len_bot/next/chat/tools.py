@@ -14,7 +14,7 @@ from len_bot.media.images import image_block
 
 from ..media.audio import TRANSCRIBE_TOOL, AudioService, TranscribeArguments
 from ..config import LabConfig
-from ..tools.discovery import DISCOVERY_REQUIRED_NAMES, DEFERRED_NAMES, TOOL_SEARCH, ToolSearchArguments, discovery_view, model_schema, search_tools
+from ..tools.discovery import DISCOVERY_REQUIRED_NAMES, TOOL_SEARCH, deferred_names, ToolSearchArguments, discovery_view, model_schema, search_tools
 from ..platform.delivery import Expression
 from ..tools.external_tools import ExternalTool
 from ..platform.file_delivery import SEND_FILE_TOOL, SendFileArguments, execute_send_file
@@ -305,7 +305,7 @@ class SceneTools:
             raise ValueError("平台查询工具已启用但未接入实际 OneBot 调用")
         if "transcribe" in self.allowed_tool_names and self.audio is None:
             raise ValueError("语音工具已启用但未接入实际语音处理服务")
-        self.deferred_names = (DEFERRED_NAMES if "tool_search" in self.allowed_tool_names else frozenset()) | set(self.external)
+        self.deferred_names = deferred_names(self.allowed_tool_names, config) | set(self.external)
         self.core_tools = [tool for tool in allowed if tool["function"]["name"] not in self.deferred_names]
         self.deferred_tools = ([tool for tool in allowed if tool["function"]["name"] in self.deferred_names]
                                + [tool.definition for tool in self.external.values()])

@@ -18,7 +18,7 @@ from .declarations import Declared
 from .recap import project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
-from ..tools.discovery import DEFERRED_NAMES, discovery_view
+from ..tools.discovery import deferred_names, discovery_view
 from ..learning.jargon_store import JargonStore
 from ..memory.service import MemoryService
 from ..platform.messages import ChatMessage, plain_text, render_batch, render_message, render_text
@@ -63,10 +63,10 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
                  external_info: Sequence[dict] = ()) -> str:
     """Render the actual stable mind system text for this scene and outlet."""
     allowed_names = {tool["function"]["name"] for tool in allowed}
-    deferred_names = DEFERRED_NAMES if "tool_search" in allowed_names else frozenset()
-    names = (allowed_names - deferred_names) | (set(discovered) & allowed_names)
+    deferred = deferred_names(allowed_names, config)
+    names = (allowed_names - deferred) | (set(discovered) & allowed_names)
     info_by_name = {info["discovery"]["name"]: info for info in external_info}
-    deferred = [tool for tool in allowed if tool["function"]["name"] in deferred_names] + list(external)
+    deferred = [tool for tool in allowed if tool["function"]["name"] in deferred] + list(external)
     system = Template(read_prompt("next_mind.md")).substitute(
         name=persona.name, scene=config.scene, bot_id=config.bot_id,
         character=character_material(config, persona),
