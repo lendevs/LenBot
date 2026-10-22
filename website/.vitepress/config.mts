@@ -5,55 +5,47 @@ const repo = 'https://github.com/lendevs/LenBot'
 export default defineConfig({
   lang: 'zh-CN',
   title: 'LenBot',
-  description: '基于大模型的 QQ 群聊机器人，通过 OneBot v11 接入 QQ，用网页面板管理',
+  description: '基于大模型的群聊机器人，接入 QQ 和 Telegram，用网页面板管理',
   base: '/LenBot/',
   cleanUrls: true,
   lastUpdated: true,
   head: [
     ['link', { rel: 'icon', href: '/LenBot/lenbot-favicon.svg', type: 'image/svg+xml' }],
+    ['meta', { name: 'theme-color', content: '#b4476a' }],
     ['meta', { property: 'og:image', content: 'https://lendevs.github.io/LenBot/brand/lenbot-social-preview.png' }],
   ],
   themeConfig: {
     logo: '/lenbot-mark.svg',
     nav: [
-      { text: '快速开始', link: '/guide/quick-start' },
-      { text: '安装', items: [
-        { text: '部署包', link: '/guide/install-package' },
-        { text: 'Docker', link: '/guide/install-docker' },
-        { text: '从源码运行', link: '/guide/install-source' },
-      ] },
-      { text: '使用', link: '/guide/panel', activeMatch: '^/guide/(?!quick-start|install-)' },
+      { text: '指南', link: '/guide/introduction', activeMatch: '^/guide/' },
       { text: '开发', link: '/develop/plugins', activeMatch: '^/develop/' },
-      { text: '发行说明', link: `${repo}/tree/master/changelogs` },
     ],
     sidebar: {
       '/guide/': [
         { text: '开始', items: [
+          { text: '认识 LenBot', link: '/guide/introduction' },
           { text: '快速开始', link: '/guide/quick-start' },
-        ] },
-        { text: '安装', items: [
-          { text: '部署包（Linux／macOS／Windows）', link: '/guide/install-package' },
-          { text: 'Docker', link: '/guide/install-docker' },
-          { text: '从源码运行', link: '/guide/install-source' },
-        ] },
-        { text: '配置', items: [
-          { text: '接入 QQ（OneBot）', link: '/guide/onebot' },
-          { text: '接入 Telegram', link: '/guide/telegram' },
           { text: '首次配置', link: '/guide/first-setup' },
+        ] },
+        { text: '接入平台', items: [
+          { text: 'QQ（OneBot）', link: '/guide/onebot' },
+          { text: 'Telegram', link: '/guide/telegram' },
         ] },
         { text: '日常使用', items: [
           { text: '面板一览', link: '/guide/panel' },
+          { text: '在群里聊天', link: '/guide/chatting' },
+          { text: '群内命令', link: '/guide/commands' },
           { text: '角色', link: '/guide/personas' },
-          { text: '插件', link: '/guide/plugins' },
-          { text: '记忆', link: '/guide/memory' },
+          { text: '记忆与学习', link: '/guide/memory' },
         ] },
-        { text: '可选能力', items: [
-          { text: '可选服务', link: '/guide/optional-services' },
+        { text: '扩展能力', items: [
+          { text: '模型与用量', link: '/guide/models' },
+          { text: '联网与工具', link: '/guide/web' },
+          { text: '插件', link: '/guide/plugins' },
           { text: '后台任务', link: '/guide/tasks' },
         ] },
         { text: '维护', items: [
-          { text: '更新与恢复', link: '/guide/update' },
-          { text: '备份', link: '/guide/backup' },
+          { text: '更新与备份', link: '/guide/maintenance' },
           { text: '日志与排查', link: '/guide/logs' },
           { text: '常见问题', link: '/guide/faq' },
         ] },
@@ -79,7 +71,9 @@ export default defineConfig({
     returnToTopLabel: '回到顶部',
     sidebarMenuLabel: '目录',
     darkModeSwitchLabel: '外观',
+    lightModeSwitchTitle: '切换到浅色',
+    darkModeSwitchTitle: '切换到深色',
     notFound: { title: '页面不存在', quote: '链接可能已经变了，试试搜索或回到首页。', linkText: '回到首页' },
-    footer: { message: '程序以 AGPL-3.0-only 发布', copyright: 'LenBot' },
+    footer: { message: '以 AGPL-3.0-only 发布', copyright: 'LenBot' },
   },
 })

@@ -16,7 +16,7 @@ BrowserSkill 在专用环境中独立部署。LenBot 仓库只保存服务的扩
 
 这项服务扩展已经与 LenBot 的任务文件工具和会话面板接通。安装这项服务不会自动修改宿主配置。根配置中仍然需要明确指定 daemon 的 socket 和 home，以及 binary 和实际的设备 ID。
 
-各发行组件的提交和工具版本集中记录在 [`components.json`](../components.json) 中，自动打包的流程见[发行说明](../releasing.md)。
+各发行组件的提交和工具版本集中记录在 [`components.json`](../components.json) 中。
 
 已构建的成品包的目录结构和安装步骤见[账号浏览成品说明](../browser/README.md)。下文介绍如何从源码构建，使用成品包的用户不需要再安装 Rust 或 Node。
 

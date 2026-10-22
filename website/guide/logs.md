@@ -16,7 +16,7 @@ Bot 没有回复或者回复内容不对时，以及插件报错时，请先查�
 
 后台任务的诊断包在**群聊 → 任务**中打开任务，点**下载诊断包（不含文件）**。
 
-回复诊断包包含消息、模型请求和回复正文，任务诊断包包含任务文字；导出时会遮盖配置密钥和长数字，但不会删除对话内容。分享前请检查其中的文字。
+回复诊断包包含消息、模型请求和回复正文，任务诊断包包含任务文字；导出时遮盖配置密钥和长数字。
 
 ## 日志文件
 
@@ -31,33 +31,25 @@ Bot 没有回复或者回复内容不对时，以及插件报错时，请先查�
 | `scene` | 同一个群或私聊 |
 | `plugin` | 同一个插件 |
 
-出错的记录包含完整的错误类型和错误信息，以及调用栈。配置中的密钥和插件的密钥字段不会写入日志。下载日志文件时，5 位以上的数字也会被遮盖，便于发给别人查看。
-
-## 其他日志
-
-| 安装方式 | 位置 |
-|---|---|
-| 部署包 | 更新器的记录在安装目录的 `updates/updater.jsonl` 和 `updates/updater.log`。macOS 服务自身的输出在 `logs/service.stdout.log` 和 `logs/service.stderr.log`。Linux 服务用 `journalctl --user -u lenbot.service` 查看 |
-| Docker | 终端输出用 `docker compose -p lenbot logs lenbot` 查看，更新器用 `docker compose -p lenbot logs lenbot-updater` |
-| 从源码运行 | 终端中每条记录显示为一行简短摘要，完整内容以日志文件为准 |
+出错的记录包含完整的错误类型和错误信息，以及调用栈。日志隐去配置中的密钥和插件的密钥字段。下载日志文件时，5 位以上的数字也会被遮盖，便于发给别人查看。
 
 ## 检查实例
 
-数据格式或插件出现问题时，在实例目录中执行检查命令。
+数据格式或插件出现问题时，在实例目录中执行：
 
-| 安装方式 | 命令 |
-|---|---|
-| 部署包 | 在 `instance` 目录执行 `../releases/<当前版本>/.venv/bin/python -m len_bot.next.maintenance.doctor`（Windows 上是 `..\releases\<当前版本>\.venv\Scripts\python.exe`） |
-| Docker | `docker compose -p lenbot exec -w /srv/lenbot lenbot /opt/lenbot/.venv/bin/python -m len_bot.next.maintenance.doctor` |
-| 从源码运行 | `uv run --no-sync python -m len_bot.next.maintenance.doctor` |
+```sh
+uv run --no-sync python -m len_bot.next.maintenance.doctor
+```
 
-这条命令逐项检查配置和数据库，也检查插件，包括插件的数据版本。每一项输出一行，全部为 `ok` 或 `disabled` 时说明没有问题。检查只读取数据，Bot 运行期间也可以执行。
+这条命令逐项检查配置、数据库和插件（包括插件的数据版本），每一项输出一行 JSON，全部为 `ok` 或 `disabled` 时表示没有问题。检查只读取数据，Bot 运行期间也可以执行。
+
+终端中每条日志只显示一行摘要，完整内容以日志文件为准。
 
 ## 报告问题
 
 在 [GitHub Issues](https://github.com/lendevs/LenBot/issues) 提问时，请附上以下内容。
 
-- LenBot 的版本和安装方式。
+- LenBot 的提交版本（`git rev-parse --short HEAD`）。
 - 出问题的那一轮回复或那个任务的诊断包。也可以从 `lenbot.jsonl` 中按 `turn_id` 或 `task_id` 摘出日志。
 - `doctor` 的输出。
 

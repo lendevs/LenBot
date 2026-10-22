@@ -27,8 +27,6 @@ LenBot 也可以作为 Telegram Bot 运行。它通过 Bot API 的长轮询收�
 - `delivery` 为 `telegram` 时才会真正发送；改为 `simulated` 可以只收不发，用来观察。
 - 可选项：`api_base` 指向自建的 Bot API 服务或反向代理，`poll_timeout_seconds`（默认 25，最大 50）是每次长轮询在服务端等待的秒数，`request_timeout_seconds`（默认 15）是其他请求的超时。
 
-令牌和 QQ 的访问令牌一样不会写进日志。
-
 ## 与 QQ 的差别
 
 - 文字、提及和回复引用可以收发，Bot 可以发送图片（每条一张）。收到的图片、表情、语音、视频和文件以 `[图片]` 这类占位文字进入上下文，模型看不到内容。

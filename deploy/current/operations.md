@@ -1,8 +1,8 @@
 # 使用与维护
 
-安装和启动见[部署](../README.md)。运行期间在面板中保存设置。手动修改配置或执行维护命令之前，请先停止 LenBot。
+安装和启动见[快速开始](https://lendevs.github.io/LenBot/guide/quick-start)。运行期间在面板中保存设置。手动修改配置或执行维护命令之前，请先停止 LenBot。
 
-维护命令都在实例根目录中执行。从源码运行时写成 `uv run --no-sync python -m ...`，部署包和 Docker 使用各自环境中的 `python`。
+维护命令都在实例根目录中执行，写成 `uv run --no-sync python -m ...`。下文简写为 `python -m ...`。
 
 ## 面板一览
 
@@ -18,7 +18,7 @@
 
 ## 账号与场景
 
-账号写成 `平台:账号`，场景写成 `平台:group:群号` 或 `平台:private:账号`。目前只有 OneBot 一个平台。例如 Bot 是 `onebot:90001`，主人是 `onebot:70001`，群是 `onebot:group:80001`。
+账号写成 `平台:账号`，场景写成 `平台:group:群号` 或 `平台:private:账号`。平台有 `onebot` 和 `telegram`。例如 Bot 是 `onebot:90001`，主人是 `onebot:70001`，群是 `onebot:group:80001`。
 
 在面板中填写以下账号时，都使用这种写法。
 
@@ -84,7 +84,7 @@
 - 账号浏览会话关闭，试聊停止。
 - 新进程启动后，需要重新登录面板。
 
-重启由 `len-bot` 启动器完成。直接运行 `python -m len_bot.next.host` 也可以启动程序，但没有重启功能。Ctrl-C、`systemctl stop` 或 `docker stop` 会停止整个程序。程序异常退出后不会自动重新启动，请查看终端输出或 `journalctl` 找出原因，使用 Docker 时查看容器日志。
+重启由 `len-bot` 启动器完成。直接运行 `python -m len_bot.next.host` 也可以启动程序，但没有重启功能。Ctrl-C 或 `systemctl stop` 会停止整个程序。程序异常退出后不会自动重新启动，请查看终端输出或 `journalctl` 找出原因。
 
 在终端中按 Ctrl-Z 会挂起进程，实例锁仍然被占用。请用 `fg` 恢复进程后再按 Ctrl-C。
 
@@ -126,7 +126,7 @@
 - 业务插件独立安装和更新，不随 LenBot 一起升级。群聊总结和 GSUID 桥接见[独立插件](../../developer/plugin-examples.md)。
 - 旧实例需要从根配置和启用的群中删除 `clock` 和 `rss_broadcast` 的引用。`group_digest` 和 `gscore_adapter` 保留原有的参数和数据，更新宿主后安装同名的独立插件即可。
 
-部署包和 Docker 升级时会自动恢复插件依赖。从源码运行时，如果重建了 Python 环境，请停止 LenBot 后执行一次下面的命令。
+重建了 Python 环境后，请停止 LenBot 并执行一次下面的命令。
 
 ```sh
 python -m len_bot.next.maintenance.plugin_dependencies
@@ -184,7 +184,7 @@ Clash 和 Surge 等代理软件开启 fake-ip（假 IP）或增强模式时，�
 
 ### 镜像
 
-使用官方任务镜像 `lenbot-worker` 时，部署包和 Docker 通过面板升级，会一并换成同版本的镜像。自行构建的镜像需要自己重新构建，并在停机后把 `worker.image` 改为新的标签。
+任务镜像从 `docker/next-worker/Dockerfile` 构建。源码更新后需要重新构建，并在停机后把 `worker.image` 改为新的标签。
 
 ## 记忆维护
 
@@ -219,12 +219,7 @@ python -m len_bot.next.maintenance.memory_reindex
 
 回复诊断包仍包含消息、模型请求与回复正文，任务诊断包仍包含任务文字。分享前须自行检查。
 
-终端只显示简短的一行，完整记录以日志文件为准。维护命令（例如迁移、升级和 `doctor`）开始和结束时，以及失败时，也会写入同一个文件。以下三条命令例外，它们不写实例日志，由更新器记录在自己的日志中。
-
-- `upgrade inspect` 和 `upgrade paths`，只读取实例
-- `upgrade restore`，会整体替换实例，包括日志
-
-部署包的更新器另有两个日志文件。`updates/updater.jsonl` 是同样格式的更新记录，`updates/updater.log` 是子进程的原始输出。文件超过 5 MiB 时，在更新器启动时轮转。
+终端只显示简短的一行，完整记录以日志文件为准。维护命令（例如迁移和 `doctor`）开始和结束时，以及失败时，也会写入同一个文件。
 
 ## 检查实例
 
@@ -240,20 +235,9 @@ python -m len_bot.next.maintenance.memory_reindex
 
 ## 升级与备份
 
-部署包和 Docker 安装在面板的设置 → 版本与更新中升级。更新器按以下顺序执行。
+面板启动 60 秒后检查一次新版本，之后每 24 小时检查一次，查询 GitHub Releases，只查询，不下载，也不安装。检查失败时记录一条 WARNING `release_check`。根配置的 `panel.update_check` 设为 `false` 可以关闭后台检查。
 
-1. 停止 LenBot。
-2. 制作完整快照。
-3. 执行下文第 4 步中的迁移，并用 `doctor` 检查。
-4. 切换版本并启动。
-
-制作快照前会先估算快照大小。磁盘空间不足以容纳快照和额外 256 MiB 余量时，升级直接停止，不做任何改动。迁移后的 `doctor` 检查没有通过，同样算作升级失败。
-
-快照之后的步骤失败时，更新器会自动恢复快照并启动原来的版本；只有自动回滚本身失败时才需要在更新页恢复快照或启动。回滚会丢掉升级开始后写入的数据。快照记录了每个文件的长度和 SHA-256，恢复前会核对整份快照，发现缺失或损坏时停止。核对通过后，先把全部内容复制到各个目标位置旁边的临时位置。复制中途出错时（例如磁盘已满），当前实例同样不会被改动。全部复制完成后，才逐项替换。详见文档站的[更新与恢复](https://lendevs.github.io/LenBot/guide/update)。部署包也可以离线执行 `install.sh upgrade`，见[部署包](../package/README.md#升级)。
-
-面板启动 60 秒后会检查一次新版本，之后每 24 小时检查一次。托管安装向更新器查询，从源码运行时查询 GitHub Releases。检查只查询，不下载，也不安装。检查失败时只记录一条 WARNING `release_check`。在根配置中把 `panel.update_check` 设为 `false` 可以关闭这项后台检查（默认为 `true`，旧配置不需要迁移）。**系统 → 设置 → 版本与更新**中的手动「检查发行版本」仍然可以使用。
-
-从源码运行时需要手动升级，步骤如下。
+升级步骤如下。
 
 1. 停止 Bot 和试聊，以及其他会写入数据的程序。
 2. 备份实例目录，以及配置中指向实例以外的任务目录和交付目录。SQLite 的 `-wal` 文件也属于数据，需要一起备份。
@@ -274,8 +258,8 @@ python -m len_bot.next.maintenance.memory_reindex
 
 启动时不会自动升级数据，数据格式不对时直接报错。
 
-- 根配置的 `config_version` 比当前格式旧时，启动直接停止，报错中写明下一步操作。从源码运行时，停机并备份实例目录，在实例目录中执行 `migrate_config`，再按上面的步骤完成其余迁移。部署包和 Docker 使用面板中的更新器。
-- `config_version` 比当前格式新时，说明这份配置是由更新的 LenBot 版本写入的。请换回那个版本，或者恢复升级前的快照。
+- 根配置的 `config_version` 比当前格式旧时，启动直接停止，报错中写明下一步操作。停机并备份实例目录，在实例目录中执行 `migrate_config`，再按上面的步骤完成其余迁移。
+- `config_version` 比当前格式新时，说明这份配置是由更新的 LenBot 版本写入的。请换回那个版本，或者恢复升级前的备份。
 - 没有 `config_version`，同时带有当前版本不认识的字段（例如旧版的模型价格）时，字段校验错误后面也会附上同样的提示。
 
 所有命令和程序运行共用实例锁 `.lenbot-instance.lock`。锁被其他命令占用时，命令会拒绝执行。请不要手动删除锁文件。

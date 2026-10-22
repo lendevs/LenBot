@@ -131,12 +131,10 @@ def test_fixture_names_match_the_formats_they_contain(fixture):
 
 
 def test_documented_business_format_matches_the_code():
-    """Audit F-1: changelog and operations guide name the current business format."""
+    """Audit F-1: the operations guide names the current business format."""
     from len_bot.next.storage.store import FORMAT_VERSION
     repo = Path(__file__).parents[1]
-    changelog = (repo / 'changelogs' / 'v0.2.0.md').read_text(encoding='utf-8')
     operations = (repo / 'deploy' / 'current' / 'operations.md').read_text(encoding='utf-8')
-    assert f'业务数据库格式 {FORMAT_VERSION}' in changelog
     assert f'目前是格式 {FORMAT_VERSION}。' in operations
     assert f'业务数据库从格式 {FORMAT_VERSION - 1} 升级到 {FORMAT_VERSION} 时' in operations
 

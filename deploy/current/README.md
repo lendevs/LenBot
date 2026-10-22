@@ -1,6 +1,6 @@
 # 可选服务与配置
 
-部署方式的选择见[部署](../README.md)。本文说明如何接入聊天以外的各项服务，以及如何把 LenBot 作为系统服务运行。所有设置都在面板中修改，最终写入实例根目录的 `lenbot.config.json`。
+本文说明如何接入聊天以外的各项服务，以及如何把 LenBot 作为系统服务运行。所有设置都在面板中修改，最终写入实例根目录的 `lenbot.config.json`。
 
 ## OneBot
 
@@ -31,16 +31,16 @@ LenBot 本身不登录 QQ，通过 OneBot v11 收发 QQ 消息。为此需要一
 
 | 用途 | 作用 | 必需 |
 |---|---|---|
-| mind（聊天） | 判断是否回复，决定回复的内容和使用的工具 | 是 |
+| mind（聊天） | 判断是否回复，决定回复的内容和使用的工具；整理回合也使用它 | 是 |
 | vision | 看图 | 否 |
 | memory | 编写记忆目录摘要 | 否 |
 | learner | 插件单次生成 | 否 |
 | worker | 后台任务中编程助手 Pi 使用的模型 | 否 |
 | asr | 语音转写 | 否 |
 
-上下文窗口、输出上限和超时时间都按服务商的文档填写。模型拒绝请求时，LenBot 直接报错，不会自动缩小参数，也不会换用其他模型重试。
+上下文窗口、输出上限和超时时间都按服务商的文档填写。
 
-测试模型时，「只测文本」调用一次模型，「测工具调用」调用两次。两种测试都不会向群里发送消息。
+测试模型时，「只测文本」调用一次模型，「测工具调用」调用两次。
 
 更换绑定的模型后，已完成的异源工具组会转为历史资料。未完成的工具组不能跨绑定续接，必要时从面板开始新的上下文。
 
@@ -65,7 +65,7 @@ docker exec lenbot-embeddings ollama pull bge-m3:567m
 
 后台任务把耗时较长的工作交给独立 Docker 容器中的 Pi 执行，聊天不需要等待任务完成。启用步骤如下。
 
-1. 准备任务镜像。使用官方的 `ghcr.io/lendevs/lenbot-worker:<版本>`（版本与 LenBot 一致），或者从源码构建，命令为 `docker build -t lenbot-worker:local -f docker/next-worker/Dockerfile .`。
+1. 构建任务镜像：`docker build -t lenbot-worker:local -f docker/next-worker/Dockerfile .`。
 2. 在能力页配置任务环境。需要填写以下内容。
    - Docker 命令的绝对路径
    - Docker socket
@@ -78,11 +78,11 @@ docker exec lenbot-embeddings ollama pull bge-m3:567m
 4. 在群聊设置的「提醒与任务」中开启任务，并在同一页的权限中指定可以发起任务的人。
 5. 角色的工具许可中包含 `delegate`、`task` 和 `tool_search`。需要使用技能时，角色的技能许可中也要包含这个技能。
 
-任务容器没有网络。模型请求和公网请求都经过宿主转发，真实密钥不会进入容器。
+任务容器没有网络。模型请求和公网请求都经过宿主转发，密钥只保存在宿主。
 
 要把任务产物发送到 QQ，OneBot 一侧也必须能读取交付目录。请把交付目录以只读方式挂载到 OneBot 所在的容器，并把 `onebot.upload_visible_root` 设为容器中看到的路径。
 
-部署包和 Docker 安装使用官方任务镜像时，通过面板升级会一并换成同版本的任务镜像。自行构建的镜像，以及从源码运行时使用的镜像，需要时请自己重新构建。为任务目录设置硬性容量上限的方法见[任务存储池](task-storage.md)。
+任务镜像的源码更新后需要重新构建，并在停机后把 `worker.image` 改为新的标签。为任务目录设置硬性容量上限的方法见[任务存储池](task-storage.md)。
 
 ## 账号浏览
 
@@ -97,15 +97,13 @@ docker exec lenbot-embeddings ollama pull bge-m3:567m
 
 ## 面板访问
 
-面板默认只监听本机地址，源码或部署包安装时默认是 `http://127.0.0.1:8088`；Docker 部署固定为 `http://127.0.0.1:11307`（Compose 只发布这个端口，向导里不能修改）。从其他机器访问时，请使用 SSH 端口转发，或者自行配置 HTTPS 反向代理。不要直接把监听地址改为公网地址。
+面板默认只监听本机地址 `http://127.0.0.1:8088`。从其他机器访问时，请使用 SSH 端口转发，或者自行配置 HTTPS 反向代理。不要直接把监听地址改为公网地址。
 
 ## 作为系统服务运行
 
 `len-bot` 是一个前台进程，按 Ctrl-C 停止。面板中的重启由进程自身完成。服务管理器只需要启动这个进程，不需要在退出后自动重新启动。进程异常退出时，请查看日志，处理问题后再启动。
 
-**部署包**自带 `service` 命令，用于管理 systemd 用户服务或 launchd 服务，见[部署包](../package/README.md#系统服务)。
-
-**从源码运行或手动安装**时，在 Linux 上可以使用 [systemd 模板](lenbot.service)。
+在 Linux 上可以使用 [systemd 模板](lenbot.service)。
 
 ```sh
 sudo install -m 0644 deploy/current/lenbot.service /etc/systemd/system/lenbot.service
@@ -119,8 +117,6 @@ sudo journalctl -u lenbot -n 100 --no-pager
 
 在 macOS 上可以双击 [start.command](start.command)，它在仓库根目录执行 `.venv/bin/len-bot`。
 
-**Docker** 见 [Docker 部署](docker.md)。
-
 ## 本机配套服务
 
-[services.compose.yaml](services.compose.yaml) 是向量服务（Ollama）的配置，[start-asr.sh](start-asr.sh) 用于启动本地转写服务。它们是独立的服务，各自有自己的配置。LenBot 只通过地址连接这些服务，不负责安装或启动。日常使用时，先启动配套服务，再启动 LenBot。停止时顺序相反。
+[services.compose.yaml](services.compose.yaml) 是向量服务（Ollama）的配置，[start-asr.sh](start-asr.sh) 用于启动本地转写服务。它们是独立的服务，各自有自己的配置。LenBot 通过地址连接这些服务。日常使用时，先启动配套服务，再启动 LenBot。停止时顺序相反。
