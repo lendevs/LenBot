@@ -51,11 +51,9 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
             'pending': restart_summary(root, running, {scene: chat.persona for scene, chat in runtime.chats.items()}),
             'panel': {'running': panel(running.panel), 'saved': panel(saved.panel)},
             'chats': [scene for scene, runner in runtime.runners.items() if runner.execution.locked()],
-            'tasks': [{'id': item.id, 'scene': item.scene, 'goal': item.goal, 'status': item.status,
-                       'account_browser': item.account_browser} for item in records.active()],
+            'tasks': [{'id': item.id, 'scene': item.scene, 'goal': item.goal, 'status': item.status}
+                      for item in records.active()],
             'queued_tasks': len(records.queued()),
-            'browsers': [{'id': item.id, 'scene': item.scene, 'session': item.browser_session}
-                         for item in records.browser_in_use()],
             'trials': [{'id': item.id, 'scene': item.scene} for item in trials.records.values()
                        if item.stopped is None],
         }

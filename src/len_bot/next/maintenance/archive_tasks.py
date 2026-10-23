@@ -55,9 +55,9 @@ def read_metadata(config: HostConfig | LabConfig) -> dict:
                 raise ValueError(f'Selected scene has no actual task records: {scene}')
         for raw in tasks:
             task = _task(raw)
-            if task.status not in TERMINAL or task.container is not None or task.browser_active:
+            if task.status not in TERMINAL or task.container is not None:
                 raise ValueError(f'Task is not a stopped terminal record: scene={task.scene!r}, id={task.id}, '
-                                 f'status={task.status}, container={task.container!r}, browser_active={task.browser_active}')
+                                 f'status={task.status}, container={task.container!r}')
         result = {'tasks': tasks}
         for table in ('task_events', 'task_files'):
             result[table] = [dict(row) for row in db.execute(

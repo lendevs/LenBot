@@ -13,7 +13,6 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .work.egress_policy import NetworkSettings
-from .browser.client import AccountBrowserSettings
 from .configuration.commands import CommandSettings
 from .models.asr import AudioSettings
 from .storage.files import sync_directory
@@ -48,7 +47,7 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 # Upgrade old root configurations with the offline maintenance command.
 UPGRADE_HINT = ("停机后在实例目录执行 python -m len_bot.next.maintenance.upgrade run --snapshot <实例外的新目录>，"
                 "完成备份、迁移和检查；单独升级配置可执行 python -m len_bot.next.maintenance.migrate_config。"
@@ -57,7 +56,7 @@ UPGRADE_HINT = ("停机后在实例目录执行 python -m len_bot.next.maintenan
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[3] = 3
+    config_version: Literal[4] = 4
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -305,7 +304,6 @@ class LabConfig(SharedConfig, SceneSettings):
 
 class HostConfig(SharedConfig):
     mode: Literal["isolated-multi"]
-    account_browser: AccountBrowserSettings | None = None
     onebot: OneBotSettings | None = Field(...)
     panel: PanelSettings | None = None
     scenes: dict[str, SceneSettings]
@@ -568,12 +566,6 @@ def _load_host_source(path: Path, source: dict) -> HostConfig:
     _resolve_archive_paths(root, source)
     _resolve_memory_path(root, source)
     _resolve_worker_paths(root, source)
-    browser = source.get("account_browser")
-    if isinstance(browser, dict):
-        for field in ("socket", "binary", "home"):
-            if isinstance(browser.get(field), str):
-                # Keep relative paths relative so the explicit-absolute validator can reject them.
-                browser[field] = Path(browser[field])
     plugins = source.get("plugins")
     if isinstance(plugins, dict):
         paths = plugins.get("paths", ["plugins"])

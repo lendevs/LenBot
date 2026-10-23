@@ -28,7 +28,6 @@ from .routes.plugins import register_host_plugins
 from .routes.mcp import register_host_mcp
 from .routes.audio import register_host_audio
 from .routes.trials import HostTrials, register_host_trials
-from .routes.browser import register_host_browser
 from .routes.permissions import register_host_permissions
 from .routes.settings import register_host_settings
 from ..runtime.lifecycle import HostLifecycle
@@ -117,7 +116,6 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     register_host_diagnostics(app, user=user)
     register_host_timeline(app, runtime=runtime, user=user)
     register_host_trials(app, trials, user)
-    register_host_browser(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_capabilities(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     releases = register_host_updates(app, root=root, user=user, check_enabled=config.panel.update_check)

@@ -23,14 +23,13 @@ The runtime configuration lives in `lenbot.config.json`. Change settings in the 
 
 | File | Contents |
 |---|---|
-| [current/README.md](current/README.md) (zh) | Optional services: OneBot, models, embeddings, speech recognition, background tasks, account browsing, panel access |
+| [current/README.md](current/README.md) (zh) | Optional services: OneBot, models, embeddings, speech recognition, background tasks, public browser, panel access |
 | [current/operations.md](current/operations.md) (zh) | Operations: panel details, plugins, memory, logs, upgrades, data formats |
 | [current/lenbot.service](current/lenbot.service) | Linux systemd template |
 | [current/start.command](current/start.command) | macOS double-click launcher |
 | [current/services.compose.yaml](current/services.compose.yaml) | Embedding service (Ollama) |
 | [current/start-asr.sh](current/start-asr.sh), [current/asr.md](current/asr.md) (zh) | Local speech recognition (whisper.cpp) |
 | [current/task-storage.md](current/task-storage.md) (zh) | Storage pool and quotas for background tasks |
-| [browser/README.md](browser/README.md), [current/browserskill-files.md](current/browserskill-files.md) (zh) | Account browsing companion and file transfer |
 | [current/first-setup.example.json](current/first-setup.example.json) | Example first-setup submission |
 
 `deploy/updater/`, `deploy/package/`, `current/Dockerfile` and `current/host*.compose.yaml` serve the package and Docker releases. The release process is not settled yet and has no user guide.

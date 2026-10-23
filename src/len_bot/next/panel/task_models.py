@@ -32,7 +32,6 @@ class TaskEventPreview(BaseModel):
     delivered_at: float | None
     event_type: str | None
     tool_name: str | None
-    browser_method: str | None
     preview: str
     truncated: bool
 
@@ -44,7 +43,6 @@ class TaskPage(BaseModel):
 
 class TaskBrowserView(BaseModel):
     public_enabled: bool
-    binding: dict[str, JsonValue] | None
     output_count: int
 
 

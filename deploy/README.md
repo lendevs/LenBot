@@ -23,14 +23,13 @@
 
 | 文件 | 内容 |
 |---|---|
-| [current/README.md](current/README.md) | 可选服务与配置：OneBot、模型、向量、语音转写、后台任务、账号浏览、面板访问 |
+| [current/README.md](current/README.md) | 可选服务与配置：OneBot、模型、向量、语音转写、后台任务、公共浏览器、面板访问 |
 | [current/operations.md](current/operations.md) | 使用与维护：面板操作细节、插件、记忆、日志、升级、数据格式 |
 | [current/lenbot.service](current/lenbot.service) | Linux systemd 模板 |
 | [current/start.command](current/start.command) | macOS 双击启动 |
 | [current/services.compose.yaml](current/services.compose.yaml) | 向量服务（Ollama） |
 | [current/start-asr.sh](current/start-asr.sh)、[current/asr.md](current/asr.md) | 本地语音转写（whisper.cpp） |
 | [current/task-storage.md](current/task-storage.md) | 后台任务的存储池和容量上限 |
-| [browser/README.md](browser/README.md)、[current/browserskill-files.md](current/browserskill-files.md) | 账号浏览的配套组件和文件传输 |
 | [current/first-setup.example.json](current/first-setup.example.json) | 首次配置向导提交内容的示例 |
 
 `deploy/updater/`、`deploy/package/`、`current/Dockerfile` 和 `current/host*.compose.yaml` 用于部署包和 Docker 发行，发行流程尚未定稿，暂无使用说明。

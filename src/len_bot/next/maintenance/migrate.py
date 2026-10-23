@@ -83,6 +83,12 @@ def _message_wake_verdict(db: sqlite3.Connection) -> None:
     db.execute('CREATE INDEX expression_messages ON messages(expression_entry_seq,seq) WHERE expression_entry_seq IS NOT NULL')
 
 
+def _without_account_browser(db: sqlite3.Connection) -> None:
+    """Format 7 to 8: tasks drop the account browser columns."""
+    for column in ('account_browser', 'browser_active', 'browser_session'):
+        db.execute(f'ALTER TABLE tasks DROP COLUMN {column}')
+
+
 BUSINESS = Format('业务数据库', APPLICATION_ID, FORMAT_VERSION, 1, {
     1: _tokens_instead_of_prices,
     2: _qualified_schedule_targets,
@@ -90,6 +96,7 @@ BUSINESS = Format('业务数据库', APPLICATION_ID, FORMAT_VERSION, 1, {
     4: _turn_wake_channels,
     5: _overview_indexes,
     6: _message_wake_verdict,
+    7: _without_account_browser,
 })
 
 

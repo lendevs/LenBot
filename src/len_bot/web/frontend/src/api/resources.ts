@@ -72,7 +72,7 @@ export interface PoolUsage {
   available_bytes: number
 }
 
-export type Continuation = 'active' | 'retained' | 'discarded' | 'account_new_task'
+export type Continuation = 'active' | 'retained' | 'discarded'
 export type StorageFilter = 'all' | 'active' | 'done' | 'failed' | 'cancelled'
 export type EnvironmentFilter = 'all' | 'retained' | 'discarded'
 export type CleanupOperation = 'temporary' | 'environment'

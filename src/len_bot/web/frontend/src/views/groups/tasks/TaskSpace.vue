@@ -32,10 +32,7 @@ const temporaryBytes = computed(
   () => value.value?.temporary.reduce((sum, item) => sum + item.file_bytes, 0) ?? 0,
 )
 const leftover = computed(
-  () =>
-    value.value &&
-    finished(value.value.task.status) &&
-    (value.value.task.container || value.value.task.browser_active),
+  () => value.value && finished(value.value.task.status) && value.value.task.container,
 )
 
 const cleaning = ref<CleanupOperation | null>(null)

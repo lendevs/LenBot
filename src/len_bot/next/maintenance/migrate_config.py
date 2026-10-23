@@ -6,6 +6,7 @@ upgrade with its value and the file is left unchanged.
 Format 2 removes settings whose old-core import and media archive commands retired,
 and turns an explicitly disabled log into the default always-on log.
 Format 3 adds cumulative delivery capacity and real DNS resolution for fake-ip networks.
+Format 4 removes the account browser settings.
 """
 
 from __future__ import annotations
@@ -51,21 +52,24 @@ def _without_prices(source: dict, path: Path) -> dict:
 def upgraded_config(source: dict, path: Path) -> dict:
     """Return the configuration upgraded to the current format."""
     format_version = source.get('config_version', 0)
-    if format_version not in (0, 1, 2, CONFIG_VERSION):
+    if format_version not in (0, 1, 2, 3, CONFIG_VERSION):
         raise ValueError(f'{path}: unsupported configuration format {format_version}; target={CONFIG_VERSION}')
     if format_version == CONFIG_VERSION:
         return source
-    upgraded = _without_prices(source, path)
-    for field in ('history_import', 'reminder_import', 'media_import', 'media_archive'):
-        upgraded.pop(field, None)
-    # Logging is always on from format 2; an explicit null meant off and now takes the default directory.
-    if 'logging' in upgraded and upgraded['logging'] is None:
-        del upgraded['logging']
+    upgraded = json.loads(json.dumps(source))
+    if format_version < 3:
+        upgraded = _without_prices(source, path)
+        for field in ('history_import', 'reminder_import', 'media_import', 'media_archive'):
+            upgraded.pop(field, None)
+        # Logging is always on from format 2; an explicit null meant off and now takes the default directory.
+        if 'logging' in upgraded and upgraded['logging'] is None:
+            del upgraded['logging']
+        if upgraded.get('worker') is not None:
+            upgraded['worker']['max_delivery_bytes'] = 500 * 1024 * 1024
+        if upgraded.get('network') is not None:
+            upgraded['network']['public_dns_url'] = 'https://dns.google/resolve'
+    upgraded.pop('account_browser', None)
     upgraded['config_version'] = CONFIG_VERSION
-    if upgraded.get('worker') is not None:
-        upgraded['worker']['max_delivery_bytes'] = 500 * 1024 * 1024
-    if upgraded.get('network') is not None:
-        upgraded['network']['public_dns_url'] = 'https://dns.google/resolve'
     return upgraded
 
 

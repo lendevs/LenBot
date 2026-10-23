@@ -2046,7 +2046,7 @@ def test_old_configuration_format_names_the_offline_upgrade(tmp_path, mode):
     with pytest.raises(ValueError) as failure:
         load_instance_config(root)
     message = str(failure.value)
-    assert "配置格式 2 需要升级到 3" in message
+    assert "配置格式 2 需要升级到 4" in message
     assert "python -m len_bot.next.maintenance.migrate_config" in message
     assert "synthetic-secret-marker" not in message
 
@@ -2064,7 +2064,7 @@ def test_unnumbered_configuration_with_removed_fields_points_to_the_upgrade(tmp_
     assert "没有 config_version" in message and "migrate_config" in message
 
 
-@pytest.mark.parametrize(("version", "expected"), [(4, "由更新的 LenBot 写入"), ("3", "must be an integer")])
+@pytest.mark.parametrize(("version", "expected"), [(5, "由更新的 LenBot 写入"), ("4", "must be an integer")])
 def test_newer_or_malformed_configuration_format_is_refused_plainly(tmp_path, version, expected):
     root = tmp_path / "lab"
     source = _host_config()
@@ -2083,5 +2083,14 @@ def test_migrated_old_configuration_loads(tmp_path):
     source["models"]["roles"]["mind"]["price"] = {"input": 1, "output": 2}
     _write_config(root, source)
     assert migrate_config(root / "lenbot.config.json")
-    assert load_host_config(root).config_version == 3
+    assert load_host_config(root).config_version == 4
     assert (root / "lenbot.config.json.pre-tokens.bak").exists()
+
+
+def test_format3_upgrade_only_removes_the_account_browser(tmp_path):
+    from len_bot.next.maintenance.migrate_config import upgraded_config
+
+    source = {**_host_config(), "config_version": 3, "worker": {"max_delivery_bytes": 1234},
+              "network": {"public_dns_url": "https://dns.example/resolve"}}
+    upgraded = upgraded_config({**source, "account_browser": {"socket": "/run/browser.sock"}}, tmp_path / "lenbot.config.json")
+    assert upgraded == {**source, "config_version": 4}

@@ -146,16 +146,6 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                                          ("PUT", "/api/host/scenes/onebot:group:80001/timeline"),
                                          ("DELETE", "/api/host/scenes/onebot:group:80001/timeline")):
                         assert (await client.request(method, path)).status_code in {404, 405}
-                    browser_settings = {'socket':str(root/'browser.sock'), 'browser_instance_id':None,
-                                        'binary':str(root/'bsk'), 'home':str(root/'browser-home'),
-                                        'timeout_seconds':65, 'max_response_bytes':16000000}
-                    browser_saved = await client.put('/api/host/browser', json={'settings':browser_settings})
-                    assert browser_saved.status_code == 200, browser_saved.text
-                    assert browser_saved.json()['running'] is None and browser_saved.json()['restart_required']
-                    assert browser_saved.json()['saved'] == browser_settings
-                    invalid_browser = {**browser_settings, 'socket':'relative.sock'}
-                    assert (await client.put('/api/host/browser', json={'settings':invalid_browser})).status_code == 422
-
                     permissions = (await client.get('/api/host/permissions?scene=onebot:group:80001')).json()
                     change = permissions['saved']
                     change['global_identities']['admins'] = ['onebot:70003']
@@ -169,7 +159,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     saved_tasks = load_host_config(root).scenes['onebot:group:80001'].tasks
                     assert (saved_tasks.owner, saved_tasks.admins) == ('onebot:70006', ['onebot:70007'])
                     pending = (await client.get('/api/host/pending-restart')).json()
-                    assert pending['sections'] == ['account_browser']
+                    assert pending['sections'] == []
                     assert pending['scenes'] == [] and pending['personas'] == []
                     scene_saved = (await client.get('/api/host/settings')).json()['saved']['scenes']['onebot:group:80001']
                     scene_body = {'timezone': None, 'voice_mode': 'direct',  'attention': scene_saved['attention'],

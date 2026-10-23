@@ -124,7 +124,7 @@ class TaskResources:
     async def list(self, scene: str, location: ResourceLocation, *, offset: int, limit: int) -> dict:
         root = self.root(scene, location)
         task = None if location.task_id is None else self.records.get(scene, location.task_id)
-        mutable_work = task is not None and task.status in TERMINAL and task.container is None and not task.browser_active
+        mutable_work = task is not None and task.status in TERMINAL and task.container is None
         sources = {} if location.task_id is None else self.records.file_sources(scene, location.task_id)
         browser_sources = {} if location.task_id is None else self.records.browser_file_sources(scene, location.task_id)
         deleted = {} if location.task_id is None else self.records.file_deletions(scene, location.task_id)

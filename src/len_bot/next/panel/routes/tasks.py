@@ -108,7 +108,6 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                             "active_timeout_seconds": None if runtime.tasks is None else runtime.tasks.active_timeout(item)}, "events": events,
                     "network": None if runtime.tasks is None else runtime.tasks.egress.status(scene, id),
                     "browser": {"public_enabled": runtime.config.worker is not None and runtime.config.worker.public_browser,
-                                "binding": records.browser_start(scene, id),
                                 "output_count": len(records.browser_file_sources(scene, id))},
                     "next_after": events[-1]["id"] if events else after,
                     "files": [file_info(file, records) for file in records.list_files(scene, id)]}

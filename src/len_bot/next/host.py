@@ -113,8 +113,8 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
     with configure_logging(config.logging, credentials(config)), Store(config.database) as store:
         activate_prompts(root)
         PluginStore(store).recover_plugin_calls()
-        if config.onebot is None and config.telegram is None and (TaskStore(store).containers() or TaskStore(store).browser_in_use()):
-            raise ValueError('stdin模拟宿主不能清理原库中残留的容器或账号浏览会话；先在所属原实例明确处理，不使用导入的定位访问外部实例')
+        if config.onebot is None and config.telegram is None and TaskStore(store).containers():
+            raise ValueError('stdin模拟宿主不能清理原库中残留的容器；先在所属原实例明确处理，不使用导入的定位访问外部实例')
         budget = ModelBudget(config, store, None, root=config._instance_root)
         budget.trials_root = root / ".runtime" / "chat-tests"
         slots.admit = budget.check
@@ -122,8 +122,6 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
         for scene, settings in config.scenes.items():
             if settings.learning is None or not settings.learning.collect_stickers:
                 sticker_records.recover(scene)
-        if TaskStore(store).browser_in_use() and (config.account_browser is None or config.worker is None):
-            raise ValueError('仍有未清理的账号浏览会话；保留原account_browser与worker配置完成清理后再停用')
         if config.worker is None and TaskStore(store).containers():
             raise ValueError("仍有未清理的任务容器；保留原 worker 配置完成清理后再停用任务执行器")
         async with (

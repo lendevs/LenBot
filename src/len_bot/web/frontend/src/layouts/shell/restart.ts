@@ -27,9 +27,8 @@ export interface RestartPreview {
   }
   panel: { running: PanelAddress; saved: PanelAddress | null }
   chats: string[]
-  tasks: { id: number; scene: string; goal: string; status: string; account_browser: boolean }[]
+  tasks: { id: number; scene: string; goal: string; status: string }[]
   queued_tasks: number
-  browsers: { id: number; scene: string; session: string | null }[]
   trials: { id: string; scene: string }[]
 }
 

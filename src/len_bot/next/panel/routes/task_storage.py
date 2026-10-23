@@ -46,7 +46,7 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
 
     def cleanable(item: Task) -> bool:
         return (runtime.tasks is not None and item.status in TERMINAL and item.container is None
-                and not item.browser_active and item.id not in runtime.tasks.running)
+                and item.id not in runtime.tasks.running)
 
     @app.get('/api/host/task-storage/pool', response_model=responses.TaskPool, response_model_exclude_unset=True)
     async def pool(_: str = Depends(user)):

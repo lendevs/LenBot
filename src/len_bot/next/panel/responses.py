@@ -640,7 +640,6 @@ class RestartPreview(PanelResponse):
     chats: list[str]
     tasks: list[JsonObject]
     queued_tasks: int
-    browsers: list[JsonObject]
     trials: list[JsonObject]
 
 
@@ -816,18 +815,6 @@ class ResourceDeleted(PanelResponse):
     name: str
     size: int
     removed: bool
-
-
-class Pairing(PanelResponse):
-    pairing_link: str
-
-
-class BrowserDevices(PanelResponse):
-    devices: list[JsonObject]
-
-
-class BrowserRevoked(PanelResponse):
-    revoked: str
 
 
 class MemoryChange(PanelResponse):

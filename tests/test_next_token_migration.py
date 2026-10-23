@@ -39,6 +39,9 @@ def _business_format1(path: Path) -> None:
         db.execute('DROP INDEX model_call_usage')
         db.execute('CREATE INDEX model_call_usage ON model_calls(started,turn_id)')
         db.execute('ALTER TABLE turns DROP COLUMN wake_channel')
+        db.execute("ALTER TABLE tasks ADD COLUMN account_browser INTEGER NOT NULL DEFAULT 0 CHECK(account_browser IN (0,1))")
+        db.execute("ALTER TABLE tasks ADD COLUMN browser_active INTEGER NOT NULL DEFAULT 0 CHECK(browser_active IN (0,1))")
+        db.execute("ALTER TABLE tasks ADD COLUMN browser_session TEXT")
         for table in CALL_TABLES:
             db.execute(f"ALTER TABLE {table} RENAME COLUMN tokens TO cost")
         db.execute("INSERT INTO model_calls(id,turn_id,role,started,ended,request,response,usage,error,cost,scene) "

@@ -6,7 +6,6 @@ import { keys } from '../../../api/query'
 import type { ResourceInput } from '../../../api/resources'
 import { tasksApi, type Task } from '../../../api/tasks'
 import Button from '../../../ui/Button.vue'
-import Checkbox from '../../../ui/Checkbox.vue'
 import Combobox from '../../../ui/Combobox.vue'
 import Dialog from '../../../ui/Dialog.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
@@ -27,7 +26,6 @@ const goal = ref('')
 const deliverable = ref('')
 const context = ref('')
 const materials = ref<string[]>([])
-const accountBrowser = ref(false)
 const picked = ref(props.resources.map((item) => ({ reference: { ...item.reference }, name: item.name })))
 
 const shared = useQuery({
@@ -39,7 +37,7 @@ const options = computed(() =>
 )
 
 const dirty = computed(() =>
-  Boolean(goal.value || deliverable.value || context.value || materials.value.length || accountBrowser.value),
+  Boolean(goal.value || deliverable.value || context.value || materials.value.length),
 )
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 const names = computed(() => [...materials.value, ...picked.value.map((item) => item.name.trim())])
@@ -59,7 +57,6 @@ const create = useMutation({
       goal: goal.value.trim(),
       deliverable: deliverable.value.trim(),
       context: context.value.trim(),
-      account_browser: accountBrowser.value,
       materials: materials.value,
       resources: picked.value.map((item) => ({ reference: item.reference, name: item.name.trim() })),
     }),
@@ -129,13 +126,6 @@ async function close() {
         :title="t('groups.tasks.new.materialsFailed')"
         :error="shared.error.value"
       />
-      <label class="flex cursor-pointer items-center gap-2 text-sm">
-        <Checkbox
-          :model-value="accountBrowser"
-          @update:model-value="(on) => (accountBrowser = on === true)"
-        />
-        {{ t('groups.tasks.new.accountBrowser') }}
-      </label>
       <ErrorNote
         v-if="create.isError.value"
         :title="t('groups.tasks.new.failed')"

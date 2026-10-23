@@ -12,7 +12,6 @@ from typing import Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
-from ..browser.client import BROWSER_TOOL
 from ..media.audio import AudioService, TranscribeArguments
 from ..config import HostConfig
 from .egress_usage import EgressUsage
@@ -22,7 +21,6 @@ from ..chat.recall import RecallArguments, recall_chat
 from .sandbox import DockerSandbox
 from ..tools.skills import Skill, load_task_skills, merge_task_skills
 from ..storage.store import Store
-from ..browser.tasks import TaskBrowser
 from ..browser.files import BrowserOutput, record_browser_output
 from .files import TaskFiles
 from .inputs import require_inputs
@@ -51,7 +49,7 @@ class TaskExecution:
     """Own one run's handles; use task-service callbacks for scheduling and completion."""
 
     def __init__(self, item: Task, config: HostConfig, store: Store, *,
-                 sandbox: DockerSandbox, files: TaskFiles, browser: TaskBrowser, egress: EgressUsage,
+                 sandbox: DockerSandbox, files: TaskFiles, egress: EgressUsage,
                  slots: ModelSlots | None, memory: MemoryService | None, audio: AudioService | None,
                  mcp: MCPHost | None, skills: dict[str, tuple[Skill, ...]],
                  skill_permissions: dict[str, Literal["all"] | list[str]],
@@ -63,7 +61,7 @@ class TaskExecution:
                  on_update: Callable[[str], None], notify_live: Callable[[int], None]):
         self.item, self.config, self.store = item, config, store
         self.settings, self.records = config.worker, TaskStore(store)
-        self.sandbox, self.files, self.task_browser, self.egress = sandbox, files, browser, egress
+        self.sandbox, self.files, self.egress = sandbox, files, egress
         self.slots, self.memory, self.audio, self.mcp = slots, memory, audio, mcp
         self.catalog, self.skill_permissions, self.tool_permissions = skills, skill_permissions, tool_permissions
         self.data_tools = data_tools
@@ -134,11 +132,7 @@ class TaskExecution:
             async with asyncio.timeout(self.active_limit) as timer:
                 self._timer = timer
                 self._skills = self.catalog[item.scene]
-                if item.account_browser:
-                    await self.task_browser.start(item)
-                    self._skills = tuple(skill for skill in self._skills if skill.source == 'builtin')
-                if (not item.account_browser and self.settings.skills_directory is not None
-                        and self.skill_permissions[item.scene] == "all"):
+                if self.settings.skills_directory is not None and self.skill_permissions[item.scene] == "all":
                     workspace = self.settings.workspace_root / item.scene / "tasks" / str(item.id)
                     authored = await asyncio.to_thread(load_task_skills, workspace)
                     self._skills = merge_task_skills(self._skills, authored)
@@ -146,7 +140,7 @@ class TaskExecution:
                     self.sandbox, scene=item.scene, task_id=str(item.id),
                     skills=self._skills,
                     input_names=tuple(item.materials),
-                    data_tools=self.data_tools[item.scene] + ([BROWSER_TOOL] if item.account_browser else [])
+                    data_tools=self.data_tools[item.scene]
                                + [tool.definition['function'] for tool in self._mcp_tools.values()],
                     task_timeout_seconds=self.active_limit,
                     public_browser=self.settings.public_browser,
@@ -220,13 +214,6 @@ class TaskExecution:
                 except Exception as error:
                     status = "failed"
                     error_text = f"{error_text or ''}\n容器清理失败：{type(error).__name__}: {error}"
-            actual = self.records.get(item.scene, item.id)
-            if actual.browser_active:
-                try:
-                    await self.task_browser.stop(actual)
-                except Exception as error:
-                    status = 'failed'
-                    error_text = f'{error_text or ""}\n浏览器清理失败：{type(error).__name__}: {error}'
             if self._proxy is not None:
                 summary = self._proxy.recorded(summary)
                 error_text = self._proxy.recorded(error_text)
@@ -248,8 +235,7 @@ class TaskExecution:
                 "scene_today_traffic": self.egress.status(item.scene),
                 "active_timeout_seconds": self.active_limit,
                 "model_call_limit": self.settings.max_calls,
-                "data_tools": [tool["name"] for tool in self.data_tools[item.scene]] + (["account_browser"] if item.account_browser else [])
-                              + list(self._mcp_tools),
+                "data_tools": [tool["name"] for tool in self.data_tools[item.scene]] + list(self._mcp_tools),
                 "public_browser": None if session.browser_cli_version is None else {
                     "command": "lenbot-browser", "cli_version": session.browser_cli_version,
                     "session": "public", "profile": "in-memory",
@@ -398,10 +384,6 @@ class TaskExecution:
                 raise RuntimeError(f'MCP 工具 {call.name} 当前不可用或定义已变化，请重新读取工具列表')
             content = await tools[call.name].call(self.item.scene, call.arguments)
             return {'content': content}
-        if path == '/task/account-browser':
-            item = self.records.get(self.item.scene, self.item.id)
-            return await self.task_browser.execute(
-                item, raw, pause_input=self._pause_input, resume_input=self._resume_input)
         if path in {"/task/recall-chat", "/task/memory", "/task/transcribe"}:
             name = {"/task/recall-chat": "recall_chat", "/task/memory": "memory", "/task/transcribe": "transcribe"}[path]
             scene = self.item.scene

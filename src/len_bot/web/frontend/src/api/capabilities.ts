@@ -1,7 +1,6 @@
 import { http, request } from './client'
 import type { ReadService, SearchService } from './webServices'
 import type { SettingsSnapshot } from './settings'
-import type { Task } from './tasks'
 
 /** Types of panel/routes/mcp.py, browser.py, skills.py and the capability parts of settings.py. */
 
@@ -113,23 +112,6 @@ export interface CapabilitySettings {
 }
 export const capabilitiesOf = (snapshot: SettingsSnapshot) => snapshot.saved as unknown as CapabilitySettings
 
-/** `browser/client.py` AccountBrowserSettings. */
-export interface BrowserSettings {
-  socket: string
-  browser_instance_id: string | null
-  binary: string
-  home: string
-  timeout_seconds: number | null
-  max_response_bytes: number | null
-}
-export interface BrowserState {
-  running: BrowserSettings | null
-  saved: BrowserSettings | null
-  restart_required: boolean
-  /** Tasks whose browser session is still open. */
-  occupied: Task[]
-}
-
 export type SkillSource = 'builtin' | 'shared' | 'scene' | 'task' | 'plugin'
 export interface SkillInfo {
   name: string
@@ -198,24 +180,6 @@ export const capabilitiesApi = {
     http.put<SettingsSnapshot>('/api/host/settings/network', { network: value }),
   saveWorker: (value: Worker | null) =>
     http.put<SettingsSnapshot>('/api/host/settings/worker', { worker: value }),
-
-  browser: (signal?: AbortSignal) => http.get<BrowserState>('/api/host/browser', undefined, signal),
-  saveBrowser: (settings: BrowserSettings | null) =>
-    http.put<BrowserState>('/api/host/browser', { settings }),
-  browserStatus: () => http.post<Record<string, unknown>>('/api/host/browser/status'),
-  browserDevices: () =>
-    http.get<{ devices: { device_id: string; label: string; [key: string]: unknown }[] }>(
-      '/api/host/browser/devices',
-    ),
-  pairBrowser: () => http.post<{ pairing_link: string; [key: string]: unknown }>('/api/host/browser/pair'),
-  revokeDevice: (device: string) =>
-    request<{ revoked: string }>(`/api/host/browser/devices/${named(device)}`, { method: 'DELETE' }),
-  releaseBrowser: (scene: string, taskId: number, sessionId: string | null) =>
-    http.post<{ released: boolean }>('/api/host/browser/release', {
-      scene,
-      task_id: taskId,
-      session_id: sessionId,
-    }),
 
   skills: (scene: string, signal?: AbortSignal) =>
     http.get<SkillsState>('/api/host/skills', { scene }, signal),

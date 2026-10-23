@@ -64,23 +64,11 @@ const connectionError = computed(() => {
           <p>{{ t('shell.restart.dialog.tasks') }}</p>
           <ul class="mt-1 list-disc pl-5">
             <li v-for="task in preview.tasks" :key="task.id">
-              #{{ task.id }} · {{ groupLabel(task.scene) }} · {{ task.goal
-              }}{{ task.account_browser ? t('shell.restart.dialog.accountBrowser') : '' }}
+              #{{ task.id }} · {{ groupLabel(task.scene) }} · {{ task.goal }}
             </li>
           </ul>
         </div>
         <p v-if="preview.queued_tasks">{{ t('shell.restart.dialog.queued', { n: preview.queued_tasks }) }}</p>
-        <p v-if="preview.browsers.length">
-          {{
-            t('shell.restart.dialog.browsers', {
-              items: list.format(
-                preview.browsers.map(
-                  (item) => `#${item.id} · ${item.session || t('shell.restart.dialog.creating')}`,
-                ),
-              ),
-            })
-          }}
-        </p>
         <p v-if="preview.trials.length">
           {{ t('shell.restart.dialog.trials', { n: preview.trials.length }) }}
         </p>

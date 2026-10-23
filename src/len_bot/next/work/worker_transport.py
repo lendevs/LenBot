@@ -115,7 +115,7 @@ class WorkerTransport:
                         or not isinstance(request["token"], str)
                         or not isinstance(request["path"], str)
                         or request["path"] not in {self.proxy.path, "/task/deliver-file", "/task/browser-file", "/task/network",
-                                                   "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/account-browser", "/task/mcp"}
+                                                   "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/mcp"}
                         or type(request["body_bytes"]) is not int
                         or not 0 < request["body_bytes"] <= self.proxy.limits.max_request_bytes):
                     raise WorkerTransportError(f"invalid worker request frame {kind!r}: {data[:500]!r}")
@@ -124,7 +124,7 @@ class WorkerTransport:
                     raise WorkerTransportError(f"invalid worker body frame {kind!r}: {body[:500]!r}")
                 try:
                     if request["path"] in {"/task/deliver-file", "/task/browser-file", "/task/network",
-                                          "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/account-browser", "/task/mcp"}:
+                                          "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/mcp"}:
                         self.proxy.authorize(request["token"])
                         if self.task_request is None:
                             raise WorkerTransportError("Task API is not configured")

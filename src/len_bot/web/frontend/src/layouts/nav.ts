@@ -144,7 +144,6 @@ const sectionKeys: Record<string, string> = {
   memory: 'memory',
   worker: 'worker',
   commands: 'commands',
-  account_browser: 'account_browser',
   plugins: 'plugins',
   mcp: 'mcp',
   prompts: 'prompts',
