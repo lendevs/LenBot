@@ -49,7 +49,7 @@ from .configuration.maintenance import (
 )
 
 CONFIG_VERSION = 3
-# Startup never rewrites the root file; an old one is upgraded while stopped by the maintenance commands.
+# Upgrade old root configurations with the offline maintenance command.
 UPGRADE_HINT = ("先停掉 Bot 并备份实例目录，在实例目录执行 python -m len_bot.next.maintenance.migrate_config"
                 "（原文件保留在旁边），再按 deploy/current/operations.md「升级与备份」执行其余迁移；"
                 "部署包和 Docker 安装请用面板的更新器")

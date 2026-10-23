@@ -80,7 +80,7 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
         required = estimate_request([system] + project_history(recap, entries) + [state], tools, output_tokens)
         raise ContextBudgetError(
             f"没有可压缩的旧完整对话段；含 system、tools、参考与输出 {output_tokens} 的请求估算 "
-            f"{required} token，压缩阈值 {trigger_tokens}、窗口 {window_tokens}；原文与工具组未拆分")
+            f"{required} token，压缩阈值 {trigger_tokens}、窗口 {window_tokens}，请调大窗口或调小输出上限")
     # Start from the newest complete units, not an arbitrary message count.
     sizes = [ceil(token_scale * len(encode(message).encode('utf-8')) / 3) for _, message in entries]
     recent = 0
@@ -104,7 +104,7 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
         raise ContextBudgetError(
             f"system、tools、参考与最新完整单位（含输出 {output_tokens}）估算 "
             f"{trigger_tokens - available} token，加回想预留 {summary_output_tokens} "
-            f"超过压缩阈值 {trigger_tokens}（窗口 {window_tokens}）；原文未裁剪")
+            f"超过压缩阈值 {trigger_tokens}（窗口 {window_tokens}），请调大窗口或调小输出上限")
 
     prompt = Template(summary_template).substitute(summary_budget_tokens=available)
 
@@ -115,8 +115,8 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
     required = estimate_request(request, [], summary_output_tokens)
     if required > window_tokens:
         raise ContextBudgetError(
-            f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}；"
-            "原文与工具组未拆分，未调用模型")
+            f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
+            "请调大窗口或调小回想最大长度")
     return CompactionPlan(entries[cut - 1][0], available, request)
 
 

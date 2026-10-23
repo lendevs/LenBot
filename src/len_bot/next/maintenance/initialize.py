@@ -1,4 +1,4 @@
-"""Initialize a new instance from setup JSON on stdin, without running the host."""
+"""Initialize a new instance from setup JSON on stdin."""
 
 import argparse
 import json

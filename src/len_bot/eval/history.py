@@ -352,12 +352,12 @@ def extract_history_candidates(source: Path, output: Path) -> dict[str, Any]:
                          "use uncertain when the excerpt is insufficient.",
             "timing": "Decide whether a reply was warranted from the visible context, then judge the observed "
                       "five-minute send/no-send. A later send may answer another message; do not score by count. "
-                      "Use observed_sends when context is truncated. No confirmed send does not prove appropriate "
-                      "silence: delivery and scene online/enabled state may be unknown.",
+                      "Use observed_sends when context is truncated. When no send is confirmed, check delivery "
+                      "and the scene's online/enabled state before judging the silence.",
             "verdicts": ["pass", "fail", "uncertain"],
             "notes": "For pass/fail supply a concrete semantic reason; timing pass/fail requires expected_speak. "
                      "Uncertain timing cases may leave expected_speak null. "
-                     "Text is locally pseudonymized, not guaranteed free of names or other private detail.",
+                     "Text is locally pseudonymized; check for remaining names or private detail before sharing.",
         },
     }
     _private_write(output / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")

@@ -1,4 +1,4 @@
-"""Optional original PNG for panel display, never model input or chat material."""
+"""Load an optional original PNG avatar for the panel."""
 
 from pathlib import Path
 import stat

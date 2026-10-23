@@ -1,4 +1,4 @@
-"""Byte-preserving native role ZIPs; import creates an unbound package, never a live replacement."""
+"""Export native role ZIPs and import them as new role packages."""
 
 from __future__ import annotations
 
@@ -123,7 +123,7 @@ def import_package(root: Path, name: str, data: bytes) -> dict:
     collection.mkdir(mode=0o700, exist_ok=True)
     destination = collection / name
     if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f'Role import never overwrites an existing directory: {destination}')
+        raise FileExistsError(f'Role directory already exists: {destination}')
     with tempfile.TemporaryDirectory(prefix='.persona-import-', dir=collection) as temporary:
         # Named like the destination so a package without an id reads the id it will have.
         package = Path(temporary) / name

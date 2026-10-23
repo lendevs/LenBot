@@ -50,11 +50,11 @@ from len_bot.plugin import Invocation, Plugin, command, fullmatch
 
 
 class Counter(Plugin):
-    @command('计数', '查看本群计数，不调用模型')
+    @command('计数', '查看本群计数')
     async def count(self, ctx: Invocation, args: str) -> None:
         await ctx.reply(f"{ctx.config['label']}：{await ctx.get_kv(ctx.scene, 0)}")
 
-    @fullmatch('计数加一', '按配置步长增加本群计数，不调用模型')
+    @fullmatch('计数加一', '按配置步长增加本群计数')
     async def increment(self, ctx: Invocation) -> None:
         value = await ctx.get_kv(ctx.scene, 0) + ctx.config['step']
         await ctx.set_kv(ctx.scene, value)
@@ -89,7 +89,7 @@ class Counter(Plugin):
 需要准备资源时，重写 `async def start(self)`。清理工作放在 `async def stop(self)` 中。
 
 - `start()` 限时 60 秒。超时后会被取消，插件被标记为失败，LenBot 的其他部分照常启动。
-- `stop()` 限时 30 秒。超时后同样会被取消，不会阻塞关闭过程。
+- `stop()` 限时 30 秒。超时后同样会被取消，关闭流程继续进行。
 
 等待网络或预热缓存等耗时操作，请用 `self.ctx.start_task(name, coroutine)` 放到后台执行。
 

@@ -1,4 +1,4 @@
-"""Locate and read task resources without duplicating files in a resource registry."""
+"""Locate and read task resources."""
 
 from __future__ import annotations
 

@@ -23,10 +23,10 @@ uv run --no-sync len-bot
 | `migrate` | 升级业务数据库 |
 | `migrate_memory_jobs` | 升级记忆处理库 |
 | `migrate_local_memory` | 升级本地记忆索引 |
-| `plugin_dependencies` | 恢复已安装插件的依赖，不执行插件代码 |
+| `plugin_dependencies` | 恢复已安装插件的依赖 |
 | `doctor` | 检查升级结果，全部为 `ok` 或 `disabled` 后再启动 |
 
-已经是最新格式的步骤不做任何改动。升级前请先[备份](#备份)。
+升级前请先[备份](#备份)。
 
 - 数据库迁移在数据库旁边保留一份升级前的副本，例如 `state.db.v2.bak`。确认运行正常后可以删除。同名副本已存在时命令拒绝执行。
 - 每一步升级在一个事务中完成，中途失败时数据停留在上一个完整的格式。
@@ -56,7 +56,7 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-命令只复制配置和配置中引用到的实例文件，不复制源码。副本改为模拟发送，不连接 OneBot 或 Telegram，面板使用指定的端口，指向原实例内部的绝对路径改为指向副本。模型、插件和后台任务在副本中照常运行，模型调用照常消耗 token。
+命令复制配置和配置中引用到的实例文件。副本改为模拟发送，不连接 OneBot 或 Telegram，面板使用指定的端口，指向原实例内部的绝对路径改为指向副本。模型、插件和后台任务在副本中正常运行，模型调用同样消耗 token。
 
 ## 作为系统服务运行
 
@@ -71,6 +71,6 @@ sudo systemctl start lenbot
 sudo journalctl -u lenbot -n 100 --no-pager
 ```
 
-模板设置了 `Restart=no`，也不会开机自启，需要时自行执行 `systemctl enable lenbot`。
+模板设置了 `Restart=no`。需要开机自启时执行 `systemctl enable lenbot`。
 
 macOS 上可以双击 `deploy/current/start.command` 启动。

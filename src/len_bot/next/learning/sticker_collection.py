@@ -68,7 +68,7 @@ def _annotation(reply: ModelReply) -> tuple[str, str, list[str], list[str], bool
 
 
 class StickerCollector:
-    """Per-scene queued candidates; failed work is never silently replayed."""
+    """Per-scene sticker candidate queue; failed items keep a failed status."""
 
     def __init__(self, config: HostConfig, store: Store, vision: ChatModel, *,
                  recording: Callable[[str], RecordedImages | None],

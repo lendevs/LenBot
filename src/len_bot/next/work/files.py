@@ -49,7 +49,7 @@ class TaskFiles:
         entries = await asyncio.to_thread(output_entries, root, path, offset, limit)
         return {'task_id': item.id, 'root': 'out', 'path': path, **entries,
                 'registered_files': [file_info(file, self.records) for file in self.records.list_files(item.scene, item.id)],
-                'notice': 'entries 是当前磁盘元数据，不是内容验证；registered_files 才是可下载交付，上传状态另列。'}
+                'notice': 'entries 列出磁盘文件信息；registered_files 列出可下载的交付及上传状态。'}
 
     async def deliver(self, item: Task, sandbox: SandboxHandle, raw: bytes) -> dict:
         arguments = DeliverFile.model_validate_json(raw)
@@ -90,7 +90,7 @@ class TaskFiles:
                                  f'scene={file.scene!r}, task={file.task_id}, file={file.id}, path={file.path!r}; '
                                  'retain/move the actual delivery explicitly before discarding this environment')
         self.records.add_event(scene, id, 'workspace_discard', {'requester': requester,
-            'workspace': workspace, 'runtime': runtime, 'notice': '明确放弃此任务环境，不再续接；不是物理删除成功回执'})
+            'workspace': workspace, 'runtime': runtime, 'notice': '任务环境已放弃，接下来清理目录，删除结果见 temporary_cleanup 事件'})
         self.notify(scene)
         progress = {'complete': False, 'removed': [], 'absent': [], 'active_root': None, 'error': None}
         original_error: BaseException | None = None

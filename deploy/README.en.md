@@ -17,7 +17,7 @@ The instance directory holds everything for one bot. When running from source, t
 | Memory, prompt overrides, task directories | `state/` and others, as configured |
 | Runtime log | `logs/lenbot.jsonl` |
 
-`lenbot.config.json` is the only runtime configuration; LenBot reads no environment variables or command-line options. Change settings in the panel while it runs, and stop LenBot before editing the file by hand.
+The runtime configuration lives in `lenbot.config.json`. Change settings in the panel while LenBot runs, and stop LenBot before editing the file by hand.
 
 ## Files
 

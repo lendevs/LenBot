@@ -89,7 +89,7 @@ SCHEDULE_TOOLS = [
         "或严格 every <正整数>m|h|d（1分钟至365天固定UTC秒，d=24小时），"
         "或 cron:<分钟> <小时> <日> <月> <星期>，按场景时区；每字段支持 *、数字、a-b、逗号列表、*/n 与 a-b/n，"
         "星期 0-6（0 为周日），日与星期不能同时限制，不支持英文名、L、W、#。"
-        "缺失/重复时刻明确报错或阻止后续，不自动顺延、选偏移。"
+        "缺失或重复的本地钟点会报错，周期安排在该处停止。"
         "for=self 是未来自己要做的事，for=账号 是提醒对象；source_message_id 是实际请求消息，宿主读取其发送者作为请求人，Bot 自主安排用 null。"
         "相对时间请结合原话和当前时刻理解。",
         "parameters": source_schema(ScheduleArguments.model_json_schema()),
@@ -102,7 +102,7 @@ SCHEDULE_TOOLS = [
     {"type": "function", "function": {
         "name": "schedule_cancel", "description": "取消当前场景未完成的一次性或周期安排；source_message_id 为实际操作者发出的消息，"
         "本人可取消自己创建的，管理者可取消他人的；Bot 自主取消用 null，只能取消自主安排。"
-        "取消周期安排停止后续唤醒，不撤回已交给会话的过去次数。",
+        "取消周期安排会停止后续唤醒。",
         "parameters": source_schema(ScheduleCancelArguments.model_json_schema()),
     }},
 ]

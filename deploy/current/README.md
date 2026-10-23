@@ -4,7 +4,7 @@
 
 ## OneBot
 
-LenBot 本身不登录 QQ，通过 OneBot v11 收发 QQ 消息。为此需要一个已经登录 QQ 并开启了 OneBot WebSocket 的实现。连接方式有两种，选择其一。
+LenBot 通过 OneBot v11 收发 QQ 消息。为此需要一个已经登录 QQ 并开启了 OneBot WebSocket 的实现。连接方式有两种，选择其一。
 
 - **正向 WebSocket**。LenBot 连接 OneBot 的地址，例如 `ws://127.0.0.1:3001`。
 - **反向 WebSocket**。LenBot 监听一个端口，等待 OneBot 连接。
@@ -16,7 +16,7 @@ LenBot 本身不登录 QQ，通过 OneBot v11 收发 QQ 消息。为此需要一
 - 正向连接按间隔重连。间隔从 1 秒开始，每次翻倍，最长 30 秒。连接稳定 30 秒后间隔重置。重连后会重新核对账号。
 - 反向连接等待 OneBot 重新连接。
 
-启动时第一次连接就失败时，LenBot 不会自动重试。问题解决后，点击总览上的「手动连接 QQ」。在总览上手动断开 QQ 后，需要在右上角的账号菜单中重启，才会重新连接。
+启动时第一次连接就失败时，处理好地址或服务问题，再点击总览上的「手动连接 QQ」。在总览上手动断开 QQ 后，需要在右上角的账号菜单中重启，才会重新连接。
 
 发送方式 `delivery` 有两种。`onebot` 真实发送到 QQ。`simulated` 只在本地记录，回复可以在面板中查看。
 
@@ -44,7 +44,7 @@ LenBot 本身不登录 QQ，通过 OneBot v11 收发 QQ 消息。为此需要一
 
 更换绑定的模型后，已完成的异源工具组会转为历史资料。未完成的工具组不能跨绑定续接，必要时从面板开始新的上下文。
 
-LenBot 只统计模型服务报告的 token 数量，不计算金额。用量和每天的 token 上限在模型页的「用量与上限」中查看和设置。服务没有报告 token 的调用会单独计数。设置了上限时，如果当天出现没有报告 token 的调用，LenBot 无法确认是否超出上限，因此也会暂停模型调用。语音转写和向量调用单独显示，不计入上限。
+LenBot 统计模型服务报告的 token 数量。用量和每天的 token 上限在模型页的「用量与上限」中查看和设置。服务没有报告 token 的调用会单独计数。设置了上限时，如果当天出现没有报告 token 的调用，LenBot 无法确认是否超出上限，因此也会暂停模型调用。语音转写和向量调用单独显示，不计入上限。
 
 ## 记忆与向量检索
 
@@ -113,7 +113,7 @@ sudo systemctl start lenbot
 sudo journalctl -u lenbot -n 100 --no-pager
 ```
 
-模板中的工作目录是实例目录，`ExecStart` 指向实例中的 `.venv/bin/len-bot`。`ReadWritePaths` 必须包含实例目录，以及配置中位于实例以外的任务目录。模板设置了 `Restart=no`，也不会开机自动启动，需要时请自行执行 `enable`。
+模板中的工作目录是实例目录，`ExecStart` 指向实例中的 `.venv/bin/len-bot`。`ReadWritePaths` 必须包含实例目录，以及配置中位于实例以外的任务目录。模板设置了 `Restart=no`；需要开机启动时执行 `systemctl enable lenbot`。
 
 在 macOS 上可以双击 [start.command](start.command)，它在仓库根目录执行 `.venv/bin/len-bot`。
 

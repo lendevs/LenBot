@@ -287,8 +287,8 @@ def test_new_version_that_never_reconnects_to_qq_is_rolled_back(make):
 
 
 @pytest.mark.parametrize(('before', 'warning'), [(False, '更新前后都没有连上 QQ；'),
-                                                 (None, '新版本没有连上 QQ，更新前的程序没有报告连接状态'),
-                                                 ('absent', '新版本没有连上 QQ，更新前的程序没有报告连接状态')])
+                                                 (None, '新版本没有连上 QQ（更新前的程序没有报告连接状态）'),
+                                                 ('absent', '新版本没有连上 QQ（更新前的程序没有报告连接状态）')])
 def test_qq_offline_before_the_update_only_warns(make, before, warning):
     backend = Backend(platform={'0.1.0': before, '0.2.0': False})
     controller = make(backend)

@@ -17,7 +17,7 @@ npm-licenses.json           前端依赖许可元数据
 source-docs/               上游远程连接与文件助手说明
 ```
 
-请把包解压到最终的程序位置后，再注册文件助手。注册内容指向可执行文件的实际路径，因此不要在临时解压目录中注册后再移动程序。
+请把包解压到最终的程序位置后，再注册文件助手。注册内容会记录可执行文件的路径，移动程序后需要重新注册。
 
 ## 浏览器所在的电脑
 
@@ -28,9 +28,9 @@ source-docs/               上游远程连接与文件助手说明
 ./bin/bsk-file-host install --extension-id <实际扩展ID>
 ```
 
-注册使用当前用户的 Chrome Native Messaging 目录，不需要管理员权限。使用 Chromium、Chrome for Testing 或其他用户资料目录时，用 `--manifest-directory /实际/NativeMessagingHosts` 指定对应的位置。注册不会安装扩展，不会打开网页，也不会自动连接 daemon。
+注册使用当前用户的 Chrome Native Messaging 目录，不需要管理员权限。使用 Chromium、Chrome for Testing 或其他用户资料目录时，用 `--manifest-directory /实际/NativeMessagingHosts` 指定对应的位置。
 
-同机浏览时，可以使用本机的 daemon。远程浏览时，电脑上只需要扩展和文件助手，通过扩展中的配对链接连接服务器。人工登录和验证码仍然在专用浏览器中完成，账号操作也一样。浏览器的用户资料不会复制到 LenBot 实例中。
+同机浏览时，可以使用本机的 daemon。远程浏览时，电脑上只需要扩展和文件助手，通过扩展中的配对链接连接服务器。人工登录、验证码和账号操作都在专用浏览器中完成，浏览器资料保存在这个浏览器的用户配置目录中。
 
 ## daemon 所在的机器
 
@@ -54,21 +54,21 @@ BSK_HOME=/absolute/path/to/browser-home ./bin/bsk daemon start --mode local
 BSK_HOME=/absolute/path/to/browser-home BSK_AUTO_START=0 ./bin/bsk daemon pair
 ```
 
-`BSK_HOME` 和 `BSK_AUTO_START` 是独立的 BrowserSkill 服务的参数，不会覆盖 LenBot 的运行配置。LenBot 根配置中的 `account_browser` 按下面的方式填写。
+`BSK_HOME` 和 `BSK_AUTO_START` 是 BrowserSkill 服务的参数。LenBot 根配置中的 `account_browser` 按下面的方式填写。
 
 - `binary` 指向这个包中的 `bin/bsk`。
 - `home` 与这个 daemon 使用的目录一致。
 - `socket` 填写 daemon 实际创建的本地 IPC 路径。
 - `device_id` 选择实际配对的设备。
 
-请不要按示例猜测 socket 路径或设备 ID。
+socket 路径和设备 ID 从 daemon 的状态信息中复制。
 
-LenBot 和 daemon 需要共享本地 IPC。如果 LenBot 运行在容器中，必须为容器提供实际的 socket 和 home 目录，以及同一平台的可执行文件。macOS 的 bsk 二进制文件不能直接在 Linux 容器中执行。部署位置按实际系统选择，连接方式不会自动切换。
+LenBot 和 daemon 需要共享本地 IPC。如果 LenBot 运行在容器中，必须为容器提供实际的 socket 和 home 目录，以及同一平台的可执行文件。macOS 的 bsk 二进制文件不能直接在 Linux 容器中执行。部署位置按实际系统选择。
 
 ## 文件与升级
 
-远程文件通过配对连接和本机的文件助手传输，服务器和浏览器所在的电脑不需要共享磁盘。上传成功表示文件已经附加到页面控件上，提交网页是另一个动作。下载和截图的保存会分别报告，LenBot 的交付登记和上传到 QQ 也会分别报告。文件助手的职责和临时文件的清理方式见包内的 `source-docs/file-host.md`。
+远程文件通过配对连接和本机的文件助手传输，服务器和浏览器所在的电脑不需要共享磁盘。上传成功时文件已附加到页面控件上，之后由页面操作提交。下载、截图保存、LenBot 的交付登记和上传到 QQ 各自报告结果。文件助手的职责和临时文件的清理方式见包内的 `source-docs/file-host.md`。
 
-升级前，请结束相关的任务并停止对应的 daemon。保留原来的服务 home 目录和配对数据，然后换成同一版本的 daemon、扩展和文件助手。扩展的加载目录或文件助手的位置发生变化后，需要为对应的扩展 ID 重新注册。宿主不会自动更新这项独立服务。请不要运行上游的自动更新命令，否则会覆盖这个版本的远程文件扩展。
+升级前，请结束相关的任务并停止对应的 daemon。保留原来的服务 home 目录和配对数据，然后换成同一版本的 daemon、扩展和文件助手。扩展的加载目录或文件助手的位置发生变化后，需要为对应的扩展 ID 重新注册。这项服务用配套发行包单独升级；上游的自动更新命令会覆盖远程文件扩展。
 
-对应的打过补丁的源码随本次 Release 另外提供，文件名为 `browserskill-<LenBot发行号>-source.tar.gz`。包中的 `component.json` 标明了上游版本，包名中的 LenBot 发行号不能代替上游自己的版本号。Linux 二进制文件在 Ubuntu 24.04 上构建，需要相应版本的 glibc。Windows 原生文件助手不在本轮发行范围内。
+对应的打过补丁的源码随本次 Release 另外提供，文件名为 `browserskill-<LenBot发行号>-source.tar.gz`。包中的 `component.json` 标明了上游版本。Linux 二进制文件在 Ubuntu 24.04 上构建，需要相应版本的 glibc。

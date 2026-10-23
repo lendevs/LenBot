@@ -136,7 +136,7 @@ PERSONA_KNOWLEDGE_TOOL = {"type": "function", "function": {
     "name": "persona_knowledge",
     "description": "按需查当前角色设定资料；list列文件名和标签，search按文件名/标签/全文原词匹配，"
                    "两者每页5项、offset是条目位置；read用真实filename每页读4000字符、offset是原文字符位置。"
-                   "按next_offset续页；搜索preview不是全文，content_offset是原文命中位置。",
+                   "按next_offset续页；搜索preview是命中片段，content_offset是原文命中位置。",
     "parameters": PersonaKnowledgeArguments.model_json_schema(),
 }}
 

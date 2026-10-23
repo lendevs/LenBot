@@ -88,7 +88,7 @@ def _token_usage(usage: dict | None) -> TokenUsage | None:
 
 
 def parse_embeddings(body: object, count: int, expected_dimensions: int | None) -> EmbeddingBatch:
-    """Parse the provider result once; never infer a missing row or dimension."""
+    """Validate embedding rows and dimensions from a provider response."""
     try:
         if not isinstance(body, dict):
             raise ValueError("response must be an object")

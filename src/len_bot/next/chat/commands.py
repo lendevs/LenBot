@@ -145,7 +145,7 @@ async def _help(call: CommandCall) -> str:
     lines = ["可用的宿主命令："]
     for command in call.runtime.commands.available(call.runtime, call.runner, call.message):
         lines.append(f"{command.usage} — {command.summary}")
-    lines.append("其他消息照常交给我。")
+    lines.append("其他消息按普通聊天处理。")
     return "\n".join(lines)
 
 

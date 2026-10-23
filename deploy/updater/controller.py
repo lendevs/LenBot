@@ -8,7 +8,7 @@ manual restore or start action.
 When the previous program was connected to QQ before the update, the new one must connect again
 within ``connect_seconds`` after it is ready, otherwise that is a failure and is rolled back too.
 When it was not connected (QQ side offline, deliberately disconnected, or a host too old to say),
-the update only records a warning, so a problem on the QQ side is not taken for a broken release.
+the update only records a warning.
 """
 
 import argparse
@@ -222,11 +222,11 @@ class Controller:
         self.stage('prepared', status='prepared')
 
     def updater_steps(self, tag: str) -> str:
-        """The updater never replaces itself; a newer protocol is switched by one explicit command."""
+        """Commands that switch to a newer updater."""
         if self.deployment['mode'] == 'native':
-            return (f'{tag} 需要新版更新器，不能从面板换版。请停止 LenBot，下载 {tag} 的部署包并解压，'
+            return (f'{tag} 需要新版更新器，请停止 LenBot，下载 {tag} 的部署包并解压，'
                     f'运行其中的 install.sh upgrade {self.root}（Windows 用 install.ps1 upgrade {self.root}），'
-                    '它会同时更新程序和更新器，然后照常启动。')
+                    '它会同时更新程序和更新器，完成后再启动 LenBot。')
         version = tag.removeprefix('v')
         image = repository(self.backend.metadata()['host_image']) + '-updater:' + version
         return (f'{tag} 需要新版更新器，请在部署目录 {self.deployment["host_directory"]} 依次运行：\n'
@@ -289,7 +289,7 @@ class Controller:
             connected = self.platform_connected()
             if connected is False:
                 self.state['warning'] = ('更新前后都没有连上 QQ' if self.state.get('platform_before') is False
-                                         else '新版本没有连上 QQ，更新前的程序没有报告连接状态，不作为更新失败'
+                                         else '新版本没有连上 QQ（更新前的程序没有报告连接状态）'
                                          ) + '；版本已经更新，请检查 QQ 端和连接设置。'
                 self.record('platform_not_connected', level='WARNING', before=self.state.get('platform_before'))
             return

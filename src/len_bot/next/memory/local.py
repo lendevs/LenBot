@@ -763,7 +763,7 @@ class LocalMemory:
                     vectors: list[tuple[float, ...]], create_only: bool = False) -> LocalMemoryChange:
         target = self._target(scope, path, file=True)
         if create_only and target.exists():
-            raise FileExistsError(f'New formal memory never overwrites an existing file: {target}')
+            raise FileExistsError(f'Memory file already exists: {target}')
         before = _source_text(target) if target.exists() else None
         changed_at = time.time()
         with self._file_mutation(scope, path, 'write', changed_at, [target]) as db:
@@ -791,7 +791,7 @@ class LocalMemory:
         async with self._lock(source):
             target = self._target(source, path, file=True)
             if create_only and target.exists():
-                raise FileExistsError(f'New formal memory never overwrites an existing file: {target}')
+                raise FileExistsError(f'Memory file already exists: {target}')
             vector = await self._embed_sections(source, content)
             return await _finish_write_thread(self._write_sync, source, path, content, reason, vector, create_only)
 

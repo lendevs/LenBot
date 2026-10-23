@@ -371,7 +371,7 @@ class PersonaService:
                 chat.context.host_state = (
                     f"本群角色已从「{previous.name}」换成「{persona.name}」。"
                     + (f"较早群聊回想里「{previous.name}」的话和承诺属于「{previous.name}」。" if handover == "done" else
-                       f"当前会话里此前 assistant 的发言和承诺属于「{previous.name}」，不是你说的。"))
+                       f"当前会话里此前 assistant 的发言和承诺都属于「{previous.name}」。"))
         log_event(logger, "persona_switch", scene=scene, persona=persona.id, previous=previous.id,
                   handover=handover, source=source)
         return {"scene": scene, "status": "switched", "persona": {"id": persona.id, "name": persona.name},

@@ -453,11 +453,11 @@ class WorkTasks:
         if item.question["method"] == "confirm":
             self._can_manage(item, requester)
             if confirmed is None or text is not None:
-                raise ValueError("操作确认必须使用 confirmed 布尔值，普通文字不能替代授权")
+                raise ValueError("操作确认用 confirmed 布尔值回答")
             response = {"confirmed": confirmed}
         else:
             if text is None or confirmed is not None:
-                raise ValueError("补充信息必须用 text，不是操作授权")
+                raise ValueError("补充信息用 text 回答，操作确认用 confirmed")
             if item.question["method"] == "select" and text not in item.question["options"]:
                 raise ValueError("回答必须是当前问题提供的一个选项")
             response = {"value": text}
@@ -640,7 +640,7 @@ class WorkTasks:
         if recent:
             notice += '\n最近过程编号（原文由请求人或任务管理者按event读取）：\n' + json.dumps(recent, ensure_ascii=False)
         elif status == 'failed' and item.account_browser:
-            notice += '\n账号浏览过程未公开；仅根主人可按权限读取原事件。'
+            notice += '\n账号浏览过程的原事件只有根主人可以读取。'
         self.records.add_event(item.scene, item.id, "finished", body, notice=notice)
         with log_context(scene=item.scene, task_id=item.id):
             log_event(logger, 'task_finished', level=logging.INFO if status == 'done' else logging.WARNING,

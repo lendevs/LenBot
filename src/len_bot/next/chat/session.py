@@ -187,7 +187,7 @@ class Chat:
                 if content_tokens > recap_target.summary_budget_tokens:
                     raise ContextBudgetError(
                         f"新回想正文估算 {content_tokens} token，超过本步回想预算 "
-                        f"{recap_target.summary_budget_tokens}；未切换起点")
+                        f"{recap_target.summary_budget_tokens}")
 
         return await request_model(
             self.config, self.store, model, messages, tools, scene=self.config.scene, role=role,

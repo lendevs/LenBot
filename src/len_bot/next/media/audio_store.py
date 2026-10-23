@@ -40,7 +40,7 @@ class AudioStore:
 
     def recover(self, scene: str, enabled: bool) -> None:
         with self.db:
-            error = "Interrupted: previous audio processing ended without a result; not replayed"
+            error = "Interrupted: previous audio processing ended without a result"
             self.db.execute("UPDATE audio_cache SET status='interrupted',error=?,updated=? "
                 "WHERE scene=? AND status='running'", (error, self.store.now(), scene))
             if not enabled:

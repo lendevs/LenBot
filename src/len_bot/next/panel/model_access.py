@@ -76,7 +76,7 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
             reply = await model.complete(messages, tools)
             replies.append(reply)
         if reply.tool_calls or not reply.text.strip():
-            raise ValueError('模型未返回完整文本；不能把工具请求或空响应当成连接成功')
+            raise ValueError('模型返回了空正文或工具调用，测试需要一段文本回复；请检查模型用途和输出上限')
     return {'model': binding.model, 'text': reply.text, 'kind': kind, 'calls': len(replies),
             'usage': [item.usage for item in replies],
             'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接'}

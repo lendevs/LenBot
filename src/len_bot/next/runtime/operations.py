@@ -31,6 +31,6 @@ def diagnostic_zip(payload: dict, config, *, plugin_redactor=None) -> bytes:
     buffer = BytesIO()
     with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
         archive.writestr("diagnostic.txt", text)
-        archive.writestr("README.txt", "诊断资料，不是可直接回放的评测快照。已隐去配置凭据与至少5位的数字（可能同时遮盖时间、消息号等）。\n"
-                         "正文仍可能含昵称、私人事实和第三方返回内容；附件、原图、语音及文件原件不包含在此包中。\n")
+        archive.writestr("README.txt", "用于排障的文本诊断包。已隐去配置凭据与至少5位的数字（时间、消息号等也会被遮盖）。\n"
+                         "正文含昵称、聊天内容和第三方返回内容，分享前请自行检查；附件、原图、语音和文件原件不在包内。\n")
     return buffer.getvalue()

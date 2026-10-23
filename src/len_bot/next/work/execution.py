@@ -395,7 +395,7 @@ class TaskExecution:
                 raise RuntimeError('任务MCP宿主尚未接入')
             tools = {tool.name: tool for tool in self.mcp.tools_for(self.item.scene)}
             if call.name not in tools or tools[call.name] != self._mcp_tools[call.name]:
-                raise RuntimeError(f'MCP工具 {call.name} 当前不可用或定义已变化；未调用，不更新本次工具集合')
+                raise RuntimeError(f'MCP 工具 {call.name} 当前不可用或定义已变化，请重新读取工具列表')
             content = await tools[call.name].call(self.item.scene, call.arguments)
             return {'content': content}
         if path == '/task/account-browser':

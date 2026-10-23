@@ -1,4 +1,4 @@
-"""Authenticated, explicit scene-material copies and downloads, never automatic task inputs."""
+"""Panel endpoints for copying and downloading scene materials."""
 
 import asyncio
 from collections.abc import Callable

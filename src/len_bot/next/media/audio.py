@@ -41,7 +41,7 @@ class TranscribeArguments(BaseModel):
 
 TRANSCRIBE_TOOL = {"type": "function", "function": {
     "name": "transcribe", "description": "把本场景已保存消息中的语音转成文字。message是实际平台消息ID，"
-    "audio从1开始按该消息record段顺序计数；refresh仅重新识别已保存音频，不重新下载。",
+    "audio从1开始按该消息record段顺序计数；refresh 用已保存的音频重新识别。",
     "parameters": TranscribeArguments.model_json_schema(),
 }}
 

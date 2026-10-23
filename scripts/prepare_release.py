@@ -1,4 +1,4 @@
-"""Set one release version and check its notes in a clean checkout; never commits, tags or pushes.
+"""Set one release version and check its notes in a clean checkout.
 
 Publishing starts when the matching v<version> tag is pushed, which stays an explicit step for the maintainer.
 """
@@ -62,7 +62,7 @@ def main() -> None:
     print(f'版本 {previous} → {args.version}，已更新 pyproject.toml 和 uv.lock。')
     problems = notes_problems(args.version)
     if problems:
-        print(f'changelogs/v{args.version}.md 还不能作为 Release 正文：')
+        print(f'changelogs/v{args.version}.md 需要先补全这些内容：')
         for problem in problems:
             print('  - ' + problem)
     print('之后由你确认并执行：')

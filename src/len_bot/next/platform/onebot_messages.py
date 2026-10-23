@@ -149,7 +149,7 @@ def parse_send_result(raw: dict) -> SendResult:
 
 
 def parse_upload_result(raw: dict) -> UploadResult:
-    """Parse the selected NapCat upload action without inventing a message ID."""
+    """Parse the configured NapCat upload action receipt."""
     if not isinstance(raw, dict):
         raise ValueError(f"OneBot upload response must be an object; raw={raw!r}")
     status = raw.get("status")

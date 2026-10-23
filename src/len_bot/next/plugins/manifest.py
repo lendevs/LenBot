@@ -283,7 +283,7 @@ def parse_manifest(path: Path) -> Manifest:
         raise ValueError(f"{path}: {error}; 原文开头：{text[:300]!r}") from error
     interface = raw.get("interface")
     if interface != INTERFACE:
-        raise ValueError(f"{path}: 插件接口版本 {interface!r} 与宿主接口版本 {INTERFACE} 不一致，未加载（不做兼容）")
+        raise ValueError(f"{path}: 插件接口版本 {interface!r} 与宿主接口版本 {INTERFACE} 不一致，请换用接口版本 {INTERFACE} 的插件")
     try:
         manifest = Manifest.model_validate(raw)
     except ValidationError as error:

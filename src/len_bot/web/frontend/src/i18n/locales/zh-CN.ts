@@ -610,7 +610,7 @@ export default {
         pending: '正在回复，这一轮结束后换成 {name}',
         waiting: '这一轮回复结束后换成 {name}',
         failed: '没有换成',
-        handoverFailed: '聊天交接没写成，已提醒新角色之前的话不是它说的',
+        handoverFailed: '聊天交接没写成，已提醒新角色之前的话属于上一个角色',
       },
       participation: {
         section: '参与方式',
@@ -1478,7 +1478,7 @@ export default {
       stalled: '最近卡顿过',
       idle: '没有在监测',
       stalls: '卡顿 {n} 次',
-      pauses: '系统休眠 {n} 次（不算卡顿）',
+      pauses: '系统休眠 {n} 次',
       longest: '最长 {n} 毫秒',
       latest: '最近一次：{task} 卡住 {n} 毫秒，{ago}',
       noStack: '卡顿太短，没有抓到现场',

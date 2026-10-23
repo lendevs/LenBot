@@ -74,10 +74,10 @@ def register_host_operations(app, *, runtime, user):
             raise HTTPException(422, '请明确确认本次会话操作')
         runner = runtime.runners[scene]
         if runner.execution.locked() or runtime.status in {'stopping', 'stopped'}:
-            raise HTTPException(409, '场景正在执行或宿主正在停止，未改变会话')
+            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后再试')
         async with runner.execution:
             if store.db.execute('SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1', (scene,)).fetchone():
-                raise HTTPException(409, '场景还有未结束或等待恢复的轮次，未改变会话')
+                raise HTTPException(409, '场景还有未结束或等待恢复的轮次，请等它结束后再试')
             if action == 'new-context':
                 through = store.new_context(scene)
                 runner.chat.toolset.discovered_tools = set()
@@ -98,7 +98,7 @@ def register_host_operations(app, *, runtime, user):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if runner.execution.locked() or not runtime.accepting:
-            raise HTTPException(409, '场景正在执行或宿主正在停止，临时状态未改变')
+            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后再试')
         async with runner.execution:
             result = runner.set_temporary_quiet(change.seconds, change.direct, None)
             runtime.events.publish("host.state", scene=scene)
@@ -109,7 +109,7 @@ def register_host_operations(app, *, runtime, user):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if runner.execution.locked() or not runtime.accepting:
-            raise HTTPException(409, '场景正在执行或宿主正在停止，临时状态未改变')
+            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后再试')
         async with runner.execution:
             result = runner.set_temporary_quiet(None, 'allow', None)
             runtime.events.publish("host.state", scene=scene)
@@ -120,7 +120,7 @@ def register_host_operations(app, *, runtime, user):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if not runtime.accepting:
-            raise HTTPException(409, '宿主没有在运行，聊天开关未改变')
+            raise HTTPException(409, '宿主没有在运行，请先启动再切换聊天开关')
         # Waits for a running turn to finish so its saved attention state cannot overwrite the switch.
         async with runner.execution:
             result = runner.set_paused(not change.enabled)
@@ -131,7 +131,7 @@ def register_host_operations(app, *, runtime, user):
     async def all_chat(change: ChatSwitch, _: str = Depends(user)):
         """Every scene at once, e.g. when model quota runs out; messages are still stored."""
         if not runtime.accepting:
-            raise HTTPException(409, '宿主没有在运行，聊天开关未改变')
+            raise HTTPException(409, '宿主没有在运行，请先启动再切换聊天开关')
         async def switch(runner):
             async with runner.execution:
                 return runner.set_paused(not change.enabled)
@@ -158,7 +158,7 @@ def register_host_operations(app, *, runtime, user):
             raise HTTPException(404, '当前场景没有这一轮')
         logs = await asyncio.to_thread(read_records, config.logging.directory, limit=2000, match={'turn_id': turn_id})
         return await archive({'turn': detail, 'log': list(reversed(logs)),
-                        'scope': '实际轮次与调用，以及同一轮 ID 的运行日志；输入原话以保存的请求为准'})
+                        'scope': '实际轮次与调用，以及同一轮 ID 的运行日志；输入原话见保存的请求'})
 
     @app.get('/api/host/tasks/{task_id}/export', response_class=Response)
     async def task_export(task_id: int, scene: str, _: str = Depends(user)):
@@ -183,7 +183,7 @@ def register_host_operations(app, *, runtime, user):
                             'SELECT name,size,note,created FROM task_files WHERE scene=? AND task_id=?',
                             (scene, task_id))],
                         'log': list(reversed(logs)), 'container_stderr_tail': stderr,
-                        'scope': '已保存任务事件、文件清单、同一任务的运行日志和容器进程 stderr 末尾 64 KiB；不包含文件字节或原生会话文件'})
+                        'scope': '已保存任务事件、文件清单、同一任务的运行日志和容器进程 stderr 末尾 64 KiB'})
 
     @app.get('/api/host/retention', response_model=responses.RetentionState, response_model_exclude_unset=True)
     async def retention_state(_: str = Depends(user)):
@@ -232,7 +232,7 @@ def register_host_operations(app, *, runtime, user):
     async def limits_state(_: str = Depends(user)):
         return {'limits': config.limits.model_dump(mode='json'),
                 'scenes': await limit_states(list(runtime.chats.items())),
-                'scope': '宿主代理的模型请求，含保留试聊及已移除场景；不含远端服务内部调用'}
+                'scope': '宿主代理的模型请求，含保留试聊及已移除场景'}
 
     @app.post('/api/host/scenes/{scene}/speech/reset', response_model=responses.SceneLimit, response_model_exclude_unset=True)
     async def speech_reset(scene: str, operator: str = Depends(user)):
@@ -264,7 +264,7 @@ def register_host_operations(app, *, runtime, user):
                                memory_db=None if records is None else records.db)
                 return {"timezone": zone, "period": period, **result,
                         'wakes': wake_usage(source, None if scene is None else [scene], start.timestamp(), end.timestamp(), zone),
-                        'scope': '当前实例业务及记忆计量；全部范围含public与已移除场景，不含独立保留试聊（预算另含）',
+                        'scope': '当前实例业务及记忆计量；全部范围含 public 与已移除场景，独立保留试聊另计',
                         'memory_record_source':
                         'not_present' if records is None else 'read_only_existing'}
         try:

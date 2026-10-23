@@ -1,4 +1,4 @@
-"""Install a built release beside an independent instance; never start the host."""
+"""Install a built release beside an independent instance."""
 
 import argparse
 import json
@@ -137,7 +137,7 @@ def main() -> None:
     if args.action == 'upgrade' and state_file.exists():
         state = json.loads(state_file.read_text(encoding='utf-8'))
         if state['status'] == 'failed' and state.get('snapshot_complete'):
-            raise ValueError(f'上次升级失败且尚未恢复，快照在 {state["snapshot"]}；先运行 run 打开恢复页恢复，不能覆盖恢复记录')
+            raise ValueError(f'上次升级失败且尚未恢复，快照在 {state["snapshot"]}；请先运行 run 打开恢复页完成恢复')
     release = root / 'releases' / metadata['version']
     # A version that was prepared, or restored away from, leaves its environment; rebuild it unless it is active.
     if args.action in ('prepare', 'upgrade') and release.exists():
@@ -179,7 +179,7 @@ def main() -> None:
                 write_json(state_file, {'status': 'complete', 'stage': 'complete', **record, 'stopped': False})
             else:
                 write_json(state_file, {'status': 'idle', 'stage': 'installed'})
-        # The controller never replaces its own code; an offline upgrade is the explicit way to move it forward.
+        # The controller code is updated here, during an offline upgrade.
         fresh, retired = root / 'control/code.new', root / 'control/code.old'
         shutil.rmtree(fresh, ignore_errors=True)
         shutil.rmtree(retired, ignore_errors=True)

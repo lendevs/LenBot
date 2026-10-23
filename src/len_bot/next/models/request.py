@@ -88,7 +88,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
     if estimated > binding.context_window_tokens:
         scope = "文本部分" if role == "vision" else "请求"
         raise ContextBudgetError(
-            f"{role} {scope}含预留输出估算 {estimated} token，超过配置窗口 {binding.context_window_tokens}；未调用模型")
+            f"{role} {scope}含预留输出估算 {estimated} token，超过配置窗口 {binding.context_window_tokens}，请调大窗口或调小输出上限")
     effective = model.settings
     if quick and getattr(binding, "quick_reasoning_effort", None) is not None:
         effective = effective.with_effort(binding.quick_reasoning_effort)

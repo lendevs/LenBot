@@ -29,7 +29,7 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-命令只复制配置和配置中引用到的实例文件（数据库、记忆、角色、任务目录等），不复制源码。副本改为模拟发送，不连接 OneBot 或 Telegram，面板使用指定的端口。指向原实例内部的绝对路径也会改为指向副本。模型、插件和任务服务在副本中照常执行，模型调用照常消耗 token。
+命令复制配置和配置中引用到的实例文件（数据库、记忆、角色、任务目录等）。副本改为模拟发送，不连接 OneBot 或 Telegram，面板使用指定的端口。指向原实例内部的绝对路径也会改为指向副本。模型、插件和任务服务在副本中正常运行，模型调用同样消耗 token。
 
 ## 源码结构
 
@@ -122,7 +122,7 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 - 升级前后各做一次完整性检查。
 - 每一步使用一个事务，并在同一个事务中修改 `user_version`。
 - 删除文件这类数据库以外的操作由步骤返回，等这一步提交后再执行。
-- 单独运行迁移命令时，在数据库旁边保留一份输入格式的副本 `<文件>.v<格式>.bak`。`upgrade apply` 已经有完整的快照，不再另外保存。
+- 单独运行迁移命令时，在数据库旁边保留一份输入格式的副本 `<文件>.v<格式>.bak`。`upgrade apply` 用自己的完整快照代替这份副本。
 
 存入数据库的 JSON 正文按 dataclass 严格解码（`ChatMessage`、`Sender`、`Segment`、`Task`、`TaskFile`、`Schedule`，以及模型调用和记忆任务中的记录）。为这些类型增加、删除或修改字段，就等于修改了数据格式。这时需要同时提高格式编号，并在升级步骤中改写已有的正文。
 
@@ -136,7 +136,7 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 ```
 
-这条命令在副本中重新构建面板，生成源码包、wheel、Linux／macOS／Windows 部署包和发行清单，不启动程序，也不上传。项目尚未发布版本，发行流程定稿后再补充说明。
+这条命令在副本中重新构建面板，生成源码包、wheel、Linux／macOS／Windows 部署包和发行清单。项目尚未发布版本，发行流程定稿后再补充说明。
 
 [CI](.github/workflows/ci.yml) 会编译代码并运行测试，然后构建面板并打包。测试在 Python 3.13 和 3.14 上各运行一遍（[check.yml](.github/workflows/check.yml)）。3.13 是 `pyproject.toml` 中的最低版本，3.14 用来提前发现新解释器上的问题。同一个工作流还用 actionlint 检查所有 workflow 文件。单元测试只在 Linux 上运行，Windows 和 macOS 只有安装冒烟测试覆盖。
 

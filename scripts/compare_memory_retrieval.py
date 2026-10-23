@@ -1,7 +1,7 @@
-"""Compare local recall on a small, inspectable synthetic corpus, without model calls.
+"""Compare local recall on a small synthetic corpus.
 
-Run the same script with each checkout on PYTHONPATH. JSON includes the actual recalled
-text, evidence coverage, character count and latency; it does not grade generated answers.
+Run the same script with each checkout on PYTHONPATH. JSON includes the recalled
+text, evidence coverage, character count and latency.
 """
 
 from __future__ import annotations

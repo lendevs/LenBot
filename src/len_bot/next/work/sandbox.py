@@ -217,7 +217,7 @@ class DockerSandbox:
                      skills: tuple[Skill, ...] = (),
                      input_names: tuple[str, ...] = (),
                      on_container: Callable[[str], None] | None = None) -> SandboxHandle:
-        """Create a fresh container; never infer a usable network from Docker defaults."""
+        """Create a task container with the configured network."""
         if _SCENE.fullmatch(scene) is None or _TASK.fullmatch(task_id) is None:
             raise ValueError("scene or task_id is not a valid task workspace identity")
         workspace_root = self.settings.workspace_root.resolve()

@@ -22,15 +22,15 @@
 - 订阅 OAuth
 - 服务商内置的搜索或图像生成
 
-OpenAI 兼容服务也可以提供 ASR 和向量接口，是否实际可用以服务商为准。其他聊天协议不能代替专用的 ASR 接口或向量接口。
+OpenAI 兼容服务也可以提供 ASR 和向量接口，按服务商文档配置。ASR 和向量使用各自的专用协议。
 
-Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析。宿主发送的图片使用内联 data URL，不会把普通的图片网址伪装成 Gemini Files API 地址。其他三种协议可以使用图片 URL 或内联图片，但服务商可能限制 URL。
+Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析。宿主发送的图片使用内联 data URL。其他三种协议可以使用图片 URL 或内联图片，部分服务商限制 URL。
 
 ## 添加与测试
 
 在面板的服务商页可以读取模型列表。读取失败时显示服务商返回的原始错误，仍然可以直接手动填写模型。列表中的窗口和输出额度只使用服务商明确返回的字段，其余的按服务商文档填写。用途页只显示支持该用途的协议。
 
-连接测试使用尚未保存的草稿。旧密钥留空时由后端读取，不会回传到浏览器。
+连接测试使用尚未保存的草稿。旧密钥留空时由后端读取。
 
 已有服务商可以改名。保存请求通过 `previous_alias` 指明原名称，一次保存更新用途、本地记忆、场景学习和搜索连接的引用；这个字段不写入根配置。只改名或补上地址末尾的斜杠可以保留旧密钥，修改协议、地址或代理需要重新填写密钥。模型列表显示名称和完整 ID，选择时写入 ID。
 
@@ -38,11 +38,11 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 - 工具测试调用两次，确认工具请求和结果能够续接。
 - 向量测试调用一次 embeddings 接口，验证返回的向量与维数，不写入业务索引。
 
-测试不发送 QQ 消息，不验证图片和长上下文，也不验证全部业务效果。测试可能产生费用，服务商报告的用量会显示在结果中，但测试不计入聊天预算。
+测试发送一条文本或完成一次工具续接，结果附服务商报告的用量；测试用量不计入聊天预算。
 
-在「模型 → 向量模型」中分别配置 `memory.local.embedding` 和 `scenes.*.learning.embedding`。两者只能绑定支持 embeddings 的协议，维数留空时使用服务商返回的维数。更换地址、模型或维数后，先重启应用保存的配置，再在记忆或学习页面点击「重建索引」；重启本身不重建。`pending-restart` 接口返回已有索引的维护项目。兼容性依据地址、模型和维数判断，服务商别名不影响已有向量。
+在「模型 → 向量模型」中分别配置 `memory.local.embedding` 和 `scenes.*.learning.embedding`。两者只能绑定支持 embeddings 的协议，维数留空时使用服务商返回的维数。更换地址、模型或维数后，先重启应用保存的配置，再在记忆或学习页面点击「重建索引」。`pending-restart` 接口返回已有索引的维护项目。兼容性依据地址、模型和维数判断。
 
-记忆查询遇到索引绑定不匹配、缺少待建向量或向量 HTTP 查询失败时，记录错误后使用现有全文索引；查询不修改或重建旧向量。自动召回的全文分支只使用消息正文，向量分支继续使用带说话者的上下文。正常的混合检索也会合并自动全文召回结果。写入和离线重建仍要求选定模型返回合法向量。`memory/state` 的 `index` 字段返回已有绑定、运行配置、当前检索方式和重建状态。
+记忆查询遇到索引绑定不匹配、缺少待建向量或向量 HTTP 查询失败时，记录错误后使用现有全文索引。自动召回的全文分支只使用消息正文，向量分支继续使用带说话者的上下文。正常的混合检索也会合并自动全文召回结果。写入和离线重建要求选定模型返回合法向量。`memory/state` 的 `index` 字段返回已有绑定、运行配置、当前检索方式和重建状态。
 
 ### 生成参数
 
@@ -50,7 +50,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 - `reasoning_effort` 按协议映射到 reasoning effort、adaptive thinking 的 effort 或 Gemini 的 thinkingLevel，必须填写该模型接受的值。
 - `thinking_budget_tokens` 用于 Anthropic 的额度思考或 Gemini 的 thinkingBudget，与思考强度二选一。Anthropic 的思考模式下，温度必须留空，额度至少为 1024，并且小于输出额度。
 
-兼容聊天接口可以明确把 `output_token_field` 选为 `max_completion_tokens` 或 `max_tokens`。请求失败时，不会自动更换字段或删除参数，也不会更换模型。原生协议必须使用 `history_policy: native`。`omit-reasoning` 只用于已经确认会自行保持签名续接的兼容路由。
+兼容聊天接口可以明确把 `output_token_field` 选为 `max_completion_tokens` 或 `max_tokens`。原生协议必须使用 `history_policy: native`。`omit-reasoning` 只用于已经确认会自行保持签名续接的兼容路由。
 
 ### 代理
 
@@ -69,7 +69,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 
 工作代理为 Pi 配置相应的原生协议，把流式字节原样转发，并观察完成事件、工具参数和真实用量。生成参数、超时和额度由同一个用途绑定控制。出错或被截断的响应，以及没有完整读取的响应，都不能记为成功。宿主的聊天调用目前仍然是非流式的，思考内容不会进入群消息。
 
-新增工作桥接路由后，现有的任务镜像需要从当前源码重新构建。这不需要修改实例的格式编号，也不会自动发布镜像。真实的服务商和代理网络，以及完整的容器任务，仍然需要在实际环境中验证，本机的协议回归测试不能代替这些结果。
+新增工作桥接路由后，现有的任务镜像需要从当前源码重新构建。
 
 协议依据：[Responses 状态与加密续接](https://developers.openai.com/api/docs/guides/migrate-to-responses)，[Messages](https://platform.claude.com/docs/en/api/messages/create)，[Gemini GenerateContent](https://ai.google.dev/api/generate-content)，[Gemini 签名](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)。
 
@@ -87,7 +87,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 | 博查 | `bocha` | `POST web-search`，`{"query", "count", "summary": true}` |
 | Jina Reader | `jina-reader` | `GET <地址>/<网页地址>`，`Accept: application/json` |
 
-除 Brave 外都用 `Authorization: Bearer`。读取服务返回的正文按 Markdown 存为场景网页文档，`web_read` 照常用 `document` 和 `offset` 续读。
+除 Brave 外都用 `Authorization: Bearer`。读取服务返回的正文按 Markdown 存为场景网页文档，`web_read` 同样用 `document` 和 `offset` 续读。
 
 ```json
 {"web_search": {"provider": "deepseek", "connection": "primary", "timeout_seconds": 15, "max_results": 5}}

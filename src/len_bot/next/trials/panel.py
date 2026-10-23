@@ -1,4 +1,4 @@
-"""Single-scene web chat in an isolated root; never opens a platform outlet."""
+"""Single-scene panel chat in an isolated instance root."""
 
 from __future__ import annotations
 

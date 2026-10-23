@@ -231,7 +231,7 @@ def test_handover_rewrites_the_session_for_the_next_role(tmp_path):
         chat.mind.complete = broken
         failed = (await client.post('/api/host/personas/fixture/scenes', json={'scenes': [SCENE]})).json()['results'][0]
         assert failed['status'] == 'switched' and failed['handover'] == 'failed' and '合成故障' in failed['error']
-        assert chat.persona.id == 'fixture' and '不是你说的' in chat.context.host_state
+        assert chat.persona.id == 'fixture' and '此前 assistant 的发言和承诺都属于' in chat.context.host_state
 
     run_host(tmp_path, exercise)
 

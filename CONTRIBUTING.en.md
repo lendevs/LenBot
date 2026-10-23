@@ -29,7 +29,7 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-Only the configuration and the instance files it references (database, memory, personas, task directories and so on) are copied, not the source code. The copy uses simulated delivery, connects to neither OneBot nor Telegram and listens on the given panel port; absolute paths pointing into the original instance are moved into the copy. Models, plugins and task services still run in the copy, and model calls still use tokens.
+The command copies the configuration and the instance files it references (database, memory, personas, task directories and so on). The copy uses simulated delivery, connects to neither OneBot nor Telegram and listens on the given panel port; absolute paths pointing into the original instance are moved into the copy. Models, plugins and task services run normally in the copy, and model calls use tokens as usual.
 
 ## Source layout
 
@@ -122,7 +122,7 @@ All three databases upgrade through `maintenance/migrations.py`:
 - An integrity check runs before and after the upgrade.
 - Each step runs in one transaction, which also sets `user_version`.
 - Work outside the database, such as deleting files, is returned by the step and runs after the step commits.
-- A standalone migration command keeps one copy of the input format beside the file, `<file>.v<format>.bak`. `upgrade apply` already holds a full snapshot and does not make this copy.
+- A standalone migration command keeps one copy of the input format beside the file, `<file>.v<format>.bak`. `upgrade apply` uses its full snapshot in place of this copy.
 
 JSON bodies stored in the databases decode strictly into dataclasses (`ChatMessage`, `Sender`, `Segment`, `Task`, `TaskFile`, `Schedule`, and the records inside model calls and memory jobs). Adding, removing or changing a field there changes the data format: bump the format number and rewrite existing bodies in the upgrade step.
 
@@ -134,7 +134,7 @@ JSON bodies stored in the databases decode strictly into dataclasses (`ChatMessa
 uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 ```
 
-This rebuilds the panel in a copy and produces the sdist, the wheel, the Linux/macOS/Windows packages and the release manifest, without starting or uploading anything. The project has no release yet; the release process will be documented once it is settled.
+This rebuilds the panel in a copy and produces the sdist, the wheel, the Linux/macOS/Windows packages and the release manifest. The project has no release yet; the release process will be documented once it is settled.
 
 [CI](.github/workflows/ci.yml) compiles, runs tests, builds the panel and packages. Tests run on both Python 3.13 and 3.14 ([check.yml](.github/workflows/check.yml)): 3.13 is the minimum in `pyproject.toml`, and 3.14 catches problems on the next interpreter early. The same workflow runs actionlint over every workflow file. Unit tests run on Linux only; Windows and macOS are covered by the install smoke tests alone.
 

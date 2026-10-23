@@ -1,4 +1,4 @@
-"""First-run local configuration editor; never starts the business runtime."""
+"""First-run configuration editor."""
 from __future__ import annotations
 
 import asyncio
@@ -227,7 +227,7 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
 
     async def authorize(x_setup_token: str = Header(default='')):
         if config_exists():
-            raise HTTPException(409, '实例已配置，请进入正常面板登录；首次向导不能覆盖配置')
+            raise HTTPException(409, '实例已配置，请进入面板登录')
         if not secrets.compare_digest(x_setup_token, token):
             raise HTTPException(401, '请使用本次启动在终端显示的初始化链接')
 

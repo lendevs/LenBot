@@ -31,7 +31,7 @@ def _error_text(error: BaseException) -> str:
 
 
 class ExpressionService:
-    """One selected embedding backend per scene, without implicit index repair."""
+    """Embedding-backed expression selection for one scene."""
 
     def __init__(self, store: Store, clients: dict[str, EmbeddingClient],
                  *, slots: ModelSlots | None = None,
@@ -255,7 +255,7 @@ class ExpressionService:
                 if dimensions is None:
                     dimensions = batch.dimensions
                 elif batch.dimensions != dimensions:
-                    raise ValueError(f"scene {scene} reindex returned mixed dimensions; old vectors unchanged")
+                    raise ValueError(f"scene {scene} reindex returned mixed dimensions")
                 vectors.update({item["id"]: self._stored(scene, vector, batch.dimensions)
                                 for item, vector in zip(chunk, batch.vectors, strict=True)})
             self.records.replace_vectors(scene, snapshot, vectors)

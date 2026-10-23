@@ -269,7 +269,7 @@ class LearningStore:
                 "SELECT id,situation FROM expressions WHERE scene=? AND status='adopted' ORDER BY id", (scene,),
             )]
             if current != snapshot:
-                raise ValueError(f"Adopted expressions changed during reindex in {scene}; old vectors unchanged")
+                raise ValueError(f"Adopted expressions changed during reindex in {scene}; run the reindex again")
             self.db.executemany("UPDATE expressions SET vector=?,vector_binding=?,vector_dimensions=? WHERE scene=? AND id=?",
                                 [(*vectors[id], scene, id) for id, _ in snapshot])
 

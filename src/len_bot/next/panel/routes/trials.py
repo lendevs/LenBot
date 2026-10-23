@@ -1,4 +1,4 @@
-"""Host-owned isolated chat sessions, never a switch on the production outlet."""
+"""Panel endpoints for isolated chat sessions."""
 from __future__ import annotations
 
 import asyncio

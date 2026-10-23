@@ -14,10 +14,10 @@
 | 聊天数据库和记忆处理库 | 配置中的 `database`，以及同名的 `.memory.sqlite3` |
 | 角色包 | `personas/<角色ID>/` |
 | 插件和插件数据 | `plugins/`、`plugins/.data/` |
-| 记忆、提示词修改、任务目录 | `state/` 等，以配置为准 |
+| 记忆、提示词修改、任务目录 | `state/` 等，位置由配置决定 |
 | 运行日志 | `logs/lenbot.jsonl` |
 
-`lenbot.config.json` 是唯一的运行配置，LenBot 不读取环境变量或命令行参数。运行期间在面板中修改配置；手动编辑之前，请先停止 LenBot。
+运行配置保存在 `lenbot.config.json`。运行期间在面板中修改配置；手动编辑前先停止 LenBot。
 
 ## 文件
 

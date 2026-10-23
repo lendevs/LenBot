@@ -26,7 +26,7 @@ class DelegateArguments(BaseModel):
     requester: str = Field(pattern=r"^[a-z][a-z0-9_-]*:[^:\s/\\]+$")
     context: str = ""
     account_browser: bool = False
-    materials: MaterialSelection = Field(default_factory=list, description='本场景共享普通资料的实际文件名选集；登记前复制为本任务私有只读快照，最多16份。不选择整个共享目录。')
+    materials: MaterialSelection = Field(default_factory=list, description='本场景共享普通资料的实际文件名选集；登记前复制为本任务私有只读快照，最多16份。')
     resources: list[ResourceInput] = Field(default_factory=list, max_length=16,
         description='本场景已有任务文件或交付的实际引用及输入文件名；与 materials 合计最多16份，名称不得重复。')
 
@@ -118,7 +118,7 @@ DELEGATE_TOOL = {"type": "function", "function": {
     "name": "delegate",
     "description": "为当前场景登记一项独立工作并排队，返回已创建表示任务入队。"
     "source_message_id 选实际请求消息，宿主读取其发送者作为请求人。"
-    "account_browser=true仅在主人已明确同意此次专用账号浏览任务时使用；另建独立任务，不提升普通任务。",
+    "account_browser=true 仅在主人已明确同意此次专用账号浏览任务时使用。",
     "parameters": source_schema(DelegateArguments.model_json_schema()),
 }}
 

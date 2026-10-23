@@ -1,4 +1,4 @@
-"""Offline task-tree relocation without rewriting conversations, task rows or Pi sessions."""
+"""Move task trees and update their root configuration while offline."""
 
 from contextlib import closing
 from collections.abc import Iterator
@@ -159,4 +159,4 @@ def move_to_pool(root: Path, pool: StoragePool) -> dict:
             raise
         return {**progress, **copied, 'storage_pool': pool.model_dump(mode='json'),
                 'source_roots': [str(p) for p in sources], 'pool_before_move': asdict(usage),
-                'notice': 'Task trees moved and root config switched. Database, Pi session contents and independent deliveries are unchanged.'}
+                'notice': 'Task trees moved and root config switched.'}

@@ -2,7 +2,7 @@
 
 这是一组通用的群聊情境，用来对比修改提示词或角色包前后的回复。人物、账号和对话都是虚构的，角色使用[示例角色小然](../personas/companion/)。
 
-在每个用例中，只有 @ Bot 的消息会触发回复，之前没有 @ 的消息作为上下文。`expect` 写的是期待的回应方式，由人工对照判断，不自动打分。
+在每个用例中，只有 @ Bot 的消息会触发回复，之前没有 @ 的消息作为上下文。`expect` 写的是期待的回应方式，由人工对照判断。
 
 ## 运行
 
@@ -11,7 +11,7 @@
 ```sh
 cp lenbot.config.example.json lenbot.config.json
 # 填写 models 里的接口地址、密钥和模型名
-uv run --no-sync lenbot-eval plan expression --profile current   # 只检查，不调用模型
+uv run --no-sync lenbot-eval plan expression --profile current   # 检查用例和配置
 uv run --no-sync lenbot-eval run expression --profile current    # 确认后输入 run 开始
 uv run --no-sync lenbot-eval report <run 目录名>
 ```

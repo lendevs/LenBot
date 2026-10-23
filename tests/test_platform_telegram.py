@@ -198,7 +198,7 @@ async def test_a_webhook_conflict_ends_polling_without_ever_connecting():
             async with asyncio.timeout(3):
                 await telegram.wait_terminated()
             assert not telegram.connected and len(errors) == 1
-            assert 'webhook is active' in errors[0] and '不再重试' in errors[0]
+            assert 'webhook is active' in errors[0] and '轮询已停止' in errors[0]
         finally:
             await telegram.close()
 

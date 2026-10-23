@@ -62,5 +62,5 @@ def test_mcp_result_preserves_text_structure_links_and_original_errors():
 
 def test_mcp_binary_result_never_claims_viewing_or_upload():
     result=types.CallToolResult.model_validate({'content':[{'type':'image','mimeType':'image/png','data':'c3ludGhldGlj'}]})
-    with pytest.raises(MCPToolError,match='nothing was viewed, played or uploaded'):
+    with pytest.raises(MCPToolError,match='passes on text results only'):
         text_result(result,1024)

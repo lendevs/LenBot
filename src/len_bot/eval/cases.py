@@ -1,4 +1,4 @@
-"""Parse structured development replay cases without inventing platform events."""
+"""Parse structured development replay cases into platform inputs."""
 
 from __future__ import annotations
 

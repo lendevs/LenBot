@@ -1,4 +1,4 @@
-"""Admission from actual reported tokens and recorded scene expressions, without reservations."""
+"""Admission from reported tokens and recorded scene expressions."""
 from __future__ import annotations
 import threading
 import time

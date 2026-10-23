@@ -1,4 +1,4 @@
-"""Load a descriptive role package without changing the running role."""
+"""Load and validate a persona package."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class PersonaTarget(BaseModel):
 
 def require_persona_target(path: Path, directory: str) -> None:
     if str(path) != directory:
-        raise ValueError(f'保存角色包绑定已变化，本次未操作文件；原选择={directory!r}，当前={str(path)!r}。请重读后明确选择。')
+        raise ValueError(f'角色目录已从 {directory!r} 变为 {str(path)!r}，请重新读取后保存')
 
 
 class Style(BaseModel):
@@ -125,7 +125,7 @@ def select_examples(persona: Persona) -> list[Example]:
 
 
 def select_style(persona: Persona) -> Style | None:
-    """Sample one validated per-turn style without normalizing its probabilities."""
+    """Sample one style using its configured probability."""
     if not persona.styles:
         return None
     positive = [style for style in persona.styles if style.weight > 0]

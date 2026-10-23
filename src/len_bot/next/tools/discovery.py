@@ -56,7 +56,7 @@ class ToolSearchArguments(BaseModel):
 
 TOOL_SEARCH = {"type": "function", "function": {
     "name": "tool_search", "description": "按名称或说明中的原词查找当前已允许的低频工具，最多返回 5 项。"
-    "目录已给出明确工具名时直接用完整名称查询。命中工具从下一次模型请求开始可用；参数错误不会改变已加载工具。",
+    "目录已给出明确工具名时直接用完整名称查询。命中工具从下一次模型请求开始可用。",
     "parameters": ToolSearchArguments.model_json_schema(),
 }}
 

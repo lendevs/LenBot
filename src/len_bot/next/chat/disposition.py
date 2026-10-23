@@ -1,4 +1,4 @@
-"""Optional local participation state; it never replaces persistent attention intents."""
+"""Optional per-turn participation state."""
 
 from __future__ import annotations
 
@@ -59,11 +59,11 @@ def schema(settings: TurnDisposition) -> dict:
     parameters = DispositionArguments.model_json_schema()
     parameters['properties']['minutes']['maximum'] = settings.max_minutes
     parameters['properties']['people']['anyOf'][0]['maxItems'] = settings.max_people
-    parameters['description'] = ('可选的本轮收尾：open 仅允许基线关注窗口内的对话继续，minutes 不延长基线窗口；'
-        '等待稍后补充或跨话题的结果应使用 attention 的 intend 创建持续意图。closed 暂停 focus 和 ambient。'
+    parameters['description'] = ('可选的本轮收尾：open 让基线关注窗口内的对话继续，minutes 最长到基线窗口结束；'
+        '等待稍后补充或跨话题的结果用 attention 的 intend 创建持续意图。closed 暂停 focus 和 ambient，'
+        '持续意图、私聊、@、回复机器人和点名照常唤醒。'
         '可附在最后一次表达或 attention 调用上，或用 end_turn 沉默收尾；省略则本轮结束后按基线规则。'
-        '下一轮的收尾会替换本轮局部状态。'
-        '不影响持续意图、私聊、@、回复机器人和点名。')
+        '下一轮的收尾会替换本轮的设置。')
     return parameters
 
 

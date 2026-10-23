@@ -633,7 +633,7 @@ export default {
         waiting: 'Switches to {name} when this reply ends',
         failed: 'Persona not switched',
         handoverFailed:
-          'The chat handover was not written; the new persona was told the earlier lines are not its own',
+          'The chat handover was not written; the new persona was told the earlier lines belong to the previous persona',
       },
       participation: {
         section: 'Participation',
@@ -1532,7 +1532,7 @@ export default {
       stalled: 'Stalled recently',
       idle: 'Not monitored',
       stalls: '{n} stall | {n} stalls',
-      pauses: '{n} system sleep (not a stall) | {n} system sleeps (not stalls)',
+      pauses: '{n} system sleep | {n} system sleeps',
       longest: 'longest {n} ms',
       latest: 'Latest: {task} stalled {n} ms, {ago}',
       noStack: 'Too short to capture a stack',

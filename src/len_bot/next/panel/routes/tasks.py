@@ -84,8 +84,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                            for scene, chat in runtime.chats.items()],
                 "public_network": service is not None and service.settings.egress.enabled,
                 "file_upload": (runtime.config.delivery == "onebot" and service is not None
-                                and runtime.config.onebot.upload_visible_root is not None),
-                "notice": "模型与公共流量使用独立管道；是否启用与目标是否连通分开。文件登记与上传回执分别显示。"}
+                                and runtime.config.onebot.upload_visible_root is not None)}
 
     @app.get("/api/host/tasks", response_model=TaskPage)
     async def listing(scene: str, status: str = "active", offset: int = Query(0, ge=0),

@@ -1,7 +1,7 @@
-"""Read the tokens services actually reported, from each call's owner, grouped without a ledger.
+"""Aggregate reported token usage by purpose.
 
-Transcription and embeddings are listed but do not count toward the daily token
-limit: they are metered differently and local services often report nothing.
+Transcription and embeddings are listed separately from the daily token limit
+because they are metered differently.
 """
 from collections import defaultdict
 from contextlib import closing

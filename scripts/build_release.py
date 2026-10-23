@@ -1,4 +1,4 @@
-"""Build corresponding source and wheel in a separate tree; never replace a running panel."""
+"""Build matching source and wheel artifacts in a separate tree."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ FORBIDDEN_SOURCE = ('docs/', 'runtime/', '.runtime/', '.backups/', '.venv/', 'st
 
 
 def check_local_imports(package: dict[str, bytes]) -> int:
-    """Inspect literal package imports without importing business code or running the host."""
+    """Inspect literal package imports statically."""
     modules = {name[:-3].replace('/', '.') for name in package if name.endswith('.py')}
     prefixes = {name.rsplit('.', 1)[0] for name in modules}
     checked = 0
@@ -168,11 +168,11 @@ def build(project: Path, output: Path, *, offline: bool, npm_cache: Path | None)
     if output.is_relative_to(project) or project.is_relative_to(output):
         raise ValueError('Release output must be a separate directory outside the source tree')
     if output.exists():
-        raise FileExistsError(f'Release output is never overwritten: {output}')
+        raise FileExistsError(f'Release output directory already exists: {output}')
     output.mkdir(parents=True, mode=0o700)
     logs = output / 'logs'
     logs.mkdir()
-    # This controls dependency-build caches only, never application configuration.
+    # This controls dependency-build caches.
     environment = dict(os.environ)
     environment.setdefault('UV_CACHE_DIR', str(output / 'uv-cache'))
     npm_cache = output / 'npm-cache' if npm_cache is None else npm_cache.expanduser().resolve()
@@ -234,8 +234,8 @@ def build(project: Path, output: Path, *, offline: bool, npm_cache: Path | None)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('output', type=Path, help='New output directory outside this checkout; never overwritten')
-    parser.add_argument('--offline', action='store_true', help='Require build dependency caches; never retry online')
+    parser.add_argument('output', type=Path, help='New output directory outside this checkout')
+    parser.add_argument('--offline', action='store_true', help='Use cached build dependencies in offline mode')
     parser.add_argument('--npm-cache', type=Path, help='Explicit existing dependency cache; defaults to new output/npm-cache')
     args = parser.parse_args()
     result = build(Path(__file__).resolve().parents[1], args.output, offline=args.offline, npm_cache=args.npm_cache)

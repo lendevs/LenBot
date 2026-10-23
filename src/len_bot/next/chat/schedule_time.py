@@ -76,8 +76,7 @@ def _matches(cron: Cron, day: date) -> bool:
 def next_cron(cron: Cron, timezone: str, after: float) -> float:
     """Return the first real occurrence strictly after ``after``.
 
-    A future missing or repeated local occurrence is an explicit error, not a
-    shifted time, a chosen fold, or two deliveries.
+    A future missing or repeated local occurrence raises ``CronTimeError``.
     """
     zone = ZoneInfo(timezone)
     after_local = datetime.fromtimestamp(after, zone)

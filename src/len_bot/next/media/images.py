@@ -34,7 +34,7 @@ class LookArguments(BaseModel):
 LOOK_TOOL = {"type": "function", "function": {
     "name": "look",
     "description": "查看当前场景已保存消息里的第几张图片。message 是原平台消息 ID，image 从1开始按原段顺序计数；"
-                   "refresh 重做已保存像素的视觉描述，不重新下载。",
+                   "refresh 用已保存的图片重新生成视觉描述。",
     "parameters": LookArguments.model_json_schema(),
 }}
 

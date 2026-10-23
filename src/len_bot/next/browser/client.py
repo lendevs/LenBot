@@ -91,7 +91,7 @@ BROWSER_TOOL = {'name': 'account_browser',
                    '先observe取得实际ref再操作。session和browser由宿主绑定。'
                    'upload的files选择当前任务inputs/workspace相对路径，params用ref或selector、可选tab_id/timeout_ms/mode(input或drop)。'
                    'download的params用ref或selector、可选tab_id/timeout_ms，完成后返回任务文件。'
-                   'screenshot可设save=true保存任务截图。附加文件、网页提交、任务文件登记和平台发送分别进行。'
+                   'screenshot可设save=true保存任务截图。'
                    '登录/验证码使用request_help；不可撤回操作先confirm_action。',
     'parameters': BrowserAction.model_json_schema()}
 

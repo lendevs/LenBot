@@ -36,8 +36,7 @@ async def run_stdin(runtime: NetworkRuntime, *, manage_signals: bool) -> None:
         runtime._status('running')
         runtime._emit({'type': 'runtime', 'status': 'ready', 'input': 'stdin' if runtime.config.panel is None else 'panel', 'delivery': 'simulated',
                        'scenes': list(runtime.runners),
-                       'notice': 'No OneBot connection or platform outlet. Models and explicitly enabled task '
-                                 'containers/public egress still execute normally and may cost money.'})
+                       'notice': 'Simulated delivery; models and enabled task containers run for real.'})
         async with asyncio.TaskGroup() as group:
             pending: list[asyncio.Task] = []
             try:
@@ -57,7 +56,6 @@ async def run_stdin(runtime: NetworkRuntime, *, manage_signals: bool) -> None:
                             runtime._emit({'type': 'receipt', 'status': 'error',
                                            'error': f'{type(error).__name__}: {error}', 'input_fragment': line[:500]})
                     # As in the lab, EOF first drains already accepted scene work.
-                    # It does not promise to finish a task that still needs input.
                     for runner in runtime.runners.values():
                         runner.close_input()
                     await runtime.scene_service.join()

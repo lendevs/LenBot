@@ -1,4 +1,4 @@
-"""Create a new Docker deployment recipe, or switch an existing one to another updater image; never starts anything."""
+"""Create a new Docker deployment recipe, or switch an existing one to another updater image."""
 
 import argparse
 import json
@@ -19,7 +19,7 @@ def switch_updater(root: Path, version: str) -> None:
     recipe['services']['lenbot-updater']['image'] = image
     path.write_text(json.dumps(recipe, indent=2) + '\n')
     owned_like_parent(path)
-    print(f'更新器镜像已改为 {image}，宿主未改动。使用以下命令换上新的更新器：')
+    print(f'更新器镜像已改为 {image}。使用以下命令换上新的更新器：')
     print(f'docker compose -p {deployment["project"]} -f host.updater.compose.yaml up -d')
 
 

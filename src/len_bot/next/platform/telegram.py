@@ -139,7 +139,7 @@ class Telegram:
             except PlatformCallError as error:
                 self._set_connected(False)
                 if isinstance(error, TelegramError) and error.error_code in TERMINAL_POLL_ERRORS:
-                    self.on_error(f"{error}；不再重试，处理后重启")
+                    self.on_error(f"{error}；轮询已停止，处理后重启")
                     self._terminated.set()
                     return
                 self.on_error(str(error))

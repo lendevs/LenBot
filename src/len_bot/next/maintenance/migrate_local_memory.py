@@ -1,4 +1,4 @@
-"""Offline local index upgrades, without model calls or Markdown changes."""
+"""Migrate the local memory index while offline."""
 
 from contextlib import ExitStack
 from pathlib import Path

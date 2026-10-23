@@ -34,7 +34,7 @@ class TaskBrowser:
         self.require_owner(item.requester)
         async with self.client.lock:
             if self.records.browser_in_use() or await self.client.sessions():
-                raise ValueError('专用账号浏览器仍被占用，未启动本任务')
+                raise ValueError('专用账号浏览器正由另一任务使用，请等待释放')
             self.records.browser_binding(item.scene, item.id, active=True, session=None)
             session_id = await self.client.start()
             self.records.browser_binding(item.scene, item.id, active=True, session=session_id)

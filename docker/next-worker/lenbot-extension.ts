@@ -114,11 +114,11 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "report_progress",
     executionMode: "sequential",
     label: "Report progress",
-    description: "Record real task progress in this Pi session; this does not send a message to the requester.",
-    parameters: Type.Object({ text: Type.String({ description: "Actual progress to record" }) }),
+    description: "Record task progress for the task detail page.",
+    parameters: Type.Object({ text: Type.String({ description: "Progress to record" }) }),
     async execute(_id, { text }) {
       pi.appendEntry("lenbot_progress", { text });
-      return result("已记录到本次会话；未声称已发给请求人。", { recorded: true, text });
+      return result("已记录到任务进度。", { recorded: true, text });
     },
   });
 
@@ -141,12 +141,12 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "confirm_action",
     executionMode: "sequential",
     label: "Confirm action",
-    description: "Request explicit approval through Pi's native interactive UI; cancellation is not approval.",
+    description: "Request explicit approval through Pi's native interactive UI.",
     parameters: Type.Object({ description: Type.String({ description: "Action requiring approval" }) }),
     async execute(_id, { description }, signal, _update, ctx) {
       if (!ctx.hasUI) throw new Error("Requester UI is unavailable");
       const approved = await ctx.ui.confirm("确认执行？", description, { signal });
-      return result(approved ? "当前操作已获明确同意。" : "当前操作未获同意（取消或超时）；不得执行。", { approved });
+      return result(approved ? "当前操作已获明确同意。" : "当前操作未获同意（取消或超时），请停止这项操作。", { approved });
     },
   });
 
@@ -154,7 +154,7 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "deliver_file",
     executionMode: "sequential",
     label: "Deliver file",
-    description: "Submit a local file to the task-only host endpoint; registration is not QQ upload confirmation.",
+    description: "Copy a local file to the host as a task delivery.",
     parameters: Type.Object({
       path: Type.String({ description: "Existing local file path" }),
       name: Type.String({ description: "Delivery filename" }),
@@ -162,7 +162,7 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     }),
     async execute(_id, { path, name, note }, signal) {
       const { raw, payload } = await taskPost(settings, "/task/deliver-file", "deliver_file", { path, name, note }, signal);
-      return result(`宿主原始结果：${raw}\n文件复制登记与 QQ 上传是不同状态；以宿主实际返回字段为准。`, payload);
+      return result(`宿主返回：${raw}`, payload);
     },
   });
 
@@ -170,7 +170,7 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "network_status",
     executionMode: "sequential",
     label: "Network status",
-    description: "Read the host's known task and scene-today egress usage, limits, and last recorded network error. This does not probe connectivity or change limits; enabled does not mean connected.",
+    description: "Read recorded egress usage and limits for this task and for the scene today, plus the last recorded network error.",
     parameters: Type.Object({}),
     async execute(_id, _args, signal) {
       const { raw, payload } = await taskPost(settings, "/task/network", "network_status", {}, signal);

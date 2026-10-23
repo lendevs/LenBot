@@ -1,8 +1,7 @@
 FROM node:24-bookworm-slim
 
-# Task image only. The host supplies the one task's generated Pi settings in
-# its writable home and task-only tokens at read-only /run/lenbot. No host
-# credential directory is copied or mounted.
+# Task image. The host supplies the task's generated Pi settings in its
+# writable home and task tokens at read-only /run/lenbot.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl ffmpeg fonts-noto-cjk git jq \

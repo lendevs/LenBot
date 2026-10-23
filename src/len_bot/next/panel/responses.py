@@ -454,7 +454,6 @@ class TaskState(PanelResponse):
     scenes: list[JsonObject]
     public_network: bool
     file_upload: bool
-    notice: str
 
 
 class TaskPool(PanelResponse):

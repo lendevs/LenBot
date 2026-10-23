@@ -75,7 +75,7 @@ def _check_budget(store: Store, config: HostConfig, scene: str, persona: Persona
     if estimated > trigger:
         raise ValueError(
             f"Scene {scene} portable first mind input estimates {estimated} tokens, "
-            f"above configured input trigger {trigger}; source history unchanged"
+            f"above configured input trigger {trigger}"
         )
     return estimated
 

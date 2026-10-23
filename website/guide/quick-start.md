@@ -18,11 +18,11 @@ LenBot 尚未发布版本，目前只能从源码运行。
 ```sh
 git clone https://github.com/lendevs/LenBot.git
 cd LenBot
-./scripts/install.sh      # 安装依赖并构建面板，不启动
+./scripts/install.sh      # 安装依赖并构建面板
 uv run --no-sync len-bot  # 启动
 ```
 
-`install.sh` 只安装依赖和构建面板，不改动已有的配置和数据库。每次启动时，LenBot 会检查面板的前端代码，有变化时自动重新构建，因此切换分支或拉取更新后可以直接启动。
+每次启动时，LenBot 会检查面板的前端代码，有变化时自动重新构建。拉取更新后，按[更新与备份](./maintenance#更新代码)执行迁移命令再启动。
 
 从源码运行时，仓库根目录就是实例目录。配置、数据库、角色和记忆都保存在这里，均已写入 `.gitignore`。
 
