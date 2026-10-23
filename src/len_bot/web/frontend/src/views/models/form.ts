@@ -70,6 +70,7 @@ export function newBinding(provider: string): ChatBinding {
     temperature: null,
     max_output_tokens: 1024,
     timeout_seconds: 60,
+    thinking: null,
     reasoning_effort: null,
     quick_reasoning_effort: null,
     thinking_budget_tokens: null,
@@ -83,6 +84,7 @@ export function newBinding(provider: string): ChatBinding {
 /** Protocol-specific fields the host refuses for other protocols. */
 export function fitProtocol(binding: ChatBinding, api: string | undefined) {
   if (api !== 'openai-chat') {
+    binding.thinking = null
     binding.history_policy = 'native'
     binding.output_token_field = 'max_completion_tokens'
   }

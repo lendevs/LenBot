@@ -2,35 +2,29 @@
 
 ## 更新代码
 
-更新代码后，按以下步骤执行迁移。
-
 ```sh
 # 先按 Ctrl-C 停止 LenBot
 git pull
 ./scripts/install.sh
-uv run --no-sync python -m len_bot.next.maintenance.migrate_config
-uv run --no-sync python -m len_bot.next.maintenance.migrate
-uv run --no-sync python -m len_bot.next.maintenance.migrate_memory_jobs
-uv run --no-sync python -m len_bot.next.maintenance.migrate_local_memory
-uv run --no-sync python -m len_bot.next.maintenance.plugin_dependencies
-uv run --no-sync python -m len_bot.next.maintenance.doctor
+uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot ../lenbot-backup-20261023
 uv run --no-sync len-bot
 ```
 
-| 命令 | 作用 |
-|---|---|
-| `migrate_config` | 升级根配置。必须在数据库升级之前执行 |
-| `migrate` | 升级业务数据库 |
-| `migrate_memory_jobs` | 升级记忆处理库 |
-| `migrate_local_memory` | 升级本地记忆索引 |
-| `plugin_dependencies` | 恢复已安装插件的依赖 |
-| `doctor` | 检查升级结果，全部为 `ok` 或 `disabled` 后再启动 |
+`upgrade run` 先把实例目录（源码运行时是整个仓库目录）和配置引用的外部目录复制到 `--snapshot`，再升级根配置、试聊配置和三个数据库，恢复插件依赖，最后运行 doctor。任何一步失败都会从快照恢复。快照目录每次用一个新的，放在实例目录和外部数据目录之外。
 
-升级前请先[备份](#备份)。
+升级成功后想退回旧版本：停止 LenBot，用 restore 恢复升级前的数据，再切回旧版本代码并运行 `./scripts/install.sh`。
 
-- 数据库迁移在数据库旁边保留一份升级前的副本，例如 `state.db.v2.bak`。确认运行正常后可以删除。同名副本已存在时命令拒绝执行。
-- 每一步升级在一个事务中完成，中途失败时数据停留在上一个完整的格式。
-- 跳过 `migrate_config` 直接启动时，LenBot 停止运行并报告配置格式过旧，同时给出需要执行的命令。
+```sh
+uv run --no-sync python -m len_bot.next.maintenance.upgrade restore --snapshot ../lenbot-backup-20261023
+```
+
+`doctor` 检查配置和各数据库的格式。配置格式过旧时，它也会列出各数据库的状态。
+
+```sh
+uv run --no-sync python -m len_bot.next.maintenance.doctor
+```
+
+只升级其中一项时，单独执行 `migrate_config`、`migrate`、`migrate_memory_jobs`、`migrate_local_memory` 或 `plugin_dependencies`。这些命令会在原文件旁保留一份升级前的副本。
 
 所有命令和程序运行共用实例锁 `.lenbot-instance.lock`，同一时间只能运行一个。不要手动删除锁文件。
 

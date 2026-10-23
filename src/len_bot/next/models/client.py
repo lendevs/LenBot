@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 from .providers import ChatAPI, http_client, valid_url
@@ -27,6 +28,7 @@ class ModelSettings(BaseModel):
     base_url: str
     api_key: str = Field(repr=False)
     model: str
+    thinking: Literal["enabled", "disabled"] | None = None
     reasoning_effort: str | None = None
     thinking_budget_tokens: int | None = Field(default=None, ge=0)
     output_token_field: Literal["max_completion_tokens", "max_tokens"] = "max_completion_tokens"
@@ -68,6 +70,8 @@ class ModelSettings(BaseModel):
 
     @model_validator(mode="after")
     def protocol_options(self):
+        if self.thinking is not None and self.api != "openai-chat":
+            raise ValueError("思考开关只能用于 OpenAI 兼容聊天接口")
         if self.thinking_budget_tokens is not None and self.reasoning_effort is not None:
             raise ValueError('思考额度与思考强度只能选一个')
         if self.thinking_budget_tokens is not None and self.api not in {'anthropic', 'gemini'}:
@@ -111,8 +115,35 @@ class ModelProtocolError(RuntimeError):
         self.token_usage = token_usage
 
 
+class ModelOutputLimitError(ModelProtocolError):
+    """The provider stopped at this request's output allowance."""
+
+    def describe(self, output_tokens: int, purpose: str = "模型", setting: str = "最长输出") -> None:
+        counts = [] if self.token_usage is None else [
+            f"{label} {value} token" for label, value in (
+                ("输入", self.token_usage.prompt_tokens), ("输出", self.token_usage.completion_tokens),
+            ) if value is not None
+        ]
+        usage = "，".join(counts) or "服务商未返回用量"
+        self.args = (f"{purpose}输出额度用完：本次额度 {output_tokens} token，服务商用量：{usage}。"
+                     f"请调大 {setting}，或降低思考强度。",)
+
+
 class ModelHTTPError(RuntimeError):
     """The configured provider rejected a model request."""
+
+    def __init__(self, status: int, detail: str, request_id: str | None = None):
+        if status in {401, 403}:
+            direction = "认证或权限校验失败，请检查服务商 API Key 和模型访问权限"
+        elif status == 429:
+            direction = "请求受限，请稍后重试或检查服务商额度"
+        elif status >= 500:
+            direction = "服务商或中转服务异常，请稍后重试或联系渠道运营方"
+        else:
+            direction = "服务商拒绝请求，请查看调用详情并核对模型参数"
+        self.status = status
+        self.response = {"status": status, "request_id": request_id, "detail": detail}
+        super().__init__(f"{direction}（HTTP {status}）" + (f"；request id: {request_id}" if request_id else ""))
 
 
 def _reject_non_json_constant(value: str) -> None:
@@ -166,6 +197,9 @@ def parse_chat_completion(body: object) -> ModelReply:
         if not isinstance(choice, dict):
             raise ValueError("expected a choice object")
         finish_reason = choice["finish_reason"]
+        if finish_reason == "length":
+            raise ModelOutputLimitError("模型输出额度耗尽（finish_reason=length）", response=body,
+                                        usage=usage, token_usage=token_usage)
         if finish_reason not in {"stop", "tool_calls"}:
             raise ValueError(f"incomplete or unsupported finish_reason: {finish_reason!r}")
         message = choice["message"]
@@ -263,7 +297,11 @@ class ChatModel:
             await asyncio.sleep(delay)
         if not response.is_success:
             fragment = response.text.replace(self.settings.api_key, '[hidden]')[:2000]
-            raise ModelHTTPError(f"Model HTTP {response.status_code}: {fragment}")
+            match = re.search(r"request[ _-]id[\s:：=]+([^\s)\"}]+)", fragment, re.IGNORECASE)
+            request_id = response.headers.get('x-request-id') or response.headers.get('request-id')
+            if request_id is None and match is not None:
+                request_id = match.group(1)
+            raise ModelHTTPError(response.status_code, fragment, request_id)
         try:
             body = json.loads(response.text, parse_constant=_reject_non_json_constant, parse_float=_finite_json_number)
         except ValueError as error:
@@ -271,4 +309,8 @@ class ChatModel:
                 f"Invalid chat completion JSON: {error}; response fragment: {response.text[:500]}",
                 response=response.text[:2000],
             ) from error
-        return parse_reply(settings, body)
+        try:
+            return parse_reply(settings, body)
+        except ModelOutputLimitError as error:
+            error.describe(settings.max_output_tokens if max_output_tokens is None else max_output_tokens)
+            raise

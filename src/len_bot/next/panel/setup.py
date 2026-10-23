@@ -25,7 +25,7 @@ from ..configuration.chat import Compaction, WebReadSettings
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
 from ..platform.onebot import OneBot
-from .model_access import probe_model as run_model_probe
+from .model_access import model_error_detail, probe_model as run_model_probe
 from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
 from ..persona.profile import Persona, load_persona
@@ -172,7 +172,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
         raise ValueError('所选官方插件尚未安装完成，请完成安装或取消选择后继续')
     persona = (load_persona(DEFAULT_PERSONA_DIRECTORY) if item.default_persona else
                Persona(id=item.persona_id, name=item.persona_name, brief=item.brief,
-                       behavior=item.brief, self_reference=['我'], aliases=[], tools='all', skills=[],
+                       behavior="", self_reference=['我'], aliases=[], tools='all', skills=[],
                        styles=[], voice=item.voice_text or '', boundaries=item.boundaries, examples=[]))
     source = setup_source(item)
     prepared = [p['name'] for p in plugin_choices(root) if p['installed'] or p['prepared']]
@@ -246,7 +246,7 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         try:
             return await run_model_probe(item.provider, item.mind, item.kind)
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.get('/api/setup/protocols', dependencies=[Depends(authorize)], response_model=responses.SetupProtocols, response_model_exclude_unset=True)
     async def protocols():
@@ -258,14 +258,14 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         try:
             return await run_model_probe(item.provider, item.binding, 'embedding')
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.post('/api/setup/models', dependencies=[Depends(authorize)], response_model=responses.ModelList, response_model_exclude_unset=True)
     async def models(item: ProviderList):
         try:
             return {'models': await list_models(item.provider)}
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.get('/api/setup/plugins', dependencies=[Depends(authorize)], response_model=responses.SetupPlugins, response_model_exclude_unset=True)
     async def plugins():
@@ -321,7 +321,7 @@ async def run_setup(root: Path, *, container: bool = False) -> None:
         listener.listen()
         port = listener.getsockname()[1]
         app = create_setup_app(root, token, completed, container=container)
-        server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False))
+        server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False, forwarded_allow_ips=['127.0.0.1']))
         print(f'尚无根配置。请打开 http://127.0.0.1:{port}/#token={token}\n'
               '保存后直接启动，按新配置连接 OneBot 并打开面板。', flush=True)
         problem = missing_build(BUILT_PANEL)

@@ -251,6 +251,7 @@ export function createWizard() {
       context_window_tokens: draft.contextWindow ?? 0,
       max_output_tokens: draft.maxOutput ?? 0,
       temperature: null,
+      thinking: null,
       quick_reasoning_effort: draft.quickEffort.trim() || null,
       image_input: draft.imageInput,
       reasoning_effort: draft.effort.trim() || null,

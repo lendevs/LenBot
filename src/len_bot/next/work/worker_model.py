@@ -295,6 +295,8 @@ class WorkerModelProxy:
             outgoing["store"] = False
         if self.settings.reasoning_effort is not None:
             outgoing["reasoning_effort"] = self.settings.reasoning_effort
+        if self.settings.thinking is not None:
+            outgoing["thinking"] = {"type": self.settings.thinking}
         image_tokens_unknown = any(
             isinstance(message.get("content"), list)
             and any(isinstance(block, dict) and block.get("type") == "image_url"

@@ -178,6 +178,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                     # log_config=None: Uvicorn's records go through the host's own log handlers.
                     server = HostPanelServer(uvicorn.Config(
                         app, host=config.panel.host, port=config.panel.port, log_config=None,
+                        forwarded_allow_ips=config.panel.trusted_proxies,
                     ))
                     await run_with_panel(runtime, server, lifecycle)
             finally:

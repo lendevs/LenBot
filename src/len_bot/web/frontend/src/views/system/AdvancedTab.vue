@@ -30,6 +30,8 @@ interface NumberField {
   max?: number
   unit?: string
   decimals?: boolean
+  /** Shown when empty; the field may stay empty. */
+  placeholder?: string
 }
 const groups = computed<{ group: Group; fields: NumberField[] }[]>(() => {
   const seconds = t('system.seconds')
@@ -39,7 +41,13 @@ const groups = computed<{ group: Group; fields: NumberField[] }[]>(() => {
       fields: [
         { group: 'compaction', key: 'input_tokens', min: 1, unit: 'tokens' },
         { group: 'compaction', key: 'keep_recent_tokens', min: 1, unit: 'tokens' },
-        { group: 'compaction', key: 'max_output_tokens', min: 1, unit: 'tokens' },
+        {
+          group: 'compaction',
+          key: 'max_output_tokens',
+          min: 1,
+          unit: 'tokens',
+          placeholder: t('models.roles.followsMind'),
+        },
       ],
     },
     {
@@ -74,8 +82,9 @@ const errors = computed(() => {
   const value = draft.value
   if (!value) return result
   for (const { group, fields } of groups.value)
-    for (const { key } of fields)
-      if (fieldsOf(group)[key] === null) result[`${group}.${key}`] = t('system.required')
+    for (const { key, placeholder } of fields)
+      if (placeholder === undefined && fieldsOf(group)[key] === null)
+        result[`${group}.${key}`] = t('system.required')
   if (!value.logging.directory.trim()) result['logging.directory'] = t('system.required')
   if (value.logging.retention_days === null) result['logging.retention_days'] = t('system.required')
   return result
@@ -117,6 +126,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
               :snap="!item.decimals"
               :steppers="false"
               :unit="item.unit"
+              :placeholder="item.placeholder"
             />
           </Field>
         </FormSection>

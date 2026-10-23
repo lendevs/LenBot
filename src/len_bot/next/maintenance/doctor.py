@@ -11,11 +11,13 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sys
+import sqlite3
 
-from ..config import HostConfig, load_host_config
+from ..config import HostConfig, load_instance_config, load_instance_source
 from ..memory.jobs import FORMAT_VERSION as MEMORY_JOBS_FORMAT
 from ..memory.local import FORMAT_VERSION as LOCAL_INDEX_FORMAT, _APPLICATION_ID as LOCAL_INDEX_APPLICATION, _INDEX_NAME
 from ..plugins.data import recorded_version
+from .migrate_config import upgraded_config
 from ..plugins.kv import APPLICATION_ID as KV_APPLICATION, FORMAT_VERSION as KV_FORMAT
 from ..plugins.manifest import discover, read_manifest
 from ..storage.sqlite import connect
@@ -101,23 +103,36 @@ def _plugins(config: HostConfig) -> dict:
 
 def check(root: Path) -> list[dict]:
     try:
-        config = load_host_config(root)
+        config = load_instance_config(root)
     except ValueError as error:
-        return [{'check': 'config', 'status': 'error', 'detail': str(error)}]
-    results = [{'check': 'config', 'status': 'ok', 'detail': f'配置格式 {config.config_version}'}]
-    database = config.database
-    results.append({'check': 'business_database', **_database(
-        database, BUSINESS_APPLICATION, BUSINESS_FORMAT, 'migrate', BUSINESS_RELATIONS)})
-    results.append({'check': 'memory_jobs', **_database(
-        database.with_name(database.name + '.memory.sqlite3'), MEMORY_JOBS_APPLICATION, MEMORY_JOBS_FORMAT,
-        'migrate_memory_jobs')})
-    if config.memory is None:
-        results.append({'check': 'local_memory_index', 'status': 'disabled', 'detail': '未配置记忆'})
+        results = [{'check': 'config', 'status': 'error', 'detail': str(error)}]
+        # An older format still names its databases; read them from the in-memory upgrade.
+        path = root / 'lenbot.config.json'
+        try:
+            config = load_instance_source(path, upgraded_config(json.loads(path.read_text(encoding='utf-8')), path))
+        except Exception:
+            return results
     else:
-        index = config.memory.local.directory.expanduser().resolve() / _INDEX_NAME
-        results.append({'check': 'local_memory_index', **_database(
-            index, LOCAL_INDEX_APPLICATION, LOCAL_INDEX_FORMAT, 'migrate_local_memory')})
-    results.append({'check': 'plugins', **_plugins(config)})
+        results = [{'check': 'config', 'status': 'ok', 'detail': f'配置格式 {config.config_version}'}]
+    database = config.database
+    index = (None if config.memory is None
+             else config.memory.local.directory.expanduser().resolve() / _INDEX_NAME)
+    for name, location, application, version, migration, relations in (
+        ('business_database', database, BUSINESS_APPLICATION, BUSINESS_FORMAT, 'migrate', BUSINESS_RELATIONS),
+        ('memory_jobs', database.with_name(database.name + '.memory.sqlite3'),
+         MEMORY_JOBS_APPLICATION, MEMORY_JOBS_FORMAT, 'migrate_memory_jobs', ()),
+        ('local_memory_index', index, LOCAL_INDEX_APPLICATION, LOCAL_INDEX_FORMAT, 'migrate_local_memory', ()),
+    ):
+        if location is None:
+            result = {'status': 'disabled', 'detail': '未配置记忆'}
+        else:
+            try:
+                result = _database(location, application, version, migration, relations)
+            except (OSError, sqlite3.DatabaseError) as error:
+                result = {'status': 'error', 'detail': f'{location}：{error}'}
+        results.append({'check': name, **result})
+    if isinstance(config, HostConfig):
+        results.append({'check': 'plugins', **_plugins(config)})
     return results
 
 

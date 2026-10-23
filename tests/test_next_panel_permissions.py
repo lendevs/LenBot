@@ -196,7 +196,7 @@ def test_configured_account_uses_separate_cookie_name_and_logout_revokes_it(pane
         with TestClient(create_app(panel_config, root=panel_root)) as client:
             client.cookies.set("session_token", legacy_token)
             client.cookies.set("lenbot_test_session", old_test_token)
-            client.cookies.set("lenbot_test_session_p81", other_port_token)
+            client.cookies.set("lenbot_session_p81", other_port_token)
             assert client.get("/api/auth/me").status_code == 401
             assert client.get("/api/chat-test/state").status_code == 401
             assert client.get("/api/chat-test/settings").status_code == 401
@@ -219,9 +219,9 @@ def test_configured_account_uses_separate_cookie_name_and_logout_revokes_it(pane
             login = _login(client)
             assert login.status_code == 200
             assert login.json()["username"] == "isolated-operator"
-            assert "lenbot_test_session_p80" in login.cookies
+            assert "lenbot_session_p80" in login.cookies
             assert "session_token" not in login.cookies
-            token = login.cookies["lenbot_test_session_p80"]
+            token = login.cookies["lenbot_session_p80"]
             assert client.get("/api/auth/me").json()["username"] == "isolated-operator"
             state = client.get("/api/chat-test/state")
             assert state.status_code == 200
@@ -244,9 +244,9 @@ def test_configured_account_uses_separate_cookie_name_and_logout_revokes_it(pane
             assert client.post("/api/auth/logout").status_code == 200
             assert client.cookies["session_token"] == legacy_token
             assert client.cookies["lenbot_test_session"] == old_test_token
-            assert client.cookies["lenbot_test_session_p81"] == other_port_token
+            assert client.cookies["lenbot_session_p81"] == other_port_token
             assert client.get("/api/auth/me").status_code == 401
-            client.cookies.set("lenbot_test_session_p80", token)
+            client.cookies.set("lenbot_session_p80", token)
             assert client.get("/api/chat-test/state").status_code == 401
             assert client.get("/api/chat-test/settings").status_code == 401
             assert client.get("/api/chat-test/scene-persona").status_code == 401
@@ -260,9 +260,9 @@ def test_configured_account_uses_separate_cookie_name_and_logout_revokes_it(pane
 
 
 @pytest.mark.parametrize("base_url,cookie", [
-    ("http://testserver", "lenbot_test_session_p80"),
-    ("https://testserver", "lenbot_test_session_p443"),
-    ("http://testserver:56789", "lenbot_test_session_p56789"),
+    ("http://testserver", "lenbot_session_p80"),
+    ("https://testserver", "lenbot_session_p443"),
+    ("http://testserver:56789", "lenbot_session_p56789"),
 ])
 def test_cookie_name_follows_effective_request_port_not_configured_listener(
         panel_config, panel_root, base_url, cookie):
@@ -271,7 +271,7 @@ def test_cookie_name_follows_effective_request_port_not_configured_listener(
         login = _login(client)
         assert login.status_code == 200
         assert cookie in login.cookies
-        assert "lenbot_test_session_p0" not in login.cookies
+        assert "lenbot_session_p0" not in login.cookies
         assert client.get("/api/auth/me").status_code == 200
         assert client.post("/api/auth/logout").status_code == 200
         assert client.get("/api/auth/me").status_code == 401
@@ -282,7 +282,7 @@ def test_http_and_websocket_use_same_effective_port_cookie(panel_config, panel_r
                     base_url="http://testserver:56789") as client:
         login = _login(client)
         assert login.status_code == 200
-        assert "lenbot_test_session_p56789" in login.cookies
+        assert "lenbot_session_p56789" in login.cookies
         with client.websocket_connect("ws://testserver:56789/api/chat-test/events") as websocket:
             assert websocket.receive_json() == {"type": "changed"}
             assert client.post("/api/auth/logout").status_code == 200
@@ -295,7 +295,7 @@ def test_https_and_wss_share_implicit_443_cookie(panel_config, panel_root):
     with TestClient(create_app(panel_config, root=panel_root), base_url="https://testserver") as client:
         login = _login(client)
         assert login.status_code == 200
-        assert "lenbot_test_session_p443" in login.cookies
+        assert "lenbot_session_p443" in login.cookies
         with client.websocket_connect("wss://testserver/api/chat-test/events") as websocket:
             assert websocket.receive_json() == {"type": "changed"}
             assert client.post("/api/auth/logout").status_code == 200

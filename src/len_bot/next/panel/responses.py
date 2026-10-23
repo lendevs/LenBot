@@ -589,6 +589,7 @@ class Overview(PanelResponse):
     unknown_token_calls: int
     pending_schedules: int
     recent_errors: list[JsonObject]
+    model_errors: list[JsonObject]
     reply_effects: JsonObject
     undelivered: JsonObject
     pending_reviews: JsonObject

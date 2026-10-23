@@ -6,7 +6,7 @@ import json
 import uuid
 from urllib.parse import quote
 
-from .client import ModelSettings, ModelReply, ModelProtocolError, parse_chat_completion, parse_token_usage
+from .client import ModelSettings, ModelReply, ModelProtocolError, ModelOutputLimitError, parse_chat_completion, parse_token_usage
 
 
 def _identity(settings: ModelSettings) -> dict:
@@ -91,6 +91,8 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
             payload['tools'] = tools
         if settings.reasoning_effort is not None:
             payload['reasoning_effort'] = settings.reasoning_effort
+        if settings.thinking is not None:
+            payload['thinking'] = {'type': settings.thinking}
         path = 'chat/completions'
     elif api == 'openai-responses':
         items = []
@@ -224,6 +226,8 @@ def parse_reply(settings: ModelSettings, body: object) -> ModelReply:
         tokens = parse_token_usage(usage)
         texts, calls = [], []
         if api == 'openai-responses':
+            if (body.get('incomplete_details') or {}).get('reason') == 'max_output_tokens':
+                raise ModelOutputLimitError("模型输出额度耗尽", response=body, usage=usage, token_usage=tokens)
             if body['status'] != 'completed':
                 raise ValueError(f'incomplete response: {body["status"]}; {body.get("incomplete_details")}')
             native = body['output']
@@ -239,6 +243,8 @@ def parse_reply(settings: ModelSettings, body: object) -> ModelReply:
                 elif item['type'] != 'reasoning':
                     raise ValueError(f'unsupported response item: {item["type"]}')
         elif api == 'anthropic':
+            if body['stop_reason'] == 'max_tokens':
+                raise ModelOutputLimitError("模型输出额度耗尽", response=body, usage=usage, token_usage=tokens)
             if body['stop_reason'] not in {'end_turn', 'tool_use'}:
                 raise ValueError(f'incomplete or unsupported stop_reason: {body["stop_reason"]}')
             if body['role'] != 'assistant':
@@ -255,6 +261,8 @@ def parse_reply(settings: ModelSettings, body: object) -> ModelReply:
                 raise ValueError('stop_reason and tool calls disagree')
         else:
             candidate = body['candidates'][0]
+            if candidate['finishReason'] == 'MAX_TOKENS':
+                raise ModelOutputLimitError("模型输出额度耗尽", response=body, usage=usage, token_usage=tokens)
             if candidate['finishReason'] != 'STOP':
                 raise ValueError(f'incomplete or unsupported finishReason: {candidate["finishReason"]}')
             native = candidate['content']
@@ -272,5 +280,7 @@ def parse_reply(settings: ModelSettings, body: object) -> ModelReply:
         reply = parse_chat_completion({'choices': [{'message': message, 'finish_reason': reason}], 'usage': usage})
         message['_continuation'] = {'binding': _identity(settings), 'data': copy.deepcopy(native)}
         return ModelReply(message, reply.text, reply.tool_calls, reason, usage, tokens, copy.deepcopy(body))
+    except ModelOutputLimitError:
+        raise
     except (KeyError, IndexError, TypeError, ValueError, ModelProtocolError) as error:
         raise ModelProtocolError(f'Invalid {settings.api} reply: {error}; response fragment: {json.dumps(body, ensure_ascii=False, default=repr)[:500]}', response=body, usage=usage, token_usage=tokens) from error

@@ -405,6 +405,32 @@ class Store:
             f"SELECT scene,COUNT(*) FROM tasks WHERE scene IN ({placeholders}) AND status='failed' AND ended>=? GROUP BY scene",
             (*scenes, since)))
 
+    def model_errors(self, scenes: Sequence[str], since: float, until: float) -> list[dict]:
+        placeholders = ','.join('?' for _ in scenes)
+        rows = self.db.execute(
+            "SELECT id,scene,turn_id,role,error,json_extract(request,'$.provider') AS provider,"
+            "json_extract(response,'$.status') AS http_status FROM model_calls "
+            f"WHERE scene IN ({placeholders}) AND error IS NOT NULL AND started>=? AND started<? ORDER BY id DESC",
+            (*scenes, since, until))
+        groups = {}
+        for row in rows:
+            item = dict(row)
+            key = (item['provider'], item['role'], item['error'].split(':', 1)[0], item['http_status'])
+            if key in groups:
+                groups[key]['count'] += 1
+            else:
+                groups[key] = {**item, 'count': 1}
+        return list(groups.values())
+
+    def model_call(self, call_id: int) -> dict | None:
+        row = self.db.execute('SELECT * FROM model_calls WHERE id=?', (call_id,)).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        for key in ('request', 'response', 'usage', 'tokens'):
+            item[key] = None if item[key] is None else json.loads(item[key])
+        return item
+
     def daily_overview(self, scenes: Sequence[str], since: float, until: float, *, calls=None) -> dict:
         placeholders = ",".join("?" for _ in scenes)
         messages = dict(self.db.execute(
@@ -431,7 +457,8 @@ class Store:
             f"SELECT COUNT(*) FROM schedules WHERE scene IN ({placeholders}) AND status='pending'", scenes,
         ).fetchone()[0]
         errors = [dict(row) for row in self.db.execute(
-            f"SELECT id,scene,started,status,error FROM turns WHERE scene IN ({placeholders}) "
+            f"SELECT id,scene,started,status,error,EXISTS(SELECT 1 FROM model_calls c "
+            f"WHERE c.turn_id=turns.id AND c.error IS NOT NULL) AS model_error FROM turns WHERE scene IN ({placeholders}) "
             "AND error IS NOT NULL ORDER BY started DESC LIMIT 10", scenes,
         )]
         undelivered = dict(self.db.execute(
@@ -456,6 +483,7 @@ class Store:
                 "tokens": {key: token_records[key] for key in ("input", "output", "cached")},
                 "unknown_token_calls": token_records["unknown_calls"],
                 "pending_schedules": pending, "recent_errors": errors,
+                "model_errors": self.model_errors(scenes, since, until),
                 "reply_effects": reactions, "undelivered": undelivered, "pending_reviews": reviews}
 
     def _append(self, scene: str, message: dict) -> int:

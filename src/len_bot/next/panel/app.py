@@ -232,6 +232,13 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         items = await asyncio.to_thread(read_records, config.logging.directory, limit=limit, match=match, level=level)
         return {"items": items, "directory": str(config.logging.directory), "limit": limit}
 
+    @app.get("/api/host/model-calls/{call_id}", response_model=responses.JsonObject)
+    async def model_call(call_id: int, _: str = Depends(user)):
+        item = await runtime.store.read(runtime.store.model_call, call_id)
+        if item is None or item['scene'] not in config.scenes:
+            raise HTTPException(404, '模型调用不存在')
+        return item
+
     overview_lock = asyncio.Lock()
     overview_cached = None
     overview_read_at = 0.0

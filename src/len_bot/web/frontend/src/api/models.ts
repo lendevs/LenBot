@@ -35,6 +35,7 @@ export interface ChatBinding {
   temperature: number | null
   max_output_tokens: number | null
   timeout_seconds: number | null
+  thinking: 'enabled' | 'disabled' | null
   reasoning_effort: string | null
   quick_reasoning_effort: string | null
   thinking_budget_tokens: number | null

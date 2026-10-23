@@ -50,8 +50,8 @@ from .configuration.maintenance import (
 
 CONFIG_VERSION = 3
 # Upgrade old root configurations with the offline maintenance command.
-UPGRADE_HINT = ("先停掉 Bot 并备份实例目录，在实例目录执行 python -m len_bot.next.maintenance.migrate_config"
-                "（原文件保留在旁边），再按 deploy/current/operations.md「升级与备份」执行其余迁移；"
+UPGRADE_HINT = ("停机后在实例目录执行 python -m len_bot.next.maintenance.upgrade run --snapshot <实例外的新目录>，"
+                "完成备份、迁移和检查；单独升级配置可执行 python -m len_bot.next.maintenance.migrate_config。"
                 "部署包和 Docker 安装请用面板的更新器")
 
 
@@ -148,11 +148,30 @@ class SharedConfig(BaseModel):
     def valid_timezone(cls, value: str) -> str:
         return _valid_timezone(value)
 
+    @property
+    def recap_output_tokens(self) -> int:
+        return self.compaction.max_output_tokens or self.models.roles.mind.max_output_tokens
+
+    @property
+    def recap_reasoning_reserve(self) -> int:
+        binding = self.models.roles.mind
+        settings = self.model_settings('mind')
+        if binding.quick_reasoning_effort is not None:
+            settings = settings.with_effort(binding.quick_reasoning_effort)
+        if settings.thinking == 'disabled' or settings.reasoning_effort in {'none', 'off'}:
+            return 0
+        if settings.thinking_budget_tokens is not None:
+            return settings.thinking_budget_tokens
+        # Provider-default and effort-based reasoning share the output allowance with the recap.
+        return self.recap_output_tokens // 2
+
     @model_validator(mode="after")
     def input_and_output_fit_window(self) -> SharedConfig:
         mind = self.models.roles.mind
-        if self.compaction.max_output_tokens >= mind.context_window_tokens:
+        if self.recap_output_tokens >= mind.context_window_tokens:
             raise ValueError("compaction.max_output_tokens must be less than mind.context_window_tokens")
+        if self.recap_reasoning_reserve >= self.recap_output_tokens:
+            raise ValueError("回想最大长度需要大于思考额度")
         trigger_tokens = self.compaction.input_tokens
         if trigger_tokens + mind.max_output_tokens > mind.context_window_tokens:
             raise ValueError(
@@ -634,6 +653,11 @@ def load_host_config(root: Path) -> HostConfig:
 def load_instance_config(root: Path) -> LabConfig | HostConfig:
     """Select the explicitly declared instance format from the one root file."""
     path, source = _read_root(root)
+    return load_instance_source(path, source)
+
+
+def load_instance_source(path: Path, source: dict) -> LabConfig | HostConfig:
+    """Validate an instance source and resolve its paths relative to the configuration file."""
     if source.get("mode") == "isolated":
         return _load_lab_source(path, source)
     if source.get("mode") == "isolated-multi":

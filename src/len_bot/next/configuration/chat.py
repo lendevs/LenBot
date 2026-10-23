@@ -20,7 +20,7 @@ class Compaction(BaseModel):
 
     input_tokens: int = Field(default=60000, gt=0, strict=True)
     keep_recent_tokens: int = Field(default=20000, gt=0, strict=True)
-    max_output_tokens: int = Field(default=1024, gt=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
 
 
 class TextDelivery(BaseModel):

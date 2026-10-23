@@ -283,7 +283,8 @@ def main() -> None:
         config = load_config(root)
         activate_prompts(root)
         app = create_app(config, root=root)
-        uvicorn.run(app, host=config.panel.host, port=config.panel.port)
+        uvicorn.run(app, host=config.panel.host, port=config.panel.port,
+                    forwarded_allow_ips=config.panel.trusted_proxies)
 
 
 if __name__ == "__main__":

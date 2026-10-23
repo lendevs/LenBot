@@ -8,9 +8,16 @@ from pydantic import model_validator
 
 from ..configuration.models import Binding, Provider
 from ..configuration.types import STRICT
-from ..models.client import ChatModel, ModelSettings
+from ..models.client import ChatModel, ModelSettings, ModelHTTPError, ModelProtocolError
 from ..models.providers import ProviderAPI
 from ..memory.embeddings import EmbeddingBinding, EmbeddingClient, EmbeddingSettings
+
+
+def model_error_detail(error: Exception) -> str | dict:
+    message = f'{type(error).__name__}: {error}'
+    if isinstance(error, (ModelHTTPError, ModelProtocolError)):
+        return {'message': message, 'data': error.response}
+    return message
 
 
 class ProviderDraft(BaseModel):

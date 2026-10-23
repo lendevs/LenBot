@@ -151,3 +151,70 @@ def test_verdict_migration_keeps_old_messages_unknown_and_replay_unchanged(tmp_p
     assert replay_fixture() == before
     with Store(root / 'state.db') as store:
         assert [row[0] for row in store.db.execute('SELECT wake_verdict FROM messages')] == [None, None]
+
+
+@pytest.mark.parametrize('fixture', FIXTURES)
+def test_source_upgrade_snapshots_old_formats_and_doctor_lists_every_component(tmp_path, fixture):
+    from len_bot.next.maintenance.upgrade import upgrade_instance
+    from len_bot.next.maintenance.snapshot import verify
+    root, backup = tmp_path / 'instance', tmp_path / 'backup'
+    shutil.copytree(HISTORY / fixture, root)
+    before = (root / 'lenbot.config.json').read_bytes()
+    results = check(root)
+    assert {'config', 'business_database', 'memory_jobs', 'local_memory_index', 'plugins'} == {item['check'] for item in results}
+    assert (root / 'lenbot.config.json').read_bytes() == before
+    upgrade_instance(root, backup)
+    assert verify(backup)
+    assert (backup / '0/lenbot.config.json').read_bytes() == before
+    assert all(item['status'] in {'ok', 'disabled'} for item in check(root))
+    assert not list(root.rglob('*.bak'))
+
+
+def test_source_upgrade_restores_partial_migrations_and_external_persona(tmp_path):
+    from len_bot.next.maintenance.upgrade import upgrade_instance
+    from len_bot.next.maintenance.snapshot import manifest
+    root, backup = tmp_path / 'instance', tmp_path / 'backup'
+    shutil.copytree(HISTORY / 'config0-business4-jobs6-index3', root)
+    external = tmp_path / 'external-persona'
+    shutil.move(root / 'role', external)
+    path = root / 'lenbot.config.json'
+    source = json.loads(path.read_text())
+    source['scenes'][SCENE]['persona'] = str(external)
+    path.write_text(json.dumps(source))
+    # The local index fails after configuration, business and job migrations have already completed.
+    with sqlite3.connect(root / 'memory/.memory-index.sqlite3') as db:
+        db.execute('PRAGMA application_id=123')
+    before, outside = manifest(root), manifest(external)
+    with pytest.raises(ValueError):
+        upgrade_instance(root, backup)
+    assert manifest(root) == before
+    assert manifest(external) == outside
+    assert (backup / 'snapshot.json').exists()
+
+
+def test_failed_trial_upgrade_restores_both_instances_and_preserves_trial_lock(tmp_path):
+    from len_bot.next.maintenance.snapshot import manifest
+    from len_bot.next.maintenance.upgrade import upgrade_instance
+    root, backup = tmp_path / 'instance', tmp_path / 'backup'
+    fixture = HISTORY / 'config0-business4-jobs6-index3'
+    shutil.copytree(fixture, root)
+    trial = root / '.runtime/chat-tests/fixture'
+    shutil.copytree(fixture, trial)
+    lock = trial / '.lenbot-instance.lock'
+    lock.write_bytes(b'0')
+    inode = lock.stat().st_ino
+    with sqlite3.connect(trial / 'state.db') as db:
+        db.execute('PRAGMA application_id=123')
+    before = manifest(root)
+    with pytest.raises(ValueError):
+        upgrade_instance(root, backup)
+    assert manifest(root) == before
+    assert lock.stat().st_ino == inode
+    assert (backup / 'snapshot.json').exists()
+
+
+@pytest.mark.parametrize('content', ['{broken', '[]', '{"mode":"isolated-multi"}'])
+def test_doctor_reports_configuration_errors_with_unreadable_locations(tmp_path, content):
+    (tmp_path / 'lenbot.config.json').write_text(content)
+    result = check(tmp_path)
+    assert result[0]['check'] == 'config' and result[0]['status'] == 'error'

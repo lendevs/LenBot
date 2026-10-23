@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from len_bot.next.config import load_host_config
+from len_bot.next.chat.context import build_system
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.panel.setup import create_setup_app
 from len_bot.web.auth import verify_password
@@ -70,6 +71,9 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
                 assert persona.skills == 'all' and '小然' in persona.aliases
             else:
                 assert persona.name == '合成角色'
+                assert persona.brief == body['brief'] and persona.behavior == ''
+                system = build_system(cfg.scene_config(body['scene']), persona, [], platform=False)
+                assert system.count(body['brief']) == 1
             assert verify_password(body['password'], cfg.panel.password_hash)
             before = (tmp_path/'lenbot.config.json').read_bytes()
             assert body['password'] not in before.decode()

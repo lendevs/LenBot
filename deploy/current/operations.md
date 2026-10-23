@@ -231,28 +231,21 @@ python -m len_bot.next.maintenance.memory_reindex
 - 本地记忆索引
 - 插件，包括插件的数据版本和 KV 文件格式
 
-数据库都以只读方式打开，Bot 运行期间也可以执行。任何一项失败时，退出码为 1。未配置的组件显示为 `disabled`。
+数据库都以只读方式打开，Bot 运行期间也可以执行。任何一项失败时，退出码为 1。未配置的组件显示为 `disabled`。配置格式过旧时，配置一项报错，其余各项按升级后的配置检查。
 
 ## 升级与备份
 
 面板启动 60 秒后检查一次新版本，之后每 24 小时检查一次，查询 GitHub Releases。检查失败时记录一条 WARNING `release_check`。根配置的 `panel.update_check` 设为 `false` 可以关闭后台检查。
 
-升级步骤如下。
+源码安装升级时，先停止 Bot、试聊和其他写入数据的程序，更新代码与依赖，然后执行：
 
-1. 停止 Bot 和试聊，以及其他会写入数据的程序。
-2. 备份实例目录，以及配置中指向实例以外的任务目录和交付目录。SQLite 的 `-wal` 文件也属于数据，需要一起备份。
-3. 换成新版本的程序。
-4. 依次执行下面的命令。
+```sh
+python -m len_bot.next.maintenance.upgrade run --snapshot ../lenbot-backup-20261023
+```
 
-   ```sh
-   python -m len_bot.next.maintenance.migrate_config
-   python -m len_bot.next.maintenance.migrate
-   python -m len_bot.next.maintenance.migrate_memory_jobs
-   python -m len_bot.next.maintenance.migrate_local_memory
-   python -m len_bot.next.maintenance.plugin_dependencies
-   ```
+这条命令持有实例锁，先把实例目录和配置引用的外部目录复制到快照，再升级根配置、试聊配置和各数据库，恢复插件依赖并运行 doctor。任何一步失败都会从快照恢复。快照目录每次用新的，放在实例目录和外部数据目录之外。完成后启动 Bot。
 
-5. 执行 `python -m len_bot.next.maintenance.doctor` 检查。全部为 `ok` 或 `disabled` 后，再启动 Bot。
+要退回升级前的版本时，停机执行 `python -m len_bot.next.maintenance.upgrade restore --snapshot <快照目录>` 恢复数据，再换回旧版本的程序。
 
 使用部署包或 Docker 更新器时，快照失败会重新启动旧版本，并在更新页显示快照错误。旧版本启动失败时，可在更新页执行「启动程序」。
 
@@ -260,7 +253,7 @@ python -m len_bot.next.maintenance.memory_reindex
 
 数据格式与程序版本不一致时，启动直接报错。
 
-- 根配置的 `config_version` 比当前格式旧时，启动直接停止，报错中写明下一步操作。停机并备份实例目录，在实例目录中执行 `migrate_config`，再按上面的步骤完成其余迁移。
+- 根配置的 `config_version` 比当前格式旧时，启动直接停止，报错中写明下一步操作。停机后在实例目录执行上面的 `upgrade run` 命令。
 - `config_version` 比当前格式新时，说明这份配置是由更新的 LenBot 版本写入的。请换回那个版本，或者恢复升级前的备份。
 - 没有 `config_version`，同时带有当前版本不认识的字段（例如旧版的模型价格）时，字段校验错误后面也会附上同样的提示。
 
@@ -270,7 +263,9 @@ python -m len_bot.next.maintenance.memory_reindex
 
 面板登录按来源 IP 统计尝试次数。15 分钟内失败或正在校验的尝试达到 5 次后，这个 IP 的登录一律返回 429，不再校验密码。即使用户名和密码正确，也要等这个时间窗口过去。更换用户名不会重置次数。登录成功后，这个 IP 的计数清零。
 
-面板部署在反向代理后面时，所有人共用代理地址的这 5 次额度。一个人连续输错密码，其他人也会暂时无法登录。面板的写入请求和 WebSocket 会核对浏览器的 Origin。反向代理必须保留 Host，并传递正确的 `X-Forwarded-Proto`。
+面板部署在反向代理后面时，把代理的 IP 或网段填进根配置的 `panel.trusted_proxies`（默认 `["127.0.0.1"]`，例如 `["127.0.0.1", "192.0.2.8"]`），修改后重启。来自这些地址的请求按 `X-Forwarded-For` 和 `X-Forwarded-Proto` 确定客户端地址和协议，登录限制、写入请求的来源检查和 WebSocket 都用这个结果。代理需要保留 Host，并用自己的值覆盖传入的 `X-Forwarded-For` 和 `X-Forwarded-Proto`。
+
+新密码采用 PBKDF2-HMAC-SHA256、600000 次迭代，保存格式为 `pbkdf2_sha256$600000$盐$哈希`。旧版 `盐$哈希` 按 100000 次验证，重设密码后采用新格式。
 
 ## 数据格式
 

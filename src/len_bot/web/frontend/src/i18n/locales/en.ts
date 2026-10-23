@@ -1489,6 +1489,7 @@ export default {
       undelivered:
         '{group}: {n} message today was not sent or may not have been | {group}: {n} messages today were not sent or may not have been',
       undeliveredMany: '{groups} groups have unsent messages today',
+      modelErrors: 'Model call failed {n} time | Model call failed {n} times',
       turnErrors: '{group}: {n} reply failed today | {group}: {n} replies failed today',
       turnErrorsMany: '{groups} groups had failed replies today',
       taskFailed: '{group}: {n} task failed today | {group}: {n} tasks failed today',
@@ -1613,6 +1614,9 @@ export default {
       effort: 'Reasoning effort',
       effortDefault: 'Provider default',
       quickEffort: 'Effort when replying to new messages',
+      thinkingSwitch: 'Thinking',
+      thinkingEnabled: 'On',
+      thinkingDisabled: 'Off',
       quickEffortSame: 'Same as reasoning effort',
       quickReply: 'Think less when replying, answer faster (recommended)',
       followsMind: 'Uses the chat model',

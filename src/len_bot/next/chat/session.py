@@ -192,11 +192,11 @@ class Chat:
         return await request_model(
             self.config, self.store, model, messages, tools, scene=self.config.scene, role=role,
             turn_id=turn_id, slots=self.slots, direct=self.direct_request,
-            output_tokens=self.config.compaction.max_output_tokens if role == "recap" else None,
+            output_tokens=self.config.recap_output_tokens if role == "recap" else None,
             validate=validate, append_to_scene=role == "mind",
             recap_for=None if recap_target is None else (self.config.scene, recap_target.through),
             expression_ids=self.expression_ids if role == "mind" else expression_ids,
-            input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick,
+            input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
             trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
 
     async def upkeep_fork(self) -> tuple[list[dict], list[dict]]:
@@ -226,7 +226,8 @@ class Chat:
                     tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
                     trigger_tokens=self.config.compaction.input_tokens,
                     keep_recent_tokens=self.config.compaction.keep_recent_tokens,
-                    summary_output_tokens=self.config.compaction.max_output_tokens, recap=recap,
+                    summary_output_tokens=self.config.recap_output_tokens,
+                    reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=recap,
                     summary_template=read_prompt("next_recap.md"),
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
@@ -265,7 +266,8 @@ class Chat:
                         self.context.project_entries(entries), system=projection[0], state=projection[-1],
                         tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
                         trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
-                        summary_output_tokens=self.config.compaction.max_output_tokens, recap=recap,
+                        summary_output_tokens=self.config.recap_output_tokens,
+                        reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=recap,
                         summary_template=template, window_tokens=binding.context_window_tokens,
                         source_entries=self.context.conversation_entries(entries), include_latest=True,
                     )
@@ -273,7 +275,7 @@ class Chat:
                     # Only an earlier recap is active; rewrite it in place.
                     through = self.store.db.execute("SELECT compact_through FROM mind_sessions WHERE scene=?",
                                                     (scene,)).fetchone()[0]
-                    budget = self.config.compaction.max_output_tokens
+                    budget = self.config.recap_output_tokens - self.config.recap_reasoning_reserve
                     plan = CompactionPlan(through, budget, [
                         {"role": "system", "content": Template(template).substitute(summary_budget_tokens=budget)},
                         {"role": "user", "content": recap_source(recap, [])}])
@@ -334,7 +336,8 @@ class Chat:
                 self.context.project_entries(entries), system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
                 output_tokens=binding.max_output_tokens, trigger_tokens=trigger,
                 keep_recent_tokens=self.config.compaction.keep_recent_tokens,
-                summary_output_tokens=self.config.compaction.max_output_tokens,
+                summary_output_tokens=self.config.recap_output_tokens,
+                reasoning_reserve_tokens=self.config.recap_reasoning_reserve,
                 recap=recap, summary_template=read_prompt("next_recap.md"),
                 window_tokens=binding.context_window_tokens,
                 source_entries=self.context.conversation_entries(entries), token_scale=scale,

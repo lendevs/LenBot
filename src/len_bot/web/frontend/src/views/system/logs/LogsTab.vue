@@ -10,6 +10,7 @@ import { keys } from '../../../api/query'
 import { timelineApi } from '../../../api/timeline'
 import { host } from '../../../api/hostStore'
 import { groupLabel } from '../../../layouts/shell/scenes'
+import CodeBlock from '../../../ui/CodeBlock.vue'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
@@ -164,6 +165,12 @@ function onFilter(key: 'turn' | 'plugin' | 'task' | 'scene', value: string) {
   setQuery({ [key]: value })
 }
 
+const call = computed(() => Number(text('call')))
+const callDetail = useQuery({
+  queryKey: computed(() => ['model-call', call.value]),
+  queryFn: ({ signal }) => logsApi.modelCall(call.value, signal),
+  enabled: computed(() => call.value > 0),
+})
 const detail = useQuery({
   queryKey: computed(() => keys.scene.turn(scene.value, turn.value)),
   queryFn: ({ signal }) => timelineApi.turn(scene.value, turn.value, signal),
@@ -269,6 +276,29 @@ function exportShown() {
       </div>
     </section>
 
+    <section v-if="call > 0" class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4">
+      <h3 class="text-base font-semibold">{{ t('logs.events.model_call') }} #{{ call }}</h3>
+      <Skeleton v-if="callDetail.isPending.value" :lines="3" />
+      <ErrorNote
+        v-else-if="callDetail.isError.value"
+        :error="callDetail.error.value"
+        :title="t('logs.turnFailed')"
+        :retry="callDetail.refetch"
+      />
+      <ErrorNote
+        v-else-if="callDetail.data.value?.error"
+        :title="t('groups.live.step.failed')"
+        :error="{
+          message: callDetail.data.value.error,
+          detail: { message: callDetail.data.value.error, data: callDetail.data.value },
+        }"
+      />
+      <CodeBlock
+        v-else-if="callDetail.data.value"
+        :code="JSON.stringify(callDetail.data.value, null, 2)"
+        :max-lines="24"
+      />
+    </section>
     <section
       v-if="turn && scene !== ALL"
       class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4"

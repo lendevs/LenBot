@@ -34,3 +34,5 @@ The runtime configuration lives in `lenbot.config.json`. Change settings in the 
 | [current/first-setup.example.json](current/first-setup.example.json) | Example first-setup submission |
 
 `deploy/updater/`, `deploy/package/`, `current/Dockerfile` and `current/host*.compose.yaml` serve the package and Docker releases. The release process is not settled yet and has no user guide.
+
+To update a source installation, follow the Chinese guide [更新与备份](../website/guide/maintenance.md).

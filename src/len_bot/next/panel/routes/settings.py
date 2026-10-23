@@ -27,7 +27,7 @@ from ...config import HostConfig, _read_root
 from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
 from ...configuration.models import Roles
-from ..model_access import ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
+from ..model_access import model_error_detail, ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
 from ...models.providers import PROTOCOLS, list_models
 from ...persona.profile import Persona
 from ...models.asr import AudioSettings
@@ -519,7 +519,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         try:
             return {'models': await list_models(await candidate_provider(item))}
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.post("/api/host/models/probe", response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def models_probe(request: Request, _: str = Depends(user)):
@@ -527,7 +527,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         try:
             return await probe_model(await candidate_provider(item), item.binding, item.kind)
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.put("/api/host/settings/models", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_models(request: Request, _: str = Depends(user)):

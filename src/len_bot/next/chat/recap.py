@@ -73,8 +73,12 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
                     keep_recent_tokens: int, summary_output_tokens: int,
                     recap: str | None, summary_template: str, window_tokens: int,
                     source_entries: list[Entry] | None = None,
-                    token_scale: float = 1.0, include_latest: bool = False) -> CompactionPlan:
+                    token_scale: float = 1.0, include_latest: bool = False,
+                    reasoning_reserve_tokens: int = 0) -> CompactionPlan:
     """``include_latest`` may fold every entry into the recap, as a role handover does."""
+    summary_text_tokens = summary_output_tokens - reasoning_reserve_tokens
+    if summary_text_tokens <= 0:
+        raise ContextBudgetError("回想输出额度需要大于思考预留，请调大回想最大长度或调小思考额度")
     boundaries = [cut for cut in complete_boundaries(entries) if cut < len(entries) or include_latest]
     if not boundaries:
         required = estimate_request([system] + project_history(recap, entries) + [state], tools, output_tokens)
@@ -98,15 +102,16 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
         without_recap = [system] + project_history("", kept) + [state]
         available = min(trigger_tokens, window_tokens - output_tokens) - ceil(
             token_scale * estimate_request(without_recap, tools, 0))
-        if available >= summary_output_tokens:
+        if available >= summary_text_tokens:
             break
     else:
         raise ContextBudgetError(
             f"system、tools、参考与最新完整单位（含输出 {output_tokens}）估算 "
-            f"{trigger_tokens - available} token，加回想预留 {summary_output_tokens} "
+            f"{trigger_tokens - available} token，加回想正文 {summary_text_tokens} "
             f"超过压缩阈值 {trigger_tokens}（窗口 {window_tokens}），请调大窗口或调小输出上限")
 
-    prompt = Template(summary_template).substitute(summary_budget_tokens=available)
+    budget = summary_text_tokens
+    prompt = Template(summary_template).substitute(summary_budget_tokens=budget)
 
     source = entries[:cut] if source_entries is None else [
         entry for entry in source_entries if entry[0] <= entries[cut - 1][0]]
@@ -117,7 +122,7 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
         raise ContextBudgetError(
             f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
             "请调大窗口或调小回想最大长度")
-    return CompactionPlan(entries[cut - 1][0], available, request)
+    return CompactionPlan(entries[cut - 1][0], budget, request)
 
 
 def recap_source(recap: str | None, entries: list[Entry]) -> str:

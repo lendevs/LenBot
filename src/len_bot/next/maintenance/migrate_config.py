@@ -48,16 +48,14 @@ def _without_prices(source: dict, path: Path) -> dict:
     return result
 
 
-def migrate_config(path: Path) -> bool:
-    """Rewrite one configuration file atomically; keep the original beside it. Returns whether it changed."""
-    source = json.loads(path.read_text(encoding="utf-8"))
+def upgraded_config(source: dict, path: Path) -> dict:
+    """Return the configuration upgraded to the current format."""
     format_version = source.get('config_version', 0)
     if format_version not in (0, 1, 2, CONFIG_VERSION):
         raise ValueError(f'{path}: unsupported configuration format {format_version}; target={CONFIG_VERSION}')
     if format_version == CONFIG_VERSION:
-        return False
+        return source
     upgraded = _without_prices(source, path)
-    tokens_changed = upgraded != source
     for field in ('history_import', 'reminder_import', 'media_import', 'media_archive'):
         upgraded.pop(field, None)
     # Logging is always on from format 2; an explicit null meant off and now takes the default directory.
@@ -68,12 +66,24 @@ def migrate_config(path: Path) -> bool:
         upgraded['worker']['max_delivery_bytes'] = 500 * 1024 * 1024
     if upgraded.get('network') is not None:
         upgraded['network']['public_dns_url'] = 'https://dns.google/resolve'
-    backup = path.with_name(path.name + ('.pre-tokens.bak' if tokens_changed else f'.pre-config-v{format_version}.bak'))
-    with backup.open("x", encoding="utf-8") as copy:
-        copy.write(path.read_text(encoding="utf-8"))
-        copy.flush()
-        os.fsync(copy.fileno())
-    sync_directory(backup.parent)
+    return upgraded
+
+
+def migrate_config(path: Path, *, backup: bool = True) -> bool:
+    """Rewrite one configuration atomically; ``backup`` keeps the original beside it."""
+    source = json.loads(path.read_text(encoding="utf-8"))
+    upgraded = upgraded_config(source, path)
+    if upgraded == source:
+        return False
+    format_version = source.get('config_version', 0)
+    tokens_changed = _without_prices(source, path) != source
+    backup_path = path.with_name(path.name + ('.pre-tokens.bak' if tokens_changed else f'.pre-config-v{format_version}.bak'))
+    if backup:
+        with backup_path.open("x", encoding="utf-8") as copy:
+            copy.write(path.read_text(encoding="utf-8"))
+            copy.flush()
+            os.fsync(copy.fileno())
+        sync_directory(backup_path.parent)
     handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as output:

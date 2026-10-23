@@ -47,6 +47,7 @@ class Binding(BaseModel):
     temperature: float | None = Field(default=0.6, ge=0, le=2, allow_inf_nan=False)
     max_output_tokens: int = Field(default=1024, gt=0)
     timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    thinking: Literal["enabled", "disabled"] | None = None
     reasoning_effort: str | None = None
     # Effort of a request that answers new messages rather than tool results; empty means reasoning_effort.
     quick_reasoning_effort: str | None = None

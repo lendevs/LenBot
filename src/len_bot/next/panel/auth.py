@@ -33,7 +33,7 @@ def cookie_name(connection: HTTPConnection) -> str:
     port = connection.url.port
     if port is None:
         port = 443 if connection.url.scheme in {"https", "wss"} else 80
-    return f"lenbot_test_session_p{port}"
+    return f"lenbot_session_p{port}"
 
 
 def require_panel_origin(connection: HTTPConnection) -> None:
@@ -42,7 +42,6 @@ def require_panel_origin(connection: HTTPConnection) -> None:
         return
     url = urlsplit(str(connection.url))
     scheme = {'ws': 'http', 'wss': 'https'}.get(url.scheme, url.scheme)
-    scheme = connection.headers.get('x-forwarded-proto', scheme)
     if origin != f'{scheme}://{url.netloc}':
         raise HTTPException(403, '面板请求必须来自当前面板地址')
 
@@ -79,6 +78,9 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
             raise HTTPException(401, "Invalid username or password")
         clear_login_failures(key)
         last_login_at = time.time()
+        old_token = request.cookies.get(cookie_name(request))
+        if old_token is not None:
+            revoke_session(old_token)
         response.set_cookie(cookie_name(request), create_session(item.username), httponly=True, samesite="lax",
                             secure=settings.cookie_secure, max_age=7 * 86400)
         return {"success": True, "username": item.username, "is_default_password": False}

@@ -135,6 +135,8 @@ def create(paths: list[str], destination: Path) -> None:
 
 
 def _remove(path: Path) -> None:
+    if path.name == LOCK:
+        return
     if path.is_dir() and not path.is_symlink():
         for child in path.iterdir():
             _remove(child)

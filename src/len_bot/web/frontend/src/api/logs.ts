@@ -46,6 +46,8 @@ export interface LogFiles {
 }
 
 export const logsApi = {
+  modelCall: (id: number, signal?: AbortSignal) =>
+    http.get<Record<string, unknown>>(`/api/host/model-calls/${id}`, undefined, signal),
   read: (filter: LogFilter, signal?: AbortSignal) =>
     http.get<LogPage>('/api/host/logs', { ...filter }, signal),
   files: (signal?: AbortSignal) => http.get<LogFiles>('/api/host/log-files', undefined, signal),

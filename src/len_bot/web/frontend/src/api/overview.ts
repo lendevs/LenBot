@@ -7,6 +7,7 @@ export interface TurnRecord {
   scene: string
   started: number
   status: string
+  model_error?: boolean
   error?: string | null
 }
 
@@ -36,6 +37,7 @@ export interface Overview {
   unknown_token_calls: number
   pending_schedules: number
   recent_errors: TurnRecord[]
+  model_errors: { id: number; scene: string; turn_id: string | null; error: string; count: number }[]
   reply_effects: Record<string, number>
   /** Messages per group that failed or may not have been sent today. */
   undelivered: Record<string, number>

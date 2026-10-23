@@ -34,3 +34,5 @@
 | [current/first-setup.example.json](current/first-setup.example.json) | 首次配置向导提交内容的示例 |
 
 `deploy/updater/`、`deploy/package/`、`current/Dockerfile` 和 `current/host*.compose.yaml` 用于部署包和 Docker 发行，发行流程尚未定稿，暂无使用说明。
+
+源码安装的更新步骤见[更新与备份](../website/guide/maintenance.md)。

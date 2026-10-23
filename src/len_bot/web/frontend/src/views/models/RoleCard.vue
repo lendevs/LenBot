@@ -52,6 +52,11 @@ const quickReply = computed({
       binding.value.quick_reasoning_effort = on ? (binding.value.quick_reasoning_effort ?? 'low') : null
   },
 })
+const thinkingOptions = computed(() => [
+  { value: UNSET, label: t('models.roles.effortDefault') },
+  { value: 'enabled', label: t('models.roles.thinkingEnabled') },
+  { value: 'disabled', label: t('models.roles.thinkingDisabled') },
+])
 const histories = computed(() => [
   { value: 'native' as const, label: t('models.roles.history.native') },
   { value: 'omit-reasoning' as const, label: t('models.roles.history.omit') },
@@ -164,6 +169,15 @@ watch(retries, (text) => {
             <Input v-model="retries" mono :placeholder="t('models.roles.noRetry')" />
           </Field>
           <template v-if="api === 'openai-chat'">
+            <Field :label="t('models.roles.thinkingSwitch')">
+              <Select
+                :model-value="binding.thinking ?? UNSET"
+                :options="thinkingOptions"
+                @update:model-value="
+                  (value) => (binding!.thinking = value === 'enabled' || value === 'disabled' ? value : null)
+                "
+              />
+            </Field>
             <Field :label="t('models.roles.history.label')">
               <Select v-model="binding.history_policy" :options="histories" />
             </Field>

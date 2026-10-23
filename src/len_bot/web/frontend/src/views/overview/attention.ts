@@ -104,9 +104,22 @@ export function useAttention() {
       })),
       (groups) => t('overview.todo.undeliveredMany', { groups }),
     )
+    for (const call of day.model_errors) {
+      items.push({
+        key: `model:${call.id}`,
+        text: t('overview.todo.modelErrors', { n: call.count }, call.count),
+        error: call.error,
+        tone: 'error',
+        to: {
+          name: 'host-logs',
+          query: { scene: call.scene, call: call.id, turn: call.turn_id ?? undefined },
+        },
+        action: view,
+      })
+    }
     const failures: Record<string, number> = {}
     for (const turn of day.recent_errors) {
-      if (turn.started >= day.since && FAILED_TURNS.has(turn.status))
+      if (turn.started >= day.since && !turn.model_error && FAILED_TURNS.has(turn.status))
         failures[turn.scene] = (failures[turn.scene] ?? 0) + 1
     }
     perScene(

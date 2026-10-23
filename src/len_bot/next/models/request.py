@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 
 from ..config import SharedConfig
 from ..chat.recap import CompactionPlan, ContextBudgetError, estimate_text_request
-from .client import ChatModel, ModelProtocolError, ModelReply, parse_token_usage
+from .client import ChatModel, ModelHTTPError, ModelOutputLimitError, ModelProtocolError, ModelReply, parse_token_usage
 from .slots import ModelSlots
 from .projection import project_messages
 from hashlib import sha256
@@ -18,6 +18,9 @@ from ..plugins.store import PluginStore
 from ..runtime.logs import log_event
 
 logger = logging.getLogger(__name__)
+# Panel names of request roles; recap names its own setting.
+ROLE_NAMES = {"mind": "聊天", "upkeep": "整理回合", "vision": "看图", "memory": "记忆摘要",
+              "worker": "后台任务", "learner": "插件生成"}
 
 
 class ChatRequest(Protocol):
@@ -117,9 +120,17 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
             if validate is not None:
                 validate(reply)
         except BaseException as error:
+            if isinstance(error, ModelOutputLimitError):
+                if role == "recap":
+                    error.describe(tokens, "回想", "系统 → 设置 → 高级 → 上下文压缩 → 回想最大长度")
+                else:
+                    page = ROLE_NAMES["mind"] if binding is config.models.roles.mind else ROLE_NAMES.get(role, role)
+                    error.describe(tokens, ROLE_NAMES.get(role, role), f"模型 → {page} → 更多参数 → 最长输出")
             response = None if reply is None else {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response}
             usage = None if reply is None else reply.usage
             token_usage = None if reply is None else reply.token_usage
+            if isinstance(error, ModelHTTPError):
+                response = error.response
             if isinstance(error, ModelProtocolError):
                 response, usage, token_usage = error.response, error.usage, error.token_usage
             store.end_call(call_id, response, usage, f"{type(error).__name__}: {error}",

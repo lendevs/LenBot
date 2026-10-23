@@ -273,7 +273,8 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
     assert config.panel is None
     assert config.compaction.input_tokens == 6000
     assert config.compaction.keep_recent_tokens == 20000
-    assert config.compaction.max_output_tokens == 1024
+    assert config.compaction.max_output_tokens is None
+    assert config.recap_output_tokens == config.models.roles.mind.max_output_tokens
     assert config.text_delivery.max_chars == 300
     assert config.text_delivery.min_interval_seconds == 0.6
     assert config.text_delivery.max_interval_seconds == 2.0
