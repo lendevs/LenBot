@@ -271,6 +271,7 @@ def test_local_setup_keeps_the_chosen_port_and_serves_the_panel_frontend(tmp_pat
                                      headers={'X-Setup-Token': 'fixture-token'}) as client:
             page = (await client.get('/api/setup/protocols')).json()
             assert page['container'] is False and page['panel_port'] is None
+            assert [item['api'] for item in page['protocols']] == ['openai-chat', 'anthropic']
             # The page itself needs no token: the token is read from the link by the frontend.
             del client.headers['X-Setup-Token']
             assert (await client.get('/api/panel-context')).json() == {'mode': 'setup', 'home': '/setup'}

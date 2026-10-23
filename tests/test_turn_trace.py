@@ -112,8 +112,8 @@ async def test_turn_trace_includes_model_tools_delivery_and_end(tmp_path, case):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('early_echo', [False, True])
-async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path, early_echo):
+@pytest.mark.parametrize('delivery', ['failed', 'early', 'late'])
+async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path, delivery):
     peers = asyncio.Queue()
 
     async def peer(ws):
@@ -123,8 +123,11 @@ async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path
             result = {'status': 'ok', 'retcode': 0, 'echo': request['echo']}
             if request['action'] == 'get_login_info':
                 result['data'] = {'user_id': 90001, 'nickname': '合成角色'}
-            elif early_echo:
-                await ws.send(json.dumps(message(90001, 999, '合成回答')))
+            elif delivery != 'failed':
+                if delivery == 'early':
+                    echo = {**message(90001, 999, '合成回答'), 'post_type': 'message_sent'}
+                    await ws.send(json.dumps(echo))
+                    await ws.send(json.dumps(echo))
                 result['data'] = {'message_id': 999}
             else:
                 result.update(status='failed', retcode=100, message='合成发送失败', data=None)
@@ -132,7 +135,7 @@ async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path
 
     requests = []
     responses = [response('say', {'content': '合成回答', 'end_turn': True}, 'say1')]
-    if not early_echo:
+    if delivery == 'failed':
         responses.append((200, 'application/json', json.dumps({
             'choices': [{'message': {'role': 'assistant', 'content': '停止发送'}, 'finish_reason': 'stop'}]}).encode()))
     model = await peer_server(responses, requests)
@@ -167,13 +170,20 @@ async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path
                             sent = event
                         if event['type'] == 'turn.ended':
                             break
+                    if delivery == 'late':
+                        echo = {**message(90001, 999, '合成回答'), 'post_type': 'message_sent'}
+                        await wire.send(json.dumps(echo))
+                        await wire.send(json.dumps(echo))
+                        async with asyncio.timeout(3):
+                            while runtime.store.db.execute("SELECT raw FROM messages WHERE platform_id='999'").fetchone()[0] is None:
+                                await asyncio.sleep(.01)
                     response_detail = await client.get(f'/api/host/scenes/{SCENE}/turns/{event["turn_id"]}')
                     assert response_detail.status_code == 200, response_detail.text
                     delivered = response_detail.json()['steps'][0]['tools'][0]['messages']
                     assert len(delivered) == 1
                     assert delivered[0]['message_seq'] == sent['message_seq']
-                    assert delivered[0]['status'] == ('sent' if early_echo else 'failed')
-                    if early_echo:
+                    assert delivered[0]['status'] == ('failed' if delivery == 'failed' else 'sent')
+                    if delivery != 'failed':
                         assert delivered[0]['platform_message_id'] == '999'
                         assert runtime.store.db.execute("SELECT COUNT(*) FROM messages WHERE platform_id='999'").fetchone()[0] == 1
                 finally:

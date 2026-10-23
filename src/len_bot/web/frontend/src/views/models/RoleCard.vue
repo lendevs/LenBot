@@ -125,15 +125,6 @@ watch(retries, (text) => {
           <Field :label="t('models.roles.maxOutput')">
             <NumberInput v-model="binding.max_output_tokens" :min="1" :steppers="false" unit="tokens" />
           </Field>
-          <Field :label="t('models.roles.temperature')">
-            <NumberInput
-              v-model="binding.temperature"
-              :min="0"
-              :max="2"
-              :step="0.1"
-              :placeholder="t('models.roles.providerDefault')"
-            />
-          </Field>
           <Field :label="t('models.roles.timeout')">
             <NumberInput
               v-model="binding.timeout_seconds"

@@ -248,7 +248,20 @@ class Controller:
         self.backend.stop()
         snapshot = self.root / 'backups' / (time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
         self.stage('backup', snapshot=str(snapshot))
-        self.backend.backup(snapshot)
+        try:
+            self.backend.backup(snapshot)
+        except Exception as error:
+            reason = f'{type(error).__name__}: {error}'
+            self.record('update_failed', level='ERROR', error=error, stage='backup')
+            self.stage('rollback_start', failed_stage='backup', error=reason)
+            try:
+                self.backend.start()
+                self.backend.ready(old)
+            except Exception as recovery:
+                raise RuntimeError(f'快照失败（{reason}），旧版本启动失败：{type(recovery).__name__}: {recovery}') from recovery
+            self.stage('rolled_back', status='rolled_back', stopped=False, rolled_back_from=target['version'],
+                       error=f'快照失败，已重新启动 {old["version"]}：{reason}')
+            return
         self.stage('migrate', snapshot_complete=True)
         try:
             self.backend.migrate(target)

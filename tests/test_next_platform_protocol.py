@@ -181,3 +181,85 @@ def test_model_speech_accepts_only_individual_platform_accounts(mention):
         SayArguments(content='合成回复', mention=mention)
     assert SayArguments(content='合成回复', mention='onebot:70001').mention == 'onebot:70001'
     assert SayArguments(content='合成回复', mention='telegram:7001').mention == 'telegram:7001'
+
+
+@pytest.mark.parametrize('kind', ['group', 'private'])
+@pytest.mark.parametrize('nickname', [None, '脱敏 Bot'])
+def test_sent_message_event_keeps_self_identity_and_actual_destination(kind, nickname):
+    from len_bot.next.platform.onebot_messages import parse_event
+    raw = {'post_type': 'message_sent', 'message_type': kind, 'self_id': 90001, 'user_id': 90001,
+           'message_id': 12345, 'time': 1790000000, 'group_id': 80001, 'target_id': 70001,
+           'sender': {} if nickname is None else {'nickname': nickname},
+           'message': [{'type': 'text', 'data': {'text': '脱敏消息'}}]}
+    message = parse_event(raw)
+    assert message.is_self and message.sender.uid == 'onebot:90001' and message.sender.nickname == nickname
+    assert message.scene == ('onebot:group:80001' if kind == 'group' else 'onebot:private:70001')
+    assert message.platform_message_id == '12345'
+
+
+@pytest.mark.parametrize('kind', ['group', 'private'])
+def test_missing_nickname_keeps_incoming_identity_and_can_render(kind):
+    from len_bot.next.platform.onebot_messages import parse_event
+    from len_bot.next.platform.messages import render_batch
+    raw = {'post_type': 'message', 'message_type': kind, 'self_id': 90001, 'user_id': 70001,
+           'message_id': 12345, 'time': 1790000000, 'group_id': 80001, 'sender': {},
+           'message': [{'type': 'text', 'data': {'text': '脱敏消息'}}]}
+    message = parse_event(raw)
+    assert not message.is_self and message.sender.uid == 'onebot:70001' and message.sender.nickname is None
+    assert 'onebot:70001' in render_batch([(message, None, {})], timezone='UTC')
+    raw['sender']['nickname'] = 123
+    with pytest.raises(ValueError, match='sender.nickname must be text'):
+        parse_event(raw)
+
+
+@pytest.mark.asyncio
+async def test_transport_routes_sent_events_and_duplicates_as_messages():
+    import json
+    from len_bot.next.configuration.onebot import OneBotForward
+    from len_bot.next.platform.onebot import OneBot
+    from websockets.asyncio.server import serve
+    raw = {'post_type': 'message_sent', 'message_type': 'group', 'self_id': 90001, 'user_id': 90001,
+           'message_id': 12345, 'time': 1790000000, 'group_id': 80001, 'sender': {},
+           'message': [{'type': 'text', 'data': {'text': '脱敏消息'}}]}
+    events, errors = [], []
+    async def peer(ws):
+        request = json.loads(await ws.recv())
+        await ws.send(json.dumps({'status': 'ok', 'retcode': 0, 'echo': request['echo'],
+                                  'data': {'user_id': 90001, 'nickname': '脱敏 Bot'}}))
+        for event in (raw, raw, {**raw, 'message_type': 'private', 'target_id': 70001}):
+            await ws.send(json.dumps(event))
+        await ws.wait_closed()
+    async with serve(peer, '127.0.0.1', 0) as server:
+        settings = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}')
+        async with OneBot(settings, bot_id='onebot:90001', on_event=events.append, on_error=errors.append) as bot:
+            assert await bot.identify() == 'onebot:90001'
+            async with asyncio.timeout(3):
+                while len(events) < 3:
+                    await asyncio.sleep(.01)
+            assert [bot.parse(event).scene for event in events] == [
+                'onebot:group:80001', 'onebot:group:80001', 'onebot:private:70001']
+    assert not errors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['group', 'private'])
+async def test_manual_self_messages_enter_context_once_without_waking(tmp_path, kind):
+    from len_bot.next.chat.attention import SceneRunner
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.storage.store import Store
+    from test_attention_protocol import config_for
+    config, persona = config_for(tmp_path)
+    config.scene = 'onebot:group:80001' if kind == 'group' else 'onebot:private:70001'
+    raw = {'post_type': 'message_sent', 'message_type': kind, 'self_id': 90001, 'user_id': 90001,
+           'message_id': 12345, 'time': 1790000000, 'group_id': 80001, 'target_id': 70001,
+           'sender': {}, 'message': [{'type': 'text', 'data': {'text': '脱敏手动消息'}}]}
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as model:
+            runner = SceneRunner(Chat(config, persona, store, model), lambda event: None)
+            first = runner.receive(raw)
+            assert not first['wake_verdict']['woke'] and runner.state.pending is None
+            assert runner.receive(raw)['status'] == 'duplicate'
+            saved = store.find_message(config.scene, '12345')
+            assert saved.is_self and saved.sender.uid == 'onebot:90001'
+            assert store.db.execute('SELECT COUNT(*) FROM messages').fetchone()[0] == 1

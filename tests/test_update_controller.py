@@ -177,7 +177,7 @@ def test_blocked_plugin_is_listed_and_preparing_again_replaces_the_candidate(mak
     assert backend.discarded == ['0.2.0']
 
 
-@pytest.mark.parametrize('fail', ['stop', 'backup'])
+@pytest.mark.parametrize('fail', ['stop'])
 def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fail):
     backend = Backend(fail=fail)
     controller = make(backend)
@@ -187,6 +187,29 @@ def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fai
     assert state['actions'] == ['start'] and state['current_version'] == '0.1.0'
     with pytest.raises(ValueError, match='现在不能恢复快照；可以：启动程序'):
         controller.submit('restore', {})
+    backend.fail = None
+    assert run(controller, 'start')['status'] == 'complete' and backend.running
+
+
+def test_backup_failure_restarts_the_previous_program_without_restoring_partial_snapshot(make):
+    backend = Backend(fail='backup')
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'rolled_back' and not state['stopped'] and not state['snapshot_complete']
+    assert state['current_version'] == '0.1.0' and backend.running and state['actions'] == ['prepare']
+    assert state['error'] == '快照失败，已重新启动 0.1.0：RuntimeError: synthetic backup failure'
+    assert backend.calls[backend.calls.index('backup'):] == ['backup', 'start_previous', 'ready_previous']
+
+
+@pytest.mark.parametrize('fail', ['start_previous', 'ready_previous'])
+def test_backup_failure_with_failed_restart_keeps_both_errors_and_manual_start(make, fail):
+    backend = Backend(fail=('backup', fail))
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'failed' and state['actions'] == ['start'] and not state['snapshot_complete']
+    assert 'synthetic backup failure' in state['error'] and f'synthetic {fail} failure' in state['error']
     backend.fail = None
     assert run(controller, 'start')['status'] == 'complete' and backend.running
 

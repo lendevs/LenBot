@@ -37,7 +37,7 @@ export interface Draft {
   delivery: 'simulated' | 'onebot'
   owner: string
   timezone: string
-  preset: 'deepseek' | 'compatible' | 'other'
+  preset: 'deepseek' | 'compatible' | 'anthropic'
   search: 'off' | SearchService
   searchConnection: 'primary' | 'separate'
   searchBaseUrl: string
@@ -58,7 +58,6 @@ export interface Draft {
   contextWindow: number | null
   inputBudget: number | null
   maxOutput: number | null
-  temperature: number | null
   effort: string
   thinkingBudget: number | null
   outputField: 'max_completion_tokens' | 'max_tokens'
@@ -128,7 +127,6 @@ function initial(): Draft {
     contextWindow: 1000000,
     inputBudget: 6000,
     maxOutput: 8192,
-    temperature: null,
     effort: 'high',
     thinkingBudget: null,
     outputField: 'max_tokens',
@@ -163,6 +161,12 @@ function restored(): Draft {
   } catch {
     // No usable draft: start empty.
   }
+  draft.preset =
+    draft.api === 'anthropic'
+      ? 'anthropic'
+      : draft.preset === 'deepseek' && draft.api === 'openai-chat'
+        ? 'deepseek'
+        : 'compatible'
   return draft
 }
 
@@ -246,7 +250,7 @@ export function createWizard() {
       model: draft.model.trim(),
       context_window_tokens: draft.contextWindow ?? 0,
       max_output_tokens: draft.maxOutput ?? 0,
-      temperature: draft.temperature,
+      temperature: null,
       quick_reasoning_effort: draft.quickEffort.trim() || null,
       image_input: draft.imageInput,
       reasoning_effort: draft.effort.trim() || null,
@@ -288,7 +292,6 @@ export function createWizard() {
       apiKey: '',
       proxy: '',
       thinkingBudget: null,
-      temperature: null,
       api: 'openai-chat',
       baseUrl: '',
       model: '',
@@ -313,6 +316,7 @@ export function createWizard() {
         search: 'deepseek',
         searchConnection: 'primary',
       })
+    if (preset === 'anthropic') chooseProtocol('anthropic')
     catalog.value = []
   }
 
@@ -326,7 +330,6 @@ export function createWizard() {
       effort: native ? 'high' : '',
       quickEffort: native ? 'low' : '',
       thinkingBudget: null,
-      temperature: null,
       imageInput: native,
       outputField: 'max_completion_tokens',
     })
@@ -362,10 +365,10 @@ export function createWizard() {
     return 'reader'
   }
 
-  /** Called once the protocols are read: keeps a restored choice, or takes the first protocol. */
+  /** Older drafts with another protocol start at the compatible connection form. */
   function settleProtocol() {
     if (!protocols.value.some((item) => item.api === draft.api) && protocols.value[0]) {
-      chooseProtocol(protocols.value[0].api)
+      choosePreset('compatible')
     }
   }
 
@@ -556,7 +559,6 @@ export function createWizard() {
     vectorProvider,
     vectorBinding,
     choosePreset,
-    chooseProtocol,
     chooseSearch,
     chooseRead,
     searchAlias,

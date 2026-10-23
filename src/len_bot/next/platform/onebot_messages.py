@@ -57,8 +57,8 @@ def _id(value: object, field: str) -> str:
 def parse_message(raw: dict, *, own_message_ids: set[str]) -> ChatMessage:
     """Parse one OneBot v11 message event with array-form message segments."""
     try:
-        if raw["post_type"] != "message":
-            raise ValueError("post_type is not message")
+        if raw["post_type"] not in {"message", "message_sent"}:
+            raise ValueError("post_type must be message or message_sent")
         kind = raw["message_type"]
         uid = _id(raw["user_id"], "user_id")
         self_id = _id(raw["self_id"], "self_id")
@@ -66,19 +66,20 @@ def parse_message(raw: dict, *, own_message_ids: set[str]) -> ChatMessage:
         if kind == "group":
             scene = f"onebot:group:{_id(raw['group_id'], 'group_id')}"
         elif kind == "private":
-            scene = f"onebot:private:{uid}"
+            peer = _id(raw["target_id"], "target_id") if uid == self_id else uid
+            scene = f"onebot:private:{peer}"
         else:
             raise ValueError(f"unsupported message_type {kind!r}")
 
         sender_raw = raw["sender"]
         if not isinstance(sender_raw, dict):
             raise ValueError("sender must be an object")
-        nickname = sender_raw["nickname"]
+        nickname = sender_raw.get("nickname")
         card = sender_raw.get("card")
         if card == "":
             card = None
         role = sender_raw.get("role")
-        if not isinstance(nickname, str):
+        if nickname is not None and not isinstance(nickname, str):
             raise ValueError("sender.nickname must be text")
         if card is not None and not isinstance(card, str):
             raise ValueError("sender.card must be text")
@@ -167,7 +168,7 @@ def parse_upload_result(raw: dict) -> UploadResult:
 
 def parse_event(raw: dict) -> ChatMessage | Notice | None:
     kind = raw['post_type']
-    if kind == 'message':
+    if kind in {'message', 'message_sent'}:
         return parse_message(raw, own_message_ids=set())
     if kind == 'notice':
         return parse_notice(raw)

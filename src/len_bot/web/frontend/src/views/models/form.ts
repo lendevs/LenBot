@@ -67,7 +67,7 @@ export function newBinding(provider: string): ChatBinding {
     provider,
     model: '',
     context_window_tokens: 128000,
-    temperature: 0.6,
+    temperature: null,
     max_output_tokens: 1024,
     timeout_seconds: 60,
     reasoning_effort: null,

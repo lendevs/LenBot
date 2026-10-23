@@ -250,7 +250,7 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
 
     @app.get('/api/setup/protocols', dependencies=[Depends(authorize)], response_model=responses.SetupProtocols, response_model_exclude_unset=True)
     async def protocols():
-        return {'protocols': [p for p in PROTOCOLS if 'mind' in p['roles']], 'container': container,
+        return {'protocols': [p for p in PROTOCOLS if p['api'] in {'openai-chat', 'anthropic'}], 'container': container,
                 'panel_port': CONTAINER_PANEL_PORT if container else None}
 
     @app.post('/api/setup/embedding', dependencies=[Depends(authorize)], response_model=responses.ModelProbe, response_model_exclude_unset=True)
