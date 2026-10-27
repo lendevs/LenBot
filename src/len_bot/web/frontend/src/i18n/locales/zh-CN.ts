@@ -565,6 +565,7 @@ export default {
         memory: '记忆整理',
         memory_summary: '记忆摘要',
         memory_embedding: '记忆向量',
+        reference_embedding: '资料向量',
       },
       tools: {
         say: '发言',
@@ -1593,7 +1594,7 @@ export default {
       autoLanguage: '自动识别',
     },
     vectors: {
-      memory: '记忆向量',
+      memory: '记忆和资料向量',
       learning: '学习向量',
       learningOf: '{name} 学习向量',
       use: '使用向量模型',

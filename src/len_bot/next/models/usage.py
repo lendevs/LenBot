@@ -2,7 +2,7 @@
 
 The purpose is the request role (``mind``, ``recap``, ``vision``, ``upkeep``, ``learner`` ...) or
 ``plugin:<name>``, ``asr``, ``expression_embedding``, ``sticker``, ``memory_summary``,
-``memory_embedding`` and ``worker``.
+``memory_embedding``, ``reference_embedding`` and ``worker``.
 """
 from collections import defaultdict
 from contextlib import closing
@@ -22,7 +22,7 @@ CREATE TABLE usage (
 CREATE INDEX usage_time ON usage(time,scene);
 """
 # Speech-to-text and embeddings are listed but do not count toward the daily token limit.
-UNBUDGETED = frozenset({"asr", "expression_embedding", "memory_embedding"})
+UNBUDGETED = frozenset({"asr", "expression_embedding", "memory_embedding", "reference_embedding"})
 
 
 def record_usage(db, *, time: float, scene: str, purpose: str, provider: str, model: str,

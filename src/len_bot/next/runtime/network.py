@@ -38,7 +38,7 @@ from ..platform.adapter import PlatformCallError, open_platform
 from ..persona.profile import Persona
 from ..plugins.host import PluginHost
 from ..tools.mcp_host import MCPHost
-from ..reference.library import ReferenceLibrary
+from ..reference.library import open_library
 from ..storage.store import Store
 from ..work.service import WorkTasks
 
@@ -118,7 +118,7 @@ class NetworkRuntime:
         self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
-        self.reference = ReferenceLibrary(config._instance_root)
+        self.reference = open_library(config._instance_root, memory, store, slots)
         self.accepting = config.onebot is None
         self.storage_error: sqlite3.Error | None = None
         # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.

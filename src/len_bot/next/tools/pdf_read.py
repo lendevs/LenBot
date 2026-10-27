@@ -61,7 +61,8 @@ def _pages(data):
             try:
                 text_page = page.get_textpage()
                 try:
-                    text = text_page.get_text_bounded()
+                    # Every character of the page, including text placed outside its visible box.
+                    text = text_page.get_text_range()
                 finally:
                     text_page.close()
             finally:

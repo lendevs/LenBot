@@ -17,7 +17,7 @@ from ..tools.pdf_read import REFERENCE_PDF_BYTES, read_pdf_pages
 KINDS = {".md": "markdown", ".markdown": "markdown", ".txt": "text", ".pdf": "pdf"}
 MAX_FILE_BYTES = REFERENCE_PDF_BYTES
 MAX_TEXT_BYTES = 10_000_000
-CHUNK_CHARS = 1200
+CHUNK_CHARS = 600
 
 
 @dataclass(frozen=True, slots=True)

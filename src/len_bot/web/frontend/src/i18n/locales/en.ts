@@ -576,6 +576,7 @@ export default {
         memory: 'Memory filing',
         memory_summary: 'Memory summary',
         memory_embedding: 'Memory embeddings',
+        reference_embedding: 'Reference embeddings',
       },
       tools: {
         say: 'Say',
@@ -1641,7 +1642,7 @@ export default {
       autoLanguage: 'Detect',
     },
     vectors: {
-      memory: 'Memory embeddings',
+      memory: 'Memory and reference embeddings',
       learning: 'Learning embeddings',
       learningOf: '{name} learning embeddings',
       use: 'Use an embedding model',

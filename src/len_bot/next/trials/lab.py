@@ -23,6 +23,7 @@ from ..chat.upkeep import open_session_upkeep, runner_fork
 from ..learning.expression_selection import open_expression_service
 from ..runtime.network import run_network
 from ..persona.profile import load_persona
+from ..reference.library import open_library
 from ..storage.store import Store, encode
 from ..platform.stdin_input import input_lines, parse_input
 
@@ -58,6 +59,7 @@ async def run() -> None:
                 return
             chat = Chat(config, persona, store, mind, vision=vision, memory=memory, now=now, slots=slots,
                         expression_service=expression_service,
+                        reference=open_library(config._instance_root, memory, store, slots),
                         on_compaction=lambda: upkeep.compacted(config.scene))
 
             def turn(result: dict) -> None:

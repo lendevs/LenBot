@@ -196,3 +196,109 @@ async def test_the_tool_is_offered_once_the_chat_has_files(tmp_path):
             call = ToolCall(id="synthetic-search", name="knowledge", arguments={"action": "search", "query": "东门"})
             content, _, _ = await chat.toolset.execute("unused-turn", call, wait_for_messages)
     assert "来自本群的资料文件" in content and "周六在东门集合" in content
+
+
+class FakeEmbedding:
+    """Vectors by topic words, so a paraphrase lands next to its source and other text lands far away."""
+    AXES = (("集合", "碰头"), ("报名", "截止"), ("会费", "钱"), ("火星",))
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+        self.fail = False
+
+    async def embed(self, scene: str, texts: list[str]):
+        from len_bot.next.memory.embeddings import EmbeddingBatch
+        self.calls.append(list(texts))
+        if self.fail:
+            raise ValueError("向量服务不可用")
+        vectors = tuple(tuple(float(any(word in text for word in axis)) for axis in self.AXES) + (0.2,)
+                        for text in texts)
+        return EmbeddingBatch(vectors, len(self.AXES) + 1, None, None)
+
+    def binding(self, model: str = "fake-vectors"):
+        from len_bot.next.reference.library import ReferenceEmbedding
+        return ReferenceEmbedding("vectors", "http://vectors.invalid/v1", model, None, self.embed)
+
+
+def vector_rows(library: ReferenceLibrary) -> int:
+    import sqlite_vec
+    with closing(sqlite3.connect(library.index)) as db:
+        db.enable_load_extension(True)
+        sqlite_vec.load(db)
+        return db.execute("SELECT count(*) FROM reference_vec").fetchone()[0]
+
+
+@pytest.mark.asyncio
+async def test_vectors_find_a_paraphrase_and_add_few_results_of_their_own(tmp_path):
+    fake = FakeEmbedding()
+    library = ReferenceLibrary(tmp_path, embedding=fake.binding())
+    directory = files(library)
+    (directory / "通知.md").write_text("周六在东门集合。\n", encoding="utf-8")
+    (directory / "会费.md").write_text("会费每学期五十元。\n", encoding="utf-8")
+    [hit] = (await ask(library, action="search", query="在哪碰头"))["matches"]
+    assert (hit["filename"], hit["matched"]) == ("通知.md", [])
+    assert not (await ask(library, action="search", query="火星"))["matches"]
+    # A keyword hit keeps its place ahead of a neighbour found by vectors only.
+    matches = (await ask(library, action="search", query="会费 碰头"))["matches"]
+    assert [item["filename"] for item in matches] == ["会费.md", "通知.md"]
+    for number in range(5):
+        (directory / f"集合{number}.md").write_text(f"第 {number} 次集合安排。\n", encoding="utf-8")
+    assert len((await ask(library, action="search", query="碰头"))["matches"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_failed_embeddings_request_leaves_the_lookup_on_full_text(tmp_path):
+    fake = FakeEmbedding()
+    fake.fail = True
+    library = ReferenceLibrary(tmp_path, embedding=fake.binding())
+    (files(library) / "通知.md").write_text("周六在东门集合。\n", encoding="utf-8")
+    assert (await ask(library, action="search", query="东门"))["matches"][0]["filename"] == "通知.md"
+    fake.fail = False
+    await ask(library, action="search", query="东门")
+    assert vector_rows(library) == 2  # the role's file and the chat's file
+
+
+@pytest.mark.asyncio
+async def test_vectors_follow_the_connection_and_the_files(tmp_path, monkeypatch):
+    from len_bot.next.reference import library as module
+    fake = FakeEmbedding()
+    monkeypatch.setattr(module, "EMBED_PER_LOOKUP", 2)
+    library = ReferenceLibrary(tmp_path, embedding=fake.binding())
+    directory = files(library)
+    for number in range(5):
+        (directory / f"{number}.md").write_text(f"第 {number} 份资料。\n", encoding="utf-8")
+    counts = []
+    for _ in range(3):
+        await ask(library, action="list")
+        counts.append(vector_rows(library))
+    assert counts == [2, 4, 6]
+    (directory / "0.md").unlink()
+    # A library without a connection adds no vectors and still drops those of removed files.
+    await ask(ReferenceLibrary(tmp_path), action="list")
+    assert vector_rows(library) == 5
+    fake.calls.clear()
+    changed = ReferenceLibrary(tmp_path, embedding=fake.binding("other-vectors"))
+    await ask(changed, action="list")
+    assert vector_rows(changed) == 2 and len(fake.calls[0]) == 2
+    with closing(sqlite3.connect(changed.index)) as db:
+        assert db.execute("SELECT model FROM reference_embedding_binding").fetchone()[0] == "other-vectors"
+
+
+@pytest.mark.asyncio
+async def test_reference_embeddings_are_recorded_in_the_usage_ledger(tmp_path):
+    from len_bot.next.memory.embeddings import EmbeddingBatch
+    from len_bot.next.models.tokens import TokenUsage
+    from len_bot.next.reference.library import reference_embedding
+    from len_bot.next.storage.store import Store
+
+    class Client:
+        settings = SimpleNamespace(provider="vectors", base_url="http://vectors.invalid/v1", model="m", dimensions=None)
+
+        async def embed(self, texts):
+            return EmbeddingBatch(tuple((1.0, 0.0) for _ in texts), 2, None, TokenUsage(7, 0, None))
+
+    with Store(tmp_path / "state.db") as store:
+        binding = reference_embedding(Client(), store, None)
+        await binding.embed(SCENE, ["一段资料"])
+        assert [tuple(row) for row in store.db.execute("SELECT scene, purpose, model, input FROM usage")] == [
+            (SCENE, "reference_embedding", "m", 7)]

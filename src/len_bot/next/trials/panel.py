@@ -32,6 +32,7 @@ from ..panel import responses
 from ..panel.auth import changes_socket, install_panel_auth
 from ..panel.routes.timeline import TurnDetail, read_turn
 from ..persona.profile import Persona, load_persona, select_examples
+from ..reference.library import open_library
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
 from ..storage.store import Store
@@ -79,6 +80,7 @@ class PanelSession:
         self.closing = False
         self.chat = Chat(config, load_persona(config.persona) if persona is None else persona, store, mind, vision=vision,
                          memory=memory, slots=slots, on_update=self.notify,
+                         reference=open_library(config._instance_root, memory, store, slots),
                          on_compaction=None if upkeep is None else lambda: upkeep.compacted(config.scene))
         self.runner = SceneRunner(self.chat, lambda _: self.turn_done())
         self.upkeep = upkeep
