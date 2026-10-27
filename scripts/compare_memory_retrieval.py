@@ -6,7 +6,8 @@ Run the same script with each checkout on PYTHONPATH. JSON includes the recalled
 coverage, character count and latency. ``--instance`` reads that instance's ``lenbot.config.json`` and
 adds the same cases with vectors through ``memory.local.embedding``; ``--answer`` also asks each case in
 its own simulated group with the instance's ``mind`` model and records the reply, the wait for the first
-reply and the tokens used. Vectors and answers are paid requests.
+reply and the tokens used. Vectors and answers are paid requests. ``--notebook`` runs the cases through
+the example memory plugin in ``examples/plugins/notebook`` as well, one note per line of the corpus.
 """
 
 from __future__ import annotations
@@ -137,6 +138,32 @@ async def compare(client: EmbeddingClient | None = None, binding=None) -> list[d
         return rows
 
 
+async def notebook() -> list[dict]:
+    """The same cases through the example memory plugin, each line of the corpus written as one note."""
+    from len_bot.plugin_testing import PluginTest
+
+    package = Path(__file__).resolve().parents[1] / 'examples/plugins/notebook'
+    rows = []
+    for name, texts, expected, *recap in CASES:
+        async with PluginTest(package, config={'recall_limit': 5}, memory=True) as bot:
+            for path, content in DOCUMENTS.items():
+                if name == 'forgotten' and path == 'events/week.md':
+                    continue
+                for line in content.splitlines():
+                    if line.strip() and not line.startswith('#'):
+                        await bot.memory({'action': 'write', 'text': line})
+            for text in texts:
+                bot.add_message(text)
+            started = time.perf_counter()
+            items = await bot.recall(recap=recap[0] if recap else None, budget_chars=1500)
+            elapsed = (time.perf_counter() - started) * 1000
+            content = '\n'.join(item['content'] for item in items)
+            rows.append({'case': name, 'query': texts, 'expected_evidence': expected,
+                         'covered': [part for part in expected if part in content],
+                         'chars': len(content), 'elapsed_ms': round(elapsed, 3), 'items': items})
+    return rows
+
+
 def group_event(group: int, ident: int, text: str, bot: str, *, at: bool) -> dict:
     return {'post_type': 'message', 'message_type': 'group', 'self_id': int(bot), 'group_id': group,
             'user_id': 70001, 'message_id': ident, 'time': int(time.time()),
@@ -222,8 +249,11 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--instance', type=Path)
     parser.add_argument('--answer', action='store_true')
+    parser.add_argument('--notebook', action='store_true', help='Also run the cases through examples/plugins/notebook')
     options = parser.parse_args()
     result = {'budget_chars': 1500, 'text': await compare()}
+    if options.notebook:
+        result['notebook'] = await notebook()
     if options.instance is not None:
         from len_bot.next.config import load_host_config
 
