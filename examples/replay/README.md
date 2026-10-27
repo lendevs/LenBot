@@ -34,6 +34,7 @@ uv run --no-sync lenbot-eval report <run 目录名>
 | ordinary-update | 分享一顿普通的午饭 | 允许平常反应，不强行抖包袱或安排下一步 |
 | mixed-result | 有进展但仍为一个细节烦恼 | 理解具体烦恼，不保证未来一定成功 |
 | unknown-arrangement | 询问未知的活动库存安排 | 区分推测和已知安排，不凭安慰保证有货 |
+| corrected-by-a-friend | 说错面馆休息日后被群友纠正 | 大方认下，顺着新信息接着聊 |
 | capability-without-posturing | 询问当前是否能发语音 | 如实回答能力，不追加人设表演 |
 
 新增用例时沿用 `cases.json` 的格式。

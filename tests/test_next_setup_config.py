@@ -70,7 +70,7 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
             if default_persona:
                 assert persona.id == 'companion' and persona.name == '小然'
                 assert persona.voice and persona.knowledge and persona.stickers
-                assert persona.examples == []
+                assert len(persona.examples) == 8
                 assert persona.skills == 'all' and '小然' in persona.aliases
             else:
                 assert persona.name == '合成角色'
