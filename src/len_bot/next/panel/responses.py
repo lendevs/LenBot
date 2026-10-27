@@ -1,5 +1,7 @@
 """面板 JSON 响应；协议原文和持久化记录保留各自的 JSON 字段。"""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from ..chat.schedule_store import Schedule
@@ -341,6 +343,10 @@ class KnowledgeFile(PanelResponse):
     filename: str
     tags: list[str]
     chars: int
+    # Reference index state, given by the listing only.
+    index: Literal['processing', 'indexed', 'failed'] | None = None
+    chunks: int | None = None
+    vectors: int | None = None
 
 
 class RoleKnowledge(Applied):

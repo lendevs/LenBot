@@ -35,6 +35,7 @@ FINAL_STEP_TOOLS = frozenset({"say", "react"})
 PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info"})
 from ..memory.service import MemoryService, MemorySettings
 from ..reference.library import ReferenceLibrary
+from ..reference.tool import changes_notice
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
 from ..models.request import request_estimate, request_model
@@ -349,12 +350,21 @@ class Chat:
             self.set_external_tools(external_tools)
             raise
 
+    async def announce_reference(self, now: float) -> None:
+        """Tell the conversation which reference files it may have read have changed since."""
+        changes = await self.toolset.reference.announce(self.config.scene, self.persona.id)
+        if changes:
+            moment = datetime.fromtimestamp(now, ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
+            await self.store.call(self.store.append, self.config.scene,
+                                  {"role": "user", "content": changes_notice(self.config.scene, changes, moment)})
+
     async def prepare_context(self, turn_id: str, *, observed_at: float, expression_style: str | None = None,
                               recalled: str | None = None) -> PreparedContext:
         binding = self.config.models.roles.mind
         trigger = self.config.compaction.input_tokens
         token_scale = 1.0
         compacted = False
+        await self.announce_reference(observed_at)
         while True:
             await self.store.call(AudioStore(self.store).append_late, self.config.scene)
             recap, entries = await self.store.read(self.store.active_history, self.config.scene)

@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..prompt_files import read_prompt
-from .library import KnowledgeOwner, ReferenceLibrary
+from .library import KnowledgeOwner, ReferenceChange, ReferenceLibrary
 
 FILES_PAGE = 20
 HITS_PAGE = 5
@@ -59,6 +59,17 @@ KNOWLEDGE_TOOL = {"type": "function", "function": {
 }}
 
 
+def chat_name(scene: str) -> str:
+    return "本群" if scene.split(":", 2)[1] == "group" else "这个私聊"
+
+
+def changes_notice(scene: str, changes: list[ReferenceChange], time: str) -> str:
+    """The conversation note for files the chat may have read before they changed."""
+    lines = [f"- {'角色资料' if change.owner.startswith('persona:') else chat_name(scene) + '资料'} {change.path}："
+             f"{'已更新' if change.action == 'updated' else '已删除'}" for change in changes]
+    return Template(read_prompt("next_reference_changed.md")).substitute(time=time, changes="\n".join(lines)).strip()
+
+
 def _scope(owner: str) -> str:
     return "persona" if owner.startswith("persona:") else "chat"
 
@@ -104,8 +115,7 @@ async def knowledge(library: ReferenceLibrary, scene: str, persona: KnowledgeOwn
         read = await library.read(scene, persona, arguments.scope, arguments.filename, arguments.offset, READ_CHARS)
         result = {"action": "read", "scope": arguments.scope, "filename": read.path, "offset": read.offset,
                   "total_chars": read.total_chars, "next_offset": read.next_offset, "text": read.text}
-    kind = scene.split(":", 2)[1]
     return Template(read_prompt("next_knowledge.md")).substitute(
-        persona_id=persona.id, persona_name=persona_name, chat="本群" if kind == "group" else "这个私聊",
+        persona_id=persona.id, persona_name=persona_name, chat=chat_name(scene),
         result=json.dumps(result, ensure_ascii=False, allow_nan=False),
     )

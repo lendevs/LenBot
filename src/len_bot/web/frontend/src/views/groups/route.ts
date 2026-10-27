@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 
-export const groupTabs = ['live', 'session', 'memory', 'tasks', 'learning', 'settings'] as const
+export const groupTabs = ['live', 'session', 'memory', 'reference', 'tasks', 'learning', 'settings'] as const
 export type GroupTab = (typeof groupTabs)[number]
 
 export function isGroupTab(value: unknown): value is GroupTab {

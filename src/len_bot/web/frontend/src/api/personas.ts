@@ -70,7 +70,15 @@ export type ExpressionFile = (typeof expressionFiles)[number]
 
 export interface KnowledgeListing extends Applied {
   saved_path: string
-  files: { filename: string; tags: string[]; chars: number }[]
+  files: {
+    filename: string
+    tags: string[]
+    chars: number
+    /** Reference index state; only the listing gives it. */
+    index?: 'processing' | 'indexed' | 'failed' | null
+    chunks?: number | null
+    vectors?: number | null
+  }[]
   document?: { filename: string; content: string; tags: string[] } | null
 }
 

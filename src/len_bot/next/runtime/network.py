@@ -534,6 +534,7 @@ class NetworkRuntime:
                             finally:
                                 try:
                                     await self.audio.close()
+                                    await self.reference.close()
                                 finally:
                                     await self.platform.close()
                     self._status("stopped")

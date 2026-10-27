@@ -103,6 +103,10 @@ export const keys = {
     ingest: () => ['memory', 'ingest'] as const,
     embeddingCalls: (scene: string, scope: string) => ['memory', scene, scope, 'embedding-calls'] as const,
   },
+  /** Under `host`, so the event raised when a group's files finish processing refreshes it. */
+  reference: {
+    scene: (scene: string) => ['host', 'reference', scene] as const,
+  },
   scene: {
     all: (scene: string) => ['scene', scene] as const,
     timeline: (scene: string) => ['scene', scene, 'timeline'] as const,

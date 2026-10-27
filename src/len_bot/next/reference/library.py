@@ -21,11 +21,13 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 import sqlite3
 import threading
 import time
 from typing import TYPE_CHECKING, Iterator, Literal, Protocol, TypeVar
+from uuid import uuid4
 
 from ..memory.embeddings import EmbeddingBatch
 from ..models.tokens import token_record
@@ -80,6 +82,18 @@ SCHEMA = (
     """CREATE TRIGGER reference_chunks_removed AFTER DELETE ON reference_chunks BEGIN
         INSERT INTO reference_fts(reference_fts, rowid, folded) VALUES ('delete', old.id, old.folded);
     END""",
+    # Files the chat may have read before they changed; each scene is told once (reference_notices).
+    """CREATE TABLE reference_changes (
+        id INTEGER PRIMARY KEY,
+        owner TEXT NOT NULL,
+        path TEXT NOT NULL,
+        action TEXT NOT NULL CHECK(action IN ('updated', 'removed')),
+        at REAL NOT NULL
+    )""",
+    """CREATE TABLE reference_notices (
+        scene TEXT PRIMARY KEY,
+        through INTEGER NOT NULL
+    )""",
     """CREATE TABLE reference_embedding_binding (
         id INTEGER PRIMARY KEY CHECK(id = 1),
         provider TEXT NOT NULL,
@@ -154,6 +168,29 @@ class ReferenceFile:
 
 
 @dataclass(frozen=True, slots=True)
+class ReferenceFileState:
+    """A file of a scene's directory as the panel shows it; ``processing`` until the index has it as it is now."""
+    path: str
+    kind: str
+    size: int
+    modified: float
+    status: Literal["processing", "indexed", "failed"]
+    error: str | None
+    chars: int | None
+    pages: int | None
+    chunks: int
+    vectors: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceChange:
+    owner: str
+    path: str
+    action: Literal["updated", "removed"]
+    at: float
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceHit:
     owner: str
     path: str
@@ -195,6 +232,8 @@ class _Vectors:
     added: dict[tuple[str, str, int], tuple[float, ...]] = field(default_factory=dict)
     missing: dict[int, tuple[float, ...]] = field(default_factory=dict)
     query: tuple[float, ...] | None = None
+    # Whether this lookup asked for as many chunk vectors as one lookup may.
+    full: bool = False
 
 
 def _create(db: sqlite3.Connection) -> None:
@@ -265,6 +304,8 @@ class ReferenceLibrary:
         self._ready = False
         self._prepare_lock = threading.Lock()
         self._locks: dict[str, asyncio.Lock] = {}
+        self._jobs: dict[str, asyncio.Task] = {}
+        self._again: set[str] = set()
 
     def directory(self, scene: str) -> Path | None:
         return scene_directory(self.root, scene)
@@ -411,10 +452,12 @@ class ReferenceLibrary:
                     body = change.extracted.text[piece.start_char:piece.end_char]
                     pending.append(((owner, change.path, position), _embedding_text(change.path, piece.heading, body)))
         pending = pending[:EMBED_PER_LOOKUP]
+        vectors.full = len(pending) == EMBED_PER_LOOKUP
         if len(pending) < EMBED_PER_LOOKUP:
             replaced = {(owner, path) for owner, (changes, removed) in plans.items()
                         for path in {change.path for change in changes} | removed}
             pending += await asyncio.to_thread(self._missing, list(plans), EMBED_PER_LOOKUP - len(pending), replaced)
+            vectors.full = len(pending) == EMBED_PER_LOOKUP
         try:
             for offset in range(0, len(pending), EMBED_BATCH):
                 part = pending[offset:offset + EMBED_BATCH]
@@ -452,26 +495,36 @@ class ReferenceLibrary:
                    (self.embedding.provider, self.embedding.base_url, self.embedding.model, dimensions))
 
     @staticmethod
-    def _remove(db: sqlite3.Connection, owner: str, path: str) -> None:
-        row = db.execute("SELECT id FROM reference_sources WHERE owner=? AND path=?", (owner, path)).fetchone()
-        if row is not None:
-            if _has_vectors(db):
-                db.execute("DELETE FROM reference_vec WHERE rowid IN (SELECT id FROM reference_chunks WHERE source=?)",
-                           (row["id"],))
-            db.execute("DELETE FROM reference_chunks WHERE source=?", (row["id"],))
-            db.execute("DELETE FROM reference_sources WHERE id=?", (row["id"],))
+    def _remove(db: sqlite3.Connection, owner: str, path: str) -> bool:
+        """Drop a file from the index; whether the chat could find it before."""
+        row = db.execute("SELECT id, error FROM reference_sources WHERE owner=? AND path=?", (owner, path)).fetchone()
+        if row is None:
+            return False
+        if _has_vectors(db):
+            db.execute("DELETE FROM reference_vec WHERE rowid IN (SELECT id FROM reference_chunks WHERE source=?)",
+                       (row["id"],))
+        db.execute("DELETE FROM reference_chunks WHERE source=?", (row["id"],))
+        db.execute("DELETE FROM reference_sources WHERE id=?", (row["id"],))
+        return row["error"] is None
+
+    @staticmethod
+    def _log(db: sqlite3.Connection, owner: str, path: str, action: str) -> None:
+        db.execute("INSERT INTO reference_changes(owner, path, action, at) VALUES (?,?,?,?)",
+                   (owner, path, action, time.time()))
 
     def _apply(self, db: sqlite3.Connection, owner: str, changes: list[_Change], removed: set[str],
                vectors: _Vectors) -> None:
         for path in sorted(removed):
-            self._remove(db, owner, path)
+            if self._remove(db, owner, path):
+                self._log(db, owner, path, "removed")
         for change in changes:
             if change.touch:
                 db.execute("UPDATE reference_sources SET size=?, modified_ns=? WHERE owner=? AND path=?",
                            (change.size, change.modified_ns, owner, change.path))
                 continue
-            self._remove(db, owner, change.path)
             extracted = change.extracted
+            if self._remove(db, owner, change.path):
+                self._log(db, owner, change.path, "removed" if extracted is None else "updated")
             source = db.execute(
                 "INSERT INTO reference_sources(owner, path, kind, version, size, modified_ns, text, pages, tags,"
                 " error, indexed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -506,6 +559,12 @@ class ReferenceLibrary:
     async def _run(self, scene: str, persona: KnowledgeOwner, scope: Scope,
                    operation: Callable[[sqlite3.Connection, list[str], tuple[float, ...] | None], T],
                    *, query: str | None = None) -> T:
+        return (await self._execute(scene, persona, scope, operation, query=query))[0]
+
+    async def _execute(self, scene: str, persona: KnowledgeOwner, scope: Scope,
+                       operation: Callable[[sqlite3.Connection, list[str], tuple[float, ...] | None], T],
+                       *, query: str | None = None) -> tuple[T, bool]:
+        """The operation's result and whether more chunks may still be waiting for vectors."""
         owners = self.owners(scene, persona.id, scope)
         async with AsyncExitStack() as stack:
             for owner in sorted(owners):
@@ -522,7 +581,7 @@ class ReferenceLibrary:
                     self._apply_missing(db, vectors)
                     return operation(db, owners, vectors.query)
 
-            return await asyncio.to_thread(run)
+            return await asyncio.to_thread(run), vectors.full
 
     async def files(self, scene: str, persona: KnowledgeOwner, scope: Scope = "all") -> list[ReferenceFile]:
         def listing(db: sqlite3.Connection, owners: list[str], _) -> list[ReferenceFile]:
@@ -628,3 +687,142 @@ class ReferenceLibrary:
             return ReferencePage(owner, path, row["kind"], offset, len(text),
                                  end if end < len(text) else None, text[offset:end])
         return await self._run(scene, persona, scope, page)
+
+    async def refresh(self, scene: str, persona: KnowledgeOwner, scope: Scope = "chat") -> None:
+        """Bring the owners up to date and give every chunk a vector, as far as the connection answers."""
+        while (await self._execute(scene, persona, scope, lambda *_: None))[1]:
+            pass
+
+    def schedule(self, scene: str, persona: KnowledgeOwner, on_done: Callable[[], None] | None = None) -> None:
+        """Index the scene's files in the background; a request while it runs adds one more pass."""
+        job = self._jobs.get(scene)
+        if job is not None and not job.done():
+            self._again.add(scene)
+            return
+
+        async def work() -> None:
+            while True:
+                self._again.discard(scene)
+                try:
+                    await self.refresh(scene, persona)
+                except Exception as error:
+                    log_event(logger, "reference_index_failed", "资料索引失败", level=logging.WARNING,
+                              scene=scene, error=error)
+                if scene not in self._again:
+                    break
+            if on_done is not None:
+                on_done()
+
+        self._jobs[scene] = asyncio.create_task(work())
+
+    def processing(self, scene: str) -> bool:
+        job = self._jobs.get(scene)
+        return job is not None and not job.done()
+
+    async def close(self) -> None:
+        jobs = [job for job in self._jobs.values() if not job.done()]
+        for job in jobs:
+            job.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
+
+    def _states(self, owner: str, found: dict[str, tuple[str, int, float]]) -> list[ReferenceFileState]:
+        rows = {}
+        if self.index is not None:
+            with self._db() as db:
+                vectors = "(SELECT count(*) FROM reference_chunks AS c WHERE c.source = s.id AND c.id IN (SELECT rowid FROM reference_vec))" \
+                    if _has_vectors(db) else "0"
+                rows = {row["path"]: row for row in db.execute(f"""
+                    SELECT s.path, s.size, s.modified_ns, s.version, s.error, length(s.text) AS chars, s.pages,
+                           (SELECT count(*) FROM reference_chunks AS c WHERE c.source = s.id) AS chunks,
+                           {vectors} AS vectors
+                    FROM reference_sources AS s WHERE s.owner=?""", (owner,))}
+        states = []
+        for path, (stamp, size, modified) in found.items():
+            row = rows.get(path)
+            current = row is not None and (stamp == row["version"] if owner.startswith("persona:")
+                                           else stamp == (row["size"], row["modified_ns"]))
+            status = "processing" if not current else "failed" if row["error"] is not None else "indexed"
+            states.append(ReferenceFileState(
+                path, kind_of(path) or "markdown", size, modified, status, row["error"] if current else None,
+                row["chars"] if current and row["error"] is None else None, row["pages"] if current else None,
+                row["chunks"] if current else 0, row["vectors"] if current else 0))
+        return states
+
+    async def scene_files(self, scene: str) -> list[ReferenceFileState]:
+        """The scene's files on disk now, each with what the index holds for it."""
+        def read() -> list[ReferenceFileState]:
+            found = {path: ((item.size, item.modified_ns), item.size, item.modified_ns / 1e9)
+                     for path, item in scan(self.directory(scene)).items()}
+            return self._states(f"scene:{scene}", found)
+        return await asyncio.to_thread(read)
+
+    async def persona_files(self, persona: KnowledgeOwner) -> list[ReferenceFileState]:
+        """The role's knowledge files after indexing them."""
+        await self.refresh("", persona, "persona")
+        found = {path: (_version(document.content.encode("utf-8")), len(document.content.encode("utf-8")), 0.0)
+                 for path, document in persona.knowledge.items()}
+        return await asyncio.to_thread(self._states, f"persona:{persona.id}", found)
+
+    async def announce(self, scene: str, persona_id: str) -> list[ReferenceChange]:
+        """Changes to files the scene could read, since the scene was last told; the first call only marks."""
+        if self.index is None:
+            return []
+        owners = self.owners(scene, persona_id, "all")
+
+        def read() -> list[ReferenceChange]:
+            with self._db() as db:
+                latest = db.execute("SELECT coalesce(max(id), 0) FROM reference_changes").fetchone()[0]
+                row = db.execute("SELECT through FROM reference_notices WHERE scene=?", (scene,)).fetchone()
+                db.execute("INSERT INTO reference_notices(scene, through) VALUES (?, ?)"
+                           " ON CONFLICT(scene) DO UPDATE SET through=excluded.through", (scene, latest))
+                if row is None:
+                    return []
+                changes = {}
+                for change in db.execute(f"""SELECT owner, path, action, at FROM reference_changes
+                        WHERE id > ? AND id <= ? AND owner IN ({",".join("?" for _ in owners)}) ORDER BY id""",
+                                         (row[0], latest, *owners)):
+                    changes[change["owner"], change["path"]] = ReferenceChange(*change)
+                return list(changes.values())
+        return await asyncio.to_thread(read)
+
+    def _file(self, scene: str, name: str) -> Path:
+        directory = self.directory(scene)
+        if directory is None:
+            raise ValueError("没有实例目录，不能保存资料文件")
+        if (not name or name != name.strip() or name.startswith(".") or len(name) > 200
+                or any(character in name for character in "/\\\0")):
+            raise ValueError(f"文件名不能用：{name!r}")
+        if kind_of(name) is None:
+            raise ValueError("只支持 Markdown、纯文本和 PDF")
+        return directory / name
+
+    def save(self, scene: str, name: str, data: bytes) -> None:
+        """Write a file into the scene's directory in one step; an existing file of that name is replaced."""
+        target = self._file(scene, name)
+        if len(data) > MAX_FILE_BYTES:
+            raise ValueError(f"文件超过 {MAX_FILE_BYTES // 1_000_000}MB 上限")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(f".{uuid4().hex}.part")
+        try:
+            with partial.open("wb") as file:
+                file.write(data)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(partial, target)
+        finally:
+            partial.unlink(missing_ok=True)
+
+    def delete(self, scene: str, name: str) -> None:
+        target = self._file(scene, name)
+        if target.is_symlink() or not target.is_file():
+            raise FileNotFoundError(f"没有资料文件 {name}")
+        target.unlink()
+
+    def reprocess(self, scene: str, name: str) -> None:
+        """Have the next pass read the file again even though it has not changed."""
+        target = self._file(scene, name)
+        if not target.is_file():
+            raise FileNotFoundError(f"没有资料文件 {name}")
+        with self._db() as db:
+            db.execute("UPDATE reference_sources SET size=-1, version='' WHERE owner=? AND path=?",
+                       (f"scene:{scene}", name))

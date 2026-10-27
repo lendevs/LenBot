@@ -450,9 +450,15 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         response.headers['Cache-Control'] = 'no-store'
         try:
             async with write_lock:
-                return await asyncio.to_thread(knowledge_state, key)
+                state = await asyncio.to_thread(knowledge_state, key)
+                candidate = await asyncio.to_thread(load_persona, located(key)[1])
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
+        indexed = {item.path: item for item in await runtime.reference.persona_files(candidate)}
+        for file in state['files']:
+            if (item := indexed.get(file['filename'])) is not None:
+                file.update(index=item.status, chunks=item.chunks, vectors=item.vectors)
+        return state
 
     @app.get('/api/host/personas/{key}/knowledge/document', response_model=responses.KnowledgeDocument, response_model_exclude_unset=True)
     async def knowledge_document(key: str, response: Response,

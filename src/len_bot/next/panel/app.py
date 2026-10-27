@@ -39,6 +39,7 @@ from .routes.operations import register_host_operations
 from .routes.diagnostics import register_host_diagnostics
 from .routes.timeline import register_host_timeline
 from .routes.memory import register_host_memory
+from .routes.reference import register_host_reference
 from .routes.tasks import register_host_tasks
 from .routes.task_storage import register_host_task_storage
 from .routes.materials import register_host_materials
@@ -132,6 +133,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     register_host_persona_stickers(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_persona_avatar(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_memory(app, runtime=runtime, user=user, root=root, container=container)
+    register_host_reference(app, runtime=runtime, user=user)
     register_host_tasks(app, runtime=runtime, user=user, host_changes=listeners, write_lock=write_lock)
     register_host_materials(app, runtime=runtime, user=user)
     register_host_resources(app, runtime=runtime, user=user)
