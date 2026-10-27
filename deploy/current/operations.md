@@ -18,7 +18,7 @@
 
 ## 账号与场景
 
-账号写成 `平台:账号`，场景写成 `平台:group:群号` 或 `平台:private:账号`。平台有 `onebot` 和 `telegram`。例如 Bot 是 `onebot:90001`，主人是 `onebot:70001`，群是 `onebot:group:80001`。
+账号写成 `平台:账号`，场景写成 `平台:group:群号` 或 `平台:private:账号`。平台目前只有 `onebot`。例如 Bot 是 `onebot:90001`，主人是 `onebot:70001`，群是 `onebot:group:80001`。
 
 在面板中填写以下账号时，都使用这种写法。
 

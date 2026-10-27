@@ -12,7 +12,7 @@ from len_bot.next.config import load_host_config
 from len_bot.next.instance_lock import instance_lock
 
 
-def source_instance(root: Path, platform: str = 'onebot') -> dict:
+def source_instance(root: Path) -> dict:
     root.mkdir()
     source = {
         'mode': 'isolated-multi', 'bot_id': 'onebot:90001', 'owners': ['onebot:70001'],
@@ -28,10 +28,6 @@ def source_instance(root: Path, platform: str = 'onebot') -> dict:
         'plugins': {'paths': ['plugins'], 'data_directory': 'plugin-data'},
         'scenes': {'onebot:group:80001': {'persona': 'role'}},
     }
-    if platform == 'telegram':
-        source.update(bot_id='telegram:90001', owners=['telegram:70001'], delivery='telegram', onebot=None,
-                      telegram={'bot_token': '90001:synthetic-token'},
-                      scenes={'telegram:group:-10080001': {'persona': 'role'}})
     path = root / 'lenbot.config.json'
     path.write_text(json.dumps(source))
     path.chmod(0o600)
@@ -50,15 +46,14 @@ def command(source: Path, target: Path, port: int) -> subprocess.CompletedProces
                           capture_output=True, text=True)
 
 
-@pytest.mark.parametrize('platform', ['onebot', 'telegram'])
-def test_copy_preserves_files_permissions_and_other_configuration(tmp_path, platform):
+def test_copy_preserves_files_permissions_and_other_configuration(tmp_path):
     source, target = tmp_path / 'source', tmp_path / 'target'
-    original = source_instance(source, platform)
+    original = source_instance(source)
     result = command(source, target, 8089)
     assert result.returncode == 0, result.stderr
     assert str(source) in result.stdout and str(target) in result.stdout and '8089' in result.stdout
     copied = json.loads((target / 'lenbot.config.json').read_text())
-    expected = {**original, 'delivery': 'simulated', 'onebot': None, 'telegram': None,
+    expected = {**original, 'delivery': 'simulated', 'onebot': None,
                 'panel': {**original['panel'], 'port': 8089}}
     assert copied == expected
     assert json.loads((source / 'lenbot.config.json').read_text()) == original
@@ -70,7 +65,7 @@ def test_copy_preserves_files_permissions_and_other_configuration(tmp_path, plat
     assert not (target / 'checkout.py').exists()
     config = load_host_config(target)
     assert config.plugins is not None
-    assert config.onebot is None and config.telegram is None
+    assert config.onebot is None
 
 
 @pytest.mark.parametrize('blocked', ['exists', 'busy', 'invalid_port'])

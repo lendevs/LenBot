@@ -6,7 +6,7 @@ import { Check } from '@lucide/vue'
 import { hostApi } from '../../api/host'
 import { keys } from '../../api/query'
 import { sceneTitles } from '../../api/scenes'
-import { host, readHostState, readSceneTitles } from '../../api/hostStore'
+import { readHostState, readSceneTitles } from '../../api/hostStore'
 import { formatNumber } from '../../i18n/format'
 import Avatar from '../../ui/Avatar.vue'
 import Button from '../../ui/Button.vue'
@@ -30,7 +30,6 @@ const kind = ref<'group' | 'private'>('group')
 const number = ref('')
 const persona = ref<string>()
 
-const telegram = computed(() => host.state?.connection.mode === 'telegram')
 const available = useQuery({
   queryKey: keys.host.availableScenes(),
   queryFn: ({ signal }) => hostApi.availableScenes(signal),
@@ -88,7 +87,7 @@ watch(open, (value) => {
     <div class="flex flex-col gap-5">
       <section class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-ink-2">
-          {{ telegram ? t('groups.join.recent') : t('groups.join.joined') }}
+          {{ t('groups.join.joined') }}
         </h3>
         <Skeleton v-if="available.isPending.value" :lines="3" />
         <ErrorNote
@@ -124,7 +123,7 @@ watch(open, (value) => {
         </div>
       </section>
 
-      <section v-if="!telegram" class="flex flex-col gap-2">
+      <section class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-ink-2">{{ t('groups.join.manual') }}</h3>
         <div class="flex flex-wrap items-center gap-2">
           <SegmentedControl

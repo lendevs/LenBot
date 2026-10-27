@@ -109,7 +109,6 @@ const sceneOptions = [
   { value: 'onebot:group:1', label: '摸鱼研究所', meta: '702154' },
   { value: 'onebot:group:2', label: '周末桌游群', meta: '881203' },
   { value: 'onebot:group:3', label: 'LenBot 开发', meta: '554219' },
-  { value: 'telegram:group:4', label: 'Weekend Club', meta: '-100223' },
 ]
 const radioOptions = [
   { value: 'all', label: '所有群' },

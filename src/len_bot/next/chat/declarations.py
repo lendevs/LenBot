@@ -29,7 +29,7 @@ class Condition(BaseModel):
         if not required <= supplied or supplied - allowed:
             raise ValueError(f'{self.type} 需要 {sorted(required)}，只接受 {sorted(allowed)}')
         if self.people is not None and any(':' not in person or not person.split(':', 1)[1] for person in self.people):
-            raise ValueError('people 必须是平台账号，例如 onebot:70001 或 telegram:7001')
+            raise ValueError('people 必须是平台账号，例如 onebot:70001')
         if self.keywords is not None:
             self.keywords = list(dict.fromkeys(word.strip().casefold() for word in self.keywords))
             if any(not word for word in self.keywords):

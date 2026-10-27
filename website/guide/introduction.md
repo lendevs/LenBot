@@ -2,7 +2,7 @@
 
 LenBot 是一个自主决策的群聊 Agent。何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。
 
-LenBot 通过一个已登录 QQ 的 OneBot 实现收发消息，也可以作为 Telegram Bot 运行。回复由用户自行准备的模型服务生成，只需要一个聊天模型和它的 API Key，例如 DeepSeek。
+LenBot 通过一个已登录 QQ 的 OneBot 实现收发消息。回复由用户自行准备的模型服务生成，只需要一个聊天模型和它的 API Key，例如 DeepSeek。
 
 与 Bot 对话不需要输入命令。群友 @ Bot、回复 Bot 或提到它的名字时，Bot 读取最近的聊天后决定如何回复。开启参与群聊后，Bot 也会在群内讨论活跃时主动发言。
 
@@ -21,7 +21,7 @@ LenBot 通过一个已登录 QQ 的 OneBot 实现收发消息，也可以作为 
 ## 运行条件
 
 - **一台长期运行的机器**。支持 Linux、macOS 和 Windows。
-- **一个 OneBot 实现**，例如 [NapCat](https://github.com/NapNeko/NapCatQQ)。需要已登录 Bot 的 QQ 号并开启 WebSocket。接入 Telegram 时不需要，见[接入 Telegram](./telegram)。
+- **一个 OneBot 实现**，例如 [NapCat](https://github.com/NapNeko/NapCatQQ)。需要已登录 Bot 的 QQ 号并开启 WebSocket。
 - **一个模型服务**。支持 OpenAI 兼容接口、OpenAI Responses、Anthropic 和 Gemini 四种协议。
 
 向量检索、语音转写、付费搜索和 Docker 都是可选的，需要时再配置。
@@ -48,7 +48,7 @@ LenBot 通过一个已登录 QQ 的 OneBot 实现收发消息，也可以作为 
 
 ## 限制
 
-- 一个实例只接入一个平台，QQ 或 Telegram。首次配置向导只支持 QQ。
+- 目前只支持 QQ。
 - 配置语音转写后可以理解语音消息，但只用文字回复。
 - 提示词只有中文，面板支持中文和英文。
 

@@ -12,7 +12,7 @@ LenBot 是一个单进程的宿主程序，按群聊场景组织。
 - 宿主不替模型判断语境，只负责三件事，即真实身份、会话连续性和执行状态。
 
 ```text
-OneBot／Telegram ──> 平台适配器 ──> 消息入库 ──┬─> 插件规则直接处理（不经过模型）
+OneBot ────────────> 平台适配器 ──> 消息入库 ──┬─> 插件规则直接处理（不经过模型）
                                     └─> 注意力决定开轮 ──> 主脑工具循环 ──> 表达／工具／任务
                                                               ^
                        插件事件、任务事件、提醒 ───────────────┘
@@ -24,10 +24,9 @@ OneBot／Telegram ──> 平台适配器 ──> 消息入库 ──┬─> 插
 
 ## 平台
 
-`platform/` 把平台的原生事件转换为统一的消息和通知。运行时只认 `platform/adapter.py` 中的 `PlatformAdapter` 协议（连接、等待、解析、身份核对、发消息、上传文件、读取场景名称和原生调用），由 `open_platform` 按配置选择 OneBot 或 Telegram 适配器，一个实例只接一个平台。平台调用失败统一抛出 `PlatformCallError`，`submitted` 说明请求是否可能已经送达。QQ 的消息段和接口只出现在 `platform/onebot*.py` 中，Telegram 的只出现在 `platform/telegram.py` 中。
+`platform/` 把平台的原生事件转换为统一的消息和通知。运行时只认 `platform/adapter.py` 中的 `PlatformAdapter` 协议（连接、等待、解析、身份核对、发消息、上传文件、读取场景名称和原生调用），由 `open_platform` 按配置打开 OneBot 适配器，没有配置平台时返回空。平台调用失败统一抛出 `PlatformCallError`，`submitted` 说明请求是否可能已经送达。QQ 的消息段和接口只出现在 `platform/onebot*.py` 中。
 
-- Telegram 适配器用 Bot API 的 `getUpdates` 长轮询收消息，启动时用 `getMe` 核对 `bot_id`，第一次 `getUpdates` 成功后才标记连上。出错时标记断开并按 1 秒到 30 秒退避重试；401 和 409 不重试，传输结束。
-- 只有 `delivery` 与平台一致（`onebot` 或 `telegram`）时才真正发送；OneBot 专有的平台工具仍只在 `onebot` 下开放。
+- 只有 `delivery` 为 `onebot` 时才真正发送，OneBot 的平台工具也只在这时开放。
 
 - 账号写成 `平台:账号`，例如 `onebot:70001`。
 - 场景写成 `平台:group:群号` 或 `平台:private:账号`。
@@ -231,7 +230,7 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 `DELETE /api/host/settings/scenes/{scene}` 立即停止该群接收输入，等待当前回合收尾，再关闭该群后台工作和正在执行的独立任务。
 其他群继续执行，消息与任务历史不删除。移除会从 MCP 和任务归档范围中去掉该群，并重新加载受影响的插件。
 可以移除最后一个群；平台连接与面板继续运行，供再次接入。
-`GET /api/host/settings/scenes/available` 在 OneBot 下查询已加入的群，Telegram 下列出本次运行最近收到消息的未接入群。
+`GET /api/host/settings/scenes/available` 查询 Bot 已加入、尚未接入的群；没有连接 OneBot 时返回空列表。
 
 运行中设置的生效范围如下。面板与群内管理工具共用这条应用路径；已发出的模型请求按原参数完成，后续请求和权限判定使用新的运行值。
 

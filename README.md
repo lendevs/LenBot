@@ -10,10 +10,10 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-b4476a">
   <img alt="Python" src="https://img.shields.io/badge/python-3.13%2B-b4476a">
-  <img alt="Platforms" src="https://img.shields.io/badge/platform-QQ%20%7C%20Telegram-b4476a">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。支持 QQ（OneBot v11）和 Telegram，只需要一个聊天模型和它的 API Key。
+**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。接入 QQ（OneBot v11），只需要一个聊天模型和它的 API Key。
 
 <img src="website/public/screenshots/live.gif" alt="群聊现场：群友 @ Bot 后，回合卡片逐步展开，先查询聊天记录，再分两条回复" width="860">
 

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: LenBot
   text: 自主决策的群聊 Agent
-  tagline: 何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。支持 QQ 和 Telegram。
+  tagline: 何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。接入 QQ。
   image:
     src: /lenbot-mark-animated.svg
     alt: LenBot
@@ -82,6 +82,6 @@ features:
 <div class="home-section">
   <div class="box">
     <h2>当前状态</h2>
-    <p>LenBot 仍在开发中，尚未发布版本，请<a href="./guide/quick-start">从源码运行</a>。主要面向 QQ，也可以<a href="./guide/telegram">接入 Telegram</a>。提示词只有中文，面板支持中文和英文。</p>
+    <p>LenBot 仍在开发中，尚未发布版本，请<a href="./guide/quick-start">从源码运行</a>。目前只支持 QQ。提示词只有中文，面板支持中文和英文。</p>
   </div>
 </div>

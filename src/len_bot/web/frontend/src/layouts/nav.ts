@@ -123,7 +123,6 @@ const sectionKeys: Record<string, string> = {
   owners: 'connection',
   timezone: 'connection',
   onebot: 'connection',
-  telegram: 'connection',
   delivery: 'connection',
   max_steps: 'connection',
   turn_timeout_seconds: 'connection',

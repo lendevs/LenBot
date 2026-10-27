@@ -20,7 +20,7 @@ import { toast } from '../../ui/toast'
 
 const { t } = useI18n()
 const router = useRouter()
-const { online, status, platform } = useConnectionStatus()
+const { online, status } = useConnectionStatus()
 const state = computed(() => host.state as HostState)
 const connection = computed(() => state.value.connection)
 
@@ -40,9 +40,9 @@ const disconnect = useMutation({
 })
 async function askDisconnect() {
   const sure = await confirm({
-    title: t('overview.status.disconnectTitle', { platform: platform.value }),
+    title: t('overview.status.disconnectTitle'),
     message: t('overview.status.disconnectMessage'),
-    confirmLabel: t('overview.status.disconnect', { platform: platform.value }),
+    confirmLabel: t('overview.status.disconnect'),
     tone: 'danger',
   })
   if (sure) disconnect.mutate()
@@ -68,13 +68,12 @@ const sendMode = computed({
   set: (value: 'send' | 'hold') => hold.mutate(value === 'hold'),
 })
 const sendOptions = computed(() => [
-  { value: 'send' as const, label: t('overview.status.sendReal', { platform: platform.value }) },
+  { value: 'send' as const, label: t('overview.status.sendReal') },
   { value: 'hold' as const, label: t('shell.status.simulated') },
 ])
 
 const delivery = computed(() => {
   const value = state.value
-  if (value.delivery === 'telegram') return t('overview.status.deliveryTelegram')
   if (value.delivery !== 'onebot') return t('shell.status.simulated')
   return value.send_hold ? t('overview.status.deliveryHeld') : t('overview.status.deliveryReal')
 })
@@ -83,7 +82,7 @@ const note = computed(() => {
   if (value.status === 'stopped' && value.disconnect_requested) return t('overview.status.notes.disconnected')
   const key = `overview.status.notes.${value.status}`
   return ['connection_failed', 'failed', 'stopped', 'waiting_connection'].includes(value.status)
-    ? t(key, { platform: platform.value })
+    ? t(key)
     : null
 })
 const menu = computed<MenuEntry[]>(() => [
@@ -96,7 +95,7 @@ const menu = computed<MenuEntry[]>(() => [
     ? [
         { type: 'separator' as const },
         {
-          label: t('overview.status.disconnect', { platform: platform.value }),
+          label: t('overview.status.disconnect'),
           icon: Unplug,
           danger: true,
           disabled: disconnect.isPending.value,
@@ -151,7 +150,7 @@ const menu = computed<MenuEntry[]>(() => [
           :loading="connect.isPending.value"
           @click="connect.mutate()"
         >
-          {{ t('overview.status.connect', { platform }) }}
+          {{ t('overview.status.connect') }}
         </Button>
         <SegmentedControl
           v-if="state.delivery === 'onebot'"

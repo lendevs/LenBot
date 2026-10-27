@@ -10,10 +10,10 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-b4476a">
   <img alt="Python" src="https://img.shields.io/badge/python-3.13%2B-b4476a">
-  <img alt="Platforms" src="https://img.shields.io/badge/platform-QQ%20%7C%20Telegram-b4476a">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by the model in a multi-step tool loop. It runs on QQ (OneBot v11) and Telegram and needs only one chat model and its API key.
+**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by the model in a multi-step tool loop. It runs on QQ (OneBot v11) and needs only one chat model and its API key.
 
 <img src="website/public/screenshots/live.gif" alt="Live view of a group: after the bot is mentioned, its turn unfolds step by step, first searching the chat history, then replying in two messages" width="860">
 

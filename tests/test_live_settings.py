@@ -139,8 +139,7 @@ async def test_settings_apply_to_wake_learning_permissions_and_preserve_cold_bin
                         await runtime.management.execute(SCENE, status)
 
                     connection = (await client.get('/api/host/settings')).json()['saved']['connection']
-                    for key in ('bot_id', 'telegram'):
-                        connection.pop(key)
+                    connection.pop('bot_id')
                     connection['onebot'].pop('access_token_configured')
                     original_url = runtime.config.onebot.ws_url
                     connection['onebot']['ws_url'] = 'ws://127.0.0.1:9'

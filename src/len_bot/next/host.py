@@ -113,7 +113,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
     with configure_logging(config.logging, credentials(config)), Store(config.database) as store:
         activate_prompts(root)
         PluginStore(store).recover_plugin_calls()
-        if config.onebot is None and config.telegram is None and TaskStore(store).containers():
+        if config.onebot is None and TaskStore(store).containers():
             raise ValueError('stdin模拟宿主不能清理原库中残留的容器；先在所属原实例明确处理，不使用导入的定位访问外部实例')
         budget = ModelBudget(config, store, None, root=config._instance_root)
         budget.trials_root = root / ".runtime" / "chat-tests"

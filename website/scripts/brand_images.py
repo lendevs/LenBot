@@ -9,8 +9,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 BRAND = Path(__file__).resolve().parents[1] / 'public/brand'
-ZH = ('自主决策的群聊 Agent', 'QQ · Telegram · 网页面板 · Python 插件')
-EN = ('A group chat agent that decides for itself', 'QQ · Telegram · Web panel · Python plugins')
+ZH = ('自主决策的群聊 Agent', 'QQ · 网页面板 · Python 插件')
+EN = ('A group chat agent that decides for itself', 'QQ · Web panel · Python plugins')
 # name: (width, height, icon size, name size, tagline size, text, show detail line)
 IMAGES = {
     'lenbot-banner.png': (1280, 400, 216, 104, 34, ZH, True),

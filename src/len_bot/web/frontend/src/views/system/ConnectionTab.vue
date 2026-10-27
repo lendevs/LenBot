@@ -17,18 +17,12 @@ import Skeleton from '../../ui/Skeleton.vue'
 import { confirm } from '../../ui/confirm'
 import { useSettingsDraft } from './draft'
 
-type Draft = Omit<Connection, 'owners' | 'bot_id' | 'telegram' | 'onebot'> & { onebot: OneBot | null }
+type Draft = Omit<Connection, 'owners' | 'bot_id' | 'onebot'> & { onebot: OneBot | null }
 
 const { t } = useI18n()
 const token = ref('')
 const pick = (snapshot: SettingsSnapshot): Draft => {
-  const {
-    owners: _owners,
-    bot_id: _bot,
-    telegram: _telegram,
-    onebot,
-    ...rest
-  } = systemOf(snapshot).connection
+  const { owners: _owners, bot_id: _bot, onebot, ...rest } = systemOf(snapshot).connection
   if (onebot === null) return { ...rest, onebot: null }
   const { access_token_configured: _configured, ...link } = onebot
   return { ...rest, onebot: link }
@@ -52,7 +46,7 @@ const form = useSettingsDraft<Draft>({
     if (value.delivery === 'simulated' || connection.value?.delivery !== 'simulated') return true
     return confirm({
       title: t('system.connection.realTitle'),
-      message: t('system.connection.realMessage', { platform: telegram.value ? 'Telegram' : 'QQ' }),
+      message: t('system.connection.realMessage'),
       confirmLabel: t('common.save'),
       tone: 'danger',
     })
@@ -62,8 +56,6 @@ const { settings, draft } = form
 const connection = computed<Connection | undefined>(() =>
   settings.data.value ? systemOf(settings.data.value).connection : undefined,
 )
-/** A Telegram host keeps its transport in the config file; only delivery and the shared fields change here. */
-const telegram = computed<boolean>(() => Boolean(connection.value?.telegram))
 const value = computed(() => draft.value!)
 const link = computed(() => draft.value?.onebot ?? null)
 const forward = computed(() => (link.value?.mode === 'forward_ws' ? link.value : null))
@@ -121,10 +113,7 @@ const mode = computed({
   },
 })
 const deliveries = computed(() => [
-  {
-    value: telegram.value ? 'telegram' : 'onebot',
-    label: t('system.connection.real', { platform: telegram.value ? 'Telegram' : 'QQ' }),
-  },
+  { value: 'onebot', label: t('system.connection.real') },
   { value: 'simulated', label: t('system.connection.simulated') },
 ])
 const transports = [
@@ -226,11 +215,11 @@ watch(invalid, () => {
   />
   <div v-else-if="draft && connection" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
-      <FormSection :title="telegram ? t('system.connection.telegram') : t('system.connection.qq')">
+      <FormSection :title="t('system.connection.qq')">
         <Field :label="t('system.connection.bot')">
           <Input :model-value="connection.bot_id" mono readonly />
         </Field>
-        <Field v-if="!telegram" :label="t('system.connection.mode')">
+        <Field :label="t('system.connection.mode')">
           <Select v-model="mode" :options="modes" />
         </Field>
         <template v-if="link">
@@ -272,7 +261,7 @@ watch(invalid, () => {
             <SegmentedControl
               v-model="value.delivery"
               :options="deliveries"
-              :disabled="!telegram && link === null"
+              :disabled="link === null"
               :label="t('system.connection.delivery')"
             />
           </div>

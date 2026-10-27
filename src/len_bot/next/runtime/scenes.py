@@ -24,7 +24,6 @@ class SceneService:
         self.tasks: dict[str, asyncio.Task] = {}
         self.changed = asyncio.Event()
         self.retiring: set[str] = set()
-        self.observed: dict[str, dict] = {}
 
     async def ready(self, scene: str, wait: bool) -> bool:
         return scene not in self.retiring and await self.runtime._ready(wait)
@@ -52,19 +51,14 @@ class SceneService:
     async def join(self) -> None:
         await asyncio.gather(*self.tasks.values())
 
-    def observe(self, scene: str, raw: dict) -> None:
-        title = raw['message']['chat'].get('title') if scene.startswith('telegram:') else None
-        self.observed[scene] = {'scene': scene, 'name': title, 'last_seen': self.runtime.store.now()}
-
     async def available(self) -> list[dict]:
         runtime = self.runtime
-        if runtime.config.onebot is not None:
-            if not runtime.platform.connected:
-                raise ValueError('平台尚未连接，无法读取已加入的群')
-            groups = await joined_groups(runtime.platform.call)
-            return [item for item in groups if item['scene'] not in runtime.chats]
-        return [item for item in sorted(self.observed.values(), key=lambda item: item['last_seen'], reverse=True)
-                if item['scene'] not in runtime.chats]
+        if runtime.config.onebot is None:
+            return []
+        if not runtime.platform.connected:
+            raise ValueError('平台尚未连接，无法读取已加入的群')
+        groups = await joined_groups(runtime.platform.call)
+        return [item for item in groups if item['scene'] not in runtime.chats]
 
     async def apply(self, saved: HostConfig) -> None:
         for scene in list(self.runtime.config.scenes):

@@ -29,7 +29,7 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-The command copies the configuration and the instance files it references (database, memory, personas, task directories and so on). The copy uses simulated delivery, connects to neither OneBot nor Telegram and listens on the given panel port; absolute paths pointing into the original instance are moved into the copy. Models, plugins and task services run normally in the copy, and model calls use tokens as usual.
+The command copies the configuration and the instance files it references (database, memory, personas, task directories and so on). The copy uses simulated delivery, does not connect to OneBot and listens on the given panel port; absolute paths pointing into the original instance are moved into the copy. Models, plugins and task services run normally in the copy, and model calls use tokens as usual.
 
 ## Source layout
 

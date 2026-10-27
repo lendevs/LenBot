@@ -74,7 +74,7 @@ class SayArguments(BaseModel):
     reply_to: str | None = Field(default=None, description="默认不填，直接接话。群里同时有几个话头、不引用会让人认错你在回哪句时，才填该平台消息 ID。")
     # Individual accounts of the platforms with an adapter; express() also requires the scene's platform,
     # and build_tools narrows the schema the model sees to it.
-    mention: str | None = Field(default=None, pattern=r"^(?:onebot|telegram):[1-9][0-9]*$",
+    mention: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
         description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query 三选一，素材目录见 react。")

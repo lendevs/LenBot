@@ -49,8 +49,6 @@ onebot:group:80001    群
 onebot:private:70001  与主人的私聊
 ```
 
-Telegram 的写法见[接入 Telegram](./telegram#配置)。
-
 ## 权限
 
 - **系统 → 设置 → 全局权限**：主人、全局管理员、白名单和黑名单，对所有群生效。

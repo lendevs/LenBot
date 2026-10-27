@@ -23,7 +23,7 @@ export interface TextDelivery {
   max_interval_seconds: number | null
   chars_per_second: number | null
 }
-export type Delivery = 'simulated' | 'onebot' | 'telegram'
+export type Delivery = 'simulated' | 'onebot'
 
 /** `saved.connection`; number fields are null while their input is empty. */
 export interface Connection {
@@ -31,7 +31,6 @@ export interface Connection {
   owners: string[]
   onebot: SavedOneBot | null
   /** Edited in the config file only. */
-  telegram: Record<string, unknown> | null
   timezone: string
   delivery: Delivery
   max_steps: number | null
@@ -164,7 +163,7 @@ const named = (value: string) => encodeURIComponent(value)
 export const systemApi = {
   /** `access_token` null keeps the saved one. */
   saveConnection: (
-    body: Omit<Connection, 'bot_id' | 'onebot' | 'telegram'> & {
+    body: Omit<Connection, 'bot_id' | 'onebot'> & {
       onebot: OneBot | null
       access_token: string | null
     },

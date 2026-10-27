@@ -10,7 +10,6 @@ from websockets.asyncio.server import serve
 from test_attention_protocol import message, response
 from test_host_stream import login, panel, receive
 from test_next_panel_acts_as_owner import SCENE
-from test_platform_telegram import BotAPI, BOT, TOKEN
 
 NEW = 'onebot:group:80002'
 
@@ -128,35 +127,3 @@ async def test_live_scene_add_remove_drains_current_turn_without_stopping_other_
                     release_first.set()
                     runtime.stop()
                     await asyncio.wait_for(running, 3)
-
-
-@pytest.mark.asyncio
-async def test_telegram_available_lists_only_recent_unconfigured_groups(tmp_path):
-    with BotAPI() as api:
-        def configure(root):
-            path = root / 'lenbot.config.json'
-            source = json.loads(path.read_text())
-            source.update(bot_id=f'telegram:{BOT}', owners=['telegram:7001'], onebot=None,
-                          telegram={'bot_token': TOKEN, 'api_base': api.base, 'poll_timeout_seconds': 1})
-            source['scenes'] = {'telegram:group:-100500': {'persona': 'persona', 'attention': {'only_direct': True}}}
-            path.write_text(json.dumps(source))
-
-        async with panel(tmp_path, configure) as (runtime, client, _):
-            await login(client)
-            running = asyncio.create_task(runtime.run(manage_signals=False))
-            try:
-                async with asyncio.timeout(3):
-                    while runtime.status != 'running':
-                        await asyncio.sleep(.01)
-                api.push('路过', chat=-100600)
-                async with asyncio.timeout(3):
-                    while 'telegram:group:-100600' not in runtime.scene_service.observed:
-                        await asyncio.sleep(.01)
-                items = (await client.get('/api/host/settings/scenes/available')).json()['items']
-                assert [item['scene'] for item in items] == ['telegram:group:-100600']
-                added = await client.post('/api/host/settings/scenes', json={'scene': items[0]['scene'], 'persona': 'persona'})
-                assert added.status_code == 200, added.text
-                assert (await client.get('/api/host/settings/scenes/available')).json()['items'] == []
-            finally:
-                runtime.stop()
-                await asyncio.wait_for(running, 3)

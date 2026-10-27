@@ -34,7 +34,7 @@ const form = useSettingsDraft<Draft>({
     let snapshot: SettingsSnapshot = form.settings.data.value!
     const saved = systemOf(snapshot)
     if (!same(owners, saved.connection.owners)) {
-      const { bot_id: _bot, telegram: _telegram, onebot, ...connection } = saved.connection
+      const { bot_id: _bot, onebot, ...connection } = saved.connection
       snapshot = await systemApi.saveConnection({
         ...connection,
         owners,
