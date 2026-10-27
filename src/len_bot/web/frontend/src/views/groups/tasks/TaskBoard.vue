@@ -198,7 +198,7 @@ function created(task: Task) {
           :scene-enabled="Boolean(sceneTasks?.enabled)"
           @dirty="(value: boolean) => (detailDirty = value)"
         />
-        <EmptyState v-else-if="selected === null" :title="t('groups.tasks.pick')" compact />
+        <EmptyState v-else-if="selected === null && rows.length" :title="t('groups.tasks.pick')" compact />
       </section>
     </div>
 
