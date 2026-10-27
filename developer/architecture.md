@@ -52,10 +52,6 @@ OneBot／Telegram ──> 平台适配器 ──> 消息入库 ──┬─> 插
 
 `turns.wake_channel` 保存开轮时的唤醒方式；轮次中合并进来的其他唤醒仍保存在表达的渠道记录中，不改开轮归类。用量页按群、开轮日期和方式统计一次轮次是否有成功表达，以及该轮全部主脑请求的输入和缓存 token。
 
-离线核对注意力规则时，运行 `uv run --no-sync python -m len_bot.next.maintenance.replay_attention . --date 2026-10-08 --output state/attention-replay/2026-10-08 --aliases 小然 然然`。它只读数据库，输出 `baseline.json`、`reduced_wakes.json`（关闭 focus 后会减少的叫醒）、`lost_speech.json`（其中实际曾经发言的轮次，带消息批次和表达原文）、`alias_messages.json` 和 `summary.json`。清单保留在实例目录，不提交真实群聊内容。
-
-回放沿用 Bot 的实际发言和直接叫醒来重新开启 focus。`--aliases` 列出字面匹配的消息供检查。
-
 `Attention.close_focus_on_silence` 默认开启：focus 轮次 settled、没有任何表达且没有工具失败时，保存 `AttentionState.focus_closed_at`；本轮期间有新的直接联系或 Bot 发言时保持开启。关闭后新消息以及轮次尾部尚未消费的 focus 消息继续参加 ambient 打分。直接消息和点名优先级不变，下一次 Bot 发言或直接联系清除关闭时间。该字段保存在原有注意力 JSON 中，旧状态缺少字段时默认未关闭。
 
 `Attention.explore_probability` 默认 0。大于 0 时，不在 focus 内、参与分没有达到门槛、也没有待处理唤醒的群友消息，按这个概率开启一次 `explore` 唤醒，用来收集主脑在规则不叫醒时会不会做事的样本。它按 focus 的空闲和最长等待合批，标签为 `[群里在聊]`，不显示参与分；之后到达的消息若达到参与分门槛，改为 ambient 唤醒。explore 轮次沉默不提高 ambient 的退避等级。每次抽样写入 `attention_explore` 日志（是否叫醒、概率、参与分、消息 ID），用于事后计算样本权重。
