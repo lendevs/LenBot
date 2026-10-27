@@ -74,13 +74,16 @@ def http_client(*, base_url: str, api_key: str, api: ProviderAPI,
 
 async def list_models(provider, *, timeout_seconds: float = 30) -> list[dict]:
     """Read the provider's model catalog."""
-    from .client import ModelHTTPError, ModelProtocolError
+    from .client import ModelConnectionError, ModelHTTPError, ModelProtocolError
     items = []
     params = {}
     async with asyncio.timeout(timeout_seconds), http_client(base_url=provider.base_url, api_key=provider.api_key,
                            api=provider.api, timeout_seconds=timeout_seconds, proxy=provider.proxy) as client:
         while True:
-            response = await client.get('models', params=params)
+            try:
+                response = await client.get('models', params=params)
+            except httpx.TransportError as error:
+                raise ModelConnectionError(provider.base_url, error, provider.api_key) from error
             if not response.is_success:
                 raise ModelHTTPError(response.status_code, response.text.replace(provider.api_key, "[hidden]")[:2000],
                                      response.headers.get("x-request-id"))

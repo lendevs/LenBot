@@ -8,7 +8,10 @@ import pytest
 
 from len_bot.next.chat.session import Chat
 from len_bot.next.config import load_host_config
-from len_bot.next.models.client import ChatModel, ModelHTTPError, ModelOutputLimitError, ModelSettings
+from len_bot.next.models.client import (ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError,
+                                        ModelSettings)
+from len_bot.next.models.providers import list_models
+from len_bot.next.configuration.models import Provider
 from len_bot.next.models.request import request_model
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.storage.store import Store
@@ -109,6 +112,77 @@ def test_provider_failures_in_logs_overview_and_call_detail(tmp_path, caplog, st
         await client.post('/api/auth/logout')
         assert (await client.get(f"/api/host/model-calls/{error['id']}")).status_code == 401
     exercise(tmp_path, check)
+
+
+@pytest.mark.parametrize('status,body,expected', [
+    (404, {'error': {'message': 'The model `gpt-x` does not exist', 'code': 'model_not_found'}}, '模型名或接口地址不存在'),
+    (400, {'error': {'message': 'Model Not Exist', 'type': 'invalid_request_error'}}, '模型名或接口地址不存在'),
+    (400, {'error': {'message': 'temperature must be at most 2'}}, '核对模型参数'),
+    (403, {'error': {'message': 'model_not_found for this key'}}, 'API Key'),
+    (400, {'error': {'message': "This model's maximum context length is 65536 tokens", 'code': 'context_length_exceeded'}},
+     '上下文长度'),
+    (400, {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'prompt is too long: 210000 tokens > 200000 maximum'}},
+     '上下文长度'),
+])
+def test_missing_model_and_context_overflow_are_named_apart(status, body, expected):
+    error = ModelHTTPError(status, json.dumps(body))
+    assert expected in str(error) and f'HTTP {status}' in str(error)
+
+
+def fixture_settings(**changes):
+    return ModelSettings(api='openai-chat', base_url='https://fixture.invalid/v1', api_key='fixture-key',
+                         model='any-model', **changes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure,expected', [
+    (httpx.ConnectError('[Errno 61] Connection refused'), '连不上服务商地址'),
+    (httpx.ProxyError('407 Proxy Authentication Required'), '代理连接失败'),
+    (httpx.ReadTimeout('timed out'), '没有及时响应'),
+])
+async def test_unreachable_provider_names_address_after_retries(failure, expected):
+    attempts = []
+    def respond(request):
+        attempts.append(request)
+        raise failure
+    settings = fixture_settings(retry_delays_seconds=[0.01])
+    async with ChatModel(settings) as model:
+        await model._client.aclose()
+        model._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url=settings.base_url + '/')
+        with pytest.raises(ModelConnectionError, match=expected) as caught:
+            await model.complete([{'role': 'user', 'content': '连接测试'}], [])
+    assert len(attempts) == 2
+    assert 'https://fixture.invalid/v1' in str(caught.value) and type(failure).__name__ in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_model_deadline_keeps_timeout_type_and_says_what_to_change():
+    import asyncio
+    async def respond(request):
+        await asyncio.sleep(1)
+        return httpx.Response(200, json={})
+    settings = fixture_settings(timeout_seconds=0.05)
+    async with ChatModel(settings) as model:
+        await model._client.aclose()
+        model._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url=settings.base_url + '/')
+        with pytest.raises(TimeoutError, match='超过 0.05 秒没有完成.*调大超时'):
+            await model.complete([{'role': 'user', 'content': '连接测试'}], [])
+
+
+@pytest.mark.asyncio
+async def test_model_list_reports_unreachable_address(monkeypatch):
+    def respond(request):
+        raise httpx.ConnectError('[Errno 8] nodename nor servname provided')
+    from len_bot.next.models import providers
+    original = providers.http_client
+    def client(**options):
+        made = original(**options)
+        made._transport = httpx.MockTransport(respond)
+        return made
+    monkeypatch.setattr(providers, 'http_client', client)
+    provider = Provider(api='openai-chat', base_url='https://fixture.invalid/v1', api_key='fixture-key')
+    with pytest.raises(ModelConnectionError, match='连不上服务商地址'):
+        await list_models(provider)
 
 
 @pytest.mark.asyncio

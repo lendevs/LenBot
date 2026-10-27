@@ -7,8 +7,10 @@ import os
 from pathlib import Path
 import secrets
 import socket
+import sys
 import tempfile
 import shutil
+import webbrowser
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -312,6 +314,17 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
     return app
 
 
+def opens_browser(*, container: bool, interactive: bool, platform: str = sys.platform, environ=os.environ) -> bool:
+    """Whether the wizard link opens on this machine: started from a terminal in a desktop session, outside
+    containers and SSH. Scripts and services read the output through a pipe and keep only the printed link."""
+    if container or not interactive or 'SSH_CONNECTION' in environ or 'SSH_TTY' in environ:
+        return False
+    if platform in ('darwin', 'win32'):
+        return True
+    # Without a display, Linux falls back to a text browser inside the terminal.
+    return bool(environ.get('DISPLAY') or environ.get('WAYLAND_DISPLAY'))
+
+
 async def run_setup(root: Path, *, container: bool = False) -> None:
     token = secrets.token_urlsafe(32)
     completed = asyncio.Event()
@@ -322,13 +335,16 @@ async def run_setup(root: Path, *, container: bool = False) -> None:
         port = listener.getsockname()[1]
         app = create_setup_app(root, token, completed, container=container)
         server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False, forwarded_allow_ips=['127.0.0.1']))
-        print(f'尚无根配置。请打开 http://127.0.0.1:{port}/#token={token}\n'
+        url = f'http://127.0.0.1:{port}/#token={token}'
+        print(f'尚无根配置。请打开 {url}\n'
               '保存后直接启动，按新配置连接 OneBot 并打开面板。', flush=True)
         problem = missing_build(BUILT_PANEL)
         if problem is not None:
             # The wizard page is the built panel; without it the link only shows this error.
             print(f'无法显示首次配置页面。{problem}', flush=True)
         serving = asyncio.create_task(server.serve(sockets=[listener]))
+        if problem is None and opens_browser(container=container, interactive=sys.stdout.isatty()):
+            await asyncio.to_thread(webbrowser.open, url)
         saving = asyncio.create_task(completed.wait())
         try:
             await asyncio.wait([serving, saving], return_when=asyncio.FIRST_COMPLETED)

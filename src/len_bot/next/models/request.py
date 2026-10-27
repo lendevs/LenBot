@@ -125,7 +125,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                     error.describe(tokens, "回想", "系统 → 设置 → 高级 → 上下文压缩 → 回想最大长度")
                 else:
                     page = ROLE_NAMES["mind"] if binding is config.models.roles.mind else ROLE_NAMES.get(role, role)
-                    error.describe(tokens, ROLE_NAMES.get(role, role), f"模型 → {page} → 更多参数 → 最长输出")
+                    error.describe(tokens, ROLE_NAMES.get(role, role), f"模型 → {page} → 最长输出")
             response = None if reply is None else {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response}
             usage = None if reply is None else reply.usage
             token_usage = None if reply is None else reply.token_usage

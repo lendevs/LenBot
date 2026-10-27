@@ -183,8 +183,9 @@ def turn_state(config: LabConfig, store: Store, *, now: float,
 
 
 HABIT_WINDOW = 8
-# Interjections and sentence particles: the only single characters worth naming as a habit.
-HABIT_CHARACTERS = frozenset("草哼啦呀嘛呜哇诶欸嘿喵捏哈啊呢吧哦噢嗷嘻")
+# Interjections: the only single characters worth naming as a habit. Sentence-final particles such
+# as 吧、呢、啊 are ordinary grammar and stay out.
+HABIT_CHARACTERS = frozenset("草哼呜哇诶欸嘿喵捏哈噢嗷嘻")
 HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
 
 

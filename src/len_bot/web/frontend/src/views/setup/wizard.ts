@@ -91,6 +91,15 @@ const SECRETS = [
   'readKey',
 ] as const
 
+/**
+ * The compaction threshold for a window: the root config's default 60000, or three quarters of what the
+ * window keeps after the output when that is smaller. The system prompt and tools alone take several
+ * thousand tokens, so a much smaller threshold leaves no room for the recap.
+ */
+function compactionBudget(window: number, output: number): number {
+  return Math.min(60000, Math.floor((window - output) * 0.75))
+}
+
 function initial(): Draft {
   return {
     username: '',
@@ -125,7 +134,7 @@ function initial(): Draft {
     proxy: '',
     model: 'deepseek-flash',
     contextWindow: 1000000,
-    inputBudget: 6000,
+    inputBudget: compactionBudget(1000000, 8192),
     maxOutput: 8192,
     effort: 'high',
     thinkingBudget: null,
@@ -138,7 +147,7 @@ function initial(): Draft {
     vectorModel: '',
     vectorDimensions: null,
     persona: 'companion',
-    personaId: 'my-bot',
+    personaId: '',
     personaName: '',
     brief: '',
     voice: '',
@@ -172,6 +181,13 @@ function restored(): Draft {
 
 const ACCOUNT = /^[1-9][0-9]*$/
 const PERSONA_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/** The folder a new persona gets when none is typed: an ASCII name in lowercase words, otherwise my-bot. */
+export function personaFolder(name: string): string {
+  const trimmed = name.trim()
+  const words = /^[\x20-\x7e]*$/.test(trimmed) ? trimmed.toLowerCase().match(/[a-z0-9]+/g) : null
+  return words?.join('-').slice(0, 64).replace(/-+$/, '') || 'my-bot'
+}
 
 function httpUrl(text: string): boolean {
   try {
@@ -373,12 +389,11 @@ export function createWizard() {
     }
   }
 
-  // Leaves room for the reply: three quarters of what the window keeps after the output.
   watch(
     () => [draft.contextWindow, draft.maxOutput] as const,
     ([window, output], previous) => {
       if (!previous || window === null || output === null) return
-      if (window > output + 1024) draft.inputBudget = Math.floor((window - output) * 0.75)
+      if (window > output + 1024) draft.inputBudget = compactionBudget(window, output)
     },
   )
 
@@ -447,7 +462,7 @@ export function createWizard() {
     }
     if (step === 'persona') {
       if (draft.persona === 'custom') {
-        need('personaId', PERSONA_ID.test(draft.personaId), 'personaId')
+        need('personaId', !draft.personaId || PERSONA_ID.test(draft.personaId), 'personaId')
         need('personaName', Boolean(draft.personaName.trim()))
         need('brief', Boolean(draft.brief.trim()))
       }
@@ -466,7 +481,7 @@ export function createWizard() {
       draft.persona === 'companion'
         ? { persona_id: 'companion' }
         : {
-            persona_id: draft.personaId,
+            persona_id: draft.personaId || personaFolder(draft.personaName),
             persona_name: draft.personaName.trim(),
             brief: draft.brief.trim(),
             ...(draft.voice.trim() ? { voice_text: draft.voice.trim() } : {}),

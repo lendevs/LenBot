@@ -129,6 +129,14 @@ class ModelOutputLimitError(ModelProtocolError):
                      f"请调大 {setting}，或降低思考强度。",)
 
 
+# How providers say a model ID is unknown when they answer 400 or 422 instead of 404.
+MODEL_MISSING = re.compile(r"model[_ ]not[_ ]found|model (?:does )?not exist|no such model|not a valid model|"
+                           r"unknown model|模型不存在", re.IGNORECASE)
+# How providers say the request is longer than the model's real context window.
+CONTEXT_EXCEEDED = re.compile(r"context[_ ]length[_ ]exceeded|maximum context length|prompt is too long|"
+                              r"exceeds the maximum number of tokens|input is too long|超过.{0,8}上下文", re.IGNORECASE)
+
+
 class ModelHTTPError(RuntimeError):
     """The configured provider rejected a model request."""
 
@@ -139,11 +147,31 @@ class ModelHTTPError(RuntimeError):
             direction = "请求受限，请稍后重试或检查服务商额度"
         elif status >= 500:
             direction = "服务商或中转服务异常，请稍后重试或联系渠道运营方"
+        elif CONTEXT_EXCEEDED.search(detail):
+            direction = "请求超过了模型实际的上下文长度，请按服务商文档调小这个用途的上下文长度"
+        elif status == 404 or MODEL_MISSING.search(detail):
+            direction = "模型名或接口地址不存在，请核对模型名，或读取服务商的模型列表后选择；同时核对服务商地址"
         else:
             direction = "服务商拒绝请求，请查看调用详情并核对模型参数"
         self.status = status
         self.response = {"status": status, "request_id": request_id, "detail": detail}
         super().__init__(f"{direction}（HTTP {status}）" + (f"；request id: {request_id}" if request_id else ""))
+
+
+class ModelConnectionError(RuntimeError):
+    """The provider address could not be reached, or the connection broke before a response."""
+
+    def __init__(self, base_url: str, error: httpx.TransportError, api_key: str = ""):
+        detail = f"{type(error).__name__}: {error}"
+        if api_key:
+            detail = detail.replace(api_key, "[hidden]")
+        if isinstance(error, httpx.ProxyError):
+            direction = "代理连接失败，请检查代理地址和代理是否在运行"
+        elif isinstance(error, httpx.TimeoutException):
+            direction = "服务商地址没有及时响应，请检查地址、网络和代理，或调大超时"
+        else:
+            direction = "连不上服务商地址，请检查地址、网络和代理"
+        super().__init__(f"{direction}（{base_url}；{detail}）")
 
 
 def _reject_non_json_constant(value: str) -> None:
@@ -282,13 +310,19 @@ class ChatModel:
         settings = self.settings if settings is None else settings
         path, payload = build_request(settings, messages, tools, max_output_tokens=max_output_tokens)
         for delay in (*settings.retry_delays_seconds, None):
+            deadline = asyncio.timeout(settings.timeout_seconds)
             try:
-                async with asyncio.timeout(settings.timeout_seconds):
+                async with deadline:
                     response = await self._client.post(path, json=payload,
                                                        headers={} if session_id is None else {"Session-Id": session_id})
+            except TimeoutError as error:
+                if deadline.expired():
+                    raise TimeoutError(f"模型请求超过 {settings.timeout_seconds:g} 秒没有完成（{settings.base_url}），"
+                                       "请检查网络和代理，或调大超时") from error
+                raise
             except httpx.TransportError as error:
                 if delay is None:
-                    raise
+                    raise ModelConnectionError(settings.base_url, error, self.settings.api_key) from error
                 logger.warning("model request retry in %ss after %s", delay, type(error).__name__)
             else:
                 if delay is None or (response.status_code != 429 and response.status_code < 500):

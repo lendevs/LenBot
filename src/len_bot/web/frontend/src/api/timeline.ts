@@ -54,6 +54,8 @@ export interface TimelineTurn {
   tokens: Tokens
   tools: string[]
   error: string | null
+  /** Seconds from the message that woke the turn, or from its start, to the first expression. */
+  first_expression_wait: number | null
 }
 
 /** A platform notice; `raw` is the event as the platform sent it. */

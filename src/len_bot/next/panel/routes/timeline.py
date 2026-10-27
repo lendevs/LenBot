@@ -73,6 +73,8 @@ class TimelineTurn(BaseModel):
     tokens: Tokens
     tools: list[str]
     error: str | None
+    # Seconds from the message that woke the turn (or the turn's start) to its first expression.
+    first_expression_wait: float | None
 
 
 class TimelineNotice(BaseModel):
@@ -247,7 +249,9 @@ def turn_record(store: Store, row) -> dict:
             'steps': sum(call['role'] == 'mind' for call in calls),
             'expressions': expressions,
             'tokens': token_summary([None if call['tokens'] is None else json.loads(call['tokens']) for call in calls]),
-            'tools': list(dict.fromkeys(tools))}
+            'tools': list(dict.fromkeys(tools)),
+            'first_expression_wait': None if row['first_expression_at'] is None else
+                row['first_expression_at'] - (row['started'] if row['wake_received_at'] is None else row['wake_received_at'])}
 
 
 # At the same moment messages come first, then notices, then turns.

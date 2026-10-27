@@ -9,7 +9,7 @@ import pytest
 from len_bot.next.config import load_host_config
 from len_bot.next.chat.context import build_system
 from len_bot.next.persona.profile import load_persona
-from len_bot.next.panel.setup import create_setup_app
+from len_bot.next.panel.setup import create_setup_app, opens_browser
 from len_bot.web.auth import verify_password
 
 
@@ -292,6 +292,22 @@ def test_local_setup_keeps_the_chosen_port_and_serves_the_panel_frontend(tmp_pat
             message = response.json()['detail']['message']
             assert str(tmp_path / 'absent' / 'index.html') in message and 'npm run build' in message
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(('container', 'interactive', 'platform', 'environ', 'expected'), [
+    (False, True, 'darwin', {}, True),
+    (False, True, 'win32', {}, True),
+    (False, True, 'linux', {'DISPLAY': ':0'}, True),
+    (False, True, 'linux', {'WAYLAND_DISPLAY': 'wayland-0'}, True),
+    (False, True, 'linux', {}, False),
+    (False, True, 'darwin', {'SSH_CONNECTION': '10.0.0.2 50000 10.0.0.1 22'}, False),
+    (False, True, 'linux', {'DISPLAY': ':0', 'SSH_TTY': '/dev/pts/1'}, False),
+    (True, True, 'linux', {'DISPLAY': ':0'}, False),
+    # Smoke tests, the demo instance and services read the output through a pipe.
+    (False, False, 'darwin', {}, False),
+])
+def test_wizard_link_opens_only_from_a_local_desktop_terminal(container, interactive, platform, environ, expected):
+    assert opens_browser(container=container, interactive=interactive, platform=platform, environ=environ) is expected
 
 
 def test_docker_smoke_goes_through_the_wizard_port():

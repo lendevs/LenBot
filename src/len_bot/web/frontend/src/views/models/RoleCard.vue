@@ -21,6 +21,13 @@ const row = computed(() => form.providerFor(binding.value?.provider))
 const api = computed(() => row.value?.api)
 const title = computed(() => form.roleTitle(props.role))
 const errors = computed(() => form.problems.value.filter((item) => item.place === `roles.${props.role}`))
+/** Marked once the provider's list was read and the model typed here is not in it, e.g. after a retirement. */
+const unlisted = computed(() => {
+  const listed = binding.value && form.catalog.value[binding.value.provider]
+  return Boolean(
+    listed?.length && binding.value!.model && !listed.some((item) => item.id === binding.value!.model),
+  )
+})
 
 const enabled = computed({
   get: () => binding.value !== null,
@@ -106,11 +113,32 @@ watch(retries, (text) => {
             @update:model-value="(id) => id && form.chooseRoleProvider(role, id)"
           />
         </Field>
-        <Field :label="t('models.roles.model')">
+        <Field :label="t('models.roles.model')" :error="unlisted ? t('models.roles.notListed') : null">
           <ModelName v-model="binding.model" :models="form.catalog.value[binding.provider]" />
         </Field>
         <Field :label="t('models.roles.context')">
           <NumberInput v-model="binding.context_window_tokens" :min="1" :steppers="false" unit="tokens" />
+        </Field>
+        <Field :label="t('models.roles.maxOutput')">
+          <NumberInput v-model="binding.max_output_tokens" :min="1" :steppers="false" unit="tokens" />
+        </Field>
+        <Field :label="t('models.roles.effort')">
+          <Select
+            :model-value="binding.reasoning_effort ?? UNSET"
+            :options="efforts"
+            @update:model-value="
+              (value) => (binding!.reasoning_effort = !value || value === UNSET ? null : value)
+            "
+          />
+        </Field>
+        <Field v-if="api === 'openai-chat'" :label="t('models.roles.thinkingSwitch')">
+          <Select
+            :model-value="binding.thinking ?? UNSET"
+            :options="thinkingOptions"
+            @update:model-value="
+              (value) => (binding!.thinking = value === 'enabled' || value === 'disabled' ? value : null)
+            "
+          />
         </Field>
         <Field v-if="role === 'mind' || role === 'vision'" :label="t('models.roles.imageInput')">
           <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
@@ -127,24 +155,12 @@ watch(retries, (text) => {
           <ChevronDown :size="16" class="transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
         <div class="mt-4 grid gap-x-5 gap-y-5 sm:grid-cols-3">
-          <Field :label="t('models.roles.maxOutput')">
-            <NumberInput v-model="binding.max_output_tokens" :min="1" :steppers="false" unit="tokens" />
-          </Field>
           <Field :label="t('models.roles.timeout')">
             <NumberInput
               v-model="binding.timeout_seconds"
               :min="1"
               :steppers="false"
               :unit="t('groups.settings.seconds')"
-            />
-          </Field>
-          <Field :label="t('models.roles.effort')">
-            <Select
-              :model-value="binding.reasoning_effort ?? UNSET"
-              :options="efforts"
-              @update:model-value="
-                (value) => (binding!.reasoning_effort = !value || value === UNSET ? null : value)
-              "
             />
           </Field>
           <Field v-if="role === 'mind'" :label="t('models.roles.quickEffort')">
@@ -169,15 +185,6 @@ watch(retries, (text) => {
             <Input v-model="retries" mono :placeholder="t('models.roles.noRetry')" />
           </Field>
           <template v-if="api === 'openai-chat'">
-            <Field :label="t('models.roles.thinkingSwitch')">
-              <Select
-                :model-value="binding.thinking ?? UNSET"
-                :options="thinkingOptions"
-                @update:model-value="
-                  (value) => (binding!.thinking = value === 'enabled' || value === 'disabled' ? value : null)
-                "
-              />
-            </Field>
             <Field :label="t('models.roles.history.label')">
               <Select v-model="binding.history_policy" :options="histories" />
             </Field>

@@ -23,7 +23,7 @@ from ...models.usage import summarize, usage_rows
 from ...storage.store import Store
 from ...chat.usage import wake_usage
 from ...models.limits import BUDGET_CACHE_SECONDS, LimitReached, check_speech, clear_speech, speech_quota
-from ...models.client import ModelHTTPError, ModelProtocolError
+from ...models.client import ModelConnectionError, ModelHTTPError, ModelProtocolError
 
 
 class ChatSwitch(BaseModel):
@@ -84,7 +84,7 @@ def register_host_operations(app, *, runtime, user):
                 return {'compact_through': through, 'message': '已开启新上下文；原记录、未读输入和后台工作保留'}
             try:
                 return await runner.chat.compact_now()
-            except (ValueError, TimeoutError, ModelHTTPError, ModelProtocolError) as error:
+            except (ValueError, TimeoutError, ModelConnectionError, ModelHTTPError, ModelProtocolError) as error:
                 raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 
     @app.get('/api/host/scenes/{scene}/control', response_model=responses.SceneControl, response_model_exclude_unset=True)
