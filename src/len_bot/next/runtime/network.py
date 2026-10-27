@@ -38,6 +38,7 @@ from ..platform.adapter import PlatformCallError, open_platform
 from ..persona.profile import Persona
 from ..plugins.host import PluginHost
 from ..tools.mcp_host import MCPHost
+from ..reference.library import ReferenceLibrary
 from ..storage.store import Store
 from ..work.service import WorkTasks
 
@@ -117,6 +118,7 @@ class NetworkRuntime:
         self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
+        self.reference = ReferenceLibrary(config._instance_root)
         self.accepting = config.onebot is None
         self.storage_error: sqlite3.Error | None = None
         # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.
@@ -167,6 +169,7 @@ class NetworkRuntime:
                             + ([] if self.mcp is None else self.mcp.tools_for(scene))),
             audio_service=self.audio,
             plugins=self.plugins,
+            reference=self.reference,
             on_update=self.notify,
             on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
         )

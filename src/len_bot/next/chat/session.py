@@ -32,8 +32,9 @@ RESERVE_CHANNELS = frozenset({"schedule", "task"})
 # Calls that speak, wait or close a turn; any other call means the turn looked something up.
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
-PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "persona_knowledge", "member_info"})
+PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info"})
 from ..memory.service import MemoryService, MemorySettings
+from ..reference.library import ReferenceLibrary
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
 from ..models.request import request_estimate, request_model
@@ -99,6 +100,7 @@ class Chat:
                  external_tools: list[ExternalTool] = (),
                  audio_service: AudioService | None = None,
                  plugins: MemoryPlugins | None = None,
+                 reference: ReferenceLibrary | None = None,
                  on_update: Callable[[], None] | None = None,
                  on_compaction: Callable[[], None] | None = None,
                  on_reply_sample: Callable[[], None] | None = None,
@@ -151,7 +153,7 @@ class Chat:
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
-            platform_call=platform_call, notify=self.notify, now=now, plugins=plugins)
+            platform_call=platform_call, notify=self.notify, now=now, plugins=plugins, reference=reference)
         self.set_external_tools(external_tools)
 
     def set_external_tools(self, external_tools: list[ExternalTool]) -> None:

@@ -24,11 +24,13 @@ from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ToolCall
 from ..models.request import ChatRequest
 from ..persona.profile import Persona
-from ..persona.knowledge import PERSONA_KNOWLEDGE_TOOL, PersonaKnowledgeArguments, persona_knowledge
 from ..platform.platform_tools import (MEMBER_INFO_TOOL, OPEN_FORWARD_TOOL, MemberInfoArguments,
                              MESSAGE_REACTION_TOOL, MessageReactionArguments, message_reaction,
                              OpenForwardArguments, PlatformCall, member_info, open_forward)
 from .recall import RECALL_TOOL, RecallArguments, recall_chat
+from ..reference.library import ReferenceLibrary
+from ..reference.sources import has_files, scene_directory
+from ..reference.tool import KNOWLEDGE_TOOL, KnowledgeArguments, knowledge
 from ..trials.replay_images import RecordedImages
 from ..trials.replay_web import RecordedWeb
 from .scene_control import SCENE_CONTROL_TOOL, SceneControlArguments
@@ -139,7 +141,7 @@ def tool_catalog(*, platform: bool) -> list[dict]:
         **SAY_TOOL["function"], "description": "在当前场景表达；结果返回实际原文和平台发送状态。",
     }}
     catalog = [say, REACT_TOOL, WAIT_TOOL, RECALL_TOOL, WEB_SEARCH_TOOL, WEB_READ_TOOL, LOOK_TOOL,
-            *SCHEDULE_TOOLS, PERSONA_KNOWLEDGE_TOOL, MEMORY_TOOL, DELEGATE_TOOL, TASK_TOOL,
+            *SCHEDULE_TOOLS, KNOWLEDGE_TOOL, MEMORY_TOOL, DELEGATE_TOOL, TASK_TOOL,
             SEND_FILE_TOOL, OPEN_FORWARD_TOOL, MEMBER_INFO_TOOL, MESSAGE_REACTION_TOOL, TRANSCRIBE_TOOL, SCENE_CONTROL_TOOL, HOST_MANAGE_TOOL, TOOL_SEARCH,
             ATTENTION_TOOL]
     return [{**tool, "function": {**tool["function"],
@@ -185,8 +187,9 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
             reasons.append("还没有设置 NapCat 能看到的文件目录")
         if config.delivery != "onebot":
             reasons.append("模拟发送时不能发文件")
-    if name == "persona_knowledge" and not persona.knowledge:
-        reasons.append("角色没有资料文件")
+    if (name == "knowledge" and not persona.knowledge
+            and not has_files(scene_directory(config._instance_root, config.scene))):
+        reasons.append("角色没有设定资料，本聊天也没有资料文件")
     if name in {"open_forward", "member_info", "transcribe", "message_reaction"} and config.delivery != "onebot":
         reasons.append("模拟发送时用不了")
     if name in {"member_info", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
@@ -215,7 +218,7 @@ def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
 
 def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_management: bool = False) -> list[dict]:
     if persona.tools != "all":
-        for name in ("web_read", "web_search", "look", "persona_knowledge", "memory", "react"):
+        for name in ("web_read", "web_search", "look", "memory", "react"):
             if name in persona.tools:
                 reasons = tool_unavailable_reasons(config, persona, name)
                 if reasons:
@@ -280,9 +283,10 @@ class SceneTools:
                  memory: MemoryService | None, tasks: WorkTasks | None, audio: AudioService | None,
                  upload_file: Callable[[str, str, str], Awaitable[UploadResult]] | None,
                  platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float],
-                 plugins: MemoryPlugins | None = None):
+                 plugins: MemoryPlugins | None = None, reference: ReferenceLibrary | None = None):
         self.config, self.persona, self.store = config, persona, store
         self.plugins = plugins
+        self.reference = ReferenceLibrary(config._instance_root) if reference is None else reference
         self.expression, self.request, self.vision = expression, request, vision
         # Images the mind model looked at itself in the current turn, newest last.
         self.looked: list[tuple[str, bytes]] = []
@@ -449,10 +453,9 @@ class SceneTools:
             # A history search may scan many rows; it reads on the database thread without the write lock.
             return await self.store.read(recall_chat, self.store, self.config.scene, self.config.timezone,
                                          RecallArguments.model_validate(call.arguments)), None, None
-        if call.name == "persona_knowledge":
-            arguments = PersonaKnowledgeArguments.model_validate(call.arguments)
-            return persona_knowledge(self.persona.id, self.persona.name, self.persona.knowledge,
-                                     arguments), None, None
+        if call.name == "knowledge":
+            return await knowledge(self.reference, self.config.scene, self.persona, self.persona.name,
+                                   KnowledgeArguments.model_validate(call.arguments)), None, None
         if call.name == "web_read":
             return await execute_web_read(self.store, self.config.scene, self.config.web_read,
                                           WebReadArguments.model_validate(call.arguments), recording=self.replay_web,

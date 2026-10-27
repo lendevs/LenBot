@@ -3,10 +3,10 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-DISCOVERY_REQUIRED_NAMES = frozenset({"scene_control", "host_manage", "schedule_list", "schedule_cancel", "persona_knowledge", "open_forward", "member_info", "transcribe", "message_reaction"})
+DISCOVERY_REQUIRED_NAMES = frozenset({"scene_control", "host_manage", "schedule_list", "schedule_cancel", "knowledge", "open_forward", "member_info", "transcribe", "message_reaction"})
 
 
-DEFERRED_NAMES = frozenset({"schedule", "memory", "delegate", "task", "send_file", "web_search", "web_read", "scene_control", "host_manage", "schedule_list", "schedule_cancel", "persona_knowledge", "open_forward", "member_info", "transcribe", "message_reaction"})
+DEFERRED_NAMES = frozenset({"schedule", "memory", "delegate", "task", "send_file", "web_search", "web_read", "scene_control", "host_manage", "schedule_list", "schedule_cancel", "knowledge", "open_forward", "member_info", "transcribe", "message_reaction"})
 
 
 def deferred_names(allowed_names: set[str], config) -> frozenset[str]:

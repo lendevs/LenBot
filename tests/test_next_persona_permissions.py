@@ -11,7 +11,8 @@ from len_bot.next.chat.session import Chat
 from len_bot.next.config import load_config
 from len_bot.next.models.client import ChatModel, ToolCall
 from len_bot.next.persona.profile import load_persona
-from len_bot.next.persona.knowledge import PersonaKnowledgeArguments, persona_knowledge
+from len_bot.next.reference.library import ReferenceLibrary
+from len_bot.next.reference.tool import KnowledgeArguments, knowledge
 from len_bot.next.storage.store import Store
 
 
@@ -52,30 +53,36 @@ def _config(root: Path, package: Path):
     return load_config(root)
 
 
-def test_loaded_persona_documents_cannot_cross_packages_or_escape_by_filename(tmp_path: Path) -> None:
+SCENE = "onebot:group:80001"
+
+
+def _read(filename: str) -> KnowledgeArguments:
+    return KnowledgeArguments(action="read", scope="persona", filename=filename)
+
+
+@pytest.mark.asyncio
+async def test_loaded_persona_documents_cannot_cross_packages_or_escape_by_filename(tmp_path: Path) -> None:
     alpha_text = "---\ntags: [合成甲] \n---\n甲的合成设定，日期与原话仍在文件里。\n"
     beta_text = "---\ntags: [合成乙]\n---\n乙的独立设定，不属于甲。\n"
-    alpha_path = _package(tmp_path, "alpha", tools=["tool_search", "persona_knowledge"],
+    alpha_path = _package(tmp_path, "alpha", tools=["tool_search", "knowledge"],
                           documents={"shared.md": alpha_text, "lore/inside.md": "甲的子目录合成资料。\n"})
-    beta_path = _package(tmp_path, "beta", tools=["tool_search", "persona_knowledge"],
+    beta_path = _package(tmp_path, "beta", tools=["tool_search", "knowledge"],
                          documents={"shared.md": beta_text, "private.md": "乙的私有合成资料。\n"})
     alpha, beta = load_persona(alpha_path), load_persona(beta_path)
 
     assert alpha.knowledge["shared.md"].content == alpha_text
     assert beta.knowledge["shared.md"].content == beta_text
     assert "lore/inside.md" in alpha.knowledge and "private.md" not in alpha.knowledge
-    alpha_page = persona_knowledge(alpha.id, alpha.name, alpha.knowledge,
-                                   PersonaKnowledgeArguments(action="read", filename="shared.md"))
-    beta_page = persona_knowledge(beta.id, beta.name, beta.knowledge,
-                                  PersonaKnowledgeArguments(action="read", filename="shared.md"))
+    library = ReferenceLibrary(None)
+    alpha_page = await knowledge(library, SCENE, alpha, alpha.name, _read("shared.md"))
+    beta_page = await knowledge(library, SCENE, beta, beta.name, _read("shared.md"))
     assert "甲的合成设定" in alpha_page and "乙的独立设定" not in alpha_page
     assert "乙的独立设定" in beta_page and "甲的合成设定" not in beta_page
     (alpha_path / "knowledge" / "added-after-load.md").write_text("未加载的合成文件。\n", encoding="utf-8")
     for filename in ("private.md", "added-after-load.md", "../beta/knowledge/private.md",
                      str(beta_path / "knowledge" / "private.md")):
         with pytest.raises(ValueError):
-            persona_knowledge(alpha.id, alpha.name, alpha.knowledge,
-                              PersonaKnowledgeArguments(action="read", filename=filename))
+            await knowledge(library, SCENE, alpha, alpha.name, _read(filename))
 
 
 def test_role_load_rejects_external_links_but_accepts_a_file_link_inside_knowledge(tmp_path: Path) -> None:
@@ -106,10 +113,10 @@ async def test_chat_only_exposes_current_role_documents_after_allowed_discovery(
 
     no_docs = _package(tmp_path, "empty", tools="all", documents={})
     explicit_missing = _package(tmp_path, "explicit-missing",
-                                tools=["tool_search", "persona_knowledge"], documents={})
-    no_search = _package(tmp_path, "no-search", tools=["persona_knowledge"],
+                                tools=["tool_search", "knowledge"], documents={})
+    no_search = _package(tmp_path, "no-search", tools=["knowledge"],
                          documents={"one.md": "仅合成权限资料。\n"})
-    allowed = _package(tmp_path, "allowed", tools=["tool_search", "persona_knowledge"],
+    allowed = _package(tmp_path, "allowed", tools=["tool_search", "knowledge"],
                        documents={"one.md": "获准角色的合成资料。\n"})
     forbidden = _package(tmp_path, "forbidden", tools=[],
                          documents={"one.md": "无权限角色的合成资料。\n"})
@@ -118,29 +125,29 @@ async def test_chat_only_exposes_current_role_documents_after_allowed_discovery(
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind:
             chat = Chat(config, load_persona(no_docs), store, mind)
-            assert "persona_knowledge" not in chat.toolset.tool_names
-            with pytest.raises(ValueError, match="persona_knowledge|knowledge"):
-                Chat(config, load_persona(explicit_missing), store, mind)
+            assert "knowledge" not in chat.toolset.tool_names
+            # Files of the chat can arrive later, so a role that lists the tool still loads.
+            assert "knowledge" not in Chat(config, load_persona(explicit_missing), store, mind).toolset.tool_names
             with pytest.raises(ValueError, match="tool_search"):
                 Chat(config, load_persona(no_search), store, mind)
 
             chat = Chat(config, load_persona(allowed), store, mind)
-            assert "tool_search" in chat.toolset.tool_names and "persona_knowledge" not in chat.toolset.tool_names
-            read = ToolCall(id="synthetic-read", name="persona_knowledge",
-                            arguments={"action": "read", "filename": "one.md"})
-            with pytest.raises(ValueError, match="persona_knowledge"):
+            assert "tool_search" in chat.toolset.tool_names and "knowledge" not in chat.toolset.tool_names
+            read = ToolCall(id="synthetic-read", name="knowledge",
+                            arguments={"action": "read", "scope": "persona", "filename": "one.md"})
+            with pytest.raises(ValueError, match="knowledge"):
                 await chat.toolset.execute("unused-turn", read, wait_for_messages)
 
             search = ToolCall(id="synthetic-search", name="tool_search",
-                              arguments={"query": "persona_knowledge"})
+                              arguments={"query": "knowledge"})
             result, expression, discovered = await chat.toolset.execute(
                 "unused-turn", search, wait_for_messages,
             )
-            assert expression is None and "persona_knowledge" in discovered
-            assert "persona_knowledge" not in chat.toolset.tool_names  # same request still cannot use it
+            assert expression is None and "knowledge" in discovered
+            assert "knowledge" not in chat.toolset.tool_names  # same request still cannot use it
             store.complete_tool(config.scene, search.id, result, discovered_tools=discovered)
             chat = Chat(config, load_persona(allowed), store, mind)
-            assert "persona_knowledge" in chat.toolset.tool_names
+            assert "knowledge" in chat.toolset.tool_names
             content, expression, discovered = await chat.toolset.execute(
                 "unused-turn", read, wait_for_messages,
             )
@@ -150,8 +157,8 @@ async def test_chat_only_exposes_current_role_documents_after_allowed_discovery(
 
             # Persisted discovery is not permission: a different loaded role loses access.
             chat = Chat(config, load_persona(forbidden), store, mind)
-            assert "persona_knowledge" not in chat.toolset.tool_names
-            with pytest.raises(ValueError, match="persona_knowledge"):
+            assert "knowledge" not in chat.toolset.tool_names
+            with pytest.raises(ValueError, match="knowledge"):
                 await chat.toolset.execute("unused-turn", read, wait_for_messages)
 
 

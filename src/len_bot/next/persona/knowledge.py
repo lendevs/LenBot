@@ -1,18 +1,12 @@
-"""Read one role's Markdown knowledge snapshot and page it by actual filename."""
+"""Read one role's Markdown knowledge snapshot; the ``knowledge`` tool searches it through the reference index."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import os
 from pathlib import Path
-import re
-from string import Template
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import yaml
-from ..prompt_files import read_prompt
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,92 +96,3 @@ def load_knowledge(persona_root: Path) -> dict[str, PersonaDocument]:
             documents[path.relative_to(directory).as_posix()] = _document(path)
 
     return dict(sorted(documents.items()))
-
-
-class PersonaKnowledgeArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    action: Literal["list", "search", "read"] = "list"
-    query: str | None = None
-    filename: str | None = None
-    offset: int = Field(default=0, ge=0, strict=True)
-
-    @field_validator("query", "filename")
-    @classmethod
-    def nonblank(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("query and filename must not be blank")
-        return value
-
-    @model_validator(mode="after")
-    def operation_fields(self) -> PersonaKnowledgeArguments:
-        if self.action == "list":
-            if self.query is not None or self.filename is not None:
-                raise ValueError("list does not accept query or filename")
-        elif self.action == "search":
-            if self.query is None or self.filename is not None:
-                raise ValueError("search requires query and does not accept filename")
-        elif self.filename is None or self.query is not None:
-            raise ValueError("read requires filename and does not accept query")
-        return self
-
-
-PERSONA_KNOWLEDGE_TOOL = {"type": "function", "function": {
-    "name": "persona_knowledge",
-    "description": "按需查当前角色设定资料；list列文件名和标签，search按文件名/标签/全文原词匹配，"
-                   "两者每页5项、offset是条目位置；read用真实filename每页读4000字符、offset是原文字符位置。"
-                   "按next_offset续页；搜索preview是命中片段，content_offset是原文命中位置。",
-    "parameters": PersonaKnowledgeArguments.model_json_schema(),
-}}
-
-
-def _page(items: list[dict], offset: int) -> tuple[list[dict], int | None]:
-    if offset > len(items):
-        raise ValueError(f"offset {offset} exceeds result count {len(items)}")
-    end = min(offset + 5, len(items))
-    return items[offset:end], end if end < len(items) else None
-
-
-def persona_knowledge(persona_id: str, persona_name: str,
-                      documents: dict[str, PersonaDocument],
-                      arguments: PersonaKnowledgeArguments) -> str:
-    filenames = sorted(documents)
-    if arguments.action == "list":
-        items = [{"filename": name, "tags": list(documents[name].tags)} for name in filenames]
-        page, next_offset = _page(items, arguments.offset)
-        result = {"action": "list", "offset": arguments.offset,
-                  "next_offset": next_offset, "documents": page}
-    elif arguments.action == "search":
-        pattern = re.compile(re.escape(arguments.query), re.IGNORECASE)
-        matches = []
-        for name in filenames:
-            document = documents[name]
-            body_match = pattern.search(document.content)
-            if body_match is None and pattern.search(name) is None and not any(
-                    pattern.search(tag) for tag in document.tags):
-                continue
-            position = 0 if body_match is None else body_match.start()
-            matches.append({"filename": name, "tags": list(document.tags),
-                            "content_offset": position, "total_chars": len(document.content),
-                            "preview": document.content[position:position + 240]})
-        page, next_offset = _page(matches, arguments.offset)
-        result = {"action": "search", "query": arguments.query, "offset": arguments.offset,
-                  "next_offset": next_offset, "matches": page}
-    else:
-        name = arguments.filename
-        if name not in documents:
-            raise ValueError(f"Current persona has no knowledge file {name!r}")
-        document = documents[name]
-        if arguments.offset > len(document.content):
-            raise ValueError(
-                f"offset {arguments.offset} exceeds {name!r} length {len(document.content)}"
-            )
-        end = min(arguments.offset + 4000, len(document.content))
-        result = {"action": "read", "filename": name, "tags": list(document.tags),
-                  "offset": arguments.offset, "total_chars": len(document.content),
-                  "next_offset": end if end < len(document.content) else None,
-                  "text": document.content[arguments.offset:end]}
-    return Template(read_prompt("next_persona_knowledge.md")).substitute(
-        persona_id=persona_id, persona_name=persona_name,
-        result=json.dumps(result, ensure_ascii=False, allow_nan=False),
-    )

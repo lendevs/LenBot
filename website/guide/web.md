@@ -43,7 +43,7 @@
 |---|---|
 | `recall_chat` | 按关键词、发言人和时间查询本群历史消息，查看前后文 |
 | `memory` | 搜索、读取和写入本群记忆，见[记忆与学习](./memory) |
-| `persona_knowledge` | 检索角色包中的资料 |
+| `knowledge` | 检索角色设定资料和本群资料文件，返回原文片段、文件名和位置。本群资料放在实例的 `state/reference/scenes/<群>/`，支持 Markdown、纯文本和 PDF |
 | `look` | 查看消息中的图片 |
 | `open_forward` | 读取合并转发的聊天记录（QQ） |
 | `member_info` | 查询群成员名单和群友资料（QQ 群） |

@@ -35,7 +35,7 @@ from ..next.storage.store import FORMAT_VERSION, encode, turn_record
 
 
 LOCAL_TOOLS = {"say", "wait", "recall_chat", "schedule", "schedule_list", "schedule_cancel",
-               "persona_knowledge", "tool_search", "react", "scene_control", "memory", "web_read", "web_search", "look",
+               "knowledge", "tool_search", "react", "scene_control", "memory", "web_read", "web_search", "look",
                "attention", "end_turn"}
 
 
