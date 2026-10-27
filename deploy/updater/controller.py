@@ -189,7 +189,7 @@ class Controller:
                 raise ValueError('未知更新操作')
             available = self.actions()
             if action not in available:
-                raise ValueError(f'现在不能{LABELS[action]}；可以：' + ('、'.join(LABELS[item] for item in available) or '等待当前操作结束'))
+                raise ValueError(f'当前不能{LABELS[action]}；可执行：' + ('、'.join(LABELS[item] for item in available) or '等待当前操作结束'))
             if action == 'prepare':
                 tag = payload['tag']
                 version_key(tag.removeprefix('v'))
@@ -263,15 +263,15 @@ class Controller:
         """Commands that switch to a newer updater."""
         if self.deployment['mode'] == 'native':
             return (f'{tag} 需要新版更新器，请停止 LenBot，下载 {tag} 的部署包并解压，'
-                    f'运行其中的 install.sh upgrade {self.root}（Windows 用 install.ps1 upgrade {self.root}），'
-                    '它会同时更新程序和更新器，完成后再启动 LenBot。')
+                    f'运行其中的 install.sh upgrade {self.root}（Windows 使用 install.ps1 upgrade {self.root}），'
+                    '该命令同时更新程序和更新器，完成后启动 LenBot。')
         version = tag.removeprefix('v')
         image = repository(self.backend.metadata()['host_image']) + '-updater:' + version
         return (f'{tag} 需要新版更新器，请在部署目录 {self.deployment["host_directory"]} 依次运行：\n'
                 f'docker run --rm --mount type=bind,source={self.deployment["host_directory"]},target=/deployment '
                 f'--entrypoint python {image} /opt/lenbot-updater/init.py --version {version} --updater-only\n'
                 f'docker compose -p {self.deployment["project"]} -f host.updater.compose.yaml up -d\n'
-                '新的更新器启动后，回到这里再准备更新。')
+                '新的更新器启动后，返回此页重新准备更新。')
 
     def apply(self) -> None:
         target = self.state['target']
@@ -328,16 +328,16 @@ class Controller:
         if self.state.get('platform_before') is not True:
             connected = self.platform_connected()
             if connected is False:
-                self.state['warning'] = ('更新前后都没有连上 QQ' if self.state.get('platform_before') is False
-                                         else '新版本没有连上 QQ（更新前的程序没有报告连接状态）'
-                                         ) + '；版本已经更新，请检查 QQ 端和连接设置。'
+                self.state['warning'] = ('更新前后均未连接 QQ' if self.state.get('platform_before') is False
+                                         else '新版本未连接 QQ（更新前的程序未报告连接状态）'
+                                         ) + '；版本已更新，请检查 QQ 客户端和连接设置。'
                 self.record('platform_not_connected', level='WARNING', before=self.state.get('platform_before'))
             return
         self.stage('connect')
         deadline = time.monotonic() + self.connect_seconds
         while self.platform_connected() is not True:
             if time.monotonic() > deadline:
-                raise TimeoutError(f'新版本 {self.connect_seconds} 秒内没有连上 QQ（更新前是连上的）')
+                raise TimeoutError(f'新版本 {self.connect_seconds} 秒内未连接 QQ（更新前已连接）')
             time.sleep(0.5)
 
     def roll_back(self, reason: str) -> None:
@@ -355,7 +355,7 @@ class Controller:
             self.backend.start()
             self.backend.ready(self.backend.metadata())
         except Exception as error:
-            raise RuntimeError(f'更新失败（{reason}），已恢复快照，但旧版本没有启动：{type(error).__name__}: {error}') from error
+            raise RuntimeError(f'更新失败（{reason}），已恢复快照，但旧版本未能启动：{type(error).__name__}: {error}') from error
         self.stage('rolled_back', status='rolled_back', stopped=False, rolled_back_from=target['version'],
                    error=f'更新到 {target["version"]} 失败，已自动恢复到 {self.backend.metadata()["version"]}：{reason}')
 
@@ -400,14 +400,14 @@ class Controller:
             raise ValueError('已有一个更新操作正在执行')
         try:
             if snapshot_time(name) is None:
-                raise LookupError('没有这份快照')
+                raise LookupError('快照不存在')
             path = self.root / 'backups' / name
             removing = path.with_name(REMOVING + name)
             if not path.is_symlink() and path.is_dir():
                 restores = self.restores(name)
                 if restores:
                     if self.state['status'] != 'complete':
-                        raise ValueError('上次更新失败后还没有恢复，恢复要用这份快照')
+                        raise ValueError('上次更新失败后尚未恢复，恢复需要使用此快照')
                     # The completed update gives up its way back before the snapshot leaves its place.
                     self.state['snapshot_complete'] = False
                     write_json(self.state_file, self.state)
@@ -419,7 +419,7 @@ class Controller:
                         write_json(self.state_file, self.state)
                     raise
             elif removing.is_symlink() or not removing.is_dir():
-                raise LookupError('没有这份快照')
+                raise LookupError('快照不存在')
             remove_tree(removing)
             self.record('snapshot_deleted', snapshot=name)
         finally:

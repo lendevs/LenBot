@@ -211,7 +211,7 @@ class PluginInstaller:
             raise ValueError(f'Plugin candidate must contain source rather than Python bytecode: {bytecode}')
         manifest = parse_manifest(checkout / 'plugin.toml')
         if expected_name is not None and manifest.name != expected_name:
-            raise ValueError(f'仓库清单的插件名是 {manifest.name}，不是 {expected_name}；没有准备候选版本')
+            raise ValueError(f'仓库清单的插件名是 {manifest.name}，不是 {expected_name}；未准备候选版本')
         if (expected_permissions is not None and manifest.permissions is not None
                 and set(expected_permissions) != set(manifest.permissions)):
             raise ValueError(f'仓库清单声明的权限是 {manifest.permissions}，目录写的是 {list(expected_permissions)}；'
@@ -371,7 +371,7 @@ class PluginInstaller:
         record = self.read(name)
         previous = self.directory / '.previous' / name
         if record.previous is None or not previous.is_dir():
-            raise ValueError(f'{name} 没有保留上一版本源码')
+            raise ValueError(f'{name} 未保留上一版本源码')
         destination = self.directory / name
         if destination.exists():
             shutil.rmtree(destination)

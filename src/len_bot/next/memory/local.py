@@ -378,7 +378,7 @@ class LocalMemory:
             if identity == (_APPLICATION_ID, FORMAT_VERSION):
                 return
             if identity != (0, 0) or db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is not None:
-                raise ValueError(f"{self.index} 不是这个版本使用的本地记忆索引格式 {FORMAT_VERSION}"
+                raise ValueError(f"{self.index} 不是当前版本使用的本地记忆索引格式 {FORMAT_VERSION}"
                                  f"（application_id={identity[0]}, user_version={identity[1]}）。{FORMAT_RESET}")
             # One transaction: an interrupted first start leaves an empty file, not half a schema.
             db.executescript(f"""

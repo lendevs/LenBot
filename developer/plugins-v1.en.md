@@ -52,7 +52,7 @@ A deployment can switch off single rules while the rest of a plugin keeps workin
 
 Time limits:
 
-- `start()` has 60 seconds. When it overruns, the host cancels it and marks the plugin failed with `TimeoutError: 插件 start() 超过 60 秒没有返回，已取消`; the rest of the host starts normally.
+- `start()` has 60 seconds. When it overruns, the host cancels it and marks the plugin failed with `TimeoutError: 插件 start() 超过 60 秒未返回，已取消`; the rest of the host starts normally.
 - `stop()` has 30 seconds. An overrunning `stop()` is cancelled and reported the same way, and shutdown continues.
 - Slow preparation, such as waiting for the network or warming a cache, belongs in `start_task` rather than being awaited in `start()`.
 - `migrate_data` has no time limit.

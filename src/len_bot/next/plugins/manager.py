@@ -101,9 +101,9 @@ class PluginManager:
             raise ValueError(f'根配置没有插件 {name}，请先配置并启用')
         metadata = self.installer.records / (name + '.json')
         if metadata.is_file() and self.installer.read(name).candidate is not None:
-            raise ValueError('先应用或取消候选版本，再重载已安装源码')
+            raise ValueError('请先应用或取消候选版本，再重载已安装源码')
         if plugin_manifest(saved, name).reload == 'host':
-            raise ValueError('这个插件声明需要宿主重启，请使用重启入口')
+            raise ValueError('此插件声明需要重启宿主，请使用重启入口')
         await self.apply(name, saved)
 
     async def _register_candidate(self, manifest: Manifest, output: str) -> dict:
@@ -178,10 +178,10 @@ class PluginManager:
                 try:
                     result = await self.rollback(name, restore_data=True)
                 except Exception as rollback_error:
-                    error.add_note(f'回到上一版本也失败：{type(rollback_error).__name__}: {rollback_error}')
+                    error.add_note(f'恢复上一版本也失败：{type(rollback_error).__name__}: {rollback_error}')
                 else:
                     restored = result['restored_data']
-                    error.add_note('已回到上一版本源码' + (f'，插件数据已从 {restored} 恢复' if restored else ''))
+                    error.add_note('已恢复上一版本源码' + (f'，插件数据已从 {restored} 恢复' if restored else ''))
             self.installer.failed(name, error)
             raise
         return {'name': name, 'restart_required': False}
@@ -244,11 +244,11 @@ class PluginManager:
         if saved.plugins is None:
             raise ValueError('根配置没有插件数据目录')
         if name in saved.plugins.configured and name not in saved.plugins.disabled:
-            raise ValueError('先停用插件，再单独删除其数据')
+            raise ValueError('请先停用插件，再单独删除其数据')
         if self.runtime.plugins is not None and name in self.runtime.plugins.plugins:
             record = self.runtime.plugins.plugins[name]
             if record.status in {'loaded', 'running'} or record.instance is not None:
-                raise ValueError('插件资源仍在运行，先停止后再删除数据')
+                raise ValueError('插件资源仍在运行，请先停止再删除数据')
         directory = saved.plugins.data_directory / name
         if directory.resolve() != directory:
             raise ValueError('删除插件数据不穿过目录链接')

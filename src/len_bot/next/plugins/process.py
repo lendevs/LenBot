@@ -37,7 +37,7 @@ def describe(directory: Path, name: str) -> list[dict]:
         done = subprocess.run([*WORKER, "describe", str(directory), name], capture_output=True, text=True,
                               timeout=DESCRIBE_SECONDS, check=False)
     except subprocess.TimeoutExpired as error:
-        raise TimeoutError(f"插件 {name} 的进程在 {DESCRIBE_SECONDS} 秒内没有完成导入") from error
+        raise TimeoutError(f"插件 {name} 的进程在 {DESCRIBE_SECONDS} 秒内未完成导入") from error
     lines = done.stdout.strip().splitlines()
     if done.returncode != 0 or not lines:
         raise RuntimeError(f"插件 {name} 的进程导入失败（退出码 {done.returncode}）：{done.stderr.strip()[-2000:]}")
@@ -125,10 +125,10 @@ class Worker:
     async def _ensure(self) -> asyncio.subprocess.Process:
         async with self.lock:
             if self.closing:
-                raise RuntimeError(f"插件 {self.ctx.name} 的进程已经停止")
+                raise RuntimeError(f"插件 {self.ctx.name} 的进程已停止")
             if self.process is not None:
                 if self.process.returncode is not None:
-                    raise RuntimeError(f"插件 {self.ctx.name} 的进程已经退出，请在面板重载插件")
+                    raise RuntimeError(f"插件 {self.ctx.name} 的进程已退出，请在面板重载插件")
                 return self.process
             self.process = await asyncio.create_subprocess_exec(
                 *WORKER, "run", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
@@ -193,7 +193,7 @@ class Worker:
                 else f"插件 {self.ctx.name} 的进程协议出错，已结束进程：{failure}")
         for future in self.pending.values():
             if not future.done():
-                future.set_exception(RuntimeError(text + "，本次调用没有完成"))
+                future.set_exception(RuntimeError(text + "，本次调用未完成"))
         if not self.closing:
             log_event(logger, "plugin_process_exited", text, level=logging.ERROR, plugin=self.ctx.name, code=code)
             self.host.worker_exited(self.ctx.name, text)

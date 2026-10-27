@@ -229,7 +229,7 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 `lenbot.config.json` 是唯一的运行参数来源，在入口处一次性解析并完整校验。面板和群里的管理工具都通过 `configuration/editing.py` 保存配置，共用一把写锁。保存后由 `runtime/settings.py` 将可即时应用的配置写入当前场景，面板返回保存值、运行值与待重启差异。插件配置定向重新加载，群聊接入与移除也立即应用。
 
 `POST /api/host/settings/scenes` 创建 Chat、SceneRunner 及相应的记忆和学习工作线程；
-`DELETE /api/host/settings/scenes/{scene}` 立即停止该群接收输入，等待当前回合收尾，再关闭该群后台工作和正在执行的独立任务。
+`DELETE /api/host/settings/scenes/{scene}` 立即停止该群接收输入，等待当前回合收尾，再关闭该群后台工作和正在执行的后台任务。
 其他群继续执行，消息与任务历史不删除。移除会从 MCP 和任务归档范围中去掉该群，并重新加载受影响的插件。
 可以移除最后一个群；平台连接与面板继续运行，供再次接入。
 `GET /api/host/settings/scenes/available` 查询 Bot 已加入、尚未接入的群；没有连接 OneBot 时返回空列表。

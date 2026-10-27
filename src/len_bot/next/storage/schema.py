@@ -5,7 +5,7 @@ from functools import cache
 import sqlite3
 
 # Until the first release candidate a format change comes without an upgrade step.
-FORMAT_RESET = '发布前的格式变化不带升级步骤，请用新的实例目录重新配置，旧目录可以留作备份。'
+FORMAT_RESET = '发布前的格式变更不提供升级步骤，请使用新的实例目录重新配置，旧目录可保留作备份。'
 
 
 SCHEMA = """

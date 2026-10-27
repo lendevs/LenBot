@@ -10,9 +10,9 @@ uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot ../le
 uv run --no-sync len-bot
 ```
 
-`upgrade run` 先把实例目录（源码运行时是整个仓库目录）和配置引用的外部目录复制到 `--snapshot`，再恢复插件依赖，最后运行 doctor。任何一步失败都会从快照恢复。快照目录每次用一个新的，放在实例目录和外部数据目录之外。
+`upgrade run` 先把实例目录（源码运行时是整个仓库目录）和配置引用的外部目录复制到 `--snapshot`，再恢复插件依赖，最后运行 doctor。任何一步失败都会从快照恢复。每次使用新的快照目录，放在实例目录和外部数据目录之外。
 
-升级成功后想退回旧版本：停止 LenBot，用 restore 恢复升级前的数据，再切回旧版本代码并运行 `./scripts/install.sh`。
+升级后需要回退时：停止 LenBot，用 restore 恢复升级前的数据，再切回旧版本代码并运行 `./scripts/install.sh`。
 
 ```sh
 uv run --no-sync python -m len_bot.next.maintenance.upgrade restore --snapshot ../lenbot-backup-20261023
@@ -43,7 +43,7 @@ uv run --no-sync python -m len_bot.next.maintenance.doctor
 
 ## 测试副本
 
-不希望改动正在使用的数据时，停止 LenBot 后复制一份测试实例：
+需要在不改动现有数据的情况下测试时，停止 LenBot 后复制一份测试实例：
 
 ```sh
 uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test --panel-port 8089

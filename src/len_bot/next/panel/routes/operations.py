@@ -53,7 +53,7 @@ def register_host_operations(app, *, runtime, user):
     config, store = runtime.config, runtime.store
     def scene_exists(scene):
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
     async def archive(payload):
         def plugin_redactor(text):
             if runtime.plugins is not None:
@@ -73,10 +73,10 @@ def register_host_operations(app, *, runtime, user):
             raise HTTPException(422, '请明确确认本次会话操作')
         runner = runtime.runners[scene]
         if runner.execution.locked() or runtime.status in {'stopping', 'stopped'}:
-            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后再试')
+            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后重试')
         async with runner.execution:
             if store.db.execute('SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1', (scene,)).fetchone():
-                raise HTTPException(409, '场景还有未结束或等待恢复的轮次，请等它结束后再试')
+                raise HTTPException(409, '场景有未结束或等待恢复的回合，请在结束后重试')
             if action == 'new-context':
                 through = store.new_context(scene)
                 runner.chat.toolset.discovered_tools = set()
@@ -97,7 +97,7 @@ def register_host_operations(app, *, runtime, user):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if runner.execution.locked() or not runtime.accepting:
-            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后再试')
+            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后重试')
         async with runner.execution:
             result = runner.set_temporary_quiet(change.seconds, change.direct, None)
             runtime.events.publish("host.state", scene=scene)
@@ -108,7 +108,7 @@ def register_host_operations(app, *, runtime, user):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if runner.execution.locked() or not runtime.accepting:
-            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后再试')
+            raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后重试')
         async with runner.execution:
             result = runner.set_temporary_quiet(None, 'allow', None)
             runtime.events.publish("host.state", scene=scene)
@@ -119,7 +119,7 @@ def register_host_operations(app, *, runtime, user):
         scene_exists(scene)
         runner = runtime.runners[scene]
         if not runtime.accepting:
-            raise HTTPException(409, '宿主没有在运行，请先启动再切换聊天开关')
+            raise HTTPException(409, '宿主未运行，请先启动再切换聊天开关')
         # Waits for a running turn to finish so its saved attention state cannot overwrite the switch.
         async with runner.execution:
             result = runner.set_paused(not change.enabled)
@@ -130,7 +130,7 @@ def register_host_operations(app, *, runtime, user):
     async def all_chat(change: ChatSwitch, _: str = Depends(user)):
         """Every scene at once, e.g. when model quota runs out; messages are still stored."""
         if not runtime.accepting:
-            raise HTTPException(409, '宿主没有在运行，请先启动再切换聊天开关')
+            raise HTTPException(409, '宿主未运行，请先启动再切换聊天开关')
         async def switch(runner):
             async with runner.execution:
                 return runner.set_paused(not change.enabled)
@@ -154,7 +154,7 @@ def register_host_operations(app, *, runtime, user):
                 return records.turn_detail(scene, turn_id)
         detail = await asyncio.to_thread(read)
         if detail is None:
-            raise HTTPException(404, '当前场景没有这一轮')
+            raise HTTPException(404, '当前场景不存在此回合')
         logs = await asyncio.to_thread(read_records, config.logging.directory, limit=2000, match={'turn_id': turn_id})
         return await archive({'turn': detail, 'log': list(reversed(logs)),
                         'scope': '实际轮次与调用，以及同一轮 ID 的运行日志；输入原话见保存的请求'})
@@ -281,6 +281,6 @@ def register_host_operations(app, *, runtime, user):
     async def file(name: str, _: str = Depends(user)):
         paths = {p.name: p for p in log_paths()}
         if name not in paths:
-            raise HTTPException(404, '没有这一份日志')
+            raise HTTPException(404, '日志文件不存在')
         # Diagnostic exports, unlike local files, also mask account-shaped numbers.
         return await archive({'log': await asyncio.to_thread(paths[name].read_text, encoding='utf-8')})

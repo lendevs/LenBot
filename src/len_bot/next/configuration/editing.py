@@ -129,7 +129,7 @@ def save_config(root: Path, running: HostConfig, edit: Callable[[dict, HostConfi
                    for key in ("docker_host", "workspace_root", "runtime_root", "storage_pool")):
                 raise ValueError(
                     "运行中不能保存任务 Docker 地址、工作区、运行目录或存储池的迁移；"
-                    "先停机清理任务容器，再搬迁原文件和修改根配置。根配置未保存"
+                    "请先停机清理任务容器，再迁移原文件并修改根配置。根配置未保存"
                 )
         temporary.replace(path)
         sync_directory(path.parent)

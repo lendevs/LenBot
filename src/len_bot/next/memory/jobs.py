@@ -33,7 +33,7 @@ class MemoryJobs:
                 application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
                 version = self.db.execute("PRAGMA user_version").fetchone()[0]
                 if application_id != 0x4C424D4A or version != FORMAT_VERSION:
-                    raise ValueError(f"{path} 不是这个版本使用的记忆处理库格式 {FORMAT_VERSION}"
+                    raise ValueError(f"{path} 不是当前版本使用的记忆处理库格式 {FORMAT_VERSION}"
                                      f"（application_id={application_id}, user_version={version}）。{FORMAT_RESET}")
             else:
                 if readonly:

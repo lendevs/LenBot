@@ -470,7 +470,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         except LimitsConflict:
             async with write_lock:
                 saved = await asyncio.to_thread(_read_saved, root)
-            raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，这次提交的内容没有保存。请重新载入最新设置，重新填写后再保存。",
+            raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，本次提交未保存。请重新载入最新设置后重新填写。",
                                       "code": "limits_conflict", "data": {"snapshot": _snapshot(running, saved)}}) from None
 
     @app.put("/api/host/settings/limits/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
@@ -557,7 +557,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if 'memory_embedding' in change.model_fields_set:
                 if memory is None:
                     if change.memory_embedding is not None:
-                        raise ValueError('先在记忆页开启本地记忆，再配置记忆向量模型')
+                        raise ValueError('请先在记忆页开启本地记忆，再配置记忆向量模型')
                 else:
                     memory['local']['embedding'] = (None if change.memory_embedding is None
                                                    else change.memory_embedding.model_dump(mode='json'))
@@ -608,7 +608,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.put("/api/host/settings/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_scene(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         change: SceneChange = await _body(request, SceneChange)
 
         def edit(source: dict, saved: HostConfig) -> None:
@@ -641,7 +641,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.put("/api/host/settings/scenes/{scene}/tasks", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_tasks(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         change: TaskSceneChange = await _body(request, TaskSceneChange)
 
         def edit(source: dict, saved: HostConfig) -> None:
@@ -654,7 +654,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.get("/api/host/settings/scenes/{scene}/learning", response_model=responses.LearningSettingsSnapshot, response_model_exclude_unset=True)
     async def get_learning(scene: str, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         async with write_lock:
             try:
                 saved = await asyncio.to_thread(_read_saved, root)
@@ -666,7 +666,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.put("/api/host/settings/scenes/{scene}/learning", response_model=responses.LearningSettingsSnapshot, response_model_exclude_unset=True)
     async def put_learning(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         change: LearningSceneChange = await _body(request, LearningSceneChange)
 
         def edit(source: dict, saved: HostConfig) -> None:

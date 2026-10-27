@@ -71,7 +71,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
     @asynccontextmanager
     async def record_operation(scene: str):
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
         try:
             with processing_records(runtime.config.database, None if runtime.memory is None else runtime.memory.jobs) as records:
                 if records is None:
@@ -85,7 +85,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
     @asynccontextmanager
     async def operation(scene: str):
         if scene not in runtime.chats:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         if runtime.memory is None:
             raise HTTPException(409, "当前运行配置未启用长期记忆后端")
         try:

@@ -221,7 +221,7 @@ const state = useQuery({ queryKey: keys.host.state(), queryFn: ({ signal }) => h
 ## 其他约定
 
 - 插件参数表单由插件清单生成（`views/plugins/schema/SchemaForm.vue`），不为单个插件写专用表单。
-- 总览的需要处理的事在 `views/overview/attention.ts` 汇总，顶栏通知的计数和总览列表共用这一份数据。
+- 总览的待处理事项在 `views/overview/attention.ts` 汇总，顶栏通知的计数和总览列表共用这一份数据。
 
 
 ## 接口清单与响应模型

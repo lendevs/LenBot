@@ -133,7 +133,7 @@ class KnowledgeFilename(PersonaTarget):
         if (not value.endswith('.md') or '\\' in value
                 or any(part in {'', '.', '..'} or any(ord(char) < 32 for char in part)
                        for part in value.split('/'))):
-            raise ValueError(f'知识文件须为knowledge目录内的相对Markdown路径：{value!r}')
+            raise ValueError(f'知识文件须为 knowledge 目录内的相对 Markdown 路径：{value!r}')
         return value
 
 
@@ -150,7 +150,7 @@ def knowledge_target(root: Path, filename: str) -> Path:
         if ancestor.is_symlink():
             raise ValueError(f'角色资料编辑不穿越目录链接：{ancestor}')
     if target.is_symlink() or not target.resolve().is_relative_to(directory.resolve()):
-        raise ValueError(f'角色资料编辑不能通过链接或离开knowledge目录：{target}')
+        raise ValueError(f'角色资料编辑不能通过链接或离开 knowledge 目录：{target}')
     return target
 
 
@@ -181,7 +181,7 @@ def append_example(content: str, example: dict) -> str:
         node = yaml.compose(content)
         # Replace only the empty sequence, retaining surrounding comments/document markers.
         updated = content[:node.start_mark.index] + "\n" + block.rstrip("\n") + content[node.end_mark.index:]
-    not_block = "examples.yaml 不是可在末尾追加的块状列表；请在角色文件编辑器里手动添加"
+    not_block = "examples.yaml 不是可在末尾追加的块状列表；请在角色文件编辑器中手动添加"
     try:
         appended = yaml.safe_load(updated)
     except yaml.YAMLError as error:
@@ -204,7 +204,7 @@ class RoleScenes(BaseModel):
 
 def role_failure(error: Exception) -> HTTPException:
     if isinstance(error, LookupError):
-        return HTTPException(404, '角色库里没有这个角色')
+        return HTTPException(404, '角色库中不存在此角色')
     if isinstance(error, FileExistsError):
         return HTTPException(409, str(error))
     if isinstance(error, FileNotFoundError):
@@ -217,7 +217,7 @@ async def apply_saved(runtime: NetworkRuntime, path: Path) -> dict:
     try:
         done, _ = await runtime.personas.settle(runtime.personas.reload(path))
     except Exception as error:
-        return {'applied': False, 'apply_error': f'已保存；运行中的群没能用上：{error_text(error)}'}
+        return {'applied': False, 'apply_error': f'已保存，但未能应用到运行中的群：{error_text(error)}'}
     return {'applied': done, 'apply_error': None}
 
 
@@ -227,7 +227,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
 
     def require_scene(scene: str) -> None:
         if scene not in runtime.chats:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
 
     def located(key: str) -> tuple[HostConfig, Path]:
         config = load_host_config(root)
@@ -307,7 +307,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             try:
                 done, result = await personas.settle(personas.switch(scene, key))
             except LookupError:
-                return {'scene': scene, 'status': 'failed', 'error': '角色库里没有这个角色'}
+                return {'scene': scene, 'status': 'failed', 'error': '角色库中不存在此角色'}
             except Exception as error:
                 return {'scene': scene, 'status': 'failed', 'error': error_text(error)}
             return result if done else {'scene': scene, 'status': 'pending'}
@@ -330,7 +330,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         try:
             data = await file.read(MAX_UPLOAD_BYTES + 1)
             if len(data) > MAX_UPLOAD_BYTES:
-                raise HTTPException(413, '角色ZIP上传超过64MiB')
+                raise HTTPException(413, '角色 ZIP 上传超过 64 MiB')
             async with write_lock:
                 return await finish_role_write(lambda: import_role(root, load_host_config(root), name, data))
         except FileExistsError as error:
@@ -371,7 +371,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         candidate = parse_persona_files(path, files)
         current = running_persona(path)
         if edit is not None and current is not None and candidate.id != current.id:
-            raise ValueError('有群正在用这个角色，不能改角色 ID；要换 ID 请复制一份角色')
+            raise ValueError('有群正在使用此角色，不能修改角色 ID；需要新 ID 时请复制角色')
         scenes = validate_dependencies(config, path, candidate)
         if edit is not None and edit[0] in EXPRESSION_FILES and not edit[1].strip():
             # A blank expression file means the framework version, so none is kept.
@@ -400,7 +400,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             target = knowledge_target(path, change.filename)
             if action == 'create':
                 if target.exists():
-                    raise FileExistsError(f'角色资料已存在，请换一个文件名：{target}')
+                    raise FileExistsError(f'角色资料已存在，请更换文件名：{target}')
             elif change.filename not in candidate.knowledge:
                 raise FileNotFoundError(f'角色包没有此知识文件：{target}')
             documents = dict(candidate.knowledge)
@@ -493,7 +493,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         require_scene(scene)
         expression = LearningStore(runtime.store).expression(scene, item.expression_id)
         if expression is None:
-            raise HTTPException(404, "当前场景没有这条表达候选")
+            raise HTTPException(404, "当前场景不存在此表达候选")
         if expression["status"] != "adopted":
             raise HTTPException(409, "只有已采用的表达可以转成角色样例")
         example = {"context": item.context, "line": item.line, **({"tags": item.tags} if item.tags else {})}
@@ -564,7 +564,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
     def preview_state(key: str, scene: str | None) -> dict:
         config, path = located(key)
         if scene is not None and scene not in config.scenes:
-            raise ValueError(f'没有接入这个群：{scene}')
+            raise ValueError(f'未接入此群：{scene}')
         persona = load_persona(path)
         style = select_style(persona)
         return {

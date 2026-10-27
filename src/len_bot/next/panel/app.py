@@ -148,7 +148,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
 
     def configured_scene(scene: str) -> None:
         if scene not in config.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
 
     def switching(scene: str) -> dict | None:
         role = None if runtime.personas is None else runtime.personas.switching.get(scene)
@@ -281,7 +281,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         configured_scene(scene)
         image = runtime.store.original_image(scene, seq, image_index)
         if image is None:
-            raise HTTPException(404, "当前场景没有这张已保存图片",
+            raise HTTPException(404, "当前场景不存在此已保存图片",
                                 headers={"Cache-Control": "no-store"})
         mime_type, data = image
         return Response(data, media_type=mime_type, headers={"Cache-Control": "no-store"})

@@ -39,7 +39,7 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
 
     def worker_for(scene: str) -> WorkerSettings:
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
         if runtime.config.worker is None:
             raise HTTPException(409, '当前未配置任务文件目录')
         return runtime.config.worker

@@ -64,7 +64,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
 
     def worker_for(scene: str) -> WorkerSettings:
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
         if runtime.config.worker is None:
             raise HTTPException(409, '当前运行配置没有 worker，无法定位共享资料和交付原件')
         return runtime.config.worker
@@ -85,7 +85,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
     async def adoption(scene: str, body: MaterialAdoption, request: Request, _: str = Depends(user)):
         worker = worker_for(scene)
         if not body.confirmed:
-            raise HTTPException(422, '先明确确认已登记副本适合保存在本场景共享目录')
+            raise HTTPException(422, '请先确认已登记副本适合保存在本场景共享目录')
         directory = material_directory(worker.workspace_root, scene)
         if body.directory != str(directory):
             raise HTTPException(409, f'当前共享目录与页面读取不同，未采用：expected={str(directory)!r}, received={body.directory!r}')

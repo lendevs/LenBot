@@ -141,13 +141,13 @@ class ProactiveStore:
         """Return the earliest allowed wake time at or after ``now`` and why it is that time."""
         idle_since = self.last_activity(scene, exclude_uids)
         if idle_since is None:
-            return None, "本群还没有可计算安静时长的消息"
+            return None, "本群暂无可计算安静时长的消息"
         if observed_since is not None:
             idle_since = max(idle_since, observed_since)
         at, reason = max(now, idle_since + settings.idle_seconds), "安静时长达到设定值"
         pause = self.pause(scene)
         if pause is not None and pause["until"] > at:
-            at, reason = pause["until"], "连续两次主动开话题都没人回应，暂停一周"
+            at, reason = pause["until"], "连续两次主动发起话题均无人回应，暂停一周"
         zone = ZoneInfo(timezone)
         for _ in range(_SEARCH_STEPS):
             if local_period(settings.start, settings.end, timezone, at) is None:

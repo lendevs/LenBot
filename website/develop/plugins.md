@@ -70,7 +70,7 @@ class Counter(Plugin):
 | `@tool` | 注册为 Bot 可以调用的工具 |
 | `@background` | 周期性后台工作 |
 
-插件安装并在某个群启用后，在群里发送 `/计数` 或 `计数加一` 就会直接得到回复。命令和全文匹配由插件直接处理，正则匹配也一样，都不调用聊天模型。`@tool` 注册的工具由模型在聊天中决定是否调用。
+插件安装并在群内启用后，发送 `/计数` 或 `计数加一` 即可得到回复。命令、全文匹配和正则匹配由插件直接处理，不调用聊天模型。`@tool` 注册的工具由模型在聊天中决定是否调用。
 
 ## 配置表单
 
@@ -88,18 +88,18 @@ class Counter(Plugin):
 
 需要准备资源时，重写 `async def start(self)`。清理工作放在 `async def stop(self)` 中。
 
-- `start()` 限时 60 秒。超时后会被取消，插件被标记为失败，LenBot 的其他部分照常启动。
-- `stop()` 限时 30 秒。超时后同样会被取消，关闭流程继续进行。
+- `start()` 限时 60 秒。超时后被取消，插件标记为失败，LenBot 的其他部分照常启动。
+- `stop()` 限时 30 秒。超时后同样被取消，关闭流程继续进行。
 
 等待网络或预热缓存等耗时操作，请用 `self.ctx.start_task(name, coroutine)` 放到后台执行。
 
 ## 日志
 
-`self.ctx.log` 是标准的 `logging.Logger`。写入的记录会进入 LenBot 的运行日志 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前回复轮次和工具调用 ID。面板的**系统 → 日志**可以按插件筛选。处理器抛出的错误由 LenBot 记录，插件不需要另外记录。
+`self.ctx.log` 是标准的 `logging.Logger`。写入的记录进入 LenBot 的运行日志 `logs/lenbot.jsonl`，并自动附带插件名、当前群、当前回合和工具调用 ID。面板的**系统 → 日志**可以按插件筛选。处理器抛出的错误由 LenBot 记录，插件不需要另外记录。
 
 ## 数据版本
 
-插件数据存放在 `ctx.data_dir` 中，KV 存储也在这个目录里。LenBot 会在这个目录中记录数据写入时使用的 `data_version`。清单中的 `data_version` 高于记录值时，LenBot 在调用 `start()` 之前执行以下步骤。
+插件数据存放在 `ctx.data_dir` 中，KV 存储也在该目录。LenBot 在该目录中记录数据写入时使用的 `data_version`。清单中的 `data_version` 高于记录值时，LenBot 在调用 `start()` 之前执行以下步骤。
 
 1. 把整个数据目录复制到 `.backups/<插件名>-v<旧版本>-<时间>`。
 2. 调用 `await self.migrate_data(from_version)`。此时可以读写 `ctx.data_dir` 和 KV。
@@ -114,7 +114,7 @@ class Notes(Plugin):
             old.unlink()
 ```
 
-一次迁移必须能从任何旧版本升级到当前版本。清单中的 `data_version` 低于记录值时，LenBot 会拒绝启动插件，因为旧版本插件不读取新格式的数据。
+一次迁移必须能从任何旧版本升级到当前版本。清单中的 `data_version` 低于记录值时，LenBot 拒绝启动插件，因为旧版本插件不读取新格式的数据。
 
 ## 测试与发布
 
@@ -152,4 +152,4 @@ jobs:
 
 推送 `v*` 标签时，`plugin-release.yml` 会核对标签与 `plugin.toml` 中的版本是否一致，然后把插件打包成可导入的 ZIP，附加到 Release 上。Release 的说明取自 CHANGELOG 中对应版本的一节。
 
-完整的接口说明见仓库里的[插件接口 v1](https://github.com/lendevs/LenBot/blob/master/developer/plugins-v1.md)。
+完整的接口说明见仓库中的[插件接口 v1](https://github.com/lendevs/LenBot/blob/master/developer/plugins-v1.md)。

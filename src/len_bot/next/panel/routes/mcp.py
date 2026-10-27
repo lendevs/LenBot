@@ -45,7 +45,7 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
 
     def require_name(name: str) -> None:
         if SERVICE_NAME.fullmatch(name) is None or '__' in name:
-            raise HTTPException(422, '服务名须为1–24个小写字母/数字/下划线，字母开头且不含双下划线')
+            raise HTTPException(422, '服务名须为 1–24 个小写字母、数字或下划线，以字母开头且不含双下划线')
 
     async def save(edit) -> dict:
         async with write_lock:
@@ -83,7 +83,7 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
                     for key, value in values.items():
                         if value is None:
                             if key not in old:
-                                raise ValueError(f'{field}.{key} 尚未保存，不能用null保持原值')
+                                raise ValueError(f'{field}.{key} 尚未保存，不能用 null 保持原值')
                             if any(prior.get(key) != transport.get(key) for key in ('type', 'url', 'command', 'args')):
                                 raise ValueError('MCP 地址或启动命令改变后需要重新填写凭据')
                             values[key] = old[key]
@@ -95,7 +95,7 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
         require_name(name)
         def edit(source: dict, saved: HostConfig) -> None:
             if name not in saved.mcp:
-                raise ValueError(f'根配置中没有MCP服务 {name}')
+                raise ValueError(f'根配置中没有 MCP 服务 {name}')
             del source['mcp'][name]
         return await save(edit)
 

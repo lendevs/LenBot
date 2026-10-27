@@ -70,7 +70,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
 
     def scene_exists(scene: str) -> None:
         if scene not in runtime.chats:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
 
     @app.get("/api/host/tasks/state", response_model=responses.TaskState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
@@ -126,7 +126,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
     async def discard(id: int, scene: str, body: WorkspaceDiscard, request: Request, _: str = Depends(user)):
         scene_exists(scene)
         if runtime.tasks is None:
-            raise HTTPException(409, '当前没有任务执行器，无法按当前worker定位/管理工作环境')
+            raise HTTPException(409, '当前没有任务执行器，无法按当前 worker 定位或管理工作环境')
         async with write_lock:
             try:
                 result = await runtime.tasks.discard_workspace(scene, id, requester=panel_owner(runtime), **body.model_dump())

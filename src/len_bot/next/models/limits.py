@@ -123,7 +123,7 @@ def speech_quota(store, config, scene: str | None = None) -> SpeechQuota:
 def check_speech(store, config, *, direct: bool = False) -> None:
     quota = speech_quota(store, config)
     if quota.blocked(direct=direct):
-        text = (f'本群最近一小时已发言 {quota.used} 条，被叫到时的余量也已用完，暂停发言。' if direct and quota.reserve
+        text = (f'本群最近一小时已发言 {quota.used} 条，被叫到时的余量已用完，暂停发言。' if direct and quota.reserve
                 else f'本群最近一小时已发言 {quota.used} 条，达到上限 {quota.limit} 条，暂停发言。')
         raise SpeechLimitReached(text, quota.until(direct=direct), direct=direct)
 

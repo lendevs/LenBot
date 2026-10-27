@@ -64,7 +64,7 @@ async def _limited(call: Coroutine, seconds: float, what: str) -> None:
     except TimeoutError as error:
         if not limit.expired():
             raise
-        raise TimeoutError(f"插件 {what} 超过 {seconds:g} 秒没有返回，已取消") from error
+        raise TimeoutError(f"插件 {what} 超过 {seconds:g} 秒未返回，已取消") from error
 
 
 @dataclass
@@ -269,7 +269,7 @@ class PluginHost:
             else:
                 record.backgrounds.append(Background(attribute, mark[1]))
         if unused:
-            logger.warning("插件 %s 没有这些规则，plugins.disabled_rules 里的条目未起作用：%s",
+            logger.warning("插件 %s 不存在以下规则，plugins.disabled_rules 中的条目未生效：%s",
                            record.name, "、".join(sorted(unused)))
         data_dir.mkdir(parents=True, exist_ok=True)
         record.context = PluginContext(name=record.name, config=parsed.model_dump(), data_dir=data_dir,
@@ -349,7 +349,7 @@ class PluginHost:
         if requester_id in self.config.scene_config(scene).permissions.blacklist:
             raise PermissionError(f'账号 {requester_id} 在当前场景黑名单中')
         if requester_id not in self.config.owners:
-            raise PermissionError(f"账号 {requester_id} 没有主人账号权限（按根配置 owners 判断）")
+            raise PermissionError(f"账号 {requester_id} 不具备主人账号权限（按根配置 owners 判断）")
 
     def redact(self, plugin: str, text: str) -> str:
         record = self.plugins[plugin]
@@ -383,7 +383,7 @@ class PluginHost:
     def _permit(self, record: Loaded, permission: str) -> Loaded:
         """A capability the manifest's ``permissions`` must list; manifests without the field keep all."""
         if record.manifest is not None and not record.manifest.granted(permission):
-            raise PermissionError(f"插件 {record.name} 没有在 plugin.toml 的 permissions 中声明 {permission}"
+            raise PermissionError(f"插件 {record.name} 未在 plugin.toml 的 permissions 中声明 {permission}"
                                   f"（{PERMISSION_TITLES[permission]}）")
         return record
 
@@ -603,7 +603,7 @@ class PluginHost:
             try:
                 self._speaking(record.name, scene)
                 if record.status != "running":
-                    raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已经停止'}")
+                    raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
                 unavailable = record.instance.unavailable_tools(scene)
                 if name in unavailable:
                     raise ValueError(unavailable[name])

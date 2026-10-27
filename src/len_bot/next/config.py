@@ -97,7 +97,7 @@ class SharedConfig(BaseModel):
             if alias not in self.models.providers:
                 raise ValueError(f"{name}.connection references unknown provider {alias!r}")
             if self.models.providers[alias].api not in apis[settings.provider]:
-                raise ValueError(f"{name} 选的 {settings.provider} 不能使用 {self.models.providers[alias].api} 连接 {alias!r}")
+                raise ValueError(f"{name} 选择的 {settings.provider} 不能使用 {self.models.providers[alias].api} 连接 {alias!r}")
         if self.memory is not None and self.memory.local.embedding is not None:
             provider = self.memory.local.embedding.provider
             if provider not in self.models.providers:
@@ -421,7 +421,7 @@ def _read_root(root: Path) -> tuple[Path, dict]:
         raise ValueError(f"{path}: configuration must be a JSON object")
     version = source.get("config_version", CONFIG_VERSION)
     if version != CONFIG_VERSION:
-        raise ValueError(f"{path}: 配置格式是 {version!r}，这个版本使用格式 {CONFIG_VERSION}。{FORMAT_RESET}")
+        raise ValueError(f"{path}: 配置格式是 {version!r}，当前版本使用格式 {CONFIG_VERSION}。{FORMAT_RESET}")
     return path, source
 
 

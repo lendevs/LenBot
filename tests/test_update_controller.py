@@ -185,7 +185,7 @@ def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fai
     state = run(controller, 'apply')
     assert state['status'] == 'failed' and state['stopped'] and not state['snapshot_complete']
     assert state['actions'] == ['start'] and state['current_version'] == '0.1.0'
-    with pytest.raises(ValueError, match='现在不能恢复快照；可以：启动程序'):
+    with pytest.raises(ValueError, match='当前不能恢复快照；可执行：启动程序'):
         controller.submit('restore', {})
     backend.fail = None
     assert run(controller, 'start')['status'] == 'complete' and backend.running
@@ -249,7 +249,7 @@ def test_rollback_that_cannot_restore_keeps_the_manual_restore(make):
     assert state['status'] == 'failed' and state['stage'] == 'rollback' and state['actions'] == ['restore']
     assert state['snapshot_complete'] and state['stopped']
     assert '自动恢复快照也失败' in state['error'] and 'synthetic ready failure' in state['error']
-    with pytest.raises(ValueError, match='现在不能启动程序'):
+    with pytest.raises(ValueError, match='当前不能启动程序'):
         controller.submit('start', {})
     backend.fail = None
     restored = run(controller, 'restore')
@@ -263,7 +263,7 @@ def test_rollback_whose_previous_program_does_not_start_offers_start(make):
     run(controller, 'prepare', {'tag': 'v0.2.0'})
     state = run(controller, 'apply')
     assert state['status'] == 'failed' and state['stage'] == 'rollback_start' and state['actions'] == ['start']
-    assert state['current_version'] == '0.1.0' and '已恢复快照，但旧版本没有启动' in state['error']
+    assert state['current_version'] == '0.1.0' and '已恢复快照，但旧版本未能启动' in state['error']
     backend.fail = None
     assert run(controller, 'start')['status'] == 'complete'
 
@@ -289,12 +289,12 @@ def test_new_version_that_never_reconnects_to_qq_is_rolled_back(make):
     assert state['status'] == 'rolled_back' and state['failed_stage'] == 'connect'
     assert state['current_version'] == '0.1.0' and backend.running
     assert state['error'] == ('更新到 0.2.0 失败，已自动恢复到 0.1.0：'
-                              'TimeoutError: 新版本 0.3 秒内没有连上 QQ（更新前是连上的）')
+                              'TimeoutError: 新版本 0.3 秒内未连接 QQ（更新前已连接）')
 
 
-@pytest.mark.parametrize(('before', 'warning'), [(False, '更新前后都没有连上 QQ；'),
-                                                 (None, '新版本没有连上 QQ（更新前的程序没有报告连接状态）'),
-                                                 ('absent', '新版本没有连上 QQ（更新前的程序没有报告连接状态）')])
+@pytest.mark.parametrize(('before', 'warning'), [(False, '更新前后均未连接 QQ；'),
+                                                 (None, '新版本未连接 QQ（更新前的程序未报告连接状态）'),
+                                                 ('absent', '新版本未连接 QQ（更新前的程序未报告连接状态）')])
 def test_qq_offline_before_the_update_only_warns(make, before, warning):
     backend = Backend(platform={'0.1.0': before, '0.2.0': False})
     controller = make(backend)
@@ -303,7 +303,7 @@ def test_qq_offline_before_the_update_only_warns(make, before, warning):
     state = run(controller, 'apply')
     assert state['status'] == 'complete' and state['current_version'] == '0.2.0'
     assert state['platform_before'] is (False if before is False else None)
-    assert state['warning'].startswith(warning) and state['warning'].endswith('请检查 QQ 端和连接设置。')
+    assert state['warning'].startswith(warning) and state['warning'].endswith('请检查 QQ 客户端和连接设置。')
     assert 'connect' not in [json.loads(line).get('stage') for line in
                              (controller.root / 'updates/updater.jsonl').read_text().splitlines()]
 
@@ -360,7 +360,7 @@ def test_unknown_and_out_of_order_actions_are_refused(make):
     controller = make(Backend())
     with pytest.raises(ValueError, match='未知'):
         controller.submit('rollback', {})
-    with pytest.raises(ValueError, match='现在不能停机升级；可以：准备更新'):
+    with pytest.raises(ValueError, match='当前不能停机升级；可执行：准备更新'):
         controller.submit('apply', {})
 
 
@@ -530,7 +530,7 @@ def test_snapshots_are_listed_newest_first_and_the_one_a_failed_update_needs_sta
          'created': datetime(2026, 10, 20, 9, 30, tzinfo=timezone.utc).timestamp()},
         {'name': older.name, 'bytes': 13, 'complete': True, 'restore': False,
          'created': datetime(2026, 10, 1, 8, tzinfo=timezone.utc).timestamp()}]
-    with pytest.raises(ValueError, match='恢复要用这份快照'):
+    with pytest.raises(ValueError, match='恢复需要使用此快照'):
         controller.delete_snapshot(newer.name)
     for name in ('../updates', 'manual-copy', '20261021-000000-0000000c'):
         with pytest.raises(LookupError):
@@ -585,7 +585,7 @@ def test_snapshot_endpoints_list_and_delete(make, tmp_path):
         code, listed = call('GET', '/api/snapshots')
         assert code == 200 and [item['name'] for item in listed] == [kept.name, '20261001-080000-0000000a']
         code, refused = call('DELETE', '/api/snapshots/' + kept.name)
-        assert code == 409 and '恢复要用这份快照' in refused['detail']
+        assert code == 409 and '恢复需要使用此快照' in refused['detail']
         assert call('DELETE', '/api/snapshots/20261001-080000-00000000')[0] == 404
         assert call('DELETE', '/api/status')[0] == 404
         code, left = call('DELETE', '/api/snapshots/20261001-080000-0000000a')

@@ -64,7 +64,7 @@ def _image(url: str, api: str) -> dict:
         return {'inlineData': {'mimeType': mime, 'data': data}}
     if api == 'anthropic':
         return {'type': 'image', 'source': {'type': 'url', 'url': url}}
-    raise ValueError('Gemini 图片需要内联 data URL；不能把普通网页图片地址当成 Files API 地址')
+    raise ValueError('Gemini 图片需要内联 data URL；普通网页图片地址不能作为 Files API 地址')
 
 
 def _chat_message(message: dict, settings: ModelSettings) -> dict:

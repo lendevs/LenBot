@@ -61,7 +61,7 @@ class TestMessage(BaseModel):
 def stored_image(store: Store, scene: str, seq: int, image_index: int) -> Response:
     image = store.original_image(scene, seq, image_index)
     if image is None:
-        raise HTTPException(404, "测试场景里没有这张图片")
+        raise HTTPException(404, "测试场景中不存在此图片")
     mime_type, data = image
     return Response(data, media_type=mime_type, headers={"Cache-Control": "no-store"})
 
@@ -122,7 +122,7 @@ class PanelSession:
             raise HTTPException(503, self.error() or "隔离场景已停止，不接收新消息")
         platform, kind, target = self.config.scene.split(":", 2)
         if item.uid == self.config.bot_id:
-            raise HTTPException(422, "虚拟发言者不能使用 Bot 自己的账号")
+            raise HTTPException(422, "虚拟发言者不能使用 Bot 自身的账号")
         if kind == "private" and item.uid != platform + ":" + target:
             raise HTTPException(422, "私聊测试身份必须是当前场景的对方账号")
         if item.reply_to is not None and self.store.find_message(self.config.scene, item.reply_to) is None:
@@ -257,7 +257,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
     async def turn(turn_id: str, _: str = Depends(user)):
         result = app.state.session.store.turn_detail(config.scene, turn_id)
         if result is None:
-            raise HTTPException(404, "当前测试场景没有这一轮")
+            raise HTTPException(404, "当前测试场景不存在此回合")
         return result
 
     @app.get("/api/chat-test/turns/{turn_id}/steps", response_model=TurnDetail)
@@ -265,7 +265,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
         """The same step view as a group's live timeline."""
         result = read_turn(app.state.session.store, config.scene, turn_id)
         if result is None:
-            raise HTTPException(404, "当前测试场景没有这一轮")
+            raise HTTPException(404, "当前测试场景不存在此回合")
         return result
 
     @app.websocket("/api/chat-test/events")

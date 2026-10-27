@@ -64,7 +64,7 @@ def _plugin_data(data_dir: Path, declared: int) -> list[str]:
     else:
         if recorded is not None and recorded > declared:
             problems.append(f'数据版本 {recorded} 比已安装插件的 data_version {declared} 新；'
-                            f'恢复 .backups 里的旧数据或安装新版本插件')
+                            f'请恢复 .backups 中的旧数据或安装新版本插件')
     kv = data_dir / 'kv.sqlite3'
     if kv.exists():
         with closing(connect(kv, readonly=True)) as db:

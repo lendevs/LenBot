@@ -121,7 +121,7 @@ async def test_id_names_the_scene_the_sender_and_the_bot(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
         await peer.say('/id')
         await until(lambda: peer.sends)
-    assert peer.texts()[0] == f'场景：{SCENE}\n你的账号：onebot:{MEMBER}\n机器人账号：onebot:90001'
+    assert peer.texts()[0] == f'场景：{SCENE}\n发送者账号：onebot:{MEMBER}\nBot 账号：onebot:90001'
 
 
 @pytest.mark.asyncio
@@ -241,7 +241,7 @@ async def test_chat_off_keeps_recording_and_chat_on_still_works(tmp_path):
         runner = runtime.runners[SCENE]
         assert runner.state.paused is True
         assert '聊天：已关闭' in await ask(peer, '/status')
-        assert await ask(peer, '/chat off', **OWNER_SENDER) == '本群聊天本来就是关闭的'
+        assert await ask(peer, '/chat off', **OWNER_SENDER) == '本群聊天已处于关闭状态'
         assert '已打开本群聊天' in await ask(peer, '/chat on', **OWNER_SENDER)
         assert runner.state.paused is False
         assert await ask(peer, '/chat maybe', **OWNER_SENDER) == '用法：/chat on 或 /chat off'
@@ -293,8 +293,8 @@ async def test_quiet_and_resume(tmp_path):
         reply = await ask(peer, '/quiet 30')
         quiet = runner.state.temporary_quiet
         assert quiet.direct == 'allow' and quiet.requester == f'onebot:{MANAGER}'
-        assert quiet.until - quiet.started == 1800 and reply.endswith('被@或回复时仍会回应，/resume 提前恢复')
-        assert '被叫到时仍回应' in await ask(peer, '/status')
+        assert quiet.until - quiet.started == 1800 and reply.endswith('被 @ 或回复时照常回复，/resume 提前恢复')
+        assert '被叫到时照常回复' in await ask(peer, '/status')
         await ask(peer, '/quiet 5 defer')
         assert runner.state.temporary_quiet.direct == 'defer'
         assert runner.quiet_direct(store.now()) == 'defer'
@@ -322,7 +322,7 @@ async def test_reset_refuses_while_a_turn_is_unfinished(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
         store.append(SCENE, {'role': 'user', 'content': '旧话'})
         store.start_turn(SCENE)
-        assert await ask(peer, '/reset', **OWNER_SENDER) == '本群还有没结束或等待恢复的一轮，没有重置'
+        assert await ask(peer, '/reset', **OWNER_SENDER) == '本群有未结束或等待恢复的回合，未重置'
         assert store.entries(SCENE) == [{'role': 'user', 'content': '旧话'}]
 
 

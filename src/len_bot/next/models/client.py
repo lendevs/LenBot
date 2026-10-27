@@ -148,7 +148,7 @@ class ModelHTTPError(RuntimeError):
         elif status >= 500:
             direction = "服务商或中转服务异常，请稍后重试或联系渠道运营方"
         elif CONTEXT_EXCEEDED.search(detail):
-            direction = "请求超过了模型实际的上下文长度，请按服务商文档调小这个用途的上下文长度"
+            direction = "请求超过模型实际的上下文长度，请按服务商文档调小该用途的上下文长度"
         elif status == 404 or MODEL_MISSING.search(detail):
             direction = "模型名或接口地址不存在，请核对模型名，或读取服务商的模型列表后选择；同时核对服务商地址"
         else:
@@ -166,11 +166,11 @@ class ModelConnectionError(RuntimeError):
         if api_key:
             detail = detail.replace(api_key, "[hidden]")
         if isinstance(error, httpx.ProxyError):
-            direction = "代理连接失败，请检查代理地址和代理是否在运行"
+            direction = "代理连接失败，请检查代理地址和代理是否正在运行"
         elif isinstance(error, httpx.TimeoutException):
-            direction = "服务商地址没有及时响应，请检查地址、网络和代理，或调大超时"
+            direction = "服务商地址响应超时，请检查地址、网络和代理，或调大超时"
         else:
-            direction = "连不上服务商地址，请检查地址、网络和代理"
+            direction = "无法连接服务商地址，请检查地址、网络和代理"
         super().__init__(f"{direction}（{base_url}；{detail}）")
 
 
@@ -317,7 +317,7 @@ class ChatModel:
                                                        headers={} if session_id is None else {"Session-Id": session_id})
             except TimeoutError as error:
                 if deadline.expired():
-                    raise TimeoutError(f"模型请求超过 {settings.timeout_seconds:g} 秒没有完成（{settings.base_url}），"
+                    raise TimeoutError(f"模型请求超过 {settings.timeout_seconds:g} 秒未完成（{settings.base_url}），"
                                        "请检查网络和代理，或调大超时") from error
                 raise
             except httpx.TransportError as error:

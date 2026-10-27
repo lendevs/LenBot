@@ -39,7 +39,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
     def chat_for(scene: str):
         chat = runtime.chats.get(scene)
         if chat is None:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         return chat
 
     def active(scene: str) -> bool:
@@ -67,7 +67,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         item = records.item(scene, id)
         if item is None:
-            raise HTTPException(404, "当前场景没有这条黑话候选")
+            raise HTTPException(404, "当前场景不存在此黑话候选")
         sources = []
         for seq in item["sample_seqs"]:
             message = runtime.store.read_message(scene, seq)
@@ -79,7 +79,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         item = records.update(scene, id, meaning=change.meaning, status=change.status)
         if item is None:
-            raise HTTPException(404, "当前场景没有这条黑话候选")
+            raise HTTPException(404, "当前场景不存在此黑话候选")
         runtime.notify()
         return item
 
@@ -87,7 +87,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
     async def delete(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
         if not records.delete(scene, id):
-            raise HTTPException(404, "当前场景没有这条黑话候选")
+            raise HTTPException(404, "当前场景不存在此黑话候选")
         runtime.notify()
         return {"deleted": True}
 
@@ -102,7 +102,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         item = records.call(scene, id)
         if item is None:
-            raise HTTPException(404, "当前场景没有这次黑话模型调用")
+            raise HTTPException(404, "当前场景不存在此黑话模型调用")
         return item
 
     def trigger(scene: str, action: Literal["run", "retry"]) -> dict:

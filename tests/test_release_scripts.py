@@ -129,7 +129,7 @@ def test_catalog_sync_pins_pushed_commits_and_replaces_entries_by_name(tmp_path)
     (plugin / 'plugin.toml').write_text('name = "sample"\nversion = "1.0.0"\ninterface = 1\n')
     run('add', '.')
     run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'one')
-    with pytest.raises(ValueError, match='还不在任何远端分支上'):
+    with pytest.raises(ValueError, match='尚未推送到任何远端分支'):
         sync.pinned_entry(plugin)
     run('push', '-q', 'origin', 'main')
     commit = run('rev-parse', 'HEAD').stdout.strip()

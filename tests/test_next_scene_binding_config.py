@@ -76,7 +76,7 @@ def test_scene_bindings_validate_before_save_and_keep_running_snapshot(tmp_path)
                     # A copied folder still carries the same role id, which would merge two roles' memories.
                     duplicate = await client.post('/api/host/personas/other/scenes', json={'scenes': ['onebot:group:80001']})
                     assert duplicate.status_code == 200 and duplicate.json()['results'][0]['status'] == 'failed'
-                    assert '同一个 ID' in duplicate.json()['results'][0]['error']
+                    assert '同一 ID' in duplicate.json()['results'][0]['error']
                     other = tmp_path/'personas/other/persona.yaml'
                     other.write_text(other.read_text().replace('id: fixture', 'id: other'))
                     rebound = await client.post('/api/host/personas/other/scenes', json={'scenes': ['onebot:group:80001']})

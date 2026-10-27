@@ -345,7 +345,7 @@ class HostManagement:
         if target not in self.runtime.runners:
             raise ValueError(f'运行中没有场景 {target}')
         if not self.runtime.accepting:
-            raise RuntimeError('宿主没有在运行，请先启动再切换聊天开关')
+            raise RuntimeError('宿主未运行，请先启动再切换聊天开关')
         runner = self.runtime.runners[target]
         titles, _ = await self.runtime.scene_titles.read()
         result = {'scene': target, 'title': titles.get(target)}

@@ -386,5 +386,5 @@ def register_host_timeline(app, *, runtime, user) -> None:
                 return read_turn(records, scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
-            raise HTTPException(404, '当前场景没有这一轮')
+            raise HTTPException(404, '当前场景不存在此回合')
         return result

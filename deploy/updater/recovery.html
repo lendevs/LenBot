@@ -2,13 +2,13 @@
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LenBot 更新与恢复</title>
 <style>body{font:16px/1.65 system-ui;margin:48px auto;padding:0 24px;max-width:840px;background:#f6f7f8;color:#242b34}h1{font-size:28px}button,select{font:inherit;padding:9px 16px;margin:8px 8px 8px 0}pre{white-space:pre-wrap;background:white;padding:20px;border:1px solid #dce0e5}label{display:block}#error{color:#b42318}</style>
-<h1>LenBot 更新与恢复</h1><p>更新期间此页面保持可用，聊天、提醒和后台任务暂停。备份完成后的更新失败会自动恢复更新前的程序和数据快照并启动旧版本；自动回滚也会丢掉更新开始后写入的数据，包括新消息、记忆、设置修改和任务记录。</p>
+<h1>LenBot 更新与恢复</h1><p>更新期间此页面保持可用，聊天、提醒和后台任务暂停。备份完成后的更新失败会自动恢复更新前的程序和数据快照并启动旧版本；自动回滚会丢弃更新开始后写入的数据，包括新消息、记忆、设置修改和任务记录。</p>
 <p id="current"></p><p id="error" role="alert"></p>
 <button id="check">检查发行版本</button><label><input id="prerelease" type="checkbox">显示预发布版本</label>
 <select id="versions" aria-label="目标版本"></select><button id="prepare">准备更新</button>
-<p id="worker"></p><pre id="notes">先检查版本，准备完成后再确认停机升级。</pre>
+<p id="worker"></p><pre id="notes">请先检查版本，准备完成后确认停机升级。</pre>
 <button id="apply" hidden>确认停机、备份并升级</button><button id="restore" hidden>恢复升级前程序和数据快照</button><button id="start" hidden>启动程序</button>
-<pre id="status"></pre><p>恢复后实例数据回到页面显示的快照时间，之后的修改会被覆盖。</p>
+<pre id="status"></pre><p>恢复后实例数据回到页面显示的快照时间，此后的修改将被覆盖。</p>
 <details><summary>原始更新日志</summary><button id="read-log">读取日志</button><pre id="log"></pre></details>
 <script>
 const token = new URLSearchParams(location.hash.slice(1)).get('session');
@@ -24,9 +24,9 @@ function notes(){$('notes').textContent=releases.find(r=>r.tag===$('versions').v
 async function refresh(){try{const s=await request('status');$('current').textContent=`当前版本 ${s.current_version} · ${s.mode}`;$('status').textContent=JSON.stringify(s,null,2);for(const name of ['apply','restore','start'])$(name).hidden=!s.actions.includes(name);$('prepare').disabled=!s.actions.includes('prepare');const w=s.status==='prepared'&&s.check?.worker_image;$('worker').textContent=!w?'':s.check.worker_follows_release?`任务镜像将换为 ${w}（已提前拉取）。`:`任务镜像 ${w} 是自定义镜像，本次更新保持原样；需要时自行重建并修改配置。`;if(s.error)$('error').textContent=s.error}catch(e){$('error').textContent=e.message}}
 $('check').onclick=async()=>{try{releases=await request('releases');options()}catch(e){$('error').textContent=e.message}};
 $('prerelease').onchange=options;$('versions').onchange=notes;
-$('prepare').onclick=()=>{if($('restore').hidden||confirm('准备新版本后，就不能再恢复这次更新前的程序和数据快照了。快照留在 backups/ 下，不会删除。继续？'))action('prepare',{tag:$('versions').value})};
-$('apply').onclick=()=>{if(confirm('将暂停聊天、提醒和后台任务，备份实例并升级。备份完成后的更新失败会自动恢复旧版本和数据快照，丢掉更新开始后写入的数据。继续？'))action('apply')};
-$('restore').onclick=()=>{if(confirm('将恢复升级前程序和数据快照，覆盖快照之后的修改。继续？'))action('restore')};
+$('prepare').onclick=()=>{if($('restore').hidden||confirm('准备新版本后，将无法恢复本次更新前的程序和数据快照。快照保留在 backups/ 下。是否继续？'))action('prepare',{tag:$('versions').value})};
+$('apply').onclick=()=>{if(confirm('将暂停聊天、提醒和后台任务，备份实例并升级。备份完成后的更新失败会自动恢复旧版本和数据快照，丢弃更新开始后写入的数据。是否继续？'))action('apply')};
+$('restore').onclick=()=>{if(confirm('将恢复升级前程序和数据快照，覆盖快照之后的修改。是否继续？'))action('restore')};
 $('start').onclick=()=>action('start');refresh();setInterval(refresh,2000);
 $('read-log').onclick=async()=>{try{$('log').textContent=(await request('log')).text}catch(e){$('error').textContent=e.message}};
 </script></html>

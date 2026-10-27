@@ -146,7 +146,7 @@ def load_draft_persona(root: Path, scene: str, draft: PersonaDraft) -> Persona:
         raise ValueError('场景已从保存配置移除，不能读取其角色资料用于新草稿试聊')
     path = next((role.path for role in roles(root, saved) if str(role.path) == draft.directory), None)
     if path is None:
-        raise ValueError(f'试聊草稿须来自角色库里的角色；directory={draft.directory!r}')
+        raise ValueError(f'试聊草稿须来自角色库中的角色；directory={draft.directory!r}')
     return parse_persona_files(path, draft.files)
 
 
@@ -254,7 +254,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     @app.post('/api/host/trials', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def start(item: TrialStart, _: str = Depends(user)):
         if not item.acknowledge_model_cost:
-            raise HTTPException(422, '开始前需明确知道模型请求仍会计费；平台发送始终模拟')
+            raise HTTPException(422, '开始前须确认模型请求照常计费；平台发送始终为模拟')
         try:
             return (await trials.start(item.scene, item.context_messages, item.persona_draft)).info()
         except InstanceBusyError as error:
@@ -277,7 +277,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     async def message(trial_id: str, item: TestMessage, _: str = Depends(user)):
         trial = trials.get(trial_id)
         if trial.stopped is not None:
-            raise HTTPException(409, '这个试聊已经停止，不接收消息')
+            raise HTTPException(409, '此试聊已停止，不接收消息')
         return trial.session.receive(item)
 
     @app.get('/api/host/trials/{trial_id}/messages/{seq}/images/{image_index}')
@@ -300,7 +300,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
                 return store.turn_detail(trial.scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
-            raise HTTPException(404, '这一轮不属于当前试聊')
+            raise HTTPException(404, '此回合不属于当前试聊')
         return result
 
     @app.get('/api/host/trials/{trial_id}/turns/{turn_id}/steps', response_model=TurnDetail)
@@ -312,7 +312,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
                 return read_turn(store, trial.scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
-            raise HTTPException(404, '这一轮不属于当前试聊')
+            raise HTTPException(404, '此回合不属于当前试聊')
         return result
 
     @app.websocket('/api/host/trials/{trial_id}/events')

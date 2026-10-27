@@ -132,9 +132,9 @@ class EgressUsage:
         date = self._date(scene)
         day = self._day(scene, date)
         if sum(task) + amount > task_limit:
-            raise EgressBlocked(f"任务 #{task_id} 出网字节会超过限额 {task_limit}；本块未转发")
+            raise EgressBlocked(f"任务 #{task_id} 出网字节将超过限额 {task_limit}；本块未转发")
         if sum(day) + amount > daily_limit:
-            raise EgressBlocked(f"场景 {scene} 在 {date} 出网字节会超过限额 {daily_limit}；本块未转发")
+            raise EgressBlocked(f"场景 {scene} 在 {date} 出网字节将超过限额 {daily_limit}；本块未转发")
         connection.day_for_write = date
 
     def on_bytes(self, scene: str, task_id: int, wire_id: int,

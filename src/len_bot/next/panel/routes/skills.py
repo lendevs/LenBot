@@ -55,7 +55,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
 
     def scene_exists(scene: str) -> None:
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
 
     def stopped(scene: str, task_id: int) -> Task:
         try:
@@ -63,7 +63,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         if item.status not in TERMINAL or item.container is not None:
-            raise HTTPException(409, '先结束任务并停止其容器，再读取或采用任务技能')
+            raise HTTPException(409, '请先结束任务并停止其容器，再读取或采用任务技能')
         if records.workspace_discarded(scene, task_id):
             raise HTTPException(409, '本任务环境已放弃，无法再读取或采用其中的技能')
         return item
@@ -76,7 +76,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
 
     def skill_directory(config: HostConfig) -> Path:
         if config.worker is None or config.worker.skills_directory is None:
-            raise HTTPException(409, '先在根配置中设置 worker.skills_directory')
+            raise HTTPException(409, '请先在根配置中设置 worker.skills_directory')
         return config.worker.skills_directory
 
     def location(config: HostConfig, scene: str, source: Source, name: str,
@@ -94,7 +94,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             for skill in scene_skill_catalog(config, scene):
                 if skill.source == 'plugin' and skill.name == name:
                     return skill.host_path, skill.container_path, None
-            raise HTTPException(404, '当前场景没有这个插件技能')
+            raise HTTPException(404, '当前场景不存在此插件技能')
         directory = skill_directory(config)
         if source == 'shared':
             return directory / 'shared' / name, f'/shared/skills/approved/{name}', None
@@ -113,7 +113,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
     def not_in_use(path: Path) -> None:
         scenes = running_users(path)
         if scenes:
-            raise HTTPException(409, f'这些场景的运行快照仍引用此目录：{scenes}；先取消该项许可并重启，再移动或删除')
+            raise HTTPException(409, f'这些场景的运行快照仍引用此目录：{scenes}；请先取消该项许可并重启，再移动或删除')
 
     def affected(config: HostConfig, scene: str, source: str) -> list[str]:
         if source != 'shared' and scene not in config.scenes:
@@ -196,7 +196,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                         catalog = tuple(skill for skill in scene_skill_catalog(config, key)
                                         if skill.host_path != source)
                         if any(skill.name == target.name for skill in catalog):
-                            raise ValueError(f'{key} 已存在同名技能 {target.name!r}，没有覆盖或移动')
+                            raise ValueError(f'{key} 已存在同名技能 {target.name!r}，未覆盖或移动')
                         select_skills((*catalog, target), load_persona(config.scenes[key].persona).skills)
                     return target, entries
 
@@ -223,7 +223,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 scenes = affected(config, scene, source)
                 refs = await asyncio.to_thread(saved_references, config, scenes, name)
                 if refs:
-                    raise HTTPException(409, f'已保存角色仍按名称引用此技能：{refs}；先修改角色许可，没有删除')
+                    raise HTTPException(409, f'已保存角色仍按名称引用此技能：{refs}；请先修改角色许可，未删除')
                 await asyncio.to_thread(list_files, path)
                 await asyncio.to_thread(delete_skill, path)
                 return {'deleted': str(path), 'name': name, 'source': source,

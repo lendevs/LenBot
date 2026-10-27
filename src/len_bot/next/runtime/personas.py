@@ -103,7 +103,7 @@ def _publish(root: Path, folder: str, fill: Any) -> Path:
     collection.mkdir(mode=0o700, exist_ok=True)
     destination = collection / folder
     if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f"已经有叫 {folder} 的角色文件夹")
+        raise FileExistsError(f"角色文件夹 {folder} 已存在")
     with tempfile.TemporaryDirectory(prefix=".persona-new-", dir=collection) as temporary:
         package = Path(temporary) / "package"
         fill(package)
@@ -125,9 +125,9 @@ def _rewrite_identity(path: Path, *, id: str, name: str | None = None) -> None:
 def _require_new(root: Path, saved: HostConfig, folder: str) -> None:
     destination = root / "personas" / folder
     if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f"已经有叫 {folder} 的角色文件夹")
+        raise FileExistsError(f"角色文件夹 {folder} 已存在")
     if any(role.id == folder for role in roles(root, saved)):
-        raise ValueError(f"角色 ID {folder} 已被别的角色使用，换一个文件夹名")
+        raise ValueError(f"角色 ID {folder} 已被其他角色使用，请更换文件夹名")
 
 
 def create_role(root: Path, saved: HostConfig, folder: str, name: str) -> Path:
@@ -176,9 +176,9 @@ def delete_role(root: Path, saved: HostConfig, role: Role, running: set[Path]) -
     """Move an unused package aside under ``.runtime/deleted-personas/``; its memory stays."""
     root = root.resolve()
     if role.path.parent != root / "personas":
-        raise ValueError("这个角色不在实例的 personas 目录里，面板不删除它")
+        raise ValueError("此角色不在实例的 personas 目录中，面板不删除")
     if role.path in running or any(settings.persona == role.path for settings in saved.scenes.values()):
-        raise ValueError("还有群在用这个角色，先给这些群换别的角色")
+        raise ValueError("有群正在使用此角色，请先为这些群切换其他角色")
     trash = root / ".runtime" / "deleted-personas"
     trash.mkdir(parents=True, exist_ok=True)
     destination = trash / f"{role.path.name}-{time.strftime('%Y%m%d-%H%M%S')}"
@@ -238,14 +238,14 @@ class PersonaService:
     def _target(self, scene: str, key: str) -> tuple[HostConfig, Role, Persona, str]:
         saved = _read_saved(self.root)
         if scene not in saved.scenes:
-            raise ValueError(f"保存配置里没有群 {scene}")
+            raise ValueError(f"保存配置中没有群 {scene}")
         library = self.library(saved)
         role = next((item for item in library if item.key == key), None)
         if role is None:
             raise KeyError(key)
         persona = load_persona(role.path)
         if sum(item.id == persona.id for item in library) > 1:
-            raise ValueError(f"有多个角色用同一个 ID {persona.id}，先改掉重复的 ID 再换")
+            raise ValueError(f"多个角色使用同一 ID {persona.id}，请先修改重复的 ID")
         data, _ = _metadata(saved.scenes[scene].persona)
         previous = self.runtime.chats[scene].persona.id if data is None else data["id"]
         return saved, role, persona, previous
@@ -253,7 +253,7 @@ class PersonaService:
     @staticmethod
     def _bind(source: dict, saved: HostConfig, scene: str, role: Role, persona: Persona, previous: str) -> None:
         if scene not in saved.scenes:
-            raise ValueError(f"保存配置里没有群 {scene}")
+            raise ValueError(f"保存配置中没有群 {scene}")
         local = source["scenes"][scene]
         parked = dict(local.get("inactive_personas") or {})
         if previous != persona.id:
@@ -386,7 +386,7 @@ class PersonaService:
                     return scene
                 persona = await asyncio.to_thread(load_persona, path)
                 if persona.id != runner.chat.persona.id:
-                    raise ValueError(f"角色 ID 从 {runner.chat.persona.id} 改成了 {persona.id}；换 ID 请复制一份角色")
+                    raise ValueError(f"角色 ID 从 {runner.chat.persona.id} 改为 {persona.id}；需要新 ID 时请复制角色")
                 self._apply(scene, persona, None)
             return scene
 
@@ -403,18 +403,18 @@ class PersonaService:
                 role.name.casefold(), role.key.casefold(), role.id.casefold(),
                 *(alias.casefold() for alias in role.aliases)}]
             if not argument:
-                text = f"现在是 {chat.persona.name}。可以换：{names}"
+                text = f"当前角色：{chat.persona.name}。可切换：{names}"
             elif not matches:
-                text = f"没有叫 {argument} 的角色。可以换：{names}"
+                text = f"不存在名为 {argument} 的角色。可切换：{names}"
             elif len(matches) > 1:
-                text = (f"有好几个叫 {argument} 的：" + "、".join(f"{role.name}（目录 {role.key}）" for role in matches)
-                        + "，发目录名再试")
+                text = (f"有多个名为 {argument} 的角色：" + "、".join(f"{role.name}（目录 {role.key}）" for role in matches)
+                        + "，请改用目录名")
             elif matches[0].path == chat.config.persona:
-                text = f"现在就是 {chat.persona.name}"
+                text = f"当前已是 {chat.persona.name}"
             else:
                 result = await self.switch(scene, matches[0].key, source="command")
-                text = f"已换成 {result['persona']['name']}"
+                text = f"已切换为 {result['persona']['name']}"
         except Exception as error:
             log_event(logger, "persona_command", level=logging.WARNING, scene=scene, error=error)
-            text = f"没换成：{error_text(error)[:200]}"
+            text = f"切换失败：{error_text(error)[:200]}"
         return text

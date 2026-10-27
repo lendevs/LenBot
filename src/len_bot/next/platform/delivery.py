@@ -53,7 +53,7 @@ def report_parts(parts: list[ChatMessage], errors: list[str | None],
             for part in parts[len(errors):])
         lines.append("本次剩余待发送内容：\n" + remaining)
     if any(part.send_status == "unconfirmed" for part in parts[:len(errors)]):
-        lines.append("平台没有返回回执，消息可能已经发出。")
+        lines.append("平台未返回回执，消息可能已发出。")
     return "\n".join(lines)
 
 

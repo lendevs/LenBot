@@ -135,7 +135,7 @@ def check_creation(settings: ScheduleSettings, *, requester: str | None, target:
     roles = identity_roles(settings, requester, group_role, root_owners)
     capability = "own" if target in {"self", requester} else "others"
     if not roles.intersection(getattr(settings, capability)):
-        raise PermissionError(f"账号 {requester} 没有创建{'本人安排' if capability == 'own' else '他人提醒'}的权限")
+        raise PermissionError(f"账号 {requester} 不具备创建{'本人安排' if capability == 'own' else '他人提醒'}的权限")
 
 
 def check_cancellation(settings: ScheduleSettings, *, requester: str | None,

@@ -148,9 +148,9 @@ def fixture_settings(**changes):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('failure,expected', [
-    (httpx.ConnectError('[Errno 61] Connection refused'), '连不上服务商地址'),
+    (httpx.ConnectError('[Errno 61] Connection refused'), '无法连接服务商地址'),
     (httpx.ProxyError('407 Proxy Authentication Required'), '代理连接失败'),
-    (httpx.ReadTimeout('timed out'), '没有及时响应'),
+    (httpx.ReadTimeout('timed out'), '响应超时'),
 ])
 async def test_unreachable_provider_names_address_after_retries(failure, expected):
     attempts = []
@@ -177,7 +177,7 @@ async def test_model_deadline_keeps_timeout_type_and_says_what_to_change():
     async with ChatModel(settings) as model:
         await model._client.aclose()
         model._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url=settings.base_url + '/')
-        with pytest.raises(TimeoutError, match='超过 0.05 秒没有完成.*调大超时'):
+        with pytest.raises(TimeoutError, match='超过 0.05 秒未完成.*调大超时'):
             await model.complete([{'role': 'user', 'content': '连接测试'}], [])
 
 
@@ -193,7 +193,7 @@ async def test_model_list_reports_unreachable_address(monkeypatch):
         return made
     monkeypatch.setattr(providers, 'http_client', client)
     provider = Provider(api='openai-chat', base_url='https://fixture.invalid/v1', api_key='fixture-key')
-    with pytest.raises(ModelConnectionError, match='连不上服务商地址'):
+    with pytest.raises(ModelConnectionError, match='无法连接服务商地址'):
         await list_models(provider)
 
 

@@ -13,7 +13,7 @@ from ..runtime.logs import run_maintenance
 async def install(root: Path) -> None:
     config = load_host_config(root)
     if config.plugins is None:
-        print('没有已配置插件，Python 环境保持。')
+        print('没有已配置的插件，Python 环境保持不变。')
         return
     found, errors = discover(config.plugins.paths)
     if errors:
@@ -37,7 +37,7 @@ async def install(root: Path) -> None:
     if requirements:
         print(await install_dependencies(requirements))
     else:
-        print('没有声明额外依赖，Python 环境保持。')
+        print('未声明额外依赖，Python 环境保持不变。')
 
 
 def main() -> None:

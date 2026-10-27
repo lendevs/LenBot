@@ -67,7 +67,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
                                user: Callable[[Request], str], write_lock: asyncio.Lock) -> None:
     def chat_for(scene: str):
         if scene not in runtime.chats:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         return runtime.chats[scene]
 
     def role_state(scene: str) -> dict:
@@ -118,9 +118,9 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             allowed = chat.persona.tools == "all" or name in chat.persona.tools
             reasons = list(preview["reasons"])
             if not allowed:
-                reasons.append("角色没有允许这个工具")
+                reasons.append("角色未允许此工具")
             if "tool_search" not in chat.toolset.allowed_tool_names:
-                reasons.append("角色没有允许 tool_search，无法发现插件工具")
+                reasons.append("角色未允许 tool_search，无法发现插件工具")
             tools.append({**preview, "allowed": allowed,
                 "registered": name in chat.toolset.allowed_tool_names,
                 "discovered": name in chat.toolset.discovered_tools, "deferred": True, "reasons": reasons})
@@ -211,7 +211,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
         affected = [key for key, value in saved.scenes.items() if value.persona == path and key in runtime.chats]
         candidates = affected or list(runtime.chats)
         if not candidates:
-            raise HTTPException(409, "还没有群聊，无法判断角色能用哪些工具")
+            raise HTTPException(409, "尚无群聊，无法判断角色可用的工具")
         return candidates[0]
 
     def role_abilities(key: str, scene: str | None) -> dict:
@@ -230,7 +230,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
                           "deferred": name in DEFERRED_NAMES,
                           "reasons": [reason for reason in tool_unavailable_reasons(
                               chat.config, persona, name, host_management=host_management)
-                              if reason != "角色没有允许这个工具"]})
+                              if reason != "角色未允许此工具"]})
         previews = [] if runtime.plugins is None else runtime.plugins.tool_previews(reference)
         previews += [] if runtime.mcp is None else [
             {**tool.discovery, "summary": tool.discovery["description"], "description": tool.description,
@@ -255,7 +255,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             async with write_lock:
                 return await asyncio.to_thread(role_abilities, key, scene)
         except LookupError as error:
-            raise HTTPException(404, "角色库里没有这个角色") from error
+            raise HTTPException(404, "角色库中不存在此角色") from error
         except (ValueError, OSError) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error
@@ -270,7 +270,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             async with write_lock:
                 result = await asyncio.to_thread(write)
         except LookupError as error:
-            raise HTTPException(404, "角色库里没有这个角色") from error
+            raise HTTPException(404, "角色库中不存在此角色") from error
         except (ValueError, OSError) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error

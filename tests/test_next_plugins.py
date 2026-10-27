@@ -447,7 +447,7 @@ async def test_hung_plugin_start_and_stop_are_cut_off(tmp_path, monkeypatch):
     with pytest.raises(ExceptionGroup) as failure:
         async with asyncio.timeout(3):
             await host.close()
-    assert [str(error) for error in failure.value.exceptions] == ["插件 stop() 超过 0.1 秒没有返回，已取消"]
+    assert [str(error) for error in failure.value.exceptions] == ["插件 stop() 超过 0.1 秒未返回，已取消"]
     assert host.plugins["slowstop"].status == "failed"
 
 

@@ -82,12 +82,12 @@ class Store:
                 if application_id != 0x4C424E31:
                     raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
                 if version != FORMAT_VERSION:
-                    raise ValueError(f"{path} 的格式是 {version}，这个版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
+                    raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
                 missing = expected_tables() - {row[0] for row in tables}
                 if missing:
                     names = sorted(missing)
                     listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
-                    raise ValueError(f"{path} 缺少数据表 {listed}，是格式 {FORMAT_VERSION} 更早的结构。{FORMAT_RESET}")
+                    raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
             else:
                 if readonly:
                     raise ValueError(f'Existing business database is not initialized: {path}')
@@ -963,7 +963,7 @@ class Store:
         )}
         missing = sorted(set(records) - found)
         if missing:
-            raise ValueError(f"当前场景没有这些原话记录：{missing}")
+            raise ValueError(f"当前场景不存在以下原话记录：{missing}")
 
     def search_messages(self, scene: str, *, query: str | None, who: str | None,
                         after: float | None, before: float | None, snapshot: int,
@@ -1300,7 +1300,7 @@ class Store:
             "AND ended IS NULL LIMIT 1",
             (scene,),
         ).fetchone() is not None
-        self.finish_pending_tools(scene, "隔离进程上次退出时没有保存执行结果")
+        self.finish_pending_tools(scene, "隔离进程上次退出时未保存执行结果")
         with self.db:
             self.db.execute(
                 "UPDATE model_calls SET ended=?,error=? WHERE ended IS NULL AND turn_id IN "

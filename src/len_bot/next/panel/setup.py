@@ -166,9 +166,9 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     config_path = root / 'lenbot.config.json'
     role_path = root / 'personas' / item.persona_id
     if config_path.exists():
-        raise FileExistsError('根配置已经存在，请使用管理面板')
+        raise FileExistsError('根配置已存在，请使用管理面板')
     if role_path.exists():
-        raise FileExistsError(f'角色目录已经存在，请换一个新角色目录名：{role_path}')
+        raise FileExistsError(f'角色目录已存在，请更换角色目录名：{role_path}')
     installed = {p['name'] for p in plugin_choices(root) if p['installed']}
     if set(item.install_plugins) - installed:
         raise ValueError('所选官方插件尚未安装完成，请完成安装或取消选择后继续')
@@ -281,9 +281,9 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
                 item = item.model_copy(update={'panel_host': '0.0.0.0', 'panel_port': CONTAINER_PANEL_PORT})
             try:
                 if (root / 'lenbot.config.json').exists():
-                    raise FileExistsError('根配置已经存在，请进入正常面板登录')
+                    raise FileExistsError('根配置已存在，请前往面板登录')
                 if (root / 'personas' / item.persona_id).exists():
-                    raise FileExistsError('角色目录已经存在，请换一个新角色目录名')
+                    raise FileExistsError('角色目录已存在，请更换角色目录名')
                 HostConfig.model_validate_json(json.dumps(setup_source(item)))
                 installed = []
                 entries = official_plugins()
