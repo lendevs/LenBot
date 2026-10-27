@@ -198,6 +198,10 @@ class PluginTest:
         tools = {item.name: item for item in self.host.tools_for(scene)}
         return await tools[name].call(scene, arguments)
 
+    async def memory(self, arguments: dict, *, scene: str = 'onebot:group:80001') -> str:
+        """Call ``@memory_tool`` with normal schema and scene checks, as the chat memory tool would."""
+        return await self.host.run_memory_tool(self.manifest.name, scene, arguments)
+
     async def recall(self, *, scene: str = 'onebot:group:80001', persona: str = 'test', recap: str | None = None,
                      tasks: Sequence[str] = (), budget_chars: int = 1500) -> list[dict]:
         """Run ``@recall`` on the scene's latest 8 added messages; return the items the chat would receive."""

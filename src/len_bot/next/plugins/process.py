@@ -260,6 +260,8 @@ class Worker:
                 return await host.delete_kv(name, args[0])
             case "memory":
                 return await host.memory(name, self._scene(args[0]), args[1])
+            case "native_memory":
+                return await host.native_memory(name, self._scene(args[0]), args[1])
             case "report_memory_progress":
                 return await host.report_memory_progress(name, self._scene(args[0]), args[1])
             case "generate":

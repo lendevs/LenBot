@@ -73,6 +73,16 @@ def background(every: str):
     return _mark(("background", seconds))
 
 
+def memory_tool(description: str):
+    """The chat ``memory`` tool for scenes whose ``memory_plugin`` names this plugin.
+
+    Handler ``(self, ctx: Invocation, ...)`` with typed named arguments, as for ``tool``; it replaces
+    the native memory tool there, and ``ctx.memory`` and task workers in those scenes call it too.
+    At most one per plugin; in-process plugins only.
+    """
+    return _mark(("memory_tool", description))
+
+
 def recall():
     """Automatic recall for scenes whose ``memory_plugin`` names this plugin.
 
@@ -187,6 +197,7 @@ class HostPort(Protocol):
     async def set_kv(self, plugin: str, key: str, value: JsonValue) -> None: ...
     async def delete_kv(self, plugin: str, key: str) -> bool: ...
     async def memory(self, plugin: str, scene: str, arguments: dict) -> str: ...
+    async def native_memory(self, plugin: str, scene: str, arguments: dict) -> str: ...
     async def report_memory_progress(self, plugin: str, scene: str, message_id: str) -> None: ...
     async def generate(self, plugin: str, scene: str, prompt: str, role: GenerationRole,
                        system: str | None) -> str: ...
@@ -301,8 +312,12 @@ class PluginContext:
         return await self.host.delete_kv(self.name, key)
 
     async def memory(self, scene: str, arguments: dict) -> str:
-        """Use the scene's permitted memory service; public content remains read-only."""
+        """Call the scene's memory tool: the native one, or its ``memory_plugin``'s; public content remains read-only."""
         return await self.host.memory(self.name, self._scene(scene), arguments)
+
+    async def native_memory(self, scene: str, arguments: dict) -> str:
+        """Read the scene's native memory files whichever memory is in use: browse, read, search or history."""
+        return await self.host.native_memory(self.name, self._scene(scene), arguments)
 
     async def report_memory_progress(self, scene: str, message_id: str) -> None:
         """As the scene's ``memory_plugin``: messages through ``message_id`` are processed.

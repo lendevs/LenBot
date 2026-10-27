@@ -13,7 +13,7 @@ def deferred_names(allowed_names: set[str], config) -> frozenset[str]:
     """Tools offered through tool_search; memory stays loaded while session upkeep writes with it."""
     if "tool_search" not in allowed_names:
         return frozenset()
-    if config.memory is not None and config.memory.ingest is not None:
+    if config.memory is not None and config.memory.ingest is not None and config.memory_plugin is None:
         return DEFERRED_NAMES - {"memory"}
     return DEFERRED_NAMES
 

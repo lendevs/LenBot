@@ -20,7 +20,7 @@ from ..chat.attention import SceneRunner
 from ..media.audio import AudioService
 from ..chat.session import Chat
 from ..chat.commands import Commands
-from ..chat.tools import tool_catalog
+from ..chat.tools import task_data_tools, tool_catalog
 from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
 from .logs import credentials, log_context, log_event
@@ -128,6 +128,7 @@ class NetworkRuntime:
                                   self.audio_updated)
         if tasks is not None:
             tasks.audio = self.audio
+            tasks.memory_call = lambda scene, arguments: self.chats[scene].toolset.run_memory(arguments)
         self.chats: dict[str, Chat] = {}
         for scene_config, persona in scene_configs:
             scene = scene_config.scene
@@ -165,8 +166,7 @@ class NetworkRuntime:
             external_tools=(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=True))
                             + ([] if self.mcp is None else self.mcp.tools_for(scene))),
             audio_service=self.audio,
-            plugin_recall=None if self.plugins is None else self.plugins.recall,
-            plugin_compact=None if self.plugins is None else self.plugins.compact,
+            plugins=self.plugins,
             on_update=self.notify,
             on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
         )
@@ -212,6 +212,10 @@ class NetworkRuntime:
                     () if self.plugins is None else self.plugins.skills_for(scene))
                 chat.skills = select_skills(catalog, chat.persona.skills)
                 self.tasks.skills[scene] = chat.skills
+                # A memory plugin's tool comes and goes with the plugin.
+                self.tasks.data_tools[scene] = task_data_tools(chat.config, chat.persona,
+                                                               platform=self.config.delivery == 'onebot',
+                                                               memory=self.memory, plugins=self.plugins)
             chat.set_external_tools(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=self.status != "running"))
                                     + ([] if self.mcp is None else self.mcp.tools_for(scene)))
         self.notify()

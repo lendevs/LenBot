@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -44,6 +44,17 @@ from ..work.tools import DELEGATE_TOOL, TASK_TOOL, execute_tasks
 from ..tools.web_read import WEB_READ_TOOL, WebReadArguments, execute_web_read, read_web_page
 from ..tools.web_search import WEB_SEARCH_TOOL, WebSearchArguments, execute_web_search
 from ..prompt_files import read_prompt
+from ...plugin import CompactRequest, RecallRequest
+
+
+
+class MemoryPlugins(Protocol):
+    """The plugin host's entries for scenes whose memory or recap a plugin provides."""
+    async def recall(self, plugin: str, request: RecallRequest) -> list[dict]: ...
+    async def compact(self, plugin: str, request: CompactRequest) -> str: ...
+    def memory_definition(self, plugin: str) -> dict | None: ...
+    async def run_memory_tool(self, plugin: str, scene: str, arguments: dict) -> str: ...
+
 
 if TYPE_CHECKING:
     from .expression import ChatExpression
@@ -153,7 +164,7 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
         reasons.append("还没有开启读网页")
     if name == "web_search" and config.web_search is None:
         reasons.append("还没有开启搜索网页")
-    if name == "memory" and config.memory is None:
+    if name == "memory" and config.memory is None and config.memory_plugin is None:
         reasons.append("还没有设置记忆")
     if name == 'attention' and config.attention.declarations is None:
         reasons.append('本群没有开启持续关注')
@@ -184,10 +195,17 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
 
 
 def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
-                    memory: MemoryService | None) -> list[dict]:
-    """Chat-data tools a task worker may call for the scene, as far as the role allows."""
+                    memory: MemoryService | None, plugins: MemoryPlugins | None = None) -> list[dict]:
+    """Chat-data tools a task worker may call for the scene, as far as the role allows.
+
+    In a scene whose memory is a plugin, ``memory`` is that plugin's tool, or absent while it has none.
+    """
     selected = [deepcopy(tool["function"]) for tool in build_tools(config, persona, platform=platform)
                 if tool["function"]["name"] in {"recall_chat", "memory", "transcribe"}]
+    if config.memory_plugin is not None:
+        definition = None if plugins is None else plugins.memory_definition(config.memory_plugin)
+        return [deepcopy(definition["function"]) if tool["name"] == "memory" else tool
+                for tool in selected if tool["name"] != "memory" or definition is not None]
     for tool in selected:
         if tool["name"] == "memory":
             tool["parameters"]["properties"]["action"]["enum"] = memory.actions
@@ -261,8 +279,10 @@ class SceneTools:
                  expression: ChatExpression, request: ChatRequest, vision: ChatModel | None,
                  memory: MemoryService | None, tasks: WorkTasks | None, audio: AudioService | None,
                  upload_file: Callable[[str, str, str], Awaitable[UploadResult]] | None,
-                 platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float]):
+                 platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float],
+                 plugins: MemoryPlugins | None = None):
         self.config, self.persona, self.store = config, persona, store
+        self.plugins = plugins
         self.expression, self.request, self.vision = expression, request, vision
         # Images the mind model looked at itself in the current turn, newest last.
         self.looked: list[tuple[str, bytes]] = []
@@ -286,6 +306,11 @@ class SceneTools:
         send_message, upload_file, platform_call = self.expression.send_message, self.upload_file, self.platform_call
         allowed = build_tools(config, persona, platform=send_message is not None,
                               host_management=self.host_management is not None)
+        if config.memory_plugin is not None:
+            # The scene's memory plugin supplies the memory tool; without its definition there is none.
+            definition = None if self.plugins is None else self.plugins.memory_definition(config.memory_plugin)
+            allowed = [definition if tool["function"]["name"] == "memory" else tool
+                       for tool in allowed if tool["function"]["name"] != "memory" or definition is not None]
         if self.scene_control is None:
             allowed = [tool for tool in allowed if tool["function"]["name"] != "scene_control"]
         if self.attention is None:
@@ -317,6 +342,12 @@ class SceneTools:
         saved = self.store.load_discovered_tools(config.scene)
         self.discovered_tools = set(saved) & self.allowed_tool_names & self.deferred_names
         return allowed
+
+    async def run_memory(self, arguments: dict) -> str:
+        """The scene's memory tool for chat, plugins and task workers: native, or the scene's memory plugin."""
+        if self.config.memory_plugin is not None:
+            return await self.plugins.run_memory_tool(self.config.memory_plugin, self.config.scene, arguments)
+        return await self.memory.execute(self.config.scene, arguments)
 
     @property
     def tools(self) -> list[dict]:
@@ -441,7 +472,7 @@ class SceneTools:
                                                 if read_top is not None else None,
                                             connection=self._connection(self.config.web_search)), None, None
         if call.name == "memory":
-            return await self.memory.execute(self.config.scene, call.arguments), None, None
+            return await self.run_memory(call.arguments), None, None
         if call.name in {"delegate", "task"}:
             return tool_result(await execute_tasks(self.tasks, self.config.scene, call.name, call.arguments)), None, None
         if call.name == "send_file":

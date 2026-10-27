@@ -16,7 +16,7 @@ from ..media.audio import AudioService
 from ..media.audio_store import AudioStore
 from .context import ChatContext, style_text, turn_state
 from .expression import ChatExpression, MessageSender
-from .tools import SceneTools
+from .tools import MemoryPlugins, SceneTools
 from ..config import LabConfig
 from .recap import (CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction,
                     recap_source)
@@ -49,8 +49,6 @@ from ..prompt_files import read_prompt
 from ...media.images import image_block
 
 logger = logging.getLogger(__name__)
-PluginRecall = Callable[[str, RecallRequest], Awaitable[list[dict]]]
-PluginCompact = Callable[[str, CompactRequest], Awaitable[str]]
 
 
 def recall_request(store: Store, config: LabConfig, persona: str, turn_id: str, observed_at: float,
@@ -100,8 +98,7 @@ class Chat:
                  platform_call: PlatformCall | None = None,
                  external_tools: list[ExternalTool] = (),
                  audio_service: AudioService | None = None,
-                 plugin_recall: PluginRecall | None = None,
-                 plugin_compact: PluginCompact | None = None,
+                 plugins: MemoryPlugins | None = None,
                  on_update: Callable[[], None] | None = None,
                  on_compaction: Callable[[], None] | None = None,
                  on_reply_sample: Callable[[], None] | None = None,
@@ -118,12 +115,9 @@ class Chat:
         if (config.memory is None) != (memory is None):
             raise ValueError("memory 服务必须与根配置的记忆后端一起提供")
         self.memory = memory
-        if config.memory_plugin is not None and plugin_recall is None:
-            raise ValueError("memory_plugin 需要插件宿主提供召回入口")
-        self.plugin_recall = plugin_recall
-        if config.recap_plugin is not None and plugin_compact is None:
-            raise ValueError("recap_plugin 需要插件宿主提供压缩入口")
-        self.plugin_compact = plugin_compact
+        if (config.memory_plugin is not None or config.recap_plugin is not None) and plugins is None:
+            raise ValueError("memory_plugin 和 recap_plugin 需要插件宿主")
+        self.plugins = plugins
         if (config.worker is None) != (tasks is None):
             raise ValueError("任务服务必须与根配置的 worker 一起提供")
         self.tasks = tasks
@@ -157,7 +151,7 @@ class Chat:
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
-            platform_call=platform_call, notify=self.notify, now=now)
+            platform_call=platform_call, notify=self.notify, now=now, plugins=plugins)
         self.set_external_tools(external_tools)
 
     def set_external_tools(self, external_tools: list[ExternalTool]) -> None:
@@ -231,7 +225,7 @@ class Chat:
         plugin = self.config.recap_plugin if strategy else None
         if plugin is not None:
             try:
-                recap = await self.plugin_compact(plugin, CompactRequest(
+                recap = await self.plugins.compact(plugin, CompactRequest(
                     self.config.scene, self.persona.id, turn_id, plan.request_messages[-1]["content"],
                     plan.summary_budget_tokens))
             except Exception as error:
@@ -475,7 +469,7 @@ class Chat:
                         request = await self.store.read(recall_request, self.store, self.config, self.persona.id,
                                                         turn_id, observed_at, budget)
                         try:
-                            recall_items = await self.plugin_recall(self.config.memory_plugin, request)
+                            recall_items = await self.plugins.recall(self.config.memory_plugin, request)
                         except Exception as error:
                             # Recorded on the plugin; this turn goes on without recalled memory.
                             recall_error = f'{type(error).__name__}: {error}'

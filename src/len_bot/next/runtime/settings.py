@@ -84,7 +84,8 @@ class LiveSettings:
             if runtime.tasks is not None:
                 from ..chat.tools import task_data_tools
                 runtime.tasks.data_tools[scene] = task_data_tools(
-                    chat.config, chat.persona, platform=running.delivery == 'onebot', memory=runtime.memory)
+                    chat.config, chat.persona, platform=running.delivery == 'onebot', memory=runtime.memory,
+                    plugins=runtime.plugins)
             runner.changed.set()
         runtime.events.publish('host.state')
         runtime.notify()

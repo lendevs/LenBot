@@ -58,6 +58,8 @@ PLUGIN_STOP_SECONDS = 30.0
 RECALL_SECONDS = 10.0
 # Compaction runs while a request waits for room; a plugin may write the recap with its own model call.
 COMPACT_SECONDS = 120.0
+# What ``ctx.native_memory`` may do: the native files stay as they are while a plugin is the memory.
+NATIVE_READS = ("browse", "read", "search", "history")
 JSON_RESULT = TypeAdapter(JsonValue, config=ConfigDict(strict=True, allow_inf_nan=False))
 
 
@@ -122,6 +124,7 @@ class Loaded:
     tools: dict[str, ToolEntry] = field(default_factory=dict)
     recall: str | None = None                                               # method
     compact: str | None = None                                              # method
+    memory_tool: ToolEntry | None = None
     backgrounds: list[Background] = field(default_factory=list)
     crons: dict[tuple[str, str], CronJob] = field(default_factory=dict)
     instructions: str | None = None
@@ -272,6 +275,11 @@ class PluginHost:
                 if record.recall is not None:
                     raise ValueError(f"recall 入口只能有一个，已有 {record.recall}")
                 record.recall = attribute
+            elif mark[0] == "memory_tool":
+                if record.memory_tool is not None:
+                    raise ValueError(f"memory_tool 入口只能有一个，已有 {record.memory_tool.method}")
+                record.memory_tool = ToolEntry(mark[1], None, _arguments("memory", getattr(cls, attribute),
+                                                                         needs_source=False), attribute, False)
             elif mark[0] == "compact":
                 if record.compact is not None:
                     raise ValueError(f"compact 入口只能有一个，已有 {record.compact}")
@@ -467,11 +475,34 @@ class PluginHost:
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         chat = self.runtime.chats[scene]
-        if chat.memory is None:
-            raise ValueError(f"场景 {scene} 未配置长期记忆服务")
         if "memory" not in chat.toolset.allowed_tool_names:
-            raise PermissionError(f"场景 {scene} 当前加载角色未允许 memory")
+            raise PermissionError(f"场景 {scene} 当前加载角色未允许 memory，或场景没有记忆")
+        return await chat.toolset.run_memory(arguments)
+
+    async def native_memory(self, plugin: str, scene: str, arguments: dict) -> str:
+        self._permit(self._active(plugin, scene), "memory")
+        if self.runtime is None:
+            raise RuntimeError("插件宿主尚未接入运行中的场景")
+        chat = self.runtime.chats[scene]
+        if chat.memory is None:
+            raise ValueError(f"场景 {scene} 未配置原生记忆")
+        if arguments.get("action") not in NATIVE_READS:
+            raise PermissionError(f"原生记忆只读，允许的 action：{'、'.join(NATIVE_READS)}")
         return await chat.memory.execute(scene, arguments)
+
+    def memory_definition(self, plugin: str) -> dict | None:
+        """The ``memory`` tool from ``plugin``'s ``@memory_tool`` while the plugin is loaded, else None."""
+        record = self.plugins.get(plugin)
+        if record is None or record.memory_tool is None or record.status not in {"loaded", "running"}:
+            return None
+        return self._external_tool(record, "memory", record.memory_tool).definition
+
+    async def run_memory_tool(self, plugin: str, scene: str, arguments: dict) -> str:
+        """One ``memory`` call in a scene whose memory is ``plugin``, with the checks of a plugin tool."""
+        record = self._active(plugin, scene)
+        if record.memory_tool is None:
+            raise ValueError(f"插件 {plugin} 没有 @memory_tool 入口")
+        return await self._tool_call(record, "memory", record.memory_tool)(scene, arguments)
 
     async def report_memory_progress(self, plugin: str, scene: str, message_id: str) -> None:
         self._active(plugin, scene)

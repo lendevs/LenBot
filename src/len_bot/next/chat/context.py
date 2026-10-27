@@ -95,7 +95,9 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
         system += "\n" + read_prompt("next_react.md")
     if "schedule" in names:
         system += "\n" + read_prompt("next_schedule.md")
-    if "memory" in names:
+    if config.memory_plugin is not None:
+        system += "\n" + Template(read_prompt("next_memory_plugin.md")).substitute(plugin=config.memory_plugin)
+    elif "memory" in names:
         system += "\n" + Template(read_prompt("next_memory.md")).substitute(
             backend=config.memory.backend,
             backend_details=read_prompt(f"next_memory_{config.memory.backend}.md"),
@@ -347,7 +349,8 @@ class ChatContext:
         entries = self.project_entries(entries)
         if self.host_state is not None:
             state = {**state, 'content': state['content'] + '\n<宿主恢复状态>\n' + self.host_state + '\n</宿主恢复状态>'}
-        profile = None if self.memory is None else await self.memory.read_group_profile(self.config.scene)
+        profile = (None if self.memory is None or self.config.memory_plugin is not None
+                   else await self.memory.read_group_profile(self.config.scene))
         if profile is not None:
             state = {**state, "content": state["content"] + "\n" + Template(
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}

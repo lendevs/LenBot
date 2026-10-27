@@ -58,13 +58,13 @@ class Notes(Plugin):
 '''
 
 
-def notes_package(base: Path, *, process: bool = False) -> None:
+def notes_package(base: Path, *, process: bool = False, source: str = NOTES) -> None:
     directory = _copy_sample(base, 'notes')
     manifest = (directory / 'plugin.toml').read_text(encoding='utf-8')
     if process:
         manifest = manifest.replace('description = ', 'isolation = "process"\ndescription = ', 1)
     (directory / 'plugin.toml').write_text(manifest, encoding='utf-8')
-    (directory / '__init__.py').write_text(NOTES, encoding='utf-8')
+    (directory / '__init__.py').write_text(source, encoding='utf-8')
 
 
 def request(**values) -> RecallRequest:
@@ -77,7 +77,8 @@ def request(**values) -> RecallRequest:
 
 
 @asynccontextmanager
-async def running(root: Path, replies: list[dict], received: list):
+async def running(root: Path, replies: list[dict], received: list, *, plugin: str = NOTES,
+                  tools: list[str] | None = None):
     server = await peer_server([(200, 'application/json', json.dumps(body).encode()) for body in replies], received)
     async with server:
         source = instance(root)
@@ -85,7 +86,11 @@ async def running(root: Path, replies: list[dict], received: list):
         source['models']['providers']['fixture']['base_url'] = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
         source['plugins'] = {'paths': ['plugins'], 'notes': {}}
         source['scenes'][SCENE].update(plugins=['notes'], memory_plugin='notes')
-        notes_package(root / 'plugins')
+        notes_package(root / 'plugins', source=plugin)
+        if tools is not None:
+            persona = root / 'persona/persona.yaml'
+            persona.write_text(persona.read_text().replace('tools: [say, tool_search, host_manage]',
+                                                           f'tools: [{", ".join(tools)}]'))
         (root / 'lenbot.config.json').write_text(json.dumps(source, ensure_ascii=False))
         config = load_host_config(root)
         plugins = PluginHost(config, core_tools=CORE)

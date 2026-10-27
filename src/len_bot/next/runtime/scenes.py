@@ -92,7 +92,8 @@ class SceneService:
             runtime.tasks.skills[scene] = select_skills(catalog, persona.skills)
             runtime.tasks.skill_permissions[scene] = persona.skills
             runtime.tasks.tool_permissions[scene] = persona.tools
-            runtime.tasks.data_tools[scene] = task_data_tools(config, persona, platform=runtime.config.delivery == 'onebot', memory=runtime.memory)
+            runtime.tasks.data_tools[scene] = task_data_tools(config, persona, platform=runtime.config.delivery == 'onebot',
+                                                              memory=runtime.memory, plugins=runtime.plugins)
         try:
             chat = runtime.create_chat(config, persona)
             if runtime.management is not None:

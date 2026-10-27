@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from ..media.audio import AudioService, TranscribeArguments
 from ..config import HostConfig
 from .egress_usage import EgressUsage
-from ..memory.service import MemoryService
 from ..models.slots import ModelSlots
 from ..chat.recall import RecallArguments, recall_chat
 from .sandbox import DockerSandbox
@@ -50,7 +49,8 @@ class TaskExecution:
 
     def __init__(self, item: Task, config: HostConfig, store: Store, *,
                  sandbox: DockerSandbox, files: TaskFiles, egress: EgressUsage,
-                 slots: ModelSlots | None, memory: MemoryService | None, audio: AudioService | None,
+                 slots: ModelSlots | None, memory_call: Callable[[str, dict], Awaitable[str]] | None,
+                 audio: AudioService | None,
                  mcp: MCPHost | None, skills: dict[str, tuple[Skill, ...]],
                  skill_permissions: dict[str, Literal["all"] | list[str]],
                  tool_permissions: dict[str, Literal["all"] | list[str]], data_tools: dict[str, list[dict]],
@@ -62,7 +62,7 @@ class TaskExecution:
         self.item, self.config, self.store = item, config, store
         self.settings, self.records = config.worker, TaskStore(store)
         self.sandbox, self.files, self.egress = sandbox, files, egress
-        self.slots, self.memory, self.audio, self.mcp = slots, memory, audio, mcp
+        self.slots, self.memory_call, self.audio, self.mcp = slots, memory_call, audio, mcp
         self.catalog, self.skill_permissions, self.tool_permissions = skills, skill_permissions, tool_permissions
         self.data_tools = data_tools
         self._active_timeout, self._limits, self._wait_for_slot = active_timeout, limits, wait_for_slot
@@ -405,7 +405,9 @@ class TaskExecution:
                     arguments = json.loads(raw)
                 except (json.JSONDecodeError, UnicodeDecodeError) as error:
                     raise ValueError(f"Invalid task memory JSON: {raw[:500]!r}; {error}") from error
-                content = await self.memory.execute(scene, arguments)
+                if self.memory_call is None:
+                    raise RuntimeError("任务记忆服务尚未接入")
+                content = await self.memory_call(scene, arguments)
             return {"content": content}
         if path == "/task/network":
             try:

@@ -60,7 +60,7 @@ permissions = ["send", "history"]
 - 插件中的 `ctx` 能力都回到宿主执行。宿主使用自己记录的插件名，并重新检查场景和 `permissions`，子进程无法冒充其他插件。`ctx.delegate` 的请求人由宿主按触发这次调用的真实消息确定，子进程传来的账号不被采用；后台循环和调用结束后不能委派。
 - 子进程崩溃或退出时，未完成的调用以失败结束，`@background` 循环随之停止，插件标记为失败并记录退出码，宿主和其他插件不受影响。协议输出中出现无法解析的行时，宿主结束这个进程，按同样方式处理。在面板中重新加载插件会启动新的进程。
 - 停止时先请求插件的 `stop()`，超时或被取消时结束进程。插件的 `print` 写入标准错误，不会混入协议。
-- 暂不支持 `@tool`、`ctx.cron` 和 `ctx.start_task`；含有这些入口的插件加载时会说明原因。跨进程传递的值需要能编码为 JSON，图片按 base64 传递。
+- 暂不支持 `@tool`、`@memory_tool`、`ctx.cron` 和 `ctx.start_task`；含有这些入口的插件加载时会说明原因。跨进程传递的值需要能编码为 JSON，图片按 base64 传递。
 - 子进程与宿主使用同一个 Python 环境，进程隔离用于故障隔离，插件拥有与宿主相同的权限。
 
 公开给插件作者的入口包括以下几项。`len_bot.next` 下的内部模块不承诺兼容。
@@ -156,6 +156,7 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 | `@tool("plugin_read", "完整说明", summary="发现简介", needs_source=False)` | `self, ctx: Invocation, ...` | 根据参数类型生成 schema，返回文本或 JSON 值 |
 | `@background(every="5m")` | `self, ctx: PluginContext` | 本次执行完成后再等待一个周期，最短 10 秒。它按间隔执行，与定点的 cron 不同 |
 | `@recall()` | `self, request: RecallRequest` | 群设置 `memory_plugin` 指向本插件时，每轮在第一次模型请求前调用一次，返回 `RecallBlock` 列表，见[自动召回](#自动召回) |
+| `@memory_tool("说明")` | `self, ctx: Invocation, ...` | 群设置 `memory_plugin` 指向本插件时，作为这个群的 `memory` 工具，参数写法与 `@tool` 相同，见[自动召回](#自动召回) |
 | `@compact()` | `self, request: CompactRequest` | 群设置 `recap_plugin` 指向本插件时，由它写压缩回想，返回文字，见[压缩回想](#压缩回想) |
 
 每个方法只使用一个入口装饰器。匹配的优先级依次为命令、全文、正则，正则之间按 priority 降序匹配。同一条消息最多由一个处理器接管，并且不唤醒聊天模型。默认匹配只针对纯文本，开头的回复段和 @Bot 自己的部分可以去掉。命令可用 `@command("转发", "说明", allow_mentions=True)` 明确接收正文中的提及；提及保留在 `ctx.message.segments`，文字参数中的提及位置替换为一个空格，插件从真实消息读取目标账号。图片、语音等其他段仍不接管。全文和正则规则继续只匹配纯文本，不把提及或媒体悄悄拼接进去。
@@ -168,7 +169,9 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 
 ### 自动召回
 
-群设置的 `memory_plugin` 写成一个已在该群启用的插件名后，这个群每轮的自动召回由该插件的 `@recall` 入口提供，原生记忆不再为这个群做自动召回和后台整理，已有的原生记忆文件原样保留。聊天的 `memory` 工具仍由原生记忆处理。每个插件最多一个 `@recall` 入口。
+群设置的 `memory_plugin` 写成一个已在该群启用的插件名后，这个群每轮的自动召回由该插件的 `@recall` 入口提供，原生记忆不再为这个群做自动召回和后台整理，已有的原生记忆文件原样保留。每个插件最多一个 `@recall` 入口。
+
+插件用 `@memory_tool("说明")` 提供这个群的 `memory` 工具，参数按处理函数的类型标注生成，写法与 `@tool` 相同。聊天模型、其他插件的 `ctx.memory()` 和任务执行器在这个群调用 `memory` 时都交给它，角色仍需允许 `memory`。插件没有 `@memory_tool` 时这个群没有 `memory` 工具。原生记忆的说明和群资料不再写入这个群的提示词，改为一段说明记忆由该插件提供的文字。需要导入原生记忆时，用 `await self.ctx.native_memory(scene, arguments)` 读取，参数与原生 `memory` 工具相同，只允许 browse、read、search 和 history。
 
 ```python
 from len_bot.plugin import Plugin, RecallBlock, RecallRequest, recall
@@ -457,7 +460,7 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 | KV | `get_kv(key, default=None)`、`set_kv(key, JSON值)`、`delete_kv(key)`，都需要 await |
 | 原消息 | `ctx.recent_messages(limit=20)`，只读取当前场景，最多 100 条 |
 | 时间段消息 | `ctx.messages_between(after, before, offset=0, limit=200)`，Unix 时间 `after <= time < before`，按时间从早到晚排列，每页最多 500 条，用 offset 翻页 |
-| 记忆 | `await ctx.memory(arguments)`，使用当前场景的记忆服务，不直接连接后端数据库 |
+| 记忆 | `await ctx.memory(arguments)`，调用当前场景的 `memory` 工具，原生记忆或该群的记忆插件，不直接连接后端数据库；`ctx.native_memory(scene, arguments)` 只读访问原生记忆文件 |
 | 主动交给聊天模型 | `await ctx.emit_event(text)`，与直接发送不同，它会唤醒聊天模型 |
 | 时间 | `ctx.now()` 和 `ctx.timezone()`，明确使用场景的时区 |
 | 主人权限 | `ctx.require_owner()`，使用真实来源的发送者 |
@@ -580,6 +583,7 @@ async def check():
 - `deliveries` 包含插件、场景、组合内容、reply_to 和 simulated 状态。
 - `events()` 用于查看实际记录的插件事件。
 - `recall(scene=..., recap=None, tasks=(), budget_chars=1500)` 用最近 8 条 `add_message` 的消息调用 `@recall`，返回聊天实际收到的召回条目。
+- `memory(arguments, scene=...)` 按聊天 `memory` 工具的校验调用 `@memory_tool`。
 - `compact(source, scene=..., budget_tokens=4096)` 调用 `@compact` 并按宿主的规则检查，返回宿主会采用的回想。
 
 处理器或启动失败时，本次测试会报错。退出上下文时会停止插件并删除临时实例。

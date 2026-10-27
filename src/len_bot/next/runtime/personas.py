@@ -295,7 +295,8 @@ class PersonaService:
                          runtime.plugins.tools_for(scene, preparing=runtime.status != "running"))
                         + ([] if runtime.mcp is None else runtime.mcp.tools_for(scene)))
             data_tools = (None if runtime.tasks is None else task_data_tools(
-                chat.config, persona, platform=runtime.config.delivery == "onebot", memory=runtime.memory))
+                chat.config, persona, platform=runtime.config.delivery == "onebot", memory=runtime.memory,
+                plugins=runtime.plugins))
             runtime.runners[scene].adopt_persona(persona, skills, external)
         except Exception:
             for target, values in zip(targets, before):

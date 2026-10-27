@@ -169,6 +169,9 @@ class RemoteHost:
     async def memory(self, plugin, scene, arguments):
         return await self.channel.call("memory", scene, arguments)
 
+    async def native_memory(self, plugin, scene, arguments):
+        return await self.channel.call("native_memory", scene, arguments)
+
     async def report_memory_progress(self, plugin, scene, message_id):
         await self.channel.call("report_memory_progress", scene, message_id)
 

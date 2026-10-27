@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict
 from datetime import datetime
 import json
@@ -57,6 +57,8 @@ class WorkTasks:
         self.skills = skills
         self.skill_permissions = skill_permissions
         self.memory = memory
+        # The scene memory tool for task workers; the network runtime routes it like the chat's.
+        self.memory_call: Callable[[str, dict], Awaitable[str]] | None = None if memory is None else memory.execute
         self.audio: AudioService | None = None
         self.data_tools = data_tools
         self.tool_permissions = tool_permissions
@@ -584,7 +586,7 @@ class WorkTasks:
                         current = TaskExecution(
                             self.records.start(item.scene, item.id), self.config, self.store,
                             sandbox=self.sandbox, files=self.files, egress=self.egress,
-                            slots=self.slots, memory=self.memory, audio=self.audio, mcp=self.mcp,
+                            slots=self.slots, memory_call=self.memory_call, audio=self.audio, mcp=self.mcp,
                             skills=self.skills, skill_permissions=self.skill_permissions,
                             tool_permissions=self.tool_permissions, data_tools=self.data_tools,
                             active_timeout=self.active_timeout, limits=self._limits,
