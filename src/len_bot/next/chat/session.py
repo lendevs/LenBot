@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from ..media.audio import AudioService
 from ..media.audio_store import AudioStore
-from .context import ChatContext, turn_state
+from .context import ChatContext, style_text, turn_state
 from .expression import ChatExpression, MessageSender
 from .tools import SceneTools
 from ..config import LabConfig
@@ -464,11 +464,7 @@ class Chat:
                             expressions=encode([{ "情境": item["situation"], "说法": item["style"] } for item in selected]))
                 phase = None
                 style = select_style(self.persona)
-                expression_style = None
-                if style is not None:
-                    expression_style = Template(read_prompt("next_style.md")).substitute(
-                        name=style.name, note="" if style.note is None else style.note,
-                    )
+                expression_style = None if style is None else style_text(style)
                 if learned is not None:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
                 looked_up = stepped_lookup = False

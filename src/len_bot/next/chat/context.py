@@ -22,7 +22,7 @@ from ..tools.discovery import deferred_names, discovery_view
 from ..learning.jargon_store import JargonStore
 from ..memory.service import MemoryService
 from ..platform.messages import ChatMessage, plain_text, render_batch, render_message, render_text
-from ..persona.profile import Persona, select_examples
+from ..persona.profile import EXPRESSION_FILES, Persona, Style, select_examples
 from .schedule import describe
 from ..tools.skills import Skill
 from ..storage.store import Store, encode
@@ -34,13 +34,14 @@ from ..prompt_files import read_prompt
 PROMPTS = Path(__file__).resolve().parents[2] / "prompts"
 
 
-def character_material(config: LabConfig, persona: Persona) -> str:
+def character_material(config: LabConfig | None, persona: Persona) -> str:
+    """The persona section of the system text; ``config`` adds what one scene says about it."""
     scene_details = {}
-    if config.persona_aliases:
+    if config is not None and config.persona_aliases:
         scene_details["本场景对你的称呼"] = config.persona_aliases
-    if config.relationships:
+    if config is not None and config.relationships:
         scene_details["关系说明（账号 → 描述）"] = dict(sorted(config.relationships.items()))
-    if config.behavior_addendum is not None:
+    if config is not None and config.behavior_addendum is not None:
         scene_details["本场景行为补充"] = config.behavior_addendum
     scene_material = (Template(read_prompt("next_scene_persona.md")).substitute(
         details=encode(scene_details)) if scene_details else "")
@@ -53,8 +54,22 @@ def character_material(config: LabConfig, persona: Persona) -> str:
     )
 
 
-def expression_principles(persona: Persona) -> str:
-    return Template(read_prompt("next_expression_principles.md")).substitute(name=persona.name)
+def expression_rule(persona: Persona, name: str) -> str:
+    """One expression rule file: the persona's own version, otherwise the framework's.
+
+    A persona's file may use ``$name`` like the framework's, and any other ``$`` stays as written. The
+    framework's chat examples are not a template.
+    """
+    own = persona.expression.get(name)
+    if own is not None:
+        return Template(own).safe_substitute(name=persona.name)
+    text = read_prompt(EXPRESSION_FILES[name])
+    return text if name == "chat_examples.md" else Template(text).substitute(name=persona.name)
+
+
+def style_text(style: Style) -> str:
+    """How one sampled style is added to a turn's reference material."""
+    return Template(read_prompt("next_style.md")).substitute(name=style.name, note="" if style.note is None else style.note)
 
 
 def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, platform: bool,
@@ -70,12 +85,12 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
     system = Template(read_prompt("next_mind.md")).substitute(
         name=persona.name, scene=config.scene, bot_id=config.bot_id,
         character=character_material(config, persona),
-        response_choice=Template(read_prompt("next_response_choice.md")).substitute(name=persona.name),
-        expression_principles=expression_principles(persona),
+        response_choice=expression_rule(persona, "response_choice.md"),
+        expression_principles=expression_rule(persona, "expression_principles.md"),
         outlet=read_prompt(("next_platform_outlet.md" if platform else
                            "next_simulated_outlet.md")).strip(),
     )
-    system += "\n" + read_prompt("next_chat_examples.md")
+    system += "\n" + expression_rule(persona, "chat_examples.md")
     if "react" in names:
         system += "\n" + read_prompt("next_react.md")
     if "schedule" in names:

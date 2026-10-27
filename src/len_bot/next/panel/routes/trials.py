@@ -120,6 +120,8 @@ def write_trial_files(config: LabConfig, persona: Persona, draft: PersonaDraft |
     (snapshot_dir / 'voice.md').write_text(persona.voice, encoding='utf-8')
     (snapshot_dir / 'boundaries.md').write_text(persona.boundaries, encoding='utf-8')
     (snapshot_dir / 'examples.yaml').write_text(yaml.safe_dump([example.model_dump() for example in persona.examples], allow_unicode=True), encoding='utf-8')
+    for filename, content in persona.expression.items():
+        (snapshot_dir / filename).write_text(content, encoding='utf-8')
     if persona.avatar is not None:
         (snapshot_dir / 'avatar.png').write_bytes(persona.avatar.data)
     for filename, document in persona.knowledge.items():

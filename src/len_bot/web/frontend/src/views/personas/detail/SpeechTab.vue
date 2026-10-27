@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, Plus, X } from '@lucide/vue'
 import Button from '../../../ui/Button.vue'
@@ -13,6 +13,7 @@ import NumberInput from '../../../ui/NumberInput.vue'
 import SaveBar from '../../../ui/SaveBar.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import Textarea from '../../../ui/Textarea.vue'
+import MoreSection from './MoreSection.vue'
 import { useProfile } from './profileForm'
 
 const { t } = useI18n()
@@ -24,6 +25,9 @@ const total = computed(() => percent(draft.value.styles.reduce((sum, style) => s
 function addStyle() {
   draft.value.styles.push({ name: '', weight: draft.value.styles.length ? 0 : 1, note: null })
 }
+
+// Folded unless the role already uses styles or a filter, so nothing written is hidden.
+const more = ref(Boolean(draft.value.styles.length || draft.value.example_tags.length))
 
 const tags = computed(() => [...new Set(draft.value.examples.flatMap((example) => example.tags))])
 const tagOptions = computed(() => tags.value.map((tag) => ({ value: tag, label: tag })))
@@ -49,68 +53,7 @@ function moveUp(index: number) {
       </Field>
     </FormSection>
 
-    <FormSection :title="t('personas.detail.speech.styles')" :columns="1">
-      <template #actions>
-        <span
-          v-if="draft.styles.length"
-          class="text-sm tabular"
-          :class="Math.abs(total - 100) < 0.01 ? 'text-muted' : 'text-error'"
-        >
-          {{ t('personas.detail.speech.total', { n: total }) }}
-        </span>
-      </template>
-      <ul v-if="draft.styles.length" class="flex flex-col gap-3">
-        <li
-          v-for="(style, index) in draft.styles"
-          :key="index"
-          class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_minmax(0,1.6fr)_auto] sm:items-start"
-        >
-          <Field
-            :label="t('personas.detail.speech.styleName')"
-            :error="style.name.trim() ? null : t('common.required')"
-          >
-            <Input v-model="style.name" />
-          </Field>
-          <Field :label="t('personas.detail.speech.share')">
-            <NumberInput
-              :model-value="percent(style.weight)"
-              :min="0"
-              :max="100"
-              :step="5"
-              unit="%"
-              @update:model-value="(value) => (style.weight = (value ?? 0) / 100)"
-            />
-          </Field>
-          <Field :label="t('personas.detail.speech.note')">
-            <Input
-              :model-value="style.note ?? ''"
-              @update:model-value="(value) => (style.note = value || null)"
-            />
-          </Field>
-          <IconButton
-            :icon="X"
-            :label="t('personas.detail.speech.removeStyle')"
-            class="max-sm:self-end sm:mt-6.5"
-            @click="draft.styles.splice(index, 1)"
-          />
-        </li>
-      </ul>
-      <div>
-        <Button size="sm" variant="ghost" :icon="Plus" @click="addStyle">
-          {{ t('personas.detail.speech.addStyle') }}
-        </Button>
-      </div>
-    </FormSection>
-
     <FormSection :title="t('personas.detail.speech.examples')" :columns="1">
-      <Field v-if="tags.length" :label="t('personas.detail.speech.filter')">
-        <Combobox
-          v-model="draft.example_tags"
-          :options="tagOptions"
-          multiple
-          :placeholder="t('personas.detail.speech.filterAll')"
-        />
-      </Field>
       <EmptyState v-if="!draft.examples.length" :title="t('personas.detail.speech.noExamples')" compact />
       <ol v-else class="flex flex-col gap-3">
         <li
@@ -158,6 +101,71 @@ function moveUp(index: number) {
         </Button>
       </div>
     </FormSection>
+
+    <MoreSection v-model="more" :title="t('personas.detail.more')">
+      <FormSection :title="t('personas.detail.speech.styles')" :columns="1">
+        <template #actions>
+          <span
+            v-if="draft.styles.length"
+            class="text-sm tabular"
+            :class="Math.abs(total - 100) < 0.01 ? 'text-muted' : 'text-error'"
+          >
+            {{ t('personas.detail.speech.total', { n: total }) }}
+          </span>
+        </template>
+        <ul v-if="draft.styles.length" class="flex flex-col gap-3">
+          <li
+            v-for="(style, index) in draft.styles"
+            :key="index"
+            class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_minmax(0,1.6fr)_auto] sm:items-start"
+          >
+            <Field
+              :label="t('personas.detail.speech.styleName')"
+              :error="style.name.trim() ? null : t('common.required')"
+            >
+              <Input v-model="style.name" />
+            </Field>
+            <Field :label="t('personas.detail.speech.share')">
+              <NumberInput
+                :model-value="percent(style.weight)"
+                :min="0"
+                :max="100"
+                :step="5"
+                unit="%"
+                @update:model-value="(value) => (style.weight = (value ?? 0) / 100)"
+              />
+            </Field>
+            <Field :label="t('personas.detail.speech.note')">
+              <Input
+                :model-value="style.note ?? ''"
+                @update:model-value="(value) => (style.note = value || null)"
+              />
+            </Field>
+            <IconButton
+              :icon="X"
+              :label="t('personas.detail.speech.removeStyle')"
+              class="max-sm:self-end sm:mt-6.5"
+              @click="draft.styles.splice(index, 1)"
+            />
+          </li>
+        </ul>
+        <div>
+          <Button size="sm" variant="ghost" :icon="Plus" @click="addStyle">
+            {{ t('personas.detail.speech.addStyle') }}
+          </Button>
+        </div>
+      </FormSection>
+      <FormSection v-if="tags.length" :columns="1">
+        <Field :label="t('personas.detail.speech.filter')">
+          <Combobox
+            v-model="draft.example_tags"
+            :options="tagOptions"
+            multiple
+            :placeholder="t('personas.detail.speech.filterAll')"
+          />
+        </Field>
+      </FormSection>
+    </MoreSection>
 
     <SaveBar
       :dirty="form.dirty.value.speech"

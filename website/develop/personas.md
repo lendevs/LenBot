@@ -11,6 +11,9 @@ companion/
   knowledge/         可检索的资料（可选）
   stickers/          表情图片和 index.yaml（可选）
   avatar.png         头像（可选）
+  response_choice.md        替换框架的回应判断（可选）
+  expression_principles.md  替换框架的一般说法（可选）
+  chat_examples.md          替换框架的情境示范（可选）
 ```
 
 ## persona.yaml
@@ -76,6 +79,12 @@ brief: 班里爱聊天的同学，说话直接，喜欢接梗。
 ### 事实资料
 
 需要准确的内容写进 `knowledge/` 下的 Markdown 文件，例如生日和经历，也包括作品。模型在需要时会检索这些资料。资料中没有的内容，模型应该回答不知道。
+
+## 替换框架的表达规则
+
+框架给每个角色附加三份通用的表达规则：开口前怎样判断（`next_response_choice.md`）、群聊里的一般说法（`next_expression_principles.md`）和几个情境示范（`next_chat_examples.md`）。角色包里放同名的 `response_choice.md`、`expression_principles.md` 或 `chat_examples.md`，这个角色就用自己的版本，其他角色不受影响。文件不存在或内容为空时，用框架的版本，包括在**系统 → 设置 → 提示词**里改过的全局版本。
+
+文件里的 `$name` 会换成角色名字，其他 `$` 原样保留。面板角色页的**文件**里可以编辑这三份文件，空白时显示框架当前的内容，可以一键填入后再改；清空并保存就回到框架版本。
 
 ## 表情
 

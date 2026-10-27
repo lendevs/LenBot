@@ -3,7 +3,14 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { keys } from '../../../api/query'
-import { personaFiles, personasApi, type PersonaFile } from '../../../api/personas'
+import {
+  expressionFiles,
+  personaFiles,
+  personasApi,
+  type ExpressionFile,
+  type PersonaFile,
+} from '../../../api/personas'
+import Button from '../../../ui/Button.vue'
 import { developerDetails } from '../../../composables/useDeveloperMode'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import SaveBar from '../../../ui/SaveBar.vue'
@@ -26,7 +33,8 @@ const files = useQuery({
   queryFn: ({ signal }) => personasApi.files(props.persona, signal),
 })
 
-const file = ref<PersonaFile>('persona.yaml')
+type FileName = PersonaFile | ExpressionFile
+const file = ref<FileName>('persona.yaml')
 const text = ref('')
 const saved = computed(() => files.data.value?.saved[file.value] ?? '')
 // Saved text read again (after a save elsewhere) replaces the editor only when it holds no edits.
@@ -41,16 +49,21 @@ const dirty = computed(() => Boolean(files.data.value) && text.value !== saved.v
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
 const options = computed(() =>
-  personaFiles.map((value) => ({
+  [...personaFiles, ...expressionFiles].map((value) => ({
     value,
     label: t(`personas.detail.files.names.${value.replace('.', '_')}`),
   })),
 )
+const expression = computed(() => (expressionFiles as readonly string[]).includes(file.value))
+/** A blank expression file uses the framework's text, shown in its place until one is written. */
+const fallback = computed(() =>
+  expression.value ? (files.data.value?.defaults[file.value as ExpressionFile] ?? '') : undefined,
+)
 const selected = computed({
   get: () => file.value,
-  set: (value: PersonaFile) => void pick(value),
+  set: (value: FileName) => void pick(value),
 })
-async function pick(value: PersonaFile) {
+async function pick(value: FileName) {
   if (value === file.value) return
   if (dirty.value) {
     const sure = await confirm({
@@ -92,7 +105,20 @@ const save = useMutation({
       />
       <code class="font-mono text-xs text-subtle">{{ file }}</code>
     </div>
-    <Textarea v-model="text" mono :rows="18" :max-rows="48" spellcheck="false" :aria-label="file" />
+    <Textarea
+      v-model="text"
+      mono
+      :rows="18"
+      :max-rows="48"
+      spellcheck="false"
+      :aria-label="file"
+      :placeholder="fallback"
+    />
+    <div v-if="expression && !text">
+      <Button size="sm" variant="secondary" @click="text = fallback ?? ''">
+        {{ t('personas.detail.files.fillDefault') }}
+      </Button>
+    </div>
     <p
       v-if="developerDetails"
       class="truncate font-mono text-xs text-subtle"

@@ -274,6 +274,28 @@ class RoleScenes(PanelResponse):
     results: list[JsonObject]
 
 
+class RolePreviewSection(PanelResponse):
+    name: str
+    # True when the text comes from the persona package rather than the framework.
+    own: bool
+    text: str
+
+
+class RolePreviewStyle(PanelResponse):
+    name: str
+    weight: float
+    note: str | None
+
+
+class RolePreview(PanelResponse):
+    scene: str | None
+    sections: list[RolePreviewSection]
+    examples: int
+    styles: list[RolePreviewStyle]
+    # One style drawn the way a turn draws it, as the turn would add it.
+    style: str | None
+
+
 class RoleLocation(PanelResponse):
     saved_path: str
     running_path: str
@@ -298,6 +320,8 @@ class RoleFiles(Applied):
     saved_path: str
     affected_scenes: list[str]
     appended: JsonObject | None = None
+    # The framework expression rules a blank persona file falls back to.
+    defaults: dict[str, str] | None = None
 
 
 class KnowledgeDocument(PanelResponse):

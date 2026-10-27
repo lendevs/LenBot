@@ -21,15 +21,19 @@ from ...learning.store import LearningStore
 from ...runtime.network import NetworkRuntime
 from ...tools.skills import select_skills
 from ...plugins.manifest import scene_skill_catalog
-from ...persona.profile import (Example, Persona, PersonaTarget, Style, load_persona, parse_persona_files,
-                      read_persona_files, require_persona_target, save_persona_files)
+from ...chat.context import character_material, expression_rule, style_text
+from ...persona.profile import (EXPRESSION_FILES, Example, Persona, PersonaTarget, Style, load_persona,
+                      parse_persona_files, read_persona_files, require_persona_target, save_persona_files,
+                      select_examples, select_style)
+from ...prompt_files import read_prompt
 from ...persona.knowledge import parse_knowledge_document
 from ...persona.packages import MAX_UPLOAD_BYTES, export_package
 from ...runtime.logs import error_text
 from ...runtime.personas import copy_role, create_role, delete_role, import_role
 
 
-PersonaFilename = Literal["persona.yaml", "voice.md", "boundaries.md", "examples.yaml"]
+PersonaFilename = Literal["persona.yaml", "voice.md", "boundaries.md", "examples.yaml",
+                          "response_choice.md", "expression_principles.md", "chat_examples.md"]
 
 
 class PersonaFileChange(PersonaTarget):
@@ -360,14 +364,20 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         if edit is not None:
             require_persona_target(path, edit[2])
         files = read_persona_files(path)
+        expression = {name: (path / name).read_text(encoding="utf-8") if (path / name).is_file() else ""
+                      for name in EXPRESSION_FILES}
         if edit is not None:
-            files[edit[0]] = edit[1]
+            (expression if edit[0] in EXPRESSION_FILES else files)[edit[0]] = edit[1]
         candidate = parse_persona_files(path, files)
         current = running_persona(path)
         if edit is not None and current is not None and candidate.id != current.id:
             raise ValueError('有群正在用这个角色，不能改角色 ID；要换 ID 请复制一份角色')
         scenes = validate_dependencies(config, path, candidate)
-        if edit is not None:
+        if edit is not None and edit[0] in EXPRESSION_FILES and not edit[1].strip():
+            # A blank expression file means the framework version, so none is kept.
+            (path / edit[0]).unlink(missing_ok=True)
+            expression[edit[0]] = ""
+        elif edit is not None:
             descriptor, name = tempfile.mkstemp(prefix=".persona-", dir=path)
             temporary = Path(name)
             try:
@@ -376,8 +386,9 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
                 temporary.replace(path / edit[0])
             finally:
                 temporary.unlink(missing_ok=True)
-        return {"saved": files, "running": None if current is None else current.model_dump(),
-                'saved_path': str(path), "affected_scenes": scenes}
+        return {"saved": {**files, **expression}, "running": None if current is None else current.model_dump(),
+                'saved_path': str(path), "affected_scenes": scenes,
+                "defaults": {name: read_prompt(bundled) for name, bundled in EXPRESSION_FILES.items()}}
 
     def knowledge_state(key: str, change: KnowledgeChange | KnowledgeFilename | None = None,
                         action: Literal['create', 'write', 'delete'] | None = None) -> dict:
@@ -547,6 +558,33 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         try:
             async with write_lock:
                 return await asyncio.to_thread(draft_files, key, change)
+        except (LookupError, ValueError, OSError) as error:
+            raise role_failure(error) from error
+
+    def preview_state(key: str, scene: str | None) -> dict:
+        config, path = located(key)
+        if scene is not None and scene not in config.scenes:
+            raise ValueError(f'没有接入这个群：{scene}')
+        persona = load_persona(path)
+        style = select_style(persona)
+        return {
+            'scene': scene,
+            'sections': [{'name': 'character', 'own': True,
+                          'text': character_material(None if scene is None else config.scene_config(scene), persona)},
+                         *({'name': name, 'own': name in persona.expression, 'text': expression_rule(persona, name)}
+                           for name in EXPRESSION_FILES)],
+            'examples': len(select_examples(persona)),
+            'styles': [style.model_dump() for style in persona.styles],
+            'style': None if style is None else style_text(style),
+        }
+
+    @app.get('/api/host/personas/{key}/preview', response_model=responses.RolePreview, response_model_exclude_unset=True)
+    async def preview(key: str, response: Response, scene: str | None = Query(None, max_length=256),
+                      _: str = Depends(user)):
+        # Each read draws the style again.
+        response.headers['Cache-Control'] = 'no-store'
+        try:
+            return await asyncio.to_thread(preview_state, key, scene)
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 

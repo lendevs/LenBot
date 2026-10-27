@@ -214,6 +214,7 @@ export default {
       tabs: {
         profile: 'Profile',
         speech: 'Speech',
+        preview: 'Preview',
         knowledge: 'Knowledge',
         stickers: 'Stickers',
         abilities: 'Tools & skills',
@@ -242,7 +243,7 @@ export default {
       },
       profile: {
         who: 'Who it is',
-        character: 'Character and conduct',
+        character: 'Character',
         name: 'Name',
         aliases: 'Aliases',
         selfReference: 'Refers to itself as',
@@ -375,6 +376,19 @@ export default {
         stopMessage: 'The chat stays in the playground.',
         stopFailed: 'Could not end the session',
       },
+      more: 'More settings',
+      preview: {
+        scene: 'Preview for',
+        noScene: 'No group settings',
+        character: 'Persona material',
+        examples: '{n} examples chosen',
+        own: 'From the persona',
+        framework: 'Framework default',
+        styles: 'Speaking styles',
+        drawn: 'One is drawn by share each turn. This draw:',
+        draw: 'Draw again',
+        readFailed: 'Could not read the preview',
+      },
       files: {
         label: 'Persona files',
         names: {
@@ -382,7 +396,11 @@ export default {
           voice_md: 'How it talks',
           boundaries_md: 'Boundaries',
           examples_yaml: 'Examples',
+          response_choice_md: 'Choosing a reply',
+          expression_principles_md: 'General style',
+          chat_examples_md: 'Situations',
         },
+        fillDefault: 'Fill in the framework default',
         discard: 'This file is not saved. Discard the changes?',
         readFailed: 'Could not read the persona files',
       },

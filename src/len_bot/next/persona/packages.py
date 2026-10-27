@@ -11,12 +11,12 @@ import tempfile
 import zipfile
 import zlib
 
-from .profile import PERSONA_FILES, REQUIRED_FILES, load_persona
+from .profile import EXPRESSION_FILES, PERSONA_FILES, REQUIRED_FILES, load_persona
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 MAX_EXPANDED_BYTES = 128 * 1024 * 1024
 MAX_ENTRIES = 2048
-ROOT_FILES = frozenset((*PERSONA_FILES, 'avatar.png', 'README.md', 'LICENSE', 'NOTICE'))
+ROOT_FILES = frozenset((*PERSONA_FILES, *EXPRESSION_FILES, 'avatar.png', 'README.md', 'LICENSE', 'NOTICE'))
 ROOT_DIRECTORIES = frozenset(('knowledge', 'stickers'))
 
 

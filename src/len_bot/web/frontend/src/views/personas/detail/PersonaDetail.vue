@@ -18,6 +18,7 @@ import Tabs from '../../../ui/Tabs.vue'
 import AbilitiesTab from './AbilitiesTab.vue'
 import FilesTab from './FilesTab.vue'
 import KnowledgeTab from './KnowledgeTab.vue'
+import PreviewTab from './PreviewTab.vue'
 import ProfileTab from './ProfileTab.vue'
 import ScenesTab from './ScenesTab.vue'
 import SpeechTab from './SpeechTab.vue'
@@ -36,6 +37,7 @@ const name = computed(() => props.role.name || props.role.key)
 const tabNames = [
   'profile',
   'speech',
+  'preview',
   'knowledge',
   'stickers',
   'abilities',
@@ -154,6 +156,7 @@ const menu = computed<MenuEntry[]>(() => [
       <KeepAlive v-else>
         <ProfileTab v-if="tab === 'profile'" :role="role" />
         <SpeechTab v-else-if="tab === 'speech'" />
+        <PreviewTab v-else-if="tab === 'preview'" :role="role" />
         <KnowledgeTab
           v-else-if="tab === 'knowledge'"
           :persona="role.key"

@@ -81,7 +81,7 @@ export const keys = {
     all: () => ['personas'] as const,
     /** One role's files; outside `personas`, so a library refresh does not read an open form again. */
     role: (key: string) => ['persona', key] as const,
-    part: (key: string, part: 'profile' | 'knowledge' | 'stickers' | 'files' | 'abilities') =>
+    part: (key: string, part: 'profile' | 'knowledge' | 'stickers' | 'files' | 'abilities' | 'preview') =>
       ['persona', key, part] as const,
   },
   plugins: {

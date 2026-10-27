@@ -75,6 +75,8 @@ class Persona(BaseModel):
     examples: list[Example] = Field(default_factory=list)
     example_tags: list[str] = Field(default_factory=list)
     knowledge: dict[str, PersonaDocument] = Field(default_factory=dict, exclude=True, repr=False)
+    # The package's own versions of framework expression rules, by file name; see EXPRESSION_FILES.
+    expression: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
     stickers: dict[str, PersonaSticker] = Field(default_factory=dict, exclude=True, repr=False)
     avatar: OriginalImage | None = Field(default=None, exclude=True, repr=False)
 
@@ -135,6 +137,13 @@ def select_style(persona: Persona) -> Style | None:
 
 
 PERSONA_FILES = ("persona.yaml", "voice.md", "boundaries.md", "examples.yaml")
+# Optional files replacing the framework's expression rules for this persona, each with the bundled
+# prompt it replaces. A missing or blank file uses the framework version, including panel edits of it.
+EXPRESSION_FILES = {
+    "response_choice.md": "next_response_choice.md",
+    "expression_principles.md": "next_expression_principles.md",
+    "chat_examples.md": "next_chat_examples.md",
+}
 # Only persona.yaml is required; a missing voice, boundaries or examples file reads as empty.
 REQUIRED_FILES = ("persona.yaml",)
 _PROFILE_LOCK = threading.RLock()
@@ -167,6 +176,16 @@ def save_persona_files(path: Path, files: dict[str, str]) -> None:
         sync_directory(path)
 
 
+def load_expression(path: Path) -> dict[str, str]:
+    """The package's non-blank expression rule files."""
+    found = {}
+    for name in EXPRESSION_FILES:
+        file = path / name
+        if file.is_file() and (text := file.read_text(encoding="utf-8")).strip():
+            found[name] = text
+    return found
+
+
 def _parse_yaml(path: Path, content: str) -> object:
     try:
         return yaml.safe_load(content)
@@ -197,7 +216,7 @@ def parse_persona_files(path: Path, files: dict[str, str], *,
             "boundaries": files["boundaries.md"],
             "examples": examples,
         })
-        return persona.model_copy(update={"knowledge": load_knowledge(path),
+        return persona.model_copy(update={"knowledge": load_knowledge(path), "expression": load_expression(path),
                                           "stickers": load_stickers(path) if stickers is None else stickers,
                                           'avatar': load_avatar(path)})
     except ValidationError as error:
