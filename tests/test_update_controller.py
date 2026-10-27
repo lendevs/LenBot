@@ -191,12 +191,18 @@ def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fai
     assert run(controller, 'start')['status'] == 'complete' and backend.running
 
 
-def test_backup_failure_restarts_the_previous_program_without_restoring_partial_snapshot(make):
+def test_backup_failure_restarts_the_previous_program_and_removes_the_partial_snapshot(make):
     backend = Backend(fail='backup')
+    def backup(snapshot):
+        (snapshot / '0').mkdir(parents=True)
+        (snapshot / '0/lenbot.db').write_bytes(b'partial')
+        backend.step('backup')
+    backend.backup = backup
     controller = make(backend)
     run(controller, 'prepare', {'tag': 'v0.2.0'})
     state = run(controller, 'apply')
     assert state['status'] == 'rolled_back' and not state['stopped'] and not state['snapshot_complete']
+    assert not Path(state['snapshot']).exists() and controller.snapshots() == []
     assert state['current_version'] == '0.1.0' and backend.running and state['actions'] == ['prepare']
     assert state['error'] == '快照失败，已重新启动 0.1.0：RuntimeError: synthetic backup failure'
     assert backend.calls[backend.calls.index('backup'):] == ['backup', 'start_previous', 'ready_previous']
@@ -575,6 +581,7 @@ def test_snapshot_endpoints_list_and_delete(make, tmp_path):
             return error.code, json.loads(error.read())
     try:
         assert call('GET', '/api/snapshots', 'wrong')[0] == 401
+        assert call('GET', '/api/snapshots', 'é')[0] == 401
         code, listed = call('GET', '/api/snapshots')
         assert code == 200 and [item['name'] for item in listed] == [kept.name, '20261001-080000-0000000a']
         code, refused = call('DELETE', '/api/snapshots/' + kept.name)
@@ -587,3 +594,87 @@ def test_snapshot_endpoints_list_and_delete(make, tmp_path):
         http.shutdown()
         thread.join(5)
         http.server_close()
+
+
+def test_concurrent_deletes_of_one_snapshot_remove_it_once(make):
+    import threading
+    controller = make(Backend())
+    snapshot = _snapshot(controller.root / 'backups', '20261001-080000-0000000a', b'x')
+    results = []
+
+    def delete():
+        try:
+            results.append(controller.delete_snapshot(snapshot.name))
+        except LookupError as error:
+            results.append(error)
+    controller.operation.acquire()
+    threads = [threading.Thread(target=delete) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    time.sleep(0.1)
+    controller.operation.release()
+    for thread in threads:
+        thread.join(15)
+    assert sorted(map(type, results), key=str) == [LookupError, list] and not snapshot.exists()
+
+
+def test_snapshot_list_skips_other_names_and_files_removed_meanwhile(make, monkeypatch):
+    controller = make(Backend())
+    backups = controller.root / 'backups'
+    kept = _snapshot(backups, '20261001-080000-0000000a', b'x' * 10)
+    _snapshot(backups, '20261399-999999-0000000b', b'y')
+    _snapshot(backups, '２０２６１００１-０８００００-0000000c', b'z')
+    walk = updater.os.walk
+    monkeypatch.setattr(updater.os, 'walk', lambda path: [*walk(path), (str(path), [], ['removed-meanwhile'])])
+    assert [(item['name'], item['bytes']) for item in controller.snapshots()] == [(kept.name, 13)]
+
+
+def test_a_removal_that_stops_halfway_keeps_the_restore_off_and_can_be_repeated(make, monkeypatch):
+    controller = make(Backend())
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    snapshot = Path(run(controller, 'apply')['snapshot'])
+    _snapshot(snapshot.parent, snapshot.name, b'z')
+    remove_tree = updater.remove_tree
+
+    def halfway(path):
+        (path / 'snapshot.json').unlink()
+        raise PermissionError('synthetic removal failure')
+    monkeypatch.setattr(updater, 'remove_tree', halfway)
+    with pytest.raises(PermissionError):
+        controller.delete_snapshot(snapshot.name)
+    assert controller.status()['actions'] == ['prepare'] and not snapshot.exists()
+    listed, = controller.snapshots()
+    assert listed['name'] == snapshot.name and not listed['complete'] and not listed['restore']
+    monkeypatch.setattr(updater, 'remove_tree', remove_tree)
+    assert controller.delete_snapshot(snapshot.name) == [] and not list(snapshot.parent.iterdir())
+
+
+def test_a_snapshot_that_cannot_be_moved_keeps_its_restore(make, monkeypatch):
+    controller = make(Backend())
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    snapshot = Path(run(controller, 'apply')['snapshot'])
+    _snapshot(snapshot.parent, snapshot.name, b'z')
+
+    def refused(self, target):
+        raise PermissionError('synthetic rename failure')
+    monkeypatch.setattr(updater.Path, 'rename', refused)
+    with pytest.raises(PermissionError):
+        controller.delete_snapshot(snapshot.name)
+    assert controller.status()['actions'] == ['prepare', 'restore'] and snapshot.is_dir()
+    assert json.loads(controller.state_file.read_text(encoding='utf-8'))['snapshot_complete'] is True
+
+
+def test_read_only_files_are_removed_with_their_snapshot(make, monkeypatch):
+    import stat
+    controller = make(Backend())
+    snapshot = _snapshot(controller.root / 'backups', '20261001-080000-0000000a', b'x')
+    (snapshot / '0/lenbot.db').chmod(stat.S_IREAD)
+    unlink = os.unlink
+
+    def windows_unlink(path, *, dir_fd=None):
+        # Windows refuses to delete a file with the read-only attribute.
+        if not os.stat(path, dir_fd=dir_fd).st_mode & stat.S_IWRITE:
+            raise PermissionError(13, 'Access is denied', path)
+        unlink(path, dir_fd=dir_fd)
+    monkeypatch.setattr(os, 'unlink', windows_unlink)
+    assert controller.delete_snapshot(snapshot.name) == [] and not snapshot.exists()

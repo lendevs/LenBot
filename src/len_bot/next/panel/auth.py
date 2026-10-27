@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import socket
+import struct
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 from collections.abc import Callable
 
@@ -34,6 +37,31 @@ def cookie_name(connection: HTTPConnection) -> str:
     if port is None:
         port = 443 if connection.url.scheme in {"https", "wss"} else 80
     return f"lenbot_session_p{port}"
+
+
+def default_gateway(routes: Path = Path('/proc/net/route')) -> str | None:
+    """The IPv4 default gateway in the Linux routing table; None elsewhere."""
+    try:
+        lines = routes.read_text(encoding='ascii').splitlines()[1:]
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        fields = line.split()
+        # Columns: Iface Destination Gateway Flags ...; addresses are little-endian hex, flag 0x2 is RTF_GATEWAY.
+        if len(fields) > 3 and fields[1] == '00000000' and int(fields[3], 16) & 0x2:
+            return socket.inet_ntoa(struct.pack('<I', int(fields[2], 16)))
+    return None
+
+
+def trusted_proxies(settings: PanelSettings, *, container: bool) -> list[str]:
+    """Peers whose X-Forwarded-For and X-Forwarded-Proto decide the client address and scheme.
+
+    In the container every connection through the published port arrives from the Docker network
+    gateway. Compose publishes the panel only on the host's 127.0.0.1, so the gateway stands for that
+    host the way 127.0.0.1 does outside a container, and a reverse proxy on it works the same way.
+    """
+    gateway = default_gateway() if container else None
+    return [*settings.trusted_proxies, *([gateway] if gateway and gateway not in settings.trusted_proxies else [])]
 
 
 def require_panel_origin(connection: HTTPConnection) -> None:

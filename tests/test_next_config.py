@@ -2014,5 +2014,5 @@ def test_configuration_format_other_than_the_current_one_is_refused(tmp_path, ve
     source = _host_config()
     source["config_version"] = version
     _write_config(root, source)
-    with pytest.raises(ValueError, match="config_version"):
+    with pytest.raises(ValueError, match="配置格式是 .*这个版本使用格式 1。发布前的格式变化不带升级步骤"):
         load_host_config(root)

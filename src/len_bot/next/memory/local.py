@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict
 from .embeddings import EmbeddingBinding, EmbeddingClient
 from .types import MemoryDocument, MemoryNode, MemoryPage
 from .sections import SECTION_STATEMENTS, put_sections, split_sections
+from ..storage.schema import FORMAT_RESET
 from ..storage.sqlite import connect
 from ..runtime.logs import log_event
 
@@ -377,8 +378,8 @@ class LocalMemory:
             if identity == (_APPLICATION_ID, FORMAT_VERSION):
                 return
             if identity != (0, 0) or db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is not None:
-                raise ValueError(f"unsupported local memory index format at {self.index}: "
-                                 f"application_id={identity[0]}, user_version={identity[1]}")
+                raise ValueError(f"{self.index} 不是这个版本使用的本地记忆索引格式 {FORMAT_VERSION}"
+                                 f"（application_id={identity[0]}, user_version={identity[1]}）。{FORMAT_RESET}")
             # One transaction: an interrupted first start leaves an empty file, not half a schema.
             db.executescript(f"""
                     BEGIN IMMEDIATE;

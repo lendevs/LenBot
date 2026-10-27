@@ -32,10 +32,14 @@ const remove = useMutation({
     void queryClient.invalidateQueries({ queryKey: keys.system.updates(), exact: true })
     toast.success(t('system.updates.snapshots.deleted'))
   },
-  onError: (error) =>
+  onError: (error) => {
+    // A removal that stopped halfway already took the restore away and left the snapshot incomplete.
+    void queryClient.invalidateQueries({ queryKey: keys.system.snapshots() })
+    void queryClient.invalidateQueries({ queryKey: keys.system.updates(), exact: true })
     toast.error(t('system.updates.snapshots.deleteFailed'), {
       detail: describeError(error, t('ui.error.network')).message,
-    }),
+    })
+  },
 })
 async function ask(item: UpdateSnapshot) {
   const sure = await confirm({

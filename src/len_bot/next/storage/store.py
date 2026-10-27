@@ -25,7 +25,7 @@ from ...image_assets import OriginalImage
 from ..models.usage import UNBUDGETED, record_usage, totals as usage_totals
 from ..chat.schedule_time import CronTimeError, next_cron, parse_cron
 from .codec import decode_message, encode
-from .schema import create_database
+from .schema import FORMAT_RESET, create_database, expected_tables
 from ..chat.schedule_store import ScheduleStore
 
 
@@ -79,8 +79,15 @@ class Store:
             if tables:
                 application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
                 version = self.db.execute("PRAGMA user_version").fetchone()[0]
-                if application_id != 0x4C424E31 or version != FORMAT_VERSION:
-                    raise ValueError(f"Not a supported next-core database: {path}")
+                if application_id != 0x4C424E31:
+                    raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
+                if version != FORMAT_VERSION:
+                    raise ValueError(f"{path} 的格式是 {version}，这个版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
+                missing = expected_tables() - {row[0] for row in tables}
+                if missing:
+                    names = sorted(missing)
+                    listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
+                    raise ValueError(f"{path} 缺少数据表 {listed}，是格式 {FORMAT_VERSION} 更早的结构。{FORMAT_RESET}")
             else:
                 if readonly:
                     raise ValueError(f'Existing business database is not initialized: {path}')

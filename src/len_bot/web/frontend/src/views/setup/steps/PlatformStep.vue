@@ -72,7 +72,7 @@ function test() {
         required
         wide
       >
-        <Input v-model="draft.wsUrl" type="url" mono placeholder="ws://127.0.0.1:3001" />
+        <Input v-model="draft.wsUrl" type="url" mono />
       </Field>
       <template v-else>
         <Field :label="t('system.connection.listenHost')" :error="error('listenHost')" required>

@@ -54,3 +54,43 @@ async def test_origin_and_login_throttle_share_trusted_proxy_scope(peer, trusted
             identity = '203.0.113.7' if origin.startswith('https') else peer
             assert login_blocked(f'isolated:{identity}')
             clear_login_failures(f'isolated:{identity}')
+
+
+ROUTES = ('Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n'
+          'eth0\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n'
+          'eth0\t00000000\t010012AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n')
+
+
+def test_the_container_trusts_its_docker_gateway(tmp_path, monkeypatch):
+    from len_bot.next.panel import auth
+    routes = tmp_path / 'route'
+    routes.write_text(ROUTES, encoding='ascii')
+    assert auth.default_gateway(routes) == '172.18.0.1'
+    assert auth.default_gateway(tmp_path / 'missing') is None
+    routes.write_text(ROUTES.splitlines(keepends=True)[0] + ROUTES.splitlines(keepends=True)[1], encoding='ascii')
+    assert auth.default_gateway(routes) is None
+    monkeypatch.setattr(auth, 'default_gateway', lambda: '172.18.0.1')
+    settings = PanelSettings(host='0.0.0.0', port=11307, username='fixture', password_hash=hash_password('password'))
+    assert auth.trusted_proxies(settings, container=False) == ['127.0.0.1']
+    assert auth.trusted_proxies(settings, container=True) == ['127.0.0.1', '172.18.0.1']
+    custom = settings.model_copy(update={'trusted_proxies': ['172.18.0.1']})
+    assert auth.trusted_proxies(custom, container=True) == ['172.18.0.1']
+
+
+@pytest.mark.asyncio
+async def test_a_reverse_proxy_in_front_of_the_container_keeps_https_writes_and_its_own_throttle(monkeypatch):
+    from len_bot.next.panel import auth
+    from len_bot.web.auth import clear_login_failures, login_blocked
+    monkeypatch.setattr(auth, 'default_gateway', lambda: '172.18.0.1')
+    settings = PanelSettings(host='0.0.0.0', port=11307, username='fixture', password_hash=hash_password('password'))
+    app = ProxyHeadersMiddleware(panel(), trusted_hosts=auth.trusted_proxies(settings, container=True))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app, client=('172.18.0.1', 1234)),
+                                 base_url='http://panel.example') as client:
+        stranger = {'Origin': 'https://panel.example', 'X-Forwarded-Proto': 'https', 'X-Forwarded-For': '203.0.113.7'}
+        for _ in range(5):
+            assert (await client.post('/api/auth/login', json={'username': 'fixture', 'password': 'wrong'},
+                                      headers=stranger)).status_code == 401
+        owner = {**stranger, 'X-Forwarded-For': '198.51.100.9'}
+        response = await client.post('/api/auth/login', json={'username': 'fixture', 'password': 'password'}, headers=owner)
+        assert response.status_code == 200 and login_blocked('isolated:203.0.113.7')
+    clear_login_failures('isolated:203.0.113.7')

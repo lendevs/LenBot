@@ -15,6 +15,7 @@ import time
 from typing import Iterator
 
 from ..storage.store import encode
+from ..storage.schema import FORMAT_RESET
 from ..storage.sqlite import connect
 from .embeddings import _reject_constant
 
@@ -32,7 +33,8 @@ class MemoryJobs:
                 application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
                 version = self.db.execute("PRAGMA user_version").fetchone()[0]
                 if application_id != 0x4C424D4A or version != FORMAT_VERSION:
-                    raise ValueError(f"unsupported memory processing database: {path}")
+                    raise ValueError(f"{path} 不是这个版本使用的记忆处理库格式 {FORMAT_VERSION}"
+                                     f"（application_id={application_id}, user_version={version}）。{FORMAT_RESET}")
             else:
                 if readonly:
                     raise ValueError(f'Existing memory processing database is not initialized: {path}')

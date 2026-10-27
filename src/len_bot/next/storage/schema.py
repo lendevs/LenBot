@@ -1,6 +1,11 @@
 """Create the current database from domain-owned schemas in one transaction."""
 
+from contextlib import closing
+from functools import cache
 import sqlite3
+
+# Until the first release candidate a format change comes without an upgrade step.
+FORMAT_RESET = '发布前的格式变化不带升级步骤，请用新的实例目录重新配置，旧目录可以留作备份。'
 
 
 SCHEMA = """
@@ -113,3 +118,11 @@ def create_database(db: sqlite3.Connection, version: int) -> None:
                REPLY_EFFECTS, PROACTIVE, PLUGINS, USAGE)
     db.executescript(f"BEGIN; PRAGMA application_id = 1279413809; PRAGMA user_version = {version};\n"
                      + "\n".join(domains) + "\nCOMMIT;")
+
+
+@cache
+def expected_tables() -> frozenset[str]:
+    """Names of the tables a database of the current format holds."""
+    with closing(sqlite3.connect(':memory:')) as db:
+        create_database(db, 0)
+        return frozenset(row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'"))

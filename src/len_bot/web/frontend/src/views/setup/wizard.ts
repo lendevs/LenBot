@@ -107,7 +107,7 @@ function initial(): Draft {
     passwordAgain: '',
     port: 8088,
     transport: 'forward_ws',
-    wsUrl: '',
+    wsUrl: 'ws://127.0.0.1:3001',
     listenHost: '127.0.0.1',
     listenPort: 8080,
     accessToken: '',

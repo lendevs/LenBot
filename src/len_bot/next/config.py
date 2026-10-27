@@ -16,6 +16,7 @@ from .work.egress_policy import NetworkSettings
 from .configuration.commands import CommandSettings
 from .models.asr import AudioSettings
 from .storage.files import sync_directory
+from .storage.schema import FORMAT_RESET
 from .runtime.identity import IdentitySettings, combine_identities
 from .models.limits import ResourceLimits
 from .configuration.mcp import MCPService, SERVICE_NAME
@@ -418,6 +419,9 @@ def _read_root(root: Path) -> tuple[Path, dict]:
         raise ValueError(f"{path}: invalid JSON at line {error.lineno}, column {error.colno}: {error.msg}") from error
     if not isinstance(source, dict):
         raise ValueError(f"{path}: configuration must be a JSON object")
+    version = source.get("config_version", CONFIG_VERSION)
+    if version != CONFIG_VERSION:
+        raise ValueError(f"{path}: 配置格式是 {version!r}，这个版本使用格式 {CONFIG_VERSION}。{FORMAT_RESET}")
     return path, source
 
 

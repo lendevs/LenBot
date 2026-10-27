@@ -20,6 +20,7 @@ import re
 import secrets
 import shutil
 import signal
+import stat
 import sys
 import threading
 import time
@@ -33,7 +34,9 @@ from native import Native
 LABELS = {'prepare': '准备更新', 'apply': '停机升级', 'restore': '恢复快照', 'start': '启动程序'}
 LOG_LIMIT = 5 * 1024 * 1024
 # backups/<UTC time>-<8 hex>, as written by the update and by install.py upgrade.
-SNAPSHOT_NAME = re.compile(r'\d{8}-\d{6}-[0-9a-f]{8}')
+SNAPSHOT_NAME = re.compile(r'[0-9]{8}-[0-9]{6}-[0-9a-f]{8}')
+# A snapshot being deleted is moved to this prefix first; a removal that stopped halfway stays listed as incomplete.
+REMOVING = '.removing-'
 
 
 def rotate(path: Path) -> None:
@@ -43,8 +46,35 @@ def rotate(path: Path) -> None:
 
 
 def size(path: Path) -> int:
-    """Bytes of the files under ``path``, without following links."""
-    return sum(os.lstat(os.path.join(folder, name)).st_size for folder, _, files in os.walk(path) for name in files)
+    """Bytes of the files under ``path``, without following links; files removed meanwhile count as nothing."""
+    total = 0
+    for folder, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(folder, name)).st_size
+            except FileNotFoundError:
+                pass
+    return total
+
+
+def snapshot_time(name: str) -> float | None:
+    """The UTC creation time in a snapshot folder name; None for any other name."""
+    if SNAPSHOT_NAME.fullmatch(name) is None:
+        return None
+    try:
+        return datetime.strptime(name[:15], '%Y%m%d-%H%M%S').replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def remove_tree(path: Path) -> None:
+    """Remove a folder, including files marked read-only (Windows refuses to delete those otherwise)."""
+    def writable(function, name, error):
+        if not isinstance(error, PermissionError) or os.path.islink(name):
+            raise error
+        os.chmod(name, os.stat(name).st_mode | stat.S_IWRITE)
+        function(name)
+    shutil.rmtree(path, onexc=writable)
 
 
 class Controller:
@@ -261,6 +291,8 @@ class Controller:
         except Exception as error:
             reason = f'{type(error).__name__}: {error}'
             self.record('update_failed', level='ERROR', error=error, stage='backup')
+            # An unfinished snapshot cannot be restored; what it copied only takes space.
+            shutil.rmtree(snapshot, ignore_errors=True)
             self.stage('rollback_start', failed_stage='backup', error=reason)
             try:
                 self.backend.start()
@@ -348,30 +380,47 @@ class Controller:
         return snapshot is not None and Path(snapshot).name == name and 'restore' in self.actions()
 
     def snapshots(self) -> list[dict]:
-        """Update snapshots under backups/, newest first."""
+        """Update snapshots under backups/, newest first; other entries there are left out."""
         folder = self.root / 'backups'
-        found = [path for path in folder.iterdir() if SNAPSHOT_NAME.fullmatch(path.name)
-                 and path.is_dir() and not path.is_symlink()] if folder.is_dir() else []
-        return [{'name': path.name, 'bytes': size(path), 'complete': (path / 'snapshot.json').is_file(),
-                 'restore': self.restores(path.name),
-                 'created': datetime.strptime(path.name[:15], '%Y%m%d-%H%M%S').replace(tzinfo=timezone.utc).timestamp()}
-                for path in sorted(found, key=lambda path: path.name, reverse=True)]
+        result = []
+        for path in sorted(folder.iterdir(), key=lambda path: path.name, reverse=True) if folder.is_dir() else ():
+            removing = path.name.startswith(REMOVING)
+            name = path.name.removeprefix(REMOVING)
+            created = snapshot_time(name)
+            if created is None or path.is_symlink() or not path.is_dir():
+                continue
+            result.append({'name': name, 'bytes': size(path), 'created': created,
+                           'complete': not removing and (path / 'snapshot.json').is_file(),
+                           'restore': not removing and self.restores(name)})
+        return result
 
     def delete_snapshot(self, name: str) -> list[dict]:
-        path = self.root / 'backups' / name
-        if not SNAPSHOT_NAME.fullmatch(name) or not path.is_dir() or path.is_symlink():
-            raise LookupError('没有这份快照')
         # Like submit: a finished operation writes its final status a moment before it releases the lock.
         if self.state['status'] in ('preparing', 'applying', 'restoring') or not self.operation.acquire(timeout=10):
             raise ValueError('已有一个更新操作正在执行')
         try:
-            if self.restores(name):
-                if self.state['status'] != 'complete':
-                    raise ValueError('上次更新失败后还没有恢复，恢复要用这份快照')
-                # The completed update gives up its way back before any of the snapshot is removed.
-                self.state['snapshot_complete'] = False
-                write_json(self.state_file, self.state)
-            shutil.rmtree(path)
+            if snapshot_time(name) is None:
+                raise LookupError('没有这份快照')
+            path = self.root / 'backups' / name
+            removing = path.with_name(REMOVING + name)
+            if not path.is_symlink() and path.is_dir():
+                restores = self.restores(name)
+                if restores:
+                    if self.state['status'] != 'complete':
+                        raise ValueError('上次更新失败后还没有恢复，恢复要用这份快照')
+                    # The completed update gives up its way back before the snapshot leaves its place.
+                    self.state['snapshot_complete'] = False
+                    write_json(self.state_file, self.state)
+                try:
+                    path.rename(removing)
+                except OSError:
+                    if restores:
+                        self.state['snapshot_complete'] = True
+                        write_json(self.state_file, self.state)
+                    raise
+            elif removing.is_symlink() or not removing.is_dir():
+                raise LookupError('没有这份快照')
+            remove_tree(removing)
             self.record('snapshot_deleted', snapshot=name)
         finally:
             self.operation.release()
@@ -399,8 +448,9 @@ def server(controller: Controller) -> ThreadingHTTPServer:
             self.wfile.write(data)
 
         def authorized(self) -> bool:
-            supplied = self.headers.get('Authorization', '').removeprefix('Bearer ')
-            return secrets.compare_digest(supplied, controller.token) or secrets.compare_digest(supplied, controller.recovery_token)
+            # Compared as bytes: compare_digest refuses str with non-ASCII characters.
+            supplied = self.headers.get('Authorization', '').removeprefix('Bearer ').encode('utf-8', 'surrogatepass')
+            return any(secrets.compare_digest(supplied, token.encode()) for token in (controller.token, controller.recovery_token))
 
         def do_GET(self):
             path = urlsplit(self.path).path

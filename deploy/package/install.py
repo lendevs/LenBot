@@ -166,7 +166,11 @@ def main() -> None:
                 # Same names and record as the panel update, so the controller's recovery page covers both.
                 snapshot = root / 'backups' / (time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
                 old = backend.metadata()
-                backend.backup(snapshot)
+                try:
+                    backend.backup(snapshot)
+                except BaseException:
+                    shutil.rmtree(snapshot, ignore_errors=True)
+                    raise
                 record = {'old': old, 'target': metadata, 'snapshot': str(snapshot), 'snapshot_complete': True,
                           'stopped': True, 'offline': True}
                 write_json(state_file, {'status': 'applying', 'stage': 'migrate', **record})

@@ -22,7 +22,7 @@ LenBot 的配置和数据保存在实例目录里。实例目录中还没有配�
 
 连接方式有两种。
 
-- **LenBot 去连 OneBot**（正向 WebSocket）。填写 OneBot 地址，例如 `ws://127.0.0.1:3001`。两边在同一台机器上时，这种方式最简单。
+- **LenBot 去连 OneBot**（正向 WebSocket）。填写 OneBot 地址，默认填好 `ws://127.0.0.1:3001`，按 OneBot 端实际的端口修改。两边在同一台机器上时，这种方式最简单。
 - **等 OneBot 来连 LenBot**（反向 WebSocket）。填写 LenBot 的监听地址和监听端口，再在 OneBot 中把反向连接地址指向这里。
 
 两种方式的区别和 OneBot 一侧的设置见[接入 QQ](./onebot)。
@@ -94,4 +94,4 @@ LenBot 按新配置启动，页面显示「正在启动 LenBot」。面板启动
 ssh -L 8088:127.0.0.1:8088 你的服务器
 ```
 
-然后在自己的电脑上打开 `http://127.0.0.1:8088`。如果要长期从外网访问，请在面板前面配置 HTTPS 反向代理。
+然后在自己的电脑上打开 `http://127.0.0.1:8088`。如果要长期从外网访问，请在面板前面配置 HTTPS 反向代理。代理要保留 Host，并设置 `X-Forwarded-For` 和 `X-Forwarded-Proto`。代理不在 LenBot 这台机器上时，把代理的地址填进根配置的 `panel.trusted_proxies`。

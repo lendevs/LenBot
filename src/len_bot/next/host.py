@@ -15,6 +15,7 @@ from .runtime.lifecycle import HostLifecycle, RESTART_EXIT
 from .runtime.logs import configure_logging, credentials, redact
 from .chat.tools import task_data_tools, tool_catalog
 from .panel.app import create_app
+from .panel.auth import trusted_proxies
 from .models.client import ChatModel
 from .models.slots import ModelSlots
 from .models.limits import ModelBudget
@@ -175,7 +176,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                     # log_config=None: Uvicorn's records go through the host's own log handlers.
                     server = HostPanelServer(uvicorn.Config(
                         app, host=config.panel.host, port=config.panel.port, log_config=None,
-                        forwarded_allow_ips=config.panel.trusted_proxies,
+                        forwarded_allow_ips=trusted_proxies(config.panel, container=container),
                     ))
                     await run_with_panel(runtime, server, lifecycle)
             finally:

@@ -24,7 +24,7 @@ function notes(){$('notes').textContent=releases.find(r=>r.tag===$('versions').v
 async function refresh(){try{const s=await request('status');$('current').textContent=`当前版本 ${s.current_version} · ${s.mode}`;$('status').textContent=JSON.stringify(s,null,2);for(const name of ['apply','restore','start'])$(name).hidden=!s.actions.includes(name);$('prepare').disabled=!s.actions.includes('prepare');const w=s.status==='prepared'&&s.check?.worker_image;$('worker').textContent=!w?'':s.check.worker_follows_release?`任务镜像将换为 ${w}（已提前拉取）。`:`任务镜像 ${w} 是自定义镜像，本次更新保持原样；需要时自行重建并修改配置。`;if(s.error)$('error').textContent=s.error}catch(e){$('error').textContent=e.message}}
 $('check').onclick=async()=>{try{releases=await request('releases');options()}catch(e){$('error').textContent=e.message}};
 $('prerelease').onchange=options;$('versions').onchange=notes;
-$('prepare').onclick=()=>action('prepare',{tag:$('versions').value});
+$('prepare').onclick=()=>{if($('restore').hidden||confirm('准备新版本后，就不能再恢复这次更新前的程序和数据快照了。快照留在 backups/ 下，不会删除。继续？'))action('prepare',{tag:$('versions').value})};
 $('apply').onclick=()=>{if(confirm('将暂停聊天、提醒和后台任务，备份实例并升级。备份完成后的更新失败会自动恢复旧版本和数据快照，丢掉更新开始后写入的数据。继续？'))action('apply')};
 $('restore').onclick=()=>{if(confirm('将恢复升级前程序和数据快照，覆盖快照之后的修改。继续？'))action('restore')};
 $('start').onclick=()=>action('start');refresh();setInterval(refresh,2000);

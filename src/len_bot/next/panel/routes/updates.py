@@ -21,7 +21,7 @@ UPDATE_NOTICE = [
     '快照按时间保存在部署目录的 backups/ 下，不再需要的可以在本页删除。',
 ]
 # The controller's backups/<UTC time>-<8 hex> names.
-SNAPSHOT = r'^\d{8}-\d{6}-[0-9a-f]{8}$'
+SNAPSHOT = r'^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$'
 
 
 def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request], str],
