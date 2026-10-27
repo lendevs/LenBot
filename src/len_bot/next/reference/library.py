@@ -97,6 +97,8 @@ EMBED_BATCH = 100
 VECTOR_NEIGHBOURS = 10
 VECTOR_ONLY = 3
 MAX_VECTOR_DISTANCE = 0.6
+# A neighbour without a full-text hit is also kept only this close to the nearest one.
+VECTOR_MARGIN = 0.03
 
 
 class KnowledgeOwner(Protocol):
@@ -533,10 +535,12 @@ class ReferenceLibrary:
 
     async def search(self, scene: str, persona: KnowledgeOwner, query: str, *, scope: Scope = "all",
                      limit: int = 50) -> list[ReferenceHit]:
-        """Full-text hits hold at least half of the keywords, most keywords first, then full-text rank.
+        """Full-text hits hold at least half of the keywords, or as many as the best chunk of the same
+        owner holds when that is fewer; most keywords first, then full-text rank.
 
         With vectors the full-text order and the nearest chunks are merged by reciprocal rank; nearest
-        chunks without a full-text hit add at most ``VECTOR_ONLY`` results.
+        chunks without a full-text hit add at most ``VECTOR_ONLY`` results, each within ``VECTOR_MARGIN``
+        of the nearest chunk and ``MAX_VECTOR_DISTANCE``.
         """
         terms = search_terms(query)
 
@@ -554,7 +558,7 @@ class ReferenceLibrary:
                 added = 0
                 for position, row in enumerate(close, 1):
                     if row["rowid"] not in ranks:
-                        if added == VECTOR_ONLY:
+                        if added == VECTOR_ONLY or row["distance"] > close[0]["distance"] + VECTOR_MARGIN:
                             continue
                         added += 1
                     ranks[row["rowid"]] = ranks.get(row["rowid"], 0.0) + 1 / position
@@ -583,11 +587,15 @@ class ReferenceLibrary:
             parameters += [*owners, *short_terms]
         matched = " + ".join("(instr(c.folded, ?) > 0)" for _ in terms)
         return [row[0] for row in db.execute(f"""
-            WITH hits(id, relevance) AS MATERIALIZED ({" UNION ALL ".join(parts)})
-            SELECT c.id, {matched} AS matched, MIN(hits.relevance) AS relevance
-            FROM hits JOIN reference_chunks AS c ON c.id = hits.id JOIN reference_sources AS s ON s.id = c.source
-            GROUP BY c.id HAVING matched >= ?
-            ORDER BY matched DESC, relevance, s.owner, s.path, c.start_char LIMIT ?
+            WITH hits(id, relevance) AS MATERIALIZED ({" UNION ALL ".join(parts)}),
+            scored AS (
+                SELECT c.id, s.owner, s.path, c.start_char, {matched} AS matched, MIN(hits.relevance) AS relevance
+                FROM hits JOIN reference_chunks AS c ON c.id = hits.id JOIN reference_sources AS s ON s.id = c.source
+                GROUP BY c.id
+            ),
+            ranked AS (SELECT *, MAX(matched) OVER (PARTITION BY owner) AS best FROM scored)
+            SELECT id FROM ranked WHERE matched >= min(?, best)
+            ORDER BY matched DESC, relevance, owner, path, start_char LIMIT ?
         """, (*parameters, *terms, (len(terms) + 1) // 2, limit))]
 
     @staticmethod

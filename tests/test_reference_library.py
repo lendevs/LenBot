@@ -130,15 +130,22 @@ async def test_a_chat_sees_its_own_files_and_the_knowledge_of_its_role(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_a_chunk_needs_at_least_half_of_the_keywords(tmp_path):
+async def test_a_chunk_needs_half_of_the_keywords_unless_nothing_of_its_owner_holds_more(tmp_path):
     library = ReferenceLibrary(tmp_path)
     directory = files(library)
     (directory / "a.md").write_text("报名截止在周五。\n", encoding="utf-8")
     (directory / "b.md").write_text("报名表在群文件里，截止前交到东门。\n", encoding="utf-8")
+    (directory / "c.md").write_text("东门有个报刊亭。\n", encoding="utf-8")
     matches = (await ask(library, action="search", query="报名 截止 东门"))["matches"]
     assert [(item["filename"], item["matched"]) for item in matches] == [
         ("b.md", ["报名", "截止", "东门"]), ("a.md", ["报名", "截止"])]
-    assert not (await ask(library, action="search", query="报名 火星 基地"))["matches"]
+    # The role's best chunk holds one keyword, the chat's best two: each owner keeps its best.
+    matches = (await ask(library, action="search", query="绘本 东门 截止"))["matches"]
+    assert [(item["scope"], item["filename"], item["matched"]) for item in matches] == [
+        ("chat", "b.md", ["东门", "截止"]), ("persona", "设定.md", ["绘本"])]
+    assert {item["filename"] for item in (await ask(library, action="search", query="报名 火星 基地"))["matches"]} == {
+        "a.md", "b.md"}
+    assert not (await ask(library, action="search", query="火星 基地"))["matches"]
 
 
 @pytest.mark.asyncio
@@ -162,9 +169,11 @@ async def test_without_an_instance_directory_only_the_role_knowledge_is_searched
     assert [item["scope"] for item in (await ask(library, action="list"))["files"]] == ["persona"]
 
 
-def test_read_names_one_scope_and_a_file():
+def test_the_action_follows_the_arguments_and_read_names_one_scope():
+    assert [KnowledgeArguments(**arguments).action for arguments in (
+        {}, {"query": "东门"}, {"scope": "chat", "filename": "a.md", "offset": 10})] == ["list", "search", "read"]
     for arguments in ({"action": "read", "filename": "a.md"}, {"action": "read", "scope": "chat"},
-                      {"action": "search"}, {"action": "list", "query": "x"}):
+                      {"action": "search"}, {"action": "list", "query": "x"}, {"filename": "a.md"}):
         with pytest.raises(ValidationError):
             KnowledgeArguments(**arguments)
 

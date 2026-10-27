@@ -20,7 +20,8 @@ READ_CHARS = 4000
 class KnowledgeArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    action: Literal["list", "search", "read"] = "search"
+    # Left out: read with filename, search with query, otherwise list.
+    action: Literal["list", "search", "read"] | None = None
     scope: Literal["all", "persona", "chat"] = "all"
     query: str | None = None
     filename: str | None = None
@@ -35,6 +36,8 @@ class KnowledgeArguments(BaseModel):
 
     @model_validator(mode="after")
     def operation_fields(self) -> KnowledgeArguments:
+        if self.action is None:
+            self.action = "read" if self.filename is not None else "search" if self.query is not None else "list"
         if self.action == "list":
             if self.query is not None or self.filename is not None:
                 raise ValueError("list does not accept query or filename")
