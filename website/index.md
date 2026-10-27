@@ -75,7 +75,7 @@ features:
     <li><strong>准备</strong><span>一个已登录 QQ 的 OneBot 实现（例如 NapCat），以及模型服务的 API Key。</span></li>
     <li><strong>启动</strong><span>克隆仓库，执行安装脚本，用 <code>uv</code> 启动。终端输出首次配置的链接。</span></li>
     <li><strong>首次配置</strong><span>按五步向导连接 QQ、选择模型和角色。发送方式建议先选模拟发送。</span></li>
-    <li><strong>试聊与上线</strong><span>在面板中试聊，确认效果后改为真实发送。</span></li>
+    <li><strong>试聊与上线</strong><span>在面板中试聊，确认效果后在总览切换为发送到 QQ。</span></li>
   </ol>
 </div>
 

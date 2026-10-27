@@ -9,7 +9,9 @@ import pytest
 from len_bot.next.config import load_host_config
 from len_bot.next.chat.context import build_system
 from len_bot.next.persona.profile import load_persona
-from len_bot.next.panel.setup import create_setup_app, opens_browser
+from len_bot.next.panel import setup as first_run
+from len_bot.next.panel.setup import FirstSetup, create_setup_app, initialize, opens_browser
+from len_bot.next.runtime.send_hold import SendHold
 from len_bot.web.auth import verify_password
 
 
@@ -53,7 +55,8 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
             assert response.status_code == 200, response.text
             assert complete.is_set() and 'synthetic-secret' not in response.text
             cfg = load_host_config(tmp_path)
-            assert cfg.delivery == 'simulated' and cfg.models.roles.mind.model == 'fixture'
+            assert cfg.delivery == 'onebot' and cfg.models.roles.mind.model == 'fixture'
+            assert SendHold(tmp_path).enabled is True
             assert cfg.memory is not None
             if embedding_mode == 'skip':
                 assert cfg.memory.local.embedding is None and set(cfg.models.providers) == {'primary'}
@@ -80,6 +83,30 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
             assert (await client.post('/api/setup', json=body)).status_code == 409
             assert (tmp_path/'lenbot.config.json').read_bytes() == before
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('delivery', ['simulated', 'onebot'])
+def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path, monkeypatch, delivery: str):
+    item = FirstSetup.model_validate({
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': delivery,
+        'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
+        'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-secret'},
+        'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
+        'compaction': {'input_tokens': 6000},
+        'scene': 'onebot:group:80001', 'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
+    })
+    published = []
+    link = first_run.os.link
+
+    def observed(source, target):
+        published.append(SendHold(tmp_path).enabled)
+        link(source, target)
+
+    monkeypatch.setattr(first_run.os, 'link', observed)
+    initialize(tmp_path, item)
+    assert published == [delivery == 'simulated']
+    assert load_host_config(tmp_path).delivery == 'onebot'
+    assert SendHold(tmp_path).enabled is (delivery == 'simulated')
 
 
 @pytest.mark.asyncio

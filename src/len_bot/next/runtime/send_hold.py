@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
 
+from ..storage.files import atomic_text
 from .logs import log_event
 
 logger = logging.getLogger(__name__)
@@ -32,9 +32,7 @@ class SendHold:
 
     def set(self, enabled: bool, *, at: float) -> None:
         if self.path is not None:
-            temporary = self.path.with_suffix(".tmp")
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(json.dumps({"enabled": enabled, "changed_at": at}) + "\n", encoding="utf-8")
-            os.replace(temporary, self.path)
+            atomic_text(self.path, json.dumps({"enabled": enabled, "changed_at": at}) + "\n")
         self.enabled = enabled
         log_event(logger, "send_hold", enabled=enabled, at=at)

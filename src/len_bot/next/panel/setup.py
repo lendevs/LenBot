@@ -10,6 +10,7 @@ import socket
 import sys
 import tempfile
 import shutil
+import time
 import webbrowser
 from typing import Literal
 
@@ -31,6 +32,7 @@ from .model_access import model_error_detail, probe_model as run_model_probe
 from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
 from ..persona.profile import Persona, load_persona
+from ..runtime.send_hold import SendHold
 from len_bot.web.auth import hash_password
 from len_bot.web.errors import install_panel_errors
 from len_bot.web.shell import BUILT_PANEL, missing_build, mount_panel
@@ -143,7 +145,7 @@ def setup_source(item: FirstSetup) -> dict:
         vector = {'provider': alias, 'model': item.embedding.model, 'dimensions': item.embedding.dimensions}
     return {
         'config_version': CONFIG_VERSION, 'mode': 'isolated-multi', 'bot_id': item.bot_id, 'owners': item.owners,
-        'timezone': item.timezone, 'delivery': item.delivery, 'database': 'state/lenbot.sqlite3',
+        'timezone': item.timezone, 'delivery': 'onebot', 'database': 'state/lenbot.sqlite3',
         'onebot': item.onebot.model_dump(mode='json'),
         'compaction': item.compaction.model_dump(mode='json'),
         'max_steps': item.max_steps,
@@ -162,7 +164,11 @@ def setup_source(item: FirstSetup) -> dict:
 
 
 def initialize(root: Path, item: FirstSetup) -> dict:
-    """Validate first, create only new files, publish the root config last."""
+    """Validate first, create only new files, publish the root config last.
+
+    The wizard's delivery choice becomes the send hold, written before the config exists: a host that
+    starts from the published config never sends before the hold is in place.
+    """
     config_path = root / 'lenbot.config.json'
     role_path = root / 'personas' / item.persona_id
     if config_path.exists():
@@ -194,6 +200,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     load_persona(role_path)
     # Plugins are installed into, or dropped by hand into, the instance's plugins/.
     (root / 'plugins').mkdir(exist_ok=True)
+    SendHold(root).set(item.delivery == 'simulated', at=time.time())
     fd, filename = tempfile.mkstemp(prefix='.lenbot-setup-', suffix='.json', dir=root)
     temporary = Path(filename)
     try:

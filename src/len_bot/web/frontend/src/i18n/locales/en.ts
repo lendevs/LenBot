@@ -1085,7 +1085,12 @@ export default {
         missing: 'local copy is gone',
         downloadFailed: 'Download failed',
         uploadFailed: 'Sending to QQ failed',
-        upload: { uploaded: 'Sent to QQ', failed: 'Send failed', unconfirmed: 'Not sure it was sent' },
+        upload: {
+          uploaded: 'Sent to QQ',
+          failed: 'Send failed',
+          unconfirmed: 'Delivery unknown',
+          simulated: 'Simulated',
+        },
         keep: 'Save as shared material',
         keepTitle: 'Save as shared material of this group',
         keepName: 'Save as',

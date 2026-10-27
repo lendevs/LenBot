@@ -44,7 +44,7 @@ export interface RegisteredFile {
   status: 'registered'
   exists: boolean
   upload: {
-    status: 'uploaded' | 'failed' | 'unconfirmed' | string
+    status: 'uploaded' | 'failed' | 'unconfirmed' | 'simulated' | string
     error?: string | null
     [field: string]: unknown
   } | null

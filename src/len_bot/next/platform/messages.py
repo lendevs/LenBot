@@ -67,7 +67,7 @@ class SendResult:
 class UploadResult:
     """An upload action receipt, not proof that a platform client received the file."""
 
-    status: Literal["uploaded", "failed", "unconfirmed"]
+    status: Literal["uploaded", "failed", "unconfirmed", "simulated"]
     file_id: str | None
     error: str | None
     raw: dict | None

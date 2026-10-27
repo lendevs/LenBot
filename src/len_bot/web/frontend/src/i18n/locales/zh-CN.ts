@@ -1043,7 +1043,12 @@ export default {
         missing: '本地副本已不存在',
         downloadFailed: '下载失败',
         uploadFailed: '发送到 QQ 失败',
-        upload: { uploaded: '已发送到 QQ', failed: '发送失败', unconfirmed: '发送状态未知' },
+        upload: {
+          uploaded: '已发送到 QQ',
+          failed: '发送失败',
+          unconfirmed: '发送状态未知',
+          simulated: '模拟发送',
+        },
         keep: '存为共享资料',
         keepTitle: '存为本群共享资料',
         keepName: '保存为',

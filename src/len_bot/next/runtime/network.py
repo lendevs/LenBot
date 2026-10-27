@@ -181,11 +181,12 @@ class NetworkRuntime:
 
     async def upload_file(self, scene: str, file: str, name: str) -> UploadResult:
         if self.held(scene):
-            return UploadResult("failed", None, "宿主处于模拟发送，文件没有上传", None)
+            return UploadResult("simulated", None, None, None)
         return await self.platform.upload_file(scene, file, name)
 
     async def platform_call(self, action: str, params: dict, *, scene: str | None = None):
-        if action == "set_msg_emoji_like" and self.held(scene):
+        # While held only reads reach OneBot; actions that change QQ state are answered here.
+        if self.held(scene) and not action.startswith("get_"):
             return {"status": "ok", "retcode": 0, "data": None}
         return await self.platform.call(action, params)
 

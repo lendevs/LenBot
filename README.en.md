@@ -40,7 +40,7 @@ cd LenBot
 uv run --no-sync len-bot
 ```
 
-On first start the terminal prints a setup link. Open it in a browser and follow the five-step wizard to connect QQ and choose a model and persona. Pick simulated delivery first, try a few rounds in the panel's test chat, then switch to real delivery.
+On first start the terminal prints a setup link. Open it in a browser and follow the five-step wizard to connect QQ and choose a model and persona. Pick simulated delivery first, try a few rounds in the panel's test chat, then switch to sending to QQ on the overview.
 
 <img src="website/public/screenshots/home.png" alt="Panel overview" width="860">
 
