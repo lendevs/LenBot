@@ -36,6 +36,7 @@ export default defineConfig({
           { text: '群内命令', link: '/guide/commands' },
           { text: '角色', link: '/guide/personas' },
           { text: '记忆与学习', link: '/guide/memory' },
+          { text: '资料检索', link: '/guide/reference' },
         ] },
         { text: '扩展能力', items: [
           { text: '模型与用量', link: '/guide/models' },

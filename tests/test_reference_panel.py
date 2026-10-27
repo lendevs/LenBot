@@ -138,3 +138,100 @@ async def test_the_role_knowledge_listing_shows_each_file_index_state(tmp_path):
         [role] = (await client.get("/api/host/personas")).json()["roles"]
         [file] = (await client.get(f"/api/host/personas/{role['key']}/knowledge")).json()["files"]
         assert (file["filename"], file["index"], file["chunks"], file["vectors"]) == ("设定.md", "indexed", 2, 0)
+
+
+def _group_files(files: list[dict], folders: list[dict] | None) -> dict:
+    return {"status": "ok", "retcode": 0, "data": {"files": files, "folders": folders}}
+
+
+# Field sets as NapCat (size and file_size, creator_name) and SnowLuma (file_size, create_name) return them.
+NAPCAT_FILE = {"group_id": 80001, "file_id": "/napcat-uuid", "file_name": "活动手册.md", "busid": 102, "size": 40,
+               "file_size": 40, "upload_time": 1792000000, "dead_time": 0, "modify_time": 1792000000,
+               "download_times": 3, "uploader": 70002, "uploader_name": "群友乙"}
+SNOWLUMA_FOLDER = {"group_id": 80001, "folder_id": "/folder-1", "folder_name": "课程", "create_time": 1792000000,
+                   "creator": 70002, "create_name": "群友乙", "total_file_count": 2}
+
+
+@pytest.mark.asyncio
+async def test_group_files_are_listed_by_folder_and_imported_into_the_reference_directory(tmp_path, monkeypatch):
+    from len_bot.next.panel.routes import reference as routes
+
+    calls = []
+
+    async def call(action: str, params: dict) -> dict:
+        calls.append((action, params))
+        if action == "get_group_root_files":
+            return _group_files([NAPCAT_FILE, NAPCAT_FILE | {"file_id": "/deck", "file_name": "slides.pptx"}],
+                                [SNOWLUMA_FOLDER])
+        if action == "get_group_files_by_folder":
+            return _group_files([], None)
+        assert action == "get_group_file_url"
+        return {"status": "ok", "retcode": 0, "data": {"url": "https://files.example/ftn_handler/abc/?fname="}}
+
+    async def download(url: str) -> bytes:
+        assert url == "https://files.example/ftn_handler/abc/?fname="
+        return "# 活动\n\n报名截止十一月三日。\n".encode()
+
+    monkeypatch.setattr(routes, "download", download)
+    async with panel(tmp_path) as (client, runtime):
+        runtime.platform.call = call
+        assert (await client.get(PATH)).json()["group_files"] is True
+        root = (await client.get(f"{PATH}/group-files")).json()
+        assert [(item["name"], item["supported"], item["uploader"]) for item in root["files"]] == [
+            ("活动手册.md", True, "群友乙"), ("slides.pptx", False, "群友乙")]
+        assert root["folders"] == [{"folder_id": "/folder-1", "name": "课程", "files": 2}]
+        inside = (await client.get(f"{PATH}/group-files", params={"folder": "/folder-1"})).json()
+        assert inside == {"folder": "/folder-1", "files": [], "folders": []}
+        assert calls[1] == ("get_group_files_by_folder", {"group_id": 80001, "folder_id": "/folder-1",
+                                                          "file_count": 200})
+
+        imported = await client.post(f"{PATH}/group-files", json={"file_id": "/napcat-uuid", "busid": 102,
+                                                                  "name": "活动手册.md"})
+        assert imported.status_code == 200, imported.text
+        assert calls[-1] == ("get_group_file_url", {"group_id": 80001, "file_id": "/napcat-uuid", "busid": 102})
+        [item] = (await settled(client))["files"]
+        assert (item["filename"], item["status"]) == ("活动手册.md", "indexed")
+        assert "十一月三日" in await search(runtime, SCENE, "报名 截止")
+
+        refused = await client.post(f"{PATH}/group-files", json={"file_id": "/deck", "busid": 102,
+                                                                 "name": "slides.pptx"})
+        assert refused.status_code == 422 and calls[-1][0] == "get_group_file_url" and len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_group_file_failures_name_the_step_and_a_private_chat_has_no_group_files(tmp_path):
+    async def call(action: str, params: dict) -> dict:
+        if action == "get_group_root_files":
+            return {"status": "failed", "retcode": 1404, "wording": "不支持的动作", "data": None}
+        return {"status": "ok", "retcode": 0, "data": {}}
+
+    async with panel(tmp_path) as (client, runtime):
+        runtime.platform.call = call
+        listed = await client.get(f"{PATH}/group-files")
+        assert listed.status_code == 502 and "读取群文件失败" in listed.json()["detail"]["message"]
+        assert "不支持的动作" in listed.json()["detail"]["message"]
+        url = await client.post(f"{PATH}/group-files", json={"file_id": "/x", "busid": 102, "name": "a.md"})
+        assert url.status_code == 502 and "下载地址" in url.json()["detail"]["message"]
+        assert (await client.get(PATH)).json()["files"] == []
+
+
+@pytest.mark.asyncio
+async def test_download_stops_at_the_size_limit():
+    import httpx
+
+    from len_bot.next.panel.routes.reference import download
+    from len_bot.next.reference.sources import MAX_FILE_BYTES
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/large":
+            return httpx.Response(200, content=b"x" * (MAX_FILE_BYTES + 1))
+        if request.url.path == "/gone":
+            return httpx.Response(404)
+        return httpx.Response(200, content=b"ok")
+
+    transport = httpx.MockTransport(answer)
+    assert await download("https://files.example/small", transport) == b"ok"
+    with pytest.raises(ValueError, match="上限"):
+        await download("https://files.example/large", transport)
+    with pytest.raises(httpx.HTTPStatusError):
+        await download("https://files.example/gone", transport)

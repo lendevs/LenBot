@@ -2,9 +2,10 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { FileText, FolderOpen, RotateCw, Trash2, Upload } from '@lucide/vue'
+import { FileText, FolderOpen, RotateCw, Trash2, Upload, Users } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { referenceApi, type ReferenceFile, type ReferenceListing } from '../../../api/reference'
+import { formatBytes } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
@@ -14,6 +15,7 @@ import Skeleton from '../../../ui/Skeleton.vue'
 import { confirm } from '../../../ui/confirm'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
+import GroupFilesDialog from './GroupFilesDialog.vue'
 
 const props = defineProps<{ scene: string }>()
 
@@ -32,6 +34,7 @@ const listing = useQuery({
 const files = computed(() => listing.data.value?.files ?? [])
 const accept = computed(() => (listing.data.value?.formats ?? []).join(','))
 const input = ref<HTMLInputElement | null>(null)
+const picking = ref(false)
 
 function adopt(result: ReferenceListing) {
   client.setQueryData(key.value, result)
@@ -78,13 +81,8 @@ async function remove(file: ReferenceFile) {
 }
 
 const tones = { processing: 'info', indexed: 'success', failed: 'error' } as const
-function size(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
 function details(file: ReferenceFile) {
-  const parts = [size(file.size)]
+  const parts = [formatBytes(file.size)]
   if (file.pages !== null) parts.push(t('groups.reference.pages', { n: file.pages }))
   if (file.chars !== null) parts.push(t('groups.reference.chars', { n: file.chars }))
   if (file.status === 'indexed') {
@@ -107,11 +105,22 @@ function details(file: ReferenceFile) {
   <section v-else class="grid min-w-0 gap-3">
     <div class="flex items-center justify-between gap-2">
       <h3 class="text-base font-semibold">{{ t('groups.reference.title') }}</h3>
-      <Button size="sm" :icon="Upload" :loading="upload.isPending.value" @click="input?.click()">
-        {{ t('groups.reference.upload') }}
-      </Button>
+      <div class="flex items-center gap-2">
+        <Button v-if="listing.data.value?.group_files" size="sm" :icon="Users" @click="picking = true">
+          {{ t('groups.reference.groupFiles.open') }}
+        </Button>
+        <Button size="sm" :icon="Upload" :loading="upload.isPending.value" @click="input?.click()">
+          {{ t('groups.reference.upload') }}
+        </Button>
+      </div>
       <input ref="input" type="file" class="hidden" multiple :accept="accept" @change="picked" />
     </div>
+    <GroupFilesDialog
+      v-model:open="picking"
+      :scene="scene"
+      :existing="files.map((file) => file.filename)"
+      @imported="adopt"
+    />
     <EmptyState v-if="!files.length" :icon="FolderOpen" :title="t('groups.reference.empty')" compact />
     <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
       <li v-for="file in files" :key="file.filename" class="flex min-w-0 items-center gap-3 px-3 py-2.5">

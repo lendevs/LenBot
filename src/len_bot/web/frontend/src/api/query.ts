@@ -106,6 +106,8 @@ export const keys = {
   /** Under `host`, so the event raised when a group's files finish processing refreshes it. */
   reference: {
     scene: (scene: string) => ['host', 'reference', scene] as const,
+    groupFiles: (scene: string, folder: string | null) =>
+      ['reference', scene, 'group-files', folder] as const,
   },
   scene: {
     all: (scene: string) => ['scene', scene] as const,
