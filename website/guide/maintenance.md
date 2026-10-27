@@ -10,7 +10,7 @@ uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot ../le
 uv run --no-sync len-bot
 ```
 
-`upgrade run` 先把实例目录（源码运行时是整个仓库目录）和配置引用的外部目录复制到 `--snapshot`，再升级根配置、试聊配置和三个数据库，恢复插件依赖，最后运行 doctor。任何一步失败都会从快照恢复。快照目录每次用一个新的，放在实例目录和外部数据目录之外。
+`upgrade run` 先把实例目录（源码运行时是整个仓库目录）和配置引用的外部目录复制到 `--snapshot`，再恢复插件依赖，最后运行 doctor。任何一步失败都会从快照恢复。快照目录每次用一个新的，放在实例目录和外部数据目录之外。
 
 升级成功后想退回旧版本：停止 LenBot，用 restore 恢复升级前的数据，再切回旧版本代码并运行 `./scripts/install.sh`。
 
@@ -18,13 +18,13 @@ uv run --no-sync len-bot
 uv run --no-sync python -m len_bot.next.maintenance.upgrade restore --snapshot ../lenbot-backup-20261023
 ```
 
-`doctor` 检查配置和各数据库的格式。配置格式过旧时，它也会列出各数据库的状态。
+`doctor` 检查配置、各数据库的格式和完整性，以及插件。
 
 ```sh
 uv run --no-sync python -m len_bot.next.maintenance.doctor
 ```
 
-只升级其中一项时，单独执行 `migrate_config`、`migrate`、`migrate_memory_jobs`、`migrate_local_memory` 或 `plugin_dependencies`。这些命令会在原文件旁保留一份升级前的副本。
+只恢复插件依赖时，单独执行 `plugin_dependencies`。
 
 所有命令和程序运行共用实例锁 `.lenbot-instance.lock`，同一时间只能运行一个。不要手动删除锁文件。
 

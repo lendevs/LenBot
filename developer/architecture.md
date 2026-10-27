@@ -354,8 +354,8 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 `scripts/build_release.py` 从同一次提交构建 wheel、源码包和 Linux／macOS 部署包，Docker 宿主镜像安装同一个 wheel。部署包中，`releases/<版本>` 存放程序和依赖环境，`instance/` 存放数据。升级时按以下顺序执行。
 
 1. 安装新版本。
-2. 停机并迁移数据。
-3. 恢复插件依赖。
+2. 停机并做完整快照。
+3. 升级数据（第一个 RC 起才有升级步骤），恢复插件依赖并运行 doctor。
 4. 切换 `current`。
 
 新版本检查位于 `runtime/releases.py`。托管安装（存在 `.runtime/update-control.json`）向更新控制器查询，从源码运行时直接查询 GitHub Releases。面板启动 60 秒后检查一次，之后每 24 小时检查一次，失败时记录一条 WARNING `release_check`。在根配置中把 `panel.update_check` 设为 `false`，可以关闭后台检查。

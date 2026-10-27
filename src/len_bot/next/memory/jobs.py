@@ -19,7 +19,7 @@ from ..storage.sqlite import connect
 from .embeddings import _reject_constant
 
 
-FORMAT_VERSION = 6
+FORMAT_VERSION = 1
 
 
 class MemoryJobs:
@@ -31,10 +31,6 @@ class MemoryJobs:
             if tables:
                 application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
                 version = self.db.execute("PRAGMA user_version").fetchone()[0]
-                if application_id == 0x4C424D4A and version in range(1, FORMAT_VERSION):
-                    raise ValueError(
-                        f"Memory processing database format {version} requires offline migration while stopped: "
-                        f"{path}; run python -m len_bot.next.maintenance.migrate_memory_jobs from the instance directory")
                 if application_id != 0x4C424D4A or version != FORMAT_VERSION:
                     raise ValueError(f"unsupported memory processing database: {path}")
             else:
@@ -43,7 +39,7 @@ class MemoryJobs:
                 self.db.executescript("""
                     BEGIN;
                     PRAGMA application_id=1279413578;
-                    PRAGMA user_version=6;
+                    PRAGMA user_version=1;
                     CREATE TABLE memory_cursors (
                         scene TEXT PRIMARY KEY, after_seq INTEGER NOT NULL,
                         enabled_at REAL NOT NULL

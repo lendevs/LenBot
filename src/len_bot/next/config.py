@@ -47,16 +47,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 4
-# Upgrade old root configurations with the offline maintenance command.
-UPGRADE_HINT = ("停机后在实例目录执行 python -m len_bot.next.maintenance.upgrade run --snapshot <实例外的新目录>，"
-                "完成备份、迁移和检查；单独升级配置可执行 python -m len_bot.next.maintenance.migrate_config。"
-                "部署包和 Docker 安装请用面板的更新器")
+CONFIG_VERSION = 1
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[4] = 4
+    config_version: Literal[1] = 1
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -433,30 +429,12 @@ def _read_root(root: Path) -> tuple[Path, dict]:
     return path, source
 
 
-def _check_format(path: Path, source: dict) -> None:
-    """Name the way forward for a file from another version instead of listing its unknown fields."""
-    version = source.get("config_version")
-    if version is None or version == CONFIG_VERSION:
-        return
-    if type(version) is not int:
-        raise ValueError(f"{path}: config_version must be an integer, got {version!r}")
-    if version < CONFIG_VERSION:
-        raise ValueError(f"{path}: 配置格式 {version} 需要升级到 {CONFIG_VERSION}。"
-                         + UPGRADE_HINT)
-    raise ValueError(f"{path}: 配置格式 {version} 由更新的 LenBot 写入，当前程序只能读取格式 {CONFIG_VERSION}；"
-                     "请换回写入它的版本，或恢复升级前的快照")
-
-
-def _validation_error(path: Path, error: ValidationError, kind: str, source: dict) -> ValueError:
+def _validation_error(path: Path, error: ValidationError, kind: str) -> ValueError:
     details = "; ".join(
         f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
         for item in error.errors(include_input=False)
     )
-    message = f"{path}: invalid {kind} configuration: {details}"
-    if "config_version" not in source and any(item["type"] == "extra_forbidden" for item in error.errors()):
-        # Files from before format 1 carry no number; removed settings such as models.*.price are the usual cause.
-        message += "。这份配置没有 config_version，可能来自旧版本：" + UPGRADE_HINT
-    return ValueError(message)
+    return ValueError(f"{path}: invalid {kind} configuration: {details}")
 
 
 def _resolve_archive_paths(root: Path, source: dict) -> None:
@@ -501,7 +479,6 @@ def _resolve_worker_paths(root: Path, source: dict) -> None:
 
 
 def _load_lab_source(path: Path, source: dict) -> LabConfig:
-    _check_format(path, source)
     root = path.parent
     for name in ('replay_web', 'replay_images'):
         if source.get(name) is not None:
@@ -536,11 +513,10 @@ def _load_lab_source(path: Path, source: dict) -> LabConfig:
         object.__setattr__(config, '_source_root', root)
         return config
     except ValidationError as error:
-        raise _validation_error(path, error, "lab", source) from error
+        raise _validation_error(path, error, "lab") from error
 
 
 def _load_host_source(path: Path, source: dict) -> HostConfig:
-    _check_format(path, source)
     root = path.parent
     source["database"] = _resolved_path(root, source.get("database"), within_root=True, field="database")
     panel = source.get("panel")
@@ -593,7 +569,7 @@ def _load_host_source(path: Path, source: dict) -> HostConfig:
                     raise ValueError(f'stdin worker.{name} must be below its independent instance root: {location}')
         return config
     except ValidationError as error:
-        raise _validation_error(path, error, "host", source) from error
+        raise _validation_error(path, error, "host") from error
 
 
 def load_config(root: Path) -> LabConfig:

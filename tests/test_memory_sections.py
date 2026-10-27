@@ -4,15 +4,12 @@ import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import json
-from pathlib import Path
-import shutil
 import sqlite3
 
 import pytest
 
-from len_bot.next.maintenance.migrate_local_memory import migrate
 from len_bot.next.memory.embeddings import EmbeddingBinding, EmbeddingClient, EmbeddingSettings
-from len_bot.next.memory.local import FORMAT_VERSION, LocalMemory, LocalMemorySettings
+from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
 from len_bot.next.memory.jobs import MemoryJobs
 from len_bot.next.memory.service import LocalMemoryConfig, MemoryService
 from len_bot.next.platform.onebot_messages import parse_message
@@ -105,17 +102,16 @@ async def test_text_sections_preserve_source_spelling_merge_ranges_and_scope(tmp
     await memory.write(SCENE, 'events/streets.md', content, '合成大小写样本')
     await memory.write('onebot:group:80002', 'events/streets.md', 'Straße 跨群秘密。', '隔离')
     await memory.write(SCENE, 'bot/other/profile.md', 'Straße 其他角色秘密。', '隔离')
-    await memory.write(SCENE, 'legacy-import/pending.md', 'Straße 待采用秘密。', '隔离')
     await memory.owner_write_public('public.md', 'Straße 公共资料。', '公共资料')
-    hits = await memory.search(SCENE, 'STRASSE', bot_persona='current', exclude_pending=True)
+    hits = await memory.search(SCENE, 'STRASSE', bot_persona='current')
     assert [(hit.scope, hit.path) for hit in hits] == [('scene', 'events/streets.md'), ('public', 'public.md')]
     assert '其他' not in hits[0].preview and 'Straße' in hits[0].preview
     ranges = hits[0].sections
     assert len(ranges) == 2 and ranges[0]['headings'] == [['街区', '同词甲'], ['街区', '同词乙']]
     assert '\n…\n'.join(content[part['start_char']:part['end_char']] for part in ranges) == hits[0].preview
     assert all(part['source_version'] == hashlib.sha256(content.encode()).hexdigest() for part in ranges)
-    assert await memory.reindex_text() == 5
-    assert (await memory.search(SCENE, 'STRASSE', include_public=False, bot_persona='current', exclude_pending=True))[0].preview == hits[0].preview
+    assert await memory.reindex_text() == 4
+    assert (await memory.search(SCENE, 'STRASSE', include_public=False, bot_persona='current'))[0].preview == hits[0].preview
     await memory.write(SCENE, 'empty.md', '# 只有标题\n', '空内容')
     assert not await memory.search(SCENE, '只有标题')
 
@@ -135,49 +131,6 @@ async def test_recall_budget_truncates_units_without_duplicate_sources(tmp_path)
         result = await service.recall(SCENE, [message])
         assert result['content_chars'] == 300 and len(result['items']) == 1
         assert result['items'][0]['truncated'] and result['items'][0]['sections']
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('vectors', [False, True])
-async def test_format_three_migration_builds_units_without_rewriting_sources(tmp_path, vectors):
-    fixture = Path(__file__).parent / 'fixtures/history/config0-business7-jobs6-index3/memory'
-    root = tmp_path / 'memory'
-    shutil.copytree(fixture, root)
-    content = '# 记忆\n\n## 约定\n周六交报告。\n'
-    # Extend a genuine format-3 fixture using its table/FTS contract.
-    target = root / 'scenes' / SCENE / 'events/week.md'
-    target.parent.mkdir(parents=True)
-    target.write_text(content)
-    index = root / '.memory-index.sqlite3'
-    with sqlite3.connect(index) as db:
-        rowid = db.execute('INSERT INTO memory_files(scope,path,content) VALUES(?,?,?)',
-                           (SCENE, 'events/week.md', content.casefold())).lastrowid
-        db.execute('INSERT INTO memory_fts(rowid,content) VALUES(?,?)', (rowid, content.casefold()))
-        db.execute("INSERT INTO memory_changes(scope,path,changed_at,action,reason,after) VALUES(?,?,1,'write','样本',?)",
-                   (SCENE, 'events/week.md', content))
-        if vectors:
-            import sqlite_vec
-            db.enable_load_extension(True)
-            sqlite_vec.load(db)
-            db.execute('CREATE VIRTUAL TABLE memory_vec USING vec0(embedding float[3] distance_metric=cosine, scope text)')
-            db.execute('INSERT INTO memory_vec(rowid,embedding,scope) VALUES(?,?,?)',
-                       (rowid, sqlite_vec.serialize_float32([1., 0., 0.]), SCENE))
-            db.execute("INSERT INTO memory_vector_binding VALUES(1,'sample','http://127.0.0.1:9/v1','three-topics',3)")
-    with pytest.raises(ValueError, match='format 3 requires offline migration'):
-        LocalMemory(LocalMemorySettings(directory=root))
-    backup = migrate(root)
-    assert backup == index.with_name(index.name + '.v3.bak')
-    with sqlite3.connect(index) as db, sqlite3.connect(backup) as old:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == FORMAT_VERSION
-        assert old.execute('PRAGMA user_version').fetchone()[0] == 3
-        assert db.execute('SELECT * FROM memory_changes').fetchall() == old.execute('SELECT * FROM memory_changes').fetchall()
-        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='memory_vec'").fetchone()
-        assert db.execute('SELECT COUNT(*) FROM memory_vector_binding').fetchone()[0] == 0
-    memory = LocalMemory(LocalMemorySettings(directory=root))
-    hit = (await memory.search(SCENE, '周六'))[0]
-    assert hit.preview == '## 约定\n周六交报告。\n'
-    assert target.read_bytes() == content.encode()
-    assert migrate(root) is None
 
 
 @pytest.mark.asyncio

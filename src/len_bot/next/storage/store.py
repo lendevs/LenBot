@@ -29,7 +29,7 @@ from .schema import create_database
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 8
+FORMAT_VERSION = 1
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -79,11 +79,6 @@ class Store:
             if tables:
                 application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
                 version = self.db.execute("PRAGMA user_version").fetchone()[0]
-                if application_id == 0x4C424E31 and version in range(1, FORMAT_VERSION):
-                    raise ValueError(
-                        f"Next-core database format {version} requires offline migration while stopped: {path}; "
-                        "run python -m len_bot.next.maintenance.migrate from the isolated instance directory"
-                    )
                 if application_id != 0x4C424E31 or version != FORMAT_VERSION:
                     raise ValueError(f"Not a supported next-core database: {path}")
             else:
@@ -256,49 +251,6 @@ class Store:
             (scene, through),
         )]
         return (None if session is None else session[1]), history
-
-    def install_portable_recaps(self, updates: dict[str, tuple[int, int, str]]) -> None:
-        """Set checked scene cutpoints together, preserving every original entry.
-
-        Each value is (previous compact_through, final entry seq, portable text).
-        """
-        if not updates:
-            return
-        self.db.execute("BEGIN EXCLUSIVE")
-        try:
-            for scene, (expected_through, through, recap) in updates.items():
-                session = self.db.execute(
-                    "SELECT compact_through FROM mind_sessions WHERE scene=?", (scene,)
-                ).fetchone()
-                current_through = 0 if session is None else session[0]
-                latest = self.db.execute(
-                    "SELECT COALESCE(MAX(seq),0) FROM mind_entries WHERE scene=?", (scene,)
-                ).fetchone()[0]
-                if current_through != expected_through or latest != through:
-                    raise ValueError(f"Portable history changed before commit in {scene}")
-                active = self.db.execute(
-                    "SELECT id,status FROM turns WHERE scene=? AND ended IS NULL "
-                    "AND status IN ('running','settling') LIMIT 1", (scene,),
-                ).fetchone()
-                if active is not None:
-                    raise ValueError(f"Scene {scene} still has turn {active['id']} in {active['status']}")
-                call = self.db.execute(
-                    "SELECT model_calls.id FROM model_calls JOIN turns ON turns.id=model_calls.turn_id "
-                    "WHERE turns.scene=? AND model_calls.ended IS NULL LIMIT 1", (scene,),
-                ).fetchone()
-                if call is not None:
-                    raise ValueError(f"Scene {scene} still has unfinished model call {call['id']}")
-                self.db.execute(
-                    "INSERT INTO mind_sessions(scene,compact_through,recap,discovered_tools) "
-                    "VALUES (?,?,?,'[]') ON CONFLICT(scene) DO UPDATE SET "
-                    "compact_through=excluded.compact_through,recap=excluded.recap,"
-                    "discovered_tools=excluded.discovered_tools",
-                    (scene, through, recap),
-                )
-            self.db.commit()
-        except BaseException:
-            self.db.rollback()
-            raise
 
     def entries(self, scene: str) -> list[dict]:
         recap, history = self.active_history(scene)

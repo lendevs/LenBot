@@ -26,8 +26,6 @@ if TYPE_CHECKING:
 
 STRICT = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 Scope = Literal["scene", "public"]
-# Offline-imported legacy memories awaiting operator confirmation (M11 migration).
-LEGACY_IMPORT = "legacy-import"
 
 
 class IngestSettings(BaseModel):
@@ -195,7 +193,7 @@ class MemoryService:
     async def search(self, scene: str, query: str, limit: int, *, automatic: bool = False,
                      text_query: str | None = None, persona: str | None = None) -> list[dict]:
         """``persona`` hides other roles' Bot records; the panel searches without it."""
-        hits = await self.backend.search(scene, query, limit, exclude_pending=automatic,
+        hits = await self.backend.search(scene, query, limit,
                                          automatic=automatic, text_query=text_query, bot_persona=persona)
         return [{**asdict(hit), "score": None} for hit in hits]
 
@@ -236,30 +234,6 @@ class MemoryService:
                 return {**asdict(result), "excluded_records": selected, "new_exclusions": added}
             result = await self.backend.delete(scene, path, reason)
             return asdict(result)
-
-    async def adopt_pending(self, scene: str, source: str, original: str, target: str,
-                            content: str, reason: str, *, remove_source: bool) -> dict:
-        """One explicit owner operation, not a model tool or a multi-file transaction."""
-        if not source.startswith(LEGACY_IMPORT + '/'):
-            raise ValueError(f'采用源必须是本场景实际待确认原件：{source!r}')
-        if target == LEGACY_IMPORT or target.startswith(LEGACY_IMPORT + '/'):
-            raise ValueError('正式目标不能继续位于待确认区域')
-        if not reason.strip() or not content.strip():
-            raise ValueError('采用须明确核对后的非空正文与实际原因')
-        async with self.write_lock(scene):
-            saved = await self.backend.read(scene, source, scope='scene')
-            if saved.content != original:
-                raise ValueError(f'待确认原件已变化，本次未创建正式文件：{source!r}。请重读原文后明确核对。')
-            require_bot_path(target, self.known_persona_ids(scene))
-            change = await self.backend.write(scene, target, content, reason, create_only=True)
-            if remove_source:
-                try:
-                    await self.backend.delete(scene, source, reason)
-                except Exception as error:
-                    raise RuntimeError(f'正式文件{target!r}已保存，但待确认原件{source!r}删除失败：'
-                                       f'{type(error).__name__}: {error}。请检查原件并手动清理。') from error
-            return {'source': source, 'target': target, 'target_saved': True, 'source_removed': remove_source,
-                    'change': asdict(change), 'notice': '已保存为本群正式记忆，文件变更可在历史中查看。'}
 
     async def history(self, scene: str, path: str) -> list[dict]:
         return [asdict(change) for change in await self.backend.history(scene, path)]

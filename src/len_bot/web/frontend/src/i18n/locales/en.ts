@@ -996,17 +996,6 @@ export default {
         probeFailed: 'Embedding test failed',
         noModel: 'Directory summaries need a memory summary model on the models page first',
       },
-      adopt: {
-        notice: 'This material was imported from the old version. File it as a memory for the bot to use it.',
-        action: 'Turn into memory',
-        original: 'Original material',
-        target: 'Save as',
-        content: 'Memory content',
-        reason: 'Filed from material imported from the old version',
-        removeSource: 'Delete the old material after saving',
-        done: 'Saved as {path}',
-        failed: 'Not saved',
-      },
     },
     tasks: {
       views: {

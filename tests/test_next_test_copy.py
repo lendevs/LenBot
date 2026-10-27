@@ -19,7 +19,7 @@ def source_instance(root: Path, platform: str = 'onebot') -> dict:
         'timezone': 'UTC', 'database': 'state.db', 'delivery': 'onebot',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9', 'access_token': 'fixture'},
         'panel': {'host': '127.0.0.1', 'port': 8088, 'username': 'fixture',
-                  'password_hash': 'fixture$' + '0' * 64},
+                  'password_hash': 'pbkdf2_sha256$600000$fixture$' + '0' * 64},
         'compaction': {'input_tokens': 2000},
         'models': {'providers': {'fixture': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1',
                                             'api_key': 'fixture'}},

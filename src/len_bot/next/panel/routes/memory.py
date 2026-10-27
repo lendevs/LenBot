@@ -40,17 +40,6 @@ class WriteRequest(BaseModel):
     reason: str = Field(min_length=1)
 
 
-class PendingAdoption(BaseModel):
-    model_config = STRICT
-    scene: str
-    source: str = Field(min_length=1)
-    original: str
-    target: str = Field(min_length=1)
-    content: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
-    remove_source: bool
-
-
 class SummaryRequest(BaseModel):
     model_config = STRICT
     scene: str
@@ -187,12 +176,6 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
     async def write(body: WriteRequest, _: str = Depends(user)):
         async with operation(body.scene) as memory:
             return await memory.write(body.scene, body.path, body.content, body.reason, scope=body.scope)
-
-    @app.post('/api/host/memory/adopt-pending', response_model=responses.MemoryAdopted, response_model_exclude_unset=True)
-    async def adopt_pending(body: PendingAdoption, _: str = Depends(user)):
-        async with operation(body.scene) as memory:
-            return await memory.adopt_pending(body.scene, body.source, body.original, body.target,
-                                              body.content, body.reason, remove_source=body.remove_source)
 
     @app.post("/api/host/memory/delete", response_model=responses.MemoryChange | responses.MemoryForgotten, response_model_exclude_unset=True)
     async def delete(body: DeleteRequest, _: str = Depends(user)):

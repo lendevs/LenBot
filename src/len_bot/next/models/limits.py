@@ -2,7 +2,6 @@
 from __future__ import annotations
 import threading
 import time
-from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,7 +9,6 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .usage import instance_calls, summarize_calls
-from ..storage.sqlite import connect
 
 
 class ResourceLimits(BaseModel):
@@ -165,32 +163,6 @@ class ModelBudget:
         self._cache: dict[tuple, tuple[float, dict]] = {}
         self._cache_lock = threading.Lock()
         self.trials_root: Path | None = None if root is None else root / '.runtime' / 'chat-tests'
-        if config.limits.daily_tokens is not None or config.limits.scene_daily_tokens:
-            self.validate_sources()
-
-    def validate_sources(self) -> None:
-        from ..memory.jobs import FORMAT_VERSION as MEMORY_FORMAT
-        paths = [self.config.database.with_name(self.config.database.name + '.memory.sqlite3')]
-        if self.trials_root is not None:
-            paths.extend(self.trials_root.glob('*/state.db.memory.sqlite3'))
-        from ..storage.store import FORMAT_VERSION as BUSINESS_FORMAT
-        if self.trials_root is not None:
-            for path in self.trials_root.glob('*/state.db'):
-                with closing(connect(path, readonly=True)) as db:
-                    app = db.execute('PRAGMA application_id').fetchone()[0]
-                    version = db.execute('PRAGMA user_version').fetchone()[0]
-                    if app != 0x4C424E31 or version != BUSINESS_FORMAT:
-                        raise ValueError(f'试聊计量源需要停机离线迁移：{path} (application={app}, format={version})；'
-                                         '运行 python -m len_bot.next.maintenance.migrate')
-        outdated = []
-        for path in paths:
-            if path.exists():
-                with closing(connect(path, readonly=True)) as db:
-                    app, version = db.execute('PRAGMA application_id').fetchone()[0], db.execute('PRAGMA user_version').fetchone()[0]
-                    if app != 0x4C424D4A or version != MEMORY_FORMAT:
-                        outdated.append(f'{path} (application={app}, format={version})')
-        if outdated:
-            raise ValueError('预算计量源需要停机离线迁移；运行 python -m len_bot.next.maintenance.migrate_memory_jobs：' + '; '.join(outdated))
 
     def totals(self, scene: str | None, since: float, until: float, *, max_age: float = 0.0,
                store=None) -> dict:

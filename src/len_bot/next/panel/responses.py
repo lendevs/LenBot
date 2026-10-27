@@ -826,15 +826,6 @@ class MemoryChange(PanelResponse):
     after: str | None
 
 
-class MemoryAdopted(PanelResponse):
-    source: str
-    target: str
-    target_saved: bool
-    source_removed: bool
-    change: MemoryChange
-    notice: str
-
-
 class MemoryForgotten(PanelResponse):
     path: str
     removed_current: bool

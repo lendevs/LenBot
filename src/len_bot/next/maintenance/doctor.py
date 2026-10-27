@@ -13,11 +13,10 @@ from pathlib import Path
 import sys
 import sqlite3
 
-from ..config import HostConfig, load_instance_config, load_instance_source
+from ..config import HostConfig, load_instance_config
 from ..memory.jobs import FORMAT_VERSION as MEMORY_JOBS_FORMAT
 from ..memory.local import FORMAT_VERSION as LOCAL_INDEX_FORMAT, _APPLICATION_ID as LOCAL_INDEX_APPLICATION, _INDEX_NAME
 from ..plugins.data import recorded_version
-from .migrate_config import upgraded_config
 from ..plugins.kv import APPLICATION_ID as KV_APPLICATION, FORMAT_VERSION as KV_FORMAT
 from ..plugins.manifest import discover, read_manifest
 from ..storage.sqlite import connect
@@ -28,15 +27,14 @@ BUSINESS_APPLICATION = 0x4C424E31
 MEMORY_JOBS_APPLICATION = 0x4C424D4A
 
 
-def _database(path: Path, application: int, format_version: int, migrate: str,
+def _database(path: Path, application: int, format_version: int,
               relations: tuple[tuple[str, str], ...] = ()) -> dict:
     if not path.exists():
         return {'status': 'disabled', 'detail': f'{path} 尚未创建'}
     with closing(connect(path, readonly=True)) as db:
         actual = (db.execute('PRAGMA application_id').fetchone()[0], db.execute('PRAGMA user_version').fetchone()[0])
         if actual != (application, format_version):
-            return {'status': 'error', 'detail': f'{path} 格式 {actual!r}，当前需要 {(application, format_version)!r}；'
-                                                 f'停机执行 python -m len_bot.next.maintenance.{migrate}'}
+            return {'status': 'error', 'detail': f'{path} 格式 {actual!r}，当前需要 {(application, format_version)!r}'}
         problems = [row[0] for row in db.execute('PRAGMA quick_check').fetchall() if row[0] != 'ok']
         for name, query in relations:
             count = db.execute(query).fetchone()[0]
@@ -105,29 +103,22 @@ def check(root: Path) -> list[dict]:
     try:
         config = load_instance_config(root)
     except ValueError as error:
-        results = [{'check': 'config', 'status': 'error', 'detail': str(error)}]
-        # An older format still names its databases; read them from the in-memory upgrade.
-        path = root / 'lenbot.config.json'
-        try:
-            config = load_instance_source(path, upgraded_config(json.loads(path.read_text(encoding='utf-8')), path))
-        except Exception:
-            return results
-    else:
-        results = [{'check': 'config', 'status': 'ok', 'detail': f'配置格式 {config.config_version}'}]
+        return [{'check': 'config', 'status': 'error', 'detail': str(error)}]
+    results = [{'check': 'config', 'status': 'ok', 'detail': f'配置格式 {config.config_version}'}]
     database = config.database
     index = (None if config.memory is None
              else config.memory.local.directory.expanduser().resolve() / _INDEX_NAME)
-    for name, location, application, version, migration, relations in (
-        ('business_database', database, BUSINESS_APPLICATION, BUSINESS_FORMAT, 'migrate', BUSINESS_RELATIONS),
+    for name, location, application, version, relations in (
+        ('business_database', database, BUSINESS_APPLICATION, BUSINESS_FORMAT, BUSINESS_RELATIONS),
         ('memory_jobs', database.with_name(database.name + '.memory.sqlite3'),
-         MEMORY_JOBS_APPLICATION, MEMORY_JOBS_FORMAT, 'migrate_memory_jobs', ()),
-        ('local_memory_index', index, LOCAL_INDEX_APPLICATION, LOCAL_INDEX_FORMAT, 'migrate_local_memory', ()),
+         MEMORY_JOBS_APPLICATION, MEMORY_JOBS_FORMAT, ()),
+        ('local_memory_index', index, LOCAL_INDEX_APPLICATION, LOCAL_INDEX_FORMAT, ()),
     ):
         if location is None:
             result = {'status': 'disabled', 'detail': '未配置记忆'}
         else:
             try:
-                result = _database(location, application, version, migration, relations)
+                result = _database(location, application, version, relations)
             except (OSError, sqlite3.DatabaseError) as error:
                 result = {'status': 'error', 'detail': f'{location}：{error}'}
         results.append({'check': name, **result})

@@ -41,9 +41,8 @@ _INDEX_NAME = ".memory-index.sqlite3"
 SUMMARY_FILES = (".abstract.md", ".overview.md")
 ABSTRACT_CHARS = 256
 OVERVIEW_CHARS = 4000
-PENDING_PREFIX = "legacy-import/"
 _APPLICATION_ID = 0x4C424D31
-FORMAT_VERSION = 4
+FORMAT_VERSION = 1
 SUMMARY_SCHEMA = """
 CREATE TABLE memory_summaries (
     scope TEXT NOT NULL,
@@ -199,11 +198,9 @@ def scope_directory(scene: str) -> str:
     return quote(scene, safe='') if sys.platform == 'win32' else scene
 
 
-def _eligible(exclude_pending: bool, bot_persona: str | None) -> str:
+def _eligible(bot_persona: str | None) -> str:
     """Extra retrieval conditions on ``path``; the role id becomes a quoted SQL literal."""
     conditions = []
-    if exclude_pending:
-        conditions.append("substr(path,1,14)!='legacy-import/'")
     if bot_persona is not None:
         prefix = f'bot/{bot_persona}/'
         literal = prefix.replace("'", "''")
@@ -288,8 +285,7 @@ def _scene_overview(root: Path, scene: str) -> str | None:
     with closing(connect(index, readonly=True)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version != FORMAT_VERSION:
-            raise ValueError(f"local memory index format {version} requires offline migration: {index}; "
-                             "run python -m len_bot.next.maintenance.migrate_local_memory")
+            raise ValueError(f"local memory index format {version}, expected {FORMAT_VERSION}: {index}")
         generated_at, changed_after = _summary_times(db, scene, "")
     if generated_at is None:
         raise ValueError(f"memory summary has no generation time: {base}")
@@ -380,9 +376,6 @@ class LocalMemory:
                         db.execute("PRAGMA user_version").fetchone()[0])
             if identity == (_APPLICATION_ID, FORMAT_VERSION):
                 return
-            if identity[0] == _APPLICATION_ID and 2 <= identity[1] < FORMAT_VERSION:
-                raise ValueError(f"local memory index format {identity[1]} requires offline migration: {self.index}; "
-                                 "run python -m len_bot.next.maintenance.migrate_local_memory")
             if identity != (0, 0) or db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is not None:
                 raise ValueError(f"unsupported local memory index format at {self.index}: "
                                  f"application_id={identity[0]}, user_version={identity[1]}")
@@ -825,12 +818,12 @@ class LocalMemory:
 
     @staticmethod
     def _lexical_rows(db: sqlite3.Connection, scene: str, query: str,
-                      limit: int, include_public: bool, exclude_pending: bool,
+                      limit: int, include_public: bool,
                       bot_persona: str | None = None) -> list[sqlite3.Row]:
         folded = query.casefold()
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
-        eligible = _eligible(exclude_pending, bot_persona)
+        eligible = _eligible(bot_persona)
         if len(folded) >= 3:
             expression = '"' + folded.replace('"', '""') + '"'
             return db.execute(f"""
@@ -848,17 +841,17 @@ class LocalMemory:
 
     @staticmethod
     def _automatic_rows(db: sqlite3.Connection, scene: str, query: str,
-                        limit: int, include_public: bool, exclude_pending: bool,
+                        limit: int, include_public: bool,
                         bot_persona: str | None = None) -> list[sqlite3.Row]:
         # The existing recall budget also bounds the number of literal query fragments.
         folded = query.casefold()[-1200:]
         if len(folded) < 3:
-            return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, exclude_pending, bot_persona)
+            return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, bot_persona)
         terms = dict.fromkeys(folded[index:index + 3] for index in range(len(folded) - 2))
         expression = ' OR '.join('"' + term.replace('"', '""') + '"' for term in terms)
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
-        eligible = _eligible(exclude_pending, bot_persona)
+        eligible = _eligible(bot_persona)
         # A short message remains searchable when a following reply adds another line.
         short = list(dict.fromkeys(line.strip() for line in folded.splitlines() if 0 < len(line.strip()) < 3))
         short_rows = ""
@@ -880,11 +873,11 @@ class LocalMemory:
         """, (*parameters, scene, limit)).fetchall()
 
     def _search_sync(self, scene: str, query: str, limit: int,
-                     include_public: bool, exclude_pending: bool, automatic: bool,
+                     include_public: bool, automatic: bool,
                      bot_persona: str | None = None) -> list[LocalMemoryHit]:
         with self._db() as db:
             search = self._automatic_rows if automatic else self._lexical_rows
-            rows = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
+            rows = search(db, scene, query, limit, include_public, bot_persona)
         return self._section_hits([row['id'] for row in rows])
 
     def _section_hits(self, ids: list[int]) -> list[LocalMemoryHit]:
@@ -913,15 +906,15 @@ class LocalMemory:
 
     def _search_hybrid_sync(self, scene: str, query: str,
                             vector: tuple[float, ...], limit: int,
-                            include_public: bool, exclude_pending: bool, automatic: bool,
+                            include_public: bool, automatic: bool,
                             bot_persona: str | None = None) -> list[LocalMemoryHit]:
         with self._db() as db:
             dimensions = self._vector_binding(db)
             if dimensions is None or len(vector) != dimensions:
                 raise ValueError(f"memory query vector dimension {len(vector)} differs from index {dimensions}")
             search = self._automatic_rows if automatic else self._lexical_rows
-            lexical = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
-            conditions = _eligible(exclude_pending, bot_persona)
+            lexical = search(db, scene, query, limit, include_public, bot_persona)
+            conditions = _eligible(bot_persona)
             eligible = f" AND rowid IN (SELECT id FROM memory_sections WHERE 1{conditions})" if conditions else ""
             vector_rows: list[tuple[int, str, float]] = []
             query_bytes = self._vector_bytes(vector)
@@ -949,7 +942,7 @@ class LocalMemory:
         return self._section_hits(ordered)
 
     async def search(self, scene: str, query: str, limit: int = 10, *,
-                     include_public: bool = True, exclude_pending: bool = False,
+                     include_public: bool = True,
                      automatic: bool = False, text_query: str | None = None,
                      bot_persona: str | None = None) -> list[LocalMemoryHit]:
         """``bot_persona`` keeps other roles' ``bot/<id>/`` records out of the results."""
@@ -963,16 +956,16 @@ class LocalMemory:
                 await locks.enter_async_context(self._lock("public"))
             if self.embedding is None:
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
+                                               include_public, automatic, bot_persona)
             try:
                 dimensions = await asyncio.to_thread(self._vector_preflight)
             except VectorIndexNeedsRebuild as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
+                                               include_public, automatic, bot_persona)
             if dimensions is None:
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
+                                               include_public, automatic, bot_persona)
             try:
                 batch = await self._embedding(source, [query], "query")
                 if batch.dimensions != dimensions:
@@ -980,9 +973,9 @@ class LocalMemory:
             except (ValueError, TimeoutError) as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
                 return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
+                                               include_public, automatic, bot_persona)
             return await asyncio.to_thread(self._search_hybrid_sync, source, literal,
-                                           batch.vectors[0], limit, include_public, exclude_pending, automatic, bot_persona)
+                                           batch.vectors[0], limit, include_public, automatic, bot_persona)
 
     def _history_sync(self, scope: str, path: str) -> list[LocalMemoryChange]:
         self._target(scope, path, file=True)
@@ -1084,14 +1077,10 @@ class LocalMemory:
         return scene_overview(self.root, scene)
 
     def _summary_inputs_sync(self, scope: str, path: str) -> dict:
-        if path == PENDING_PREFIX.rstrip("/") or path.startswith(PENDING_PREFIX):
-            raise ValueError("待确认旧记忆不能生成正式摘要；请先采用到正式记忆目录")
         directory = self._summary_directory(scope, path)
         files, directories = [], []
         for entry in sorted(directory.iterdir(), key=lambda item: item.name):
             relative = f"{path}/{entry.name}" if path else entry.name
-            if relative == PENDING_PREFIX.rstrip("/"):
-                continue
             if entry.is_dir():
                 self._target(scope, relative, file=False)
                 summary = self._summary_sync(scope, relative)

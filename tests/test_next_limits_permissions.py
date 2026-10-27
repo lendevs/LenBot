@@ -185,7 +185,7 @@ def test_embedding_and_transcription_tokens_do_not_count_toward_the_limit(tmp_pa
         ModelBudget(settings(path,daily_tokens=100),store,None).check('onebot:group:80001')
 
 
-def test_trial_budget_uses_explicit_root_and_requires_migrated_sidecar(tmp_path):
+def test_trial_budget_uses_explicit_root(tmp_path):
     root=tmp_path/'instance'
     path=root/'nested'/'state.db'
     trial=root/'.runtime'/'chat-tests'/'closed'/'state.db'
@@ -195,10 +195,6 @@ def test_trial_budget_uses_explicit_root_and_requires_migrated_sidecar(tmp_path)
         cfg=settings(path,daily_tokens=100)
         with pytest.raises(LimitReached):
             ModelBudget(cfg,store,None,root=root).check('onebot:group:80001')
-        with MemoryJobs(trial.with_name(trial.name+'.memory.sqlite3')) as jobs:
-            jobs.db.execute('PRAGMA user_version=3')
-        with pytest.raises(ValueError,match='migrate_memory_jobs'):
-            ModelBudget(cfg,store,None,root=root)
 
 
 @pytest.mark.parametrize('value',[{'request_days':0},{'timeline_days':31},
@@ -208,18 +204,6 @@ def test_retention_configuration_rejects_ambiguous_or_unmetered_windows(value):
     from len_bot.next.runtime.retention import RetentionSettings
     with pytest.raises(ValidationError):
         RetentionSettings.model_validate(value)
-
-
-def test_budget_rejects_unmigrated_trial_business_source(tmp_path):
-    root=tmp_path/'root'
-    path=root/'state.db'
-    trial=root/'.runtime'/'chat-tests'/'closed'/'state.db'
-    with Store(trial) as old:
-        old.db.execute('ALTER TABLE audio_calls DROP COLUMN tokens')
-        old.db.execute('PRAGMA user_version=31')
-    with Store(path) as store:
-        with pytest.raises(ValueError,match='试聊计量源.*离线迁移'):
-            ModelBudget(settings(path,daily_tokens=100),store,None,root=root)
 
 
 @pytest.mark.asyncio

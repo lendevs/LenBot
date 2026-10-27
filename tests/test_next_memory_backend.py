@@ -1,4 +1,4 @@
-"""Local memory interface: pending material is visible manually, not selected automatically."""
+"""Local memory interface: index transactions, vector bindings, recall and summaries."""
 import asyncio
 import json
 import logging
@@ -52,7 +52,7 @@ async def test_optional_vector_binding_keeps_text_recall_and_scope(tmp_path, cap
             original = LocalMemory(old_local, embedding=client if mode != 'new_binding' else None)
             for scope, path, content in [
                 (scene, 'events/meeting.md', '周五读书会在图书馆二楼。'),
-                (scene, 'legacy-import/meeting.md', '周五读书会在图书馆二楼。'),
+                (scene, 'events/weather.md', '今天下雨。'),
                 (scene, 'events/metadata.md', '群友 90001 2026-10-03 20:40:00 UTC'),
                 ('onebot:group:80002', 'events/meeting.md', '周五读书会在图书馆二楼。'),
             ]:
@@ -158,35 +158,6 @@ async def test_failed_forget_keeps_source_and_ancestor_summaries(tmp_path, sourc
     assert len(await restored.history(scene, 'events/meeting.md')) == (1 if source_exists else 2)
 
 
-def test_pending_files_do_not_take_automatic_search_slots(tmp_path):
-    async def run():
-        backend = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
-        scene = 'onebot:group:80001'
-        for n in range(3):
-            await backend.write(scene, f'legacy-import/{n}.md', '合成同一主题 abc', 'synthetic pending import')
-        await backend.write(scene, 'topics/current.md', '合成同一主题 abc', 'synthetic adopted content')
-        assert (await backend.search(scene, 'abc', 1))[0].path.startswith('legacy-import/')
-        for query in ('abc', '合成'):
-            result = await backend.search(scene, query, 1, exclude_pending=True)
-            assert [hit.path for hit in result] == ['topics/current.md']
-        assert (await backend.read(scene, 'legacy-import/0.md')).content == '合成同一主题 abc'
-    asyncio.run(run())
-
-
-def test_pending_material_cannot_enter_directory_summaries(tmp_path):
-    async def run():
-        backend = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
-        scene = 'onebot:group:80001'
-        await backend.write(scene, 'legacy-import/group.md', '合成待确认内容', 'synthetic')
-        # An old generated summary remains readable on disk, but cannot propagate into the root.
-        await backend.write_summary(scene, 'legacy-import', '旧版本合成摘要', '旧版本合成概览')
-        with pytest.raises(ValueError, match='待确认旧记忆'):
-            await backend.summary_inputs(scene, 'legacy-import')
-        inputs = await backend.summary_inputs(scene, '')
-        assert not inputs['directories'] and not inputs['files']
-    asyncio.run(run())
-
-
 def test_changed_profile_is_not_current_and_empty_summary_can_be_removed(tmp_path):
     from len_bot.next.memory.local import scene_overview
     async def run():
@@ -267,7 +238,6 @@ def test_text_only_automatic_recall_uses_chat_topics_without_message_metadata(tm
             service = MemoryService(settings, backend, jobs=jobs, store=store, active_personas={})
             scene = 'onebot:group:80001'
             await service.write(scene, 'events/meeting.md', content, '记录已确认活动地点')
-            await backend.write(scene, 'legacy-import/meeting.md', content, '待确认材料')
             await backend.write('onebot:group:80002', 'events/other.md', content, '其他场景资料')
             await backend.write(scene, 'events/common.md', '大家好。', '日常问候')
             await backend.write(scene, 'events/metadata.md', '群友 90001 2026-10-03 20:40:00 UTC', '身份资料')

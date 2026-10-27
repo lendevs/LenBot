@@ -38,7 +38,7 @@ class PanelSettings(BaseModel):
     @classmethod
     def valid_password_hash(cls, value: str) -> str:
         if re.fullmatch(PASSWORD_HASH_PATTERN, value) is None:
-            raise ValueError("请填写 pbkdf2_sha256$迭代次数$盐$哈希，或旧版 盐$哈希")
+            raise ValueError("请填写 pbkdf2_sha256$迭代次数$盐$哈希")
         return value
 
 

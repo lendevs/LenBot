@@ -50,7 +50,7 @@ The runtime core is in `src/len_bot/next/`. The entry point is `len_bot.next.hos
 | `plugins/` | Plugin runtime and installation; business plugins live in separate repositories |
 | `tools/`, `media/` | Web, skills, MCP and other tools; image and voice handling |
 | `panel/` | Panel backend and the first-run wizard |
-| `maintenance/` | Commands run while stopped: data upgrades, reindexing, plugin dependencies, storage pools, test copies |
+| `maintenance/` | Commands run while stopped: update steps, reindexing, plugin dependencies, storage pools, test copies |
 | `trials/` | Isolated trial chats in the panel |
 
 Other directories:
@@ -91,7 +91,6 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 Tests cover only the following. Test samples are anonymized real data.
 
 - External protocol boundaries: parsing of OneBot, Pi RPC, and model and memory service responses
-- Data migrations
 - Permissions
 - Configuration validation
 
@@ -101,32 +100,21 @@ When changing prompts or persona expression, compare replies before and after wi
 
 ## Data format
 
-The business database starts from public baseline v1. To change the schema:
-
-1. Create the new structure directly in `storage/schema.py`.
-2. Add a step to `BUSINESS` in `maintenance/migrate.py` that upgrades the previous version.
-3. Bump `FORMAT_VERSION` in `storage/store.py`.
-
-The memory job database (`migrate_memory_jobs.py`), local memory index (`migrate_local_memory.py`) and root configuration work the same way. Current numbers:
+LenBot has not been released yet. Until the first RC, all four format numbers stay at 1. Change the schema by editing the create statements and the configuration by editing its models, without upgrade steps; adjust or recreate a local instance by hand when needed.
 
 | Number | Value | Where |
 |---|---|---|
 | Plugin interface | 1 | `INTERFACE` in `plugin.py` |
-| Root configuration | 3 | `CONFIG_VERSION` in `config.py` |
-| Business database | 7 | `FORMAT_VERSION` in `storage/store.py` |
-| Memory job database | 6 | `FORMAT_VERSION` in `memory/jobs.py` |
-| Local memory index | 4 | `FORMAT_VERSION` in `memory/local.py` |
+| Root configuration | 1 | `CONFIG_VERSION` in `config.py` |
+| Business database | 1 | `FORMAT_VERSION` in `storage/store.py` |
+| Memory job database | 1 | `FORMAT_VERSION` in `memory/jobs.py` |
+| Local memory index | 1 | `FORMAT_VERSION` in `memory/local.py` |
 
-All three databases upgrade through `maintenance/migrations.py`:
+The three databases name their file type in `application_id` and their format in `user_version`. LenBot opens only files whose number matches the current one.
 
-- An integrity check runs before and after the upgrade.
-- Each step runs in one transaction, which also sets `user_version`.
-- Work outside the database, such as deleting files, is returned by the step and runs after the step commits.
-- A standalone migration command keeps one copy of the input format beside the file, `<file>.v<format>.bak`. `upgrade apply` uses its full snapshot in place of this copy.
+JSON bodies stored in the databases decode strictly into dataclasses (`ChatMessage`, `Sender`, `Segment`, `Task`, `TaskFile`, `Schedule`, and the records inside model calls and memory jobs); their fields are part of the data format too.
 
-JSON bodies stored in the databases decode strictly into dataclasses (`ChatMessage`, `Sender`, `Segment`, `Task`, `TaskFile`, `Schedule`, and the records inside model calls and memory jobs). Adding, removing or changing a field there changes the data format: bump the format number and rewrite existing bodies in the upgrade step.
-
-`tests/fixtures/history/` holds small instances written by older formats' own code; `tests/test_history_migrations.py` upgrades them and requires the same schema as a fresh instance and that every body decodes. Before bumping any format number, register the last commit before the change in `scripts/build_history_fixtures.py` and run it (`uv run --no-sync python scripts/build_history_fixtures.py`); rebuilding the same input gives byte-identical files.
+From the first RC on, every format change bumps its number and adds an upgrade from the previous one to the `apply` step in `maintenance/upgrade.py`. The updater takes a full snapshot before that step.
 
 ## Packaging
 

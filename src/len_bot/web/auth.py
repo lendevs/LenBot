@@ -43,7 +43,7 @@ def clear_login_failures(key: str) -> None:
     _FAILED_LOGINS.pop(key, None)
 
 
-PASSWORD_HASH_PATTERN = r"(?:pbkdf2_sha256\$[1-9][0-9]*\$)?[^$]+\$[0-9a-f]{64}"
+PASSWORD_HASH_PATTERN = r"pbkdf2_sha256\$[1-9][0-9]*\$[^$]+\$[0-9a-f]{64}"
 
 
 def hash_password(password: str, salt: Optional[str] = None) -> str:
@@ -54,13 +54,11 @@ def hash_password(password: str, salt: Optional[str] = None) -> str:
     return f"pbkdf2_sha256$600000${salt}${dk.hex()}"
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    """Verify parameterized PBKDF2 hashes and legacy salt$hash records."""
+    """Verify a pbkdf2_sha256$iterations$salt$hash record."""
     if re.fullmatch(PASSWORD_HASH_PATTERN, stored_hash) is None:
         return False
-    parts = stored_hash.split("$")
-    salt, expected_hex = parts[-2:]
-    iterations = int(parts[1]) if len(parts) == 4 else 100_000
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+    _, iterations, salt, expected_hex = stored_hash.split("$")
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations))
     return hmac.compare_digest(dk.hex(), expected_hex)
 
 def create_session(username: str) -> str:

@@ -1,4 +1,4 @@
-"""Offline update inspection and the ordered migrations used by deployment controllers."""
+"""Offline update steps for deployment controllers: inspect, snapshot, apply, check and restore."""
 
 import argparse
 import asyncio
@@ -8,14 +8,10 @@ from pathlib import Path
 import sys
 import tomllib
 
-from ..config import HostConfig, load_instance_config, load_instance_source
+from ..config import HostConfig, load_instance_config
 from ..instance_lock import instance_lock
 from ..memory.service import LocalMemoryConfig
 from ..plugins.manifest import INTERFACE, Manifest, discover
-from .migrate import migrate
-from .migrate_config import migrate_config, upgraded_config
-from .migrate_memory_jobs import migrate_memory_jobs
-from .migrate_local_memory import migrate as migrate_local_memory
 from .doctor import check
 from .plugin_dependencies import install
 from .snapshot import create, restore
@@ -49,8 +45,7 @@ def inspect(root: Path, version: str) -> dict:
 
 
 def data_paths(root: Path) -> list[str]:
-    path = root / 'lenbot.config.json'
-    config = load_instance_source(path, upgraded_config(json.loads(path.read_text(encoding='utf-8')), path))
+    config = load_instance_config(root)
     paths = [root, config.database, config.database.with_name(config.database.name + '.memory.sqlite3')]
     if isinstance(config, HostConfig) and config.plugins is not None:
         paths.extend([config.plugins.data_directory, *config.plugins.paths])
@@ -77,18 +72,9 @@ def _trial_roots(root: Path) -> list[Path]:
     return [path.parent for path in sorted((root / '.runtime/chat-tests').glob('*/lenbot.config.json'))]
 
 
-def _migrate_locked(root: Path, trials: list[Path]) -> None:
+def _apply_locked(root: Path, trials: list[Path]) -> None:
     for directory in (root, *trials):
-        migrate_config(directory / 'lenbot.config.json', backup=False)
-        config = load_instance_config(directory)
-        if config.database.exists():
-            migrate(config.database, backup=False)
-        jobs = config.database.with_name(config.database.name + '.memory.sqlite3')
-        if jobs.exists():
-            migrate_memory_jobs(jobs, backup=False)
-        if isinstance(config.memory, LocalMemoryConfig):
-            migrate_local_memory(config.memory.local.directory, backup=False)
-        if isinstance(config, HostConfig):
+        if isinstance(load_instance_config(directory), HostConfig):
             asyncio.run(install(directory))
         failed = [item for item in check(directory) if item['status'] == 'error']
         if failed:
@@ -96,18 +82,18 @@ def _migrate_locked(root: Path, trials: list[Path]) -> None:
                              + '\n'.join(f"{item['check']}: {item['detail']}" for item in failed))
 
 
-def migrate_instance(root: Path) -> None:
-    """Migrate after the deployment controller has taken its snapshot."""
+def apply_instance(root: Path) -> None:
+    """Install plugin dependencies and check the instance after the deployment controller took its snapshot."""
     with ExitStack() as locks:
         locks.enter_context(instance_lock(root))
         trials = _trial_roots(root)
         for directory in trials:
             locks.enter_context(instance_lock(directory))
-        _migrate_locked(root, trials)
+        _apply_locked(root, trials)
 
 
 def upgrade_instance(root: Path, snapshot: Path) -> None:
-    """Back up, migrate and check a stopped source installation, restoring on failure."""
+    """Back up, apply and check a stopped source installation, restoring on failure."""
     with ExitStack() as locks:
         locks.enter_context(instance_lock(root))
         trials = _trial_roots(root)
@@ -117,7 +103,7 @@ def upgrade_instance(root: Path, snapshot: Path) -> None:
         saved = sorted(path for path in paths if not any(parent in paths for parent in path.parents))
         create([str(path) for path in saved], snapshot)
         try:
-            _migrate_locked(root, trials)
+            _apply_locked(root, trials)
         except BaseException:
             restore(root, snapshot)
             raise
@@ -142,7 +128,7 @@ def main() -> None:
         upgrade_instance(root, args.snapshot.resolve())
         print(json.dumps({'status': 'ok', 'snapshot': str(args.snapshot.resolve())}, ensure_ascii=False))
     elif args.action == 'apply':
-        migrate_instance(root)
+        apply_instance(root)
     else:
         if args.snapshot is None:
             parser.error('backup and restore require --snapshot')

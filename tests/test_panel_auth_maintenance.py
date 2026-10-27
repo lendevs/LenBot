@@ -11,15 +11,15 @@ from len_bot.next.panel.auth import install_panel_auth
 from len_bot.web.auth import hash_password, verify_password
 
 
-def test_current_and_legacy_password_formats():
+def test_password_hash_records_its_iterations():
     salt, password = 'fixture-salt', '密码 fixture'
-    old = salt + '$' + hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()
-    current = hash_password(password, salt)
-    assert current.startswith('pbkdf2_sha256$600000$')
-    for stored in (old, current):
-        assert verify_password(password, stored)
-        assert not verify_password('wrong', stored)
-        PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=stored)
+    stored = hash_password(password, salt)
+    assert stored.startswith('pbkdf2_sha256$600000$')
+    assert verify_password(password, stored)
+    assert not verify_password('wrong', stored)
+    PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=stored)
+    legacy = salt + '$' + hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()
+    assert not verify_password(password, legacy)
 
 
 def panel():

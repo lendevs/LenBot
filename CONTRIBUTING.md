@@ -50,7 +50,7 @@ cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 | `plugins/` | 插件运行与安装；业务插件位于独立仓库 |
 | `tools/`、`media/` | 网页、技能、MCP 等工具，图片和语音处理 |
 | `panel/` | 面板后端和首次配置向导 |
-| `maintenance/` | 停机后执行的维护命令，包括数据升级、重建索引、插件依赖、存储池、测试副本 |
+| `maintenance/` | 停机后执行的维护命令，包括更新步骤、重建索引、插件依赖、存储池、测试副本 |
 | `trials/` | 面板里的隔离试聊 |
 
 其他目录如下。
@@ -91,7 +91,6 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 测试只覆盖以下内容，样本使用脱敏后的真实数据。
 
 - 外部协议边界，包括 OneBot、Pi RPC，以及模型服务和记忆服务的响应解析
-- 数据迁移
 - 权限
 - 配置校验
 
@@ -101,34 +100,21 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 
 ## 数据格式
 
-业务数据库从公开基线 v1 开始。修改表结构时，按以下步骤操作。
-
-1. 在 `storage/schema.py` 中直接建立新的结构。
-2. 在 `maintenance/migrate.py` 的 `BUSINESS` 中增加一步从上一版的升级。
-3. 提高 `storage/store.py` 中的 `FORMAT_VERSION`。
-
-记忆处理库（`migrate_memory_jobs.py`）、本地记忆索引（`migrate_local_memory.py`）和根配置的做法相同。各编号的当前值：
+LenBot 还没有发布。第一个 RC 之前，四个格式编号都固定为 1。改表结构就直接改建表语句，改配置就直接改配置模型，不写升级步骤；本机实例需要时手动调整或重建。
 
 | 编号 | 当前值 | 位置 |
 |---|---|---|
 | 插件接口 | 1 | `plugin.py` 的 `INTERFACE` |
-| 根配置格式 | 3 | `config.py` 的 `CONFIG_VERSION` |
-| 业务数据库 | 7 | `storage/store.py` 的 `FORMAT_VERSION` |
-| 记忆处理库 | 6 | `memory/jobs.py` 的 `FORMAT_VERSION` |
-| 本地记忆索引 | 4 | `memory/local.py` 的 `FORMAT_VERSION` |
+| 根配置格式 | 1 | `config.py` 的 `CONFIG_VERSION` |
+| 业务数据库 | 1 | `storage/store.py` 的 `FORMAT_VERSION` |
+| 记忆处理库 | 1 | `memory/jobs.py` 的 `FORMAT_VERSION` |
+| 本地记忆索引 | 1 | `memory/local.py` 的 `FORMAT_VERSION` |
 
-三个数据库的升级都由 `maintenance/migrations.py` 执行。
+三个数据库用 `application_id` 标明文件类型，用 `user_version` 记录格式编号。程序只打开编号与当前一致的文件。
 
-- 升级前后各做一次完整性检查。
-- 每一步使用一个事务，并在同一个事务中修改 `user_version`。
-- 删除文件这类数据库以外的操作由步骤返回，等这一步提交后再执行。
-- 单独运行迁移命令时，在数据库旁边保留一份输入格式的副本 `<文件>.v<格式>.bak`。`upgrade apply` 用自己的完整快照代替这份副本。
+存入数据库的 JSON 正文按 dataclass 严格解码（`ChatMessage`、`Sender`、`Segment`、`Task`、`TaskFile`、`Schedule`，以及模型调用和记忆任务中的记录），这些字段同样属于数据格式。
 
-存入数据库的 JSON 正文按 dataclass 严格解码（`ChatMessage`、`Sender`、`Segment`、`Task`、`TaskFile`、`Schedule`，以及模型调用和记忆任务中的记录）。为这些类型增加、删除或修改字段，就等于修改了数据格式。这时需要同时提高格式编号，并在升级步骤中改写已有的正文。
-
-`tests/fixtures/history/` 存放由旧格式代码写出的小型实例。`tests/test_history_migrations.py` 把它们升级到当前格式，要求表结构与全新建立的数据库一致，并且所有正文都能解码。
-
-提高任何一个格式编号之前，先在 `scripts/build_history_fixtures.py` 中登记改动前的最后一个提交，再运行这个脚本生成新的样本（`uv run --no-sync python scripts/build_history_fixtures.py`）。同一输入重新生成的文件逐字节相同。
+从第一个 RC 起，每次改动格式都提高对应编号，并在 `maintenance/upgrade.py` 的 `apply` 步骤里加上从上一版的升级。更新器在执行这一步之前会做完整快照。
 
 ## 打包
 

@@ -132,15 +132,6 @@ export const memoryApi = {
     query: { query?: string; who?: string; offset?: number; snapshot?: number },
     signal?: AbortSignal,
   ) => http.get<SourcePage>('/api/host/memory/sources', { scene, ...query }, signal),
-  adoptPending: (body: {
-    scene: string
-    source: string
-    original: string
-    target: string
-    content: string
-    reason: string
-    remove_source: boolean
-  }) => http.post<{ target: string; source_removed: boolean }>('/api/host/memory/adopt-pending', body),
   summary: (scene: string, scope: MemoryScope, path: string, signal?: AbortSignal) =>
     http.get<DirectorySummary>('/api/host/memory/summary', { scene, scope, path }, signal),
   summarize: (scene: string, scope: MemoryScope, path: string) =>

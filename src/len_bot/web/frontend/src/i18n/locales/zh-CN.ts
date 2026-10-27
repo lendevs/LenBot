@@ -964,17 +964,6 @@ export default {
         probeFailed: '向量接口测试失败',
         noModel: '目录摘要需要先在模型页设置记忆摘要模型',
       },
-      adopt: {
-        notice: '这是从旧版导入的资料，整理成正式记忆后生效。',
-        action: '整理成正式记忆',
-        original: '原资料',
-        target: '保存为',
-        content: '整理后的内容',
-        reason: '从旧版导入的资料整理',
-        removeSource: '保存后删除这份旧资料',
-        done: '已保存为 {path}',
-        failed: '没有保存',
-      },
     },
     tasks: {
       views: { tasks: '任务', schedules: '提醒', proactive: '主动开话题', resources: '任务空间与文件' },

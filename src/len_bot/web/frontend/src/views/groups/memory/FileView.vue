@@ -13,7 +13,6 @@ import Skeleton from '../../../ui/Skeleton.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import { confirm } from '../../../ui/confirm'
 import { toast } from '../../../ui/toast'
-import AdoptDialog from './AdoptDialog.vue'
 import DeleteDialog from './DeleteDialog.vue'
 import HistoryDialog from './HistoryDialog.vue'
 
@@ -87,17 +86,10 @@ const canSave = computed(
 
 const removing = ref(false)
 const historyOpen = ref(false)
-const adopting = ref(false)
-const pending = computed(() => inScene.value && Boolean(props.path?.startsWith('legacy-import/')))
 function removed() {
   removing.value = false
   void client.invalidateQueries({ queryKey: keys.memory.all() })
   emit('changed', null)
-}
-function adopted(result: { target: string; source_removed: boolean }) {
-  adopting.value = false
-  toast.success(t('groups.memory.adopt.done', { path: result.target }))
-  emit('changed', result.source_removed ? null : props.path)
 }
 </script>
 
@@ -162,13 +154,6 @@ function adopted(result: { target: string; source_removed: boolean }) {
       :retry="doc.refetch"
     />
     <template v-else>
-      <div
-        v-if="pending"
-        class="flex flex-wrap items-center gap-3 rounded-lg bg-info-bg px-4 py-3 text-sm text-info"
-      >
-        <span class="min-w-0 flex-1">{{ t('groups.memory.adopt.notice') }}</span>
-        <Button size="sm" @click="adopting = true">{{ t('groups.memory.adopt.action') }}</Button>
-      </div>
       <p class="text-base leading-7 break-words whitespace-pre-wrap text-ink">{{ original }}</p>
     </template>
 
@@ -182,13 +167,5 @@ function adopted(result: { target: string; source_removed: boolean }) {
       @removed="removed"
     />
     <HistoryDialog v-if="path" v-model:open="historyOpen" :scene="scene" :path="path" :time-zone="timeZone" />
-    <AdoptDialog
-      v-if="path && pending"
-      v-model:open="adopting"
-      :scene="scene"
-      :source="path"
-      :original="original"
-      @adopted="adopted"
-    />
   </article>
 </template>

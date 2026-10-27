@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowUpRight, ChevronDown } from '@lucide/vue'
 import { capabilitiesApi, capabilitiesOf, type Egress, type Worker } from '../../api/capabilities'
 import { keys } from '../../api/query'
+import { groupsTarget } from '../groups/route'
 import { settingsApi } from '../../api/settings'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { readPendingRestart } from '../../api/hostStore'
@@ -313,7 +314,12 @@ const pool = computed(() => {
         <FormSection :title="t('capabilities.worker.storage')" :columns="1">
           <p class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
             {{ pool }}
-            <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="{ name: 'host-resources' }">
+            <Button
+              size="sm"
+              variant="ghost"
+              :icon-right="ArrowUpRight"
+              :to="groupsTarget(undefined, 'tasks', { tab: 'resources' })"
+            >
               {{ t('capabilities.worker.usage') }}
             </Button>
           </p>

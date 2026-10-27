@@ -22,7 +22,6 @@ export interface Schedule {
   reason: string | null
   interval_seconds: number | null
   cron: string | null
-  legacy_source: Record<string, unknown> | null
 }
 
 export interface ScheduleService {
