@@ -79,7 +79,7 @@ async def chat_with_notes(root):
                 await model._client.aclose()
                 model._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url='https://fixture.invalid/')
                 chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, model,
-                            plugin_compact=host.compact)
+                            plugins=host)
                 for content in ['明天讨论报告。' * 100, '报告主题是连接恢复。' * 100, '好的。']:
                     store.append(SCENE, {'role': 'user', 'content': content})
                 store.save_discovered_tools(SCENE, ['schedule'])
