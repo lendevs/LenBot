@@ -148,6 +148,7 @@ export interface Trial {
   scene: string
   persona: string
   active: boolean
+  draft_source: string | null
 }
 
 const base = (key: string) => `/api/host/personas/${encodeURIComponent(key)}`
@@ -226,8 +227,13 @@ export const personasApi = {
   saveFile: (key: string, directory: string, filename: PersonaFile | ExpressionFile, content: string) =>
     http.put<FilesState>(`${base(key)}/files/${filename}`, { directory, content }),
 
-  preview: (key: string, scene: string | null, signal?: AbortSignal) =>
-    http.get<RolePreview>(`${base(key)}/preview`, scene ? { scene } : undefined, signal),
+  /** Without a draft the saved package is previewed. */
+  preview: (
+    key: string,
+    scene: string | null,
+    draft: { directory: string; profile: PersonaProfile } | null,
+    signal?: AbortSignal,
+  ) => request<RolePreview>(`${base(key)}/preview`, { method: 'POST', body: { scene, draft }, signal }),
 
   abilities: (key: string, signal?: AbortSignal) =>
     http.get<Abilities>(`${base(key)}/abilities`, undefined, signal),

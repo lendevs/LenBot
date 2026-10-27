@@ -65,6 +65,8 @@ class Trial:
     excluded: list[str]
     context: list[str]
     persona_source: Literal['running', 'draft'] = 'running'
+    # The role library directory a draft trial was made from.
+    draft_source: str | None = None
     stopped: float | None = None
     final_state: dict | None = None
 
@@ -75,6 +77,7 @@ class Trial:
                 'persona': self.session.chat.persona.name,
                 'persona_source': self.persona_source,
                 'draft_path': str(self.root / 'persona-draft') if self.persona_source == 'draft' else None,
+                'draft_source': self.draft_source,
                 'models': {'mind': self.config.models.roles.mind.model}}
 
     def snapshot(self) -> dict:
@@ -229,7 +232,8 @@ class HostTrials:
                 session = PanelSession(config, store, mind, vision=vision, memory=local_memory,
                                        persona=persona, slots=self.runtime.chats[scene].slots)
                 trial = Trial(root.name, scene, root, time.time(), config, session, stack, excluded, context,
-                              persona_source='running' if persona_draft is None else 'draft')
+                              persona_source='running' if persona_draft is None else 'draft',
+                              draft_source=None if persona_draft is None else persona_draft.directory)
                 self.records[trial.id] = trial
                 return trial
             except BaseException as error:

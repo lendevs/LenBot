@@ -92,7 +92,7 @@ def test_files_page_edits_and_clears_expression_files(tmp_path):
                     assert saved.json()['saved']['chat_examples.md'].startswith('<chat_examples>')
                     assert '合成情境' in runtime.chats[SCENE].persona.expression['chat_examples.md']
 
-                    preview = await client.get('/api/host/personas/fixture/preview', params={'scene': SCENE})
+                    preview = await client.post('/api/host/personas/fixture/preview', json={'scene': SCENE})
                     assert preview.status_code == 200, preview.text
                     body = preview.json()
                     assert [item['name'] for item in body['sections']] == [
@@ -101,10 +101,23 @@ def test_files_page_edits_and_clears_expression_files(tmp_path):
                     assert '合成资料' in body['sections'][0]['text'] and '合成情境' in body['sections'][3]['text']
                     assert body['examples'] == 2 and body['styles'][0]['name'] == '慢慢说'
                     assert '名称：慢慢说' in body['style']
-                    assert (await client.get('/api/host/personas/fixture/preview',
-                                             params={'scene': 'onebot:group:1'})).status_code == 422
-                    bare = (await client.get('/api/host/personas/fixture/preview')).json()
+                    assert (await client.post('/api/host/personas/fixture/preview',
+                                              json={'scene': 'onebot:group:1'})).status_code == 422
+                    bare = (await client.post('/api/host/personas/fixture/preview', json={})).json()
                     assert bare['scene'] is None and '<本场景角色补充>' not in bare['sections'][0]['text']
+
+                    # The unsaved form is previewed as it would run; the saved package stays unchanged.
+                    saved_profile = (await client.get('/api/host/personas/fixture/profile')).json()
+                    draft = {'directory': saved_profile['directory'],
+                             'profile': {**saved_profile['profile'], 'brief': '草稿里的新资料',
+                                         'examples': saved_profile['profile']['examples'][:1]}}
+                    drafted = await client.post('/api/host/personas/fixture/preview', json={'scene': SCENE, 'draft': draft})
+                    assert drafted.status_code == 200, drafted.text
+                    assert '草稿里的新资料' in drafted.json()['sections'][0]['text'] and drafted.json()['examples'] == 1
+                    assert '合成资料' in (package / 'persona.yaml').read_text(encoding='utf-8')
+                    moved = {**draft, 'directory': str(tmp_path / 'elsewhere')}
+                    assert (await client.post('/api/host/personas/fixture/preview',
+                                              json={'draft': moved})).status_code == 422
 
                     cleared = await client.put(url, json={'directory': str(package), 'content': '  \n'})
                     assert cleared.status_code == 200, cleared.text

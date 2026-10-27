@@ -95,6 +95,8 @@ export interface TrialInfo {
   persona: string
   persona_source: 'running' | 'draft' | string
   draft_path: string | null
+  /** The role library directory of a draft trial. */
+  draft_source: string | null
   models: Record<string, string>
 }
 

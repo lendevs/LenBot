@@ -559,6 +559,7 @@ class TrialInfo(PanelResponse):
     persona: str
     persona_source: str
     draft_path: str | None
+    draft_source: str | None
     models: dict[str, str]
 
 

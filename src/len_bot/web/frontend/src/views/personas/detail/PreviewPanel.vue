@@ -1,42 +1,41 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onActivated, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery } from '@tanstack/vue-query'
 import { Shuffle } from '@lucide/vue'
 import { personasApi, type PersonaRole } from '../../../api/personas'
 import { keys } from '../../../api/query'
 import { formatNumber } from '../../../i18n/format'
-import { groupLabel } from '../../../layouts/shell/scenes'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
-import Field from '../../../ui/Field.vue'
-import Select from '../../../ui/Select.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
+import { useProfile } from './profileForm'
 
-const props = defineProps<{ role: PersonaRole }>()
+const props = defineProps<{ role: PersonaRole; scene: string | null }>()
 
 const { t } = useI18n()
-/** Select options cannot be empty; this stands for the role without any group's settings. */
-const NONE = '*'
-const scene = ref(props.role.scenes[0] ?? NONE)
-watch(
-  () => props.role.scenes.join(),
-  () => {
-    if (scene.value !== NONE && !props.role.scenes.includes(scene.value))
-      scene.value = props.role.scenes[0] ?? NONE
-  },
-)
-const options = computed(() => [
-  ...props.role.scenes.map((value) => ({ value, label: groupLabel(value) })),
-  { value: NONE, label: t('personas.detail.preview.noScene') },
-])
-const chosen = computed(() => (scene.value === NONE ? null : scene.value))
+const form = useProfile()
+
+/** The form as it stands when this panel is shown; editing happens on other tabs, so it is read on each visit. */
+function capture() {
+  const saved = form.saved.data.value
+  if (!saved || !form.draft.value || !(form.dirty.value.identity || form.dirty.value.speech)) return null
+  return { directory: saved.directory, profile: JSON.parse(JSON.stringify(form.draft.value)) }
+}
+const draft = ref(capture())
+onActivated(() => (draft.value = capture()))
+const blocked = computed(() => Boolean(form.problem('identity') ?? form.problem('speech')))
 
 const preview = useQuery({
-  queryKey: computed(() => [...keys.personas.part(props.role.key, 'preview'), chosen.value]),
-  queryFn: ({ signal }) => personasApi.preview(props.role.key, chosen.value, signal),
+  queryKey: computed(() => [
+    ...keys.personas.part(props.role.key, 'preview'),
+    props.scene,
+    JSON.stringify(draft.value),
+  ]),
+  queryFn: ({ signal }) => personasApi.preview(props.role.key, props.scene, draft.value, signal),
+  enabled: computed(() => !blocked.value),
   staleTime: 0,
 })
 const title = (name: string) =>
@@ -46,10 +45,7 @@ const title = (name: string) =>
 </script>
 
 <template>
-  <div class="flex max-w-4xl flex-col gap-6">
-    <Field :label="t('personas.detail.preview.scene')">
-      <Select v-model="scene" :options="options" class="sm:max-w-xs" />
-    </Field>
+  <div v-if="!blocked" class="flex max-w-4xl flex-col gap-6">
     <Skeleton v-if="preview.isPending.value" :lines="10" />
     <ErrorNote
       v-else-if="preview.isError.value"

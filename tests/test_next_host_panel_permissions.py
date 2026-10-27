@@ -192,6 +192,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     })
                     assert trial.status_code == 200
                     assert len(trial.json()['context']) == 1
+                    assert trial.json()['persona_source'] == 'running' and trial.json()['draft_source'] is None
                     # Offline migrations reload every kept trial as its own instance.
                     trial_root, = (root / '.runtime' / 'chat-tests').iterdir()
                     assert load_instance_config(trial_root).logging.directory.is_relative_to(trial_root.resolve())

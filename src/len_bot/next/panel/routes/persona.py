@@ -62,6 +62,13 @@ class PersonaProfileChange(PersonaTarget):
     profile: PersonaProfile
 
 
+class PersonaPreviewRequest(BaseModel):
+    model_config = STRICT
+    scene: str | None = Field(default=None, max_length=256)
+    # The unsaved form; without it the saved package is previewed.
+    draft: PersonaProfileChange | None = None
+
+
 PROFILE_METADATA = ('name', 'brief', 'behavior', 'self_reference', 'aliases', 'styles', 'example_tags')
 
 
@@ -561,11 +568,15 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
-    def preview_state(key: str, scene: str | None) -> dict:
+    def preview_state(key: str, scene: str | None, draft: PersonaProfileChange | None) -> dict:
         config, path = located(key)
         if scene is not None and scene not in config.scenes:
             raise ValueError(f'未接入此群：{scene}')
-        persona = load_persona(path)
+        if draft is None:
+            persona = load_persona(path)
+        else:
+            require_persona_target(path, draft.directory)
+            persona = parse_persona_files(path, profile_files(read_persona_files(path), draft.profile))
         style = select_style(persona)
         return {
             'scene': scene,
@@ -578,13 +589,12 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
             'style': None if style is None else style_text(style),
         }
 
-    @app.get('/api/host/personas/{key}/preview', response_model=responses.RolePreview, response_model_exclude_unset=True)
-    async def preview(key: str, response: Response, scene: str | None = Query(None, max_length=256),
-                      _: str = Depends(user)):
+    @app.post('/api/host/personas/{key}/preview', response_model=responses.RolePreview, response_model_exclude_unset=True)
+    async def preview(key: str, item: PersonaPreviewRequest, response: Response, _: str = Depends(user)):
         # Each read draws the style again.
         response.headers['Cache-Control'] = 'no-store'
         try:
-            return await asyncio.to_thread(preview_state, key, scene)
+            return await asyncio.to_thread(preview_state, key, item.scene, item.draft)
         except (LookupError, ValueError, OSError) as error:
             raise role_failure(error) from error
 
