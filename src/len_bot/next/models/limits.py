@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from .usage import instance_calls, summarize_calls
+from .usage import budgeted_tokens, instance_usage
 
 
 class ResourceLimits(BaseModel):
@@ -156,36 +156,29 @@ BUDGET_CACHE_SECONDS = 2.0
 
 
 class ModelBudget:
-    def __init__(self, config, store, memory, *, root: Path | None = None,
-                 clock=time.monotonic):
-        self.config, self.store, self.memory = config, store, memory
+    def __init__(self, config, store, *, root: Path | None = None, clock=time.monotonic):
+        self.config, self.store = config, store
         self.clock = clock
-        self._cache: dict[tuple, tuple[float, dict]] = {}
+        self._cache: dict[tuple, tuple[float, int]] = {}
         self._cache_lock = threading.Lock()
         self.trials_root: Path | None = None if root is None else root / '.runtime' / 'chat-tests'
 
-    def totals(self, scene: str | None, since: float, until: float, *, max_age: float = 0.0,
-               store=None) -> dict:
-        """Budgeted totals; ``max_age`` > 0 may reuse a recent result, ``store`` reads another connection
-        (a read-only one off the event loop; the memory sidecar is then opened read-only too)."""
+    def tokens(self, scene: str | None, since: float, until: float, *, max_age: float = 0.0, store=None) -> int:
+        """Budgeted tokens of the window; ``max_age`` > 0 may reuse a recent result, ``store`` reads another
+        connection (a read-only one off the event loop)."""
         key = (scene, since, until)
         if max_age > 0:
             with self._cache_lock:
                 cached = self._cache.get(key)
             if cached is not None and self.clock() - cached[0] <= max_age:
                 return cached[1]
-        selected = None if scene is None else [scene]
-        calls = instance_calls(self.store if store is None else store, self.config.database, selected, since, until,
-                               memory=self.memory if store is None else None, trials_root=self.trials_root)
-        result = summarize_calls(calls, since, until)
-        totals = {'tokens': result['budgeted']['input'] + result['budgeted']['output'],
-                  'settled_unknown_calls': result['settled_unknown_calls'],
-                  'successful_unknown_calls': result['successful_unknown_calls'],
-                  'unfinished_calls': result['unfinished_calls']}
+        rows = instance_usage((self.store if store is None else store).db, None if scene is None else [scene],
+                              since, until, trials_root=self.trials_root)
+        tokens = budgeted_tokens(rows)
         with self._cache_lock:
             self._cache = {k: v for k, v in self._cache.items() if k[1:] == key[1:]}
-            self._cache[key] = (self.clock(), totals)
-        return totals
+            self._cache[key] = (self.clock(), tokens)
+        return tokens
 
     def check(self, scene: str | None, *, max_age: float = 0.0, store=None) -> None:
         limits = self.config.limits
@@ -196,9 +189,6 @@ class ModelBudget:
             if cap is None:
                 continue
             since, until = day_window(self.store.now(), timezone)
-            result = self.totals(scope, since, until, max_age=max_age, store=store)
             label = '全局' if scope is None else '本场景'
-            if result['successful_unknown_calls']:
-                raise LimitReached(f'{label}今日有成功模型调用没有报告 token，暂停模型请求；请核对计量。', until)
-            if result['tokens'] >= cap:
+            if self.tokens(scope, since, until, max_age=max_age, store=store) >= cap:
                 raise LimitReached(f'{label}今日模型 token 已达 {cap}，暂停模型请求。', until)

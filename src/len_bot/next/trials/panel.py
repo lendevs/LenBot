@@ -74,7 +74,7 @@ class PanelSession:
         self.config, self.store = config, store
         if slots is None:
             slots = ModelSlots(config.max_model_requests)
-            slots.admit = ModelBudget(config, store, memory, root=config._instance_root).check
+            slots.admit = ModelBudget(config, store, root=config._instance_root).check
         self.listeners: set[asyncio.Event] = set()
         self.closing = False
         self.chat = Chat(config, load_persona(config.persona) if persona is None else persona, store, mind, vision=vision,
@@ -164,7 +164,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
         persona = load_persona(config.persona)
         with Store(config.database) as store:
             slots = ModelSlots(config.max_model_requests)
-            budget = ModelBudget(config, store, None, root=config._instance_root)
+            budget = ModelBudget(config, store, root=config._instance_root)
             slots.admit = budget.check
             async with (
                 ChatModel(config.model_settings("mind")) as mind,
@@ -173,7 +173,6 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                 open_memory(config, store, active_personas={config.scene: persona.id}, slots=slots) as memory,
                 open_session_upkeep(config, store, mind, memory=memory, slots=slots) as upkeep,
             ):
-                budget.memory = memory
                 session = PanelSession(config, store, mind, vision=vision, memory=memory, upkeep=upkeep, slots=slots,
                                        persona=persona)
                 app.state.session = session

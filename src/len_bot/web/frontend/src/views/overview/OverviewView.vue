@@ -52,12 +52,10 @@ const stats = computed(() => {
 const tokenNote = computed(() => {
   const value = day.value
   if (!value) return ''
-  return value.unknown_token_calls
-    ? t('overview.stats.unknownTokens', { n: formatNumber(value.unknown_token_calls) })
-    : t('overview.stats.tokenSplit', {
-        input: formatNumber(value.tokens.input),
-        output: formatNumber(value.tokens.output),
-      })
+  return t('overview.stats.tokenSplit', {
+    input: formatNumber(value.tokens.input),
+    output: formatNumber(value.tokens.output),
+  })
 })
 const effects = computed(() =>
   Object.entries(day.value?.reply_effects ?? {})

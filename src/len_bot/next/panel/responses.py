@@ -584,9 +584,7 @@ class Overview(PanelResponse):
     messages: JsonObject
     turns: JsonObject
     model_calls: int
-    unfinished_calls: int
     tokens: JsonObject
-    unknown_token_calls: int
     pending_schedules: int
     recent_errors: list[JsonObject]
     model_errors: list[JsonObject]
@@ -686,21 +684,13 @@ class Usage(PanelResponse):
     since: Number
     until: Number
     calls: int
-    unfinished_calls: int
-    settled_unknown_calls: int
-    successful_unknown_calls: int
-    budgeted: JsonObject
     input: int
     output: int
     cached: int
-    known_calls: int
-    unknown_calls: int
+    models: list[JsonObject]
+    days: list[JsonObject]
     groups: list[JsonObject]
-    unverified_summary_attempts: int
-    unmetered_sources: list[str]
     wakes: list[JsonObject]
-    scope: str
-    memory_record_source: str
 
 
 class LogFiles(Enabled):

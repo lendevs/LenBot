@@ -33,8 +33,6 @@ export interface Overview {
   turns: Record<string, number>
   model_calls: number
   tokens: { input: number; output: number; cached: number }
-  /** Calls whose provider reported no token counts. */
-  unknown_token_calls: number
   pending_schedules: number
   recent_errors: TurnRecord[]
   model_errors: { id: number; scene: string; turn_id: string | null; error: string; count: number }[]

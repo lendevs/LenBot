@@ -19,12 +19,11 @@ from ...runtime.logs import log_event, log_files, read_records
 from ...work.storage import temporary_paths
 from ...runtime.operations import diagnostic_zip
 from ...work.store import TaskStore
-from ...models.usage import usage
+from ...models.usage import summarize, usage_rows
 from ...storage.store import Store
 from ...chat.usage import wake_usage
 from ...models.limits import BUDGET_CACHE_SECONDS, LimitReached, check_speech, clear_speech, speech_quota
 from ...models.client import ModelHTTPError, ModelProtocolError
-from ...memory.jobs import processing_records
 
 
 class ChatSwitch(BaseModel):
@@ -258,15 +257,12 @@ def register_host_operations(app, *, runtime, user):
         else:
             end = start + timedelta(days=1)
         def read():
-            with Store(config.database, readonly=True) as source, processing_records(config.database, None) as records:
-                result = usage(source, None if scene is None else [scene],
-                               start.timestamp(), end.timestamp(),
-                               memory_db=None if records is None else records.db)
-                return {"timezone": zone, "period": period, **result,
-                        'wakes': wake_usage(source, None if scene is None else [scene], start.timestamp(), end.timestamp(), zone),
-                        'scope': '当前实例业务及记忆计量；全部范围含 public 与已移除场景，独立保留试聊另计',
-                        'memory_record_source':
-                        'not_present' if records is None else 'read_only_existing'}
+            selected = None if scene is None else [scene]
+            with Store(config.database, readonly=True) as source:
+                rows = usage_rows(source.db, selected, start.timestamp(), end.timestamp())
+                return {"timezone": zone, "period": period, "since": start.timestamp(), "until": end.timestamp(),
+                        **summarize(rows, zone),
+                        'wakes': wake_usage(source, selected, start.timestamp(), end.timestamp(), zone)}
         try:
             return await asyncio.to_thread(read)
         except (OSError, ValueError, sqlite3.Error) as error:

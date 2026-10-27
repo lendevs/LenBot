@@ -36,7 +36,7 @@ def seed(root, count, *, same_time=False):
                 {'role': 'system', 'content': '合成设定'},
                 {'role': 'user', 'content': '\n<相关长期记忆>\n不是 JSON，是群友粘贴的文本\n</相关长期记忆>'}]})
             store.end_call(call_id, {'message': {'role': 'assistant', 'content': '合成输出'}}, None,
-                           tokens={'input': 100, 'output': 20, 'cached': 10})
+                           tokens={'input': 100, 'output': 20, 'cached': 10}, model=('fixture', 'fixture-model'))
             store.end_turn(turn_id, 'settled')
 
 

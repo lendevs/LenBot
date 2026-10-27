@@ -5,6 +5,7 @@ import json
 from string import Template
 from typing import TYPE_CHECKING
 
+from ..models.usage import record_usage
 from ..storage.codec import encode
 from ..prompt_files import read_prompt
 
@@ -125,8 +126,12 @@ class AudioStore:
             return self.db.execute("INSERT INTO audio_calls(scene,platform_id,audio_index,started,request) VALUES (?,?,?,?,?)",
                                    (scene, message, index, self.store.now(), encode(request))).lastrowid
 
-    def end_call(self, call: int, response, usage, error: str | None = None, *, tokens: dict | None = None) -> None:
+    def end_call(self, call: int, response, usage, error: str | None = None, *, tokens: dict | None = None,
+                 model: tuple[str, str]) -> None:
         with self.db:
+            scene, started = self.db.execute("SELECT scene,started FROM audio_calls WHERE id=?", (call,)).fetchone()
+            record_usage(self.db, time=started, scene=scene, purpose="asr", provider=model[0], model=model[1],
+                         tokens=tokens)
             self.db.execute("UPDATE audio_calls SET ended=?,response=?,usage=?,error=?,tokens=? WHERE id=?",
                 (self.store.now(), None if response is None else encode(response),
                  None if usage is None else encode(usage), error, None if tokens is None else encode(tokens), call))

@@ -105,13 +105,14 @@ class ExpressionService:
             try:
                 batch = await client.embed(texts)
             except BaseException as error:
-                self.records.end_embedding_call(call_id, None, None, None, error=_error_text(error))
+                self.records.end_embedding_call(call_id, None, None, None, error=_error_text(error),
+                                                model=(client.settings.provider, client.settings.model))
                 if self.on_update is not None:
                     self.on_update()
                 raise
             self.records.end_embedding_call(
                 call_id, {"vector_count": len(batch.vectors), "dimensions": batch.dimensions},
-                batch.usage, token_record(batch.token_usage),
+                batch.usage, token_record(batch.token_usage), model=(client.settings.provider, client.settings.model),
             )
             if self.on_update is not None:
                 self.on_update()

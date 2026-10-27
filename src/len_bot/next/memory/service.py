@@ -19,6 +19,7 @@ from ..models.client import ChatModel
 from ..models.slots import ModelSlots
 from ..storage.store import Store, encode
 from ..models.tokens import token_record
+from ..models.usage import record_usage
 
 if TYPE_CHECKING:
     from ..config import SharedConfig
@@ -341,10 +342,11 @@ async def open_memory(config: SharedConfig, store: Store, *, active_personas: di
             if backend.embedding is not None:
                 async def embed(source, texts, purpose):
                     async with (slots.slot(scene=source) if slots is not None else nullcontext()):
+                        started = store.now()
                         with jobs.db:
                             call_id = jobs.db.execute(
                                 "INSERT INTO memory_embedding_calls(scene,purpose,started,request) VALUES(?,?,?,?)",
-                                (source, purpose, store.now(), encode({"texts": texts,
+                                (source, purpose, started, encode({"texts": texts,
                                  "settings": backend.embedding.settings.model_dump(mode="json", exclude={"api_key"})})),
                             ).lastrowid
                         try:
@@ -360,6 +362,10 @@ async def open_memory(config: SharedConfig, store: Store, *, active_personas: di
                                             (store.now(), encode({"vector_count":len(batch.vectors),"dimensions":batch.dimensions}),
                                              None if batch.usage is None else encode(batch.usage),
                                              None if tokens is None else encode(tokens), call_id))
+                        with store.db:
+                            record_usage(store.db, time=started, scene=source, purpose="memory_embedding",
+                                         provider=backend.embedding.settings.provider,
+                                         model=backend.embedding.settings.model, tokens=tokens)
                         return batch
                 backend.track_embedding = embed
 
@@ -367,5 +373,5 @@ async def open_memory(config: SharedConfig, store: Store, *, active_personas: di
                 yield service
                 return
             async with ChatModel(config.model_settings("memory")) as model:
-                service.summarizer = MemorySummarizer(config, backend, jobs, model, slots=slots)
+                service.summarizer = MemorySummarizer(config, backend, jobs, model, store, slots=slots)
                 yield service

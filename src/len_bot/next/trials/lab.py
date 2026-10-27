@@ -40,7 +40,7 @@ async def run() -> None:
 
     with Store(config.database, now=now) as store:
         slots = ModelSlots(config.max_model_requests)
-        budget = ModelBudget(config, store, None, root=config._instance_root)
+        budget = ModelBudget(config, store, root=config._instance_root)
         slots.admit = budget.check
         async with (
             ChatModel(config.model_settings("mind")) as mind,
@@ -51,7 +51,6 @@ async def run() -> None:
             open_session_upkeep(config, store, mind, memory=memory, expression_service=expression_service,
                                 slots=slots) as upkeep,
         ):
-            budget.memory = memory
             if config.onebot is not None:
                 await run_network(config, [(config, persona)], store, mind,
                                   vision=vision, memory=memory, upkeep=upkeep, slots=slots, budget=budget,

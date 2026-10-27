@@ -102,10 +102,11 @@ async def process_audio(store, config, arguments, *, turn_id, platform, slots, d
             call_id = (store.start_call(turn_id, "asr", request) if turn_id is not None
                        else calls.start_call(*position, request))
             def end_call(response, usage, error=None, *, tokens=None):
+                served = (binding.provider, binding.model)
                 if turn_id is None:
-                    calls.end_call(call_id, response, usage, error, tokens=tokens)
+                    calls.end_call(call_id, response, usage, error, tokens=tokens, model=served)
                 else:
-                    store.end_call(call_id, response, usage, error, tokens=tokens)
+                    store.end_call(call_id, response, usage, error, tokens=tokens, model=served)
             notify()
             try:
                 reply = await transcribe_audio(binding, base_url=provider.base_url, api_key=provider.api_key, wav=row["wav"], proxy=provider.proxy)

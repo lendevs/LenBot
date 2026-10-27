@@ -9,6 +9,7 @@ from typing import Literal, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..platform.messages import UploadResult
+from ..models.usage import record_usage
 from ..storage.codec import encode
 from .materials import MATERIALS
 from ..memory.embeddings import _reject_constant
@@ -334,7 +335,7 @@ class TaskStore:
     def finish_call(self, eventid: int, facts: dict) -> None:
         with self.db:
             row = self.db.execute(
-                "SELECT kind,body FROM task_events WHERE id=?", (eventid,)
+                "SELECT kind,body,scene,created FROM task_events WHERE id=?", (eventid,)
             ).fetchone()
             if row is None or row["kind"] != "model_call":
                 raise ValueError(f"No model call event {eventid}")
@@ -344,6 +345,9 @@ class TaskStore:
             body["response"] = facts
             body["ended"] = self.now()
             self.db.execute("UPDATE task_events SET body=? WHERE id=?", (encode(body), eventid))
+            record_usage(self.db, time=row["created"], scene=row["scene"], purpose="worker",
+                         provider=body["request"]["provider"], model=body["request"]["model"],
+                         tokens=facts.get("tokens"))
 
     def call_tokens(self, scene: str, id: int, *, for_budget: bool = False) -> list[dict | None]:
         self.get(scene, id)

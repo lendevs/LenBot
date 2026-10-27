@@ -18,7 +18,7 @@ def _settings(path, **values):
 def _spend(store, scene, tokens):
     turn = store.start_turn(scene)
     call = store.start_call(turn, 'mind', {'provider': 'fixture'})
-    store.end_call(call, {}, None, tokens={'input': tokens - 10, 'output': 10, 'cached': None})
+    store.end_call(call, {}, None, tokens={'input': tokens - 10, 'output': 10, 'cached': None}, model=('fixture', 'fixture-model'))
     store.end_turn(turn, 'settled')
 
 
@@ -27,10 +27,10 @@ def test_polling_checks_share_recent_totals_but_admission_is_exact(tmp_path, mon
     now, clock = 1790618400., [0.0]
     path = tmp_path / 'state.db'
     with Store(path, now=lambda: now) as store:
-        budget = ModelBudget(_settings(path, daily_tokens=100), store, None, clock=lambda: clock[0])
+        budget = ModelBudget(_settings(path, daily_tokens=100), store, clock=lambda: clock[0])
         counted = []
-        real = limits.instance_calls
-        monkeypatch.setattr(limits, 'instance_calls', lambda *a, **k: counted.append(1) or real(*a, **k))
+        real = limits.instance_usage
+        monkeypatch.setattr(limits, 'instance_usage', lambda *a, **k: counted.append(1) or real(*a, **k))
         # A settings save wakes every runner at once: one aggregation serves them all.
         for scene in ('onebot:group:80001', 'onebot:group:80002', 'onebot:group:80003'):
             budget.check(scene, max_age=2)
@@ -49,7 +49,7 @@ def test_budget_reads_through_a_read_only_store_in_a_thread(tmp_path):
     path = tmp_path / 'state.db'
     with Store(path, now=lambda: now) as store:
         _spend(store, 'onebot:group:80001', 100)
-        budget = ModelBudget(_settings(path, daily_tokens=100), store, None)
+        budget = ModelBudget(_settings(path, daily_tokens=100), store)
 
         def read():
             with Store(path, readonly=True, now=lambda: now) as source:
@@ -74,7 +74,7 @@ def test_runner_admission_loop_uses_the_short_cache(tmp_path):
             def check(self, scene, *, max_age=0.0, store=None):
                 calls.append(max_age)
         slots.admit = Budget(SimpleNamespace(database=config.database, timezone='UTC', limits=ResourceLimits()),
-                             store, None).check
+                             store).check
         runner = SceneRunner(Chat(config, load_persona(package), store, None, slots=slots), lambda event: None)
         asyncio.run(runner.ready_messages(wait=False))
         assert calls and all(age > 0 for age in calls)

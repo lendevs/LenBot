@@ -14,11 +14,13 @@ from .local import ABSTRACT_CHARS, OVERVIEW_CHARS, LocalMemory
 from ..models.client import ChatModel, ModelProtocolError, ModelReply
 from ..models.slots import ModelSlots
 from ..models.tokens import token_record
+from ..models.usage import record_usage
 from ..storage.store import encode
 from ..prompt_files import read_prompt
 
 if TYPE_CHECKING:
     from ..config import SharedConfig
+    from ..storage.store import Store
 
 
 
@@ -60,15 +62,22 @@ def affected_directories(paths: list[str]) -> list[str]:
 
 
 class MemorySummarizer:
-    def __init__(self, config: SharedConfig, backend: LocalMemory, jobs: MemoryJobs, model: ChatModel, *,
+    def __init__(self, config: SharedConfig, backend: LocalMemory, jobs: MemoryJobs, model: ChatModel, store: Store, *,
                  slots: ModelSlots | None = None):
         self.config = config
         self.backend = backend
         self.jobs = jobs
+        self.store = store
         self.model = model
         self.slots = slots
         self._prompt = read_prompt("next_memory_summary.md")
         jobs.recover_summaries()
+
+    def _record(self, started: float, scene: str, tokens: dict | None) -> None:
+        binding = self.config.binding("memory")
+        with self.store.db:
+            record_usage(self.store.db, time=started, scene=scene, purpose="memory_summary",
+                         provider=binding.provider, model=binding.model, tokens=tokens)
 
     async def summarize(self, scene: str, path: str, *,
                         scope: Literal["scene", "public"] = "scene") -> dict:
@@ -97,13 +106,16 @@ class MemorySummarizer:
         try:
             async with (self.slots.slot(direct=False, scene=scene) if self.slots is not None else nullcontext()):
                 run = self.jobs.begin_summary(scene, source, path, request)
+                started = self.store.now()
                 try:
                     reply = await self.model.complete(messages, [])
                 except ModelProtocolError as error:
                     self.jobs.summary_response(run, error.response, error.usage, token_record(error.token_usage))
+                    self._record(started, source, token_record(error.token_usage))
                     raise
             self.jobs.summary_response(run, {"message": reply.message, "finish_reason": reply.finish_reason},
                                        reply.usage, token_record(reply.token_usage))
+            self._record(started, source, token_record(reply.token_usage))
             abstract, overview = parse_summary(reply)
             summary = await self.backend.write_summary(scene, path, abstract, overview, scope=scope)
         except asyncio.CancelledError as error:

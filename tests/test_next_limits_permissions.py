@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
+from len_bot.next.models.usage import record_usage
 from len_bot.next.models.limits import (ResourceLimits, ModelBudget, LimitReached, SpeechLimitReached, apply_speech_limits,
                                        check_speech, clear_speech, record_speech, speech_quota)
 from len_bot.next.models.slots import ModelSlots
 from len_bot.next.platform.messages import Segment
 from len_bot.next.storage.store import Store
-from len_bot.next.memory.jobs import MemoryJobs
 
 
 def settings(path, **values):
@@ -21,7 +21,7 @@ def spend(store, scene, tokens, *, end=True):
     turn=store.start_turn(scene)
     call=store.start_call(turn,'mind',{'provider':'fixture'})
     if end:
-        store.end_call(call,{},None,tokens=None if tokens is None else {'input':tokens-10,'output':10,'cached':None})
+        store.end_call(call,{},None,tokens=None if tokens is None else {'input':tokens-10,'output':10,'cached':None},model=('fixture','fixture-model'))
         store.end_turn(turn,'settled')
     return call
 
@@ -38,34 +38,30 @@ def test_global_budget_includes_removed_scenes_and_stopped_trials(tmp_path):
     path=tmp_path/'state.db'
     with Store(path,now=lambda:now) as store:
         cfg=settings(path,daily_tokens=300)
-        budget=ModelBudget(cfg,store,None);budget.trials_root=tmp_path/'trials'
+        budget=ModelBudget(cfg,store);budget.trials_root=tmp_path/'trials'
         spend(store,'onebot:group:89999',100)
         trial=budget.trials_root/'stopped'/'state.db'
         with Store(trial,now=lambda:now) as other: spend(other,'onebot:group:80001',200)
         with pytest.raises(LimitReached,match='全局'):budget.check('onebot:group:80002')
-        assert budget.totals(None,now-1,now+1)['tokens']==300
+        assert budget.tokens(None,now-1,now+1)==300
 
 
-def test_inflight_and_failed_unknown_allow_but_successful_unknown_denies(tmp_path):
+def test_calls_without_reported_tokens_are_not_counted(tmp_path):
     at=[1790618400.]
     with Store(tmp_path/'state.db',now=lambda:at[0]) as store:
-        budget=ModelBudget(settings(tmp_path/'state.db',daily_tokens=1000),store,None)
+        budget=ModelBudget(settings(tmp_path/'state.db',daily_tokens=1000),store)
         at[0]+=1
-        call=spend(store,'onebot:group:80001',None,end=False)
+        spend(store,'onebot:group:80001',None)
         budget.check('onebot:group:80001')
-        store.end_call(call,None,None,'provider request failed')
-        budget.check('onebot:group:80001')
-        assert budget.totals(None,at[0]-1,at[0]+1)['settled_unknown_calls']==1
-        call=spend(store,'onebot:group:80001',None,end=False)
-        store.end_call(call,None,None)
-        with pytest.raises(LimitReached,match='没有报告 token'):budget.check('onebot:group:80001')
+        assert budget.tokens(None,at[0]-1,at[0]+1)==0
+        assert store.db.execute('SELECT COUNT(*) FROM usage').fetchone()[0]==0
 
 
 def test_budget_rechecks_after_waiting_for_slot_and_releases_on_rejection(tmp_path):
     async def run():
         with Store(tmp_path/'state.db',now=lambda:1790618400.) as store:
             slots=ModelSlots(1)
-            slots.admit=ModelBudget(settings(tmp_path/'state.db',daily_tokens=100),store,None).check
+            slots.admit=ModelBudget(settings(tmp_path/'state.db',daily_tokens=100),store).check
             async def waiting():
                 async with slots.slot(scene='onebot:group:80001'):
                     pytest.fail('settled budget was not applied at actual admission')
@@ -163,26 +159,24 @@ async def test_one_expression_counts_once_and_host_or_plugin_sends_are_free(tmp_
         assert speech_quota(store,config).used==6
 
 
-def test_memory_tokens_remain_counted_when_backend_disabled(tmp_path):
+def test_memory_summary_tokens_count_toward_the_limit(tmp_path):
     path=tmp_path/'state.db'
     with Store(path,now=lambda:1790618400.) as store:
-        with MemoryJobs(path.with_name(path.name+'.memory.sqlite3')) as jobs:
-            with jobs.db:
-                jobs.db.execute('INSERT INTO memory_summary_runs(scene,scope,path,started,ended,status,request,model_started,tokens) '
-                    'VALUES(?,?,?,?,?,?,?,?,?)', ('public','public','index.md',1790618400.,1790618400.,'complete','{}',
-                                                 1790618400.,'{"input":90,"output":10,"cached":null}'))
-        budget=ModelBudget(settings(path,daily_tokens=100),store,None)
+        with store.db:
+            record_usage(store.db,time=1790618400.,scene='public',purpose='memory_summary',provider='fixture',
+                         model='fixture-model',tokens={'input':90,'output':10,'cached':None})
+        budget=ModelBudget(settings(path,daily_tokens=100),store)
         with pytest.raises(LimitReached):budget.check('onebot:group:80001')
 
 
 def test_embedding_and_transcription_tokens_do_not_count_toward_the_limit(tmp_path):
     path=tmp_path/'state.db'
     with Store(path,now=lambda:1790618400.) as store:
-        with MemoryJobs(path.with_name(path.name+'.memory.sqlite3')) as jobs:
-            with jobs.db:
-                jobs.db.execute('INSERT INTO memory_embedding_calls(scene,purpose,started,ended,request,tokens) VALUES(?,?,?,?,?,?)',
-                    ('public','index',1790618400.,1790618400.,'{}',None))
-        ModelBudget(settings(path,daily_tokens=100),store,None).check('onebot:group:80001')
+        with store.db:
+            for purpose in ('memory_embedding','expression_embedding','asr'):
+                record_usage(store.db,time=1790618400.,scene='public',purpose=purpose,provider='fixture',
+                             model='fixture-model',tokens={'input':500,'output':0,'cached':None})
+        ModelBudget(settings(path,daily_tokens=100),store).check('onebot:group:80001')
 
 
 def test_trial_budget_uses_explicit_root(tmp_path):
@@ -194,7 +188,7 @@ def test_trial_budget_uses_explicit_root(tmp_path):
     with Store(path,now=lambda:1790618400.) as store:
         cfg=settings(path,daily_tokens=100)
         with pytest.raises(LimitReached):
-            ModelBudget(cfg,store,None,root=root).check('onebot:group:80001')
+            ModelBudget(cfg,store,root=root).check('onebot:group:80001')
 
 
 @pytest.mark.parametrize('value',[{'request_days':0},{'timeline_days':31},

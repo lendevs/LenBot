@@ -134,7 +134,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
             if isinstance(error, ModelProtocolError):
                 response, usage, token_usage = error.response, error.usage, error.token_usage
             store.end_call(call_id, response, usage, f"{type(error).__name__}: {error}",
-                           tokens=token_record(token_usage))
+                           tokens=token_record(token_usage), model=(binding.provider, binding.model))
             log_event(logger, 'model_call', level=logging.WARNING, call_id=call_id, role=role, model=binding.model,
                       provider=binding.provider, **({'plugin': plugin} if plugin else {}), status='failed', tokens=token_record(token_usage),
                       error=error if isinstance(error, Exception) else None)
@@ -148,7 +148,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         # The reply is saved on the database thread; a cancellation here still leaves the call recorded as ended.
         await store.call(store.end_call, call_id,
                          {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response},
-                         reply.usage, tokens=token_record(reply.token_usage),
+                         reply.usage, tokens=token_record(reply.token_usage), model=(binding.provider, binding.model),
                          append_to_scene=scene if append_to_scene else None, recap_for=recap_for)
         log_event(logger, 'model_call', call_id=call_id, role=role, model=binding.model, provider=binding.provider,
                   **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage))

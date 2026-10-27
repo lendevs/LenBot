@@ -17,7 +17,7 @@ from . import responses
 from ..config import HostConfig
 from ..configuration.editing import _read_saved
 from ..models.limits import speech_quota
-from ..models.usage import instance_calls
+from ..models.usage import instance_usage
 from ..memory.jobs import processing_records
 from ..storage.store import Store
 from .routes.capabilities import register_host_capabilities
@@ -248,8 +248,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             scenes = list(config.scenes)
             # The last 24 whole hours, ending with the current one.
             hour = now.replace(minute=0, second=0, microsecond=0).timestamp()
-            calls = instance_calls(store, config.database, None,
-                                   min(start.timestamp(), hour - 23 * 3600), end.timestamp(),
+            usage = instance_usage(store.db, None, min(start.timestamp(), hour - 23 * 3600), end.timestamp(),
                                    trials_root=root / '.runtime' / 'chat-tests')
             stuck = [] if runtime.ingestor is None or records is None else [
                 {"scene": scene, "status": job["status"], "error": job["error"], "ended": job["ended"]}
@@ -258,8 +257,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 if job is not None and job["status"] in {"failed", "interrupted"}]
             return {"timezone": config.timezone, "sampled_at": now.timestamp(),
                     "since": start.timestamp(), "until": end.timestamp(),
-                    **store.daily_overview(scenes, start.timestamp(), end.timestamp(), calls=calls),
-                    "hourly": store.hourly_overview(scenes, hour - 23 * 3600, 24, calls=calls),
+                    **store.daily_overview(scenes, start.timestamp(), end.timestamp(), usage=usage),
+                    "hourly": store.hourly_overview(scenes, hour - 23 * 3600, 24, usage=usage),
                     "activity": store.recent_activity(scenes, 12),
                     "failed_tasks": store.failed_tasks(scenes, start.timestamp()),
                     "memory_stuck": stuck,

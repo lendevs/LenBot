@@ -49,6 +49,8 @@ OneBot ────────────> 平台适配器 ──> 消息入�
 
 `messages` 保存真实的收发记录，`mind_entries` 保存已经交给模型的批次和完整的工具交换。轮次是执行单位，会话跨轮次延续。
 
+每次模型调用结束时，`models/usage.py` 的 `record_usage` 在 `usage` 表记一行（开始时间、场景、用途、连接、模型、服务商报告的 token）。用量页、总览和每日 token 上限只读这张表；`model_calls` 等调用记录保存请求和回复，供回合详情查看，按保留期清理。
+
 `turns.wake_channel` 保存开轮时的唤醒方式；轮次中合并进来的其他唤醒仍保存在表达的渠道记录中，不改开轮归类。用量页按群、开轮日期和方式统计一次轮次是否有成功表达，以及该轮全部主脑请求的输入和缓存 token。
 
 `Attention.close_focus_on_silence` 默认开启：focus 轮次 settled、没有任何表达且没有工具失败时，保存 `AttentionState.focus_closed_at`；本轮期间有新的直接联系或 Bot 发言时保持开启。关闭后新消息以及轮次尾部尚未消费的 focus 消息继续参加 ambient 打分。直接消息和点名优先级不变，下一次 Bot 发言或直接联系清除关闭时间。该字段保存在原有注意力 JSON 中，旧状态缺少字段时默认未关闭。

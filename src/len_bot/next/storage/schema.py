@@ -107,8 +107,9 @@ def create_database(db: sqlite3.Connection, version: int) -> None:
     from ..chat.schedule_store import SCHEMA as SCHEDULES
     from ..learning.sticker_store import SCHEMA as STICKERS
     from ..work.store import SCHEMA as TASKS
+    from ..models.usage import SCHEMA as USAGE
 
     domains = (SCHEMA, SCHEDULES, TASKS, AUDIO, LEARNING, JARGON, STICKERS,
-               REPLY_EFFECTS, PROACTIVE, PLUGINS)
+               REPLY_EFFECTS, PROACTIVE, PLUGINS, USAGE)
     db.executescript(f"BEGIN; PRAGMA application_id = 1279413809; PRAGMA user_version = {version};\n"
                      + "\n".join(domains) + "\nCOMMIT;")

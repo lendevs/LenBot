@@ -326,12 +326,12 @@ def test_turn_lookup_is_scoped_to_configured_scene(panel_config, panel_root):
              "function": {"name": "say", "arguments": '{"content":"合成表达"}'}}
         ]}, "finish_reason": "tool_calls"}
         local_call = store.start_call(local_turn, "mind", request)
-        store.end_call(local_call, response, None, append_to_scene=panel_config.scene)
+        store.end_call(local_call, response, None, append_to_scene=panel_config.scene, model=('fixture', 'fixture-model'))
         store.complete_tool(panel_config.scene, "shared-provider-id", "本场景的合成结果")
         store.end_turn(local_turn, "settled")
         other_turn = store.start_turn("onebot:group:80002")
         other_call = store.start_call(other_turn, "mind", request)
-        store.end_call(other_call, response, None, append_to_scene="onebot:group:80002")
+        store.end_call(other_call, response, None, append_to_scene="onebot:group:80002", model=('fixture', 'fixture-model'))
         store.complete_tool("onebot:group:80002", "shared-provider-id", "其他场景不可见的合成结果")
         store.end_turn(other_turn, "settled")
 

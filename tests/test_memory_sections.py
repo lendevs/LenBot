@@ -167,7 +167,7 @@ async def test_turn_detail_http_keeps_actual_recalled_section_sources(tmp_path):
         recall = await runtime.memory.recall(SCENE, [message])
         turn = runtime.store.start_turn(SCENE)
         call = runtime.store.start_call(turn, 'mind', {'messages': [], 'recall_items': recall['items']})
-        runtime.store.end_call(call, {'message': {'role': 'assistant', 'content': '好'}}, None)
+        runtime.store.end_call(call, {'message': {'role': 'assistant', 'content': '好'}}, None, model=('fixture', 'fixture-model'))
         runtime.store.end_turn(turn, 'settled')
         response = await client.get(f'/api/host/scenes/{SCENE}/turns/{turn}')
         assert response.status_code == 200, response.text

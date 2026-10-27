@@ -115,7 +115,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
         PluginStore(store).recover_plugin_calls()
         if config.onebot is None and TaskStore(store).containers():
             raise ValueError('stdin模拟宿主不能清理原库中残留的容器；先在所属原实例明确处理，不使用导入的定位访问外部实例')
-        budget = ModelBudget(config, store, None, root=config._instance_root)
+        budget = ModelBudget(config, store, root=config._instance_root)
         budget.trials_root = root / ".runtime" / "chat-tests"
         slots.admit = budget.check
         sticker_records = StickerStore(store)
@@ -133,7 +133,6 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
             open_session_upkeep(config, store, mind, memory=memory, expression_service=expression_service,
                                 slots=slots) as upkeep,
         ):
-            budget.memory = memory
             def task_update(scene: str) -> None:
                 runner = runtime.runners.get(scene)
                 if runner is not None:

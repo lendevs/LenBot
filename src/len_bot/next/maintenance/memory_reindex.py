@@ -47,10 +47,9 @@ async def rebuild(config: SharedConfig) -> dict:
     backup = await asyncio.to_thread(_backup, config.memory.local.directory / ".memory-index.sqlite3")
     with Store(config.database) as store:
         slots = ModelSlots(config.max_model_requests)
-        budget = ModelBudget(config, store, None, root=config._instance_root)
+        budget = ModelBudget(config, store, root=config._instance_root)
         slots.admit = budget.check
         async with open_memory(config, store, slots=slots) as memory:
-            budget.memory = memory
             if config.memory.local.embedding is None:
                 count = await asyncio.to_thread(memory.backend.reindex)
             else:
