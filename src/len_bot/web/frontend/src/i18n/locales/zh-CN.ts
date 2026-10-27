@@ -1758,7 +1758,6 @@ export default {
       ref: '版本',
       refPlaceholder: '标签、分支或提交，留空使用默认分支',
       choose: '选择 ZIP 文件',
-      zipLayout: 'ZIP 根目录或唯一的顶层目录中需要包含 plugin.toml 和 __init__.py。',
       switchSource: '替换同名插件的安装来源',
       prepare: '准备候选版本',
       failed: '候选版本准备失败',

@@ -121,7 +121,11 @@ class PluginManager:
                 plugins.setdefault('disabled', []).append(name)
 
         self.installer.directory.mkdir(exist_ok=True)
-        await self.save(register)
+        new = self.running.plugins is None or name not in self.running.plugins.configured
+        saved = await self.save(register)
+        if new:
+            # A new plugin is registered disabled and loads only on apply, so nothing waits for a restart.
+            self._binding(name, saved)
         return {'name': name, 'version': manifest.version,
                 'needs_config': any('default' not in field.model_fields_set for field in manifest.config.values()),
                 'output': output.strip(), 'source': await self.installer.details(name)}

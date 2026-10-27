@@ -313,6 +313,9 @@ class PluginInstaller:
         temporary = Path(tempfile.mkdtemp(prefix='.zip-', dir=self.candidates))
         try:
             package = await finish_file_operation(self._unpack, data, temporary / 'checkout')
+            missing = [name for name in ('plugin.toml', '__init__.py') if not (package / name).is_file()]
+            if missing:
+                raise ValueError(f'ZIP 根目录或唯一的顶层目录里没有 {" 和 ".join(missing)}')
             source = Source(kind='zip', location=filename, ref=None, branch=None,
                             revision=await finish_file_operation(lambda: hashlib.sha256(data).hexdigest()), version='')
             manifest, record = await self.candidate(package, source, paths, switch_source=switch_source)

@@ -1813,7 +1813,6 @@ export default {
       ref: 'Version',
       refPlaceholder: 'Tag, branch or commit; empty uses the default branch',
       choose: 'Choose ZIP file',
-      zipLayout: 'The ZIP root, or its only top-level folder, must hold plugin.toml and __init__.py.',
       switchSource: 'Replace the source of a plugin with the same name',
       prepare: 'Prepare candidate',
       failed: 'The candidate was not prepared',
