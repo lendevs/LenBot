@@ -141,7 +141,8 @@ def excerpt(text: str, query: str, limit: int) -> str:
 
     Leading heading lines stay in front. The body is cut at sentence ends and the window holding the most
     distinct query trigrams wins; among equal windows the one ending later wins, since a correction is
-    written after what it corrects, then the one starting earlier, for more context.
+    written after what it corrects, then the one starting earlier, for more context. A section found by
+    meaning alone shares no trigram, so its latest part is shown.
     """
     if len(text) <= limit:
         return text
@@ -156,7 +157,7 @@ def excerpt(text: str, query: str, limit: int) -> str:
     body = text[len(head):]
     room = limit - len(head) - 2 * len(GAP)
     terms = {term for term in query_terms(query)[0] if term in body.casefold()}
-    if room <= 0 or not terms:
+    if room <= 0:
         return text[:limit]
     units: list[str] = []
     for sentence in _SENTENCE.findall(body):

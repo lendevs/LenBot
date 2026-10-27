@@ -42,6 +42,12 @@ _INDEX_NAME = ".memory-index.sqlite3"
 SUMMARY_FILES = (".abstract.md", ".overview.md")
 ABSTRACT_CHARS = 256
 OVERVIEW_CHARS = 4000
+# A section found by vectors alone is kept only within MAX_VECTOR_DISTANCE and within VECTOR_MARGIN of
+# the nearest section, at most VECTOR_ONLY of them, so a question with no answer in memory does not
+# fill the recall with whatever lies nearest (the same rule as reference lookup).
+VECTOR_ONLY = 3
+MAX_VECTOR_DISTANCE = 0.6
+VECTOR_MARGIN = 0.03
 _APPLICATION_ID = 0x4C424D31
 FORMAT_VERSION = 1
 SUMMARY_SCHEMA = """
@@ -935,7 +941,15 @@ class LocalMemory:
             key = row['id']
             scopes[key] = row['scope']
             ranks[key] = ranks.get(key, 0.0) + 1 / position
-        for position, (key, scope, _) in enumerate(sorted(vector_rows, key=lambda row: row[2]), 1):
+        close = sorted((row for row in vector_rows if row[2] <= MAX_VECTOR_DISTANCE), key=lambda row: row[2])
+        kept, alone = [], 0
+        for row in close:
+            if row[0] not in scopes:
+                if alone == VECTOR_ONLY or row[2] > close[0][2] + VECTOR_MARGIN:
+                    continue
+                alone += 1
+            kept.append(row)
+        for position, (key, scope, _) in enumerate(kept, 1):
             scopes[key] = scope
             ranks[key] = ranks.get(key, 0.0) + 1 / position
         ordered = sorted(ranks, key=lambda key: (-ranks[key], scopes[key] != scene, key))[:limit]

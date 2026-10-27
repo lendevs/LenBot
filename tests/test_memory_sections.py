@@ -95,6 +95,25 @@ async def test_semantic_unit_is_the_returned_source_and_tracks_replacements(tmp_
 
 
 @pytest.mark.asyncio
+async def test_vectors_alone_keep_only_close_sections_and_show_their_latest_part(tmp_path):
+    async with embeddings() as (client, _):
+        binding = EmbeddingBinding(provider='sample', model='three-topics', dimensions=3)
+        settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory',
+                                     embedding=binding), recall_budget_chars=300, recall_limit=5)
+        memory = LocalMemory(settings.local, embedding=client)
+        await memory.write(SCENE, 'events/meet.md', '# 聚会\n\n## 集合\n' + '大家先在门口等人到齐。' * 60
+                           + '\n集合地点最后定在图书馆二楼。\n', '合成样本')
+        await memory.write(SCENE, 'events/money.md', '# 账目\n\n## 开销\n预算还剩三百元。\n', '合成样本')
+        # Orthogonal topics are a cosine distance of 1 apart: a question near neither finds nothing.
+        assert await memory.search(SCENE, '火星飞船几点起飞', 5, automatic=True) == []
+        assert [hit.path for hit in await memory.search(SCENE, '借阅空间在哪', 5, automatic=True)] == ['events/meet.md']
+        with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+            service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+            [item] = (await service.recall(SCENE, chat('借阅空间那边最后怎么定的')))['items']
+        assert item['path'] == 'events/meet.md' and item['content'].rstrip().endswith('图书馆二楼。')
+
+
+@pytest.mark.asyncio
 async def test_text_sections_preserve_source_spelling_merge_ranges_and_scope(tmp_path):
     memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
     content = ('首段事件。\n\n街区\n======\n\n## 同词甲\nStraße 甲在东门。\n\n'

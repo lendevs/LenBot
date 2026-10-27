@@ -1,18 +1,28 @@
 """Compare local recall on a small synthetic corpus.
 
-Run the same script with each checkout on PYTHONPATH. JSON includes the recalled
-text, evidence coverage, character count and latency.
+    uv run --no-sync python scripts/compare_memory_retrieval.py [--instance DIR] [--answer]
+
+Run the same script with each checkout on PYTHONPATH. JSON includes the recalled text, evidence
+coverage, character count and latency. ``--instance`` reads that instance's ``lenbot.config.json`` and
+adds the same cases with vectors through ``memory.local.embedding``; ``--answer`` also asks each case in
+its own simulated group with the instance's ``mind`` model and records the reply, the wait for the first
+reply and the tokens used. Vectors and answers are paid requests.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+from contextlib import AsyncExitStack
 import json
 from pathlib import Path
+import re
+import shutil
 import tempfile
 import time
 
 from len_bot.next.memory.jobs import MemoryJobs
+from len_bot.next.memory.embeddings import EmbeddingClient, EmbeddingSettings
 from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
 from len_bot.next.memory.service import LocalMemoryConfig, MemoryService, recall_cues
 from len_bot.next.platform.onebot_messages import parse_message
@@ -60,17 +70,51 @@ CASES = [
     ('second-source', ['秋游集合时间最新是几点', '聚餐由谁订位'], ['周日早上七点半', '阿杰订位']),
     ('forgotten', ['南门出游集合'], []),
     ('promise-cue', ['那个弄好了没', '周五了哦'], ['《小王子》和《夜航西飞》'], RECAP),
+    ('paraphrase', ['看书那个小组最后定在哪儿碰头？'], ['图书馆二楼']),
 ]
+# What a correct reply says; None means the corpus has no answer and the reply should say it does not know.
+ANSWERS = {
+    'long-section': [r'图书馆(二|2)楼', r'(三|3)点'],
+    'latest-correction': [r'周六中午'],
+    'same-name-first': [r'无糖豆浆'],
+    'same-name-second': [r'热红茶'],
+    'follow-up': [r'图书馆(二|2)楼'],
+    'case-fold': [r'东侧咖啡店'],
+    'no-evidence': None,
+    'correction-past-budget': [r'(七|7)点半|7[:：]30'],
+    'second-source': [r'(七|7)点半|7[:：]30', r'阿杰'],
+    'forgotten': None,
+    'promise-cue': [r'小王子', r'夜航西飞'],
+    'paraphrase': [r'图书馆(二|2)楼'],
+}
+UNKNOWN = r'不知道|不清楚|不记得|没(有)?(印象|记录|听说|看到|找到|查到)|没说过|不太确定'
 
 
-async def compare() -> dict:
+def config(root: Path, binding=None) -> LocalMemoryConfig:
+    return LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=root / 'memory', embedding=binding),
+                             recall_limit=5, recall_budget_chars=1500)
+
+
+async def corpus(backend: LocalMemory, scene: str) -> None:
+    for path, content in DOCUMENTS.items():
+        await backend.write(scene, path, content, '人工可核对的合成对照样本')
+
+
+def chat(texts: list[str]):
+    return [parse_message({
+        'post_type': 'message', 'message_type': 'group', 'group_id': 80001,
+        'user_id': 90001, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
+        'sender': {'nickname': '提问者', 'role': 'member'},
+        'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
+        for index, text in enumerate(texts, 1)]
+
+
+async def compare(client: EmbeddingClient | None = None, binding=None) -> list[dict]:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
-        settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=root / 'memory'),
-                                     recall_limit=5, recall_budget_chars=1500)
-        backend = LocalMemory(settings.local)
-        for path, content in DOCUMENTS.items():
-            await backend.write(SCENE, path, content, '人工可核对的合成对照样本')
+        settings = config(root, binding)
+        backend = LocalMemory(settings.local, embedding=client)
+        await corpus(backend, SCENE)
         await backend.write('onebot:group:80002', 'secret.md', '本群独有暗号海蓝石，读书会。', '隔离样本')
         await backend.write(SCENE, 'bot/other/profile.md', '其他角色独有暗号紫云石，读书会。', '角色隔离样本')
         rows = []
@@ -79,14 +123,10 @@ async def compare() -> dict:
             for name, texts, expected, *recap in CASES:
                 if name == 'forgotten':
                     await backend.forget(SCENE, 'events/week.md')
-                messages = [parse_message({
-                    'post_type': 'message', 'message_type': 'group', 'group_id': 80001,
-                    'user_id': 90001, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
-                    'sender': {'nickname': '提问者', 'role': 'member'},
-                    'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
-                    for index, text in enumerate(texts, 1)]
+                if name == 'promise-cue':
+                    await backend.write(SCENE, 'events/week.md', DOCUMENTS['events/week.md'], '恢复样本')
                 started = time.perf_counter()
-                result = await service.recall(SCENE, messages, recall_cues(recap[0] if recap else None))
+                result = await service.recall(SCENE, chat(texts), recall_cues(recap[0] if recap else None))
                 elapsed = (time.perf_counter() - started) * 1000
                 content = '\n'.join(item['content'] for item in result['items'])
                 rows.append({'case': name, 'query': texts, 'expected_evidence': expected,
@@ -94,8 +134,112 @@ async def compare() -> dict:
                              'chars': result['content_chars'], 'elapsed_ms': round(elapsed, 3),
                              'excluded_scope_leaked': any(word in content for word in ['海蓝石', '紫云石']),
                              'items': result['items']})
-        return {'mode': 'text-only; no embedding or answer model', 'budget_chars': 1500, 'cases': rows}
+        return rows
+
+
+def group_event(group: int, ident: int, text: str, bot: str, *, at: bool) -> dict:
+    return {'post_type': 'message', 'message_type': 'group', 'self_id': int(bot), 'group_id': group,
+            'user_id': 70001, 'message_id': ident, 'time': int(time.time()),
+            'sender': {'nickname': '群友阿青', 'card': '阿青', 'role': 'member'},
+            'message': ([{'type': 'at', 'data': {'qq': bot}}] if at else [])
+            + [{'type': 'text', 'data': {'text': (' ' if at else '') + text}}]}
+
+
+async def answers(host, client: EmbeddingClient | None, binding) -> list[dict]:
+    """Each case in its own group holding the corpus, so earlier replies do not answer later cases."""
+    from len_bot.next.chat.attention import SceneRunner
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.persona.profile import load_persona
+
+    rows = []
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        package = root / 'persona'
+        shutil.copytree(Path(__file__).resolve().parents[1] / 'examples/personas/companion', package)
+        persona = load_persona(package)
+        settings = config(root, binding)
+        base = host.scene_config(next(iter(host.scenes)))
+        bot = host.bot_id.split(':', 1)[1]
+        backend = LocalMemory(settings.local, embedding=client)
+        with Store(root / 'state.db') as store, MemoryJobs(root / 'jobs.db') as jobs:
+            groups = {name: 80101 + index for index, (name, *_) in enumerate(CASES)}
+            service = MemoryService(settings, backend, jobs=jobs, store=store,
+                                    active_personas={f'onebot:group:{group}': persona.id for group in groups.values()})
+            async with AsyncExitStack() as stack:
+                mind = await stack.enter_async_context(ChatModel(host.model_settings('mind')))
+                vision = (await stack.enter_async_context(ChatModel(host.model_settings('vision')))
+                          if host.models.roles.vision is not None else None)
+                done: asyncio.Queue = asyncio.Queue()
+                for ident, (name, texts, _, *recap) in enumerate(CASES, 1001):
+                    group = groups[name]
+                    scene = f'onebot:group:{group}'
+                    await corpus(backend, scene)
+                    if name == 'forgotten':
+                        await backend.forget(scene, 'events/week.md')
+                    if recap:
+                        with store.db:
+                            store.db.execute('INSERT INTO mind_sessions(scene,recap) VALUES(?,?) ON CONFLICT(scene) '
+                                             'DO UPDATE SET recap=excluded.recap', (scene, recap[0]))
+                    scene_config = base.model_copy(update={
+                        'scene': scene, 'delivery': 'simulated', 'memory': settings, 'worker': None,
+                        'learning': None, 'memory_plugin': None, 'recap_plugin': None})
+                    object.__setattr__(scene_config, '_source_root', root)
+                    runner = SceneRunner(Chat(scene_config, persona, store, mind, vision=vision, memory=service),
+                                         lambda result: done.put_nowait(result))
+                    task = asyncio.create_task(runner.run())
+                    before = store.db.execute('SELECT coalesce(sum(input), 0), coalesce(sum(output), 0), count(*) '
+                                              "FROM usage WHERE purpose='mind'").fetchone()
+                    last = store.db.execute('SELECT coalesce(max(seq), 0) FROM messages').fetchone()[0]
+                    started = time.time()
+                    for position, text in enumerate(texts):
+                        runner.receive(group_event(group, ident * 10 + position, text, bot,
+                                                   at=position == len(texts) - 1))
+                    await asyncio.wait_for(done.get(), 300)
+                    runner.close_input()
+                    await asyncio.gather(task, return_exceptions=True)
+                    said = [json.loads(row[0]) for row in store.db.execute(
+                        "SELECT body FROM messages WHERE scene=? AND seq>? AND json_extract(body, '$.is_self') ORDER BY seq",
+                        (scene, last))]
+                    reply = ' '.join(segment['data']['text'] for message in said for segment in message['segments']
+                                     if segment['type'] == 'text')
+                    wait = store.db.execute('SELECT first_expression_at - wake_received_at FROM turns'
+                                            ' WHERE scene=? AND started>=? ORDER BY started LIMIT 1',
+                                            (scene, started)).fetchone()
+                    after = store.db.execute('SELECT coalesce(sum(input), 0), coalesce(sum(output), 0), count(*) '
+                                             "FROM usage WHERE purpose='mind'").fetchone()
+                    expected = ANSWERS[name]
+                    rows.append({'case': name, 'reply': reply,
+                                 'correct': (re.search(UNKNOWN, reply) is not None if expected is None
+                                             else all(re.search(pattern, reply) for pattern in expected)),
+                                 'first_reply_seconds': None if wait is None or wait[0] is None else round(wait[0], 1),
+                                 'requests': after[2] - before[2],
+                                 'input_tokens': after[0] - before[0], 'output_tokens': after[1] - before[1]})
+    return rows
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--instance', type=Path)
+    parser.add_argument('--answer', action='store_true')
+    options = parser.parse_args()
+    result = {'budget_chars': 1500, 'text': await compare()}
+    if options.instance is not None:
+        from len_bot.next.config import load_host_config
+
+        host = load_host_config(options.instance.resolve())
+        binding = None if host.memory is None else host.memory.local.embedding
+        async with AsyncExitStack() as stack:
+            client = None
+            if binding is not None:
+                provider = host.models.providers[binding.provider]
+                client = await stack.enter_async_context(EmbeddingClient(EmbeddingSettings(
+                    **binding.model_dump(), base_url=provider.base_url, api_key=provider.api_key, proxy=provider.proxy)))
+                result['hybrid'] = await compare(client, binding)
+            if options.answer:
+                result['answer'] = await answers(host, client, binding)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == '__main__':
-    print(json.dumps(asyncio.run(compare()), ensure_ascii=False, indent=2))
+    asyncio.run(main())
