@@ -38,6 +38,12 @@ DOCUMENTS = {
         + '\n报告最新更正为周六中午提交，覆盖之前的周五约定。\n'
     ),
     'topics/strasse.md': '# Straße\n\nStraße 的集合地址是东侧咖啡店。\n',
+    'events/trip.md': (
+        '# 秋游\n\n## 安排\n'
+        + '秋游路线先走山脚步道，中途在茶亭休息，大家轮流分享路上拍的照片。' * 80
+        + '\n秋游集合时间最新改为周日早上七点半，原来的八点作废。\n'
+    ),
+    'events/potluck.md': '# 聚餐\n\n聚餐由阿杰订位，秋游结束后在山脚的农家菜馆。\n',
 }
 CASES = [
     ('long-section', ['读书会最终地点和时间是什么？'], ['图书馆二楼', '周六下午三点']),
@@ -47,6 +53,8 @@ CASES = [
     ('follow-up', ['读书会的安排', '接着说地点和时间'], ['图书馆二楼']),
     ('case-fold', ['STRASSE 集合地址'], ['东侧咖啡店']),
     ('no-evidence', ['火星飞船什么时候起飞？'], []),
+    ('correction-past-budget', ['秋游集合时间最新是几点？'], ['周日早上七点半']),
+    ('second-source', ['秋游集合时间最新是几点', '聚餐由谁订位'], ['周日早上七点半', '阿杰订位']),
     ('forgotten', ['南门出游集合'], []),
 ]
 
@@ -55,13 +63,12 @@ async def compare() -> dict:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=root / 'memory'),
-                                     recall_limit=5, recall_budget_chars=1800)
+                                     recall_limit=5, recall_budget_chars=1500)
         backend = LocalMemory(settings.local)
         for path, content in DOCUMENTS.items():
             await backend.write(SCENE, path, content, '人工可核对的合成对照样本')
         await backend.write('onebot:group:80002', 'secret.md', '本群独有暗号海蓝石，读书会。', '隔离样本')
         await backend.write(SCENE, 'bot/other/profile.md', '其他角色独有暗号紫云石，读书会。', '角色隔离样本')
-        await backend.write(SCENE, 'legacy-import/pending.md', '待采用暗号金砂石，读书会。', '待采用样本')
         rows = []
         with Store(root / 'chat.db') as store, MemoryJobs(root / 'jobs.db') as jobs:
             service = MemoryService(settings, backend, jobs=jobs, store=store, active_personas={SCENE: 'current'})
@@ -81,9 +88,9 @@ async def compare() -> dict:
                 rows.append({'case': name, 'query': texts, 'expected_evidence': expected,
                              'covered': [part for part in expected if part in content],
                              'chars': result['content_chars'], 'elapsed_ms': round(elapsed, 3),
-                             'excluded_scope_leaked': any(word in content for word in ['海蓝石', '紫云石', '金砂石']),
+                             'excluded_scope_leaked': any(word in content for word in ['海蓝石', '紫云石']),
                              'items': result['items']})
-        return {'mode': 'text-only; no embedding or answer model', 'budget_chars': 1800, 'cases': rows}
+        return {'mode': 'text-only; no embedding or answer model', 'budget_chars': 1500, 'cases': rows}
 
 
 if __name__ == '__main__':

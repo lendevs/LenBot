@@ -14,6 +14,7 @@ from .local import LocalMemory, LocalMemorySettings
 from .jobs import MemoryJobs
 from .summary import MemorySummarizer
 from .role_paths import require_bot_path
+from .sections import excerpt
 from ..platform.messages import ChatMessage, plain_text, render_message
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
@@ -299,9 +300,12 @@ class MemoryService:
         text_query = "\n".join(plain_text(message) for message in messages
                                if plain_text(message).strip() and message.send_status in {"received", "sent", "simulated"})[-1200:]
         if query and budget > 0:
-            for hit in await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query,
-                                         persona=self.active_personas.get(scene)):
-                append(hit["scope"], hit["path"], hit["preview"], budget,
+            hits = await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query,
+                                     persona=self.active_personas.get(scene))
+            for position, hit in enumerate(hits):
+                # Each remaining hit gets an equal share; what a short one leaves goes to the next.
+                share = max(budget // (len(hits) - position), min(budget, 200))
+                append(hit["scope"], hit["path"], excerpt(hit["preview"], text_query, share), share,
                        kind="excerpt",
                        source_chars=hit["total_chars"], sections=hit["sections"])
         return {"backend": self.settings.backend, "query": query, "items": items,

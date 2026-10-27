@@ -129,8 +129,33 @@ async def test_recall_budget_truncates_units_without_duplicate_sources(tmp_path)
     with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
         service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
         result = await service.recall(SCENE, [message])
-        assert result['content_chars'] == 300 and len(result['items']) == 1
+        assert result['content_chars'] <= 300 and len(result['items']) == 1
         assert result['items'][0]['truncated'] and result['items'][0]['sections']
+        # The excerpt ends on the later matching sentence instead of cutting the source from its head.
+        content = result['items'][0]['content']
+        assert content.startswith('## 甲\n…\n') and content.rstrip().endswith('读书会在东门。')
+
+
+@pytest.mark.asyncio
+async def test_recall_shares_the_budget_so_a_long_hit_leaves_room_for_the_next(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=600, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'events/trip.md', '# 秋游\n\n' + '秋游路线先走山脚步道，中途在茶亭休息。' * 60
+                       + '\n秋游集合时间最新改为周日早上七点半。\n', '合成样本')
+    await memory.write(SCENE, 'events/potluck.md', '# 聚餐\n\n聚餐由阿杰订位。\n', '合成样本')
+    messages = [parse_message({'post_type': 'message', 'message_type': 'group', 'group_id': 80001,
+        'user_id': 90001, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
+        'sender': {'nickname': '提问者', 'role': 'member'},
+        'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
+        for index, text in enumerate(['秋游集合时间最新是几点', '聚餐由谁订位'], 1)]
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        result = await service.recall(SCENE, messages)
+    content = '\n'.join(item['content'] for item in result['items'])
+    assert {item['path'] for item in result['items']} == {'events/trip.md', 'events/potluck.md'}
+    assert '周日早上七点半' in content and '阿杰订位' in content
+    assert result['content_chars'] <= 600
 
 
 @pytest.mark.asyncio

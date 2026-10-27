@@ -107,3 +107,53 @@ def put_sections(db: sqlite3.Connection, scope: str, path: str, content: str) ->
         db.execute('INSERT INTO memory_fts(rowid,content) VALUES(?,?)', (rowid, folded))
         ids.append(rowid)
     return ids
+
+
+_SENTENCE = re.compile(r'[^。！？!?；;\n]*(?:[。！？!?；;]+\n?|\n|$)')
+GAP = '\n…\n'
+
+
+def excerpt(text: str, query: str, limit: int) -> str:
+    """The part of ``text`` that best answers ``query`` within ``limit`` characters.
+
+    Leading heading lines stay in front. The body is cut at sentence ends and the window holding the most
+    distinct query trigrams wins; among equal windows the one ending later wins, since a correction is
+    written after what it corrects, then the one starting earlier, for more context.
+    """
+    if len(text) <= limit:
+        return text
+    lines = text.splitlines(keepends=True)
+    head = ''
+    for line in lines:
+        if line.strip() and not line.lstrip().startswith('#'):
+            break
+        if len(head) + len(line) > limit // 4:
+            break
+        head += line
+    body = text[len(head):]
+    room = limit - len(head) - 2 * len(GAP)
+    folded = query.casefold()
+    terms = {folded[index:index + 3] for index in range(len(folded) - 2)}
+    terms = {term for term in terms if term.strip() == term and term in body.casefold()}
+    if room <= 0 or not terms:
+        return text[:limit]
+    units: list[str] = []
+    for sentence in _SENTENCE.findall(body):
+        units.extend(sentence[offset:offset + room] for offset in range(0, len(sentence), room))
+    units = [unit for unit in units if unit]
+    best: tuple[int, int, int] = (-1, 0, 0)
+    end, length = 0, 0
+    for start in range(len(units)):
+        if end < start:
+            end, length = start, 0
+        while end < len(units) and length + len(units[end]) <= room:
+            length += len(units[end])
+            end += 1
+        window = ''.join(units[start:end]).casefold()
+        best = max(best, (sum(term in window for term in terms), end, -start))
+        length -= len(units[start])
+    _, end, start = best
+    start = -start
+    prefix = (head.rstrip('\n') + (GAP if start else '\n')) if head else (GAP.lstrip('\n') if start else '')
+    suffix = GAP.rstrip('\n') if end < len(units) else ''
+    return prefix + ''.join(units[start:end]).strip('\n') + suffix
