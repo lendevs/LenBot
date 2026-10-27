@@ -21,10 +21,11 @@ import secrets
 import subprocess
 import sys
 
-from ...plugin import MARK, Invocation, Plugin, PluginContext
+from ...plugin import MARK, Invocation, Plugin, PluginContext, RecallRequest
 from ..platform.messages import ChatMessage, Notice
 from ..runtime.logs import log_event
-from .codec import (error_value, message_value, notice_value, part_from, raise_error, sent_value)
+from .codec import (blocks_from, error_value, message_value, notice_value, part_from, raise_error, recall_value,
+                    sent_value)
 
 logger = logging.getLogger(__name__)
 DESCRIBE_SECONDS = 60
@@ -63,6 +64,9 @@ def proxy_class(directory: Path, name: str, entries: list[dict] | None = None) -
 
 def _forwarder(attribute: str, mark: tuple):
     async def forward(self, target, *arguments):
+        if isinstance(target, RecallRequest):
+            return blocks_from(await self.worker.request({"type": "recall", "attribute": attribute,
+                                                          "request": recall_value(target)}))
         if isinstance(target, Invocation):
             scene, message = target.scene, message_value(target.message)
         else:

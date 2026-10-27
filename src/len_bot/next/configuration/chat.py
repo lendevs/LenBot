@@ -297,6 +297,8 @@ class SceneSettings(ScenePersona):
     simulated_delivery: bool = False
     # Plugins enabled in this scene; each must be loaded by root ``plugins``.
     plugins: list[str] = Field(default_factory=list)
+    # The enabled plugin that recalls memory for this scene instead of the native memory; None keeps native.
+    memory_plugin: str | None = None
     # Scene aliases, relationships and addendum of roles not in use here, by role id; switching back restores them.
     inactive_personas: dict[str, ScenePersona] = Field(default_factory=dict)
 
@@ -330,3 +332,9 @@ class SceneSettings(ScenePersona):
         if len(set(value)) != len(value):
             raise ValueError("plugins must not repeat a name")
         return value
+
+    @model_validator(mode="after")
+    def memory_plugin_enabled(self) -> SceneSettings:
+        if self.memory_plugin is not None and self.memory_plugin not in self.plugins:
+            raise ValueError("memory_plugin must be one of this scene's plugins")
+        return self

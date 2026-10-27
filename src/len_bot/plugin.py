@@ -73,6 +73,15 @@ def background(every: str):
     return _mark(("background", seconds))
 
 
+def recall():
+    """Automatic recall for scenes whose ``memory_plugin`` names this plugin.
+
+    Handler ``(self, request: RecallRequest) -> Sequence[RecallBlock]``, in the order to show; the host
+    keeps the blocks within ``request.budget_chars``. At most one per plugin.
+    """
+    return _mark(("recall",))
+
+
 def _mark(value: tuple):
     def decorate(function: Callable) -> Callable:
         if hasattr(function, MARK):
@@ -108,6 +117,31 @@ class Mention:
 
 Content = Text | Image | Mention
 GenerationRole = Literal["mind", "learner"]
+
+
+@dataclass(frozen=True)
+class RecallRequest:
+    """One turn's automatic recall, taken once before the turn's first model request.
+
+    ``messages`` are the latest messages the bot has read or delivered, oldest first; undelivered
+    bot messages are left out. ``recap`` is the scene's current compaction recap and ``tasks`` one
+    line per unfinished work task.
+    """
+    scene: str
+    persona: str
+    turn_id: str
+    observed_at: float
+    messages: tuple[ChatMessage, ...]
+    recap: str | None
+    tasks: tuple[str, ...]
+    budget_chars: int
+
+
+@dataclass(frozen=True)
+class RecallBlock:
+    """One piece of recalled material; ``title`` names its source in the panel and the prompt."""
+    title: str
+    text: str
 
 
 

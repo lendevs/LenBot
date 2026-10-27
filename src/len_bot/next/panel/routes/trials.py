@@ -204,7 +204,7 @@ class HostTrials:
                 # log directory, which lies outside the trial root that offline migrations reload it from.
                 candidate = source.model_copy(update={'mode':'isolated', 'onebot':None, 'delivery':'simulated', 'logging':LoggingSettings(directory=root / 'logs'),
                     'database':root / 'state.db', 'persona':root / 'persona-snapshot', 'owners':[],
-                    'permissions': IdentitySettings(), 'panel':None, 'plugins':[], 'worker':None, 'tasks':source.tasks.model_copy(update={'enabled':False}),
+                    'permissions': IdentitySettings(), 'panel':None, 'plugins':[], 'memory_plugin':None, 'worker':None, 'tasks':source.tasks.model_copy(update={'enabled':False}),
                     'learning':None, 'proactive':None, 'transcribe_audio':False, 'memory':memory,
                     'web_read':None, 'web_search':None})
                 config = LabConfig.model_validate_json(candidate.model_dump_json())

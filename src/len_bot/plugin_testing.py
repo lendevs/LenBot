@@ -13,7 +13,7 @@ from uuid import uuid4
 from .next.config import HostConfig
 from .next.platform.identity import validate_scene
 from .next.platform.messages import ChatMessage, Sender, Segment
-from .plugin import Content, Image, Sent, Text
+from .plugin import Content, Image, RecallRequest, Sent, Text
 from .next.plugins.host import PluginHost
 from .next.plugins.data import write_version
 from .next.plugins.manifest import parse_manifest
@@ -197,6 +197,13 @@ class PluginTest:
         """Call the actual registered tool with normal schema and scene checks."""
         tools = {item.name: item for item in self.host.tools_for(scene)}
         return await tools[name].call(scene, arguments)
+
+    async def recall(self, *, scene: str = 'onebot:group:80001', persona: str = 'test', recap: str | None = None,
+                     tasks: Sequence[str] = (), budget_chars: int = 1500) -> list[dict]:
+        """Run ``@recall`` on the scene's latest 8 added messages; return the items the chat would receive."""
+        messages = tuple(item for item in self.host.messages if item.scene == scene)[-8:]
+        return await self.host.recall(self.manifest.name, RecallRequest(
+            scene, persona, uuid4().hex, self.host.now(), messages, recap, tuple(tasks), budget_chars))
 
     def events(self, scene: str = 'onebot:group:80001') -> list[dict]:
         return PluginStore(self.host.runtime.store).plugin_events(scene)

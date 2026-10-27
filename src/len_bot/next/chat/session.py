@@ -33,7 +33,7 @@ RESERVE_CHANNELS = frozenset({"schedule", "task"})
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
 PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "persona_knowledge", "member_info"})
-from ..memory.service import MemoryService
+from ..memory.service import MemoryService, MemorySettings
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
 from ..models.request import request_estimate, request_model
@@ -42,11 +42,25 @@ from ..persona.profile import Persona, select_style
 from ..platform.platform_tools import PlatformCall
 from ..storage.store import Store, encode
 from ..work.service import WorkTasks
+from ..work.store import TaskStore
+from ...plugin import RecallRequest
 from ..runtime.logs import add_context, log_event
 from ..prompt_files import read_prompt
 from ...media.images import image_block
 
 logger = logging.getLogger(__name__)
+PluginRecall = Callable[[str, RecallRequest], Awaitable[list[dict]]]
+
+
+def recall_request(store: Store, config: LabConfig, persona: str, turn_id: str, observed_at: float,
+                   budget_chars: int) -> RecallRequest:
+    """What the scene's memory plugin receives for one turn, read in one snapshot."""
+    scene = config.scene
+    messages = tuple(message for message in store.recent_context_messages(scene, limit=8)
+                     if message.send_status in {"received", "sent", "simulated"})
+    tasks = tuple(f"#{task.id} [{task.status}] {task.goal}" for task in TaskStore(store).list(scene, limit=20))
+    return RecallRequest(scene, persona, turn_id, observed_at, messages, store.active_history(scene)[0], tasks,
+                         budget_chars)
 
 
 @dataclass(frozen=True)
@@ -85,6 +99,7 @@ class Chat:
                  platform_call: PlatformCall | None = None,
                  external_tools: list[ExternalTool] = (),
                  audio_service: AudioService | None = None,
+                 plugin_recall: PluginRecall | None = None,
                  on_update: Callable[[], None] | None = None,
                  on_compaction: Callable[[], None] | None = None,
                  on_reply_sample: Callable[[], None] | None = None,
@@ -101,6 +116,9 @@ class Chat:
         if (config.memory is None) != (memory is None):
             raise ValueError("memory 服务必须与根配置的记忆后端一起提供")
         self.memory = memory
+        if config.memory_plugin is not None and plugin_recall is None:
+            raise ValueError("memory_plugin 需要插件宿主提供召回入口")
+        self.plugin_recall = plugin_recall
         if (config.worker is None) != (tasks is None):
             raise ValueError("任务服务必须与根配置的 worker 一起提供")
         self.tasks = tasks
@@ -421,7 +439,23 @@ class Chat:
                 recall_items = []
                 recall_error = None
                 try:
-                    if self.memory is not None and self.memory.settings.auto_recall:
+                    if self.config.memory_plugin is not None:
+                        phase = '插件自动召回'
+                        budget = (MemorySettings.model_fields['recall_budget_chars'].default if self.memory is None
+                                  else self.memory.settings.recall_budget_chars)
+                        request = await self.store.read(recall_request, self.store, self.config, self.persona.id,
+                                                        turn_id, observed_at, budget)
+                        try:
+                            recall_items = await self.plugin_recall(self.config.memory_plugin, request)
+                        except Exception as error:
+                            # Recorded on the plugin; this turn goes on without recalled memory.
+                            recall_error = f'{type(error).__name__}: {error}'
+                            log_event(logger, 'plugin_recall_failed', recall_error, level=logging.WARNING,
+                                      plugin=self.config.memory_plugin)
+                        if recall_items:
+                            recalled = encode({"backend": "plugin:" + self.config.memory_plugin,
+                                               "items": recall_items})
+                    elif self.memory is not None and self.memory.settings.auto_recall:
                         phase = '记忆自动召回'
                         recall = await self.memory.recall(
                             scene, await self.store.call(self.store.recent_context_messages, scene, limit=8))

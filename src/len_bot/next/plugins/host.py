@@ -25,7 +25,7 @@ from ..config import HostConfig
 from ..tools.external_tools import ExternalTool
 from ..platform.messages import ChatMessage
 from ...plugin import (MARK, Content, GenerationRole, Image, Text,
-                     Invocation, Notice, Plugin, PluginContext, Sent)
+                     Invocation, Notice, Plugin, PluginContext, RecallBlock, RecallRequest, Sent)
 from .kv import PluginKV
 from .data import prepare_data
 from ..models.client import ChatModel, ModelReply
@@ -53,6 +53,8 @@ ERROR_LIMIT = 20
 # scene) or the shutdown. Data migration before start() has no limit: it may legitimately be long.
 PLUGIN_START_SECONDS = 60.0
 PLUGIN_STOP_SECONDS = 30.0
+# Recall runs before the turn's first model request, so it is part of the wait for the first reply.
+RECALL_SECONDS = 10.0
 JSON_RESULT = TypeAdapter(JsonValue, config=ConfigDict(strict=True, allow_inf_nan=False))
 
 
@@ -115,6 +117,7 @@ class Loaded:
     patterns: list[Pattern] = field(default_factory=list)
     notices: dict[str, str] = field(default_factory=dict)                   # type -> method
     tools: dict[str, ToolEntry] = field(default_factory=dict)
+    recall: str | None = None                                               # method
     backgrounds: list[Background] = field(default_factory=list)
     crons: dict[tuple[str, str], CronJob] = field(default_factory=dict)
     instructions: str | None = None
@@ -261,6 +264,10 @@ class PluginHost:
                 if mark[1] in record.notices:
                     raise ValueError(f"通知 {mark[1]} 在本插件重复登记")
                 record.notices[mark[1]] = attribute
+            elif mark[0] == "recall":
+                if record.recall is not None:
+                    raise ValueError(f"recall 入口只能有一个，已有 {record.recall}")
+                record.recall = attribute
             elif mark[0] == "tool":
                 if mark[1] in core_tools or mark[1] in self.tool_owner or mark[1] in record.tools:
                     raise ValueError(f"工具名 {mark[1]} 与核心工具或其他插件工具重复")
@@ -630,6 +637,52 @@ class PluginHost:
                 raise
             return redact_values(result, record.manifest, record.values)
         return call
+
+    async def recall(self, plugin: str, request: RecallRequest) -> list[dict]:
+        """Recall items from the scene's memory plugin in the native item shape, cut to the budget.
+
+        A failure is recorded on the plugin and raised; the turn goes on without recall.
+        """
+        record = self._active(plugin, request.scene)
+        try:
+            if record.status != "running":
+                raise RuntimeError(f"插件 {plugin} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
+            if record.recall is None:
+                raise ValueError(f"插件 {plugin} 没有 @recall 入口，不能作为场景的记忆实现")
+            with log_context(plugin=record.name):
+                task = asyncio.create_task(getattr(record.instance, record.recall)(request),
+                                           name=f"{record.name}:recall")
+            self.tasks[task] = record.name
+            task.add_done_callback(lambda done: self.tasks.pop(done, None))
+            limit = asyncio.timeout(RECALL_SECONDS)
+            try:
+                async with limit:
+                    blocks = await task
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
+                raise RuntimeError(f"插件 {plugin} 已停止或重载，本次自动召回中断") from None
+            except TimeoutError:
+                if not limit.expired():
+                    raise
+                raise TimeoutError(f"插件 {plugin} 的自动召回超过 {RECALL_SECONDS:g} 秒未返回，已取消") from None
+            if not isinstance(blocks, (list, tuple)) or not all(isinstance(block, RecallBlock) for block in blocks):
+                raise TypeError("@recall 必须返回 RecallBlock 序列")
+        except Exception as error:
+            safe = self._record(record, "自动召回", error)
+            raise RuntimeError(safe) from None
+        items, budget = [], request.budget_chars
+        for block in blocks:
+            text = redact_values(block.text, record.manifest, record.values)
+            if budget <= 0:
+                break
+            if not text.strip():
+                continue
+            shown = text[:budget]
+            items.append({"scope": f"plugin:{plugin}", "path": redact_values(block.title, record.manifest, record.values),
+                          "content": shown, "kind": "plugin", "truncated": len(shown) < len(text)})
+            budget -= len(shown)
+        return items
 
     def match_message(self, message: ChatMessage, other_bots: tuple[str, ...]) -> Matched | None:
         if (self.closing or message.is_self or message.sender.uid in other_bots
