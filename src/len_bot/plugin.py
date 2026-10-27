@@ -82,6 +82,16 @@ def recall():
     return _mark(("recall",))
 
 
+def compact():
+    """Compaction for scenes whose ``recap_plugin`` names this plugin.
+
+    Handler ``(self, request: CompactRequest) -> str``: the recap that replaces the current one and
+    the entries in ``request.source``. The host checks it against ``request.budget_tokens`` and
+    adopts it. At most one per plugin.
+    """
+    return _mark(("compact",))
+
+
 def _mark(value: tuple):
     def decorate(function: Callable) -> Callable:
         if hasattr(function, MARK):
@@ -135,6 +145,20 @@ class RecallRequest:
     recap: str | None
     tasks: tuple[str, ...]
     budget_chars: int
+
+
+@dataclass(frozen=True)
+class CompactRequest:
+    """One compaction: ``source`` is the current recap and the oldest complete conversation entries, as text.
+
+    The returned recap must fit ``budget_tokens`` by the host's estimate of about three UTF-8 bytes
+    per token.
+    """
+    scene: str
+    persona: str
+    turn_id: str
+    source: str
+    budget_tokens: int
 
 
 @dataclass(frozen=True)

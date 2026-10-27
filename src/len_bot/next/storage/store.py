@@ -1222,8 +1222,7 @@ class Store:
 
     def end_call(self, call_id: int, response: dict | None, usage: dict | None,
                  error: str | None = None, *, tokens: dict | None = None, model: tuple[str, str],
-                 append_to_scene: str | None = None, recap_for: tuple[str, int] | None = None,
-                 retries: int = 0) -> None:
+                 append_to_scene: str | None = None, retries: int = 0) -> None:
         """Settle a call; ``model`` is the (provider, model) that served it, for the usage ledger;
         ``retries`` counts resends of the same request after 429, 5xx or a dropped connection."""
         with self.db:
@@ -1246,15 +1245,21 @@ class Store:
                         "(SELECT turn_id FROM model_calls WHERE id=?) AND ended IS NULL",
                         (call_id,),
                     )
-            if recap_for is not None:
-                scene, through = recap_for
-                self.db.execute(
-                    "INSERT INTO mind_sessions(scene,compact_through,recap,discovered_tools) "
-                    "VALUES (?,?,?,'[]') "
-                    "ON CONFLICT(scene) DO UPDATE SET compact_through=excluded.compact_through, "
-                    "recap=excluded.recap,discovered_tools=excluded.discovered_tools",
-                    (scene, through, response["message"]["content"]),
-                )
+
+    def commit_recap(self, scene: str, through: int, recap: str) -> None:
+        """Adopt ``recap`` for the entries through ``through``, whoever wrote it.
+
+        One transaction replaces the recap, moves the compaction position and clears the
+        discovered tools, since the searches that found them are folded into the recap.
+        """
+        with self.db:
+            self.db.execute(
+                "INSERT INTO mind_sessions(scene,compact_through,recap,discovered_tools) "
+                "VALUES (?,?,?,'[]') "
+                "ON CONFLICT(scene) DO UPDATE SET compact_through=excluded.compact_through, "
+                "recap=excluded.recap,discovered_tools=excluded.discovered_tools",
+                (scene, through, recap),
+            )
 
     def last_mind_request(self, scene: str) -> dict | None:
         row = self.db.execute(

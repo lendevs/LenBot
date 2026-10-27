@@ -19,11 +19,11 @@ import re
 import sys
 import threading
 
-from ...plugin import MARK, Invocation, Plugin, PluginContext
+from ...plugin import MARK, CompactRequest, Invocation, Plugin, PluginContext
 from .codec import (blocks_value, error_value, message_from, notice_from, part_value, raise_error, recall_from,
                     sent_from)
 
-SUPPORTED = {"command", "fullmatch", "regex", "notice", "background", "recall"}
+SUPPORTED = {"command", "fullmatch", "regex", "notice", "background", "recall", "compact"}
 # The host's token for the invocation this code runs under; the host maps it back to the real sender.
 INVOCATION: contextvars.ContextVar[str | None] = contextvars.ContextVar("invocation", default=None)
 
@@ -206,6 +206,8 @@ async def serve(channel: Channel, init: dict) -> None:
                 value = await instance.migrate_data(request["from_version"])
             elif kind == "recall":
                 value = blocks_value(await getattr(instance, request["attribute"])(recall_from(request["request"])))
+            elif kind == "compact":
+                value = await getattr(instance, request["attribute"])(CompactRequest(**request["request"]))
             else:
                 INVOCATION.set(request.get("invocation"))
                 attribute, arguments = request["attribute"], list(request["args"])

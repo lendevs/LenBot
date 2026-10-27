@@ -69,7 +69,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         slots: ModelSlots | None = None, direct: bool = False,
                         output_tokens: int | None = None,
                         validate: Callable[[ModelReply], None] | None = None,
-                        append_to_scene: bool = False, recap_for: tuple[str, int] | None = None,
+                        append_to_scene: bool = False,
                         expression_ids: list[int] | None = None,
                         input_estimate: tuple[int, str] | None = None,
                         notify: Callable[[], None] | None = None,
@@ -157,7 +157,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         await store.call(store.end_call, call_id,
                          {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response},
                          reply.usage, tokens=token_record(reply.token_usage), model=(binding.provider, binding.model),
-                         append_to_scene=scene if append_to_scene else None, recap_for=recap_for, retries=retries)
+                         append_to_scene=scene if append_to_scene else None, retries=retries)
         log_event(logger, 'model_call', call_id=call_id, role=role, model=binding.model, provider=binding.provider,
                   **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage),
                   retries=retries)

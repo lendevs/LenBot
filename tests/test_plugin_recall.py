@@ -203,13 +203,14 @@ async def test_a_process_plugin_receives_the_request_and_returns_blocks(tmp_path
     assert sum(len(item['content']) for item in items) == 300
 
 
-def test_memory_plugin_must_be_enabled_in_the_scene(tmp_path):
+@pytest.mark.parametrize('field', ['memory_plugin', 'recap_plugin'])
+def test_memory_plugins_must_be_enabled_in_the_scene(tmp_path, field):
     root = _root(tmp_path, {'sample': {}}, [])
     path = root / 'lenbot.config.json'
     source = json.loads(path.read_text())
-    source['scenes'][SCENE]['memory_plugin'] = 'sample'
+    source['scenes'][SCENE][field] = 'sample'
     path.write_text(json.dumps(source))
-    with pytest.raises(ValueError, match="memory_plugin must be one of this scene's plugins"):
+    with pytest.raises(ValueError, match=f"{field} must be one of this scene's plugins"):
         load_host_config(root)
 
 

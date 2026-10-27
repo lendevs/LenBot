@@ -43,13 +43,14 @@ from ..platform.platform_tools import PlatformCall
 from ..storage.store import Store, encode
 from ..work.service import WorkTasks
 from ..work.store import TaskStore
-from ...plugin import RecallRequest
+from ...plugin import CompactRequest, RecallRequest
 from ..runtime.logs import add_context, log_event
 from ..prompt_files import read_prompt
 from ...media.images import image_block
 
 logger = logging.getLogger(__name__)
 PluginRecall = Callable[[str, RecallRequest], Awaitable[list[dict]]]
+PluginCompact = Callable[[str, CompactRequest], Awaitable[str]]
 
 
 def recall_request(store: Store, config: LabConfig, persona: str, turn_id: str, observed_at: float,
@@ -100,6 +101,7 @@ class Chat:
                  external_tools: list[ExternalTool] = (),
                  audio_service: AudioService | None = None,
                  plugin_recall: PluginRecall | None = None,
+                 plugin_compact: PluginCompact | None = None,
                  on_update: Callable[[], None] | None = None,
                  on_compaction: Callable[[], None] | None = None,
                  on_reply_sample: Callable[[], None] | None = None,
@@ -119,6 +121,9 @@ class Chat:
         if config.memory_plugin is not None and plugin_recall is None:
             raise ValueError("memory_plugin 需要插件宿主提供召回入口")
         self.plugin_recall = plugin_recall
+        if config.recap_plugin is not None and plugin_compact is None:
+            raise ValueError("recap_plugin 需要插件宿主提供压缩入口")
+        self.plugin_compact = plugin_compact
         if (config.worker is None) != (tasks is None):
             raise ValueError("任务服务必须与根配置的 worker 一起提供")
         self.tasks = tasks
@@ -212,10 +217,33 @@ class Chat:
             turn_id=turn_id, slots=self.slots, direct=self.direct_request,
             output_tokens=self.config.recap_output_tokens if role == "recap" else None,
             validate=validate, append_to_scene=role == "mind",
-            recap_for=None if recap_target is None else (self.config.scene, recap_target.through),
             expression_ids=self.expression_ids if role == "mind" else expression_ids,
             input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
             trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
+
+    async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True) -> str:
+        """Fold the plan's entries into a new recap and adopt it through the one recap commit.
+
+        With ``strategy`` the scene's ``recap_plugin`` writes the recap; when it fails, the native recap
+        does, so the session still fits its window.
+        """
+        recap = None
+        plugin = self.config.recap_plugin if strategy else None
+        if plugin is not None:
+            try:
+                recap = await self.plugin_compact(plugin, CompactRequest(
+                    self.config.scene, self.persona.id, turn_id, plan.request_messages[-1]["content"],
+                    plan.summary_budget_tokens))
+            except Exception as error:
+                # Recorded on the plugin; the native recap takes this compaction.
+                log_event(logger, 'plugin_compaction_failed', f'{type(error).__name__}: {error}',
+                          level=logging.WARNING, plugin=plugin)
+            else:
+                log_event(logger, 'plugin_compaction', plugin=plugin, compact_through=plan.through)
+        if recap is None:
+            recap = (await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)).text
+        await self.store.call(self.store.commit_recap, self.config.scene, plan.through, recap)
+        return recap
 
     async def upkeep_fork(self) -> tuple[list[dict], list[dict]]:
         """The chat request's system, tools and history without the turn state; caller owns the scene lock."""
@@ -250,7 +278,7 @@ class Chat:
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
                 )
-                reply = await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)
+                recap = await self.compact(turn_id, plan)
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -259,7 +287,7 @@ class Chat:
         if self.on_compaction is not None:
             self.on_compaction()
         self.notify()
-        return {"turn_id": turn_id, "compact_through": plan.through, "recap": reply.text}
+        return {"turn_id": turn_id, "compact_through": plan.through, "recap": recap}
 
     async def hand_over(self, previous: str, current: str) -> str:
         """Fold the whole active session into a third-person handover; caller owns the scene lock.
@@ -297,7 +325,8 @@ class Chat:
                     plan = CompactionPlan(through, budget, [
                         {"role": "system", "content": Template(template).substitute(summary_budget_tokens=budget)},
                         {"role": "user", "content": recap_source(recap, [])}])
-                await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)
+                # A handover follows its own template for the next role; the scene's recap plugin does not write it.
+                await self.compact(turn_id, plan, strategy=False)
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -360,7 +389,7 @@ class Chat:
                 window_tokens=binding.context_window_tokens,
                 source_entries=self.context.conversation_entries(entries), token_scale=scale,
             )
-            await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)
+            await self.compact(turn_id, plan)
             compacted = True
             if self.on_compaction is not None:
                 self.on_compaction()

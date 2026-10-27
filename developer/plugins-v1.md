@@ -56,7 +56,7 @@ permissions = ["send", "history"]
 
 `isolation = "process"` 让插件运行在自己的子进程中，默认值 `inline` 与宿主同进程。
 
-- 宿主先在子进程中导入插件、读取入口，再按同样的标记登记命令、全文和正则规则、通知、`@background` 循环和 `@recall`。每次调用通过标准输入输出上的 JSON 行转发。
+- 宿主先在子进程中导入插件、读取入口，再按同样的标记登记命令、全文和正则规则、通知、`@background` 循环、`@recall` 和 `@compact`。每次调用通过标准输入输出上的 JSON 行转发。
 - 插件中的 `ctx` 能力都回到宿主执行。宿主使用自己记录的插件名，并重新检查场景和 `permissions`，子进程无法冒充其他插件。`ctx.delegate` 的请求人由宿主按触发这次调用的真实消息确定，子进程传来的账号不被采用；后台循环和调用结束后不能委派。
 - 子进程崩溃或退出时，未完成的调用以失败结束，`@background` 循环随之停止，插件标记为失败并记录退出码，宿主和其他插件不受影响。协议输出中出现无法解析的行时，宿主结束这个进程，按同样方式处理。在面板中重新加载插件会启动新的进程。
 - 停止时先请求插件的 `stop()`，超时或被取消时结束进程。插件的 `print` 写入标准错误，不会混入协议。
@@ -156,6 +156,7 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 | `@tool("plugin_read", "完整说明", summary="发现简介", needs_source=False)` | `self, ctx: Invocation, ...` | 根据参数类型生成 schema，返回文本或 JSON 值 |
 | `@background(every="5m")` | `self, ctx: PluginContext` | 本次执行完成后再等待一个周期，最短 10 秒。它按间隔执行，与定点的 cron 不同 |
 | `@recall()` | `self, request: RecallRequest` | 群设置 `memory_plugin` 指向本插件时，每轮在第一次模型请求前调用一次，返回 `RecallBlock` 列表，见[自动召回](#自动召回) |
+| `@compact()` | `self, request: CompactRequest` | 群设置 `recap_plugin` 指向本插件时，由它写压缩回想，返回文字，见[压缩回想](#压缩回想) |
 
 每个方法只使用一个入口装饰器。匹配的优先级依次为命令、全文、正则，正则之间按 priority 降序匹配。同一条消息最多由一个处理器接管，并且不唤醒聊天模型。默认匹配只针对纯文本，开头的回复段和 @Bot 自己的部分可以去掉。命令可用 `@command("转发", "说明", allow_mentions=True)` 明确接收正文中的提及；提及保留在 `ctx.message.segments`，文字参数中的提及位置替换为一个空格，插件从真实消息读取目标账号。图片、语音等其他段仍不接管。全文和正则规则继续只匹配纯文本，不把提及或媒体悄悄拼接进去。
 
@@ -189,6 +190,27 @@ class Notes(Plugin):
 | `budget_chars` | 字数预算，取根配置的 `memory.recall_budget_chars`；没有配置原生记忆时为 1500 |
 
 宿主按返回顺序保留各块，跳过空白块，累计超出 `budget_chars` 的部分截掉。保留的块以 `plugin:<插件名>` 为来源、`title` 为路径写入本轮状态和面板的召回记录，一轮内的每次模型请求使用同一份结果。召回限时 10 秒；超时、抛出异常或返回值不是 `RecallBlock` 序列时，错误记到插件上，这一轮不带召回继续。
+
+### 压缩回想
+
+会话快要超过压缩阈值，或管理员在面板手动压缩时，宿主选出最早的若干完整对话段，连同当前回想一起换成一份新回想。群设置的 `recap_plugin` 写成一个已在该群启用的插件名后，这份新回想由该插件的 `@compact` 入口写。每个插件最多一个 `@compact` 入口。
+
+```python
+from len_bot.plugin import CompactRequest, Plugin, compact
+
+class Notes(Plugin):
+    @compact()
+    async def fold(self, request: CompactRequest) -> str:
+        return await self.ctx.generate(request.scene, "把下面的对话整理成回想：\n" + request.source)
+```
+
+| `CompactRequest` 字段 | 内容 |
+|---|---|
+| `scene`、`persona`、`turn_id` | 场景、当前角色 ID、本次压缩所属的回合 ID |
+| `source` | 当前回想和待压缩的对话段，按原生回想使用的同一份文字 |
+| `budget_tokens` | 新回想的长度上限，宿主按 UTF-8 字节数除以 3 估算 |
+
+压缩的边界由宿主决定，不会切开工具调用和它的结果。插件返回的文字去掉首尾空白后，由宿主在同一个事务里写入回想、推进压缩位置并清空已发现的工具，原生回想走同一个提交。压缩限时 120 秒；超时、抛出异常、返回空白或超过 `budget_tokens` 时，错误记到插件上，这一次改由原生回想完成。切换角色时的交接回想始终由原生回想写。
 
 ## 配置表单
 
@@ -556,6 +578,7 @@ async def check():
 - `deliveries` 包含插件、场景、组合内容、reply_to 和 simulated 状态。
 - `events()` 用于查看实际记录的插件事件。
 - `recall(scene=..., recap=None, tasks=(), budget_chars=1500)` 用最近 8 条 `add_message` 的消息调用 `@recall`，返回聊天实际收到的召回条目。
+- `compact(source, scene=..., budget_tokens=4096)` 调用 `@compact` 并按宿主的规则检查，返回宿主会采用的回想。
 
 处理器或启动失败时，本次测试会报错。退出上下文时会停止插件并删除临时实例。
 

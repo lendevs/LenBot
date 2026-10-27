@@ -299,6 +299,8 @@ class SceneSettings(ScenePersona):
     plugins: list[str] = Field(default_factory=list)
     # The enabled plugin that recalls memory for this scene instead of the native memory; None keeps native.
     memory_plugin: str | None = None
+    # The enabled plugin that writes this scene's compaction recaps; None keeps the native recap.
+    recap_plugin: str | None = None
     # Scene aliases, relationships and addendum of roles not in use here, by role id; switching back restores them.
     inactive_personas: dict[str, ScenePersona] = Field(default_factory=dict)
 
@@ -334,7 +336,8 @@ class SceneSettings(ScenePersona):
         return value
 
     @model_validator(mode="after")
-    def memory_plugin_enabled(self) -> SceneSettings:
-        if self.memory_plugin is not None and self.memory_plugin not in self.plugins:
-            raise ValueError("memory_plugin must be one of this scene's plugins")
+    def memory_plugins_enabled(self) -> SceneSettings:
+        for name in ("memory_plugin", "recap_plugin"):
+            if getattr(self, name) is not None and getattr(self, name) not in self.plugins:
+                raise ValueError(f"{name} must be one of this scene's plugins")
         return self

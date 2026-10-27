@@ -13,7 +13,7 @@ from uuid import uuid4
 from .next.config import HostConfig
 from .next.platform.identity import validate_scene
 from .next.platform.messages import ChatMessage, Sender, Segment
-from .plugin import Content, Image, RecallRequest, Sent, Text
+from .plugin import CompactRequest, Content, Image, RecallRequest, Sent, Text
 from .next.plugins.host import PluginHost
 from .next.plugins.data import write_version
 from .next.plugins.manifest import parse_manifest
@@ -204,6 +204,12 @@ class PluginTest:
         messages = tuple(item for item in self.host.messages if item.scene == scene)[-8:]
         return await self.host.recall(self.manifest.name, RecallRequest(
             scene, persona, uuid4().hex, self.host.now(), messages, recap, tuple(tasks), budget_chars))
+
+    async def compact(self, source: str, *, scene: str = 'onebot:group:80001', persona: str = 'test',
+                      budget_tokens: int = 4096) -> str:
+        """Run ``@compact`` on ``source`` with the host's checks; return the recap the host would adopt."""
+        return await self.host.compact(self.manifest.name, CompactRequest(
+            scene, persona, uuid4().hex, source, budget_tokens))
 
     def events(self, scene: str = 'onebot:group:80001') -> list[dict]:
         return PluginStore(self.host.runtime.store).plugin_events(scene)

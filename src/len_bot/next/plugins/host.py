@@ -25,13 +25,14 @@ from ..config import HostConfig
 from ..tools.external_tools import ExternalTool
 from ..platform.messages import ChatMessage
 from ...plugin import (MARK, Content, GenerationRole, Image, Text,
-                     Invocation, Notice, Plugin, PluginContext, RecallBlock, RecallRequest, Sent)
+                     CompactRequest, Invocation, Notice, Plugin, PluginContext, RecallBlock, RecallRequest, Sent)
 from .kv import PluginKV
 from .data import prepare_data
 from ..models.client import ChatModel, ModelReply
 from ..models.request import request_model
 from ..chat.schedule_time import Cron, next_cron, parse_cron
 from ..chat.request_source import SOURCE_DESCRIPTION, source_message
+from ..chat.recap import estimate_content
 from ..runtime.logs import SECRETS, error_text, log_context, log_event, recorded_errors
 from ..tools.skills import Skill, load_plugin_skills
 from .process import describe, proxy_class
@@ -55,6 +56,8 @@ PLUGIN_START_SECONDS = 60.0
 PLUGIN_STOP_SECONDS = 30.0
 # Recall runs before the turn's first model request, so it is part of the wait for the first reply.
 RECALL_SECONDS = 10.0
+# Compaction runs while a request waits for room; a plugin may write the recap with its own model call.
+COMPACT_SECONDS = 120.0
 JSON_RESULT = TypeAdapter(JsonValue, config=ConfigDict(strict=True, allow_inf_nan=False))
 
 
@@ -118,6 +121,7 @@ class Loaded:
     notices: dict[str, str] = field(default_factory=dict)                   # type -> method
     tools: dict[str, ToolEntry] = field(default_factory=dict)
     recall: str | None = None                                               # method
+    compact: str | None = None                                              # method
     backgrounds: list[Background] = field(default_factory=list)
     crons: dict[tuple[str, str], CronJob] = field(default_factory=dict)
     instructions: str | None = None
@@ -268,6 +272,10 @@ class PluginHost:
                 if record.recall is not None:
                     raise ValueError(f"recall 入口只能有一个，已有 {record.recall}")
                 record.recall = attribute
+            elif mark[0] == "compact":
+                if record.compact is not None:
+                    raise ValueError(f"compact 入口只能有一个，已有 {record.compact}")
+                record.compact = attribute
             elif mark[0] == "tool":
                 if mark[1] in core_tools or mark[1] in self.tool_owner or mark[1] in record.tools:
                     raise ValueError(f"工具名 {mark[1]} 与核心工具或其他插件工具重复")
@@ -638,6 +646,30 @@ class PluginHost:
             return redact_values(result, record.manifest, record.values)
         return call
 
+    async def _entry(self, record: Loaded, attribute: str | None, where: str, mark: str, seconds: float,
+                     argument: object) -> object:
+        """Run one host-awaited entry under a time limit, as a task that stopping the plugin cancels."""
+        if record.status != "running":
+            raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
+        if attribute is None:
+            raise ValueError(f"插件 {record.name} 没有 @{mark} 入口")
+        with log_context(plugin=record.name):
+            task = asyncio.create_task(getattr(record.instance, attribute)(argument), name=f"{record.name}:{mark}")
+        self.tasks[task] = record.name
+        task.add_done_callback(lambda done: self.tasks.pop(done, None))
+        limit = asyncio.timeout(seconds)
+        try:
+            async with limit:
+                return await task
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
+            raise RuntimeError(f"插件 {record.name} 已停止或重载，本次{where}中断") from None
+        except TimeoutError:
+            if not limit.expired():
+                raise
+            raise TimeoutError(f"插件 {record.name} 的{where}超过 {seconds:g} 秒未返回，已取消") from None
+
     async def recall(self, plugin: str, request: RecallRequest) -> list[dict]:
         """Recall items from the scene's memory plugin in the native item shape, cut to the budget.
 
@@ -645,32 +677,11 @@ class PluginHost:
         """
         record = self._active(plugin, request.scene)
         try:
-            if record.status != "running":
-                raise RuntimeError(f"插件 {plugin} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
-            if record.recall is None:
-                raise ValueError(f"插件 {plugin} 没有 @recall 入口，不能作为场景的记忆实现")
-            with log_context(plugin=record.name):
-                task = asyncio.create_task(getattr(record.instance, record.recall)(request),
-                                           name=f"{record.name}:recall")
-            self.tasks[task] = record.name
-            task.add_done_callback(lambda done: self.tasks.pop(done, None))
-            limit = asyncio.timeout(RECALL_SECONDS)
-            try:
-                async with limit:
-                    blocks = await task
-            except asyncio.CancelledError:
-                if asyncio.current_task().cancelling():
-                    raise
-                raise RuntimeError(f"插件 {plugin} 已停止或重载，本次自动召回中断") from None
-            except TimeoutError:
-                if not limit.expired():
-                    raise
-                raise TimeoutError(f"插件 {plugin} 的自动召回超过 {RECALL_SECONDS:g} 秒未返回，已取消") from None
+            blocks = await self._entry(record, record.recall, "自动召回", "recall", RECALL_SECONDS, request)
             if not isinstance(blocks, (list, tuple)) or not all(isinstance(block, RecallBlock) for block in blocks):
                 raise TypeError("@recall 必须返回 RecallBlock 序列")
         except Exception as error:
-            safe = self._record(record, "自动召回", error)
-            raise RuntimeError(safe) from None
+            raise RuntimeError(self._record(record, "自动召回", error)) from None
         items, budget = [], request.budget_chars
         for block in blocks:
             text = redact_values(block.text, record.manifest, record.values)
@@ -683,6 +694,20 @@ class PluginHost:
                           "content": shown, "kind": "plugin", "truncated": len(shown) < len(text)})
             budget -= len(shown)
         return items
+
+    async def compact(self, plugin: str, request: CompactRequest) -> str:
+        """A recap from the scene's compaction plugin, checked against the budget; failures are recorded and raised."""
+        record = self._active(plugin, request.scene)
+        try:
+            recap = await self._entry(record, record.compact, "压缩", "compact", COMPACT_SECONDS, request)
+            if not isinstance(recap, str) or not recap.strip():
+                raise TypeError("@compact 必须返回非空文字")
+            recap = redact_values(recap.strip(), record.manifest, record.values)
+            if estimate_content(recap) > request.budget_tokens:
+                raise ValueError(f"回想估算 {estimate_content(recap)} token，超过预算 {request.budget_tokens}")
+        except Exception as error:
+            raise RuntimeError(self._record(record, "压缩", error)) from None
+        return recap
 
     def match_message(self, message: ChatMessage, other_bots: tuple[str, ...]) -> Matched | None:
         if (self.closing or message.is_self or message.sender.uid in other_bots

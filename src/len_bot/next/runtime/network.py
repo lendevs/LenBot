@@ -166,6 +166,7 @@ class NetworkRuntime:
                             + ([] if self.mcp is None else self.mcp.tools_for(scene))),
             audio_service=self.audio,
             plugin_recall=None if self.plugins is None else self.plugins.recall,
+            plugin_compact=None if self.plugins is None else self.plugins.compact,
             on_update=self.notify,
             on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
         )

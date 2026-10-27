@@ -12,6 +12,7 @@ the message behind the token, never from the worker.
 
 import asyncio
 import base64
+from dataclasses import asdict
 import itertools
 import json
 import logging
@@ -21,7 +22,7 @@ import secrets
 import subprocess
 import sys
 
-from ...plugin import MARK, Invocation, Plugin, PluginContext, RecallRequest
+from ...plugin import MARK, CompactRequest, Invocation, Plugin, PluginContext, RecallRequest
 from ..platform.messages import ChatMessage, Notice
 from ..runtime.logs import log_event
 from .codec import (blocks_from, error_value, message_value, notice_value, part_from, raise_error, recall_value,
@@ -67,6 +68,8 @@ def _forwarder(attribute: str, mark: tuple):
         if isinstance(target, RecallRequest):
             return blocks_from(await self.worker.request({"type": "recall", "attribute": attribute,
                                                           "request": recall_value(target)}))
+        if isinstance(target, CompactRequest):
+            return await self.worker.request({"type": "compact", "attribute": attribute, "request": asdict(target)})
         if isinstance(target, Invocation):
             scene, message = target.scene, message_value(target.message)
         else:
