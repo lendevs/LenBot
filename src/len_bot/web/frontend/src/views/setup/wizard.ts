@@ -273,6 +273,7 @@ export function createWizard() {
       reasoning_effort: draft.effort.trim() || null,
       thinking_budget_tokens: draft.thinkingBudget,
       output_token_field: draft.api === 'openai-chat' ? draft.outputField : 'max_completion_tokens',
+      retry_delays_seconds: [2, 5],
     }
   }
 

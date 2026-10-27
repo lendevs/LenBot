@@ -101,6 +101,7 @@ export interface ModelStep {
   error: string | null
   tokens: { input: number; output: number; cached: number | null } | null
   snapshot_expired_at: number | null
+  retries: number
 }
 
 export interface Step {

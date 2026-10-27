@@ -71,6 +71,7 @@ export interface SetupBinding {
   reasoning_effort: string | null
   thinking_budget_tokens: number | null
   output_token_field: 'max_completion_tokens' | 'max_tokens'
+  retry_delays_seconds: number[]
 }
 
 export interface SetupEmbedding {

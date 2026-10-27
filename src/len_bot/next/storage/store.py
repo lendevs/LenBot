@@ -822,9 +822,9 @@ class Store:
             native = None if entry_seq is None else self.db.execute(
                 "SELECT message FROM mind_entries WHERE scene=? AND seq=?", (scene, entry_seq)).fetchone()
             if call["role"] == "mind" and call["response"] is not None and call["error"] is None:
-                tool_calls = call["response"]["message"].get("tool_calls", [])
+                tool_calls = call["response"]["message"].get("tool_calls") or []
             else:
-                tool_calls = [] if native is None else json.loads(native[0]).get("tool_calls", [])
+                tool_calls = [] if native is None else json.loads(native[0]).get("tool_calls") or []
             call["native_tool_calls"] = tool_calls
             if tool_calls and entry_seq is not None:
                 for entry in self.db.execute(
@@ -1222,8 +1222,10 @@ class Store:
 
     def end_call(self, call_id: int, response: dict | None, usage: dict | None,
                  error: str | None = None, *, tokens: dict | None = None, model: tuple[str, str],
-                 append_to_scene: str | None = None, recap_for: tuple[str, int] | None = None) -> None:
-        """Settle a call; ``model`` is the (provider, model) that served it, for the usage ledger."""
+                 append_to_scene: str | None = None, recap_for: tuple[str, int] | None = None,
+                 retries: int = 0) -> None:
+        """Settle a call; ``model`` is the (provider, model) that served it, for the usage ledger;
+        ``retries`` counts resends of the same request after 429, 5xx or a dropped connection."""
         with self.db:
             scene, role, plugin, started = self.db.execute(
                 "SELECT scene,role,plugin,started FROM model_calls WHERE id=?", (call_id,)).fetchone()
@@ -1232,10 +1234,10 @@ class Store:
             entry_seq = (None if append_to_scene is None else
                          self._append(append_to_scene, response["message"]))
             self.db.execute(
-                "UPDATE model_calls SET ended=?,response=?,usage=?,error=?,mind_entry_seq=?,tokens=? WHERE id=?",
+                "UPDATE model_calls SET ended=?,response=?,usage=?,error=?,mind_entry_seq=?,tokens=?,retries=? WHERE id=?",
                 (self.now(), None if response is None else encode(response),
                  None if usage is None else encode(usage), error, entry_seq,
-                 None if tokens is None else encode(tokens), call_id),
+                 None if tokens is None else encode(tokens), retries, call_id),
             )
             if append_to_scene is not None:
                 if error is None and not response["message"].get("tool_calls"):

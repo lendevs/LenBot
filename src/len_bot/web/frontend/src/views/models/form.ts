@@ -77,7 +77,7 @@ export function newBinding(provider: string): ChatBinding {
     image_input: true,
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',
-    retry_delays_seconds: [],
+    retry_delays_seconds: [2, 5],
   }
 }
 

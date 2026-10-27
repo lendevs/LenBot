@@ -537,6 +537,7 @@ export default {
         arguments: '参数',
         result: '结果',
         expired: '请求原文已过保留期',
+        retries: '重试 {n} 次',
         failed: '本步出错',
         toolStatus: { pending: '执行中', complete: '完成', error: '失败', interrupted: '中断' },
       },

@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 from .providers import ChatAPI, http_client, valid_url
@@ -304,8 +305,10 @@ class ChatModel:
 
     async def complete(self, messages: list[dict], tools: list[dict], *,
                        max_output_tokens: int | None = None, session_id: str | None = None,
-                       settings: ModelSettings | None = None) -> ModelReply:
-        """``settings`` overrides request options for this call only; the client keeps its connection."""
+                       settings: ModelSettings | None = None,
+                       on_retry: Callable[[], None] | None = None) -> ModelReply:
+        """``settings`` overrides request options for this call only; the client keeps its connection.
+        ``on_retry`` runs before each resend of the same request."""
         from .protocols import build_request, parse_reply
         settings = self.settings if settings is None else settings
         path, payload = build_request(settings, messages, tools, max_output_tokens=max_output_tokens)
@@ -328,6 +331,8 @@ class ChatModel:
                 if delay is None or (response.status_code != 429 and response.status_code < 500):
                     break
                 logger.warning("model request retry in %ss after HTTP %s", delay, response.status_code)
+            if on_retry is not None:
+                on_retry()
             await asyncio.sleep(delay)
         if not response.is_success:
             fragment = response.text.replace(self.settings.api_key, '[hidden]')[:2000]

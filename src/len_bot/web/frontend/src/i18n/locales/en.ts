@@ -548,6 +548,7 @@ export default {
         arguments: 'Arguments',
         result: 'Result',
         expired: 'Request text past retention',
+        retries: 'Retries: {n}',
         failed: 'This step failed',
         toolStatus: { pending: 'Running', complete: 'Done', error: 'Failed', interrupted: 'Interrupted' },
       },

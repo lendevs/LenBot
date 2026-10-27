@@ -66,7 +66,8 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
         return {'model': binding.model, 'kind': kind, 'calls': 1,
                 'text': f'向量接口连接成功，返回 {result.dimensions} 维向量。', 'dimensions': result.dimensions,
                 'usage': [result.usage], 'scope': '验证一次 embeddings 请求'}
-    settings = ModelSettings.from_binding(provider, binding)
+    # A probe reports the first failure as it is; retries belong to real requests.
+    settings = ModelSettings.from_binding(provider, binding).model_copy(update={'retry_delays_seconds': ()})
     messages = [{'role': 'user', 'content': '请回复连接成功。' if kind == 'text' else '请调用 connection_check 工具完成连接测试。不要自行假设工具结果。'}]
     tools = [] if kind == 'text' else [{'type': 'function', 'function': {
         'name': 'connection_check', 'description': '返回本次连接测试的固定结果。',

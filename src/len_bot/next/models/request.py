@@ -114,9 +114,16 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         if notify is not None:
             notify()
         reply = None
+        retries = 0
+
+        def retried() -> None:
+            nonlocal retries
+            retries += 1
+
         try:
             reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id,
-                                         settings=None if effective is model.settings else effective)
+                                         settings=None if effective is model.settings else effective,
+                                         on_retry=retried)
             if validate is not None:
                 validate(reply)
         except BaseException as error:
@@ -134,9 +141,10 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
             if isinstance(error, ModelProtocolError):
                 response, usage, token_usage = error.response, error.usage, error.token_usage
             store.end_call(call_id, response, usage, f"{type(error).__name__}: {error}",
-                           tokens=token_record(token_usage), model=(binding.provider, binding.model))
+                           tokens=token_record(token_usage), model=(binding.provider, binding.model), retries=retries)
             log_event(logger, 'model_call', level=logging.WARNING, call_id=call_id, role=role, model=binding.model,
                       provider=binding.provider, **({'plugin': plugin} if plugin else {}), status='failed', tokens=token_record(token_usage),
+                      retries=retries,
                       error=error if isinstance(error, Exception) else None)
             if notify is not None:
                 notify()
@@ -149,9 +157,10 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         await store.call(store.end_call, call_id,
                          {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response},
                          reply.usage, tokens=token_record(reply.token_usage), model=(binding.provider, binding.model),
-                         append_to_scene=scene if append_to_scene else None, recap_for=recap_for)
+                         append_to_scene=scene if append_to_scene else None, recap_for=recap_for, retries=retries)
         log_event(logger, 'model_call', call_id=call_id, role=role, model=binding.model, provider=binding.provider,
-                  **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage))
+                  **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage),
+                  retries=retries)
         if notify is not None:
             notify()
         if trace is not None:

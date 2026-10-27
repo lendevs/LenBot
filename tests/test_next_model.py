@@ -349,10 +349,13 @@ async def test_configured_retry_resends_same_request_after_transient_errors():
         port = server.sockets[0].getsockname()[1]
         settings = ModelSettings(api="openai-chat", base_url=f"http://127.0.0.1:{port}/v1", api_key="replay-only",
                                  model="recorded-model", retry_delays_seconds=(0, 0, 0))
+        retried = []
         async with ChatModel(settings) as model:
-            reply = await model.complete([{"role": "user", "content": "hello"}], [])
+            reply = await model.complete([{"role": "user", "content": "hello"}], [],
+                                         on_retry=lambda: retried.append(len(payloads)))
     assert reply.text
     assert len(payloads) == 3 and payloads[0] == payloads[1] == payloads[2]
+    assert retried == [1, 2]
 
 
 @pytest.mark.asyncio

@@ -54,7 +54,7 @@ CREATE TABLE model_calls (
     id INTEGER PRIMARY KEY, turn_id TEXT, role TEXT NOT NULL,
     started REAL NOT NULL, ended REAL, request TEXT NOT NULL,
     response TEXT, usage TEXT, error TEXT, mind_entry_seq INTEGER, tokens TEXT,
-    scene TEXT NOT NULL, plugin TEXT
+    scene TEXT NOT NULL, plugin TEXT, retries INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX turn_calls ON model_calls(turn_id, id);
 CREATE TABLE web_documents (

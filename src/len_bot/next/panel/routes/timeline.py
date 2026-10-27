@@ -123,6 +123,7 @@ class ModelStep(BaseModel):
     error: str | None
     tokens: CallTokens | None
     snapshot_expired_at: float | None
+    retries: int
 
 
 class Step(BaseModel):
@@ -321,7 +322,7 @@ def read_turn(store: Store, scene: str, turn_id: str) -> dict | None:
                 if identity not in seen:
                     recalled.append(item)
                     seen.add(identity)
-        model = {key: call[key] for key in ('id', 'role', 'started', 'ended', 'error', 'tokens', 'snapshot_expired_at')}
+        model = {key: call[key] for key in ('id', 'role', 'started', 'ended', 'error', 'tokens', 'snapshot_expired_at', 'retries')}
         if call['role'] != 'mind':
             if call['role'] == 'recap' or not steps:
                 pending.append(model)
