@@ -232,7 +232,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         return {"enabled": ingestor is not None, "scenes": [] if ingestor is None else [
             {**ingestor.jobs.view(scene), "worker_error": (
                 f"{type(ingestor.errors[scene]).__name__}: {ingestor.errors[scene]}"
-                if scene in ingestor.errors else None)} for scene in runtime.chats
+                if scene in ingestor.errors else None)} for scene in runtime.chats if scene in ingestor.scenes
         ]}
 
     @app.post("/api/host/memory/ingest/{scene}/{action}", response_model=responses.IngestAction, response_model_exclude_unset=True)

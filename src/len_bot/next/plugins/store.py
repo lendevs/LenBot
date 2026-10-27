@@ -18,6 +18,10 @@ CREATE TABLE plugin_events (
     content TEXT NOT NULL, created REAL NOT NULL, delivered_at REAL
 );
 CREATE INDEX plugin_events_pending ON plugin_events(scene,id) WHERE delivered_at IS NULL;
+CREATE TABLE plugin_memory_progress (
+    scene TEXT NOT NULL, plugin TEXT NOT NULL, through_seq INTEGER NOT NULL, updated REAL NOT NULL,
+    PRIMARY KEY(scene, plugin)
+);
 """
 
 
@@ -47,6 +51,24 @@ class PluginStore:
         return [dict(row) for row in self.db.execute(
             "SELECT id,plugin,kind,content,created,delivered_at FROM plugin_events "
             "WHERE scene=? ORDER BY id DESC LIMIT ?", (scene, limit))]
+
+    def report_memory_progress(self, scene: str, plugin: str, message_id: str) -> int:
+        """Record that ``plugin`` has processed this scene's messages through ``message_id``; never moves back."""
+        row = self.db.execute("SELECT seq FROM messages WHERE scene=? AND json_extract(body,'$.id')=?",
+                              (scene, message_id)).fetchone()
+        if row is None:
+            raise ValueError(f"场景 {scene} 没有消息 {message_id}")
+        with self.db:
+            self.db.execute(
+                "INSERT INTO plugin_memory_progress(scene,plugin,through_seq,updated) VALUES (?,?,?,?) "
+                "ON CONFLICT(scene,plugin) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),"
+                "updated=excluded.updated", (scene, plugin, row[0], self.now()))
+        return row[0]
+
+    def memory_progress(self, scene: str, plugin: str) -> int | None:
+        row = self.db.execute("SELECT through_seq FROM plugin_memory_progress WHERE scene=? AND plugin=?",
+                              (scene, plugin)).fetchone()
+        return None if row is None else row[0]
 
     def start_plugin_call(self, scene: str, plugin: str, role: str, request: dict) -> int:
         with self.db:

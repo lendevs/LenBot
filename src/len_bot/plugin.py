@@ -187,6 +187,7 @@ class HostPort(Protocol):
     async def set_kv(self, plugin: str, key: str, value: JsonValue) -> None: ...
     async def delete_kv(self, plugin: str, key: str) -> bool: ...
     async def memory(self, plugin: str, scene: str, arguments: dict) -> str: ...
+    async def report_memory_progress(self, plugin: str, scene: str, message_id: str) -> None: ...
     async def generate(self, plugin: str, scene: str, prompt: str, role: GenerationRole,
                        system: str | None) -> str: ...
     async def delegate(self, plugin: str, scene: str, requester: str, goal: str, deliverable: str,
@@ -302,6 +303,14 @@ class PluginContext:
     async def memory(self, scene: str, arguments: dict) -> str:
         """Use the scene's permitted memory service; public content remains read-only."""
         return await self.host.memory(self.name, self._scene(scene), arguments)
+
+    async def report_memory_progress(self, scene: str, message_id: str) -> None:
+        """As the scene's ``memory_plugin``: messages through ``message_id`` are processed.
+
+        Retention then may remove those originals once they expire; before the first report the
+        plugin does not hold any back. The position never moves back.
+        """
+        await self.host.report_memory_progress(self.name, self._scene(scene), message_id)
 
 
 @dataclass(frozen=True)

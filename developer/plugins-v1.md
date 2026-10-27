@@ -168,7 +168,7 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 
 ### 自动召回
 
-群设置的 `memory_plugin` 写成一个已在该群启用的插件名后，这个群每轮的自动召回由该插件的 `@recall` 入口提供，原生记忆不再做自动召回。聊天的 `memory` 工具和后台整理仍由原生记忆处理。每个插件最多一个 `@recall` 入口。
+群设置的 `memory_plugin` 写成一个已在该群启用的插件名后，这个群每轮的自动召回由该插件的 `@recall` 入口提供，原生记忆不再为这个群做自动召回和后台整理，已有的原生记忆文件原样保留。聊天的 `memory` 工具仍由原生记忆处理。每个插件最多一个 `@recall` 入口。
 
 ```python
 from len_bot.plugin import Plugin, RecallBlock, RecallRequest, recall
@@ -190,6 +190,8 @@ class Notes(Plugin):
 | `budget_chars` | 字数预算，取根配置的 `memory.recall_budget_chars`；没有配置原生记忆时为 1500 |
 
 宿主按返回顺序保留各块，跳过空白块，累计超出 `budget_chars` 的部分截掉。保留的块以 `plugin:<插件名>` 为来源、`title` 为路径写入本轮状态和面板的召回记录，一轮内的每次模型请求使用同一份结果。召回限时 10 秒；超时、抛出异常或返回值不是 `RecallBlock` 序列时，错误记到插件上，这一轮不带召回继续。
+
+插件用 `ctx.messages_between` 读原消息做自己的整理时，处理完一段后调用 `await self.ctx.report_memory_progress(scene, message.id)`，表示到这条消息为止都已处理。只有该群的 `memory_plugin` 可以报告，位置只前进不后退。数据清理按 `retention.message_days` 删除过期原话时，只保留插件还没处理的部分；插件从未报告时不为它保留。原生记忆的整理位置在插件接管期间不参与判断。改回原生记忆后，原生整理从改回时的最新消息开始，插件接管期间的消息不补整理。
 
 ### 压缩回想
 

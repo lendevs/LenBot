@@ -473,6 +473,14 @@ class PluginHost:
             raise PermissionError(f"场景 {scene} 当前加载角色未允许 memory")
         return await chat.memory.execute(scene, arguments)
 
+    async def report_memory_progress(self, plugin: str, scene: str, message_id: str) -> None:
+        self._active(plugin, scene)
+        if self.config.scenes[scene].memory_plugin != plugin:
+            raise PermissionError(f"插件 {plugin} 不是场景 {scene} 的记忆实现，不能报告处理位置")
+        if self.runtime is None:
+            raise RuntimeError("插件宿主尚未接入运行中的场景")
+        await self.runtime.store.call(PluginStore(self.runtime.store).report_memory_progress, scene, plugin, message_id)
+
     async def generate(self, plugin: str, scene: str, prompt: str, role: GenerationRole,
                        system: str | None) -> str:
         self._permit(self._active(plugin, scene), "generate")

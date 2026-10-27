@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ..storage.store import encode, Store
 from ..work.materials import finish_file_operation
 from ..memory.jobs import MemoryJobs
+from ..plugins.store import PluginStore
 
 
 class RetentionSettings(BaseModel):
@@ -99,7 +100,13 @@ class Retention:
                 cursor = db.execute(f'SELECT after_seq FROM {table} WHERE scene=?',(scene,)).fetchone()
                 if cursor is not None:
                     through = min(through, cursor[0])
-            if memory_jobs is not None:
+            plugin = config.scenes[scene].memory_plugin if scene in config.scenes else None
+            if plugin is not None:
+                # Only the scene's current memory holds originals back; the native cursor is not in use.
+                progress = PluginStore(store).memory_progress(scene, plugin)
+                if progress is not None:
+                    through = min(through, progress)
+            elif memory_jobs is not None:
                 jobs = memory_jobs.db
                 cursor = jobs.execute('SELECT after_seq FROM memory_cursors WHERE scene=?',(scene,)).fetchone()
                 if cursor is not None:

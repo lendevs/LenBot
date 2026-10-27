@@ -71,7 +71,7 @@ class SceneService:
     def backgrounds(self, scene: str):
         runtime = self.runtime
         learning = runtime.config.scenes[scene].learning
-        return [(runtime.ingestor, True),
+        return [(runtime.ingestor, runtime.config.scenes[scene].memory_plugin is None),
                 (runtime.learning, learning is not None and learning.extract),
                 (runtime.jargon, learning is not None and learning.jargon_extract),
                 (runtime.sticker_collection, learning is not None and learning.collect_stickers),

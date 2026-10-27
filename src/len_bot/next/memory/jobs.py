@@ -136,6 +136,18 @@ class MemoryJobs:
                             "WHERE scene=? AND status='running'",
                             (time.time(), "Process stopped before this extraction completed", scene))
 
+    def release(self, scene: str, reason: str) -> None:
+        """Stop tracking a scene the native memory no longer processes.
+
+        Its cursor is dropped, so a later ``initialize`` starts from the then latest message and the
+        messages in between are not extracted; unfinished jobs end as interrupted.
+        """
+        with self.db:
+            self.db.execute("DELETE FROM memory_cursors WHERE scene=?", (scene,))
+            self.db.execute("UPDATE memory_jobs SET status='interrupted',ended=?,error=? "
+                            "WHERE scene=? AND status IN ('queued','running','submitted')",
+                            (time.time(), reason, scene))
+
     def after(self, scene: str) -> int:
         return self.db.execute("SELECT after_seq FROM memory_cursors WHERE scene=?", (scene,)).fetchone()[0]
 
