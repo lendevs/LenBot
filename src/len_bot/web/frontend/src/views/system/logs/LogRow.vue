@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Copy } from '@lucide/vue'
+import { ArrowUpRight, ChevronDown, Copy } from '@lucide/vue'
 import type { LogRecord } from '../../../api/logs'
 import { formatDateTime } from '../../../i18n/format'
 import { groupLabel } from '../../../layouts/shell/scenes'
+import Button from '../../../ui/Button.vue'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import IconButton from '../../../ui/IconButton.vue'
 import { toast } from '../../../ui/toast'
@@ -28,6 +29,14 @@ const ids = computed(() =>
     .map((key) => ({ key, value: String(props.item[key]) })),
 )
 const filterOf = { turn_id: 'turn', plugin: 'plugin', task_id: 'task' } as const
+/** A failed model call names the provider and role whose settings fix it. */
+const provider = computed(() =>
+  props.item.event === 'model_call' &&
+  props.item.status === 'failed' &&
+  typeof props.item.provider === 'string'
+    ? props.item.provider
+    : null,
+)
 const errorText = computed(() => {
   const error = props.item.error
   return error ? (error.type ? `${error.type}: ${error.message}` : error.message) : ''
@@ -114,6 +123,24 @@ async function copy() {
     <p v-if="errorText" class="text-sm break-words text-error" :class="!open && 'line-clamp-3'">
       {{ errorText }}
     </p>
+    <div v-if="provider" class="flex flex-wrap gap-2">
+      <Button
+        size="sm"
+        variant="ghost"
+        :icon-right="ArrowUpRight"
+        :to="{ name: 'host-models', query: { tab: 'providers', item: provider } }"
+      >
+        {{ t('logs.toProvider', { name: provider }) }}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        :icon-right="ArrowUpRight"
+        :to="{ name: 'host-models', query: { tab: 'roles' } }"
+      >
+        {{ t('logs.toRoles') }}
+      </Button>
+    </div>
     <CodeBlock v-if="open" :code="item" :max-lines="24" class="mt-1" />
   </div>
 </template>

@@ -1453,7 +1453,6 @@ export default {
       turns: '回复轮次',
       tokens: '今日 token',
       schedules: '待执行提醒',
-      hours: '走势为最近 24 小时，每格一小时',
       tokenSplit: 'token 输入 {input} · 输出 {output}',
       effectsLabel: '群友对 Bot 发言的反应：',
       effect: '{name} {n}',
@@ -2388,6 +2387,8 @@ export default {
     download: '下载',
     copy: '复制记录',
     copied: '已复制',
+    toProvider: '服务商 {name}',
+    toRoles: '模型用途',
     copyFailed: '浏览器禁止复制',
     ids: {
       turn_id: '轮',

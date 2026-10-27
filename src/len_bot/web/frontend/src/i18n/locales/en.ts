@@ -1501,7 +1501,6 @@ export default {
       turns: 'Reply turns',
       tokens: 'Tokens today',
       schedules: 'Pending reminders',
-      hours: 'Trends cover the last 24 hours, one point per hour',
       tokenSplit: 'Tokens in {input} · out {output}',
       effectsLabel: 'How members reacted to the bot: ',
       effect: '{name} {n}',
@@ -2461,6 +2460,8 @@ export default {
     download: 'Download',
     copy: 'Copy this record',
     copied: 'Copied',
+    toProvider: 'Provider {name}',
+    toRoles: 'Model roles',
     copyFailed: 'The browser blocked copying',
     ids: {
       turn_id: 'Turn',

@@ -105,7 +105,7 @@ function details(file: ReferenceFile) {
   <section v-else class="grid min-w-0 gap-3">
     <div class="flex items-center justify-between gap-2">
       <h3 class="text-base font-semibold">{{ t('groups.reference.title') }}</h3>
-      <div class="flex items-center gap-2">
+      <div v-if="files.length" class="flex items-center gap-2">
         <Button v-if="listing.data.value?.group_files" size="sm" :icon="Users" @click="picking = true">
           {{ t('groups.reference.groupFiles.open') }}
         </Button>
@@ -121,7 +121,19 @@ function details(file: ReferenceFile) {
       :existing="files.map((file) => file.filename)"
       @imported="adopt"
     />
-    <EmptyState v-if="!files.length" :icon="FolderOpen" :title="t('groups.reference.empty')" compact />
+    <EmptyState v-if="!files.length" :icon="FolderOpen" :title="t('groups.reference.empty')">
+      <Button v-if="listing.data.value?.group_files" variant="primary" :icon="Users" @click="picking = true">
+        {{ t('groups.reference.groupFiles.open') }}
+      </Button>
+      <Button
+        :variant="listing.data.value?.group_files ? 'secondary' : 'primary'"
+        :icon="Upload"
+        :loading="upload.isPending.value"
+        @click="input?.click()"
+      >
+        {{ t('groups.reference.upload') }}
+      </Button>
+    </EmptyState>
     <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
       <li v-for="file in files" :key="file.filename" class="flex min-w-0 items-center gap-3 px-3 py-2.5">
         <FileText :size="16" class="shrink-0 text-muted" aria-hidden="true" />
