@@ -1513,6 +1513,11 @@ export default {
       longest: 'longest {n} ms',
       latest: 'Latest: {task} stalled {n} ms, {ago}',
       noStack: 'Too short to capture a stack',
+      models: 'Model calls (last 7 days)',
+      working: 'Working',
+      failing: 'Failing',
+      lastSuccess: 'Succeeded {ago}',
+      lastFailure: 'Failed {ago}',
     },
     raw: {
       connection: 'Connection details',

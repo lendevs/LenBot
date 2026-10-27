@@ -367,6 +367,25 @@ class Store:
                 groups[key] = {**item, 'count': 1}
         return list(groups.values())
 
+    def model_health(self, scenes: Sequence[str], since: float) -> list[dict]:
+        """Per purpose of the calls kept in model_calls, the latest success and the latest failure since ``since``."""
+        placeholders = ','.join('?' for _ in scenes)
+        purpose = "CASE WHEN plugin IS NULL THEN role ELSE 'plugin:'||plugin END"
+        found: dict[str, dict] = {}
+        for kind, condition in (('success', 'error IS NULL AND ended IS NOT NULL'), ('failure', 'error IS NOT NULL')):
+            latest = self.db.execute(
+                f"SELECT {purpose},MAX(id) FROM model_calls WHERE scene IN ({placeholders}) AND started>=? "
+                f"AND {condition} GROUP BY 1", (*scenes, since)).fetchall()
+            for name, call_id in latest:
+                # Only the chosen rows' request bodies are read, for the connection and model that served them.
+                row = self.db.execute(
+                    "SELECT id,scene,turn_id,started,error,json_extract(request,'$.provider') AS provider,"
+                    "json_extract(request,'$.settings.model') AS model FROM model_calls WHERE id=?", (call_id,)).fetchone()
+                item = found.setdefault(name, {'purpose': name, 'success': None, 'failure': None})
+                item[kind] = {key: row[key] for key in ('id', 'scene', 'turn_id', 'started', 'provider', 'model')
+                              } | ({'error': row['error']} if kind == 'failure' else {})
+        return [found[name] for name in sorted(found)]
+
     def model_call(self, call_id: int) -> dict | None:
         row = self.db.execute('SELECT * FROM model_calls WHERE id=?', (call_id,)).fetchone()
         if row is None:

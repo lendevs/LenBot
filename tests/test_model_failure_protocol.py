@@ -96,6 +96,12 @@ def test_provider_failures_in_logs_overview_and_call_detail(tmp_path, caplog, st
                     with pytest.raises(ModelHTTPError, match=hint):
                         await request_model(config, store, model, [{'role': 'user', 'content': '测试'}], [],
                                             scene=SCENE, role='mind')
+                await model._client.aclose()
+                model._client = httpx.AsyncClient(transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json=json.loads(FIXTURE.read_text()))),
+                    base_url='https://fixture.invalid/')
+                await request_model(config, store, model, [{'role': 'user', 'content': '测试'}], [],
+                                    scene=SCENE, role='recap')
     import asyncio
     asyncio.run(fail_twice())
     assert hint in caplog.text and 'fixture-request-42' in caplog.text
@@ -104,6 +110,12 @@ def test_provider_failures_in_logs_overview_and_call_detail(tmp_path, caplog, st
         assert len(overview['model_errors']) == 1
         error = overview['model_errors'][0]
         assert error['count'] == 2 and hint in error['error']
+        health = {item['purpose']: item for item in overview['model_health']}
+        assert set(health) == {'mind', 'recap'}
+        assert health['mind']['success'] is None
+        assert health['mind']['failure']['id'] == error['id'] and hint in health['mind']['failure']['error']
+        assert health['mind']['failure']['provider'] == 'local'
+        assert health['recap']['failure'] is None and health['recap']['success']['scene'] == SCENE
         result = await client.get(f"/api/host/model-calls/{error['id']}")
         assert result.status_code == 200
         assert result.json()['response']['request_id'] == 'fixture-request-42'

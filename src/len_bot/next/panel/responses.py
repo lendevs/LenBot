@@ -612,6 +612,8 @@ class Overview(PanelResponse):
     pending_schedules: int
     recent_errors: list[JsonObject]
     model_errors: list[JsonObject]
+    # Per model call purpose over the last seven days: the latest success and failure, or null.
+    model_health: list[JsonObject]
     reply_effects: JsonObject
     undelivered: JsonObject
     pending_reviews: JsonObject
