@@ -248,6 +248,10 @@ class Store:
             if updated.rowcount != 1:
                 raise ValueError(f"No cached image {image_index} for platform message {platform_id} in {scene}")
 
+    def recap(self, scene: str) -> str | None:
+        row = self.db.execute("SELECT recap FROM mind_sessions WHERE scene=?", (scene,)).fetchone()
+        return None if row is None else row[0]
+
     def active_history(self, scene: str) -> tuple[str | None, list[tuple[int, dict]]]:
         session = self.db.execute(
             "SELECT compact_through,recap FROM mind_sessions WHERE scene=?", (scene,)

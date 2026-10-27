@@ -14,7 +14,7 @@ from .local import LocalMemory, LocalMemorySettings
 from .jobs import MemoryJobs
 from .summary import MemorySummarizer
 from .role_paths import require_bot_path
-from .sections import excerpt
+from .sections import evidence, excerpt
 from ..platform.messages import ChatMessage, plain_text, render_message
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
@@ -143,6 +143,25 @@ MEMORY_TOOL = {"type": "function", "function": {
 }}
 
 
+# Recall characters each query fragment found in a section earns it in text-only recall.
+EVIDENCE_CHARS = 200
+# Recap sections whose items lead recall to the matters they concern, and how much of them is used.
+CUE_SECTIONS = ("我答应的事", "没回答的问题")
+CUE_CHARS = 400
+CUE_HITS = 2
+
+
+def recall_cues(recap: str | None) -> str:
+    """The recap's promises and unanswered questions, latest last, as extra recall wording."""
+    lines, keep = [], False
+    for line in (recap or "").splitlines():
+        if line.startswith("## "):
+            keep = line[3:].strip() in CUE_SECTIONS
+        elif keep and line.strip():
+            lines.append(line.strip().removeprefix("- ").removeprefix("* ").strip())
+    return "\n".join(lines)[-CUE_CHARS:]
+
+
 class MemoryService:
     def __init__(self, settings: LocalMemoryConfig,
                  backend: LocalMemory, *, jobs: MemoryJobs, store: Store,
@@ -193,10 +212,11 @@ class MemoryService:
         return ["browse", "read", "search", "write", "delete", "history", "forget"]
 
     async def search(self, scene: str, query: str, limit: int, *, automatic: bool = False,
-                     text_query: str | None = None, persona: str | None = None) -> list[dict]:
+                     text_query: str | None = None, persona: str | None = None,
+                     literal: bool = False) -> list[dict]:
         """``persona`` hides other roles' Bot records; the panel searches without it."""
-        hits = await self.backend.search(scene, query, limit,
-                                         automatic=automatic, text_query=text_query, bot_persona=persona)
+        hits = await self.backend.search(scene, query, limit, automatic=automatic, text_query=text_query,
+                                         bot_persona=persona, literal=literal)
         return [{**asdict(hit), "score": None} for hit in hits]
 
     def own_bot_path(self, scene: str, path: str) -> None:
@@ -264,8 +284,11 @@ class MemoryService:
             result = {"changes": await self.history(scene, item.path)}
         return encode(result)
 
-    async def recall(self, scene: str, messages: list[ChatMessage]) -> dict:
-        """Recall from actual chat only; returned text never becomes a native history entry."""
+    async def recall(self, scene: str, messages: list[ChatMessage], cues: str = "") -> dict:
+        """Recall from actual chat only; returned text never becomes a native history entry.
+
+        ``cues`` (see ``recall_cues``) find what the recent chat does not name; their hits only use the
+        budget the chat's own hits leave, and are searched by wording alone, with no vector request."""
         relevant = [message for message in messages if not message.is_self]
         # Semantic retrieval keeps speakers; literal retrieval must not match timestamps/accounts.
         text_only = self.backend.embedding is None
@@ -305,10 +328,23 @@ class MemoryService:
             for position, hit in enumerate(hits):
                 # Each remaining hit gets an equal share; what a short one leaves goes to the next.
                 share = max(budget // (len(hits) - position), min(budget, 200))
+                if text_only:
+                    # Without vectors the only sign of relevance is the shared wording: a section sharing
+                    # one fragment with the recent chat is shown around that fragment only.
+                    share = min(share, EVIDENCE_CHARS * evidence(hit["preview"], text_query))
                 append(hit["scope"], hit["path"], excerpt(hit["preview"], text_query, share), share,
                        kind="excerpt",
                        source_chars=hit["total_chars"], sections=hit["sections"])
-        return {"backend": self.settings.backend, "query": query, "items": items,
+        cues = cues.strip()
+        if cues and budget > 0:
+            hits = [hit for hit in await self.search(scene, cues, CUE_HITS, automatic=True,
+                                                     persona=self.active_personas.get(scene), literal=True)
+                    if (hit["scope"], hit["path"]) not in seen]
+            for position, hit in enumerate(hits):
+                share = min(budget // (len(hits) - position), EVIDENCE_CHARS * evidence(hit["preview"], cues))
+                append(hit["scope"], hit["path"], excerpt(hit["preview"], cues, share), share, kind="excerpt",
+                       source_chars=hit["total_chars"], sections=hit["sections"])
+        return {"backend": self.settings.backend, "query": query, "cues": cues, "items": items,
                 "content_chars": self.settings.recall_budget_chars - budget,
                 "budget_chars": self.settings.recall_budget_chars}
 

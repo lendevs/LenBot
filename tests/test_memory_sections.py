@@ -11,7 +11,8 @@ import pytest
 from len_bot.next.memory.embeddings import EmbeddingBinding, EmbeddingClient, EmbeddingSettings
 from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
 from len_bot.next.memory.jobs import MemoryJobs
-from len_bot.next.memory.service import LocalMemoryConfig, MemoryService
+from len_bot.next.memory.sections import evidence, query_terms
+from len_bot.next.memory.service import LocalMemoryConfig, MemoryService, recall_cues
 from len_bot.next.platform.onebot_messages import parse_message
 from len_bot.next.storage.store import Store
 from test_host_stream import panel, login
@@ -156,6 +157,60 @@ async def test_recall_shares_the_budget_so_a_long_hit_leaves_room_for_the_next(t
     assert {item['path'] for item in result['items']} == {'events/trip.md', 'events/potluck.md'}
     assert '周日早上七点半' in content and '阿杰订位' in content
     assert result['content_chars'] <= 600
+
+
+def chat(*texts):
+    return [parse_message({'post_type': 'message', 'message_type': 'group', 'group_id': 80001,
+        'user_id': 90001, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
+        'sender': {'nickname': '提问者', 'role': 'member'},
+        'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
+        for index, text in enumerate(texts, 1)]
+
+
+def test_query_fragments_stay_inside_one_line():
+    terms, short = query_terms('读书会的安排\n接着说 地点\n好')
+    assert '安排\n' not in terms and '排\n接' not in terms and '说 地' in terms and ' 地点' not in terms
+    assert short == ['好'] and evidence('## 安排\n秋游路线', '读书会的安排\n接着说') == 0
+
+
+@pytest.mark.asyncio
+async def test_text_recall_shows_a_section_sharing_little_wording_only_around_it(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=1500, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'events/trip.md', '# 秋游\n\n## 安排\n' + '秋游路线先走山脚步道，中途在茶亭休息。' * 80
+                       + '\n秋游集合时间最新改为周日早上七点半。\n', '合成样本')
+    await memory.write(SCENE, 'events/week.md', '# 读书会\n\n读书会最终地点是图书馆二楼。\n', '合成样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        # Two messages joined by a line break do not match the heading line followed by the route.
+        follow = await service.recall(SCENE, chat('读书会的安排', '接着说地点'))
+        assert [item['path'] for item in follow['items']] == ['events/week.md']
+        # One shared fragment (游集合) shows the trip around it, not the whole budget.
+        loose = await service.recall(SCENE, chat('南门出游集合'))
+        assert [item['path'] for item in loose['items']] == ['events/trip.md']
+        assert loose['content_chars'] <= 200 and '游集合' in loose['items'][0]['content']
+
+
+@pytest.mark.asyncio
+async def test_recap_promises_lead_recall_to_what_the_chat_no_longer_names(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=1500, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'events/books.md', '# 十一月书单\n\n十一月书单定了《小王子》和《夜航西飞》。\n', '合成样本')
+    await memory.write(SCENE, 'events/trip.md', '# 秋游\n\n秋游集合时间是周日早上七点半。\n', '合成样本')
+    recap = ('## 话题脉络\n- 秋游安排\n\n## 我答应的事\n- 周五前把十一月书单发到群里\n\n'
+             '## 没回答的问题\n- 小林问借书证怎么办\n\n## 关键原话\n- 秋游别迟到\n')
+    cues = recall_cues(recap)
+    assert cues == '周五前把十一月书单发到群里\n小林问借书证怎么办' and recall_cues(None) == ''
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        assert (await service.recall(SCENE, chat('那个弄好了没')))['items'] == []
+        found = await service.recall(SCENE, chat('那个弄好了没'), cues)
+        assert [item['path'] for item in found['items']] == ['events/books.md'] and found['cues'] == cues
+        # The chat's own hits come first; a cue hit already shown is not repeated.
+        both = await service.recall(SCENE, chat('秋游集合时间是几点'), cues)
+        assert [item['path'] for item in both['items']] == ['events/trip.md', 'events/books.md']
 
 
 @pytest.mark.asyncio

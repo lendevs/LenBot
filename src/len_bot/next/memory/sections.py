@@ -113,6 +113,29 @@ _SENTENCE = re.compile(r'[^。！？!?；;\n]*(?:[。！？!?；;]+\n?|\n|$)')
 GAP = '\n…\n'
 
 
+def query_terms(query: str) -> tuple[list[str], list[str]]:
+    """The distinct three-character fragments within each line of ``query``, and its one- or two-character
+    lines, case-folded. A fragment never spans a line break or starts or ends with a space, so two
+    messages joined into one query do not match a heading followed by a line."""
+    terms: dict[str, None] = {}
+    short: dict[str, None] = {}
+    for line in query.casefold().splitlines():
+        line = line.strip()
+        if 0 < len(line) < 3:
+            short[line] = None
+        for index in range(len(line) - 2):
+            term = line[index:index + 3]
+            if term.strip() == term:
+                terms[term] = None
+    return list(terms), list(short)
+
+
+def evidence(text: str, query: str) -> int:
+    """How many of the query's fragments and short lines ``text`` contains."""
+    folded = text.casefold()
+    return sum(part in folded for part in (part for parts in query_terms(query) for part in parts))
+
+
 def excerpt(text: str, query: str, limit: int) -> str:
     """The part of ``text`` that best answers ``query`` within ``limit`` characters.
 
@@ -132,9 +155,7 @@ def excerpt(text: str, query: str, limit: int) -> str:
         head += line
     body = text[len(head):]
     room = limit - len(head) - 2 * len(GAP)
-    folded = query.casefold()
-    terms = {folded[index:index + 3] for index in range(len(folded) - 2)}
-    terms = {term for term in terms if term.strip() == term and term in body.casefold()}
+    terms = {term for term in query_terms(query)[0] if term in body.casefold()}
     if room <= 0 or not terms:
         return text[:limit]
     units: list[str] = []

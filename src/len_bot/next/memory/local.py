@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .embeddings import EmbeddingBinding, EmbeddingClient
 from .types import MemoryDocument, MemoryNode, MemoryPage
-from .sections import SECTION_STATEMENTS, put_sections, split_sections
+from .sections import SECTION_STATEMENTS, put_sections, query_terms, split_sections
 from ..storage.schema import FORMAT_RESET
 from ..storage.sqlite import connect
 from ..runtime.logs import log_event
@@ -848,27 +848,26 @@ class LocalMemory:
         folded = query.casefold()[-1200:]
         if len(folded) < 3:
             return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, bot_persona)
-        terms = dict.fromkeys(folded[index:index + 3] for index in range(len(folded) - 2))
-        expression = ' OR '.join('"' + term.replace('"', '""') + '"' for term in terms)
+        # A short message remains searchable when a following reply adds another line.
+        terms, short = query_terms(folded)
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
         eligible = _eligible(bot_persona)
-        # A short message remains searchable when a following reply adds another line.
-        short = list(dict.fromkeys(line.strip() for line in folded.splitlines() if 0 < len(line.strip()) < 3))
-        short_rows = ""
-        parameters = [expression, *scopes]
+        selects, parameters = [], []
+        if terms:
+            selects.append(f"""SELECT m.id, m.scope, m.path, memory_fts.rank AS relevance
+                FROM memory_fts JOIN memory_sections AS m ON m.id=memory_fts.rowid
+                WHERE memory_fts MATCH ? AND m.scope IN ({placeholders}) {eligible}""")
+            parameters += [' OR '.join('"' + term.replace('"', '""') + '"' for term in terms), *scopes]
         if short:
             matches = " OR ".join("instr(content, ?) > 0" for _ in short)
-            short_rows = f"""UNION ALL SELECT id, scope, path, 0 FROM memory_sections
-                WHERE scope IN ({placeholders}) AND ({matches}) {eligible}"""
-            parameters.extend([*scopes, *short])
+            selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
+                WHERE scope IN ({placeholders}) AND ({matches}) {eligible}""")
+            parameters += [*scopes, *short]
+        if not selects:
+            return []
         return db.execute(f"""
-            WITH hits AS MATERIALIZED (
-                SELECT m.id, m.scope, m.path, memory_fts.rank AS relevance
-                FROM memory_fts JOIN memory_sections AS m ON m.id=memory_fts.rowid
-                WHERE memory_fts MATCH ? AND m.scope IN ({placeholders}) {eligible}
-                {short_rows}
-            )
+            WITH hits(id, scope, path, relevance) AS MATERIALIZED ({" UNION ALL ".join(selects)})
             SELECT id, scope, path FROM hits GROUP BY id, scope, path
             ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END, MIN(relevance), path, id LIMIT ?
         """, (*parameters, scene, limit)).fetchall()
@@ -945,27 +944,28 @@ class LocalMemory:
     async def search(self, scene: str, query: str, limit: int = 10, *,
                      include_public: bool = True,
                      automatic: bool = False, text_query: str | None = None,
-                     bot_persona: str | None = None) -> list[LocalMemoryHit]:
-        """``bot_persona`` keeps other roles' ``bot/<id>/`` records out of the results."""
+                     bot_persona: str | None = None, literal: bool = False) -> list[LocalMemoryHit]:
+        """``bot_persona`` keeps other roles' ``bot/<id>/`` records out of the results; ``literal`` skips
+        the vectors and their query request."""
         if not query.strip() or not 1 <= limit <= 100:
             raise ValueError("search requires a nonblank query and limit 1..100")
         source = _scene_scope(scene)
-        literal = query if text_query is None else text_query
+        text = query if text_query is None else text_query
         async with AsyncExitStack() as locks:
             await locks.enter_async_context(self._lock(source))
             if include_public:
                 await locks.enter_async_context(self._lock("public"))
-            if self.embedding is None:
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
+            if self.embedding is None or literal:
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
                                                include_public, automatic, bot_persona)
             try:
                 dimensions = await asyncio.to_thread(self._vector_preflight)
             except VectorIndexNeedsRebuild as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
                                                include_public, automatic, bot_persona)
             if dimensions is None:
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
                                                include_public, automatic, bot_persona)
             try:
                 batch = await self._embedding(source, [query], "query")
@@ -973,9 +973,9 @@ class LocalMemory:
                     raise ValueError(f"embedding dimensions {batch.dimensions} differ from memory index {dimensions}")
             except (ValueError, TimeoutError) as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
                                                include_public, automatic, bot_persona)
-            return await asyncio.to_thread(self._search_hybrid_sync, source, literal,
+            return await asyncio.to_thread(self._search_hybrid_sync, source, text,
                                            batch.vectors[0], limit, include_public, automatic, bot_persona)
 
     def _history_sync(self, scope: str, path: str) -> list[LocalMemoryChange]:

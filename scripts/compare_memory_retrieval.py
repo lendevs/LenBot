@@ -14,7 +14,7 @@ import time
 
 from len_bot.next.memory.jobs import MemoryJobs
 from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
-from len_bot.next.memory.service import LocalMemoryConfig, MemoryService
+from len_bot.next.memory.service import LocalMemoryConfig, MemoryService, recall_cues
 from len_bot.next.platform.onebot_messages import parse_message
 from len_bot.next.storage.store import Store
 
@@ -44,7 +44,10 @@ DOCUMENTS = {
         + '\n秋游集合时间最新改为周日早上七点半，原来的八点作废。\n'
     ),
     'events/potluck.md': '# 聚餐\n\n聚餐由阿杰订位，秋游结束后在山脚的农家菜馆。\n',
+    'events/booklist.md': '# 十一月书单\n\n十一月书单定了《小王子》和《夜航西飞》，小林负责借书。\n',
 }
+# The recap of an earlier conversation: what the bot promised, which the recent chat no longer names.
+RECAP = '## 话题脉络\n- 读书会选书\n\n## 我答应的事\n- 周五前把十一月书单发到群里（小林问的）\n\n## 没回答的问题\n'
 CASES = [
     ('long-section', ['读书会最终地点和时间是什么？'], ['图书馆二楼', '周六下午三点']),
     ('latest-correction', ['报告最新什么时候交？'], ['最新更正为周六中午提交']),
@@ -56,6 +59,7 @@ CASES = [
     ('correction-past-budget', ['秋游集合时间最新是几点？'], ['周日早上七点半']),
     ('second-source', ['秋游集合时间最新是几点', '聚餐由谁订位'], ['周日早上七点半', '阿杰订位']),
     ('forgotten', ['南门出游集合'], []),
+    ('promise-cue', ['那个弄好了没', '周五了哦'], ['《小王子》和《夜航西飞》'], RECAP),
 ]
 
 
@@ -72,7 +76,7 @@ async def compare() -> dict:
         rows = []
         with Store(root / 'chat.db') as store, MemoryJobs(root / 'jobs.db') as jobs:
             service = MemoryService(settings, backend, jobs=jobs, store=store, active_personas={SCENE: 'current'})
-            for name, texts, expected in CASES:
+            for name, texts, expected, *recap in CASES:
                 if name == 'forgotten':
                     await backend.forget(SCENE, 'events/week.md')
                 messages = [parse_message({
@@ -82,7 +86,7 @@ async def compare() -> dict:
                     'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
                     for index, text in enumerate(texts, 1)]
                 started = time.perf_counter()
-                result = await service.recall(SCENE, messages)
+                result = await service.recall(SCENE, messages, recall_cues(recap[0] if recap else None))
                 elapsed = (time.perf_counter() - started) * 1000
                 content = '\n'.join(item['content'] for item in result['items'])
                 rows.append({'case': name, 'query': texts, 'expected_evidence': expected,

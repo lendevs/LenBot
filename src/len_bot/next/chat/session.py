@@ -33,7 +33,7 @@ RESERVE_CHANNELS = frozenset({"schedule", "task"})
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
 PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info"})
-from ..memory.service import MemoryService, MemorySettings
+from ..memory.service import MemoryService, MemorySettings, recall_cues
 from ..reference.library import ReferenceLibrary
 from ..reference.tool import changes_notice
 from ..platform.messages import UploadResult
@@ -493,7 +493,8 @@ class Chat:
                     elif self.memory is not None and self.memory.settings.auto_recall:
                         phase = '记忆自动召回'
                         recall = await self.memory.recall(
-                            scene, await self.store.call(self.store.recent_context_messages, scene, limit=8))
+                            scene, await self.store.call(self.store.recent_context_messages, scene, limit=8),
+                            recall_cues(await self.store.call(self.store.recap, scene)))
                         if recall["items"]:
                             recalled = encode({"backend": recall["backend"], "items": recall["items"]})
                         recall_items = recall['items']
