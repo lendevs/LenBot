@@ -1,4 +1,4 @@
-import type { PluginsSnapshot } from './plugins'
+import type { PluginsSnapshot, SceneMemory } from './plugins'
 import { http, request } from './client'
 
 /** Types of panel/routes/settings.py, permissions.py and the parts of plugins.py a group's settings use. */
@@ -186,8 +186,8 @@ export const settingsApi = {
   putPermissions: (scene: string, body: Permissions) =>
     request<PermissionsSnapshot>('/api/host/permissions', { method: 'PUT', query: { scene }, body }),
   plugins: (signal?: AbortSignal) => http.get<PluginsSnapshot>('/api/host/plugins', undefined, signal),
-  putScenePlugins: (scene: string, plugins: string[]) =>
-    http.put<PluginsSnapshot>(`/api/host/scenes/${scenePath(scene)}/plugins`, { plugins }),
+  putScenePlugins: (scene: string, plugins: string[], memory: SceneMemory) =>
+    http.put<PluginsSnapshot>(`/api/host/scenes/${scenePath(scene)}/plugins`, { plugins, ...memory }),
   useRole: (key: string, scenes: string[]) =>
     http.post<RoleSwitch>(`/api/host/personas/${encodeURIComponent(key)}/scenes`, { scenes }),
 }

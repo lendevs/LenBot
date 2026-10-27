@@ -126,6 +126,8 @@ export interface RunningPlugin {
   notices: string[]
   tools: PluginTool[]
   instructions: string | null
+  /** Entries a group may choose this plugin for as its memory or recap. */
+  memory_entries: ('recall' | 'memory_tool' | 'compact')[]
   backgrounds: {
     method: string
     every_seconds: number
@@ -149,6 +151,12 @@ export interface RunningPlugin {
   model_calls: PluginCall[]
 }
 
+/** A group's memory implementation and compaction recap: a plugin name, or null for the native one. */
+export interface SceneMemory {
+  memory_plugin: string | null
+  recap_plugin: string | null
+}
+
 /** A saved value: secrets only say whether they are set, values of unknown plugins stay hidden. */
 export type SavedValue = { value: FieldValue } | { configured: boolean } | { hidden: true }
 
@@ -168,7 +176,15 @@ export interface PluginsSnapshot {
   /** Groups in the saved configuration, the choices of scene fields. */
   scene_choices: string[]
   /** Running groups: the plugins saved for each and the ones running now. */
-  scenes: Record<string, { saved: string[] | null; running: string[] }>
+  scenes: Record<
+    string,
+    {
+      saved: string[] | null
+      running: string[]
+      memory_plugin: { saved: string | null; running: string | null }
+      recap_plugin: { saved: string | null; running: string | null }
+    }
+  >
   restart_required: boolean
   /** What an install, apply or other operation returned. */
   operation?: {
@@ -238,8 +254,8 @@ export const pluginsApi = {
   /** Saving parameters also enables the plugin; secrets left null keep their saved value. */
   save: (plugin: string, enabled: boolean, config: Record<string, FieldValue> = {}) =>
     http.put<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}`, { enabled, config }),
-  putScene: (scene: string, plugins: string[]) =>
-    http.put<PluginsSnapshot>(`/api/host/scenes/${name(scene)}/plugins`, { plugins }),
+  putScene: (scene: string, plugins: string[], memory: SceneMemory) =>
+    http.put<PluginsSnapshot>(`/api/host/scenes/${name(scene)}/plugins`, { plugins, ...memory }),
   putPaths: (paths: string[], dataDirectory: string) =>
     http.put<PluginsSnapshot>('/api/host/plugin-paths', { paths, data_directory: dataDirectory }),
   install: (url: string, ref: string | null, switchSource: boolean) =>

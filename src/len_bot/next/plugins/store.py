@@ -65,6 +65,14 @@ class PluginStore:
                 "updated=excluded.updated", (scene, plugin, row[0], self.now()))
         return row[0]
 
+    def memory_progress_detail(self, scene: str, plugin: str) -> dict | None:
+        """The reported position with the time of that message and of the report."""
+        row = self.db.execute(
+            "SELECT p.through_seq,p.updated,COALESCE(m.received_at,json_extract(m.body,'$.time')) AS message_time "
+            "FROM plugin_memory_progress p LEFT JOIN messages m ON m.scene=p.scene AND m.seq=p.through_seq "
+            "WHERE p.scene=? AND p.plugin=?", (scene, plugin)).fetchone()
+        return None if row is None else dict(row)
+
     def memory_progress(self, scene: str, plugin: str) -> int | None:
         row = self.db.execute("SELECT through_seq FROM plugin_memory_progress WHERE scene=? AND plugin=?",
                               (scene, plugin)).fetchone()

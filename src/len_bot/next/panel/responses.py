@@ -49,6 +49,12 @@ class ScenePersona(PanelResponse):
     persona: PersonaName
 
 
+class MemoryScene(ScenePersona):
+    # The running scene's memory plugin, its reported position and latest memory error; None is native.
+    plugin: JsonObject | None
+    recap_plugin: str | None
+
+
 class HostScene(ScenePersona):
     persona_path: str
     persona_switch: dict[str, str] | None
@@ -180,7 +186,7 @@ class MemoryState(PanelResponse):
     index: JsonObject | None
     reindex_command: str
     maintenance_container: bool
-    scenes: list[ScenePersona]
+    scenes: list[MemoryScene]
     persona_ids: dict[str, list[str]]
 
 

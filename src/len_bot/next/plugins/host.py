@@ -1028,6 +1028,10 @@ class PluginHost:
                            "parameters": entry.model.model_json_schema(), "needs_source": entry.needs_source}
                           for name, entry in record.tools.items()],
                 "instructions": record.instructions,
+                # Memory entries a group may choose this plugin for: recall, memory_tool, compact.
+                "memory_entries": [name for name, present in (("recall", record.recall is not None),
+                                                              ("memory_tool", record.memory_tool is not None),
+                                                              ("compact", record.compact is not None)) if present],
                 "backgrounds": [{"method": item.method, "every_seconds": item.seconds,
                                  "last_started": item.last_started, "last_finished": item.last_finished,
                                  "last_error": item.last_error} for item in record.backgrounds],

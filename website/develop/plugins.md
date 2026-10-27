@@ -69,8 +69,13 @@ class Counter(Plugin):
 | `@on_notice` | OneBot 通知事件，例如有人进群 |
 | `@tool` | 注册为 Bot 可以调用的工具 |
 | `@background` | 周期性后台工作 |
+| `@recall` | 群选择本插件做长期记忆时，每轮提供自动召回 |
+| `@memory_tool` | 群选择本插件做长期记忆时，作为这个群的 `memory` 工具 |
+| `@compact` | 群选择本插件写压缩回想时，生成新的回想 |
 
 插件安装并在群内启用后，发送 `/计数` 或 `计数加一` 即可得到回复。命令、全文匹配和正则匹配由插件直接处理，不调用聊天模型。`@tool` 注册的工具由模型在聊天中决定是否调用。
+
+记忆相关的三个入口的参数、预算和出错时的处理见[插件接口 v1](https://github.com/lendevs/LenBot/blob/master/developer/plugins-v1.md#自动召回)，完整示例在仓库的 `examples/plugins/notebook`。
 
 ## 配置表单
 

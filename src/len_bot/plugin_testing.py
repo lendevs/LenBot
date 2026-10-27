@@ -90,12 +90,12 @@ class PluginTest:
     def __init__(self, package: Path, *, config: dict | None = None,
                  scenes: Sequence[str] = ('onebot:group:80001',), owners: Sequence[str] = (),
                  now: Callable[[], float] = time.time, models: dict | None = None,
-                 data: Path | None = None, data_version: int | None = None):
-        """``data`` is copied in as the plugin's existing data directory; ``data_version`` records the
+                 data: Path | None = None, data_version: int | None = None, memory: bool = False):
+        """``memory`` makes the plugin every scene's ``memory_plugin``. ``data`` is copied in as the plugin's existing data directory; ``data_version`` records the
         version it was written with (data without one counts as 1). A higher manifest ``data_version``
         then runs ``migrate_data`` before ``start``, as on a real upgrade."""
         self.now, self.models = now, models
-        self.data, self.data_version = data, data_version
+        self.data, self.data_version, self.memory_scenes = data, data_version, memory
         self.package = Path(package)
         self.manifest = parse_manifest(self.package / 'plugin.toml')
         self.manifest.require_compatible()
@@ -125,7 +125,8 @@ class PluginTest:
                                               'api_key': 'synthetic'}},
                        'roles': {'mind': {'provider': 'local', 'model': 'local', 'context_window_tokens': 8192}}},
             'plugins': {'paths': [plugins], 'data_directory': root / 'plugin-data', self.manifest.name: self.values},
-            'scenes': {scene: {'persona': root / 'unused-role', 'plugins': [self.manifest.name]}
+            'scenes': {scene: {'persona': root / 'unused-role', 'plugins': [self.manifest.name],
+                               **({'memory_plugin': self.manifest.name} if self.memory_scenes else {})}
                        for scene in self.scenes},
         })
         try:

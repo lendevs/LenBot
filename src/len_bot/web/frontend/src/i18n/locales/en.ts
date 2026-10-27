@@ -750,6 +750,13 @@ export default {
         empty: 'No plugins loaded yet',
         notLoaded: 'Not loaded',
         failed: 'Failed to load',
+        memory: 'Long-term memory',
+        recap: 'Compaction recap',
+        native: 'Native',
+        switchTitle: "Switch this group's long-term memory?",
+        switchMessage:
+          'Existing memory data is kept. After switching back to native memory, upkeep starts from that moment; messages in between are not processed.',
+        switchConfirm: 'Switch',
       },
       permissions: {
         section: 'Permissions',
@@ -880,6 +887,15 @@ export default {
       readFailed: 'Could not read memory',
       off: 'Memory is off. Choose how memory is stored in settings and save.',
       unused: 'This group does not use memory',
+      plugin: {
+        memory: 'Memory',
+        recap: 'Compaction recap',
+        name: 'Plugin {name}',
+        missing: 'Not loaded',
+        progress: 'Processed through',
+        unreported: 'Not reported',
+        lastError: 'Latest error',
+      },
       needsRebuild: 'The vector settings do not match the memory index; only full-text search is used now.',
       toIndex: 'Rebuild index',
       views: {

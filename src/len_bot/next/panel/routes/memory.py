@@ -19,9 +19,12 @@ from ...chat.recall import RecallArguments, message_page
 from ...runtime.logs import credentials, redact, redact_record
 from ...memory.jobs import processing_records
 from ...maintenance.commands import maintenance_command
+from ...plugins.store import PluginStore
 
 
 logger = logging.getLogger(__name__)
+# Where a memory plugin's errors are recorded: its recall and its memory tool.
+MEMORY_ERRORS = frozenset({'自动召回', '工具 memory'})
 
 
 class SearchRequest(BaseModel):
@@ -97,6 +100,15 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                     422 if isinstance(error, ValueError) else 500)
             raise HTTPException(code, redact(f"{type(error).__name__}: {error}", secrets)) from error
 
+    def memory_plugin(scene: str, name: str | None) -> dict | None:
+        if name is None:
+            return None
+        record = None if runtime.plugins is None else runtime.plugins.plugins.get(name)
+        errors = [] if record is None else [item for item in record.errors if item['where'] in MEMORY_ERRORS]
+        return {"name": name, "status": None if record is None else record.status,
+                "progress": PluginStore(runtime.store).memory_progress_detail(scene, name),
+                "last_error": errors[-1] if errors else None}
+
     @app.get("/api/host/memory/state", response_model=responses.MemoryState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         memory = runtime.memory
@@ -113,7 +125,9 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
             "index": None if memory is None else await asyncio.to_thread(memory.backend.index_status),
             "reindex_command": maintenance_command(root, 'len_bot.next.maintenance.memory_reindex'),
             "maintenance_container": container,
-            "scenes": [{"scene": scene, "persona": {"id": chat.persona.id, "name": chat.persona.name}}
+            "scenes": [{"scene": scene, "persona": {"id": chat.persona.id, "name": chat.persona.name},
+                        "plugin": memory_plugin(scene, chat.config.memory_plugin),
+                        "recap_plugin": chat.config.recap_plugin}
                        for scene, chat in runtime.chats.items()],
             'persona_ids': {} if memory is None else {scene: sorted(memory.known_persona_ids(scene))
                                                      for scene in runtime.chats},

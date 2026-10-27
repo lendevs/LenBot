@@ -95,3 +95,32 @@ async def test_the_local_harness_calls_the_memory_tool(tmp_path):
     async with PluginTest(tmp_path / 'notes') as bot:
         assert await bot.memory({'note': '甲'}) == f'已记下 {SCENE}'
         assert await bot.memory({'query': '甲'}) == '笔记：甲'
+
+
+@pytest.mark.asyncio
+async def test_the_panel_saves_the_group_memory_choice_for_the_next_start(tmp_path):
+    import httpx
+    from len_bot.next.panel.app import create_app
+    async with running(tmp_path, [], [], plugin=NOTEBOOK, tools=['say', 'memory']) as runtime:
+        runtime.accepting = True
+        app = create_app(runtime.config, runtime, root=tmp_path)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+            assert (await client.post('/api/auth/login', json={'username': 'operator',
+                                                               'password': 'fixture-password'})).status_code == 200
+            path = f'/api/host/scenes/{SCENE}/plugins'
+            snapshot = (await client.get('/api/host/plugins')).json()
+            assert snapshot['scenes'][SCENE]['memory_plugin'] == {'saved': 'notes', 'running': 'notes'}
+            notes = next(item for item in snapshot['running']['plugins'] if item['name'] == 'notes')
+            assert notes['memory_entries'] == ['recall', 'memory_tool']
+            # Leaving the memory fields out would reset them, so they are required.
+            assert (await client.put(path, json={'plugins': ['notes']})).status_code == 422
+            refused = await client.put(path, json={'plugins': [], 'memory_plugin': 'notes', 'recap_plugin': None})
+            assert refused.status_code == 422 and 'memory_plugin' in refused.text
+            saved = await client.put(path, json={'plugins': ['notes'], 'memory_plugin': None, 'recap_plugin': 'notes'})
+            assert saved.status_code == 200, saved.text
+            body = saved.json()
+            assert body['scenes'][SCENE]['memory_plugin'] == {'saved': None, 'running': 'notes'}
+            assert body['scenes'][SCENE]['recap_plugin'] == {'saved': 'notes', 'running': None}
+            assert body['restart_required'] is True
+        scene = json.loads((tmp_path / 'lenbot.config.json').read_text())['scenes'][SCENE]
+        assert 'memory_plugin' not in scene and scene['recap_plugin'] == 'notes'

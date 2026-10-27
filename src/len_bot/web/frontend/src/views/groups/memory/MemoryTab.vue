@@ -16,6 +16,7 @@ import BrowseView from './BrowseView.vue'
 import IndexView from './IndexView.vue'
 import IngestView from './IngestView.vue'
 import MemorySettingsView from './MemorySettingsView.vue'
+import PluginMemory from './PluginMemory.vue'
 import SearchView from './SearchView.vue'
 
 const props = defineProps<{ scene: string; timeZone: string }>()
@@ -26,9 +27,14 @@ const { t } = useI18n()
 const route = useRoute()
 const state = useQuery({ queryKey: keys.memory.state(), queryFn: ({ signal }) => memoryApi.state(signal) })
 const enabled = computed(() => state.data.value?.enabled ?? false)
+const entry = computed(() => (state.data.value?.scenes ?? []).find((item) => item.scene === props.scene))
+const used = computed(() => entry.value !== undefined)
+// A group whose memory is a plugin has no native upkeep.
 const views = computed(() =>
   (enabled.value
-    ? (['browse', 'search', 'ingest', 'index', 'settings'] as const)
+    ? (['browse', 'search', 'ingest', 'index', 'settings'] as const).filter(
+        (value) => value !== 'ingest' || !entry.value?.plugin,
+      )
     : (['settings'] as const)
   ).map((value) => ({ value, label: t(`groups.memory.views.${value}`) })),
 )
@@ -38,8 +44,9 @@ const chosen = ref<View>(
     ? (initial as View)
     : 'browse',
 )
-const view = computed<View>(() => (enabled.value ? chosen.value : 'settings'))
-const used = computed(() => (state.data.value?.scenes ?? []).some((item) => item.scene === props.scene))
+const view = computed<View>(() =>
+  !enabled.value ? 'settings' : chosen.value === 'ingest' && entry.value?.plugin ? 'browse' : chosen.value,
+)
 
 /** A file opened from search results. */
 const opening = ref<{ scope: MemoryScope; path: string } | null>(null)
@@ -77,6 +84,12 @@ async function switchTo(value: View) {
       :retry="state.refetch"
     />
     <template v-else-if="state.data.value">
+      <PluginMemory
+        v-if="entry?.plugin || entry?.recap_plugin"
+        :plugin="entry.plugin"
+        :recap="entry.recap_plugin"
+        :time-zone="timeZone"
+      />
       <p v-if="!enabled" class="rounded-lg border border-line px-4 py-3 text-sm text-muted">
         {{ t('groups.memory.off') }}
       </p>

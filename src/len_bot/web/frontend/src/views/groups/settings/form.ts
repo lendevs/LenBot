@@ -11,6 +11,7 @@ import {
   type TaskChange,
 } from '../../../api/settings'
 import { readHostState, readPendingRestart } from '../../../api/hostStore'
+import type { SceneMemory } from '../../../api/plugins'
 import { describeError } from '../../../ui/errors'
 
 export interface Relationship {
@@ -25,6 +26,7 @@ export interface Draft {
   tasks: TaskChange
   speech: SpeechChange
   plugins: string[]
+  memory: SceneMemory
   permissions: Permissions | null
 }
 
@@ -112,14 +114,19 @@ export function useSettingsForm(scene: Ref<string>) {
     const snapshot = settings.data.value
     const base = snapshot && sceneOf(snapshot, scene.value)
     if (!base) return null
+    const entry = plugins.data.value?.scenes[scene.value]
     return {
       ...base,
-      plugins: copy(plugins.data.value?.scenes[scene.value]?.saved ?? []),
+      plugins: copy(entry?.saved ?? []),
+      memory: {
+        memory_plugin: entry?.memory_plugin.saved ?? null,
+        recap_plugin: entry?.recap_plugin.saved ?? null,
+      },
       permissions: permissions.data.value ? copy(permissions.data.value.saved) : null,
     }
   })
   const draft = ref<Draft | null>(null)
-  const parts = ['scene', 'tasks', 'speech', 'plugins', 'permissions'] as const
+  const parts = ['scene', 'tasks', 'speech', 'plugins', 'memory', 'permissions'] as const
   const changed = (part: (typeof parts)[number]) => {
     if (!draft.value || !saved.value) return false
     if (part === 'scene')
@@ -130,6 +137,11 @@ export function useSettingsForm(scene: Ref<string>) {
     return !same(draft.value[part], saved.value[part])
   }
   const dirty = computed(() => parts.some(changed))
+  /** The memory implementation itself; a recap change alone needs no confirmation. */
+  const memoryChanged = computed(
+    () =>
+      !!draft.value && !!saved.value && draft.value.memory.memory_plugin !== saved.value.memory.memory_plugin,
+  )
 
   function adopt() {
     draft.value = saved.value && copy(saved.value)
@@ -254,8 +266,11 @@ export function useSettingsForm(scene: Ref<string>) {
         client.setQueryData(keys.host.settings(), await settingsApi.putSpeech(name, value.speech))
         void client.invalidateQueries({ queryKey: keys.host.limits() })
       }
-      if (changed('plugins'))
-        client.setQueryData(keys.plugins.all(), await settingsApi.putScenePlugins(name, value.plugins))
+      if (changed('plugins') || changed('memory'))
+        client.setQueryData(
+          keys.plugins.all(),
+          await settingsApi.putScenePlugins(name, value.plugins, value.memory),
+        )
       if (changed('permissions') && value.permissions)
         client.setQueryData(
           keys.scene.permissions(name),
@@ -283,6 +298,7 @@ export function useSettingsForm(scene: Ref<string>) {
     saved,
     draft,
     dirty,
+    memoryChanged,
     errors,
     invalid,
     saving,

@@ -38,6 +38,9 @@ class PluginChange(BaseModel):
 class ScenePlugins(BaseModel):
     model_config = STRICT
     plugins: list[str]
+    # Required, so a client that only knows the plugin list cannot reset the scene's memory by omission.
+    memory_plugin: str | None
+    recap_plugin: str | None
 
     @field_validator("plugins")
     @classmethod
@@ -45,6 +48,9 @@ class ScenePlugins(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("插件名不能重复")
         return value
+
+
+MEMORY_KEYS = ("memory_plugin", "recap_plugin")
 
 
 class PluginPaths(BaseModel):
@@ -192,10 +198,13 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                                and PLUGIN_NAME.fullmatch(path.name) and path.name not in configured]),
             "scene_choices": list(saved.scenes),
             "scenes": {scene: {"saved": saved.scenes[scene].plugins if scene in saved.scenes else None,
-                               "running": settings.plugins}
+                               "running": settings.plugins,
+                               **{key: {"saved": getattr(saved.scenes[scene], key) if scene in saved.scenes else None,
+                                        "running": getattr(settings, key)} for key in MEMORY_KEYS}}
                        for scene, settings in running.scenes.items()},
             "restart_required": any(item.requested for item in pending) or saved.plugins != running.plugins or any(
                 scene not in saved.scenes or saved.scenes[scene].plugins != settings.plugins
+                or any(getattr(saved.scenes[scene], key) != getattr(settings, key) for key in MEMORY_KEYS)
                 for scene, settings in running.scenes.items()),
         }
 
@@ -423,7 +432,13 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                 if record_path.is_file() and manager.installer.read(name).installed is None:
                     raise ValueError(f'插件 {name} 尚未应用源码，请先完成安装')
             changed.extend(sorted(set(saved.scenes[scene].plugins) ^ set(change.plugins)))
-            source["scenes"][scene]["plugins"] = change.plugins
+            target = source["scenes"][scene]
+            target["plugins"] = change.plugins
+            for key in ("memory_plugin", "recap_plugin"):
+                if getattr(change, key) is None:
+                    target.pop(key, None)
+                else:
+                    target[key] = getattr(change, key)
 
         return await save(edit, changed)
 

@@ -16,6 +16,7 @@ import RoleSection from './RoleSection.vue'
 import SpeechSection from './SpeechSection.vue'
 import TasksSection from './TasksSection.vue'
 import { formKey, useSettingsForm } from './form'
+import { confirmMemorySwitch } from './memory'
 
 const props = defineProps<{ scene: string; timeZone: string }>()
 const emit = defineEmits<{ dirty: [value: boolean] }>()
@@ -31,6 +32,7 @@ watch(
 )
 
 async function save() {
+  if (form.memoryChanged && !(await confirmMemorySwitch())) return
   if (await form.save()) toast.success(t('common.saved'))
 }
 </script>

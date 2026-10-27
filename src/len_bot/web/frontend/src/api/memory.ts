@@ -30,8 +30,22 @@ export interface MemoryState {
   summaries: boolean
   reindexing: boolean
   index: MemoryIndex | null
-  scenes: { scene: string; persona: { id: string; name: string } }[]
+  scenes: {
+    scene: string
+    persona: { id: string; name: string }
+    /** The running group's memory plugin; null when the native memory is in use. */
+    plugin: MemoryPlugin | null
+    recap_plugin: string | null
+  }[]
   persona_ids: Record<string, string[]>
+}
+
+export interface MemoryPlugin {
+  name: string
+  status: string | null
+  /** The last message the plugin reported as processed; null before its first report. */
+  progress: { through_seq: number; updated: number; message_time: number | null } | null
+  last_error: { at: number; where: string; error: string } | null
 }
 
 export interface MemoryNode {
