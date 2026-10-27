@@ -16,6 +16,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
@@ -31,12 +32,19 @@ from native import Native
 
 LABELS = {'prepare': '准备更新', 'apply': '停机升级', 'restore': '恢复快照', 'start': '启动程序'}
 LOG_LIMIT = 5 * 1024 * 1024
+# backups/<UTC time>-<8 hex>, as written by the update and by install.py upgrade.
+SNAPSHOT_NAME = re.compile(r'\d{8}-\d{6}-[0-9a-f]{8}')
 
 
 def rotate(path: Path) -> None:
     """Keep one previous file once a log grows past the limit; checked when the updater starts."""
     if path.exists() and path.stat().st_size > LOG_LIMIT:
         path.replace(path.with_name(path.name + '.1'))
+
+
+def size(path: Path) -> int:
+    """Bytes of the files under ``path``, without following links."""
+    return sum(os.lstat(os.path.join(folder, name)).st_size for folder, _, files in os.walk(path) for name in files)
 
 
 class Controller:
@@ -334,6 +342,41 @@ class Controller:
             self.backend.publish_reference(self.reference) if self.deployment['mode'] == 'docker' else write_json(
                 self.backend.instance / '.runtime/update-control.json', self.reference)
 
+    def restores(self, name: str) -> bool:
+        """Whether the restore action offered now would use this snapshot."""
+        snapshot = self.state.get('snapshot')
+        return snapshot is not None and Path(snapshot).name == name and 'restore' in self.actions()
+
+    def snapshots(self) -> list[dict]:
+        """Update snapshots under backups/, newest first."""
+        folder = self.root / 'backups'
+        found = [path for path in folder.iterdir() if SNAPSHOT_NAME.fullmatch(path.name)
+                 and path.is_dir() and not path.is_symlink()] if folder.is_dir() else []
+        return [{'name': path.name, 'bytes': size(path), 'complete': (path / 'snapshot.json').is_file(),
+                 'restore': self.restores(path.name),
+                 'created': datetime.strptime(path.name[:15], '%Y%m%d-%H%M%S').replace(tzinfo=timezone.utc).timestamp()}
+                for path in sorted(found, key=lambda path: path.name, reverse=True)]
+
+    def delete_snapshot(self, name: str) -> list[dict]:
+        path = self.root / 'backups' / name
+        if not SNAPSHOT_NAME.fullmatch(name) or not path.is_dir() or path.is_symlink():
+            raise LookupError('没有这份快照')
+        # Like submit: a finished operation writes its final status a moment before it releases the lock.
+        if self.state['status'] in ('preparing', 'applying', 'restoring') or not self.operation.acquire(timeout=10):
+            raise ValueError('已有一个更新操作正在执行')
+        try:
+            if self.restores(name):
+                if self.state['status'] != 'complete':
+                    raise ValueError('上次更新失败后还没有恢复，恢复要用这份快照')
+                # The completed update gives up its way back before any of the snapshot is removed.
+                self.state['snapshot_complete'] = False
+                write_json(self.state_file, self.state)
+            shutil.rmtree(path)
+            self.record('snapshot_deleted', snapshot=name)
+        finally:
+            self.operation.release()
+        return self.snapshots()
+
     def status(self) -> dict:
         return {**self.state, 'current_version': self.backend.metadata()['version'], 'mode': self.deployment['mode'],
                 'actions': self.actions()}
@@ -382,6 +425,8 @@ def server(controller: Controller) -> ThreadingHTTPServer:
                     self.send(200, {'url': controller.reference['public_url'] + '/#session=' + controller.recovery_token})
                 elif path == '/api/log':
                     self.send(200, {'text': controller.log_text()})
+                elif path == '/api/snapshots':
+                    self.send(200, controller.snapshots())
                 else:
                     self.send(404, {'detail': 'Unknown endpoint'})
             except Exception as error:
@@ -408,6 +453,22 @@ def server(controller: Controller) -> ThreadingHTTPServer:
                 self.send(202, controller.submit(path.removeprefix('/api/'), payload))
             except (ValueError, KeyError) as error:
                 self.send(409, {'detail': str(error)})
+
+        def do_DELETE(self):
+            if not self.authorized():
+                self.send(401, {'detail': '使用管理面板交接的更新链接'})
+                return
+            path = urlsplit(self.path).path
+            try:
+                if not path.startswith('/api/snapshots/'):
+                    raise LookupError('Unknown endpoint')
+                self.send(200, controller.delete_snapshot(path.removeprefix('/api/snapshots/')))
+            except LookupError as error:
+                self.send(404, {'detail': str(error)})
+            except ValueError as error:
+                self.send(409, {'detail': str(error)})
+            except OSError as error:
+                self.send(422, {'detail': f'{type(error).__name__}: {error}'})
     address = controller.deployment.get('listen', {'host': '127.0.0.1', 'port': 0})
     http = ThreadingHTTPServer((address['host'], address['port']), Handler)
     endpoint = f'http://127.0.0.1:{http.server_port}'

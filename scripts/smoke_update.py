@@ -1,6 +1,7 @@
 """Install two real wheel versions and exercise the native update HTTP protocol and snapshot restore."""
 
 import argparse
+from http.cookiejar import CookieJar
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ import sys
 import threading
 import time
 import tomllib
+import urllib.request
 import zipfile
 
 from build_deployment import build_deployments
@@ -152,9 +154,24 @@ def run(artifacts: Path, work: Path) -> dict:
             assert 'exited' in rolled['error'] and rolled['rolled_back_from'] == broken_manifest['version']
             assert marker.read_text(encoding='utf-8') == 'before upgrade'
             check_panel(panel_port, 'smoke', 'smoke-password', lambda: process.poll() is None)
+            # Both updates left a snapshot; the panel lists them through the controller and deletes the older one.
+            panel = f'http://127.0.0.1:{panel_port}'
+            session = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+            code, text = request(session, panel + '/api/auth/login', body={'username': 'smoke', 'password': 'smoke-password'})
+            assert code == 200, text
+            code, text = request(session, panel + '/api/host/updates/snapshots')
+            assert code == 200, text
+            snapshots = json.loads(text)
+            assert len(snapshots) == 2 and all(item['complete'] and item['bytes'] > 0 and not item['restore']
+                                               for item in snapshots), snapshots
+            removal = urllib.request.Request(panel + '/api/host/updates/snapshots/' + snapshots[1]['name'], method='DELETE')
+            with session.open(removal, timeout=60) as response:
+                assert [item['name'] for item in json.loads(response.read())] == [snapshots[0]['name']]
+            assert not (root / 'backups' / snapshots[1]['name']).exists() and (root / 'backups' / snapshots[0]['name']).is_dir()
             return {'baseline': '0.0.0', 'target': manifest['version'], 'installed': True,
                     'upgrade': 'ready', 'restore': 'data and old program restored', 'restart': 'ready',
-                    'startup_failure': 'rolled back to the previous program automatically', 'failed_update_rollback': 'ready'}
+                    'startup_failure': 'rolled back to the previous program automatically', 'failed_update_rollback': 'ready',
+                    'snapshots': 'listed and the older one deleted from the panel'}
         finally:
             process.send_signal(signal.CTRL_BREAK_EVENT if sys.platform == 'win32' else signal.SIGTERM)
             process.wait(timeout=190)

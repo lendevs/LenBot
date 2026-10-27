@@ -575,6 +575,15 @@ class UpdateState(PanelResponse):
     rollback_loses_data: bool
 
 
+class UpdateSnapshot(PanelResponse):
+    """One update snapshot under the deployment's backups/; ``restore``: the restore action offered now uses it."""
+    name: str
+    created: float
+    bytes: int
+    complete: bool
+    restore: bool
+
+
 class SetupProtocols(Protocols):
     container: bool
     panel_port: int | None

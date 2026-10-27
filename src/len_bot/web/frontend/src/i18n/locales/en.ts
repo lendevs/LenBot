@@ -2320,6 +2320,20 @@ export default {
       newer: 'New',
       installed: 'Current',
       pre: 'Prerelease',
+      snapshots: {
+        title: 'Update snapshots',
+        total: '{n} · {size}',
+        none: 'No snapshots yet',
+        readFailed: 'Could not read snapshots',
+        restore: 'Restorable',
+        incomplete: 'Incomplete',
+        deleteTitle: 'Delete the snapshot from {time}?',
+        deleteMessage: 'The snapshot folder is removed from backups/. This cannot be undone.',
+        deleteRestore:
+          'This is the snapshot you can restore now. After deleting it you can no longer go back to the program and data from before this update.',
+        deleted: 'Snapshot deleted',
+        deleteFailed: 'Could not delete the snapshot',
+      },
     },
     advanced: {
       developer: 'Developer mode: show internal IDs, raw requests and responses, and full data',

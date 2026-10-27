@@ -32,6 +32,7 @@ export const keys = {
     prompt: (name: string) => ['system', 'prompts', name] as const,
     updates: () => ['system', 'updates'] as const,
     releases: () => ['system', 'updates', 'releases'] as const,
+    snapshots: () => ['system', 'updates', 'snapshots'] as const,
     /** Read on demand or by the page's own follow timer; host events would re-read files many times a second. */
     logs: (filter: object) => ['system', 'logs', filter] as const,
     logFiles: () => ['system', 'log-files'] as const,

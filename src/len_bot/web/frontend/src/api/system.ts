@@ -150,6 +150,17 @@ export interface UpdateState {
   notice: string[] | null
   rollback_loses_data: boolean
 }
+/** `deploy/updater/controller.py` Controller.snapshots(): one folder under the deployment's backups/. */
+export interface UpdateSnapshot {
+  name: string
+  /** Unix seconds, from the folder name. */
+  created: number
+  bytes: number
+  /** The snapshot finished writing its manifest. */
+  complete: boolean
+  /** The restore action offered now uses it; deleting it after a completed update removes that action. */
+  restore: boolean
+}
 export interface Release {
   tag: string
   version: string
@@ -200,4 +211,8 @@ export const systemApi = {
   updates: (signal?: AbortSignal) => http.get<UpdateState>('/api/host/updates', undefined, signal),
   releases: (signal?: AbortSignal) => http.get<Release[]>('/api/host/updates/releases', undefined, signal),
   updaterSession: () => http.post<{ url: string }>('/api/host/updates/session'),
+  snapshots: (signal?: AbortSignal) =>
+    http.get<UpdateSnapshot[]>('/api/host/updates/snapshots', undefined, signal),
+  deleteSnapshot: (name: string) =>
+    request<UpdateSnapshot[]>(`/api/host/updates/snapshots/${named(name)}`, { method: 'DELETE' }),
 }

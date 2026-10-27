@@ -499,3 +499,91 @@ def test_next_action_waits_for_the_finishing_operation_to_release(make):
     assert controller.submit('restore', {}) == {'accepted': True}
     with controller.operation:
         assert controller.state['status'] == 'restored'
+
+
+def _snapshot(backups: Path, name: str, data: bytes, *, complete: bool = True) -> Path:
+    path = backups / name
+    (path / '0').mkdir(parents=True)
+    (path / '0/lenbot.db').write_bytes(data)
+    if complete:
+        (path / 'snapshot.json').write_text('[]\n', encoding='utf-8')
+    return path
+
+
+def test_snapshots_are_listed_newest_first_and_the_one_a_failed_update_needs_stays(make):
+    from datetime import datetime, timezone
+    controller = make(Backend())
+    backups = controller.root / 'backups'
+    older = _snapshot(backups, '20261001-080000-0000000a', b'x' * 10)
+    newer = _snapshot(backups, '20261020-093000-0000000b', b'y' * 100, complete=False)
+    (backups / 'notes.txt').write_text('其他文件', encoding='utf-8')
+    (backups / 'manual-copy').mkdir()
+    controller.state.update(status='failed', stage='migrate', snapshot=str(newer), snapshot_complete=True)
+    assert controller.snapshots() == [
+        {'name': newer.name, 'bytes': 100, 'complete': False, 'restore': True,
+         'created': datetime(2026, 10, 20, 9, 30, tzinfo=timezone.utc).timestamp()},
+        {'name': older.name, 'bytes': 13, 'complete': True, 'restore': False,
+         'created': datetime(2026, 10, 1, 8, tzinfo=timezone.utc).timestamp()}]
+    with pytest.raises(ValueError, match='恢复要用这份快照'):
+        controller.delete_snapshot(newer.name)
+    for name in ('../updates', 'manual-copy', '20261021-000000-0000000c'):
+        with pytest.raises(LookupError):
+            controller.delete_snapshot(name)
+    assert [item['name'] for item in controller.delete_snapshot(older.name)] == [newer.name]
+    assert not older.exists() and (backups / 'notes.txt').exists() and (backups / 'manual-copy').exists()
+    assert controller.status()['actions'] == ['restore']
+    controller.state['status'] = 'restoring'
+    with pytest.raises(ValueError, match='正在执行'):
+        controller.delete_snapshot(newer.name)
+
+
+def test_deleting_the_snapshot_of_a_completed_update_removes_its_restore(make):
+    controller = make(Backend())
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    done = run(controller, 'apply')
+    assert done['actions'] == ['prepare', 'restore']
+    snapshot = Path(done['snapshot'])
+    _snapshot(snapshot.parent, snapshot.name, b'z')
+    assert controller.snapshots()[0]['restore']
+    assert controller.delete_snapshot(snapshot.name) == []
+    assert controller.status()['actions'] == ['prepare'] and not snapshot.exists()
+    assert json.loads(controller.state_file.read_text(encoding='utf-8'))['snapshot_complete'] is False
+
+
+def test_snapshot_endpoints_list_and_delete(make, tmp_path):
+    import threading
+    import urllib.error
+    import urllib.request
+    (tmp_path / 'instance').mkdir()
+    controller = make(Backend())
+    controller.backend.instance = tmp_path / 'instance'
+    kept = _snapshot(tmp_path / 'backups', '20261020-093000-0000000b', b'y')
+    _snapshot(tmp_path / 'backups', '20261001-080000-0000000a', b'x')
+    controller.state.update(status='failed', snapshot=str(kept), snapshot_complete=True)
+    http = updater.server(controller)
+    thread = threading.Thread(target=http.serve_forever)
+    thread.start()
+    reference = json.loads((tmp_path / 'instance/.runtime/update-control.json').read_text())
+
+    def call(method: str, path: str, token: str = reference['token']) -> tuple[int, object]:
+        request = urllib.request.Request(reference['endpoint'] + path, method=method,
+                                         headers={'Authorization': 'Bearer ' + token})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+    try:
+        assert call('GET', '/api/snapshots', 'wrong')[0] == 401
+        code, listed = call('GET', '/api/snapshots')
+        assert code == 200 and [item['name'] for item in listed] == [kept.name, '20261001-080000-0000000a']
+        code, refused = call('DELETE', '/api/snapshots/' + kept.name)
+        assert code == 409 and '恢复要用这份快照' in refused['detail']
+        assert call('DELETE', '/api/snapshots/20261001-080000-00000000')[0] == 404
+        assert call('DELETE', '/api/status')[0] == 404
+        code, left = call('DELETE', '/api/snapshots/20261001-080000-0000000a')
+        assert code == 200 and [item['name'] for item in left] == [kept.name]
+    finally:
+        http.shutdown()
+        thread.join(5)
+        http.server_close()

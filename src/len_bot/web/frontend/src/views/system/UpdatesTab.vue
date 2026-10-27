@@ -13,6 +13,7 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
+import SnapshotsSection from './SnapshotsSection.vue'
 
 const { t } = useI18n()
 const current = useQuery({
@@ -118,6 +119,8 @@ const open = useMutation({
       </template>
       <p v-else class="text-sm text-ink-2">{{ t('system.updates.source') }}</p>
     </section>
+
+    <SnapshotsSection v-if="data.managed" />
 
     <section class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
       <header class="flex flex-wrap items-center justify-between gap-3">
