@@ -211,10 +211,10 @@ class JargonStore:
             if call is None:
                 raise ValueError(f"No running jargon meaning call {id}")
             now = self.store.now()
-            # Deletion or rejection while the model ran never recreates or changes the decision.
+            # Inferred meanings update pending candidates; reviewed decisions keep their contents.
             self.db.execute(
                 "UPDATE jargon SET latest_meaning=?,confidence=?,last_inference_count=?,updated=? "
-                "WHERE scene=? AND id=?",
+                "WHERE scene=? AND id=? AND status='pending'",
                 (meaning, confidence, call["inference_count"], now,
                  call["scene"], call["term_id"]),
             )
@@ -223,7 +223,7 @@ class JargonStore:
 
     def pending(self, scene: str) -> list[dict]:
         rows = self.db.execute(
-            "SELECT * FROM jargon WHERE scene=? AND status!='rejected' ORDER BY id", (scene,),
+            "SELECT * FROM jargon WHERE scene=? AND status='pending' ORDER BY id", (scene,),
         )
         return [item for row in rows if (item := self._item(row)) is not None and
                 any(item["last_inference_count"] < threshold <= item["count"]

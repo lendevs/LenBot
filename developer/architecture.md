@@ -168,6 +168,8 @@ OneBot ────────────> 平台适配器 ──> 消息入�
 
 说法去重：没有向量时，同一说法且情境字词重合度不低于 0.6 的新候选并入已有说法；有向量时按余弦相似度 0.9 合并。
 
+黑话含义在同一整理结果中返回本群用法 `meaning`、通常含义 `ordinary_meaning`、是否相同 `same_meaning` 和 `confidence`。通常含义相同的候选归入已拒绝，原因和两种含义写入现有 `latest_meaning`；原始结果保留在 `jargon_calls`。语境不足的候选以较低信心保留待审核。推断只更新待审核的词，人工采用的词使用人工确认的含义。
+
 `memory` 绑定只用于目录摘要，`learner` 绑定只供插件 `generate` 使用。
 
 本地对照可运行 `uv run --no-sync python scripts/compare_memory_retrieval.py`，用不同检出的 PYTHONPATH 执行同一脚本，比较固定语料、查询和预算下的实际正文、证据覆盖、字数及延迟。`--instance <实例目录>` 加上该实例的记忆向量；`--answer` 再让 `mind` 模型在每例单独的模拟群里回答，记录回复、首句等待、请求数和用量。后两项是付费请求。
