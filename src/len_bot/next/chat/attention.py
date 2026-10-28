@@ -633,6 +633,19 @@ class SceneRunner:
         timing = 'focus' if wake.channel in {'attention', 'explore'} else wake.channel
         idle = getattr(self.settings, timing + "_idle_seconds")
         maximum = getattr(self.settings, timing + "_max_seconds")
+        pending = [(message, at) for _, message, at in self.store.pending_messages(self.config.scene)
+                   if at >= wake.first_at and not message.is_self
+                   and (is_direct(message) or message.sender.uid not in self.settings.other_bot_ids)]
+        if pending:
+            latest = pending[0][1]
+            for (previous, _), (message, at) in zip(pending, pending[1:]):
+                if message.sender.uid == previous.sender.uid:
+                    latest = at
+            last = pending[-1][0]
+            if (any(segment.type == 'image' for segment in last.segments)
+                    and not plain_text(last).strip()
+                    and all(segment.type in {'image', 'mention', 'reply', 'text'} for segment in last.segments)):
+                idle = min(maximum, idle * 2)
         return min((wake.first_at if latest is None else latest) + idle, wake.first_at + maximum)
 
     def due_schedules(self, now: float) -> list[tuple[int, str]]:

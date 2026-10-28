@@ -389,3 +389,25 @@ def test_chat_status_names_the_reason_and_when_it_changes(tmp_path):
         assert live.chat_status() == {'status': 'quiet', 'changes_at': START + 600}
         live.set_paused(True)
         assert live.chat_status() == {'status': 'paused', 'changes_at': None}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('channel', 'idle', 'maximum'), [('direct', 1.5, 4), ('named', 3, 8), ('focus', 4, 12)])
+async def test_onebot_bursts_wait_for_image_caption_extend_same_speaker_and_keep_channel_cap(channel, idle, maximum):
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location('latency_cases', Path(__file__).parents[1] / 'scripts/first_reply_latency.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    measured = await module.batches()
+    rows = {row['case']: row for row in measured['rows'] if row['channel'] == channel}
+    assert rows['single-text']['first_batch_seconds'] == idle
+    assert rows['same-speaker']['first_batch_seconds'] == pytest.approx(idle * 1.4)
+    assert rows['different-speaker']['first_batch_seconds'] == idle
+    assert rows['several-speakers']['first_batch_seconds'] == idle
+    assert rows['image-only']['first_batch_seconds'] == min(idle * 2, maximum)
+    assert rows['image-then-caption']['consumed'] == [0, 1]
+    assert not rows['image-then-caption']['cut']
+    assert rows['at-cap']['first_batch_seconds'] == maximum
+    assert all(row['within_cap'] and row['model_requests'] == 0 for row in rows.values())

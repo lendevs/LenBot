@@ -105,6 +105,7 @@ def main() -> None:
     parser.add_argument('--report', type=Path)
     parser.add_argument('--jargon', action='store_true')
     parser.add_argument('--persona', type=Path)
+    parser.add_argument('--cases', type=Path, help='A structured case file whose set is social')
     parser.add_argument('--repetitions', type=int, default=3)
     options = parser.parse_args()
     if options.report is not None:
@@ -136,7 +137,8 @@ def main() -> None:
     source['models'] = {'providers': {mind.provider: host.models.providers[mind.provider].model_dump(mode='json')},
                         'roles': {'mind': mind.model_dump(mode='json')}}
     source.update(persona='persona', attention={})
-    source['evaluation'].update(sets={'social': str(checkout / 'examples/replay/social.json')},
+    source['evaluation'].update(sets={'social': str(options.cases.resolve() if options.cases is not None
+                                                  else checkout / 'examples/replay/social.json')},
                                 repetitions=options.repetitions)
     path = root / 'lenbot.config.json'
     write_json(path, source)

@@ -344,7 +344,8 @@ async def batches() -> dict:
                                      'idle_seconds': idle, 'maximum_seconds': maximum,
                                      'first_batch_seconds': round(wait, 3), 'consumed': consumed,
                                      'cut': name == 'image-then-caption' and len(consumed) < len(pattern),
-                                     'within_cap': wait <= maximum})
+                                     'within_cap': wait <= maximum,
+                                     'model_requests': store.db.execute('SELECT count(*) FROM model_calls').fetchone()[0]})
     return {'clock': 'synthetic arrivals after a seeded wake; offsets are multiples of channel idle seconds', 'rows': rows,
             'channels': {channel: {
                 'median_seconds': median(row['first_batch_seconds'] for row in rows if row['channel'] == channel),

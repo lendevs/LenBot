@@ -83,3 +83,5 @@ uv run --no-sync python scripts/first_reply_latency.py batches
 ```sh
 uv run --no-sync python scripts/compare_social.py --instance . --label jargon-baseline --jargon
 ```
+
+专项对照可用 `--cases <文件>` 指向 set 为 `social` 的固定用例或子集，用 `--repetitions <次数>` 指定重复次数；`--persona <目录>` 选择试验角色。每次运行保存实际用例和角色快照。
