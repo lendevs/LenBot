@@ -6,8 +6,9 @@ Run the same script with each checkout on PYTHONPATH. JSON includes the recalled
 coverage, character count and latency. ``--instance`` reads that instance's ``lenbot.config.json`` and
 adds the same cases with vectors through ``memory.local.embedding``; ``--answer`` also asks each case in
 its own simulated group with the instance's ``mind`` model and records the reply, the wait for the first
-reply and the tokens used. Vectors and answers are paid requests. ``--notebook`` runs the cases through
-the example memory plugin in ``examples/plugins/notebook`` as well, one note per line of the corpus.
+reply and the tokens used. ``--notebook`` runs the cases through the example memory plugin in
+``examples/plugins/notebook`` as well, one note per line of the corpus; with ``--answer`` each case is also
+asked in a group whose memory is that plugin, loaded by the plugin host.
 """
 
 from __future__ import annotations
@@ -172,9 +173,49 @@ def group_event(group: int, ident: int, text: str, bot: str, *, at: bool) -> dic
             + [{'type': 'text', 'data': {'text': (' ' if at else '') + text}}]}
 
 
+async def ask(store: Store, chat, name: str, texts: list[str], group: int, ident: int, bot: str) -> dict:
+    """Send one case as group messages, the last one mentioning the bot, and score the reply."""
+    from len_bot.next.chat.attention import SceneRunner
+
+    scene = f'onebot:group:{group}'
+    done: asyncio.Queue = asyncio.Queue()
+    runner = SceneRunner(chat, done.put_nowait)
+    task = asyncio.create_task(runner.run())
+    before = store.db.execute('SELECT coalesce(sum(input), 0), coalesce(sum(output), 0), count(*) '
+                              "FROM usage WHERE purpose='mind'").fetchone()
+    last = store.db.execute('SELECT coalesce(max(seq), 0) FROM messages').fetchone()[0]
+    started = time.time()
+    for position, text in enumerate(texts):
+        runner.receive(group_event(group, ident * 10 + position, text, bot, at=position == len(texts) - 1))
+    await asyncio.wait_for(done.get(), 300)
+    runner.close_input()
+    await asyncio.gather(task, return_exceptions=True)
+    said = [json.loads(row[0]) for row in store.db.execute(
+        "SELECT body FROM messages WHERE scene=? AND seq>? AND json_extract(body, '$.is_self') ORDER BY seq",
+        (scene, last))]
+    reply = ' '.join(segment['data']['text'] for message in said for segment in message['segments']
+                     if segment['type'] == 'text')
+    wait = store.db.execute('SELECT first_expression_at - wake_received_at FROM turns'
+                            ' WHERE scene=? AND started>=? ORDER BY started LIMIT 1', (scene, started)).fetchone()
+    after = store.db.execute('SELECT coalesce(sum(input), 0), coalesce(sum(output), 0), count(*) '
+                             "FROM usage WHERE purpose='mind'").fetchone()
+    expected = ANSWERS[name]
+    return {'case': name, 'reply': reply,
+            'correct': (re.search(UNKNOWN, reply) is not None if expected is None
+                        else all(re.search(pattern, reply) for pattern in expected)),
+            'first_reply_seconds': None if wait is None or wait[0] is None else round(wait[0], 1),
+            'requests': after[2] - before[2],
+            'input_tokens': after[0] - before[0], 'output_tokens': after[1] - before[1]}
+
+
+def set_recap(store: Store, scene: str, recap: str) -> None:
+    with store.db:
+        store.db.execute('INSERT INTO mind_sessions(scene,recap) VALUES(?,?) ON CONFLICT(scene) '
+                         'DO UPDATE SET recap=excluded.recap', (scene, recap))
+
+
 async def answers(host, client: EmbeddingClient | None, binding) -> list[dict]:
     """Each case in its own group holding the corpus, so earlier replies do not answer later cases."""
-    from len_bot.next.chat.attention import SceneRunner
     from len_bot.next.chat.session import Chat
     from len_bot.next.models.client import ChatModel
     from len_bot.next.persona.profile import load_persona
@@ -197,7 +238,6 @@ async def answers(host, client: EmbeddingClient | None, binding) -> list[dict]:
                 mind = await stack.enter_async_context(ChatModel(host.model_settings('mind')))
                 vision = (await stack.enter_async_context(ChatModel(host.model_settings('vision')))
                           if host.models.roles.vision is not None else None)
-                done: asyncio.Queue = asyncio.Queue()
                 for ident, (name, texts, _, *recap) in enumerate(CASES, 1001):
                     group = groups[name]
                     scene = f'onebot:group:{group}'
@@ -205,43 +245,69 @@ async def answers(host, client: EmbeddingClient | None, binding) -> list[dict]:
                     if name == 'forgotten':
                         await backend.forget(scene, 'events/week.md')
                     if recap:
-                        with store.db:
-                            store.db.execute('INSERT INTO mind_sessions(scene,recap) VALUES(?,?) ON CONFLICT(scene) '
-                                             'DO UPDATE SET recap=excluded.recap', (scene, recap[0]))
+                        set_recap(store, scene, recap[0])
                     scene_config = base.model_copy(update={
                         'scene': scene, 'delivery': 'simulated', 'memory': settings, 'worker': None,
                         'learning': None, 'memory_plugin': None, 'recap_plugin': None})
                     object.__setattr__(scene_config, '_source_root', root)
-                    runner = SceneRunner(Chat(scene_config, persona, store, mind, vision=vision, memory=service),
-                                         lambda result: done.put_nowait(result))
-                    task = asyncio.create_task(runner.run())
-                    before = store.db.execute('SELECT coalesce(sum(input), 0), coalesce(sum(output), 0), count(*) '
-                                              "FROM usage WHERE purpose='mind'").fetchone()
-                    last = store.db.execute('SELECT coalesce(max(seq), 0) FROM messages').fetchone()[0]
-                    started = time.time()
-                    for position, text in enumerate(texts):
-                        runner.receive(group_event(group, ident * 10 + position, text, bot,
-                                                   at=position == len(texts) - 1))
-                    await asyncio.wait_for(done.get(), 300)
-                    runner.close_input()
-                    await asyncio.gather(task, return_exceptions=True)
-                    said = [json.loads(row[0]) for row in store.db.execute(
-                        "SELECT body FROM messages WHERE scene=? AND seq>? AND json_extract(body, '$.is_self') ORDER BY seq",
-                        (scene, last))]
-                    reply = ' '.join(segment['data']['text'] for message in said for segment in message['segments']
-                                     if segment['type'] == 'text')
-                    wait = store.db.execute('SELECT first_expression_at - wake_received_at FROM turns'
-                                            ' WHERE scene=? AND started>=? ORDER BY started LIMIT 1',
-                                            (scene, started)).fetchone()
-                    after = store.db.execute('SELECT coalesce(sum(input), 0), coalesce(sum(output), 0), count(*) '
-                                             "FROM usage WHERE purpose='mind'").fetchone()
-                    expected = ANSWERS[name]
-                    rows.append({'case': name, 'reply': reply,
-                                 'correct': (re.search(UNKNOWN, reply) is not None if expected is None
-                                             else all(re.search(pattern, reply) for pattern in expected)),
-                                 'first_reply_seconds': None if wait is None or wait[0] is None else round(wait[0], 1),
-                                 'requests': after[2] - before[2],
-                                 'input_tokens': after[0] - before[0], 'output_tokens': after[1] - before[1]})
+                    chat = Chat(scene_config, persona, store, mind, vision=vision, memory=service)
+                    rows.append(await ask(store, chat, name, texts, group, ident, bot))
+    return rows
+
+
+async def notebook_answers(instance: Path) -> list[dict]:
+    """The cases answered in groups whose memory is the example notebook plugin, one note per corpus line."""
+    from len_bot.next.chat.tools import tool_catalog
+    from len_bot.next.config import load_host_config
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.plugins.host import PluginHost
+    from len_bot.next.runtime.lifecycle import HostLifecycle
+    from len_bot.next.runtime.network import NetworkRuntime
+
+    source = json.loads((instance / 'lenbot.config.json').read_text(encoding='utf-8'))
+    binding = source['models']['roles']['mind']
+    repository = Path(__file__).resolve().parents[1]
+    groups = {name: 80301 + index for index, (name, *_) in enumerate(CASES)}
+    rows = []
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        shutil.copytree(repository / 'examples/personas/companion', root / 'persona')
+        (root / 'lenbot.config.json').write_text(json.dumps({
+            'mode': 'isolated-multi', 'bot_id': source['bot_id'], 'owners': [], 'timezone': source['timezone'],
+            'database': 'chat.sqlite3', 'delivery': 'simulated',
+            # Turns are run directly on the scene chats; the platform connection is never opened.
+            'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
+            'models': {'providers': {binding['provider']: source['models']['providers'][binding['provider']]},
+                       'roles': {'mind': binding}},
+            'plugins': {'paths': [str(repository / 'examples/plugins')], 'notebook': {'recall_limit': 5}},
+            'scenes': {f'onebot:group:{group}': {'persona': 'persona', 'plugins': ['notebook'],
+                                                 'memory_plugin': 'notebook', 'attention': {'only_direct': True}}
+                       for group in groups.values()},
+        }, ensure_ascii=False), encoding='utf-8')
+        host = load_host_config(root)
+        persona = load_persona(root / 'persona')
+        bot = host.bot_id.split(':', 1)[1]
+        plugins = PluginHost(host, core_tools={tool['function']['name'] for tool in tool_catalog(platform=True)})
+        with Store(host.database) as store:
+            async with ChatModel(host.model_settings('mind')) as mind:
+                runtime = NetworkRuntime(host, [(host.scene_config(scene), persona) for scene in host.scenes],
+                                         store, mind, plugins=plugins, lifecycle=HostLifecycle())
+                await plugins.start()
+                try:
+                    for ident, (name, texts, _, *recap) in enumerate(CASES, 3001):
+                        scene = f'onebot:group:{groups[name]}'
+                        for path, content in DOCUMENTS.items():
+                            if name == 'forgotten' and path == 'events/week.md':
+                                continue
+                            for line in content.splitlines():
+                                if line.strip() and not line.startswith('#'):
+                                    await plugins.run_memory_tool('notebook', scene, {'action': 'write', 'text': line})
+                        if recap:
+                            set_recap(store, scene, recap[0])
+                        rows.append(await ask(store, runtime.chats[scene], name, texts, groups[name], ident, bot))
+                finally:
+                    await plugins.close()
     return rows
 
 
@@ -268,6 +334,8 @@ async def main() -> None:
                 result['hybrid'] = await compare(client, binding)
             if options.answer:
                 result['answer'] = await answers(host, client, binding)
+            if options.answer and options.notebook:
+                result['notebook_answer'] = await notebook_answers(options.instance.resolve())
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
