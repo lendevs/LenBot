@@ -33,6 +33,9 @@ RESERVE_CHANNELS = frozenset({"schedule", "task"})
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
 PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info"})
+# Consecutive sends not confirmed as delivered after which the turn ends; rewriting the message again would
+# meet the same platform, and an unconfirmed send may already be in the group.
+SEND_FAILURE_LIMIT = 2
 from ..memory.service import MemoryService, MemorySettings, recall_cues
 from ..reference.library import ReferenceLibrary
 from ..reference.tool import changes_notice
@@ -464,6 +467,7 @@ class Chat:
         expressions: list[str] = []
         extensions = 0
         failed_tools = 0
+        failed_sends = 0
         status, error_text = "step_limit", None
         limit_until = limit_kind = None
         phase = None
@@ -612,10 +616,12 @@ class Chat:
                                             self.turn_messages += 1
                                         if delivery_status in {"sent", "simulated"}:
                                             end_turn = end_turn or expression.end_turn
+                                            failed_sends = 0
                                         else:
                                             group_failed = True
                                             tool_status = 'error'
                                             failed_tools += 1
+                                            failed_sends += 1
                                         self.trace('turn.step', turn_id, kind='expression', phase='end',
                                                    call_id=call.id, status=delivery_status, summary=content[:500])
                                     tool_summary = content
@@ -630,6 +636,9 @@ class Chat:
                     finally:
                         for started in prefetched.values():
                             started.cancel()
+                    if failed_sends >= SEND_FAILURE_LIMIT:
+                        status, error_text = "send_failed", f"连续 {failed_sends} 次发送没有确认送达"
+                        break
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the
                         # model as new input instead of waiting for the next turn.

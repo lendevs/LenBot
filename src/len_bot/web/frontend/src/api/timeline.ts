@@ -166,5 +166,5 @@ export function compareItems(a: TimelineItem, b: TimelineItem): number {
 }
 
 export const failedTurn = (status: string) =>
-  ['error', 'timeout', 'interrupted', 'step_limit'].includes(status)
+  ['error', 'timeout', 'interrupted', 'step_limit', 'send_failed'].includes(status)
 export const failedMessage = (status: string) => status === 'failed' || status === 'unconfirmed'

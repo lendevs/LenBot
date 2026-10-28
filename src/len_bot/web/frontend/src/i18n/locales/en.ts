@@ -580,6 +580,7 @@ export default {
         cancelled: 'Cancelled',
         interrupted: 'Interrupted',
         step_limit: 'Out of steps',
+        send_failed: 'Send failed',
         manual_compaction: 'Manual recap',
         persona_handover: 'Persona handover',
       },

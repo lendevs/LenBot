@@ -22,7 +22,7 @@ export interface Attention {
 }
 
 /** Statuses of a turn that ended without finishing its reply. */
-const FAILED_TURNS = new Set(['error', 'timeout', 'interrupted', 'step_limit'])
+const FAILED_TURNS = new Set(['error', 'timeout', 'interrupted', 'step_limit', 'send_failed'])
 /** From this many groups on, the same kind of trouble reads as one item. */
 const MERGE_FROM = 3
 

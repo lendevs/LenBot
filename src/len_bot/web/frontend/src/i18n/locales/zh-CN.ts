@@ -569,6 +569,7 @@ export default {
         cancelled: '已取消',
         interrupted: '已中断',
         step_limit: '步数已用尽',
+        send_failed: '发送失败',
         manual_compaction: '手动整理回想',
         persona_handover: '角色交接',
       },

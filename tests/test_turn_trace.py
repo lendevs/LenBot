@@ -189,3 +189,60 @@ async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path
                 finally:
                     runtime.stop()
                     await asyncio.wait_for(running, 3)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_ends_after_two_sends_that_are_not_delivered(tmp_path):
+    peers = asyncio.Queue()
+
+    async def peer(ws):
+        await peers.put(ws)
+        async for frame in ws:
+            request = json.loads(frame)
+            result = {'status': 'ok', 'retcode': 0, 'echo': request['echo']}
+            if request['action'] == 'get_login_info':
+                result['data'] = {'user_id': 90001, 'nickname': '合成角色'}
+            else:
+                result.update(status='failed', retcode=100, message='合成发送失败', data=None)
+            await ws.send(json.dumps(result))
+
+    requests = []
+    responses = [response('say', {'content': f'合成回答{index}', 'end_turn': True}, f'say{index}') for index in range(3)]
+    model = await peer_server(responses, requests)
+    async with model, serve(peer, '127.0.0.1', 0) as platform:
+        def configure(root):
+            path = root / 'lenbot.config.json'
+            source = json.loads(path.read_text())
+            source['onebot'] = {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{platform.sockets[0].getsockname()[1]}'}
+            source['delivery'] = 'onebot'
+            source['models']['providers']['local']['base_url'] = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
+            source['models']['roles']['mind']['context_window_tokens'] = 64000
+            source['compaction']['input_tokens'] = 30000
+            source['scenes'][SCENE]['attention'] = {'activity': 0, 'direct_idle_seconds': 0}
+            path.write_text(json.dumps(source))
+            path = root / 'persona/persona.yaml'
+            path.write_text(path.read_text().replace('tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [say]'))
+
+        async with panel(tmp_path, configure) as (runtime, client, url):
+            async with connect(url, additional_headers=await login(client), proxy=None) as ws:
+                await receive(ws)
+                running = asyncio.create_task(runtime.run(manage_signals=False))
+                try:
+                    wire = await asyncio.wait_for(peers.get(), 3)
+                    async with asyncio.timeout(3):
+                        while runtime.status != 'running':
+                            await asyncio.sleep(.01)
+                    await wire.send(json.dumps(message(70001, 1, '在吗', direct=True)))
+                    while (event := await receive(ws))['type'] != 'turn.ended':
+                        pass
+                    status, error = runtime.store.db.execute('SELECT status, error FROM turns WHERE id=?',
+                                                             (event['turn_id'],)).fetchone()
+                    assert status == 'send_failed' and '2 次' in error
+                    assert len(requests) == 2
+                    sends = runtime.store.db.execute(
+                        "SELECT count(*) FROM messages WHERE scene=? AND json_extract(body, '$.send_status')='failed'",
+                        (SCENE,)).fetchone()[0]
+                    assert sends == 2
+                finally:
+                    runtime.stop()
+                    await asyncio.wait_for(running, 3)

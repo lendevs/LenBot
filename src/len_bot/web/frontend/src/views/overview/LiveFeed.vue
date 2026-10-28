@@ -103,6 +103,7 @@ const turnTones: Record<string, Tone> = {
   timeout: 'error',
   interrupted: 'warning',
   step_limit: 'warning',
+  send_failed: 'error',
   cancelled: 'neutral',
 }
 const sendTones: Record<string, Tone> = { sent: 'success', simulated: 'neutral', failed: 'error' }
