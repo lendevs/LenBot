@@ -2,11 +2,15 @@
 
     uv run --no-sync python scripts/first_reply_latency.py report state/lenbot.sqlite3 [--hours 24]
     uv run --no-sync python scripts/first_reply_latency.py run --instance DIR [--rounds 3] [--quick low]
+        [--parallel] [--slots N]
 
 ``report`` reads the turns of an instance database. ``run`` asks a fixed set of questions with the
 instance's ``mind`` model in simulated groups, a new group each round, and reports those turns with the
 recall and tool times from the turn trace. ``--quick`` sets the effort of the first request of each turn
-(``quick_reasoning_effort``); an empty value uses ``reasoning_effort``.
+(``quick_reasoning_effort``); an empty value uses ``reasoning_effort``. The groups share one set of model
+request slots, ``max_model_requests`` of the instance or ``--slots``; ``--parallel`` runs every round's group
+at the same time, and each turn records how long its requests waited for a slot (``slot_wait``, part of
+``before_model`` and ``between``).
 Segments, in seconds:
 
 - batch: from the waking message to the turn start (waiting for the speaker to finish, or for an earlier turn)
@@ -22,7 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 import json
 from pathlib import Path
 import shutil
@@ -128,6 +132,32 @@ def traced(row: dict, events: list[tuple[float, dict]], first: float) -> None:
     row['tools'] = tools
 
 
+class TimedSlots:
+    """Model request slots that record, per scene, when each request got one and how long it waited."""
+
+    def __init__(self, limit: int):
+        from len_bot.next.models.slots import ModelSlots
+
+        self.inner = ModelSlots(limit)
+        self.limit = limit
+        self.admit = None
+        self.waits: list[tuple[str | None, float, float]] = []
+
+    @asynccontextmanager
+    async def slot(self, *, direct: bool = False, scene: str | None = None):
+        asked = time.time()
+        async with self.inner.slot(direct=direct, scene=scene):
+            granted = time.time()
+            self.waits.append((scene, granted, granted - asked))
+            yield
+
+
+def spread(values: list[float]) -> dict:
+    ordered = sorted(values)
+    return {'median': round(median(ordered), 2), 'p90': round(ordered[int(0.9 * (len(ordered) - 1))], 2),
+            'max': round(ordered[-1], 2)} if ordered else {}
+
+
 def group_event(group: int, ident: int, user: int, name: str, text: str, bot: str, *, at: bool) -> dict:
     return {'post_type': 'message', 'message_type': 'group', 'self_id': int(bot), 'group_id': group,
             'user_id': user, 'message_id': ident, 'time': int(time.time()),
@@ -136,7 +166,8 @@ def group_event(group: int, ident: int, user: int, name: str, text: str, bot: st
             + [{'type': 'text', 'data': {'text': (' ' if at else '') + text}}]}
 
 
-async def run(instance: Path, rounds: int, quick: str | None) -> dict:
+async def run(instance: Path, rounds: int, quick: str | None, *, parallel: bool = False,
+              limit: int | None = None) -> dict:
     from len_bot.next.chat.attention import SceneRunner
     from len_bot.next.chat.session import Chat
     from len_bot.next.config import load_host_config
@@ -158,6 +189,7 @@ async def run(instance: Path, rounds: int, quick: str | None) -> dict:
     bot = host.bot_id.split(':', 1)[1]
     binding = None if host.memory is None else host.memory.local.embedding
     rows, traces, replies = [], {}, {}
+    slots = TimedSlots(limit or host.max_model_requests)
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
         shutil.copytree(Path(__file__).resolve().parents[1] / 'examples/personas/companion', root / 'persona')
@@ -180,8 +212,8 @@ async def run(instance: Path, rounds: int, quick: str | None) -> dict:
                 mind = await stack.enter_async_context(ChatModel(host.model_settings('mind')))
                 vision = (await stack.enter_async_context(ChatModel(host.model_settings('vision')))
                           if host.models.roles.vision is not None else None)
-                started = time.time()
-                for index, scene in enumerate(scenes):
+
+                async def ask(index: int, scene: str) -> None:
                     group = int(scene.rsplit(':', 1)[1])
                     for path, content in MEMORY.items():
                         await backend.write(scene, path, content, '首句延迟拆解的合成样本')
@@ -195,6 +227,7 @@ async def run(instance: Path, rounds: int, quick: str | None) -> dict:
                     object.__setattr__(config, '_source_root', root)
                     done: asyncio.Queue = asyncio.Queue()
                     chat = Chat(config, persona, store, mind, vision=vision, memory=service, reference=library,
+                                slots=slots,
                                 on_trace=lambda event: traces.setdefault(event['turn_id'], []).append((time.time(), event)))
                     runner = SceneRunner(chat, done.put_nowait)
                     task = asyncio.create_task(runner.run())
@@ -216,16 +249,28 @@ async def run(instance: Path, rounds: int, quick: str | None) -> dict:
                         await asyncio.sleep(1)
                     runner.close_input()
                     await asyncio.gather(task, return_exceptions=True)
+                started = time.time()
+                if parallel:
+                    await asyncio.gather(*(ask(index, scene) for index, scene in enumerate(scenes)))
+                else:
+                    for index, scene in enumerate(scenes):
+                        await ask(index, scene)
                 for row in breakdown(store.db, started, set(replies)):
-                    first = store.db.execute('SELECT first_expression_at FROM turns WHERE id=?',
-                                             (row['turn_id'],)).fetchone()[0]
+                    began, first = store.db.execute('SELECT started, first_expression_at FROM turns WHERE id=?',
+                                                    (row['turn_id'],)).fetchone()
                     traced(row, traces.get(row['turn_id'], []), first)
+                    row['slot_wait'] = sum(wait for scene, granted, wait in slots.waits
+                                           if scene == row['scene'] and began <= granted <= first)
                     row['round'], row['case'], row['reply'] = replies[row['turn_id']]
                     rows.append(row)
     cases = {case: {'turns': len(same), 'total': middle(same, 'total'), 'requests': [row['requests'] for row in same]}
              for case, _ in QUESTIONS for same in [[row for row in rows if row['case'] == case]] if same}
     mind = base.models.roles.mind
+    waits = [wait for _, _, wait in slots.waits]
     return {'model': mind.model, 'effort': mind.reasoning_effort, 'quick_effort': mind.quick_reasoning_effort,
+            'groups': rounds, 'parallel': parallel, 'slots': slots.limit,
+            'slot_wait': {'requests': len(waits), 'waited': sum(wait > 0.05 for wait in waits), **spread(waits),
+                          'turns': spread([row['slot_wait'] for row in rows])},
             'summary': summary(rows), 'cases': cases,
             'turns': [rounded(row) for row in rows], 'unanswered': len(replies) - len(rows)}
 
@@ -240,6 +285,8 @@ def main() -> None:
     measure.add_argument('--instance', type=Path, required=True)
     measure.add_argument('--rounds', type=int, default=3)
     measure.add_argument('--quick')
+    measure.add_argument('--parallel', action='store_true')
+    measure.add_argument('--slots', type=int)
     options = parser.parse_args()
     if options.command == 'report':
         db = sqlite3.connect(f'file:{options.database.resolve()}?mode=ro', uri=True)
@@ -247,7 +294,8 @@ def main() -> None:
         rows = breakdown(db, time.time() - options.hours * 3600)
         result = {'summary': summary(rows), 'turns': [rounded(row) for row in rows]}
     else:
-        result = asyncio.run(run(options.instance, options.rounds, options.quick))
+        result = asyncio.run(run(options.instance, options.rounds, options.quick, parallel=options.parallel,
+                                 limit=options.slots))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
