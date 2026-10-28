@@ -18,7 +18,7 @@ uv run --no-project --with playwright python website/scripts/screenshots.py # �
 uv run --no-project --with playwright python website/scripts/record_live.py # 录制现场页签的动图，需要 ffmpeg
 ```
 
-每次录制使用新的实例目录，否则群内会保留上一次录制的回合。实例运行期间，可以向控制端口发送群消息，`at` 表示 @ Bot：
+截图脚本先通过面板接口写入一份记忆、把三份群文件导入资料，在两个群各发一条 @ 消息，并在角色效果页开始一次试聊。每次录制使用新的实例目录，否则群内会保留上一次录制的回合。实例运行期间，可以向控制端口发送群消息，`at` 表示 @ Bot：
 
 ```sh
 curl -H 'Content-Type: application/json' -d '{"group": 80001, "user": 70002, "text": "周六带什么零食好", "at": true}' http://127.0.0.1:18099/inject

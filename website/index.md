@@ -66,7 +66,7 @@ features:
 <div class="shots">
   <figure class="wide"><img src="/screenshots/live.gif" alt="群聊现场：群友 @ Bot 后，回合卡片逐步展开，先查询聊天记录，再分两条回复"><figcaption>群聊现场。Bot 被 @ 后先查询聊天记录，再分两条回复，每一步实时显示。</figcaption></figure>
   <figure><img src="/screenshots/home.png" alt="面板总览，显示 QQ 连接状态、今天的消息量和群列表"><figcaption>总览：连接状态、当日统计、待处理事项和各群动态。</figcaption></figure>
-  <figure><img src="/screenshots/persona.png" alt="角色编辑页"><figcaption>角色编辑：修改设定后可以先试聊，确认后再保存。</figcaption></figure>
+  <figure><img src="/screenshots/persona.png" alt="角色效果页签的对话试聊：群友 @ 角色后收到两条回复"><figcaption>角色编辑：修改设定后可以先试聊，确认后再保存。</figcaption></figure>
 </div>
 
 <div class="home-section">
