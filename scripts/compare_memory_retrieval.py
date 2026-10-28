@@ -70,11 +70,14 @@ CASES = [
     ('no-evidence', ['火星飞船什么时候起飞？'], []),
     ('correction-past-budget', ['秋游集合时间最新是几点？'], ['周日早上七点半']),
     ('second-source', ['秋游集合时间最新是几点', '聚餐由谁订位'], ['周日早上七点半', '阿杰订位']),
+    ('similar-event', ['南门出游几点集合？'], ['出游集合点是南门，周日上午九点出发']),
     ('forgotten', ['南门出游集合'], []),
     ('promise-cue', ['那个弄好了没', '周五了哦'], ['《小王子》和《夜航西飞》'], RECAP),
     ('paraphrase', ['看书那个小组最后定在哪儿碰头？'], ['图书馆二楼']),
 ]
 # What a correct reply says; None means the corpus has no answer and the reply should say it does not know.
+# ABSENT is what a correct reply does not say: the other outing's time, or the outing that was forgotten.
+# ``says_unknown`` is recorded for every reply, so forgotten can also be read as a case that must say it does not know.
 ANSWERS = {
     'long-section': [r'图书馆(二|2)楼', r'(三|3)点'],
     'latest-correction': [r'周六中午'],
@@ -85,11 +88,14 @@ ANSWERS = {
     'no-evidence': None,
     'correction-past-budget': [r'(七|7)点半|7[:：]30'],
     'second-source': [r'(七|7)点半|7[:：]30', r'阿杰'],
-    'forgotten': None,
+    'similar-event': [r'(九|9)点'],
+    'forgotten': [],
     'promise-cue': [r'小王子', r'夜航西飞'],
     'paraphrase': [r'图书馆(二|2)楼'],
 }
-UNKNOWN = r'不知道|不清楚|不记得|没(有)?(印象|记录|听说|看到|找到|查到)|没说过|不太确定'
+ABSENT = {'similar-event': r'(七|7)点半|7[:：]30', 'forgotten': r'(九|9)点|9[:：]00'}
+FORGOTTEN = '出游集合点是南门'
+UNKNOWN = r'不知道|哪知道|不清楚|不记得|没(有)?(印象|记录|听说|看到|找到|查到)|没说过|不太确定'
 
 
 def config(root: Path, binding=None) -> LocalMemoryConfig:
@@ -135,6 +141,7 @@ async def compare(client: EmbeddingClient | None = None, binding=None) -> list[d
                              'covered': [part for part in expected if part in content],
                              'chars': result['content_chars'], 'elapsed_ms': round(elapsed, 3),
                              'excluded_scope_leaked': any(word in content for word in ['海蓝石', '紫云石']),
+                             **({'forgotten_leaked': FORGOTTEN in content} if name == 'forgotten' else {}),
                              'items': result['items']})
         return rows
 
@@ -202,7 +209,9 @@ async def ask(store: Store, chat, name: str, texts: list[str], group: int, ident
     expected = ANSWERS[name]
     return {'case': name, 'reply': reply,
             'correct': (re.search(UNKNOWN, reply) is not None if expected is None
-                        else all(re.search(pattern, reply) for pattern in expected)),
+                        else all(re.search(pattern, reply) for pattern in expected)
+                        and not (name in ABSENT and re.search(ABSENT[name], reply))),
+            'says_unknown': re.search(UNKNOWN, reply) is not None,
             'first_reply_seconds': None if wait is None or wait[0] is None else round(wait[0], 1),
             'requests': after[2] - before[2],
             'input_tokens': after[0] - before[0], 'output_tokens': after[1] - before[1]}
