@@ -255,3 +255,26 @@ def test_bad_json_and_nonstandard_constant_report_raw_fragment(tmp_path):
         load_cases(path, set_name="coherence", scene=SCENE, bot_id=BOT)
     assert str(path) in str(failure.value)
     assert "NaN" in str(failure.value)
+
+
+def test_public_social_cases_keep_expected_speech_and_protocol_inputs():
+    path = Path(__file__).parents[1] / 'examples/replay/social.json'
+    cases = load_cases(path, set_name='social', scene=SCENE, bot_id='onebot:90002')
+    assert {case.social.category for case in cases.cases} == {
+        'listen', 'join', 'accuracy', 'expression', 'sticker', 'preference'}
+    assert sum(not case.social.speak for case in cases.cases) == 3
+    assert sum(bool(case.social.sticker_files) for case in cases.cases) == 3
+
+
+def test_social_expectation_rejects_unknown_metric_configuration(tmp_path):
+    source = _source()
+    source['cases'][0]['social'] = {'category': 'listen', 'speak': False, 'automatic_approval': True}
+    with pytest.raises(ValueError, match='automatic_approval'):
+        load_cases(_write(tmp_path, source), set_name='coherence', scene=SCENE, bot_id=BOT)
+
+
+def test_social_expectation_reports_invalid_answer_pattern_at_config_boundary(tmp_path):
+    source = _source()
+    source['cases'][0]['social'] = {'category': 'accuracy', 'speak': True, 'answer_patterns': ['[']}
+    with pytest.raises(ValueError, match='invalid answer pattern'):
+        load_cases(_write(tmp_path, source), set_name='coherence', scene=SCENE, bot_id=BOT)

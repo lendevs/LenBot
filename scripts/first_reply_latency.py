@@ -275,9 +275,88 @@ async def run(instance: Path, rounds: int, quick: str | None, *, parallel: bool 
             'turns': [rounded(row) for row in rows], 'unanswered': len(replies) - len(rows)}
 
 
+async def batches() -> dict:
+    """Feed real OneBot envelopes at a logical clock; measure the first batch's public deadline."""
+    from len_bot.next.chat.attention import PendingWake, SceneRunner
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.config import load_config
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.storage.store import Store
+
+    checkout = Path(__file__).resolve().parents[1]
+    base = json.loads((checkout / 'examples/replay/lenbot.config.example.json').read_text())
+    base['models']['providers']['main']['api_key'] = 'synthetic-key'
+    base.update(persona=str(checkout / 'examples/personas/companion'), attention={'activity': 0.0})
+    base.pop('evaluation')
+    patterns = {
+        'single-text': [(0, 70001, 'text')],
+        'same-speaker': [(0, 70001, 'text'), (0.4, 70001, 'text')],
+        'image-then-caption': [(0, 70001, 'image'), (1.4, 70001, 'text')],
+        'image-only': [(0, 70001, 'image')],
+        'different-speaker': [(0, 70001, 'text'), (0.6, 70002, 'text')],
+        'several-speakers': [(0, 70001, 'text'), (0.6, 70002, 'text'), (1.2, 70003, 'text')],
+        'at-cap': [(index * 0.8, 70001, 'text') for index in range(6)],
+    }
+    rows = []
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        (root / 'lenbot.config.json').write_text(json.dumps(base))
+        config = load_config(root)
+        persona = load_persona(config.persona)
+        async with ChatModel(config.model_settings('mind')) as mind:
+            for channel in ('direct', 'named', 'focus'):
+                idle = getattr(config.attention, channel + '_idle_seconds')
+                maximum = getattr(config.attention, channel + '_max_seconds')
+                for name, pattern in patterns.items():
+                    clock = [1791201600.0]
+                    with Store(root / f'{channel}-{name}.db', now=lambda: clock[0]) as store:
+                        chat = Chat(config, persona, store, mind, now=lambda: clock[0])
+                        runner = SceneRunner(chat, lambda event: None)
+                        runner.state.offer(PendingWake(channel, clock[0]))
+                        if channel == 'focus':
+                            runner.state.contact(clock[0], config.attention.focus_seconds)
+                        start = clock[0]
+                        deadline = None
+                        consumed = []
+                        for index, (offset, user, kind) in enumerate(pattern):
+                            arrival = start + offset * idle
+                            if deadline is not None and deadline <= arrival:
+                                break
+                            clock[0] = arrival
+                            segments = ([{'type': 'at', 'data': {'qq': '90002'}}]
+                                        if index == 0 and channel == 'direct' else [])
+                            if kind == 'image':
+                                segments.append({'type': 'image', 'data': {'file': 'synthetic.png', 'sub_type': 0}})
+                            else:
+                                segments.append({'type': 'text', 'data': {'text':
+                                    ('小然 ' if index == 0 and channel == 'named' else '') + '看这里'}})
+                            runner.receive({'post_type': 'message', 'message_type': 'group', 'self_id': 90002,
+                                            'group_id': 80001, 'user_id': user, 'message_id': f'{name}-{index}',
+                                            'time': arrival, 'sender': {'nickname': f'群友{user}', 'role': 'member'},
+                                            'message': segments})
+                            deadline = runner.deadline()
+                            if deadline is None:
+                                raise RuntimeError(f'{channel}/{name} did not wake')
+                            consumed.append(index)
+                        wait = deadline - start
+                        rows.append({'channel': channel, 'case': name, 'arrivals': pattern,
+                                     'idle_seconds': idle, 'maximum_seconds': maximum,
+                                     'first_batch_seconds': round(wait, 3), 'consumed': consumed,
+                                     'cut': name == 'image-then-caption' and len(consumed) < len(pattern),
+                                     'within_cap': wait <= maximum})
+    return {'clock': 'synthetic arrivals after a seeded wake; offsets are multiples of channel idle seconds', 'rows': rows,
+            'channels': {channel: {
+                'median_seconds': median(row['first_batch_seconds'] for row in rows if row['channel'] == channel),
+                'cut': sum(row['cut'] for row in rows if row['channel'] == channel),
+                'sequences': sum(row['channel'] == channel for row in rows),
+            } for channel in ('direct', 'named', 'focus')}}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('batches', help='Measure fixed synthetic arrival sequences without model calls')
     report = commands.add_parser('report')
     report.add_argument('database', type=Path)
     report.add_argument('--hours', type=float, default=24.0)
@@ -288,7 +367,9 @@ def main() -> None:
     measure.add_argument('--parallel', action='store_true')
     measure.add_argument('--slots', type=int)
     options = parser.parse_args()
-    if options.command == 'report':
+    if options.command == 'batches':
+        result = asyncio.run(batches())
+    elif options.command == 'report':
         db = sqlite3.connect(f'file:{options.database.resolve()}?mode=ro', uri=True)
         db.row_factory = sqlite3.Row
         rows = breakdown(db, time.time() - options.hours * 3600)
