@@ -76,9 +76,11 @@ function next() {
 }
 
 const saved = ref<SetupSaved | null>(null)
+const username = ref('')
 const save = useMutation({
   mutationFn: () => setupApi.save(wizard.body()),
   onSuccess: (result) => {
+    username.value = wizard.draft.username
     wizard.clear()
     forgetSetupToken()
     saved.value = result
@@ -185,7 +187,7 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
         </header>
 
         <div class="flex-1 px-4 py-8 sm:px-8 lg:px-14 lg:py-14">
-          <DonePanel v-if="saved" :result="saved" />
+          <DonePanel v-if="saved" :result="saved" :username="username" />
           <div v-else-if="!token" class="mx-auto w-full max-w-2xl">
             <ErrorNote :title="t('setup.noToken')" :error="t('setup.noTokenText')" />
           </div>

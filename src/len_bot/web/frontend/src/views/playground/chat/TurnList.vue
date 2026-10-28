@@ -29,7 +29,7 @@ const tone = (turn: ChatTurn) =>
 
 <template>
   <section
-    class="flex max-h-[min(78vh,820px)] min-w-0 flex-col gap-2 overflow-y-auto rounded-xl border border-line bg-surface p-3 scrollbar-thin"
+    class="flex max-h-[min(calc(100dvh-240px),820px)] min-w-0 flex-col gap-2 overflow-y-auto rounded-xl border border-line bg-surface p-3 scrollbar-thin"
   >
     <h3 class="px-1 text-sm font-semibold text-ink">{{ t('playground.turns') }}</h3>
     <p v-if="!turns.length" class="px-1 text-sm text-muted">{{ t('playground.noTurns') }}</p>

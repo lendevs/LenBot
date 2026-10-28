@@ -66,14 +66,20 @@ const subtitle = (name: string) => {
     :error="mcp.error.value"
     :retry="mcp.refetch"
   />
+  <EmptyState
+    v-else-if="state && !names.length && selected === undefined"
+    :icon="Server"
+    :title="t('capabilities.mcp.empty')"
+  >
+    <Button variant="primary" :icon="Plus" @click="select(null)">{{ t('capabilities.mcp.add') }}</Button>
+  </EmptyState>
   <div v-else-if="state" class="grid min-w-0 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
     <section v-if="wide || selected === undefined" class="flex min-w-0 flex-col gap-3">
       <div class="flex items-center justify-between gap-2">
         <h2 class="text-base font-semibold">{{ t('capabilities.mcp.title') }}</h2>
         <Button size="sm" :icon="Plus" @click="select(null)">{{ t('capabilities.mcp.add') }}</Button>
       </div>
-      <EmptyState v-if="!names.length" :icon="Server" :title="t('capabilities.mcp.empty')" compact />
-      <ul v-else class="flex list-none flex-col gap-1">
+      <ul class="flex list-none flex-col gap-1">
         <li v-for="name in names" :key="name">
           <button
             type="button"
