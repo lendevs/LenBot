@@ -43,12 +43,16 @@ provide('embedded-page', true)
 
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const { scene, current } = useCurrentScene()
+// Learning runs in group chats only.
+const available = computed(() =>
+  groupTabs.filter((value) => value !== 'learning' || scene.value?.split(':')[1] !== 'private'),
+)
 const tab = computed<GroupTab>(() => {
   const { scene: first, tab: second } = route.params
-  if (isGroupTab(second)) return second
-  return isGroupTab(first) ? first : lastGroupTab.value
+  const name = isGroupTab(second) ? second : isGroupTab(first) ? first : lastGroupTab.value
+  return available.value.includes(name) ? name : 'live'
 })
-const tabs = computed(() => groupTabs.map((value) => ({ value, label: t(`groups.tabs.${value}`) })))
+const tabs = computed(() => available.value.map((value) => ({ value, label: t(`groups.tabs.${value}`) })))
 
 // One canonical address per view: /groups/<scene>/<tab>.
 watch(
