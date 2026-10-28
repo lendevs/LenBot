@@ -381,7 +381,7 @@ class DockerSandbox:
         try:
             rpc = await PiRpc.spawn(command, cwd=sandbox.workspace,
                                     env=_docker_environment(), stderr_path=stderr_path)
-            # A spawned Docker CLI is not proof that Pi started inside it.
+            # Pi has started once it answers get_state inside the container.
             state = await asyncio.wait_for(rpc.command("get_state"),
                                            timeout=self.settings.command_timeout_seconds)
             data = state.body.get("data")
