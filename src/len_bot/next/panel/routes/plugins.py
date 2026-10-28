@@ -298,8 +298,11 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
         async with manager.lock:
             try:
                 saved = await manager.save(edit)
+                # Before the reload a scene leaves a plugin being switched off; after it, one just loaded serves.
+                await runtime.scene_service.apply_memory(saved)
                 for name in names:
                     await manager.apply(name, saved)
+                await runtime.scene_service.apply_memory(saved)
                 return await snapshot()
             except (ValueError, OSError, RuntimeError) as error:
                 raise HTTPException(422 if isinstance(error, ValueError) else 500,

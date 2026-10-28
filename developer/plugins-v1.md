@@ -169,7 +169,7 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 
 ### 自动召回
 
-群设置的 `memory_plugin` 写成一个已在该群启用的插件名后，这个群每轮的自动召回由该插件的 `@recall` 入口提供，原生记忆不再为这个群做自动召回和后台整理，已有的原生记忆文件原样保留。每个插件最多一个 `@recall` 入口。
+群设置的 `memory_plugin` 写成一个已在该群启用的插件名后，这个群每轮的自动召回由该插件的 `@recall` 入口提供，原生记忆不再为这个群做自动召回和后台整理，已有的原生记忆文件原样保留。在面板保存 `memory_plugin` 或 `recap_plugin` 后，这个群在当前回合结束时切换；插件卸载时，用它的群回到原生实现。每个插件最多一个 `@recall` 入口。
 
 插件用 `@memory_tool("说明")` 提供这个群的 `memory` 工具，参数按处理函数的类型标注生成，写法与 `@tool` 相同。聊天模型、其他插件的 `ctx.memory()` 和任务执行器在这个群调用 `memory` 时都交给它，角色仍需允许 `memory`。插件没有 `@memory_tool` 时这个群没有 `memory` 工具。原生记忆的说明和群资料不再写入这个群的提示词，改为一段说明记忆由该插件提供的文字。需要导入原生记忆时，用 `await self.ctx.native_memory(scene, arguments)` 读取，参数与原生 `memory` 工具相同，只允许 browse、read、search 和 history。
 

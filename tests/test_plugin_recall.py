@@ -5,12 +5,13 @@ native recall and goes on without recall when the plugin fails; process plugins 
 """
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import json
 from pathlib import Path
 
 import pytest
 
+from len_bot.next.chat.upkeep import open_session_upkeep, upkeep_parts
 from len_bot.next.config import load_host_config
 from len_bot.next.memory.service import open_memory
 from len_bot.next.models.client import ChatModel
@@ -78,7 +79,8 @@ def request(**values) -> RecallRequest:
 
 @asynccontextmanager
 async def running(root: Path, replies: list[dict], received: list, *, plugin: str = NOTES,
-                  tools: list[str] | None = None):
+                  tools: list[str] | None = None, upkeep: bool = False):
+    """``upkeep`` adds the native memory extraction of a host."""
     server = await peer_server([(200, 'application/json', json.dumps(body).encode()) for body in replies], received)
     async with server:
         source = instance(root)
@@ -86,6 +88,8 @@ async def running(root: Path, replies: list[dict], received: list, *, plugin: st
         source['models']['providers']['fixture']['base_url'] = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
         source['plugins'] = {'paths': ['plugins'], 'notes': {}}
         source['scenes'][SCENE].update(plugins=['notes'], memory_plugin='notes')
+        if upkeep:
+            source['memory']['ingest'] = {}
         notes_package(root / 'plugins', source=plugin)
         if tools is not None:
             persona = root / 'persona/persona.yaml'
@@ -96,9 +100,13 @@ async def running(root: Path, replies: list[dict], received: list, *, plugin: st
         plugins = PluginHost(config, core_tools=CORE)
         persona = load_persona(config.scenes[SCENE].persona)
         with Store(config.database) as store:
-            async with ChatModel(config.model_settings('mind')) as mind, open_memory(config, store) as memory:
+            async with AsyncExitStack() as stack:
+                mind = await stack.enter_async_context(ChatModel(config.model_settings('mind')))
+                memory = await stack.enter_async_context(open_memory(config, store))
+                parts = (upkeep_parts(await stack.enter_async_context(open_session_upkeep(config, store, mind, memory=memory)))
+                         if upkeep else {})
                 runtime = NetworkRuntime(config, [(config.scene_config(scene), persona) for scene in config.scenes],
-                                         store, mind, memory=memory, plugins=plugins, lifecycle=HostLifecycle())
+                                         store, mind, memory=memory, plugins=plugins, lifecycle=HostLifecycle(), **parts)
                 await plugins.start()
                 try:
                     yield runtime

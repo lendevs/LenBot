@@ -238,8 +238,13 @@ class PluginManager:
             source['plugins']['disabled'] = [item for item in source['plugins'].get('disabled', []) if item != name]
             for settings in source['scenes'].values():
                 settings['plugins'] = [item for item in settings.get('plugins', []) if item != name]
+                # A scene whose memory or recap was this plugin returns to the native one.
+                for key in ('memory_plugin', 'recap_plugin'):
+                    if settings.get(key) == name:
+                        del settings[key]
 
         saved = await self.save(remove)
+        await self.runtime.scene_service.apply_memory(saved)
         await self.apply(name, saved)
         await self.installer.uninstall(name)
 
