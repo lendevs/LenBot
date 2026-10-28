@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-This directory holds templates, companion service configuration and maintenance notes for running LenBot. Setup and daily use are covered on the [documentation site (zh)](https://lendevs.github.io/LenBot/). LenBot currently runs from source only; see [quick start (zh)](https://lendevs.github.io/LenBot/guide/quick-start).
+This directory holds templates, companion service configuration and maintenance notes for running LenBot. Setup and daily use are covered on the [documentation site (zh)](https://lendevs.github.io/LenBot/). For source installation, see [quick start (zh)](https://lendevs.github.io/LenBot/guide/quick-start). Candidate packages and Docker images are covered in [deployment installation (zh)](current/installation.md).
 
 ## The instance directory
 
@@ -32,6 +32,6 @@ The runtime configuration lives in `lenbot.config.json`. Change settings in the 
 | [current/task-storage.md](current/task-storage.md) (zh) | Storage pool and quotas for background tasks |
 | [current/first-setup.example.json](current/first-setup.example.json) | Example first-setup submission |
 
-`deploy/updater/`, `deploy/package/`, `current/Dockerfile` and `current/host*.compose.yaml` serve the package and Docker releases. The release process is not settled yet and has no user guide.
+`deploy/updater/` and `deploy/package/` provide the installer and updater; `current/Dockerfile` and `current/host*.compose.yaml` provide Docker recipes. CI produces candidate deployment packages. The Release workflow with `publish=false` builds candidate images for each architecture.
 
 To update a source installation, follow the Chinese guide [更新与备份](../website/guide/maintenance.md).

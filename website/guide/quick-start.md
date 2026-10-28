@@ -1,10 +1,8 @@
 # 快速开始
 
-本页说明从获取源码到 Bot 在群里回复的完整步骤。
+本页说明从安装到 Bot 在群里回复的完整步骤。
 
-::: tip 开发中
-LenBot 尚未发布版本，目前只能从源码运行。
-:::
+源码可直接安装。开发候选包在 [CI 构建记录](https://github.com/lendevs/LenBot/actions/workflows/ci.yml)的 `release-packages` 产物中；正式版本发布后从 Releases 获取。
 
 ## 准备
 
@@ -25,6 +23,28 @@ uv run --no-sync len-bot  # 启动
 每次启动时，LenBot 检查面板的前端代码，有变化时自动重新构建。拉取更新后按[更新与备份](./maintenance#更新代码)操作。
 
 从源码运行时，仓库根目录就是实例目录。配置、数据库、角色和记忆都保存在这里，均已写入 `.gitignore`。
+
+### 使用候选部署包
+
+部署包安装只需 uv，面板已经构建。下载对应平台的包，解压后执行：
+
+```sh
+# Linux / macOS，在解压后的目录执行
+./install.sh install "$HOME/lenbot"
+"$HOME/lenbot/run"
+```
+
+```powershell
+# Windows，在解压后的目录执行
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 install "$env:USERPROFILE\lenbot"
+& "$env:USERPROFILE\lenbot\run.cmd"
+```
+
+安装器创建目标目录并下载 Python 和依赖。启动后继续下方的首次配置步骤。包名、目录布局与维护入口见[部署包安装](https://github.com/lendevs/LenBot/blob/master/deploy/current/installation.md)。
+
+### 使用 Docker
+
+Docker 使用同版本的 host 和 updater 镜像。Release 候选构建提供各架构镜像，载入后用 updater 镜像创建部署目录，再启动 Compose，按日志中的链接完成首次配置。完整命令见[Docker 安装](https://github.com/lendevs/LenBot/blob/master/deploy/current/installation.md#docker)。向导与下方第 3 步相同。
 
 ## 2. 打开首次配置
 

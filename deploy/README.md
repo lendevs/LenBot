@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-本目录存放运行 LenBot 所需的模板、配套服务配置和维护说明。安装和日常使用见[文档站](https://lendevs.github.io/LenBot/)。LenBot 目前只能从源码运行，步骤见[快速开始](https://lendevs.github.io/LenBot/guide/quick-start)。
+本目录存放运行 LenBot 所需的模板、配套服务配置和维护说明。安装和日常使用见[文档站](https://lendevs.github.io/LenBot/)。源码安装步骤见[快速开始](https://lendevs.github.io/LenBot/guide/quick-start)，候选部署包与 Docker 镜像的使用见[部署安装](current/installation.md)。
 
 ## 实例目录
 
@@ -32,6 +32,6 @@
 | [current/task-storage.md](current/task-storage.md) | 后台任务的存储池和容量上限 |
 | [current/first-setup.example.json](current/first-setup.example.json) | 首次配置向导提交内容的示例 |
 
-`deploy/updater/`、`deploy/package/`、`current/Dockerfile` 和 `current/host*.compose.yaml` 用于部署包和 Docker 发行，发行流程尚未定稿，暂无使用说明。
+`deploy/updater/` 和 `deploy/package/` 提供部署包安装器与更新器；`current/Dockerfile` 和 `current/host*.compose.yaml` 提供 Docker 配方。CI 生成候选部署包，Release 工作流的 `publish=false` 构建生成各架构候选镜像。
 
 源码安装的更新步骤见[更新与备份](../website/guide/maintenance.md)。
