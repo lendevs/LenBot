@@ -186,6 +186,14 @@ function discard() {
               <span class="block truncate text-sm font-medium text-ink">{{ title(file.filename) }}</span>
               <span class="block truncate text-xs text-muted">
                 {{ t('personas.detail.knowledge.chars', { n: file.chars }) }}
+                <template v-if="file.index">
+                  ·
+                  {{
+                    file.index === 'indexed'
+                      ? t('personas.detail.knowledge.indexed', { n: file.chunks ?? 0 })
+                      : t(`personas.detail.knowledge.${file.index}`)
+                  }}
+                </template>
                 <template v-if="file.tags.length">· {{ file.tags.join(t('personas.separator')) }}</template>
               </span>
             </span>

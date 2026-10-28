@@ -47,7 +47,7 @@ def _configured_scene(scenes: Collection[str]):
     def check(value: str) -> str:
         validate_scene(value)
         if value not in scenes:
-            raise ValueError(f"群 {value} 不在宿主配置的场景里")
+            raise ValueError(f"群 {value} 不在宿主配置的场景中")
         return value
     return check
 
@@ -175,7 +175,7 @@ class ModelInstructions(BaseModel):
 # message rules, tools and notices need none.
 PluginPermission = Literal["send", "events", "history", "memory", "generate", "delegate", "network", "schedule"]
 PERMISSION_TITLES: dict[str, str] = {
-    "send": "在启用的群里发消息", "events": "把插件事件交给 Bot 作背景", "history": "读取启用的群的聊天记录",
+    "send": "在启用的群内发送消息", "events": "将插件事件作为背景提供给 Bot", "history": "读取启用的群的聊天记录",
     "memory": "读写启用的群的长期记忆", "generate": "调用模型做单次生成（计入用量）",
     "delegate": "以请求人的名义发起后台任务", "network": "从公网获取图片", "schedule": "登记定点任务",
 }
@@ -283,7 +283,7 @@ def parse_manifest(path: Path) -> Manifest:
         raise ValueError(f"{path}: {error}; 原文开头：{text[:300]!r}") from error
     interface = raw.get("interface")
     if interface != INTERFACE:
-        raise ValueError(f"{path}: 插件接口版本 {interface!r} 与宿主接口版本 {INTERFACE} 不一致，未加载（不做兼容）")
+        raise ValueError(f"{path}: 插件接口版本 {interface!r} 与宿主接口版本 {INTERFACE} 不一致，请改用接口版本 {INTERFACE} 的插件")
     try:
         manifest = Manifest.model_validate(raw)
     except ValidationError as error:

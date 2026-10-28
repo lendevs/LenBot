@@ -17,7 +17,8 @@ import SegmentedControl from '../ui/SegmentedControl.vue'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const username = ref('')
+const username = ref(typeof route.query.username === 'string' ? route.query.username : '')
+const prefilled = Boolean(username.value)
 const password = ref('')
 const busy = ref(false)
 const error = ref('')
@@ -74,10 +75,16 @@ async function submit() {
       />
       <h1 class="text-xl font-semibold">{{ t('login.title') }}</h1>
       <Field :label="t('login.username')">
-        <Input v-model="username" autocomplete="username" :disabled="busy" autofocus />
+        <Input v-model="username" autocomplete="username" :disabled="busy" :autofocus="!prefilled" />
       </Field>
       <Field :label="t('login.password')" :error="error || null">
-        <Input v-model="password" type="password" autocomplete="current-password" :disabled="busy" />
+        <Input
+          v-model="password"
+          type="password"
+          autocomplete="current-password"
+          :disabled="busy"
+          :autofocus="prefilled"
+        />
       </Field>
       <Button
         type="submit"

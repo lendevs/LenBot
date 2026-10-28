@@ -6,7 +6,9 @@ import Avatar from '../../../ui/Avatar.vue'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
+import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
+import Select from '../../../ui/Select.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Switch from '../../../ui/Switch.vue'
 import { useForm } from './form'
@@ -35,7 +37,34 @@ const items = computed(() => {
 function toggle(name: string, on: boolean) {
   const list = form.draft.plugins.filter((item) => item !== name)
   form.draft.plugins = on ? [...list, name] : list
+  // A plugin switched off here stops being this group's memory or recap.
+  if (!on && form.draft.memory.memory_plugin === name) form.draft.memory.memory_plugin = null
+  if (!on && form.draft.memory.recap_plugin === name) form.draft.memory.recap_plugin = null
 }
+
+/** Select options cannot be empty; this stands for the native implementation. */
+const NATIVE = '*'
+/** Enabled plugins offering the entry, and the saved choice even while its plugin is not running. */
+function choices(entry: 'recall' | 'compact', saved: string | null) {
+  const offering = (form.plugins.data?.running.plugins ?? [])
+    .filter((item) => item.memory_entries.includes(entry) && form.draft?.plugins.includes(item.name))
+    .map((item) => item.name)
+  const names = [...new Set([...offering, ...(saved ? [saved] : [])])].sort()
+  return [
+    { value: NATIVE, label: t('groups.settings.plugins.native') },
+    ...names.map((name) => ({ value: name, label: name })),
+  ]
+}
+const memoryOptions = computed(() => choices('recall', form.draft?.memory.memory_plugin ?? null))
+const recapOptions = computed(() => choices('compact', form.draft?.memory.recap_plugin ?? null))
+const memory = computed({
+  get: () => form.draft?.memory.memory_plugin ?? NATIVE,
+  set: (value: string) => form.draft && (form.draft.memory.memory_plugin = value === NATIVE ? null : value),
+})
+const recap = computed({
+  get: () => form.draft?.memory.recap_plugin ?? NATIVE,
+  set: (value: string) => form.draft && (form.draft.memory.recap_plugin = value === NATIVE ? null : value),
+})
 </script>
 
 <template>
@@ -75,5 +104,13 @@ function toggle(name: string, on: boolean) {
         />
       </li>
     </ul>
+    <div v-if="memoryOptions.length > 1 || recapOptions.length > 1" class="grid gap-4 sm:grid-cols-2">
+      <Field v-if="memoryOptions.length > 1" :label="t('groups.settings.plugins.memory')">
+        <Select v-model="memory" :options="memoryOptions" />
+      </Field>
+      <Field v-if="recapOptions.length > 1" :label="t('groups.settings.plugins.recap')">
+        <Select v-model="recap" :options="recapOptions" />
+      </Field>
+    </div>
   </FormSection>
 </template>

@@ -3,10 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery } from '@tanstack/vue-query'
 import { useMediaQuery } from '@vueuse/core'
-import { ArrowLeft, ChevronRight, FileText, Folder, Plus } from '@lucide/vue'
+import { ArrowLeft, ChevronRight, FileText, Folder, FolderOpen, Plus } from '@lucide/vue'
 import { memoryApi, type MemoryScope, type MemoryState } from '../../../api/memory'
 import { keys } from '../../../api/query'
 import Button from '../../../ui/Button.vue'
+import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
@@ -130,7 +131,14 @@ const detail = computed(() => Boolean(file.value || creating.value))
           size="sm"
           :label="t('groups.memory.scope')"
         />
-        <Button v-if="writable" size="sm" variant="ghost" :icon="Plus" class="ml-auto" @click="create">
+        <Button
+          v-if="writable && nodes.length"
+          size="sm"
+          variant="ghost"
+          :icon="Plus"
+          class="ml-auto"
+          @click="create"
+        >
           {{ t('groups.memory.create') }}
         </Button>
       </div>
@@ -155,7 +163,16 @@ const detail = computed(() => Boolean(file.value || creating.value))
         :error="listing.error.value"
         :retry="listing.refetch"
       />
-      <p v-else-if="!nodes.length" class="text-sm text-muted">{{ t('groups.memory.emptyDirectory') }}</p>
+      <EmptyState
+        v-else-if="!nodes.length"
+        :icon="FolderOpen"
+        :title="t('groups.memory.emptyDirectory')"
+        compact
+      >
+        <Button v-if="writable" variant="primary" :icon="Plus" @click="create">
+          {{ t('groups.memory.create') }}
+        </Button>
+      </EmptyState>
       <ul v-else class="flex list-none flex-col">
         <li v-for="node in nodes" :key="node.path">
           <button
@@ -212,7 +229,7 @@ const detail = computed(() => Boolean(file.value || creating.value))
         @close="close"
       />
       <DirectorySummary
-        v-else
+        v-else-if="nodes.length"
         :key="`${scope}:${directory}`"
         :scene="scene"
         :scope="scope"

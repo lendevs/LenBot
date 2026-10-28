@@ -23,7 +23,7 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
                             user: Callable[[Request], str]) -> None:
     def chat_for(scene: str):
         if scene not in runtime.chats:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         return runtime.chats[scene]
 
     def changed(scene: str) -> None:

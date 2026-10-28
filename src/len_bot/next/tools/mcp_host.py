@@ -57,8 +57,7 @@ def text_result(result: types.CallToolResult, max_bytes: int) -> str:
     if result.is_error:
         raise MCPToolError(output)
     if unsupported:
-        raise MCPToolError("MCP tool executed, but this host does not process its binary content; "
-                           "nothing was viewed, played or uploaded, and the call was not repeated: " + output)
+        raise MCPToolError("MCP tool returned binary content; LenBot passes on text results only: " + output)
     return output
 
 
@@ -172,7 +171,7 @@ class MCPHost:
             settings = connection.settings.transport
             transport = (self.stdio(connection, settings) if isinstance(settings, StdioTransport)
                          else SingleHTTP(connection.settings, settings, lambda error: self.failed(connection, error)).connect())
-            # One handshake, no probe/fallback, no cached results and no automatic input-required rounds.
+            # One handshake per connection; tool calls go straight to the client.
             async with Client(transport, mode="legacy", cache=None,
                               client_info=types.Implementation(name="LenBot", version=version("len-bot")),
                               read_timeout_seconds=connection.settings.timeout_seconds) as client:

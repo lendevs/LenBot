@@ -16,13 +16,13 @@ import IconButton from '../../../ui/IconButton.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Tabs from '../../../ui/Tabs.vue'
 import AbilitiesTab from './AbilitiesTab.vue'
+import EffectTab from './EffectTab.vue'
 import FilesTab from './FilesTab.vue'
 import KnowledgeTab from './KnowledgeTab.vue'
 import ProfileTab from './ProfileTab.vue'
 import ScenesTab from './ScenesTab.vue'
 import SpeechTab from './SpeechTab.vue'
 import StickersTab from './StickersTab.vue'
-import TrialTab from './TrialTab.vue'
 import { profileKey, useProfileForm } from './profileForm'
 
 const props = defineProps<{ role: PersonaRole; exporting?: boolean }>()
@@ -36,11 +36,11 @@ const name = computed(() => props.role.name || props.role.key)
 const tabNames = [
   'profile',
   'speech',
+  'effect',
   'knowledge',
   'stickers',
   'abilities',
   'scenes',
-  'trial',
   'files',
 ] as const
 type Tab = (typeof tabNames)[number]
@@ -63,6 +63,9 @@ const form = useProfileForm(computed(() => props.role.key))
 provide(profileKey, form)
 // Tabs stay alive while switching, so each keeps its own draft and save bar.
 const dirty = reactive({ knowledge: false, abilities: false, files: false })
+const unsavedTabs = computed(() =>
+  (Object.keys(dirty) as (keyof typeof dirty)[]).filter((name) => dirty[name]),
+)
 useUnsavedChanges(
   computed(() => form.dirty.value.identity || form.dirty.value.speech || Object.values(dirty).some(Boolean)),
   { keep: ['tab'] },
@@ -154,6 +157,7 @@ const menu = computed<MenuEntry[]>(() => [
       <KeepAlive v-else>
         <ProfileTab v-if="tab === 'profile'" :role="role" />
         <SpeechTab v-else-if="tab === 'speech'" />
+        <EffectTab v-else-if="tab === 'effect'" :role="role" :others="unsavedTabs" />
         <KnowledgeTab
           v-else-if="tab === 'knowledge'"
           :persona="role.key"
@@ -166,7 +170,6 @@ const menu = computed<MenuEntry[]>(() => [
           @dirty="(value) => (dirty.abilities = value)"
         />
         <ScenesTab v-else-if="tab === 'scenes'" :role="role" :blocked="blocked" />
-        <TrialTab v-else-if="tab === 'trial'" :role="role" />
         <FilesTab v-else :persona="role.key" @dirty="(value) => (dirty.files = value)" />
       </KeepAlive>
     </template>

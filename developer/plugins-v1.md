@@ -6,7 +6,7 @@
 
 清单中必须填写以下字段。`name` 等于安装后的目录名，仓库根目录或 ZIP 根目录不要求事先使用这个目录名。
 
-公共接口的代次为 **1**，从 0.2.0 起冻结。之后只做兼容的增加，例如新的可选参数、新方法和新的清单可选字段，不修改已有的签名和语义。确实需要破坏兼容时，提升代次。宿主只加载当前代次的插件，不猜测旧包的字段。
+公共接口的代次为 **1**，从 0.2.0 起冻结。之后只做兼容的增加，例如新的可选参数、新方法和新的清单可选字段，不修改已有的签名和语义。确实需要破坏兼容时，提升代次。宿主加载当前代次的插件，旧代次的插件需要升级到当前接口。
 
 ```toml
 name = "counter"
@@ -29,7 +29,7 @@ description = "每群独立计数"
 - 可选的 `repository` 和 `homepage` 是 HTTP(S) 地址。
 - 可选的 `data_version`（正整数，默认为 1）是插件数据目录和 KV 的格式编号。改变数据的结构时，需要提高这个编号并实现 `migrate_data`，见下文的[数据版本](#数据版本)。
 
-`dependencies = ["包名>=版本"]` 声明 Python 依赖，由 uv 解析。当前环境中已有的版本会作为约束，冲突时原样报告，不会自动更换服务或修改版本后重试。对系统软件、外部服务和凭据的要求，请写在插件的 README 中。
+`dependencies = ["包名>=版本"]` 声明 Python 依赖，由 uv 解析。当前环境中已有的版本会作为约束，冲突时原样报告。对系统软件、外部服务和凭据的要求，请写在插件的 README 中。
 
 ### 权限声明
 
@@ -41,7 +41,7 @@ permissions = ["send", "history"]
 
 | 名称 | 能力 |
 |---|---|
-| `send` | 在启用的群里发消息，包括 `ctx.reply` 回复自己的命令 |
+| `send` | 在启用的群内发送消息，包括 `ctx.reply` 回复自己的命令 |
 | `events` | `emit_event` 唤醒群聊 |
 | `history` | `recent_messages` 和 `messages_between` |
 | `memory` | `ctx.memory` |
@@ -50,18 +50,18 @@ permissions = ["send", "history"]
 | `network` | `fetch_image` 从公网获取图片 |
 | `schedule` | `ctx.cron` 登记定点任务 |
 
-插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的旧插件保留全部能力，面板显示为「未声明」。新插件和官方插件应明确声明实际调用的宿主能力；模板也按此编写。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
+插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的旧插件保留全部能力，面板显示为**未声明权限**。新插件和官方插件应明确声明实际调用的宿主能力；模板也按此编写。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
 
 ### 进程隔离
 
 `isolation = "process"` 让插件运行在自己的子进程中，默认值 `inline` 与宿主同进程。
 
-- 宿主先在子进程中导入插件、读取入口，再按同样的标记登记命令、全文和正则规则、通知和 `@background` 循环。每次调用通过标准输入输出上的 JSON 行转发。
+- 宿主先在子进程中导入插件、读取入口，再按同样的标记登记命令、全文和正则规则、通知、`@background` 循环、`@recall` 和 `@compact`。每次调用通过标准输入输出上的 JSON 行转发。
 - 插件中的 `ctx` 能力都回到宿主执行。宿主使用自己记录的插件名，并重新检查场景和 `permissions`，子进程无法冒充其他插件。`ctx.delegate` 的请求人由宿主按触发这次调用的真实消息确定，子进程传来的账号不被采用；后台循环和调用结束后不能委派。
 - 子进程崩溃或退出时，未完成的调用以失败结束，`@background` 循环随之停止，插件标记为失败并记录退出码，宿主和其他插件不受影响。协议输出中出现无法解析的行时，宿主结束这个进程，按同样方式处理。在面板中重新加载插件会启动新的进程。
 - 停止时先请求插件的 `stop()`，超时或被取消时结束进程。插件的 `print` 写入标准错误，不会混入协议。
-- 暂不支持 `@tool`、`ctx.cron` 和 `ctx.start_task`；含有这些入口的插件加载时会说明原因。跨进程传递的值需要能编码为 JSON，图片按 base64 传递。
-- 子进程与宿主使用同一个 Python 环境，这是故障隔离，不是安全沙箱。
+- 暂不支持 `@tool`、`@memory_tool`、`ctx.cron` 和 `ctx.start_task`；含有这些入口的插件加载时会说明原因。跨进程传递的值需要能编码为 JSON，图片按 base64 传递。
+- 子进程与宿主使用同一个 Python 环境，进程隔离用于故障隔离，插件拥有与宿主相同的权限。
 
 公开给插件作者的入口包括以下几项。`len_bot.next` 下的内部模块不承诺兼容。
 
@@ -73,7 +73,7 @@ permissions = ["send", "history"]
 
 ### 安装来源
 
-- **Git**。在面板中手动填写完整的 HTTPS 或 `ssh://` Git URL，可以选择标签、分支或提交。仓库根目录需要包含清单和包入口。私有仓库使用本机的 Git 凭据，URL 中不要写密码。没有指定 ref 时记录默认分支，更新时沿用这个分支。指定了 ref 时，更新会重新获取同一个 ref，不会自动切换到最新版本。
+- **Git**。在面板中手动填写完整的 HTTPS 或 `ssh://` Git URL，可以选择标签、分支或提交。仓库根目录需要包含清单和包入口。私有仓库使用本机的 Git 凭据，URL 中不要写密码。没有指定 ref 时记录默认分支，更新时沿用这个分支。指定了 ref 时，更新会重新获取同一个 ref。
 - **ZIP**。清单可以放在 ZIP 的根目录，也可以把全部内容放在唯一的顶层目录中，并在这个目录中直接包含清单。必须有 `__init__.py`。以下情况都会报错，Finder 元数据会被忽略。
   - 路径越界
   - 重复的文件
@@ -84,7 +84,7 @@ permissions = ["send", "history"]
 
   ZIP 源码可以离线准备，但安装依赖可能仍然需要网络。
 
-两种来源都只**准备候选版本**。准备时会下载和解析插件，检查身份和兼容性，并保存来源信息。当前运行的版本继续运行，不导入候选版本，也不修改 Python 环境。之后在面板中填写候选版本的配置并保存，再点击应用。新插件初始为停用状态，应用成功后可以启用并选择群。
+两种来源都只**准备候选版本**。准备时会下载和解析插件，检查身份和兼容性，并保存来源信息。当前运行的版本继续运行。之后在面板中填写候选版本的配置并保存，再点击应用。新插件初始为停用状态，应用成功后可以启用并选择群。
 
 ### 文件位置
 
@@ -100,16 +100,16 @@ permissions = ["send", "history"]
 
 安装记录保存 Git commit 或 ZIP 的 SHA-256、已安装版本和候选版本、生效方式、是否已经选择重启应用，以及最近的错误。
 
-生效的参数和群选择保存在根目录的 `lenbot.config.json` 中。候选参数暂存在 `.installations/.candidate-values/`，应用对应的源码时才会发布。取消候选版本时，新字段不会留给旧版本。
+生效的参数和群选择保存在根目录的 `lenbot.config.json` 中。候选参数暂存在 `.installations/.candidate-values/`，应用对应的源码时才会发布。取消候选版本时，候选参数一并删除。
 
 `plugins.paths` 默认为 `["plugins"]`，手动复制进 `plugins/` 的插件同样会被发现，但手动放入的目录不由安装器管理。
 
 ### 应用规则
 
 - 受管理的 Git 源码有本地修改时（包括未跟踪的文件，宿主生成的 `__pycache__` 除外），应用会停止。
-- ZIP 插件换版时重新导入。同名的包更换 Git 仓库，或者在 Git 和 ZIP 之间切换来源时，需要选择「替换安装来源」，并沿用原插件的数据身份。
+- ZIP 插件换版时重新导入。同名的包更换 Git 仓库，或者在 Git 和 ZIP 之间切换来源时，需要选择**替换同名插件的安装来源**，并沿用原插件的数据身份。
 - 依赖没有变化，并且 `reload=plugin` 时，停止目标插件，切换源码，然后实际重新导入并调用 start。保存普通参数或群选择时，也只重新加载目标插件。重新加载会中断这个插件尚未完成的处理，其他插件和聊天继续运行。
-- 依赖声明有变化，或者 `reload=host` 时，应用操作只选定候选版本，面板将其列为待重启。明确重启时，启动器等待旧宿主退出，然后由 `maintenance.apply_plugins` 持有实例锁，核对候选配置，一次性安装合并后的依赖，切换源码，最后启动新宿主。普通启动不会处理候选版本。失败时本次启动器结束，候选版本和原始错误保留。修正问题后需要再次明确操作，环境不会自动回滚。
+- 依赖声明有变化，或者 `reload=host` 时，应用操作只选定候选版本，面板将其列为待重启。明确重启时，启动器等待旧宿主退出，然后由 `maintenance.apply_plugins` 持有实例锁，核对候选配置，一次性安装合并后的依赖，切换源码，最后启动新宿主。候选版本只在明确重启时应用。失败时本次启动器结束，候选版本和原始错误保留，修正问题后再次重启应用。
 
 直接运行 host 的实例，停机后在实例根目录执行 `python -m len_bot.next.maintenance.apply_plugins`，然后明确启动。这条命令只处理面板中已经选择应用的候选版本。
 
@@ -117,15 +117,15 @@ permissions = ["send", "history"]
 
 ### 取消、停用和卸载
 
-- 「取消候选」会保留已安装的源码。首次安装且尚未应用时，取消会移除这个插件的配置入口。
+- **取消候选**保留已安装的源码。首次安装且尚未应用时，取消会移除这个插件的配置入口。
 - 停用会保留参数、群选择和数据。
 - 卸载会删除源码、候选版本和启用配置，保留插件的业务数据和共享的依赖包。删除数据是插件停止后的单独操作。
 
 ### 回退
 
-应用新版本时，被替换的源码会移到 `plugins/.previous/<name>`，同时保留当时的参数，面板可以「回到上一版本」一次。新版本在加载、启动或数据迁移时失败，宿主会回到上一版本的源码和参数。如果新版本已经迁移了数据，数据也会恢复为迁移前的备份。在面板上手动回退只替换源码和参数，不改动数据（见下文）。
+应用新版本时，被替换的源码会移到 `plugins/.previous/<name>`，同时保留当时的参数，面板可以**回退到上一版本**一次。新版本在加载、启动或数据迁移时失败，宿主会回到上一版本的源码和参数。如果新版本已经迁移了数据，数据也会恢复为迁移前的备份。在面板上手动回退会换回上一版的源码和参数，数据的处理见下文。
 
-新版本增加必填配置或删除字段时，必须在应用前明确填写。宿主不会自动删除未知的配置。
+应用新版本前，按候选配置表单补齐新增的必填项，并移除已删除的字段。
 
 ### 数据版本
 
@@ -155,14 +155,67 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 | `@on_notice("group_increase")` | `self, ctx: Invocation, notice` | OneBot 的 notice_type，也支持 type.sub_type |
 | `@tool("plugin_read", "完整说明", summary="发现简介", needs_source=False)` | `self, ctx: Invocation, ...` | 根据参数类型生成 schema，返回文本或 JSON 值 |
 | `@background(every="5m")` | `self, ctx: PluginContext` | 本次执行完成后再等待一个周期，最短 10 秒。它按间隔执行，与定点的 cron 不同 |
+| `@recall()` | `self, request: RecallRequest` | 群设置 `memory_plugin` 指向本插件时，每轮在第一次模型请求前调用一次，返回 `RecallBlock` 列表，见[自动召回](#自动召回) |
+| `@memory_tool("说明")` | `self, ctx: Invocation, ...` | 群设置 `memory_plugin` 指向本插件时，作为这个群的 `memory` 工具，参数写法与 `@tool` 相同，见[自动召回](#自动召回) |
+| `@compact()` | `self, request: CompactRequest` | 群设置 `recap_plugin` 指向本插件时，由它写压缩回想，返回文字，见[压缩回想](#压缩回想) |
 
 每个方法只使用一个入口装饰器。匹配的优先级依次为命令、全文、正则，正则之间按 priority 降序匹配。同一条消息最多由一个处理器接管，并且不唤醒聊天模型。默认匹配只针对纯文本，开头的回复段和 @Bot 自己的部分可以去掉。命令可用 `@command("转发", "说明", allow_mentions=True)` 明确接收正文中的提及；提及保留在 `ctx.message.segments`，文字参数中的提及位置替换为一个空格，插件从真实消息读取目标账号。图片、语音等其他段仍不接管。全文和正则规则继续只匹配纯文本，不把提及或媒体悄悄拼接进去。
 
 插件先于宿主命令匹配。插件显式注册 `/角色` 等同名命令时由插件处理；否则 `/角色` 交给宿主，只有主人和全局管理员可以切换角色。需要保留宿主命令时，不要给插件注册同名命令。
 
-部署方可以只关掉插件的某几条规则，插件其余功能照常：在 `plugins.disabled_rules` 里按插件名列出，命令写 `/日程`，全文写原文，正则写模式字符串，例如 `"disabled_rules": {"asoul": ["今日直播"]}`。被关掉的文本当普通聊天处理。写了插件没有的规则时，日志里有一条警告。
+部署方可以只关掉插件的某几条规则，插件其余功能继续可用：在 `plugins.disabled_rules` 里按插件名列出，命令写 `/日程`，全文写原文，正则写模式字符串，例如 `"disabled_rules": {"asoul": ["今日直播"]}`。被关掉的文本当普通聊天处理。写了插件没有的规则时，日志里有一条警告。
 
-处理结果会记录到之后的对话上下文中，但不会因此启动模型。处理器返回字符串时不会自动发送消息，调用 `await ctx.reply("文字")` 才会发送。聊天模型选择调用某个 tool，属于一轮聊天的一部分。插件的 tool 本身是否调用模型是另一回事，插件的说明中必须写清楚。
+处理结果会作为背景记录到之后的对话上下文中，等下一次唤醒时供模型参考。发送消息需要调用 `await ctx.reply("文字")`，处理器的返回值只作记录。聊天模型选择调用某个 tool，属于一轮聊天的一部分；插件的 tool 内部如果调用模型，要在插件说明中写清楚。
+
+### 自动召回
+
+群设置的 `memory_plugin` 写成一个已在该群启用的插件名后，这个群每轮的自动召回由该插件的 `@recall` 入口提供，原生记忆不再为这个群做自动召回和后台整理，已有的原生记忆文件原样保留。在面板保存 `memory_plugin` 或 `recap_plugin` 后，这个群在当前回合结束时切换；插件卸载时，用它的群回到原生实现。每个插件最多一个 `@recall` 入口。
+
+插件用 `@memory_tool("说明")` 提供这个群的 `memory` 工具，参数按处理函数的类型标注生成，写法与 `@tool` 相同。聊天模型、其他插件的 `ctx.memory()` 和任务执行器在这个群调用 `memory` 时都交给它，角色仍需允许 `memory`。插件没有 `@memory_tool` 时这个群没有 `memory` 工具。原生记忆的说明和群资料不再写入这个群的提示词，改为一段说明记忆由该插件提供的文字。需要导入原生记忆时，用 `await self.ctx.native_memory(scene, arguments)` 读取，参数与原生 `memory` 工具相同，只允许 browse、read、search 和 history。
+
+```python
+from len_bot.plugin import Plugin, RecallBlock, RecallRequest, recall
+
+class Notes(Plugin):
+    @recall()
+    async def remember(self, request: RecallRequest) -> list[RecallBlock]:
+        hits = await self.search(request.scene, request.messages, limit=5)
+        return [RecallBlock(hit.title, hit.text) for hit in hits]
+```
+
+| `RecallRequest` 字段 | 内容 |
+|---|---|
+| `scene`、`persona`、`turn_id` | 场景、当前角色 ID、本轮 ID |
+| `observed_at` | 本轮开始时间，Unix 秒 |
+| `messages` | 最近 8 条 Bot 已读或已送达的消息，从早到晚排列；未送达的 Bot 发言不在其中 |
+| `recap` | 当前的压缩回想，没有时为 None |
+| `tasks` | 未完成的工作，每项一行 |
+| `budget_chars` | 字数预算，取根配置的 `memory.recall_budget_chars`；没有配置原生记忆时为 1500 |
+
+宿主按返回顺序保留各块，跳过空白块，累计超出 `budget_chars` 的部分截掉。保留的块以 `plugin:<插件名>` 为来源、`title` 为路径写入本轮状态和面板的召回记录，一轮内的每次模型请求使用同一份结果。召回限时 10 秒；超时、抛出异常或返回值不是 `RecallBlock` 序列时，错误记到插件上，这一轮不带召回继续。
+
+插件用 `ctx.messages_between` 读原消息做自己的整理时，处理完一段后调用 `await self.ctx.report_memory_progress(scene, message.id)`，表示到这条消息为止都已处理。只有该群的 `memory_plugin` 可以报告，位置只前进不后退。数据清理按 `retention.message_days` 删除过期原话时，只保留插件还没处理的部分；插件从未报告时不为它保留。原生记忆的整理位置在插件接管期间不参与判断。改回原生记忆后，原生整理从改回时的最新消息开始，插件接管期间的消息不补整理。
+
+### 压缩回想
+
+会话快要超过压缩阈值，或管理员在面板手动压缩时，宿主选出最早的若干完整对话段，连同当前回想一起换成一份新回想。群设置的 `recap_plugin` 写成一个已在该群启用的插件名后，这份新回想由该插件的 `@compact` 入口写。每个插件最多一个 `@compact` 入口。
+
+```python
+from len_bot.plugin import CompactRequest, Plugin, compact
+
+class Notes(Plugin):
+    @compact()
+    async def fold(self, request: CompactRequest) -> str:
+        return await self.ctx.generate(request.scene, "把下面的对话整理成回想：\n" + request.source)
+```
+
+| `CompactRequest` 字段 | 内容 |
+|---|---|
+| `scene`、`persona`、`turn_id` | 场景、当前角色 ID、本次压缩所属的回合 ID |
+| `source` | 当前回想和待压缩的对话段，按原生回想使用的同一份文字 |
+| `budget_tokens` | 新回想的长度上限，宿主按 UTF-8 字节数除以 3 估算 |
+
+宿主按完整的工具调用及其结果选择压缩边界。插件返回的文字去掉首尾空白后，由宿主在同一个事务里写入回想、推进压缩位置并清空已发现的工具，原生回想走同一个提交。压缩限时 120 秒；超时、抛出异常、返回空白或超过 `budget_tokens` 时，错误记到插件和当前回合上，当前回合结束，已有回想、压缩位置和历史保持原样。切换角色时的交接回想始终由原生回想写。
 
 ## 配置表单
 
@@ -263,7 +316,7 @@ default = []
 
 `summary` 可以省略，此时完整的 description 原样作为简介，不按标点截断。Field 中的 description、examples、枚举和范围都会保留。函数的 docstring、README、清单介绍和后台任务技能，都不会自动进入聊天提示。
 
-角色必须同时允许 `tool_search` 和实际的工具名。聊天模型先从简短的目录中选择能力，再按完整的工具名搜索。按原词搜索只是辅助，不做语义检索。被搜索到的工具从下一次请求开始可用。目录、搜索结果和面板使用同一份发现简介和来源，实际的工具定义始终提供完整的说明和参数 schema。
+角色必须同时允许 `tool_search` 和实际的工具名。聊天模型先从简短的目录中选择能力，再按完整的工具名搜索。搜索按原词匹配。被搜索到的工具从下一次请求开始可用。目录、搜索结果和面板使用同一份发现简介和来源，实际的工具定义始终提供完整的说明和参数 schema。
 
 跨工具的流程写在可选的共享指南中。
 
@@ -282,7 +335,7 @@ from pydantic import Field
 from len_bot.plugin import Invocation, Plugin, tool
 
 class Example(Plugin):
-    @tool("recent_count", "统计当前群指定时段的消息数量；不发送。",
+    @tool("recent_count", "统计当前群指定时段的消息数量。",
           summary="查询本群最近几小时的消息数")
     async def count(self, ctx: Invocation,
                     hours: Annotated[int, Field(ge=1, le=72,
@@ -299,13 +352,13 @@ class Example(Plugin):
 
 工具可以直接返回 dict、list、int、float、bool、None 等 JSON 值，宿主在调用边界统一编码。返回 str 时保持原文，原有的返回 JSON 文本的工具可以继续使用。不支持任意的 Python 对象、键不是字符串的对象、tuple 或非有限的浮点数。当前群由宿主确定，不让模型填写群号。
 
-推荐的返回方式如下。这只是写法建议，并非强制的业务 schema。
+推荐的返回方式如下。
 
 - 查询类工具返回数据。
 - 发送类工具返回实际的 Sent 字段。
 - 后台生成类工具返回 `{"status": "started", "delivery": "plugin"}` 这类业务结果，并在说明中写明完成后由插件自行发送。
 
-只有 sent 表示平台已确认。结果未知或失败时，不当作成功，也不自动重发。
+`sent` 表示平台已确认，结果未知和失败都按未确认处理。
 
 ## 工具按能力组织
 
@@ -338,7 +391,7 @@ class Read(Query):
 
 Request = Annotated[Search | Read, Field(discriminator="action")]
 
-@tool("content_query", "搜索或读取内容，不发送。", summary="查询内容")
+@tool("content_query", "搜索或读取内容。", summary="查询内容")
 async def query(self, ctx: Invocation,
                 request: Annotated[Request, Field(description="搜索或详情请求")]) -> dict:
     if request.action == "search":
@@ -369,7 +422,7 @@ async def action(self, ctx: Invocation) -> dict:
 - 是接收到的消息，并且不是 Bot 自己发的
 - 发送者不是已知的其他 Bot，也不在黑名单中
 
-群里的请求归属由模型判断。宿主不会默认使用最后一个发言人，也不接受模型提供的主人账号代替来源消息。普通的查询不需要这个字段。
+群里的请求归属由模型判断，宿主读取模型指明的来源消息的发送者作为请求人。普通的查询不需要这个字段。
 
 ## 配置可用性
 
@@ -382,9 +435,9 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
     return {}
 ```
 
-这些工具仍然保留在面板的预览中，但不会进入发现目录，也不能执行。保存配置后，定向重新加载会刷新工具的可用性。这个入口是同步的、不联网的配置判断，不能代替对实际请求人的权限检查。原因和指南中不能包含凭据。
+这些工具保留在面板的预览中，发现目录和执行都会跳过它们。保存配置后，定向重新加载会刷新工具的可用性。这个入口只做同步的配置判断，实际请求人的权限在工具执行时另行检查。原因和指南中不能包含凭据。
 
-面板的「群聊 → 工具」统一显示以下信息。
+面板角色详情的**工具与技能**页签统一显示以下信息。
 
 - 群是否启用
 - 角色许可
@@ -407,7 +460,7 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 | KV | `get_kv(key, default=None)`、`set_kv(key, JSON值)`、`delete_kv(key)`，都需要 await |
 | 原消息 | `ctx.recent_messages(limit=20)`，只读取当前场景，最多 100 条 |
 | 时间段消息 | `ctx.messages_between(after, before, offset=0, limit=200)`，Unix 时间 `after <= time < before`，按时间从早到晚排列，每页最多 500 条，用 offset 翻页 |
-| 记忆 | `await ctx.memory(arguments)`，使用当前场景的记忆服务，不直接连接后端数据库 |
+| 记忆 | `await ctx.memory(arguments)`，调用当前场景的 `memory` 工具，原生记忆或该群的记忆插件，不直接连接后端数据库；`ctx.native_memory(scene, arguments)` 只读访问原生记忆文件 |
 | 主动交给聊天模型 | `await ctx.emit_event(text)`，与直接发送不同，它会唤醒聊天模型 |
 | 时间 | `ctx.now()` 和 `ctx.timezone()`，明确使用场景的时区 |
 | 主人权限 | `ctx.require_owner()`，使用真实来源的发送者 |
@@ -421,7 +474,7 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 
 发送后返回 `Sent`，状态分为 sent、failed、unconfirmed、simulated 和 partial。只有 sent 表示平台已确认，客户端上的实际效果仍需要观察。用原生 JSON 返回回执时，可以把 message_ids 转为 list。
 
-`PluginContext.fetch_image` 和 `Invocation.fetch_image` 使用宿主的公网地址检查和重定向规则，以及实例的 fake-ip 配置和图片的字节数、像素上限。它们返回完整的、已经验证的图片，不会自动更换服务或重试。
+`PluginContext.fetch_image` 和 `Invocation.fetch_image` 使用宿主的公网地址检查和重定向规则，以及实例的 fake-ip 配置和图片的字节数、像素上限。它们返回完整的、已经验证的图片。
 
 以下是稳定的公共辅助接口。
 
@@ -438,7 +491,7 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 # 普通查询：直接 Python 处理与发送。
 await ctx.reply("今天的订阅内容")
 
-# 显式单次模型生成，无工具循环、不唤醒群会话、不自动发送。
+# 用指定用途执行一次模型生成。
 text = await ctx.generate("待处理的资料", role="mind", system="本次整理要求")
 await ctx.reply(text)
 
@@ -448,9 +501,9 @@ task = await ctx.delegate("整理刚才的活动", "CSV 文件", context="实际
 
 ### generate
 
-`generate` 的 role 只能是 `mind` 或 `learner`。没有单独配置 `learner` 时使用 `mind` 的绑定。请求只发给这个用途绑定的服务商和模型，出错时不会更换模型或服务。`PluginContext.generate` 需要先传入 scene。
+`generate` 执行一次模型生成并返回文本，发送由插件自己调用 `reply`。role 只能是 `mind` 或 `learner`。没有单独配置 `learner` 时使用 `mind` 的绑定。请求发给这个用途绑定的服务商和模型。`PluginContext.generate` 需要先传入 scene。
 
-调用使用 ModelSlots，以及原有的预算和用量记录。插件来源写入 `model_calls.plugin`，不会产生虚假的聊天轮次。完整的系统提示和输入都由插件提供，宿主不自动注入角色或历史。
+调用使用 ModelSlots 和原有的预算，用量写入 `model_calls`，`plugin` 字段记录插件来源。完整的系统提示和输入都由插件提供。
 
 ### delegate
 
@@ -473,14 +526,14 @@ async def start(self):
                       scene=scene, timezone=self.ctx.timezone(scene))
 
 async def publish(self, ctx):
-    await ctx.reply("定点播报，不调用模型")
+    await ctx.reply("定点播报")
 ```
 
 - 同一个插件和场景中的任务名必须唯一。
 - 使用明确的 IANA 时区和五段式 cron。时间计算使用宿主的实现，遇到夏令时导致的时刻缺失或重复时，原样报错。
-- 登记只在本次生命周期内有效。重启后从当前时间计算下一次执行，不补发离线期间错过的次数。
+- 登记只在本次生命周期内有效。重启后从当前时间计算下一次执行，离线期间的次数跳过。
 - `background` 仍然用于完成后按间隔轮询。
-- 单次执行失败时记录原始错误并结束本次执行。下一次执行是新的一次日程，并非对失败的重试。
+- 单次执行失败时记录原始错误并结束本次执行。下一次执行按日程正常进行。
 
 ### 插件技能
 
@@ -496,12 +549,12 @@ async def publish(self, ctx):
 
 `start()` 限时 60 秒，`stop()` 限时 30 秒。
 
-- `start()` 超时后，宿主会取消它并把插件标记为失败，错误为 `TimeoutError: 插件 start() 超过 60 秒没有返回，已取消`。宿主的其他部分照常启动。
-- `stop()` 超时后同样会被取消，并报告同类错误，不会阻塞关闭过程。
+- `start()` 超时后，宿主会取消它并把插件标记为失败，错误为 `TimeoutError: 插件 start() 超过 60 秒未返回，已取消`。宿主的其他部分继续启动。
+- `stop()` 超时后同样会被取消，并报告同类错误，关闭流程继续进行。
 - 等待网络或预热缓存这类耗时的准备工作，请放进 `start_task`，不要在 `start()` 中等待。
 - `migrate_data` 不限时。
 
-处理器的一次报错只会结束这一次调用。原始错误由宿主写入运行日志（`plugin_error`），宿主不会自动重试、更换服务，也不会停用整个插件。
+处理器的一次报错结束这一次调用，原始错误由宿主写入运行日志（`plugin_error`），插件继续处理后续事件。
 
 插件自己的日志使用 `self.ctx.log`（标准的 `logging.Logger`），写入宿主的 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前的回复轮次和工具调用 ID。面板的系统日志可以按插件筛选。需要特殊权限的入口可以使用 `ctx.require_owner()`，普通查询不需要加上主人限制。
 
@@ -529,12 +582,15 @@ async def check():
 - `message(text, scene=..., sender=..., parts=...)` 模拟身份和消息，返回是否被接管。`parts` 是追加在文字之后的公开 `Segment` 列表，可验证提及或媒体的接管边界。
 - `deliveries` 包含插件、场景、组合内容、reply_to 和 simulated 状态。
 - `events()` 用于查看实际记录的插件事件。
+- `recall(scene=..., recap=None, tasks=(), budget_chars=1500)` 用最近 8 条 `add_message` 的消息调用 `@recall`，返回聊天实际收到的召回条目。
+- `memory(arguments, scene=...)` 按聊天 `memory` 工具的校验调用 `@memory_tool`。
+- `compact(source, scene=..., budget_tokens=4096)` 调用 `@compact` 并按宿主的规则检查，返回宿主会采用的回想。
 
 处理器或启动失败时，本次测试会报错。退出上下文时会停止插件并删除临时实例。
 
 当前官方业务插件和模板都有工具，部分还使用 cron 或 start_task，保持 inline；它们不能只改 isolation 就切到进程模式。进程模式的限制是当前接口的明确范围。
 
-模型默认关闭。通过 `models=` 明确配置测试模型后，generate 会经过真实的宿主协议、预算和用量记录。记忆服务和工作服务仍然会明确报错。插件自行访问外部网络的调用仍然会执行，同进程测试并非沙箱。
+模型默认关闭。通过 `models=` 明确配置测试模型后，generate 会经过真实的宿主协议、预算和用量记录。记忆服务和工作服务仍然会明确报错。插件自己的网络访问在测试中照常执行。
 
 测试数据迁移时，传入旧的数据目录，例如 `PluginTest(package, data=Path('tests/data-v1'), data_version=1)`。进入上下文时，会像真实升级一样先运行 `migrate_data`，再调用 `start()`。
 

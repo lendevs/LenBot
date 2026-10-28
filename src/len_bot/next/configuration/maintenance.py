@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from len_bot.web.auth import PASSWORD_HASH_PATTERN
+
 from .types import STRICT, EpochSeconds, _FiniteSeconds, _valid_scene
 
 
@@ -19,6 +21,7 @@ class PanelSettings(BaseModel):
     username: str
     password_hash: str = Field(repr=False)
     cookie_secure: bool = False
+    trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1"])
     assets_dir: Path | None = None
     # Once a day the panel asks GitHub (or a managed installation's updater) whether a newer release exists.
     # Nothing is downloaded or installed; false turns the background request off, the explicit check stays.
@@ -34,8 +37,8 @@ class PanelSettings(BaseModel):
     @field_validator("password_hash")
     @classmethod
     def valid_password_hash(cls, value: str) -> str:
-        if re.fullmatch(r"[^$]+\$[0-9a-f]{64}", value) is None:
-            raise ValueError("must use a nonempty salt followed by $ and 64 lowercase hex digits")
+        if re.fullmatch(PASSWORD_HASH_PATTERN, value) is None:
+            raise ValueError("请填写 pbkdf2_sha256$迭代次数$盐$哈希")
         return value
 
 

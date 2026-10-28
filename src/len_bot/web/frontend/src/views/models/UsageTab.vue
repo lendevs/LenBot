@@ -46,6 +46,13 @@ const tiles = computed(() => {
   ]
 })
 
+// A month lists each day's models; a day lists the models once.
+const modelRows = computed(() =>
+  period.value === 'month'
+    ? (data.value?.days ?? [])
+    : (data.value?.models ?? []).map((row) => ({ ...row, day: '' })),
+)
+
 const wakeScene = ref('all')
 const wakeScenes = computed(() => [
   { value: 'all', label: t('models.usage.allGroups') },
@@ -89,10 +96,47 @@ const percent = (value: number) => formatNumber(value, { style: 'percent', maxim
             "
           />
         </div>
-        <p v-if="data?.unknown_calls" class="text-xs text-muted">
-          {{ t('models.usage.unknown', { n: count(data.unknown_calls) }, data.unknown_calls) }}
-        </p>
       </template>
+    </section>
+
+    <section v-if="!usage.isError.value" class="flex min-w-0 flex-col gap-3">
+      <h2 class="text-base font-semibold">{{ t('models.usage.byModel') }}</h2>
+      <Skeleton v-if="usage.isPending.value" :lines="3" />
+      <EmptyState
+        v-else-if="!data?.models.length"
+        :icon="BarChart3"
+        :title="t('models.usage.noCalls')"
+        compact
+      />
+      <div v-else class="overflow-x-auto rounded-xl border border-line bg-surface px-4 scrollbar-thin">
+        <table class="w-full min-w-[560px] text-sm">
+          <thead>
+            <tr class="text-left text-xs text-muted">
+              <th v-if="period === 'month'" scope="col" class="py-2 pr-3 font-medium">
+                {{ t('models.usage.date') }}
+              </th>
+              <th scope="col" class="py-2 pr-3 font-medium">{{ t('models.usage.model') }}</th>
+              <th scope="col" class="py-2 pr-3 text-right font-medium">{{ t('models.usage.calls') }}</th>
+              <th scope="col" class="py-2 pr-3 text-right font-medium">{{ t('models.usage.input') }}</th>
+              <th scope="col" class="py-2 pr-3 text-right font-medium">{{ t('models.usage.cached') }}</th>
+              <th scope="col" class="py-2 text-right font-medium">{{ t('models.usage.output') }}</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-line border-t border-line">
+            <tr v-for="row in modelRows" :key="`${row.day}/${row.provider}/${row.model}`">
+              <td v-if="period === 'month'" class="py-2 pr-3 text-ink-2 tabular">{{ row.day }}</td>
+              <th scope="row" class="max-w-64 truncate py-2 pr-3 text-left font-normal text-ink">
+                {{ row.model }}
+                <span class="text-xs text-muted">{{ row.provider }}</span>
+              </th>
+              <td class="py-2 pr-3 text-right text-ink-2 tabular">{{ count(row.calls) }}</td>
+              <td class="py-2 pr-3 text-right text-ink-2 tabular">{{ count(row.input) }}</td>
+              <td class="py-2 pr-3 text-right text-ink-2 tabular">{{ count(row.cached) }}</td>
+              <td class="py-2 text-right text-ink-2 tabular">{{ count(row.output) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section v-if="!usage.isError.value" class="flex min-w-0 flex-col gap-3">
@@ -116,17 +160,12 @@ const percent = (value: number) => formatNumber(value, { style: 'percent', maxim
             </tr>
           </thead>
           <tbody class="divide-y divide-line border-t border-line">
-            <tr v-for="row in data.groups" :key="`${row.scene}/${row.role}`">
+            <tr v-for="row in data.groups" :key="`${row.scene}/${row.purpose}`">
               <th scope="row" class="max-w-48 truncate py-2 pr-3 text-left font-normal text-ink">
                 {{ groupLabel(row.scene) }}
               </th>
-              <td class="py-2 pr-3 text-ink-2">{{ labels.role(row.role) }}</td>
-              <td class="py-2 pr-3 text-right text-ink-2 tabular">
-                {{ count(row.calls) }}
-                <span v-if="row.unknown_calls" class="text-xs text-muted">
-                  {{ t('models.usage.unreported', { n: row.unknown_calls }) }}
-                </span>
-              </td>
+              <td class="py-2 pr-3 text-ink-2">{{ labels.role(row.purpose) }}</td>
+              <td class="py-2 pr-3 text-right text-ink-2 tabular">{{ count(row.calls) }}</td>
               <td class="py-2 pr-3 text-right text-ink-2 tabular">{{ count(row.input) }}</td>
               <td class="py-2 text-right text-ink-2 tabular">{{ count(row.output) }}</td>
             </tr>

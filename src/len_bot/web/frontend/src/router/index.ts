@@ -1,7 +1,6 @@
 import {
   createRouter,
   createWebHashHistory,
-  type LocationQuery,
   type RouteLocationNormalized,
   type RouteRecordRaw,
 } from 'vue-router'
@@ -10,7 +9,6 @@ import { i18n } from '../i18n'
 import { areaOf } from '../layouts/nav'
 import { onUnauthorized } from '../api/client'
 import { internalPath } from './navigation'
-import { groupsTarget, type GroupTab } from '../views/groups/route'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -29,7 +27,7 @@ const page = (
   meta: RouteRecordRaw['meta'] = {},
 ) => ({ path, name, component, meta }) as RouteRecordRaw
 
-/** Host pages. Route names other than `groups` are the ones old pages link to. */
+/** Host pages. */
 const hostRoutes: RouteRecordRaw[] = [
   page('/overview', 'host-overview', () => import('../views/overview/OverviewView.vue')),
   page('/playground', 'host-trials', () => import('../views/playground/PlaygroundView.vue')),
@@ -51,54 +49,6 @@ const trialRoutes: RouteRecordRaw[] = [
   }),
 ]
 
-/** Addresses of the old shell, still used by bookmarks and the documentation site. */
-const moved: Record<string, string> = {
-  overview: '/overview',
-  'chat-test': '/playground',
-  persona: '/personas',
-  plugins: '/plugins',
-  capabilities: '/capabilities',
-  models: '/models',
-  system: '/system',
-  logs: '/system/logs',
-}
-
-/** Old group pages, by name and by their `/host/...` address; they now open a tab of the workbench. */
-const sceneTabs: Record<string, GroupTab> = {
-  messages: 'live',
-  settings: 'settings',
-  permissions: 'settings',
-  brain: 'session',
-  learning: 'learning',
-}
-function legacyGroup(
-  path: string,
-  name: string,
-  target: (query: LocationQuery) => [GroupTab, LocationQuery],
-): RouteRecordRaw {
-  return {
-    path,
-    name,
-    redirect: (to) => {
-      const { scene, ...rest } = to.query
-      const [tab, query] = target(rest)
-      return groupsTarget(typeof scene === 'string' ? scene : undefined, tab, query)
-    },
-  }
-}
-const legacyGroupRoutes = [
-  legacyGroup('/host/scenes', 'host-scenes', ({ tab, ...query }) => [
-    sceneTabs[String(tab)] ?? 'live',
-    query,
-  ]),
-  legacyGroup('/host/memory', 'host-memory', (query) => ['memory', query]),
-  legacyGroup('/host/tasks', 'host-tasks', (query) => ['tasks', query]),
-  legacyGroup('/host/resources', 'host-resources', ({ task, ...query }) => [
-    'tasks',
-    { ...query, tab: 'resources', ...(task ? { id: task } : {}) },
-  ]),
-]
-
 const hostPageNames = hostRoutes.map((route) => route.name)
 const trialPageNames = trialRoutes.map((route) => route.name)
 
@@ -117,11 +67,6 @@ const router = createRouter({
     { path: '/', redirect: { name: 'host-overview' } },
     ...hostRoutes,
     ...trialRoutes,
-    ...legacyGroupRoutes,
-    {
-      path: '/host/:page(.*)',
-      redirect: (to) => ({ path: moved[String(to.params.page)] ?? '/overview', query: to.query }),
-    },
     page('/setup', 'setup', () => import('../views/setup/SetupView.vue'), {
       public: true,
       bare: true,

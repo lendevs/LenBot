@@ -14,6 +14,7 @@ export const uploadTone: Record<string, Tone> = {
   uploaded: 'success',
   failed: 'error',
   unconfirmed: 'warning',
+  simulated: 'neutral',
 }
 
 export const finished = (status: TaskStatus | undefined) =>

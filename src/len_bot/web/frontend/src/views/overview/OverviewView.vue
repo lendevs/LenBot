@@ -52,12 +52,10 @@ const stats = computed(() => {
 const tokenNote = computed(() => {
   const value = day.value
   if (!value) return ''
-  return value.unknown_token_calls
-    ? t('overview.stats.unknownTokens', { n: formatNumber(value.unknown_token_calls) })
-    : t('overview.stats.tokenSplit', {
-        input: formatNumber(value.tokens.input),
-        output: formatNumber(value.tokens.output),
-      })
+  return t('overview.stats.tokenSplit', {
+    input: formatNumber(value.tokens.input),
+    output: formatNumber(value.tokens.output),
+  })
 })
 const effects = computed(() =>
   Object.entries(day.value?.reply_effects ?? {})
@@ -106,7 +104,6 @@ const effects = computed(() =>
           </template>
         </div>
         <p v-if="stats" class="flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs text-muted">
-          <span>{{ t('overview.stats.hours') }}</span>
           <span>{{ tokenNote }}</span>
           <span v-if="effects.length">{{ t('overview.stats.effectsLabel') }}{{ effects.join(' · ') }}</span>
         </p>

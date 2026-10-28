@@ -113,6 +113,9 @@ async function end() {
         <div class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
           <span>{{ t('playground.persona', { name: selected.persona }) }}</span>
           <Badge v-if="selected.persona_source === 'draft'" tone="info">{{ t('playground.draft') }}</Badge>
+          <Badge v-if="selected.memory_plugin">
+            {{ t('playground.nativeMemory', { name: selected.memory_plugin }) }}
+          </Badge>
           <Badge v-if="!selected.active">{{ t('playground.ended') }}</Badge>
         </div>
         <details v-if="selected.context.length" class="text-sm">

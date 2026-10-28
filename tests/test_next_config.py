@@ -2,9 +2,6 @@
 
 import json
 from pathlib import Path
-import sqlite3
-import subprocess
-import sys
 from datetime import time as WallTime
 
 import pytest
@@ -24,7 +21,6 @@ from len_bot.next.config import (
 from len_bot.next.configuration.learning import LearningSettings
 from len_bot.next.configuration.chat import QuietHours, ScenePersona
 from len_bot.next.persona.profile import load_persona
-from len_bot.next.storage.store import FORMAT_VERSION, Store
 from len_bot.web.auth import hash_password
 
 
@@ -273,7 +269,8 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
     assert config.panel is None
     assert config.compaction.input_tokens == 6000
     assert config.compaction.keep_recent_tokens == 20000
-    assert config.compaction.max_output_tokens == 1024
+    assert config.compaction.max_output_tokens is None
+    assert config.recap_output_tokens == config.models.roles.mind.max_output_tokens
     assert config.text_delivery.max_chars == 300
     assert config.text_delivery.min_interval_seconds == 0.6
     assert config.text_delivery.max_interval_seconds == 2.0
@@ -606,13 +603,13 @@ def test_learning_embedding_rejects_unknown_provider_and_invalid_binding(tmp_pat
 @pytest.mark.parametrize("panel,field", [
     ({"host": "127.0.0.1", "port": 0, "username": "host-operator"}, "password_hash"),
     ({"host": "127.0.0.1", "port": True, "username": "host-operator",
-      "password_hash": "salt$" + "a" * 64}, "port"),
+      "password_hash": "pbkdf2_sha256$600000$salt$" + "a" * 64}, "port"),
     ({"host": "127.0.0.1", "port": 0, "username": "host-operator",
       "password_hash": "invalid"}, "password_hash"),
     ({"host": "127.0.0.1", "port": 0, "username": "host-operator",
-      "password_hash": "salt$" + "a" * 64, "assets_dir": 12}, "panel.assets_dir"),
+      "password_hash": "pbkdf2_sha256$600000$salt$" + "a" * 64, "assets_dir": 12}, "panel.assets_dir"),
     ({"host": "127.0.0.1", "port": 0, "username": "host-operator",
-      "password_hash": "salt$" + "a" * 64, "extra": True}, "extra"),
+      "password_hash": "pbkdf2_sha256$600000$salt$" + "a" * 64, "extra": True}, "extra"),
 ])
 def test_host_panel_rejects_invalid_configuration(tmp_path, panel, field):
     root = tmp_path / "host"
@@ -1114,30 +1111,6 @@ def test_instance_config_rejects_retired_maintenance_settings(tmp_path, mode, fi
     assert field in str(failure.value)
     assert "Extra inputs are not permitted" in str(failure.value)
     assert "synthetic-secret-marker" not in str(failure.value)
-
-
-def test_offline_version_upgrade_cli_selects_explicit_multiscene_root(tmp_path):
-    root = tmp_path / "lab"
-    source = _host_config()
-    source["database"] = "isolated.sqlite3"
-    _write_config(root, source)
-    with Store(root / "isolated.sqlite3"):
-        pass
-    completed = subprocess.run(
-        [sys.executable, "-m", "len_bot.next.maintenance.migrate"], cwd=root,
-        text=True, capture_output=True, check=False,
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert f"business format {FORMAT_VERSION}" in completed.stdout
-    with sqlite3.connect(root / "isolated.sqlite3") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == FORMAT_VERSION
-    with sqlite3.connect(root / "isolated.sqlite3") as db:
-        db.execute("PRAGMA user_version=36")
-    rejected = subprocess.run(
-        [sys.executable, "-m", "len_bot.next.maintenance.migrate"], cwd=root,
-        text=True, capture_output=True, check=False,
-    )
-    assert rejected.returncode != 0 and "不是可升级的业务数据库" in rejected.stderr
 
 
 @pytest.mark.parametrize("port", [0, 65535])
@@ -2035,52 +2008,33 @@ def test_history_projection_policy_is_explicit_not_provider_inference(tmp_path, 
         load_config(root)
 
 
-@pytest.mark.parametrize("mode", ["isolated", "isolated-multi"])
-def test_old_configuration_format_names_the_offline_upgrade(tmp_path, mode):
-    root = tmp_path / "lab"
-    source = _config("personas/example") if mode == "isolated" else _host_config()
-    source["config_version"] = 2
-    source["models"]["roles"]["mind"]["price"] = {"input": 1, "output": 2}
-    _write_config(root, source)
-    with pytest.raises(ValueError) as failure:
-        load_instance_config(root)
-    message = str(failure.value)
-    assert "配置格式 2 早于当前程序使用的格式 3" in message
-    assert "python -m len_bot.next.maintenance.migrate_config" in message
-    assert "synthetic-secret-marker" not in message
-
-
-def test_unnumbered_configuration_with_removed_fields_points_to_the_upgrade(tmp_path):
-    # The shape that broke startup after model prices were removed: no config_version, a leftover price.
-    root = tmp_path / "lab"
-    source = _host_config()
-    source["models"]["roles"]["mind"]["price"] = {"input": 1, "output": 2}
-    _write_config(root, source)
-    with pytest.raises(ValueError) as failure:
-        load_host_config(root)
-    message = str(failure.value)
-    assert "models.roles.mind.price: Extra inputs are not permitted" in message
-    assert "没有 config_version" in message and "migrate_config" in message
-
-
-@pytest.mark.parametrize(("version", "expected"), [(4, "由更新的 LenBot 写入"), ("3", "must be an integer")])
-def test_newer_or_malformed_configuration_format_is_refused_plainly(tmp_path, version, expected):
+@pytest.mark.parametrize("version", [2, "1"])
+def test_configuration_format_other_than_the_current_one_is_refused(tmp_path, version):
     root = tmp_path / "lab"
     source = _host_config()
     source["config_version"] = version
     _write_config(root, source)
-    with pytest.raises(ValueError, match=expected):
+    with pytest.raises(ValueError, match="配置格式是 .*当前版本使用格式 1。发布前的格式变更不提供升级步骤"):
         load_host_config(root)
 
 
-def test_migrated_old_configuration_loads(tmp_path):
-    from len_bot.next.maintenance.migrate_config import migrate_config
-
+def test_worker_docker_binary_keeps_the_link_it_names(tmp_path):
+    cellar = tmp_path / "Cellar/docker/29.8.0/bin"
+    cellar.mkdir(parents=True)
+    (cellar / "docker").write_text("")
+    link = tmp_path / "bin/docker"
+    link.parent.mkdir()
+    link.symlink_to(cellar / "docker")
     root = tmp_path / "lab"
     source = _host_config()
-    source["config_version"] = 2
-    source["models"]["roles"]["mind"]["price"] = {"input": 1, "output": 2}
+    source["worker"] = {"docker_binary": str(link), "docker_host": "unix:///var/run/docker.sock",
+                        "image": "lenbot-worker:local", "workspace_root": "tasks/workspaces",
+                        "runtime_root": "tasks/runtime", "delivery_root": "tasks/deliveries",
+                        "uid": 501, "gid": 20, "model_reasoning": True,
+                        "compaction_reserve_tokens": 1000, "compaction_keep_recent_tokens": 2000}
     _write_config(root, source)
-    assert migrate_config(root / "lenbot.config.json")
-    assert load_host_config(root).config_version == 3
-    assert (root / "lenbot.config.json.pre-tokens.bak").exists()
+
+    worker = load_host_config(root).worker
+
+    assert worker.docker_binary == link
+    assert worker.workspace_root == (root / "tasks/workspaces").resolve()

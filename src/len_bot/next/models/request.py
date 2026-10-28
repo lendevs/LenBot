@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 
 from ..config import SharedConfig
 from ..chat.recap import CompactionPlan, ContextBudgetError, estimate_text_request
-from .client import ChatModel, ModelProtocolError, ModelReply, parse_token_usage
+from .client import ChatModel, ModelHTTPError, ModelOutputLimitError, ModelProtocolError, ModelReply, parse_token_usage
 from .slots import ModelSlots
 from .projection import project_messages
 from hashlib import sha256
@@ -18,6 +18,9 @@ from ..plugins.store import PluginStore
 from ..runtime.logs import log_event
 
 logger = logging.getLogger(__name__)
+# Panel names of request roles; recap names its own setting.
+ROLE_NAMES = {"mind": "聊天", "upkeep": "整理回合", "vision": "看图", "memory": "记忆摘要",
+              "worker": "后台任务", "learner": "插件生成"}
 
 
 class ChatRequest(Protocol):
@@ -66,7 +69,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         slots: ModelSlots | None = None, direct: bool = False,
                         output_tokens: int | None = None,
                         validate: Callable[[ModelReply], None] | None = None,
-                        append_to_scene: bool = False, recap_for: tuple[str, int] | None = None,
+                        append_to_scene: bool = False,
                         expression_ids: list[int] | None = None,
                         input_estimate: tuple[int, str] | None = None,
                         notify: Callable[[], None] | None = None,
@@ -88,7 +91,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
     if estimated > binding.context_window_tokens:
         scope = "文本部分" if role == "vision" else "请求"
         raise ContextBudgetError(
-            f"{role} {scope}含预留输出估算 {estimated} token，超过配置窗口 {binding.context_window_tokens}；未调用模型")
+            f"{role} {scope}含预留输出估算 {estimated} token，超过配置窗口 {binding.context_window_tokens}，请调大窗口或调小输出上限")
     effective = model.settings
     if quick and getattr(binding, "quick_reasoning_effort", None) is not None:
         effective = effective.with_effort(binding.quick_reasoning_effort)
@@ -111,21 +114,37 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         if notify is not None:
             notify()
         reply = None
+        retries = 0
+
+        def retried() -> None:
+            nonlocal retries
+            retries += 1
+
         try:
             reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id,
-                                         settings=None if effective is model.settings else effective)
+                                         settings=None if effective is model.settings else effective,
+                                         on_retry=retried)
             if validate is not None:
                 validate(reply)
         except BaseException as error:
+            if isinstance(error, ModelOutputLimitError):
+                if role == "recap":
+                    error.describe(tokens, "回想", "系统 → 设置 → 高级 → 上下文压缩 → 回想最大长度")
+                else:
+                    page = ROLE_NAMES["mind"] if binding is config.models.roles.mind else ROLE_NAMES.get(role, role)
+                    error.describe(tokens, ROLE_NAMES.get(role, role), f"模型 → {page} → 最长输出")
             response = None if reply is None else {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response}
             usage = None if reply is None else reply.usage
             token_usage = None if reply is None else reply.token_usage
+            if isinstance(error, ModelHTTPError):
+                response = error.response
             if isinstance(error, ModelProtocolError):
                 response, usage, token_usage = error.response, error.usage, error.token_usage
             store.end_call(call_id, response, usage, f"{type(error).__name__}: {error}",
-                           tokens=token_record(token_usage))
+                           tokens=token_record(token_usage), model=(binding.provider, binding.model), retries=retries)
             log_event(logger, 'model_call', level=logging.WARNING, call_id=call_id, role=role, model=binding.model,
                       provider=binding.provider, **({'plugin': plugin} if plugin else {}), status='failed', tokens=token_record(token_usage),
+                      retries=retries,
                       error=error if isinstance(error, Exception) else None)
             if notify is not None:
                 notify()
@@ -137,10 +156,11 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         # The reply is saved on the database thread; a cancellation here still leaves the call recorded as ended.
         await store.call(store.end_call, call_id,
                          {"message": reply.message, "finish_reason": reply.finish_reason, "raw": reply.response},
-                         reply.usage, tokens=token_record(reply.token_usage),
-                         append_to_scene=scene if append_to_scene else None, recap_for=recap_for)
+                         reply.usage, tokens=token_record(reply.token_usage), model=(binding.provider, binding.model),
+                         append_to_scene=scene if append_to_scene else None, retries=retries)
         log_event(logger, 'model_call', call_id=call_id, role=role, model=binding.model, provider=binding.provider,
-                  **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage))
+                  **({'plugin': plugin} if plugin else {}), status='ok', finish_reason=reply.finish_reason, tokens=token_record(reply.token_usage),
+                  retries=retries)
         if notify is not None:
             notify()
         if trace is not None:

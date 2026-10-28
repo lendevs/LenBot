@@ -32,7 +32,7 @@ export interface HostState {
   timezone: string
   delivery: string
   connection: {
-    mode: 'telegram' | 'simulated' | 'forward_ws' | 'reverse_ws' | string
+    mode: 'simulated' | 'forward_ws' | 'reverse_ws' | string
     connected: boolean
     status: string
     addresses: string[]
@@ -70,7 +70,7 @@ export interface SceneControl {
   direct: string
 }
 
-/** A group the Bot is in (OneBot) or has recently seen (Telegram) that is not connected yet. */
+/** A group the Bot is in that is not connected yet. */
 export interface AvailableScene {
   scene: string
   name: string | null

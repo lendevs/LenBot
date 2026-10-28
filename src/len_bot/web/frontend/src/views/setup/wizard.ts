@@ -37,7 +37,7 @@ export interface Draft {
   delivery: 'simulated' | 'onebot'
   owner: string
   timezone: string
-  preset: 'deepseek' | 'compatible' | 'other'
+  preset: 'deepseek' | 'compatible' | 'anthropic'
   search: 'off' | SearchService
   searchConnection: 'primary' | 'separate'
   searchBaseUrl: string
@@ -58,7 +58,6 @@ export interface Draft {
   contextWindow: number | null
   inputBudget: number | null
   maxOutput: number | null
-  temperature: number | null
   effort: string
   thinkingBudget: number | null
   outputField: 'max_completion_tokens' | 'max_tokens'
@@ -92,6 +91,15 @@ const SECRETS = [
   'readKey',
 ] as const
 
+/**
+ * The compaction threshold for a window: the root config's default 60000, or three quarters of what the
+ * window keeps after the output when that is smaller. The system prompt and tools alone take several
+ * thousand tokens, so a much smaller threshold leaves no room for the recap.
+ */
+function compactionBudget(window: number, output: number): number {
+  return Math.min(60000, Math.floor((window - output) * 0.75))
+}
+
 function initial(): Draft {
   return {
     username: '',
@@ -99,7 +107,7 @@ function initial(): Draft {
     passwordAgain: '',
     port: 8088,
     transport: 'forward_ws',
-    wsUrl: '',
+    wsUrl: 'ws://127.0.0.1:3001',
     listenHost: '127.0.0.1',
     listenPort: 8080,
     accessToken: '',
@@ -126,9 +134,8 @@ function initial(): Draft {
     proxy: '',
     model: 'deepseek-flash',
     contextWindow: 1000000,
-    inputBudget: 6000,
+    inputBudget: compactionBudget(1000000, 8192),
     maxOutput: 8192,
-    temperature: null,
     effort: 'high',
     thinkingBudget: null,
     outputField: 'max_tokens',
@@ -140,7 +147,7 @@ function initial(): Draft {
     vectorModel: '',
     vectorDimensions: null,
     persona: 'companion',
-    personaId: 'my-bot',
+    personaId: '',
     personaName: '',
     brief: '',
     voice: '',
@@ -163,11 +170,24 @@ function restored(): Draft {
   } catch {
     // No usable draft: start empty.
   }
+  draft.preset =
+    draft.api === 'anthropic'
+      ? 'anthropic'
+      : draft.preset === 'deepseek' && draft.api === 'openai-chat'
+        ? 'deepseek'
+        : 'compatible'
   return draft
 }
 
 const ACCOUNT = /^[1-9][0-9]*$/
 const PERSONA_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/** The folder a new persona gets when none is typed: an ASCII name in lowercase words, otherwise my-bot. */
+export function personaFolder(name: string): string {
+  const trimmed = name.trim()
+  const words = /^[\x20-\x7e]*$/.test(trimmed) ? trimmed.toLowerCase().match(/[a-z0-9]+/g) : null
+  return words?.join('-').slice(0, 64).replace(/-+$/, '') || 'my-bot'
+}
 
 function httpUrl(text: string): boolean {
   try {
@@ -246,12 +266,14 @@ export function createWizard() {
       model: draft.model.trim(),
       context_window_tokens: draft.contextWindow ?? 0,
       max_output_tokens: draft.maxOutput ?? 0,
-      temperature: draft.temperature,
+      temperature: null,
+      thinking: null,
       quick_reasoning_effort: draft.quickEffort.trim() || null,
       image_input: draft.imageInput,
       reasoning_effort: draft.effort.trim() || null,
       thinking_budget_tokens: draft.thinkingBudget,
       output_token_field: draft.api === 'openai-chat' ? draft.outputField : 'max_completion_tokens',
+      retry_delays_seconds: [2, 5],
     }
   }
 
@@ -288,7 +310,6 @@ export function createWizard() {
       apiKey: '',
       proxy: '',
       thinkingBudget: null,
-      temperature: null,
       api: 'openai-chat',
       baseUrl: '',
       model: '',
@@ -313,6 +334,7 @@ export function createWizard() {
         search: 'deepseek',
         searchConnection: 'primary',
       })
+    if (preset === 'anthropic') chooseProtocol('anthropic')
     catalog.value = []
   }
 
@@ -326,7 +348,6 @@ export function createWizard() {
       effort: native ? 'high' : '',
       quickEffort: native ? 'low' : '',
       thinkingBudget: null,
-      temperature: null,
       imageInput: native,
       outputField: 'max_completion_tokens',
     })
@@ -362,19 +383,18 @@ export function createWizard() {
     return 'reader'
   }
 
-  /** Called once the protocols are read: keeps a restored choice, or takes the first protocol. */
+  /** Older drafts with another protocol start at the compatible connection form. */
   function settleProtocol() {
     if (!protocols.value.some((item) => item.api === draft.api) && protocols.value[0]) {
-      chooseProtocol(protocols.value[0].api)
+      choosePreset('compatible')
     }
   }
 
-  // Leaves room for the reply: three quarters of what the window keeps after the output.
   watch(
     () => [draft.contextWindow, draft.maxOutput] as const,
     ([window, output], previous) => {
       if (!previous || window === null || output === null) return
-      if (window > output + 1024) draft.inputBudget = Math.floor((window - output) * 0.75)
+      if (window > output + 1024) draft.inputBudget = compactionBudget(window, output)
     },
   )
 
@@ -443,7 +463,7 @@ export function createWizard() {
     }
     if (step === 'persona') {
       if (draft.persona === 'custom') {
-        need('personaId', PERSONA_ID.test(draft.personaId), 'personaId')
+        need('personaId', !draft.personaId || PERSONA_ID.test(draft.personaId), 'personaId')
         need('personaName', Boolean(draft.personaName.trim()))
         need('brief', Boolean(draft.brief.trim()))
       }
@@ -462,7 +482,7 @@ export function createWizard() {
       draft.persona === 'companion'
         ? { persona_id: 'companion' }
         : {
-            persona_id: draft.personaId,
+            persona_id: draft.personaId || personaFolder(draft.personaName),
             persona_name: draft.personaName.trim(),
             brief: draft.brief.trim(),
             ...(draft.voice.trim() ? { voice_text: draft.voice.trim() } : {}),
@@ -556,7 +576,6 @@ export function createWizard() {
     vectorProvider,
     vectorBinding,
     choosePreset,
-    chooseProtocol,
     chooseSearch,
     chooseRead,
     searchAlias,

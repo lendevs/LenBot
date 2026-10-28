@@ -23,7 +23,7 @@ class CardPage:
 
 
 class TextCards:
-    """No browser, network, font discovery or rendering fallback.
+    """Render text cards with the bundled renderer and fonts.
 
     All source text is wrapped and paginated, including long names and URLs.
     A document exceeding 32 pages fails before creating any outgoing content.

@@ -1,4 +1,4 @@
-"""Single-scene web chat in an isolated root; never opens a platform outlet."""
+"""Single-scene panel chat in an isolated instance root."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from ..panel import responses
 from ..panel.auth import changes_socket, install_panel_auth
 from ..panel.routes.timeline import TurnDetail, read_turn
 from ..persona.profile import Persona, load_persona, select_examples
+from ..reference.library import open_library
 from ..models.slots import ModelSlots
 from ..models.limits import ModelBudget
 from ..storage.store import Store
@@ -61,7 +62,7 @@ class TestMessage(BaseModel):
 def stored_image(store: Store, scene: str, seq: int, image_index: int) -> Response:
     image = store.original_image(scene, seq, image_index)
     if image is None:
-        raise HTTPException(404, "测试场景里没有这张图片")
+        raise HTTPException(404, "测试场景中不存在此图片")
     mime_type, data = image
     return Response(data, media_type=mime_type, headers={"Cache-Control": "no-store"})
 
@@ -74,11 +75,12 @@ class PanelSession:
         self.config, self.store = config, store
         if slots is None:
             slots = ModelSlots(config.max_model_requests)
-            slots.admit = ModelBudget(config, store, memory, root=config._instance_root).check
+            slots.admit = ModelBudget(config, store, root=config._instance_root).check
         self.listeners: set[asyncio.Event] = set()
         self.closing = False
         self.chat = Chat(config, load_persona(config.persona) if persona is None else persona, store, mind, vision=vision,
                          memory=memory, slots=slots, on_update=self.notify,
+                         reference=open_library(config._instance_root, memory, store, slots),
                          on_compaction=None if upkeep is None else lambda: upkeep.compacted(config.scene))
         self.runner = SceneRunner(self.chat, lambda _: self.turn_done())
         self.upkeep = upkeep
@@ -122,7 +124,7 @@ class PanelSession:
             raise HTTPException(503, self.error() or "隔离场景已停止，不接收新消息")
         platform, kind, target = self.config.scene.split(":", 2)
         if item.uid == self.config.bot_id:
-            raise HTTPException(422, "虚拟发言者不能使用 Bot 自己的账号")
+            raise HTTPException(422, "虚拟发言者不能使用 Bot 自身的账号")
         if kind == "private" and item.uid != platform + ":" + target:
             raise HTTPException(422, "私聊测试身份必须是当前场景的对方账号")
         if item.reply_to is not None and self.store.find_message(self.config.scene, item.reply_to) is None:
@@ -164,7 +166,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
         persona = load_persona(config.persona)
         with Store(config.database) as store:
             slots = ModelSlots(config.max_model_requests)
-            budget = ModelBudget(config, store, None, root=config._instance_root)
+            budget = ModelBudget(config, store, root=config._instance_root)
             slots.admit = budget.check
             async with (
                 ChatModel(config.model_settings("mind")) as mind,
@@ -173,7 +175,6 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
                 open_memory(config, store, active_personas={config.scene: persona.id}, slots=slots) as memory,
                 open_session_upkeep(config, store, mind, memory=memory, slots=slots) as upkeep,
             ):
-                budget.memory = memory
                 session = PanelSession(config, store, mind, vision=vision, memory=memory, upkeep=upkeep, slots=slots,
                                        persona=persona)
                 app.state.session = session
@@ -258,7 +259,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
     async def turn(turn_id: str, _: str = Depends(user)):
         result = app.state.session.store.turn_detail(config.scene, turn_id)
         if result is None:
-            raise HTTPException(404, "当前测试场景没有这一轮")
+            raise HTTPException(404, "当前测试场景不存在此回合")
         return result
 
     @app.get("/api/chat-test/turns/{turn_id}/steps", response_model=TurnDetail)
@@ -266,7 +267,7 @@ def create_app(config: LabConfig, *, root: Path) -> FastAPI:
         """The same step view as a group's live timeline."""
         result = read_turn(app.state.session.store, config.scene, turn_id)
         if result is None:
-            raise HTTPException(404, "当前测试场景没有这一轮")
+            raise HTTPException(404, "当前测试场景不存在此回合")
         return result
 
     @app.websocket("/api/chat-test/events")
@@ -283,7 +284,8 @@ def main() -> None:
         config = load_config(root)
         activate_prompts(root)
         app = create_app(config, root=root)
-        uvicorn.run(app, host=config.panel.host, port=config.panel.port)
+        uvicorn.run(app, host=config.panel.host, port=config.panel.port,
+                    forwarded_allow_ips=config.panel.trusted_proxies)
 
 
 if __name__ == "__main__":

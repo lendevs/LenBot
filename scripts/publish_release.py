@@ -1,4 +1,4 @@
-"""Publish existing-tag assets without replacing an already uploaded file."""
+"""Publish release assets for an existing tag."""
 
 import argparse
 import hashlib
@@ -33,7 +33,7 @@ def main() -> None:
     if matching:
         release, = matching
         if release['prerelease'] != manifest['prerelease'] or release['draft']:
-            raise ValueError('Existing Release channel differs; do not rewrite it')
+            raise ValueError('Existing Release differs in draft or prerelease state; fix it on GitHub first')
     else:
         release = None
     assets = {} if release is None else {item['name']: item for item in release['assets']}

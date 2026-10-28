@@ -20,7 +20,7 @@ class Compaction(BaseModel):
 
     input_tokens: int = Field(default=60000, gt=0, strict=True)
     keep_recent_tokens: int = Field(default=20000, gt=0, strict=True)
-    max_output_tokens: int = Field(default=1024, gt=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
 
 
 class TextDelivery(BaseModel):
@@ -297,6 +297,10 @@ class SceneSettings(ScenePersona):
     simulated_delivery: bool = False
     # Plugins enabled in this scene; each must be loaded by root ``plugins``.
     plugins: list[str] = Field(default_factory=list)
+    # The enabled plugin that recalls memory for this scene instead of the native memory; None keeps native.
+    memory_plugin: str | None = None
+    # The enabled plugin that writes this scene's compaction recaps; None keeps the native recap.
+    recap_plugin: str | None = None
     # Scene aliases, relationships and addendum of roles not in use here, by role id; switching back restores them.
     inactive_personas: dict[str, ScenePersona] = Field(default_factory=dict)
 
@@ -330,3 +334,10 @@ class SceneSettings(ScenePersona):
         if len(set(value)) != len(value):
             raise ValueError("plugins must not repeat a name")
         return value
+
+    @model_validator(mode="after")
+    def memory_plugins_enabled(self) -> SceneSettings:
+        for name in ("memory_plugin", "recap_plugin"):
+            if getattr(self, name) is not None and getattr(self, name) not in self.plugins:
+                raise ValueError(f"{name} must be one of this scene's plugins")
+        return self

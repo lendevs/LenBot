@@ -73,6 +73,8 @@ class TimelineTurn(BaseModel):
     tokens: Tokens
     tools: list[str]
     error: str | None
+    # Seconds from the message that woke the turn (or the turn's start) to its first expression.
+    first_expression_wait: float | None
 
 
 class TimelineNotice(BaseModel):
@@ -121,6 +123,7 @@ class ModelStep(BaseModel):
     error: str | None
     tokens: CallTokens | None
     snapshot_expired_at: float | None
+    retries: int
 
 
 class Step(BaseModel):
@@ -247,7 +250,9 @@ def turn_record(store: Store, row) -> dict:
             'steps': sum(call['role'] == 'mind' for call in calls),
             'expressions': expressions,
             'tokens': token_summary([None if call['tokens'] is None else json.loads(call['tokens']) for call in calls]),
-            'tools': list(dict.fromkeys(tools))}
+            'tools': list(dict.fromkeys(tools)),
+            'first_expression_wait': None if row['first_expression_at'] is None else
+                row['first_expression_at'] - (row['started'] if row['wake_received_at'] is None else row['wake_received_at'])}
 
 
 # At the same moment messages come first, then notices, then turns.
@@ -317,7 +322,7 @@ def read_turn(store: Store, scene: str, turn_id: str) -> dict | None:
                 if identity not in seen:
                     recalled.append(item)
                     seen.add(identity)
-        model = {key: call[key] for key in ('id', 'role', 'started', 'ended', 'error', 'tokens', 'snapshot_expired_at')}
+        model = {key: call[key] for key in ('id', 'role', 'started', 'ended', 'error', 'tokens', 'snapshot_expired_at', 'retries')}
         if call['role'] != 'mind':
             if call['role'] == 'recap' or not steps:
                 pending.append(model)
@@ -382,5 +387,5 @@ def register_host_timeline(app, *, runtime, user) -> None:
                 return read_turn(records, scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
-            raise HTTPException(404, '当前场景没有这一轮')
+            raise HTTPException(404, '当前场景不存在此回合')
         return result

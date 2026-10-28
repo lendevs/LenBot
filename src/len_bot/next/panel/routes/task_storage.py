@@ -39,14 +39,14 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
 
     def worker_for(scene: str) -> WorkerSettings:
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
         if runtime.config.worker is None:
             raise HTTPException(409, '当前未配置任务文件目录')
         return runtime.config.worker
 
     def cleanable(item: Task) -> bool:
         return (runtime.tasks is not None and item.status in TERMINAL and item.container is None
-                and not item.browser_active and item.id not in runtime.tasks.running)
+                and item.id not in runtime.tasks.running)
 
     @app.get('/api/host/task-storage/pool', response_model=responses.TaskPool, response_model_exclude_unset=True)
     async def pool(_: str = Depends(user)):

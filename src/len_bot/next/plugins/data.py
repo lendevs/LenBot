@@ -50,7 +50,7 @@ async def prepare_data(name: str, target: int, data_dir: Path, backups: Path,
         return None
     if current > target:
         raise ValueError(f'插件 {name} 的数据版本 {current} 比当前插件声明的 data_version {target} 新；'
-                         '旧版本插件不能读新数据，回到旧版本需要同时恢复升级前的插件数据备份')
+                         '旧版本插件不能读取新数据，退回旧版本需要同时恢复升级前的插件数据备份')
     backup = backups / f'{name}-v{current}-{time.strftime("%Y%m%d-%H%M%S", time.gmtime())}'
     backups.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(shutil.copytree, data_dir, backup, symlinks=True)
@@ -79,6 +79,6 @@ def restore_backup(name: str, data_dir: Path, backups: Path, version: int) -> Pa
         return None
     taken = sorted(backups.glob(f'{name}-v{version}-*'))
     if not taken:
-        raise ValueError(f'插件 {name} 的数据已是版本 {current}，{backups} 里没有版本 {version} 的备份')
+        raise ValueError(f'插件 {name} 的数据已是版本 {current}，{backups} 中没有版本 {version} 的备份')
     _restore(taken[-1], data_dir)
     return taken[-1]

@@ -1,5 +1,7 @@
 """面板 JSON 响应；协议原文和持久化记录保留各自的 JSON 字段。"""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from ..chat.schedule_store import Schedule
@@ -47,6 +49,12 @@ class PersonaName(PanelResponse):
 class ScenePersona(PanelResponse):
     scene: str
     persona: PersonaName
+
+
+class MemoryScene(ScenePersona):
+    # The running scene's memory plugin, its reported position and latest memory error; None is native.
+    plugin: JsonObject | None
+    recap_plugin: str | None
 
 
 class HostScene(ScenePersona):
@@ -142,6 +150,17 @@ class SettingsSnapshot(PanelResponse):
     restart_required: JsonObject
 
 
+class WorkerDefaults(PanelResponse):
+    docker_binary: str | None = None
+    docker_host: str | None = None
+    image: str | None = None
+    workspace_root: str | None = None
+    runtime_root: str | None = None
+    delivery_root: str | None = None
+    uid: int | None = None
+    gid: int | None = None
+
+
 class LearningSettingsSnapshot(PanelResponse):
     scene: str
     running: JsonObject | None
@@ -180,7 +199,7 @@ class MemoryState(PanelResponse):
     index: JsonObject | None
     reindex_command: str
     maintenance_container: bool
-    scenes: list[ScenePersona]
+    scenes: list[MemoryScene]
     persona_ids: dict[str, list[str]]
 
 
@@ -274,6 +293,28 @@ class RoleScenes(PanelResponse):
     results: list[JsonObject]
 
 
+class RolePreviewSection(PanelResponse):
+    name: str
+    # True when the text comes from the persona package rather than the framework.
+    own: bool
+    text: str
+
+
+class RolePreviewStyle(PanelResponse):
+    name: str
+    weight: float
+    note: str | None
+
+
+class RolePreview(PanelResponse):
+    scene: str | None
+    sections: list[RolePreviewSection]
+    examples: int
+    styles: list[RolePreviewStyle]
+    # One style drawn the way a turn draws it, as the turn would add it.
+    style: str | None
+
+
 class RoleLocation(PanelResponse):
     saved_path: str
     running_path: str
@@ -298,6 +339,8 @@ class RoleFiles(Applied):
     saved_path: str
     affected_scenes: list[str]
     appended: JsonObject | None = None
+    # The framework expression rules a blank persona file falls back to.
+    defaults: dict[str, str] | None = None
 
 
 class KnowledgeDocument(PanelResponse):
@@ -311,6 +354,10 @@ class KnowledgeFile(PanelResponse):
     filename: str
     tags: list[str]
     chars: int
+    # Reference index state, given by the listing only.
+    index: Literal['processing', 'indexed', 'failed'] | None = None
+    chunks: int | None = None
+    vectors: int | None = None
 
 
 class RoleKnowledge(Applied):
@@ -454,7 +501,6 @@ class TaskState(PanelResponse):
     scenes: list[JsonObject]
     public_network: bool
     file_upload: bool
-    notice: str
 
 
 class TaskPool(PanelResponse):
@@ -533,9 +579,11 @@ class TrialInfo(PanelResponse):
     root: str
     excluded_tools: list[str]
     memory: str
+    memory_plugin: str | None
     persona: str
     persona_source: str
     draft_path: str | None
+    draft_source: str | None
     models: dict[str, str]
 
 
@@ -550,6 +598,15 @@ class UpdateState(PanelResponse):
     check: JsonObject
     notice: list[str] | None
     rollback_loses_data: bool
+
+
+class UpdateSnapshot(PanelResponse):
+    """One update snapshot under the deployment's backups/; ``restore``: the restore action offered now uses it."""
+    name: str
+    created: float
+    bytes: int
+    complete: bool
+    restore: bool
 
 
 class SetupProtocols(Protocols):
@@ -585,11 +642,12 @@ class Overview(PanelResponse):
     messages: JsonObject
     turns: JsonObject
     model_calls: int
-    unfinished_calls: int
     tokens: JsonObject
-    unknown_token_calls: int
     pending_schedules: int
     recent_errors: list[JsonObject]
+    model_errors: list[JsonObject]
+    # Per model call purpose over the last seven days: the latest success and failure, or null.
+    model_health: list[JsonObject]
     reply_effects: JsonObject
     undelivered: JsonObject
     pending_reviews: JsonObject
@@ -640,7 +698,6 @@ class RestartPreview(PanelResponse):
     chats: list[str]
     tasks: list[JsonObject]
     queued_tasks: int
-    browsers: list[JsonObject]
     trials: list[JsonObject]
 
 
@@ -687,21 +744,13 @@ class Usage(PanelResponse):
     since: Number
     until: Number
     calls: int
-    unfinished_calls: int
-    settled_unknown_calls: int
-    successful_unknown_calls: int
-    budgeted: JsonObject
     input: int
     output: int
     cached: int
-    known_calls: int
-    unknown_calls: int
+    models: list[JsonObject]
+    days: list[JsonObject]
     groups: list[JsonObject]
-    unverified_summary_attempts: int
-    unmetered_sources: list[str]
     wakes: list[JsonObject]
-    scope: str
-    memory_record_source: str
 
 
 class LogFiles(Enabled):
@@ -818,18 +867,6 @@ class ResourceDeleted(PanelResponse):
     removed: bool
 
 
-class Pairing(PanelResponse):
-    pairing_link: str
-
-
-class BrowserDevices(PanelResponse):
-    devices: list[JsonObject]
-
-
-class BrowserRevoked(PanelResponse):
-    revoked: str
-
-
 class MemoryChange(PanelResponse):
     action: str
     path: str
@@ -837,15 +874,6 @@ class MemoryChange(PanelResponse):
     reason: str
     before: str | None
     after: str | None
-
-
-class MemoryAdopted(PanelResponse):
-    source: str
-    target: str
-    target_saved: bool
-    source_removed: bool
-    change: MemoryChange
-    notice: str
 
 
 class MemoryForgotten(PanelResponse):

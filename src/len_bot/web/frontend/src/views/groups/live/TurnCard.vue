@@ -38,6 +38,13 @@ const summary = computed(() => {
     turn.ended !== null && turn.expressions === 0
       ? t('groups.live.turn.listened')
       : t('groups.live.turn.expressions', { n: turn.expressions }),
+    ...(turn.first_expression_wait === null
+      ? []
+      : [
+          t('groups.live.turn.firstWait', {
+            time: formatDuration(Math.max(0, turn.first_expression_wait) * 1000),
+          }),
+        ]),
     formatDuration(Math.max(0, ended - turn.started) * 1000),
     t('groups.live.turn.tokens', {
       input: formatCompact(turn.tokens.input),

@@ -27,7 +27,7 @@ const name = computed(() => (props.message.is_self ? props.persona : senderName(
 const text = computed(() =>
   props.message.text
     .replace(/\[提及全体成员\]/g, `@${t('groups.live.everyone')}`)
-    .replace(/\[提及 ((?:onebot|telegram):[0-9]+)\]/g, (_, uid: string) => `@${props.nameOf(uid)} `)
+    .replace(/\[提及 (onebot:[0-9]+)\]/g, (_, uid: string) => `@${props.nameOf(uid)} `)
     .replace(/\[图片[0-9]+(?:：[^\]]*)?\]/g, '')
     .trim(),
 )

@@ -5,7 +5,7 @@ const repo = 'https://github.com/lendevs/LenBot'
 export default defineConfig({
   lang: 'zh-CN',
   title: 'LenBot',
-  description: '基于大模型的群聊机器人，接入 QQ 和 Telegram，用网页面板管理',
+  description: '基于大模型的群聊机器人，接入 QQ，用网页面板管理',
   base: '/LenBot/',
   cleanUrls: true,
   lastUpdated: true,
@@ -29,7 +29,6 @@ export default defineConfig({
         ] },
         { text: '接入平台', items: [
           { text: 'QQ（OneBot）', link: '/guide/onebot' },
-          { text: 'Telegram', link: '/guide/telegram' },
         ] },
         { text: '日常使用', items: [
           { text: '面板一览', link: '/guide/panel' },
@@ -37,6 +36,7 @@ export default defineConfig({
           { text: '群内命令', link: '/guide/commands' },
           { text: '角色', link: '/guide/personas' },
           { text: '记忆与学习', link: '/guide/memory' },
+          { text: '资料检索', link: '/guide/reference' },
         ] },
         { text: '扩展能力', items: [
           { text: '模型与用量', link: '/guide/models' },

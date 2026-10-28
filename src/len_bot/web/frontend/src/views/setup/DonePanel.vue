@@ -8,8 +8,9 @@ import Button from '../../ui/Button.vue'
 import Field from '../../ui/Field.vue'
 import Input from '../../ui/Input.vue'
 
-/** After saving: waits for the new panel and opens it; the address can be corrected by hand. */
-const props = defineProps<{ result: SetupSaved }>()
+/** After saving: waits for the new panel and opens its login page with the new username filled in; the
+ * address can be corrected by hand. */
+const props = defineProps<{ result: SetupSaved; username: string }>()
 
 const { t } = useI18n()
 type State = 'starting' | 'ready' | 'slow' | 'failed'
@@ -27,6 +28,11 @@ function panelAddress(): string {
 const address = ref(panelAddress())
 const addressError = ref<string | null>(null)
 const installed = computed(() => props.result.plugins.map((item) => item.name))
+const login = (panel: URL) => {
+  const page = new URL(panel)
+  page.hash = `/login?${new URLSearchParams({ username: props.username })}`
+  return page.href
+}
 
 let stopped = false
 async function wait() {
@@ -42,7 +48,7 @@ async function wait() {
         const ready = (await response.json()) as { ready?: boolean; status?: string }
         if (ready.ready) {
           state.value = 'ready'
-          setTimeout(() => !stopped && location.assign(panel.href), 600)
+          setTimeout(() => !stopped && location.assign(login(panel)), 600)
           return
         }
         if (ready.status === 'failed') {
@@ -74,7 +80,7 @@ function open() {
     return
   }
   addressError.value = null
-  location.assign(panel.href)
+  location.assign(login(panel))
 }
 </script>
 

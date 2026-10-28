@@ -10,7 +10,8 @@ from len_bot.next.work.worker_model import Limits, WorkerModelError, WorkerModel
 
 
 @pytest.mark.asyncio
-async def test_pi_output_budget_is_validated_forwarded_and_recorded_without_retry():
+@pytest.mark.parametrize('thinking', [None, 'enabled', 'disabled'])
+async def test_pi_output_budget_is_validated_forwarded_and_recorded_without_retry(thinking):
     received, started, finished = [], [], []
     event = {'choices': [{'index': 0, 'delta': {'content': 'synthetic'}, 'finish_reason': 'stop'}],
              'usage': {'prompt_tokens': 20, 'completion_tokens': 1}}
@@ -34,7 +35,7 @@ async def test_pi_output_budget_is_validated_forwarded_and_recorded_without_retr
     async with server:
         port = server.sockets[0].getsockname()[1]
         settings = ModelSettings(api='openai-chat', base_url=f'http://127.0.0.1:{port}/v1',
-                                 api_key='synthetic-key', model='fixture', max_output_tokens=1024)
+                                 api_key='synthetic-key', model='fixture', max_output_tokens=1024, thinking=thinking)
         async with WorkerModelProxy(settings, 'fixture', 4096, 'synthetic-task',
                                     Limits(10, 100000, 100000), start_call=record,
                                     finish_call=lambda ident, result: finished.append((ident, result))) as proxy:
@@ -49,6 +50,7 @@ async def test_pi_output_budget_is_validated_forwarded_and_recorded_without_retr
             for fields in ({'max_completion_tokens': 256}, {}):
                 async with proxy.open('synthetic-task', json.dumps({**request, **fields}).encode()) as response:
                     assert b''.join([chunk async for chunk in response.body]) == stream
+    assert all(item.get('thinking') == (None if thinking is None else {'type': thinking}) for item in received)
     assert [item['max_completion_tokens'] for item in received] == [256, 1024]
     assert [item['request']['max_completion_tokens'] for item in started] == [256, 1024]
     assert started[1]['text_request_estimate_tokens'] - started[0]['text_request_estimate_tokens'] == 768
@@ -61,10 +63,10 @@ def test_rejected_calls_remain_unknown_in_records_but_do_not_block_a_task_budget
     with Store(tmp_path / 'state.db') as store:
         tasks = TaskStore(store)
         task = tasks.create('onebot:group:80001', 'onebot:70001', '测试', '测试', '测试', '测试')
-        call = tasks.start_call(task.scene, task.id, {'model': 'fixture'})
+        call = tasks.start_call(task.scene, task.id, {'provider': 'fixture', 'model': 'fixture'})
         tasks.finish_call(call, {'http_status': 429, 'tokens': None, 'error': 'upstream model HTTP 429'})
         assert tasks.call_tokens(task.scene, task.id) == [None]
         assert tasks.call_tokens(task.scene, task.id, for_budget=True) == []
-        interrupted = tasks.start_call(task.scene, task.id, {'model': 'fixture'})
+        interrupted = tasks.start_call(task.scene, task.id, {'provider': 'fixture', 'model': 'fixture'})
         tasks.finish_call(interrupted, {'http_status': 200, 'tokens': None, 'error': 'response interrupted'})
         assert tasks.call_tokens(task.scene, task.id, for_budget=True) == [None]

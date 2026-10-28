@@ -17,7 +17,7 @@ from . import responses
 from ..config import HostConfig
 from ..configuration.editing import _read_saved
 from ..models.limits import speech_quota
-from ..models.usage import instance_calls
+from ..models.usage import instance_usage
 from ..memory.jobs import processing_records
 from ..storage.store import Store
 from .routes.capabilities import register_host_capabilities
@@ -28,7 +28,6 @@ from .routes.plugins import register_host_plugins
 from .routes.mcp import register_host_mcp
 from .routes.audio import register_host_audio
 from .routes.trials import HostTrials, register_host_trials
-from .routes.browser import register_host_browser
 from .routes.permissions import register_host_permissions
 from .routes.settings import register_host_settings
 from ..runtime.lifecycle import HostLifecycle
@@ -40,6 +39,7 @@ from .routes.operations import register_host_operations
 from .routes.diagnostics import register_host_diagnostics
 from .routes.timeline import register_host_timeline
 from .routes.memory import register_host_memory
+from .routes.reference import register_host_reference
 from .routes.tasks import register_host_tasks
 from .routes.task_storage import register_host_task_storage
 from .routes.materials import register_host_materials
@@ -117,7 +117,6 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     register_host_diagnostics(app, user=user)
     register_host_timeline(app, runtime=runtime, user=user)
     register_host_trials(app, trials, user)
-    register_host_browser(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_capabilities(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     releases = register_host_updates(app, root=root, user=user, check_enabled=config.panel.update_check)
@@ -134,6 +133,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     register_host_persona_stickers(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_persona_avatar(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_memory(app, runtime=runtime, user=user, root=root, container=container)
+    register_host_reference(app, runtime=runtime, user=user)
     register_host_tasks(app, runtime=runtime, user=user, host_changes=listeners, write_lock=write_lock)
     register_host_materials(app, runtime=runtime, user=user)
     register_host_resources(app, runtime=runtime, user=user)
@@ -150,7 +150,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
 
     def configured_scene(scene: str) -> None:
         if scene not in config.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
 
     def switching(scene: str) -> dict | None:
         role = None if runtime.personas is None else runtime.personas.switching.get(scene)
@@ -163,8 +163,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "connection": {
-                "mode": ("telegram" if config.telegram is not None else "simulated" if config.onebot is None
-                         else config.onebot.mode),
+                "mode": "simulated" if config.onebot is None else config.onebot.mode,
                 "connected": False if runtime.platform is None else runtime.platform.connected,
                 "status": runtime.status,
                 "addresses": [] if runtime.platform is None else [
@@ -232,6 +231,13 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         items = await asyncio.to_thread(read_records, config.logging.directory, limit=limit, match=match, level=level)
         return {"items": items, "directory": str(config.logging.directory), "limit": limit}
 
+    @app.get("/api/host/model-calls/{call_id}", response_model=responses.JsonObject)
+    async def model_call(call_id: int, _: str = Depends(user)):
+        item = await runtime.store.read(runtime.store.model_call, call_id)
+        if item is None or item['scene'] not in config.scenes:
+            raise HTTPException(404, '模型调用不存在')
+        return item
+
     overview_lock = asyncio.Lock()
     overview_cached = None
     overview_read_at = 0.0
@@ -244,8 +250,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
             scenes = list(config.scenes)
             # The last 24 whole hours, ending with the current one.
             hour = now.replace(minute=0, second=0, microsecond=0).timestamp()
-            calls = instance_calls(store, config.database, None,
-                                   min(start.timestamp(), hour - 23 * 3600), end.timestamp(),
+            usage = instance_usage(store.db, None, min(start.timestamp(), hour - 23 * 3600), end.timestamp(),
                                    trials_root=root / '.runtime' / 'chat-tests')
             stuck = [] if runtime.ingestor is None or records is None else [
                 {"scene": scene, "status": job["status"], "error": job["error"], "ended": job["ended"]}
@@ -254,10 +259,11 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 if job is not None and job["status"] in {"failed", "interrupted"}]
             return {"timezone": config.timezone, "sampled_at": now.timestamp(),
                     "since": start.timestamp(), "until": end.timestamp(),
-                    **store.daily_overview(scenes, start.timestamp(), end.timestamp(), calls=calls),
-                    "hourly": store.hourly_overview(scenes, hour - 23 * 3600, 24, calls=calls),
+                    **store.daily_overview(scenes, start.timestamp(), end.timestamp(), usage=usage),
+                    "hourly": store.hourly_overview(scenes, hour - 23 * 3600, 24, usage=usage),
                     "activity": store.recent_activity(scenes, 12),
                     "failed_tasks": store.failed_tasks(scenes, start.timestamp()),
+                    "model_health": store.model_health(scenes, now.timestamp() - 7 * 86400),
                     "memory_stuck": stuck,
                     "speech_held": {scene: until for scene, chat in runtime.chats.items()
                                     for until in [speech_quota(store, chat.config).until(direct=False)] if until is not None},
@@ -277,7 +283,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         configured_scene(scene)
         image = runtime.store.original_image(scene, seq, image_index)
         if image is None:
-            raise HTTPException(404, "当前场景没有这张已保存图片",
+            raise HTTPException(404, "当前场景不存在此已保存图片",
                                 headers={"Cache-Control": "no-store"})
         mime_type, data = image
         return Response(data, media_type=mime_type, headers={"Cache-Control": "no-store"})

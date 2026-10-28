@@ -55,6 +55,16 @@ SCRIPTS = [
      '清和之前说过要轻一点的，碳纤维的小三脚架就够用。',
      ['扫街的话买个一公斤以内的碳纤维小三脚架就够了', '要拍火烧云再加个快门线，手就不会抖啦']),
 ]
+# Group files of 80001 for the reference tab: (folder, file_id, name, uploader, text or None for a photo).
+GROUP_FILES = [
+    (None, '/f-rules', '桌游规则速查.md', 70003,
+     '# 桌游规则速查\n\n## 卡坦岛\n\n先到 10 分获胜。强盗出现时手牌超过 7 张要弃掉一半。\n\n'
+     '## 璀璨宝石\n\n每回合拿 3 枚不同颜色或 2 枚同色宝石，手里最多 10 枚。\n'),
+    (None, '/f-venue', '场地预约.txt', 70002, '周六 18:00 到 23:00，东门桌游吧 3 号包间，押金 100 元已交。\n'),
+    (None, '/f-photo', '上周合影.jpg', 70004, None),
+    ('/d-books', '/f-expansion', '卡坦岛航海家扩展.md', 70003,
+     '# 航海家扩展\n\n## 胜利条件\n\n航海家扩展先到 13 分获胜。\n'),
+]
 FALLBACK = ('', None, '有人叫我，先看看群里刚才在聊什么。', '大概明白了，接一句。',
             ['我在呢～刚才在看你们聊', '有事随时叫我'])
 
@@ -116,7 +126,17 @@ def free_port() -> int:
 COUNTER = itertools.count(1000)
 
 
-async def onebot(port: int, ready: asyncio.Event, connections: set | None = None) -> None:
+def group_files(folder: str | None) -> dict:
+    files = [{'group_id': 80001, 'file_id': file_id, 'file_name': name, 'busid': 102,
+              'file_size': len(text.encode()) if text else 812_000, 'upload_time': int(time.time()) - 86400 * index,
+              'uploader': user, 'uploader_name': MEMBERS[user]}
+             for index, (inside, file_id, name, user, text) in enumerate(GROUP_FILES) if inside == folder]
+    folders = [] if folder else [{'group_id': 80001, 'folder_id': '/d-books', 'folder_name': '规则书',
+                                  'total_file_count': 1}]
+    return {'files': files, 'folders': folders}
+
+
+async def onebot(port: int, ready: asyncio.Event, connections: set | None = None, files_url: str = '') -> None:
     """Answer the queries LenBot makes and push the invented messages once it is connected."""
     counter = COUNTER
     connections = set() if connections is None else connections
@@ -133,6 +153,10 @@ async def onebot(port: int, ready: asyncio.Event, connections: set | None = None
             return {'user_id': user, 'nickname': MEMBERS.get(user, '群友'), 'card': '', 'role': 'member'}
         if action.startswith('send_'):
             return {'message_id': next(counter)}
+        if action in ('get_group_root_files', 'get_group_files_by_folder'):
+            return group_files(params.get('folder_id') if params['group_id'] == 80001 else '/none')
+        if action == 'get_group_file_url':
+            return {'url': files_url + params['file_id']}
         return {}
 
     async def handle(connection):
@@ -176,8 +200,14 @@ async def main() -> None:
     onebot_port = free_port()
     ready = asyncio.Event()
     connections: set = set()
-    server = asyncio.create_task(onebot(onebot_port, ready, connections))
+    server = asyncio.create_task(onebot(onebot_port, ready, connections,
+                                        f'http://127.0.0.1:{args.control_port}/files'))
     control = scripted_model(args.model_delay)
+
+    @control.get('/files/{file_id}')
+    async def group_file(file_id: str):
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(next(text for _, known, _, _, text in GROUP_FILES if known == '/' + file_id))
 
     @control.post('/inject')
     async def inject(body: dict):

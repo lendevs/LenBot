@@ -1,17 +1,16 @@
-import { request as httpRequest } from "node:http";
 import { readFile } from "node:fs/promises";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const TASK_API_FILE = "/run/lenbot/task-api.json";
 const TASK_API_BASE = "http://127.0.0.1:18181";
-type BuiltinDataToolName = "recall_chat" | "memory" | "transcribe" | "account_browser";
+type BuiltinDataToolName = "recall_chat" | "memory" | "transcribe";
 type MCPToolName = `mcp__${string}`;
 type DataToolName = BuiltinDataToolName | MCPToolName;
 type DataTool = { name: DataToolName; description: string; parameters: Record<string, unknown> };
 type TaskApiSettings = { token: string; timeoutMs: number; tools: DataTool[] };
-const DATA_ROUTES = {recall_chat: "/task/recall-chat", memory: "/task/memory", transcribe: "/task/transcribe", account_browser: "/task/account-browser"} as const;
-const DATA_LABELS = {recall_chat: "Recall chat", memory: "Memory", transcribe: "Transcribe scene audio", account_browser: "Account browser"} as const;
+const DATA_ROUTES = {recall_chat: "/task/recall-chat", memory: "/task/memory", transcribe: "/task/transcribe"} as const;
+const DATA_LABELS = {recall_chat: "Recall chat", memory: "Memory", transcribe: "Transcribe scene audio"} as const;
 
 function isMCPName(value: string): value is MCPToolName {
   return /^mcp__[a-zA-Z0-9_-]{1,59}$/.test(value);
@@ -42,7 +41,7 @@ async function taskApi(): Promise<TaskApiSettings> {
     }
     const tool = value as Record<string, unknown>;
     const name = tool.name;
-    if (name !== "recall_chat" && name !== "memory" && name !== "transcribe" && name !== "account_browser"
+    if (name !== "recall_chat" && name !== "memory" && name !== "transcribe"
       && !(typeof name === "string" && isMCPName(name))) {
       throw new Error(`${TASK_API_FILE}: invalid tools[${index}].name: ${JSON.stringify(name)}`);
     }
@@ -63,41 +62,17 @@ async function taskApi(): Promise<TaskApiSettings> {
 
 async function taskPost(
   settings: TaskApiSettings,
-  route: "/task/deliver-file" | "/task/network" | "/task/recall-chat" | "/task/memory" | "/task/transcribe" | "/task/account-browser" | "/task/mcp",
+  route: "/task/deliver-file" | "/task/network" | "/task/recall-chat" | "/task/memory" | "/task/transcribe" | "/task/mcp",
   operation: "deliver_file" | "network_status" | DataToolName,
   body: Record<string, unknown>,
   signal?: AbortSignal,
 ) {
-  const humanWait = operation === "account_browser" && body.method === "request_help";
-  const encoded = JSON.stringify(body);
-  const headers = { Authorization: `Bearer ${settings.token}`, "Content-Type": "application/json" };
-  let raw: string, status: number;
-  if (humanWait) {
-    // Human time is bounded by the host; fetch's built-in header timeout is not an input deadline.
-    const response = await new Promise<{ raw: string; status: number }>((resolve, reject) => {
-      const request = httpRequest(`${TASK_API_BASE}${route}`, {
-        method: "POST", headers: { ...headers, "Content-Length": Buffer.byteLength(encoded) }, signal,
-      }, response => {
-        if (response.statusCode === undefined) { response.destroy(); reject(new Error("Task bridge omitted HTTP status")); return; }
-        const status = response.statusCode;
-        response.setEncoding("utf8");
-        let raw = "";
-        response.on("data", chunk => { raw += chunk; });
-        response.on("error", reject);
-        response.on("end", () => resolve({ raw, status }));
-      });
-      request.on("error", reject);
-      request.end(encoded);
-    });
-    ({ raw, status } = response);
-  } else {
-    const timeout = AbortSignal.timeout(Math.ceil(settings.timeoutMs));
-    const response = await fetch(`${TASK_API_BASE}${route}`, {
-      method: "POST", headers, body: encoded,
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error",
-    });
-    raw = await response.text(); status = response.status;
-  }
+  const timeout = AbortSignal.timeout(Math.ceil(settings.timeoutMs));
+  const response = await fetch(`${TASK_API_BASE}${route}`, {
+    method: "POST", headers: { Authorization: `Bearer ${settings.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error",
+  });
+  const raw = await response.text(), status = response.status;
   if (status < 200 || status >= 300) throw new Error(`${operation} HTTP ${status}: ${raw}`);
   let payload: unknown;
   try { payload = JSON.parse(raw); }
@@ -114,11 +89,11 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "report_progress",
     executionMode: "sequential",
     label: "Report progress",
-    description: "Record real task progress in this Pi session; this does not send a message to the requester.",
-    parameters: Type.Object({ text: Type.String({ description: "Actual progress to record" }) }),
+    description: "Record task progress for the task detail page.",
+    parameters: Type.Object({ text: Type.String({ description: "Progress to record" }) }),
     async execute(_id, { text }) {
       pi.appendEntry("lenbot_progress", { text });
-      return result("已记录到本次会话；未声称已发给请求人。", { recorded: true, text });
+      return result("已记录到任务进度。", { recorded: true, text });
     },
   });
 
@@ -141,12 +116,12 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "confirm_action",
     executionMode: "sequential",
     label: "Confirm action",
-    description: "Request explicit approval through Pi's native interactive UI; cancellation is not approval.",
+    description: "Request explicit approval through Pi's native interactive UI.",
     parameters: Type.Object({ description: Type.String({ description: "Action requiring approval" }) }),
     async execute(_id, { description }, signal, _update, ctx) {
       if (!ctx.hasUI) throw new Error("Requester UI is unavailable");
       const approved = await ctx.ui.confirm("确认执行？", description, { signal });
-      return result(approved ? "当前操作已获明确同意。" : "当前操作未获同意（取消或超时）；不得执行。", { approved });
+      return result(approved ? "当前操作已获明确同意。" : "当前操作未获同意（取消或超时），请停止这项操作。", { approved });
     },
   });
 
@@ -154,7 +129,7 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "deliver_file",
     executionMode: "sequential",
     label: "Deliver file",
-    description: "Submit a local file to the task-only host endpoint; registration is not QQ upload confirmation.",
+    description: "Copy a local file to the host as a task delivery.",
     parameters: Type.Object({
       path: Type.String({ description: "Existing local file path" }),
       name: Type.String({ description: "Delivery filename" }),
@@ -162,7 +137,7 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     }),
     async execute(_id, { path, name, note }, signal) {
       const { raw, payload } = await taskPost(settings, "/task/deliver-file", "deliver_file", { path, name, note }, signal);
-      return result(`宿主原始结果：${raw}\n文件复制登记与 QQ 上传是不同状态；以宿主实际返回字段为准。`, payload);
+      return result(`宿主返回：${raw}`, payload);
     },
   });
 
@@ -170,7 +145,7 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
     name: "network_status",
     executionMode: "sequential",
     label: "Network status",
-    description: "Read the host's known task and scene-today egress usage, limits, and last recorded network error. This does not probe connectivity or change limits; enabled does not mean connected.",
+    description: "Read recorded egress usage and limits for this task and for the scene today, plus the last recorded network error.",
     parameters: Type.Object({}),
     async execute(_id, _args, signal) {
       const { raw, payload } = await taskPost(settings, "/task/network", "network_status", {}, signal);
@@ -191,11 +166,6 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
         const { raw, payload } = await taskPost(settings, route, tool.name, body, signal);
         if (typeof payload.content !== "string") {
           throw new Error(`${tool.name} expected a string content; raw=${raw}`);
-        }
-        if (tool.name === "account_browser" && payload.image !== undefined) {
-          const image = payload.image as {data?: unknown; mimeType?: unknown};
-          if (typeof image.data !== "string" || image.mimeType !== "image/png") throw new Error(`Invalid browser image: ${raw.slice(0,500)}`);
-          return {content:[{type:"text" as const, text:payload.content}, {type:"image" as const, data:image.data, mimeType:image.mimeType}], details:{content:payload.content}};
         }
         return result(payload.content, payload);
       },

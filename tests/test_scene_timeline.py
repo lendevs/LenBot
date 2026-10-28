@@ -28,15 +28,18 @@ def seed(root, count, *, same_time=False):
                              'woke': False, 'channel': None, 'reason': '合成判定', 'score': 0.2, 'threshold': 1.0})))
         with store.db:
             store.db.executemany('INSERT INTO messages(scene,platform_id,body,raw,received_at,wake_verdict) VALUES(?,?,?,?,?,?)', rows)
-        for _ in range(3):
+        for number in range(3):
             if same_time:
                 store.now = lambda: START
-            turn_id = store.start_turn(SCENE, wake_channel='direct')
+            turn_id = store.start_turn(SCENE, wake_channel='direct', wake_received_at=START - 4 if number == 0 else None)
             call_id = store.start_call(turn_id, 'mind', {'messages': [
                 {'role': 'system', 'content': '合成设定'},
                 {'role': 'user', 'content': '\n<相关长期记忆>\n不是 JSON，是群友粘贴的文本\n</相关长期记忆>'}]})
             store.end_call(call_id, {'message': {'role': 'assistant', 'content': '合成输出'}}, None,
-                           tokens={'input': 100, 'output': 20, 'cached': 10})
+                           tokens={'input': 100, 'output': 20, 'cached': 10}, model=('fixture', 'fixture-model'))
+            if number < 2:
+                with store.db:
+                    store.db.execute('UPDATE turns SET first_expression_at=started+6 WHERE id=?', (turn_id,))
             store.end_turn(turn_id, 'settled')
 
 
@@ -59,6 +62,9 @@ def test_timeline_cursor_orders_ties_without_gaps_and_validates_requests(tmp_pat
         assert [e['message_seq'] for e in found if e['type'] == 'message'] == [1, 2, 3, 4, 5]
         assert len({e['turn_id'] for e in found if e['type'] == 'turn'}) == 3
         assert [e['type'] for e in found] == ['message'] * 5 + ['turn'] * 3
+        # From the waking message when known, otherwise from the turn's start; none without an expression.
+        waits = sorted((e['first_expression_wait'] for e in found if e['type'] == 'turn'), key=lambda value: (value is None, value))
+        assert waits == [6, 10, None]
         pictured = found[4]
         assert pictured['sender']['card'] == '群名片'
         assert pictured['images'][0]['url'] == 'https://example.invalid/image.png'

@@ -26,6 +26,7 @@ const toolTones: Record<ToolDetail['status'], Tone> = {
 function modelMeta(model: ModelStep): string {
   const parts = [labels.role(model.role)]
   if (model.ended !== null) parts.push(formatDuration((model.ended - model.started) * 1000))
+  if (model.retries) parts.push(t('groups.live.step.retries', { n: model.retries }))
   if (model.tokens) {
     parts.push(
       t('groups.live.turn.tokens', {

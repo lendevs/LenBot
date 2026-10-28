@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -24,11 +24,13 @@ from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ToolCall
 from ..models.request import ChatRequest
 from ..persona.profile import Persona
-from ..persona.knowledge import PERSONA_KNOWLEDGE_TOOL, PersonaKnowledgeArguments, persona_knowledge
 from ..platform.platform_tools import (MEMBER_INFO_TOOL, OPEN_FORWARD_TOOL, MemberInfoArguments,
                              MESSAGE_REACTION_TOOL, MessageReactionArguments, message_reaction,
                              OpenForwardArguments, PlatformCall, member_info, open_forward)
 from .recall import RECALL_TOOL, RecallArguments, recall_chat
+from ..reference.library import ReferenceLibrary
+from ..reference.sources import has_files, scene_directory
+from ..reference.tool import KNOWLEDGE_TOOL, KnowledgeArguments, knowledge
 from ..trials.replay_images import RecordedImages
 from ..trials.replay_web import RecordedWeb
 from .scene_control import SCENE_CONTROL_TOOL, SceneControlArguments
@@ -44,6 +46,17 @@ from ..work.tools import DELEGATE_TOOL, TASK_TOOL, execute_tasks
 from ..tools.web_read import WEB_READ_TOOL, WebReadArguments, execute_web_read, read_web_page
 from ..tools.web_search import WEB_SEARCH_TOOL, WebSearchArguments, execute_web_search
 from ..prompt_files import read_prompt
+from ...plugin import CompactRequest, RecallRequest
+
+
+
+class MemoryPlugins(Protocol):
+    """The plugin host's entries for scenes whose memory or recap a plugin provides."""
+    async def recall(self, plugin: str, request: RecallRequest) -> list[dict]: ...
+    async def compact(self, plugin: str, request: CompactRequest) -> str: ...
+    def memory_definition(self, plugin: str) -> dict | None: ...
+    async def run_memory_tool(self, plugin: str, scene: str, arguments: dict) -> str: ...
+
 
 if TYPE_CHECKING:
     from .expression import ChatExpression
@@ -74,7 +87,7 @@ class SayArguments(BaseModel):
     reply_to: str | None = Field(default=None, description="默认不填，直接接话。群里同时有几个话头、不引用会让人认错你在回哪句时，才填该平台消息 ID。")
     # Individual accounts of the platforms with an adapter; express() also requires the scene's platform,
     # and build_tools narrows the schema the model sees to it.
-    mention: str | None = Field(default=None, pattern=r"^(?:onebot|telegram):[1-9][0-9]*$",
+    mention: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
         description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query 三选一，素材目录见 react。")
@@ -128,7 +141,7 @@ def tool_catalog(*, platform: bool) -> list[dict]:
         **SAY_TOOL["function"], "description": "在当前场景表达；结果返回实际原文和平台发送状态。",
     }}
     catalog = [say, REACT_TOOL, WAIT_TOOL, RECALL_TOOL, WEB_SEARCH_TOOL, WEB_READ_TOOL, LOOK_TOOL,
-            *SCHEDULE_TOOLS, PERSONA_KNOWLEDGE_TOOL, MEMORY_TOOL, DELEGATE_TOOL, TASK_TOOL,
+            *SCHEDULE_TOOLS, KNOWLEDGE_TOOL, MEMORY_TOOL, DELEGATE_TOOL, TASK_TOOL,
             SEND_FILE_TOOL, OPEN_FORWARD_TOOL, MEMBER_INFO_TOOL, MESSAGE_REACTION_TOOL, TRANSCRIBE_TOOL, SCENE_CONTROL_TOOL, HOST_MANAGE_TOOL, TOOL_SEARCH,
             ATTENTION_TOOL]
     return [{**tool, "function": {**tool["function"],
@@ -153,7 +166,7 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
         reasons.append("还没有开启读网页")
     if name == "web_search" and config.web_search is None:
         reasons.append("还没有开启搜索网页")
-    if name == "memory" and config.memory is None:
+    if name == "memory" and config.memory is None and config.memory_plugin is None:
         reasons.append("还没有设置记忆")
     if name == 'attention' and config.attention.declarations is None:
         reasons.append('本群没有开启持续关注')
@@ -174,8 +187,9 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
             reasons.append("还没有设置 NapCat 能看到的文件目录")
         if config.delivery != "onebot":
             reasons.append("模拟发送时不能发文件")
-    if name == "persona_knowledge" and not persona.knowledge:
-        reasons.append("角色没有资料文件")
+    if (name == "knowledge" and not persona.knowledge
+            and not has_files(scene_directory(config._instance_root, config.scene))):
+        reasons.append("角色没有设定资料，本聊天也没有资料文件")
     if name in {"open_forward", "member_info", "transcribe", "message_reaction"} and config.delivery != "onebot":
         reasons.append("模拟发送时用不了")
     if name in {"member_info", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
@@ -184,10 +198,17 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
 
 
 def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
-                    memory: MemoryService | None) -> list[dict]:
-    """Chat-data tools a task worker may call for the scene, as far as the role allows."""
+                    memory: MemoryService | None, plugins: MemoryPlugins | None = None) -> list[dict]:
+    """Chat-data tools a task worker may call for the scene, as far as the role allows.
+
+    In a scene whose memory is a plugin, ``memory`` is that plugin's tool, or absent while it has none.
+    """
     selected = [deepcopy(tool["function"]) for tool in build_tools(config, persona, platform=platform)
                 if tool["function"]["name"] in {"recall_chat", "memory", "transcribe"}]
+    if config.memory_plugin is not None:
+        definition = None if plugins is None else plugins.memory_definition(config.memory_plugin)
+        return [deepcopy(definition["function"]) if tool["name"] == "memory" else tool
+                for tool in selected if tool["name"] != "memory" or definition is not None]
     for tool in selected:
         if tool["name"] == "memory":
             tool["parameters"]["properties"]["action"]["enum"] = memory.actions
@@ -197,7 +218,7 @@ def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
 
 def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_management: bool = False) -> list[dict]:
     if persona.tools != "all":
-        for name in ("web_read", "web_search", "look", "persona_knowledge", "memory", "react"):
+        for name in ("web_read", "web_search", "look", "memory", "react"):
             if name in persona.tools:
                 reasons = tool_unavailable_reasons(config, persona, name)
                 if reasons:
@@ -261,8 +282,11 @@ class SceneTools:
                  expression: ChatExpression, request: ChatRequest, vision: ChatModel | None,
                  memory: MemoryService | None, tasks: WorkTasks | None, audio: AudioService | None,
                  upload_file: Callable[[str, str, str], Awaitable[UploadResult]] | None,
-                 platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float]):
+                 platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float],
+                 plugins: MemoryPlugins | None = None, reference: ReferenceLibrary | None = None):
         self.config, self.persona, self.store = config, persona, store
+        self.plugins = plugins
+        self.reference = ReferenceLibrary(config._instance_root) if reference is None else reference
         self.expression, self.request, self.vision = expression, request, vision
         # Images the mind model looked at itself in the current turn, newest last.
         self.looked: list[tuple[str, bytes]] = []
@@ -286,6 +310,11 @@ class SceneTools:
         send_message, upload_file, platform_call = self.expression.send_message, self.upload_file, self.platform_call
         allowed = build_tools(config, persona, platform=send_message is not None,
                               host_management=self.host_management is not None)
+        if config.memory_plugin is not None:
+            # The scene's memory plugin supplies the memory tool; without its definition there is none.
+            definition = None if self.plugins is None else self.plugins.memory_definition(config.memory_plugin)
+            allowed = [definition if tool["function"]["name"] == "memory" else tool
+                       for tool in allowed if tool["function"]["name"] != "memory" or definition is not None]
         if self.scene_control is None:
             allowed = [tool for tool in allowed if tool["function"]["name"] != "scene_control"]
         if self.attention is None:
@@ -317,6 +346,12 @@ class SceneTools:
         saved = self.store.load_discovered_tools(config.scene)
         self.discovered_tools = set(saved) & self.allowed_tool_names & self.deferred_names
         return allowed
+
+    async def run_memory(self, arguments: dict) -> str:
+        """The scene's memory tool for chat, plugins and task workers: native, or the scene's memory plugin."""
+        if self.config.memory_plugin is not None:
+            return await self.plugins.run_memory_tool(self.config.memory_plugin, self.config.scene, arguments)
+        return await self.memory.execute(self.config.scene, arguments)
 
     @property
     def tools(self) -> list[dict]:
@@ -418,10 +453,9 @@ class SceneTools:
             # A history search may scan many rows; it reads on the database thread without the write lock.
             return await self.store.read(recall_chat, self.store, self.config.scene, self.config.timezone,
                                          RecallArguments.model_validate(call.arguments)), None, None
-        if call.name == "persona_knowledge":
-            arguments = PersonaKnowledgeArguments.model_validate(call.arguments)
-            return persona_knowledge(self.persona.id, self.persona.name, self.persona.knowledge,
-                                     arguments), None, None
+        if call.name == "knowledge":
+            return await knowledge(self.reference, self.config.scene, self.persona, self.persona.name,
+                                   KnowledgeArguments.model_validate(call.arguments)), None, None
         if call.name == "web_read":
             return await execute_web_read(self.store, self.config.scene, self.config.web_read,
                                           WebReadArguments.model_validate(call.arguments), recording=self.replay_web,
@@ -441,7 +475,7 @@ class SceneTools:
                                                 if read_top is not None else None,
                                             connection=self._connection(self.config.web_search)), None, None
         if call.name == "memory":
-            return await self.memory.execute(self.config.scene, call.arguments), None, None
+            return await self.run_memory(call.arguments), None, None
         if call.name in {"delegate", "task"}:
             return tool_result(await execute_tasks(self.tasks, self.config.scene, call.name, call.arguments)), None, None
         if call.name == "send_file":

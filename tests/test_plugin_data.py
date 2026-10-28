@@ -147,7 +147,7 @@ def test_apply_keeps_the_replaced_source_for_one_rollback(tmp_path):
     record = installer.read('notes')
     assert 'version = "1.0.0"' in (old / 'plugin.toml').read_text()
     assert record.installed.version == '1.0.0' and record.previous is None
-    with pytest.raises(ValueError, match='没有保留上一版本'):
+    with pytest.raises(ValueError, match='未保留上一版本'):
         installer.rollback_files('notes')
 
 

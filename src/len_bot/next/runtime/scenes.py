@@ -16,6 +16,8 @@ from ..platform.platform_tools import joined_groups
 if TYPE_CHECKING:
     from .network import NetworkRuntime
 
+MEMORY_KEYS = ('memory_plugin', 'recap_plugin')
+
 
 class SceneService:
     def __init__(self, runtime: NetworkRuntime):
@@ -24,7 +26,6 @@ class SceneService:
         self.tasks: dict[str, asyncio.Task] = {}
         self.changed = asyncio.Event()
         self.retiring: set[str] = set()
-        self.observed: dict[str, dict] = {}
 
     async def ready(self, scene: str, wait: bool) -> bool:
         return scene not in self.retiring and await self.runtime._ready(wait)
@@ -52,19 +53,14 @@ class SceneService:
     async def join(self) -> None:
         await asyncio.gather(*self.tasks.values())
 
-    def observe(self, scene: str, raw: dict) -> None:
-        title = raw['message']['chat'].get('title') if scene.startswith('telegram:') else None
-        self.observed[scene] = {'scene': scene, 'name': title, 'last_seen': self.runtime.store.now()}
-
     async def available(self) -> list[dict]:
         runtime = self.runtime
-        if runtime.config.onebot is not None:
-            if not runtime.platform.connected:
-                raise ValueError('平台尚未连接，无法读取已加入的群')
-            groups = await joined_groups(runtime.platform.call)
-            return [item for item in groups if item['scene'] not in runtime.chats]
-        return [item for item in sorted(self.observed.values(), key=lambda item: item['last_seen'], reverse=True)
-                if item['scene'] not in runtime.chats]
+        if runtime.config.onebot is None:
+            return []
+        if not runtime.platform.connected:
+            raise ValueError('平台尚未连接，无法读取已加入的群')
+        groups = await joined_groups(runtime.platform.call)
+        return [item for item in groups if item['scene'] not in runtime.chats]
 
     async def apply(self, saved: HostConfig) -> None:
         for scene in list(self.runtime.config.scenes):
@@ -74,10 +70,67 @@ class SceneService:
             if scene not in self.runtime.config.scenes:
                 await self.add(scene, settings)
 
+    def _memory_ready(self, scene: str, plugin: str | None) -> bool:
+        """Whether ``plugin`` (None for native memory) is running in the scene."""
+        if plugin is None:
+            return True
+        record = None if self.runtime.plugins is None else self.runtime.plugins.plugins.get(plugin)
+        return (plugin in self.runtime.config.scenes[scene].plugins and record is not None
+                and scene in record.scenes and record.status in {'loaded', 'running'})
+
+    async def apply_memory(self, saved: HostConfig) -> None:
+        """Move scenes to their saved memory and compaction plugins between turns.
+
+        A setting whose plugin is not yet running in the scene is applied by the restart.
+        """
+        for scene in list(self.runtime.config.scenes):
+            if scene not in saved.scenes:
+                continue
+            current, desired = self.runtime.config.scenes[scene], saved.scenes[scene]
+            changes = {key: getattr(desired, key) for key in MEMORY_KEYS
+                       if getattr(current, key) != getattr(desired, key)
+                       and self._memory_ready(scene, getattr(desired, key))}
+            if changes:
+                await self._switch_memory(scene, changes)
+
+    async def _switch_memory(self, scene: str, changes: dict[str, str | None]) -> None:
+        runtime = self.runtime
+        runner, chat = runtime.runners[scene], runtime.chats[scene]
+        async with runner.execution:
+            current = runtime.config.scenes[scene]
+            before = {key: getattr(current, key) for key in changes}
+            for target in (current, chat.config):
+                for key, value in changes.items():
+                    setattr(target, key, value)
+            external = list(chat.toolset.external.values())
+            try:
+                runner.adopt_persona(chat.persona, chat.skills, external)
+            except Exception:
+                for target in (current, chat.config):
+                    for key, value in before.items():
+                        setattr(target, key, value)
+                chat.set_external_tools(external)
+                raise
+            ingestor = runtime.ingestor
+            if ingestor is not None and 'memory_plugin' in changes:
+                if current.memory_plugin is None:
+                    if scene not in ingestor.scenes:
+                        ingestor.add_scene(scene)
+                elif before['memory_plugin'] is None:
+                    if scene in ingestor.scenes:
+                        await ingestor.remove_scene(scene)
+                    ingestor.jobs.release(scene, f"记忆改由插件 {current.memory_plugin} 处理")
+            if runtime.tasks is not None:
+                runtime.tasks.data_tools[scene] = task_data_tools(
+                    chat.config, chat.persona, platform=runtime.config.delivery == 'onebot', memory=runtime.memory,
+                    plugins=runtime.plugins)
+        runtime.events.publish('host.state', scene=scene)
+        runtime.notify()
+
     def backgrounds(self, scene: str):
         runtime = self.runtime
         learning = runtime.config.scenes[scene].learning
-        return [(runtime.ingestor, True),
+        return [(runtime.ingestor, runtime.config.scenes[scene].memory_plugin is None),
                 (runtime.learning, learning is not None and learning.extract),
                 (runtime.jargon, learning is not None and learning.jargon_extract),
                 (runtime.sticker_collection, learning is not None and learning.collect_stickers),
@@ -98,7 +151,8 @@ class SceneService:
             runtime.tasks.skills[scene] = select_skills(catalog, persona.skills)
             runtime.tasks.skill_permissions[scene] = persona.skills
             runtime.tasks.tool_permissions[scene] = persona.tools
-            runtime.tasks.data_tools[scene] = task_data_tools(config, persona, platform=runtime.config.delivery == 'onebot', memory=runtime.memory)
+            runtime.tasks.data_tools[scene] = task_data_tools(config, persona, platform=runtime.config.delivery == 'onebot',
+                                                              memory=runtime.memory, plugins=runtime.plugins)
         try:
             chat = runtime.create_chat(config, persona)
             if runtime.management is not None:

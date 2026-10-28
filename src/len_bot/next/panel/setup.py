@@ -1,4 +1,4 @@
-"""First-run local configuration editor; never starts the business runtime."""
+"""First-run configuration editor."""
 from __future__ import annotations
 
 import asyncio
@@ -7,8 +7,11 @@ import os
 from pathlib import Path
 import secrets
 import socket
+import sys
 import tempfile
 import shutil
+import time
+import webbrowser
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -25,10 +28,11 @@ from ..configuration.chat import Compaction, WebReadSettings
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
 from ..platform.onebot import OneBot
-from .model_access import probe_model as run_model_probe
+from .model_access import model_error_detail, probe_model as run_model_probe
 from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
 from ..persona.profile import Persona, load_persona
+from ..runtime.send_hold import SendHold
 from len_bot.web.auth import hash_password
 from len_bot.web.errors import install_panel_errors
 from len_bot.web.shell import BUILT_PANEL, missing_build, mount_panel
@@ -141,7 +145,7 @@ def setup_source(item: FirstSetup) -> dict:
         vector = {'provider': alias, 'model': item.embedding.model, 'dimensions': item.embedding.dimensions}
     return {
         'config_version': CONFIG_VERSION, 'mode': 'isolated-multi', 'bot_id': item.bot_id, 'owners': item.owners,
-        'timezone': item.timezone, 'delivery': item.delivery, 'database': 'state/lenbot.sqlite3',
+        'timezone': item.timezone, 'delivery': 'onebot', 'database': 'state/lenbot.sqlite3',
         'onebot': item.onebot.model_dump(mode='json'),
         'compaction': item.compaction.model_dump(mode='json'),
         'max_steps': item.max_steps,
@@ -160,19 +164,23 @@ def setup_source(item: FirstSetup) -> dict:
 
 
 def initialize(root: Path, item: FirstSetup) -> dict:
-    """Validate first, create only new files, publish the root config last."""
+    """Validate first, create only new files, publish the root config last.
+
+    The wizard's delivery choice becomes the send hold, written before the config exists: a host that
+    starts from the published config never sends before the hold is in place.
+    """
     config_path = root / 'lenbot.config.json'
     role_path = root / 'personas' / item.persona_id
     if config_path.exists():
-        raise FileExistsError('根配置已经存在；初始化不覆盖，继续使用正常管理面板')
+        raise FileExistsError('根配置已存在，请使用管理面板')
     if role_path.exists():
-        raise FileExistsError(f'角色目录已经存在，请换一个新角色目录名：{role_path}')
+        raise FileExistsError(f'角色目录已存在，请更换角色目录名：{role_path}')
     installed = {p['name'] for p in plugin_choices(root) if p['installed']}
     if set(item.install_plugins) - installed:
         raise ValueError('所选官方插件尚未安装完成，请完成安装或取消选择后继续')
     persona = (load_persona(DEFAULT_PERSONA_DIRECTORY) if item.default_persona else
                Persona(id=item.persona_id, name=item.persona_name, brief=item.brief,
-                       behavior=item.brief, self_reference=['我'], aliases=[], tools='all', skills=[],
+                       behavior="", self_reference=['我'], aliases=[], tools='all', skills=[],
                        styles=[], voice=item.voice_text or '', boundaries=item.boundaries, examples=[]))
     source = setup_source(item)
     prepared = [p['name'] for p in plugin_choices(root) if p['installed'] or p['prepared']]
@@ -192,6 +200,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     load_persona(role_path)
     # Plugins are installed into, or dropped by hand into, the instance's plugins/.
     (root / 'plugins').mkdir(exist_ok=True)
+    SendHold(root).set(item.delivery == 'simulated', at=time.time())
     fd, filename = tempfile.mkstemp(prefix='.lenbot-setup-', suffix='.json', dir=root)
     temporary = Path(filename)
     try:
@@ -227,7 +236,7 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
 
     async def authorize(x_setup_token: str = Header(default='')):
         if config_exists():
-            raise HTTPException(409, '实例已配置，请进入正常面板登录；首次向导不能覆盖配置')
+            raise HTTPException(409, '实例已配置，请进入面板登录')
         if not secrets.compare_digest(x_setup_token, token):
             raise HTTPException(401, '请使用本次启动在终端显示的初始化链接')
 
@@ -246,11 +255,11 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         try:
             return await run_model_probe(item.provider, item.mind, item.kind)
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.get('/api/setup/protocols', dependencies=[Depends(authorize)], response_model=responses.SetupProtocols, response_model_exclude_unset=True)
     async def protocols():
-        return {'protocols': [p for p in PROTOCOLS if 'mind' in p['roles']], 'container': container,
+        return {'protocols': [p for p in PROTOCOLS if p['api'] in {'openai-chat', 'anthropic'}], 'container': container,
                 'panel_port': CONTAINER_PANEL_PORT if container else None}
 
     @app.post('/api/setup/embedding', dependencies=[Depends(authorize)], response_model=responses.ModelProbe, response_model_exclude_unset=True)
@@ -258,14 +267,14 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         try:
             return await run_model_probe(item.provider, item.binding, 'embedding')
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.post('/api/setup/models', dependencies=[Depends(authorize)], response_model=responses.ModelList, response_model_exclude_unset=True)
     async def models(item: ProviderList):
         try:
             return {'models': await list_models(item.provider)}
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.get('/api/setup/plugins', dependencies=[Depends(authorize)], response_model=responses.SetupPlugins, response_model_exclude_unset=True)
     async def plugins():
@@ -279,9 +288,9 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
                 item = item.model_copy(update={'panel_host': '0.0.0.0', 'panel_port': CONTAINER_PANEL_PORT})
             try:
                 if (root / 'lenbot.config.json').exists():
-                    raise FileExistsError('根配置已经存在，请进入正常面板登录')
+                    raise FileExistsError('根配置已存在，请前往面板登录')
                 if (root / 'personas' / item.persona_id).exists():
-                    raise FileExistsError('角色目录已经存在，请换一个新角色目录名')
+                    raise FileExistsError('角色目录已存在，请更换角色目录名')
                 HostConfig.model_validate_json(json.dumps(setup_source(item)))
                 installed = []
                 entries = official_plugins()
@@ -312,6 +321,17 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
     return app
 
 
+def opens_browser(*, container: bool, interactive: bool, platform: str = sys.platform, environ=os.environ) -> bool:
+    """Whether the wizard link opens on this machine: started from a terminal in a desktop session, outside
+    containers and SSH. Scripts and services read the output through a pipe and keep only the printed link."""
+    if container or not interactive or 'SSH_CONNECTION' in environ or 'SSH_TTY' in environ:
+        return False
+    if platform in ('darwin', 'win32'):
+        return True
+    # Without a display, Linux falls back to a text browser inside the terminal.
+    return bool(environ.get('DISPLAY') or environ.get('WAYLAND_DISPLAY'))
+
+
 async def run_setup(root: Path, *, container: bool = False) -> None:
     token = secrets.token_urlsafe(32)
     completed = asyncio.Event()
@@ -321,14 +341,17 @@ async def run_setup(root: Path, *, container: bool = False) -> None:
         listener.listen()
         port = listener.getsockname()[1]
         app = create_setup_app(root, token, completed, container=container)
-        server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False))
-        print(f'尚无根配置。请打开 http://127.0.0.1:{port}/#token={token}\n'
+        server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False, forwarded_allow_ips=['127.0.0.1']))
+        url = f'http://127.0.0.1:{port}/#token={token}'
+        print(f'尚无根配置。请打开 {url}\n'
               '保存后直接启动，按新配置连接 OneBot 并打开面板。', flush=True)
         problem = missing_build(BUILT_PANEL)
         if problem is not None:
             # The wizard page is the built panel; without it the link only shows this error.
             print(f'无法显示首次配置页面。{problem}', flush=True)
         serving = asyncio.create_task(server.serve(sockets=[listener]))
+        if problem is None and opens_browser(container=container, interactive=sys.stdout.isatty()):
+            await asyncio.to_thread(webbrowser.open, url)
         saving = asyncio.create_task(completed.wait())
         try:
             await asyncio.wait([serving, saving], return_when=asyncio.FIRST_COMPLETED)

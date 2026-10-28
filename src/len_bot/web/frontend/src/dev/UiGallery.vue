@@ -109,7 +109,6 @@ const sceneOptions = [
   { value: 'onebot:group:1', label: '摸鱼研究所', meta: '702154' },
   { value: 'onebot:group:2', label: '周末桌游群', meta: '881203' },
   { value: 'onebot:group:3', label: 'LenBot 开发', meta: '554219' },
-  { value: 'telegram:group:4', label: 'Weekend Club', meta: '-100223' },
 ]
 const radioOptions = [
   { value: 'all', label: '所有群' },
@@ -136,7 +135,7 @@ const tabs = [
 ]
 const menu: MenuEntry[] = [
   { type: 'label', label: '摸鱼研究所' },
-  { label: '安静一会', icon: Pause, shortcut: 'Q', select: () => toast.info('已安静 30 分钟') },
+  { label: '临时安静', icon: Pause, shortcut: 'Q', select: () => toast.info('安静 30 分钟') },
   { label: '开始新会话', icon: RotateCw, select: () => toast.success('已开始新会话') },
   { label: '复制群号', icon: Copy, select: () => toast.success('已复制') },
   { type: 'separator' },
@@ -152,7 +151,7 @@ const menu: MenuEntry[] = [
 async function ask() {
   const confirmed = await confirm({
     title: '移除摸鱼研究所？',
-    message: '移除后不再接收这个群的消息，历史记录保留。',
+    message: '移除后不再接收此群的消息，历史记录保留。',
     confirmLabel: '移除',
   })
   toast[confirmed ? 'success' : 'info'](confirmed ? '已移除' : '已取消')

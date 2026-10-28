@@ -26,6 +26,13 @@ def error_response(status: int, detail: str | dict, *, headers: dict | None = No
     return JSONResponse({'detail': payload}, status_code=status, headers=headers)
 
 
+def validation_detail(errors: list[dict]) -> dict:
+    """422 正文：每项只保留位置、说明和类型。"""
+    items = [{'loc': list(item['loc']), 'msg': item['msg'], 'type': item['type']} for item in errors]
+    message = '; '.join(f"{'.'.join(map(str, item['loc']))}: {item['msg']}" for item in items)
+    return {'message': message, 'code': 'validation_error', 'data': {'errors': items}}
+
+
 def install_panel_errors(app: FastAPI) -> None:
     app.router.responses.update({status: {'model': PanelError}
                                  for status in (400, 401, 403, 404, 405, 409, 413, 415, 422, 429, 500, 502, 503)})
@@ -36,7 +43,4 @@ def install_panel_errors(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def invalid_input(request: Request, error: RequestValidationError):
-        errors = [{'loc': list(item['loc']), 'msg': item['msg'], 'type': item['type']}
-                  for item in error.errors()]
-        message = '; '.join(f"{'.'.join(map(str, item['loc']))}: {item['msg']}" for item in errors)
-        return error_response(422, {'message': message, 'code': 'validation_error', 'data': {'errors': errors}})
+        return error_response(422, validation_detail(error.errors()))

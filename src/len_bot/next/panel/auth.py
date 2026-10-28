@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import socket
+import struct
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 from collections.abc import Callable
 
@@ -33,7 +36,32 @@ def cookie_name(connection: HTTPConnection) -> str:
     port = connection.url.port
     if port is None:
         port = 443 if connection.url.scheme in {"https", "wss"} else 80
-    return f"lenbot_test_session_p{port}"
+    return f"lenbot_session_p{port}"
+
+
+def default_gateway(routes: Path = Path('/proc/net/route')) -> str | None:
+    """The IPv4 default gateway in the Linux routing table; None elsewhere."""
+    try:
+        lines = routes.read_text(encoding='ascii').splitlines()[1:]
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        fields = line.split()
+        # Columns: Iface Destination Gateway Flags ...; addresses are little-endian hex, flag 0x2 is RTF_GATEWAY.
+        if len(fields) > 3 and fields[1] == '00000000' and int(fields[3], 16) & 0x2:
+            return socket.inet_ntoa(struct.pack('<I', int(fields[2], 16)))
+    return None
+
+
+def trusted_proxies(settings: PanelSettings, *, container: bool) -> list[str]:
+    """Peers whose X-Forwarded-For and X-Forwarded-Proto decide the client address and scheme.
+
+    In the container every connection through the published port arrives from the Docker network
+    gateway. Compose publishes the panel only on the host's 127.0.0.1, so the gateway stands for that
+    host the way 127.0.0.1 does outside a container, and a reverse proxy on it works the same way.
+    """
+    gateway = default_gateway() if container else None
+    return [*settings.trusted_proxies, *([gateway] if gateway and gateway not in settings.trusted_proxies else [])]
 
 
 def require_panel_origin(connection: HTTPConnection) -> None:
@@ -42,7 +70,6 @@ def require_panel_origin(connection: HTTPConnection) -> None:
         return
     url = urlsplit(str(connection.url))
     scheme = {'ws': 'http', 'wss': 'https'}.get(url.scheme, url.scheme)
-    scheme = connection.headers.get('x-forwarded-proto', scheme)
     if origin != f'{scheme}://{url.netloc}':
         raise HTTPException(403, '面板请求必须来自当前面板地址')
 
@@ -71,7 +98,7 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
         # A blocked address is refused before the password is checked: answering a correct guess with 200
         # while wrong ones get 429 would leave the guessing loop as fast as before.
         if login_blocked(key):
-            raise HTTPException(429, "登录尝试过于频繁，请稍后再试")
+            raise HTTPException(429, "登录尝试过于频繁，请稍后重试")
         record_login_failure(key)
         password_valid = await asyncio.to_thread(verify_password, item.password, settings.password_hash)
         valid = hmac.compare_digest(item.username.encode('utf-8'), settings.username.encode('utf-8')) and password_valid
@@ -79,6 +106,9 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
             raise HTTPException(401, "Invalid username or password")
         clear_login_failures(key)
         last_login_at = time.time()
+        old_token = request.cookies.get(cookie_name(request))
+        if old_token is not None:
+            revoke_session(old_token)
         response.set_cookie(cookie_name(request), create_session(item.username), httponly=True, samesite="lax",
                             secure=settings.cookie_secure, max_age=7 * 86400)
         return {"success": True, "username": item.username, "is_default_password": False}

@@ -54,6 +54,8 @@ export interface TimelineTurn {
   tokens: Tokens
   tools: string[]
   error: string | null
+  /** Seconds from the message that woke the turn, or from its start, to the first expression. */
+  first_expression_wait: number | null
 }
 
 /** A platform notice; `raw` is the event as the platform sent it. */
@@ -99,6 +101,7 @@ export interface ModelStep {
   error: string | null
   tokens: { input: number; output: number; cached: number | null } | null
   snapshot_expired_at: number | null
+  retries: number
 }
 
 export interface Step {
@@ -163,5 +166,5 @@ export function compareItems(a: TimelineItem, b: TimelineItem): number {
 }
 
 export const failedTurn = (status: string) =>
-  ['error', 'timeout', 'interrupted', 'step_limit'].includes(status)
+  ['error', 'timeout', 'interrupted', 'step_limit', 'send_failed'].includes(status)
 export const failedMessage = (status: string) => status === 'failed' || status === 'unconfirmed'

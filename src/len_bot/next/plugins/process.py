@@ -12,6 +12,7 @@ the message behind the token, never from the worker.
 
 import asyncio
 import base64
+from dataclasses import asdict
 import itertools
 import json
 import logging
@@ -21,10 +22,11 @@ import secrets
 import subprocess
 import sys
 
-from ...plugin import MARK, Invocation, Plugin, PluginContext
+from ...plugin import MARK, CompactRequest, Invocation, Plugin, PluginContext, RecallRequest
 from ..platform.messages import ChatMessage, Notice
 from ..runtime.logs import log_event
-from .codec import (error_value, message_value, notice_value, part_from, raise_error, sent_value)
+from .codec import (blocks_from, error_value, message_value, notice_value, part_from, raise_error, recall_value,
+                    sent_value)
 
 logger = logging.getLogger(__name__)
 DESCRIBE_SECONDS = 60
@@ -37,7 +39,7 @@ def describe(directory: Path, name: str) -> list[dict]:
         done = subprocess.run([*WORKER, "describe", str(directory), name], capture_output=True, text=True,
                               timeout=DESCRIBE_SECONDS, check=False)
     except subprocess.TimeoutExpired as error:
-        raise TimeoutError(f"插件 {name} 的进程在 {DESCRIBE_SECONDS} 秒内没有完成导入") from error
+        raise TimeoutError(f"插件 {name} 的进程在 {DESCRIBE_SECONDS} 秒内未完成导入") from error
     lines = done.stdout.strip().splitlines()
     if done.returncode != 0 or not lines:
         raise RuntimeError(f"插件 {name} 的进程导入失败（退出码 {done.returncode}）：{done.stderr.strip()[-2000:]}")
@@ -63,6 +65,11 @@ def proxy_class(directory: Path, name: str, entries: list[dict] | None = None) -
 
 def _forwarder(attribute: str, mark: tuple):
     async def forward(self, target, *arguments):
+        if isinstance(target, RecallRequest):
+            return blocks_from(await self.worker.request({"type": "recall", "attribute": attribute,
+                                                          "request": recall_value(target)}))
+        if isinstance(target, CompactRequest):
+            return await self.worker.request({"type": "compact", "attribute": attribute, "request": asdict(target)})
         if isinstance(target, Invocation):
             scene, message = target.scene, message_value(target.message)
         else:
@@ -125,10 +132,10 @@ class Worker:
     async def _ensure(self) -> asyncio.subprocess.Process:
         async with self.lock:
             if self.closing:
-                raise RuntimeError(f"插件 {self.ctx.name} 的进程已经停止")
+                raise RuntimeError(f"插件 {self.ctx.name} 的进程已停止")
             if self.process is not None:
                 if self.process.returncode is not None:
-                    raise RuntimeError(f"插件 {self.ctx.name} 的进程已经退出，请在面板重载插件")
+                    raise RuntimeError(f"插件 {self.ctx.name} 的进程已退出，请在面板重载插件")
                 return self.process
             self.process = await asyncio.create_subprocess_exec(
                 *WORKER, "run", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
@@ -193,7 +200,7 @@ class Worker:
                 else f"插件 {self.ctx.name} 的进程协议出错，已结束进程：{failure}")
         for future in self.pending.values():
             if not future.done():
-                future.set_exception(RuntimeError(text + "，本次调用没有完成"))
+                future.set_exception(RuntimeError(text + "，本次调用未完成"))
         if not self.closing:
             log_event(logger, "plugin_process_exited", text, level=logging.ERROR, plugin=self.ctx.name, code=code)
             self.host.worker_exited(self.ctx.name, text)
@@ -253,6 +260,10 @@ class Worker:
                 return await host.delete_kv(name, args[0])
             case "memory":
                 return await host.memory(name, self._scene(args[0]), args[1])
+            case "native_memory":
+                return await host.native_memory(name, self._scene(args[0]), args[1])
+            case "report_memory_progress":
+                return await host.report_memory_progress(name, self._scene(args[0]), args[1])
             case "generate":
                 return await host.generate(name, self._scene(args[0]), *args[1:])
             case "delegate":

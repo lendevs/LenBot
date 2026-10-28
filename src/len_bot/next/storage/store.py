@@ -22,14 +22,14 @@ from .sqlite import SerializedConnection, connect
 from ..persona.stickers import PersonaSticker
 from ..learning.sticker_assets import CollectedSticker
 from ...image_assets import OriginalImage
-from ..models.tokens import token_summary
+from ..models.usage import UNBUDGETED, record_usage, totals as usage_totals
 from ..chat.schedule_time import CronTimeError, next_cron, parse_cron
 from .codec import decode_message, encode
-from .schema import create_database
+from .schema import FORMAT_RESET, create_database, expected_tables
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 7
+FORMAT_VERSION = 1
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -79,13 +79,15 @@ class Store:
             if tables:
                 application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
                 version = self.db.execute("PRAGMA user_version").fetchone()[0]
-                if application_id == 0x4C424E31 and version in range(1, FORMAT_VERSION):
-                    raise ValueError(
-                        f"Next-core database format {version} requires offline migration while stopped: {path}; "
-                        "run python -m len_bot.next.maintenance.migrate from the isolated instance directory"
-                    )
-                if application_id != 0x4C424E31 or version != FORMAT_VERSION:
-                    raise ValueError(f"Not a supported next-core database: {path}")
+                if application_id != 0x4C424E31:
+                    raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
+                if version != FORMAT_VERSION:
+                    raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
+                missing = expected_tables() - {row[0] for row in tables}
+                if missing:
+                    names = sorted(missing)
+                    listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
+                    raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
             else:
                 if readonly:
                     raise ValueError(f'Existing business database is not initialized: {path}')
@@ -246,6 +248,10 @@ class Store:
             if updated.rowcount != 1:
                 raise ValueError(f"No cached image {image_index} for platform message {platform_id} in {scene}")
 
+    def recap(self, scene: str) -> str | None:
+        row = self.db.execute("SELECT recap FROM mind_sessions WHERE scene=?", (scene,)).fetchone()
+        return None if row is None else row[0]
+
     def active_history(self, scene: str) -> tuple[str | None, list[tuple[int, dict]]]:
         session = self.db.execute(
             "SELECT compact_through,recap FROM mind_sessions WHERE scene=?", (scene,)
@@ -256,49 +262,6 @@ class Store:
             (scene, through),
         )]
         return (None if session is None else session[1]), history
-
-    def install_portable_recaps(self, updates: dict[str, tuple[int, int, str]]) -> None:
-        """Set checked scene cutpoints together, preserving every original entry.
-
-        Each value is (previous compact_through, final entry seq, portable text).
-        """
-        if not updates:
-            return
-        self.db.execute("BEGIN EXCLUSIVE")
-        try:
-            for scene, (expected_through, through, recap) in updates.items():
-                session = self.db.execute(
-                    "SELECT compact_through FROM mind_sessions WHERE scene=?", (scene,)
-                ).fetchone()
-                current_through = 0 if session is None else session[0]
-                latest = self.db.execute(
-                    "SELECT COALESCE(MAX(seq),0) FROM mind_entries WHERE scene=?", (scene,)
-                ).fetchone()[0]
-                if current_through != expected_through or latest != through:
-                    raise ValueError(f"Portable history changed before commit in {scene}")
-                active = self.db.execute(
-                    "SELECT id,status FROM turns WHERE scene=? AND ended IS NULL "
-                    "AND status IN ('running','settling') LIMIT 1", (scene,),
-                ).fetchone()
-                if active is not None:
-                    raise ValueError(f"Scene {scene} still has turn {active['id']} in {active['status']}")
-                call = self.db.execute(
-                    "SELECT model_calls.id FROM model_calls JOIN turns ON turns.id=model_calls.turn_id "
-                    "WHERE turns.scene=? AND model_calls.ended IS NULL LIMIT 1", (scene,),
-                ).fetchone()
-                if call is not None:
-                    raise ValueError(f"Scene {scene} still has unfinished model call {call['id']}")
-                self.db.execute(
-                    "INSERT INTO mind_sessions(scene,compact_through,recap,discovered_tools) "
-                    "VALUES (?,?,?,'[]') ON CONFLICT(scene) DO UPDATE SET "
-                    "compact_through=excluded.compact_through,recap=excluded.recap,"
-                    "discovered_tools=excluded.discovered_tools",
-                    (scene, through, recap),
-                )
-            self.db.commit()
-        except BaseException:
-            self.db.rollback()
-            raise
 
     def entries(self, scene: str) -> list[dict]:
         recap, history = self.active_history(scene)
@@ -343,14 +306,8 @@ class Store:
             "next_before": selected[-1][0] if len(rows) > limit else None,
         }
 
-    def _call_tokens(self, scenes: Sequence[str], since: float, until: float, *, calls=None) -> list:
-        from ..models.usage import call_records
-        if calls is None:
-            return call_records(self, list(scenes), since, until)
-        return [call for call in calls if since <= call.started < until]
-
-    def hourly_overview(self, scenes: Sequence[str], since: float, hours: int, *, calls=None) -> dict:
-        """Per-hour counts from ``since``: received and spoken messages, reply turns, reported tokens."""
+    def hourly_overview(self, scenes: Sequence[str], since: float, hours: int, *, usage: list[dict]) -> dict:
+        """Per-hour counts from ``since``: received and spoken messages, reply turns, budgeted tokens of ``usage``."""
         placeholders = ",".join("?" for _ in scenes)
         until = since + hours * 3600
 
@@ -375,10 +332,9 @@ class Store:
             "SELECT CAST((started-?)/3600 AS INTEGER),COUNT(*) FROM turns "
             f"WHERE scene IN ({placeholders}) AND started>=? AND started<? GROUP BY 1")
         tokens = [0] * hours
-        from ..models.usage import UNBUDGETED_ROLES
-        for call in self._call_tokens(scenes, since, until, calls=calls):
-            if call.tokens is not None and call.role not in UNBUDGETED_ROLES:
-                tokens[int((call.started - since) // 3600)] += call.tokens["input"] + call.tokens["output"]
+        for row in usage:
+            if since <= row["time"] < until and row["purpose"] not in UNBUDGETED:
+                tokens[int((row["time"] - since) // 3600)] += row["input"] + row["output"]
         return {"since": since, "hours": hours, "received": received, "spoke": spoke, "turns": turns, "tokens": tokens}
 
     def recent_activity(self, scenes: Sequence[str], limit: int) -> list[dict]:
@@ -405,7 +361,52 @@ class Store:
             f"SELECT scene,COUNT(*) FROM tasks WHERE scene IN ({placeholders}) AND status='failed' AND ended>=? GROUP BY scene",
             (*scenes, since)))
 
-    def daily_overview(self, scenes: Sequence[str], since: float, until: float, *, calls=None) -> dict:
+    def model_errors(self, scenes: Sequence[str], since: float, until: float) -> list[dict]:
+        placeholders = ','.join('?' for _ in scenes)
+        rows = self.db.execute(
+            "SELECT id,scene,turn_id,role,error,json_extract(request,'$.provider') AS provider,"
+            "json_extract(response,'$.status') AS http_status FROM model_calls "
+            f"WHERE scene IN ({placeholders}) AND error IS NOT NULL AND started>=? AND started<? ORDER BY id DESC",
+            (*scenes, since, until))
+        groups = {}
+        for row in rows:
+            item = dict(row)
+            key = (item['provider'], item['role'], item['error'].split(':', 1)[0], item['http_status'])
+            if key in groups:
+                groups[key]['count'] += 1
+            else:
+                groups[key] = {**item, 'count': 1}
+        return list(groups.values())
+
+    def model_health(self, scenes: Sequence[str], since: float) -> list[dict]:
+        """Per purpose of the calls kept in model_calls, the latest success and the latest failure since ``since``."""
+        placeholders = ','.join('?' for _ in scenes)
+        purpose = "CASE WHEN plugin IS NULL THEN role ELSE 'plugin:'||plugin END"
+        found: dict[str, dict] = {}
+        for kind, condition in (('success', 'error IS NULL AND ended IS NOT NULL'), ('failure', 'error IS NOT NULL')):
+            latest = self.db.execute(
+                f"SELECT {purpose},MAX(id) FROM model_calls WHERE scene IN ({placeholders}) AND started>=? "
+                f"AND {condition} GROUP BY 1", (*scenes, since)).fetchall()
+            for name, call_id in latest:
+                # Only the chosen rows' request bodies are read, for the connection and model that served them.
+                row = self.db.execute(
+                    "SELECT id,scene,turn_id,started,error,json_extract(request,'$.provider') AS provider,"
+                    "json_extract(request,'$.settings.model') AS model FROM model_calls WHERE id=?", (call_id,)).fetchone()
+                item = found.setdefault(name, {'purpose': name, 'success': None, 'failure': None})
+                item[kind] = {key: row[key] for key in ('id', 'scene', 'turn_id', 'started', 'provider', 'model')
+                              } | ({'error': row['error']} if kind == 'failure' else {})
+        return [found[name] for name in sorted(found)]
+
+    def model_call(self, call_id: int) -> dict | None:
+        row = self.db.execute('SELECT * FROM model_calls WHERE id=?', (call_id,)).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        for key in ('request', 'response', 'usage', 'tokens'):
+            item[key] = None if item[key] is None else json.loads(item[key])
+        return item
+
+    def daily_overview(self, scenes: Sequence[str], since: float, until: float, *, usage: list[dict]) -> dict:
         placeholders = ",".join("?" for _ in scenes)
         messages = dict(self.db.execute(
             "SELECT json_extract(body,'$.send_status'),COUNT(*) FROM messages "
@@ -418,20 +419,18 @@ class Store:
             f"SELECT status,COUNT(*) FROM turns WHERE scene IN ({placeholders}) "
             "AND started>=? AND started<? GROUP BY status", (*scenes, since, until),
         ))
-        calls = self._call_tokens(scenes, since, until, calls=calls)
+        budgeted = [row for row in usage if since <= row["time"] < until and row["purpose"] not in UNBUDGETED]
         reactions = dict(self.db.execute(
             "SELECT COALESCE(reaction,CASE WHEN observed_seqs='[]' THEN 'no_messages' ELSE 'waiting' END),"
             f"COUNT(*) FROM reply_effects WHERE scene IN ({placeholders}) AND closed_at IS NOT NULL "
             "AND first_sent_at>=? AND first_sent_at<? GROUP BY 1", (*scenes, since, until),
         ))
-        from ..models.usage import UNBUDGETED_ROLES
-        token_records = token_summary([call.tokens for call in calls if call.role not in UNBUDGETED_ROLES])
-        unfinished = sum(call.ended is None for call in calls)
         pending = self.db.execute(
             f"SELECT COUNT(*) FROM schedules WHERE scene IN ({placeholders}) AND status='pending'", scenes,
         ).fetchone()[0]
         errors = [dict(row) for row in self.db.execute(
-            f"SELECT id,scene,started,status,error FROM turns WHERE scene IN ({placeholders}) "
+            f"SELECT id,scene,started,status,error,EXISTS(SELECT 1 FROM model_calls c "
+            f"WHERE c.turn_id=turns.id AND c.error IS NOT NULL) AS model_error FROM turns WHERE scene IN ({placeholders}) "
             "AND error IS NOT NULL ORDER BY started DESC LIMIT 10", scenes,
         )]
         undelivered = dict(self.db.execute(
@@ -451,11 +450,11 @@ class Store:
                 f"{query} AND scene IN ({placeholders}) GROUP BY scene", scenes,
             ):
                 reviews.setdefault(scene, {})[kind] = count
-        return {"messages": messages, "turns": turns, "model_calls": len(calls),
-                "unfinished_calls": unfinished,
-                "tokens": {key: token_records[key] for key in ("input", "output", "cached")},
-                "unknown_token_calls": token_records["unknown_calls"],
+        counted = usage_totals(budgeted)
+        return {"messages": messages, "turns": turns, "model_calls": counted["calls"],
+                "tokens": {key: counted[key] for key in ("input", "output", "cached")},
                 "pending_schedules": pending, "recent_errors": errors,
+                "model_errors": self.model_errors(scenes, since, until),
                 "reply_effects": reactions, "undelivered": undelivered, "pending_reviews": reviews}
 
     def _append(self, scene: str, message: dict) -> int:
@@ -827,9 +826,9 @@ class Store:
             native = None if entry_seq is None else self.db.execute(
                 "SELECT message FROM mind_entries WHERE scene=? AND seq=?", (scene, entry_seq)).fetchone()
             if call["role"] == "mind" and call["response"] is not None and call["error"] is None:
-                tool_calls = call["response"]["message"].get("tool_calls", [])
+                tool_calls = call["response"]["message"].get("tool_calls") or []
             else:
-                tool_calls = [] if native is None else json.loads(native[0]).get("tool_calls", [])
+                tool_calls = [] if native is None else json.loads(native[0]).get("tool_calls") or []
             call["native_tool_calls"] = tool_calls
             if tool_calls and entry_seq is not None:
                 for entry in self.db.execute(
@@ -968,7 +967,7 @@ class Store:
         )}
         missing = sorted(set(records) - found)
         if missing:
-            raise ValueError(f"当前场景没有这些原话记录：{missing}")
+            raise ValueError(f"当前场景不存在以下原话记录：{missing}")
 
     def search_messages(self, scene: str, *, query: str | None, who: str | None,
                         after: float | None, before: float | None, snapshot: int,
@@ -1226,16 +1225,22 @@ class Store:
         return cursor.lastrowid
 
     def end_call(self, call_id: int, response: dict | None, usage: dict | None,
-                 error: str | None = None, *, tokens: dict | None = None, append_to_scene: str | None = None,
-                 recap_for: tuple[str, int] | None = None) -> None:
+                 error: str | None = None, *, tokens: dict | None = None, model: tuple[str, str],
+                 append_to_scene: str | None = None, retries: int = 0) -> None:
+        """Settle a call; ``model`` is the (provider, model) that served it, for the usage ledger;
+        ``retries`` counts resends of the same request after 429, 5xx or a dropped connection."""
         with self.db:
+            scene, role, plugin, started = self.db.execute(
+                "SELECT scene,role,plugin,started FROM model_calls WHERE id=?", (call_id,)).fetchone()
+            record_usage(self.db, time=started, scene=scene, purpose=role if plugin is None else f"plugin:{plugin}",
+                         provider=model[0], model=model[1], tokens=tokens)
             entry_seq = (None if append_to_scene is None else
                          self._append(append_to_scene, response["message"]))
             self.db.execute(
-                "UPDATE model_calls SET ended=?,response=?,usage=?,error=?,mind_entry_seq=?,tokens=? WHERE id=?",
+                "UPDATE model_calls SET ended=?,response=?,usage=?,error=?,mind_entry_seq=?,tokens=?,retries=? WHERE id=?",
                 (self.now(), None if response is None else encode(response),
                  None if usage is None else encode(usage), error, entry_seq,
-                 None if tokens is None else encode(tokens), call_id),
+                 None if tokens is None else encode(tokens), retries, call_id),
             )
             if append_to_scene is not None:
                 if error is None and not response["message"].get("tool_calls"):
@@ -1244,15 +1249,21 @@ class Store:
                         "(SELECT turn_id FROM model_calls WHERE id=?) AND ended IS NULL",
                         (call_id,),
                     )
-            if recap_for is not None:
-                scene, through = recap_for
-                self.db.execute(
-                    "INSERT INTO mind_sessions(scene,compact_through,recap,discovered_tools) "
-                    "VALUES (?,?,?,'[]') "
-                    "ON CONFLICT(scene) DO UPDATE SET compact_through=excluded.compact_through, "
-                    "recap=excluded.recap,discovered_tools=excluded.discovered_tools",
-                    (scene, through, response["message"]["content"]),
-                )
+
+    def commit_recap(self, scene: str, through: int, recap: str) -> None:
+        """Adopt ``recap`` for the entries through ``through``, whoever wrote it.
+
+        One transaction replaces the recap, moves the compaction position and clears the
+        discovered tools, since the searches that found them are folded into the recap.
+        """
+        with self.db:
+            self.db.execute(
+                "INSERT INTO mind_sessions(scene,compact_through,recap,discovered_tools) "
+                "VALUES (?,?,?,'[]') "
+                "ON CONFLICT(scene) DO UPDATE SET compact_through=excluded.compact_through, "
+                "recap=excluded.recap,discovered_tools=excluded.discovered_tools",
+                (scene, through, recap),
+            )
 
     def last_mind_request(self, scene: str) -> dict | None:
         row = self.db.execute(
@@ -1285,10 +1296,10 @@ class Store:
                 del pending[entry["tool_call_id"]]
         with self.db:
             for call_id, name in pending.items():
-                upload_notice = (" 文件上传结果未确认；用 task status 查看已保存回执，不自动重传。"
+                upload_notice = (" 文件上传结果未确认，用 task status 查看已保存回执。"
                                  if name == "send_file" else "")
                 self._append(scene, {"role": "tool", "tool_call_id": call_id,
-                                     "content": f"{name} 中断：{reason}。未重放此调用。{upload_notice}"})
+                                     "content": f"{name} 中断：{reason}。{upload_notice}"})
 
     def has_open_turn(self, scene: str) -> bool:
         return self.db.execute("SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1",
@@ -1300,7 +1311,7 @@ class Store:
             "AND ended IS NULL LIMIT 1",
             (scene,),
         ).fetchone() is not None
-        self.finish_pending_tools(scene, "隔离进程上次退出时没有保存执行结果")
+        self.finish_pending_tools(scene, "隔离进程上次退出时未保存执行结果")
         with self.db:
             self.db.execute(
                 "UPDATE model_calls SET ended=?,error=? WHERE ended IS NULL AND turn_id IN "

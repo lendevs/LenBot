@@ -7,6 +7,7 @@ import { groupLabel } from '../../../layouts/shell/scenes'
 import Avatar from '../../../ui/Avatar.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import Switch from '../../../ui/Switch.vue'
+import { confirmMemorySwitch } from '../../groups/settings/memory'
 import { usePluginsState } from '../state'
 import { enabledIn, scenesUsing } from '../view'
 
@@ -18,12 +19,22 @@ const scenes = computed(() => Object.keys(props.snapshot.scenes))
 const used = computed(() => scenesUsing(props.snapshot, props.name))
 const enabled = computed(() => enabledIn(props.snapshot, props.name))
 
-function toggle(scene: string, on: boolean) {
-  const current = props.snapshot.scenes[scene].saved ?? []
+async function toggle(scene: string, on: boolean) {
+  const entry = props.snapshot.scenes[scene]
+  const current = entry.saved ?? []
   const next = on
     ? [...current.filter((item) => item !== props.name), props.name]
     : current.filter((item) => item !== props.name)
-  void state.run(`scene:${scene}`, () => pluginsApi.putScene(scene, next), { success: t('common.saved') })
+  // A plugin switched off in a group stops being its memory or recap there too.
+  const keep = (value: string | null) => (on || value !== props.name ? value : null)
+  const memory = {
+    memory_plugin: keep(entry.memory_plugin.saved),
+    recap_plugin: keep(entry.recap_plugin.saved),
+  }
+  if (memory.memory_plugin !== entry.memory_plugin.saved && !(await confirmMemorySwitch())) return
+  void state.run(`scene:${scene}`, () => pluginsApi.putScene(scene, next, memory), {
+    success: t('common.saved'),
+  })
 }
 </script>
 

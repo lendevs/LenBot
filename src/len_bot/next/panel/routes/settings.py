@@ -27,7 +27,8 @@ from ...config import HostConfig, _read_root
 from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
 from ...configuration.models import Roles
-from ..model_access import ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
+from ...configuration.tasks import suggested_worker
+from ..model_access import model_error_detail, ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
 from ...models.providers import PROTOCOLS, list_models
 from ...persona.profile import Persona
 from ...models.asr import AudioSettings
@@ -202,7 +203,7 @@ class ConnectionChange(BaseModel):
     access_token: str | None = Field(default=None, repr=False)
     owners: list[str]
     timezone: str
-    delivery: Literal["simulated", "onebot", "telegram"]
+    delivery: Literal["simulated", "onebot"]
     max_steps: int
     turn_timeout_seconds: float
     max_model_requests: int
@@ -244,11 +245,6 @@ def _project(config: HostConfig) -> dict:
     if config.onebot is not None:
         onebot = config.onebot.model_dump(mode="json", exclude={"access_token"})
         onebot["access_token_configured"] = bool(config.onebot.access_token)
-    telegram = None
-    if config.telegram is not None:
-        # Edited in the config file only; the panel shows it so the connection page knows the platform.
-        telegram = config.telegram.model_dump(mode="json", exclude={"bot_token"})
-        telegram["bot_token_configured"] = bool(config.telegram.bot_token)
     return {
         "limits": config.limits.model_dump(mode="json"),
         "retention": None if config.retention is None else config.retention.model_dump(mode="json"),
@@ -258,7 +254,6 @@ def _project(config: HostConfig) -> dict:
             "bot_id": config.bot_id,
             "owners": config.owners,
             "onebot": onebot,
-            "telegram": telegram,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "max_steps": config.max_steps,
@@ -347,7 +342,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
-                for name in ("bot_id", "owners", "onebot", "telegram", "timezone", "delivery", "max_steps",
+                for name in ("bot_id", "owners", "onebot", "timezone", "delivery", "max_steps",
                              "turn_timeout_seconds", "max_model_requests", "text_delivery")
             ),
             "limits": running.limits != saved.limits,
@@ -476,7 +471,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         except LimitsConflict:
             async with write_lock:
                 saved = await asyncio.to_thread(_read_saved, root)
-            raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，这次提交的内容没有保存。请重新载入最新设置，重新填写后再保存。",
+            raise HTTPException(409, {"message": "上限设置已在其他页面或标签页修改，本次提交未保存。请重新载入最新设置后重新填写。",
                                       "code": "limits_conflict", "data": {"snapshot": _snapshot(running, saved)}}) from None
 
     @app.put("/api/host/settings/limits/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
@@ -519,7 +514,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         try:
             return {'models': await list_models(await candidate_provider(item))}
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.post("/api/host/models/probe", response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def models_probe(request: Request, _: str = Depends(user)):
@@ -527,7 +522,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         try:
             return await probe_model(await candidate_provider(item), item.binding, item.kind)
         except Exception as error:
-            raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+            raise HTTPException(422, model_error_detail(error)) from error
 
     @app.put("/api/host/settings/models", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_models(request: Request, _: str = Depends(user)):
@@ -563,7 +558,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if 'memory_embedding' in change.model_fields_set:
                 if memory is None:
                     if change.memory_embedding is not None:
-                        raise ValueError('先在记忆页开启本地记忆，再配置记忆向量模型')
+                        raise ValueError('请先在记忆页开启本地记忆，再配置记忆向量模型')
                 else:
                     memory['local']['embedding'] = (None if change.memory_embedding is None
                                                    else change.memory_embedding.model_dump(mode='json'))
@@ -614,7 +609,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.put("/api/host/settings/scenes/{scene}", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_scene(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         change: SceneChange = await _body(request, SceneChange)
 
         def edit(source: dict, saved: HostConfig) -> None:
@@ -639,15 +634,28 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         change: NetworkChange = await _body(request, NetworkChange)
         return await save(lambda source, _: source.update(network=change.network.model_dump(mode="json")))
 
+    @app.get("/api/host/settings/worker/defaults", response_model=responses.WorkerDefaults, response_model_exclude_unset=True)
+    async def worker_defaults(_: str = Depends(user)):
+        return suggested_worker(root)
+
     @app.put("/api/host/settings/worker", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_worker(request: Request, _: str = Depends(user)):
         change: WorkerChange = await _body(request, WorkerChange)
-        return await save(lambda source, _: source.update(worker=change.worker))
+
+        def edit(source: dict, _: HostConfig) -> None:
+            source["worker"] = change.worker
+            if change.worker is None:
+                # Without a worker no group can delegate; each group's other task settings stay.
+                for scene in source["scenes"].values():
+                    if isinstance(scene.get("tasks"), dict):
+                        scene["tasks"]["enabled"] = False
+
+        return await save(edit)
 
     @app.put("/api/host/settings/scenes/{scene}/tasks", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_tasks(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         change: TaskSceneChange = await _body(request, TaskSceneChange)
 
         def edit(source: dict, saved: HostConfig) -> None:
@@ -660,7 +668,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.get("/api/host/settings/scenes/{scene}/learning", response_model=responses.LearningSettingsSnapshot, response_model_exclude_unset=True)
     async def get_learning(scene: str, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         async with write_lock:
             try:
                 saved = await asyncio.to_thread(_read_saved, root)
@@ -672,7 +680,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.put("/api/host/settings/scenes/{scene}/learning", response_model=responses.LearningSettingsSnapshot, response_model_exclude_unset=True)
     async def put_learning(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         change: LearningSceneChange = await _body(request, LearningSceneChange)
 
         def edit(source: dict, saved: HostConfig) -> None:

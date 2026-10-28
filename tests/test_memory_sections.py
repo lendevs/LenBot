@@ -4,17 +4,15 @@ import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import json
-from pathlib import Path
-import shutil
 import sqlite3
 
 import pytest
 
-from len_bot.next.maintenance.migrate_local_memory import migrate
 from len_bot.next.memory.embeddings import EmbeddingBinding, EmbeddingClient, EmbeddingSettings
-from len_bot.next.memory.local import FORMAT_VERSION, LocalMemory, LocalMemorySettings
+from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
 from len_bot.next.memory.jobs import MemoryJobs
-from len_bot.next.memory.service import LocalMemoryConfig, MemoryService
+from len_bot.next.memory.sections import evidence, query_terms
+from len_bot.next.memory.service import LocalMemoryConfig, MemoryService, recall_cues
 from len_bot.next.platform.onebot_messages import parse_message
 from len_bot.next.storage.store import Store
 from test_host_stream import panel, login
@@ -97,6 +95,25 @@ async def test_semantic_unit_is_the_returned_source_and_tracks_replacements(tmp_
 
 
 @pytest.mark.asyncio
+async def test_vectors_alone_keep_only_close_sections_and_show_their_latest_part(tmp_path):
+    async with embeddings() as (client, _):
+        binding = EmbeddingBinding(provider='sample', model='three-topics', dimensions=3)
+        settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory',
+                                     embedding=binding), recall_budget_chars=300, recall_limit=5)
+        memory = LocalMemory(settings.local, embedding=client)
+        await memory.write(SCENE, 'events/meet.md', '# 聚会\n\n## 集合\n' + '大家先在门口等人到齐。' * 60
+                           + '\n集合地点最后定在图书馆二楼。\n', '合成样本')
+        await memory.write(SCENE, 'events/money.md', '# 账目\n\n## 开销\n预算还剩三百元。\n', '合成样本')
+        # Orthogonal topics are a cosine distance of 1 apart: a question near neither finds nothing.
+        assert await memory.search(SCENE, '火星飞船几点起飞', 5, automatic=True) == []
+        assert [hit.path for hit in await memory.search(SCENE, '借阅空间在哪', 5, automatic=True)] == ['events/meet.md']
+        with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+            service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+            [item] = (await service.recall(SCENE, chat('借阅空间那边最后怎么定的')))['items']
+        assert item['path'] == 'events/meet.md' and item['content'].rstrip().endswith('图书馆二楼。')
+
+
+@pytest.mark.asyncio
 async def test_text_sections_preserve_source_spelling_merge_ranges_and_scope(tmp_path):
     memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
     content = ('首段事件。\n\n街区\n======\n\n## 同词甲\nStraße 甲在东门。\n\n'
@@ -105,17 +122,16 @@ async def test_text_sections_preserve_source_spelling_merge_ranges_and_scope(tmp
     await memory.write(SCENE, 'events/streets.md', content, '合成大小写样本')
     await memory.write('onebot:group:80002', 'events/streets.md', 'Straße 跨群秘密。', '隔离')
     await memory.write(SCENE, 'bot/other/profile.md', 'Straße 其他角色秘密。', '隔离')
-    await memory.write(SCENE, 'legacy-import/pending.md', 'Straße 待采用秘密。', '隔离')
     await memory.owner_write_public('public.md', 'Straße 公共资料。', '公共资料')
-    hits = await memory.search(SCENE, 'STRASSE', bot_persona='current', exclude_pending=True)
+    hits = await memory.search(SCENE, 'STRASSE', bot_persona='current')
     assert [(hit.scope, hit.path) for hit in hits] == [('scene', 'events/streets.md'), ('public', 'public.md')]
     assert '其他' not in hits[0].preview and 'Straße' in hits[0].preview
     ranges = hits[0].sections
     assert len(ranges) == 2 and ranges[0]['headings'] == [['街区', '同词甲'], ['街区', '同词乙']]
     assert '\n…\n'.join(content[part['start_char']:part['end_char']] for part in ranges) == hits[0].preview
     assert all(part['source_version'] == hashlib.sha256(content.encode()).hexdigest() for part in ranges)
-    assert await memory.reindex_text() == 5
-    assert (await memory.search(SCENE, 'STRASSE', include_public=False, bot_persona='current', exclude_pending=True))[0].preview == hits[0].preview
+    assert await memory.reindex_text() == 4
+    assert (await memory.search(SCENE, 'STRASSE', include_public=False, bot_persona='current'))[0].preview == hits[0].preview
     await memory.write(SCENE, 'empty.md', '# 只有标题\n', '空内容')
     assert not await memory.search(SCENE, '只有标题')
 
@@ -133,51 +149,105 @@ async def test_recall_budget_truncates_units_without_duplicate_sources(tmp_path)
     with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
         service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
         result = await service.recall(SCENE, [message])
-        assert result['content_chars'] == 300 and len(result['items']) == 1
+        assert result['content_chars'] <= 300 and len(result['items']) == 1
         assert result['items'][0]['truncated'] and result['items'][0]['sections']
+        # The excerpt ends on the later matching sentence instead of cutting the source from its head.
+        content = result['items'][0]['content']
+        assert content.startswith('## 甲\n…\n') and content.rstrip().endswith('读书会在东门。')
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('vectors', [False, True])
-async def test_format_three_migration_builds_units_without_rewriting_sources(tmp_path, vectors):
-    fixture = Path(__file__).parent / 'fixtures/history/config0-business7-jobs6-index3/memory'
-    root = tmp_path / 'memory'
-    shutil.copytree(fixture, root)
-    content = '# 记忆\n\n## 约定\n周六交报告。\n'
-    # Extend a genuine format-3 fixture using its table/FTS contract.
-    target = root / 'scenes' / SCENE / 'events/week.md'
-    target.parent.mkdir(parents=True)
-    target.write_text(content)
-    index = root / '.memory-index.sqlite3'
-    with sqlite3.connect(index) as db:
-        rowid = db.execute('INSERT INTO memory_files(scope,path,content) VALUES(?,?,?)',
-                           (SCENE, 'events/week.md', content.casefold())).lastrowid
-        db.execute('INSERT INTO memory_fts(rowid,content) VALUES(?,?)', (rowid, content.casefold()))
-        db.execute("INSERT INTO memory_changes(scope,path,changed_at,action,reason,after) VALUES(?,?,1,'write','样本',?)",
-                   (SCENE, 'events/week.md', content))
-        if vectors:
-            import sqlite_vec
-            db.enable_load_extension(True)
-            sqlite_vec.load(db)
-            db.execute('CREATE VIRTUAL TABLE memory_vec USING vec0(embedding float[3] distance_metric=cosine, scope text)')
-            db.execute('INSERT INTO memory_vec(rowid,embedding,scope) VALUES(?,?,?)',
-                       (rowid, sqlite_vec.serialize_float32([1., 0., 0.]), SCENE))
-            db.execute("INSERT INTO memory_vector_binding VALUES(1,'sample','http://127.0.0.1:9/v1','three-topics',3)")
-    with pytest.raises(ValueError, match='format 3 requires offline migration'):
-        LocalMemory(LocalMemorySettings(directory=root))
-    backup = migrate(root)
-    assert backup == index.with_name(index.name + '.v3.bak')
-    with sqlite3.connect(index) as db, sqlite3.connect(backup) as old:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == FORMAT_VERSION
-        assert old.execute('PRAGMA user_version').fetchone()[0] == 3
-        assert db.execute('SELECT * FROM memory_changes').fetchall() == old.execute('SELECT * FROM memory_changes').fetchall()
-        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='memory_vec'").fetchone()
-        assert db.execute('SELECT COUNT(*) FROM memory_vector_binding').fetchone()[0] == 0
-    memory = LocalMemory(LocalMemorySettings(directory=root))
-    hit = (await memory.search(SCENE, '周六'))[0]
-    assert hit.preview == '## 约定\n周六交报告。\n'
-    assert target.read_bytes() == content.encode()
-    assert migrate(root) is None
+async def test_recall_shares_the_budget_so_a_long_hit_leaves_room_for_the_next(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=600, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'events/trip.md', '# 秋游\n\n' + '秋游路线先走山脚步道，中途在茶亭休息。' * 60
+                       + '\n秋游集合时间最新改为周日早上七点半。\n', '合成样本')
+    await memory.write(SCENE, 'events/potluck.md', '# 聚餐\n\n聚餐由阿杰订位。\n', '合成样本')
+    messages = [parse_message({'post_type': 'message', 'message_type': 'group', 'group_id': 80001,
+        'user_id': 90001, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
+        'sender': {'nickname': '提问者', 'role': 'member'},
+        'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
+        for index, text in enumerate(['秋游集合时间最新是几点', '聚餐由谁订位'], 1)]
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        result = await service.recall(SCENE, messages)
+    content = '\n'.join(item['content'] for item in result['items'])
+    assert {item['path'] for item in result['items']} == {'events/trip.md', 'events/potluck.md'}
+    assert '周日早上七点半' in content and '阿杰订位' in content
+    assert result['content_chars'] <= 600
+
+
+def chat(*texts):
+    return [parse_message({'post_type': 'message', 'message_type': 'group', 'group_id': 80001,
+        'user_id': 90001, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
+        'sender': {'nickname': '提问者', 'role': 'member'},
+        'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
+        for index, text in enumerate(texts, 1)]
+
+
+def test_query_fragments_stay_inside_one_line():
+    terms, short = query_terms('读书会的安排\n接着说 地点\n好')
+    assert '安排\n' not in terms and '排\n接' not in terms and '说 地' in terms and ' 地点' not in terms
+    assert short == ['好'] and evidence('## 安排\n秋游路线', '读书会的安排\n接着说') == 0
+
+
+@pytest.mark.asyncio
+async def test_text_recall_shows_a_section_sharing_little_wording_only_around_it(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=1500, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'events/trip.md', '# 秋游\n\n## 安排\n' + '秋游路线先走山脚步道，中途在茶亭休息。' * 80
+                       + '\n秋游集合时间最新改为周日早上七点半。\n', '合成样本')
+    await memory.write(SCENE, 'events/week.md', '# 读书会\n\n读书会最终地点是图书馆二楼。\n', '合成样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        # Two messages joined by a line break do not match the heading line followed by the route.
+        follow = await service.recall(SCENE, chat('读书会的安排', '接着说地点'))
+        assert [item['path'] for item in follow['items']] == ['events/week.md']
+        # One shared fragment (游集合) shows the trip around it, not the whole budget.
+        loose = await service.recall(SCENE, chat('南门出游集合'))
+        assert [item['path'] for item in loose['items']] == ['events/trip.md']
+        assert loose['content_chars'] <= 200 and '游集合' in loose['items'][0]['content']
+
+
+@pytest.mark.asyncio
+async def test_reordered_chinese_recall_keeps_scene_and_persona_boundaries(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'))
+    memory = LocalMemory(settings.local)
+    content = '# 出游\n出游集合点是南门，周日上午九点出发。\n'
+    await memory.write(SCENE, 'events/trip.md', content, '合成样本')
+    await memory.write(SCENE, 'events/other.md', '# 秋游\n集合时间是七点半。\n', '合成样本')
+    await memory.write('onebot:group:80002', 'events/trip.md', content + '其他群资料。', '群隔离样本')
+    await memory.write(SCENE, 'bot/other/trip.md', content + '其他角色资料。', '角色隔离样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={SCENE: 'current'})
+        result = await service.recall(SCENE, chat('南门出游几点集合？'))
+        assert [item['path'] for item in result['items']] == ['events/trip.md']
+        assert '周日上午九点' in result['items'][0]['content']
+        await memory.forget(SCENE, 'events/trip.md')
+        assert (await service.recall(SCENE, chat('南门出游几点集合？')))['items'] == []
+
+
+@pytest.mark.asyncio
+async def test_recap_promises_lead_recall_to_what_the_chat_no_longer_names(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=1500, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'events/books.md', '# 十一月书单\n\n十一月书单定了《小王子》和《夜航西飞》。\n', '合成样本')
+    await memory.write(SCENE, 'events/trip.md', '# 秋游\n\n秋游集合时间是周日早上七点半。\n', '合成样本')
+    recap = ('## 话题脉络\n- 秋游安排\n\n## 我答应的事\n- 周五前把十一月书单发到群里\n\n'
+             '## 没回答的问题\n- 小林问借书证怎么办\n\n## 关键原话\n- 秋游别迟到\n')
+    cues = recall_cues(recap)
+    assert cues == '周五前把十一月书单发到群里\n小林问借书证怎么办' and recall_cues(None) == ''
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        assert (await service.recall(SCENE, chat('那个弄好了没')))['items'] == []
+        found = await service.recall(SCENE, chat('那个弄好了没'), cues)
+        assert [item['path'] for item in found['items']] == ['events/books.md'] and found['cues'] == cues
+        # The chat's own hits come first; a cue hit already shown is not repeated.
+        both = await service.recall(SCENE, chat('秋游集合时间是几点'), cues)
+        assert [item['path'] for item in both['items']] == ['events/trip.md', 'events/books.md']
 
 
 @pytest.mark.asyncio
@@ -214,7 +284,7 @@ async def test_turn_detail_http_keeps_actual_recalled_section_sources(tmp_path):
         recall = await runtime.memory.recall(SCENE, [message])
         turn = runtime.store.start_turn(SCENE)
         call = runtime.store.start_call(turn, 'mind', {'messages': [], 'recall_items': recall['items']})
-        runtime.store.end_call(call, {'message': {'role': 'assistant', 'content': '好'}}, None)
+        runtime.store.end_call(call, {'message': {'role': 'assistant', 'content': '好'}}, None, model=('fixture', 'fixture-model'))
         runtime.store.end_turn(turn, 'settled')
         response = await client.get(f'/api/host/scenes/{SCENE}/turns/{turn}')
         assert response.status_code == 200, response.text

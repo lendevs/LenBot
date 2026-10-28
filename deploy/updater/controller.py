@@ -8,7 +8,7 @@ manual restore or start action.
 When the previous program was connected to QQ before the update, the new one must connect again
 within ``connect_seconds`` after it is ready, otherwise that is a failure and is rolled back too.
 When it was not connected (QQ side offline, deliberately disconnected, or a host too old to say),
-the update only records a warning, so a problem on the QQ side is not taken for a broken release.
+the update only records a warning.
 """
 
 import argparse
@@ -16,9 +16,11 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
+import stat
 import sys
 import threading
 import time
@@ -31,12 +33,48 @@ from native import Native
 
 LABELS = {'prepare': '准备更新', 'apply': '停机升级', 'restore': '恢复快照', 'start': '启动程序'}
 LOG_LIMIT = 5 * 1024 * 1024
+# backups/<UTC time>-<8 hex>, as written by the update and by install.py upgrade.
+SNAPSHOT_NAME = re.compile(r'[0-9]{8}-[0-9]{6}-[0-9a-f]{8}')
+# A snapshot being deleted is moved to this prefix first; a removal that stopped halfway stays listed as incomplete.
+REMOVING = '.removing-'
 
 
 def rotate(path: Path) -> None:
     """Keep one previous file once a log grows past the limit; checked when the updater starts."""
     if path.exists() and path.stat().st_size > LOG_LIMIT:
         path.replace(path.with_name(path.name + '.1'))
+
+
+def size(path: Path) -> int:
+    """Bytes of the files under ``path``, without following links; files removed meanwhile count as nothing."""
+    total = 0
+    for folder, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(folder, name)).st_size
+            except FileNotFoundError:
+                pass
+    return total
+
+
+def snapshot_time(name: str) -> float | None:
+    """The UTC creation time in a snapshot folder name; None for any other name."""
+    if SNAPSHOT_NAME.fullmatch(name) is None:
+        return None
+    try:
+        return datetime.strptime(name[:15], '%Y%m%d-%H%M%S').replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def remove_tree(path: Path) -> None:
+    """Remove a folder, including files marked read-only (Windows refuses to delete those otherwise)."""
+    def writable(function, name, error):
+        if not isinstance(error, PermissionError) or os.path.islink(name):
+            raise error
+        os.chmod(name, os.stat(name).st_mode | stat.S_IWRITE)
+        function(name)
+    shutil.rmtree(path, onexc=writable)
 
 
 class Controller:
@@ -151,7 +189,7 @@ class Controller:
                 raise ValueError('未知更新操作')
             available = self.actions()
             if action not in available:
-                raise ValueError(f'现在不能{LABELS[action]}；可以：' + ('、'.join(LABELS[item] for item in available) or '等待当前操作结束'))
+                raise ValueError(f'当前不能{LABELS[action]}；可执行：' + ('、'.join(LABELS[item] for item in available) or '等待当前操作结束'))
             if action == 'prepare':
                 tag = payload['tag']
                 version_key(tag.removeprefix('v'))
@@ -222,18 +260,18 @@ class Controller:
         self.stage('prepared', status='prepared')
 
     def updater_steps(self, tag: str) -> str:
-        """The updater never replaces itself; a newer protocol is switched by one explicit command."""
+        """Commands that switch to a newer updater."""
         if self.deployment['mode'] == 'native':
-            return (f'{tag} 需要新版更新器，不能从面板换版。请停止 LenBot，下载 {tag} 的部署包并解压，'
-                    f'运行其中的 install.sh upgrade {self.root}（Windows 用 install.ps1 upgrade {self.root}），'
-                    '它会同时更新程序和更新器，然后照常启动。')
+            return (f'{tag} 需要新版更新器，请停止 LenBot，下载 {tag} 的部署包并解压，'
+                    f'运行其中的 install.sh upgrade {self.root}（Windows 使用 install.ps1 upgrade {self.root}），'
+                    '该命令同时更新程序和更新器，完成后启动 LenBot。')
         version = tag.removeprefix('v')
         image = repository(self.backend.metadata()['host_image']) + '-updater:' + version
         return (f'{tag} 需要新版更新器，请在部署目录 {self.deployment["host_directory"]} 依次运行：\n'
                 f'docker run --rm --mount type=bind,source={self.deployment["host_directory"]},target=/deployment '
                 f'--entrypoint python {image} /opt/lenbot-updater/init.py --version {version} --updater-only\n'
                 f'docker compose -p {self.deployment["project"]} -f host.updater.compose.yaml up -d\n'
-                '新的更新器启动后，回到这里再准备更新。')
+                '新的更新器启动后，返回此页重新准备更新。')
 
     def apply(self) -> None:
         target = self.state['target']
@@ -248,7 +286,22 @@ class Controller:
         self.backend.stop()
         snapshot = self.root / 'backups' / (time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
         self.stage('backup', snapshot=str(snapshot))
-        self.backend.backup(snapshot)
+        try:
+            self.backend.backup(snapshot)
+        except Exception as error:
+            reason = f'{type(error).__name__}: {error}'
+            self.record('update_failed', level='ERROR', error=error, stage='backup')
+            # An unfinished snapshot cannot be restored; what it copied only takes space.
+            shutil.rmtree(snapshot, ignore_errors=True)
+            self.stage('rollback_start', failed_stage='backup', error=reason)
+            try:
+                self.backend.start()
+                self.backend.ready(old)
+            except Exception as recovery:
+                raise RuntimeError(f'快照失败（{reason}），旧版本启动失败：{type(recovery).__name__}: {recovery}') from recovery
+            self.stage('rolled_back', status='rolled_back', stopped=False, rolled_back_from=target['version'],
+                       error=f'快照失败，已重新启动 {old["version"]}：{reason}')
+            return
         self.stage('migrate', snapshot_complete=True)
         try:
             self.backend.migrate(target)
@@ -275,16 +328,16 @@ class Controller:
         if self.state.get('platform_before') is not True:
             connected = self.platform_connected()
             if connected is False:
-                self.state['warning'] = ('更新前后都没有连上 QQ' if self.state.get('platform_before') is False
-                                         else '新版本没有连上 QQ，更新前的程序没有报告连接状态，不作为更新失败'
-                                         ) + '；版本已经更新，请检查 QQ 端和连接设置。'
+                self.state['warning'] = ('更新前后均未连接 QQ' if self.state.get('platform_before') is False
+                                         else '新版本未连接 QQ（更新前的程序未报告连接状态）'
+                                         ) + '；版本已更新，请检查 QQ 客户端和连接设置。'
                 self.record('platform_not_connected', level='WARNING', before=self.state.get('platform_before'))
             return
         self.stage('connect')
         deadline = time.monotonic() + self.connect_seconds
         while self.platform_connected() is not True:
             if time.monotonic() > deadline:
-                raise TimeoutError(f'新版本 {self.connect_seconds} 秒内没有连上 QQ（更新前是连上的）')
+                raise TimeoutError(f'新版本 {self.connect_seconds} 秒内未连接 QQ（更新前已连接）')
             time.sleep(0.5)
 
     def roll_back(self, reason: str) -> None:
@@ -302,7 +355,7 @@ class Controller:
             self.backend.start()
             self.backend.ready(self.backend.metadata())
         except Exception as error:
-            raise RuntimeError(f'更新失败（{reason}），已恢复快照，但旧版本没有启动：{type(error).__name__}: {error}') from error
+            raise RuntimeError(f'更新失败（{reason}），已恢复快照，但旧版本未能启动：{type(error).__name__}: {error}') from error
         self.stage('rolled_back', status='rolled_back', stopped=False, rolled_back_from=target['version'],
                    error=f'更新到 {target["version"]} 失败，已自动恢复到 {self.backend.metadata()["version"]}：{reason}')
 
@@ -320,6 +373,58 @@ class Controller:
         if self.reference is not None:
             self.backend.publish_reference(self.reference) if self.deployment['mode'] == 'docker' else write_json(
                 self.backend.instance / '.runtime/update-control.json', self.reference)
+
+    def restores(self, name: str) -> bool:
+        """Whether the restore action offered now would use this snapshot."""
+        snapshot = self.state.get('snapshot')
+        return snapshot is not None and Path(snapshot).name == name and 'restore' in self.actions()
+
+    def snapshots(self) -> list[dict]:
+        """Update snapshots under backups/, newest first; other entries there are left out."""
+        folder = self.root / 'backups'
+        result = []
+        for path in sorted(folder.iterdir(), key=lambda path: path.name, reverse=True) if folder.is_dir() else ():
+            removing = path.name.startswith(REMOVING)
+            name = path.name.removeprefix(REMOVING)
+            created = snapshot_time(name)
+            if created is None or path.is_symlink() or not path.is_dir():
+                continue
+            result.append({'name': name, 'bytes': size(path), 'created': created,
+                           'complete': not removing and (path / 'snapshot.json').is_file(),
+                           'restore': not removing and self.restores(name)})
+        return result
+
+    def delete_snapshot(self, name: str) -> list[dict]:
+        # Like submit: a finished operation writes its final status a moment before it releases the lock.
+        if self.state['status'] in ('preparing', 'applying', 'restoring') or not self.operation.acquire(timeout=10):
+            raise ValueError('已有一个更新操作正在执行')
+        try:
+            if snapshot_time(name) is None:
+                raise LookupError('快照不存在')
+            path = self.root / 'backups' / name
+            removing = path.with_name(REMOVING + name)
+            if not path.is_symlink() and path.is_dir():
+                restores = self.restores(name)
+                if restores:
+                    if self.state['status'] != 'complete':
+                        raise ValueError('上次更新失败后尚未恢复，恢复需要使用此快照')
+                    # The completed update gives up its way back before the snapshot leaves its place.
+                    self.state['snapshot_complete'] = False
+                    write_json(self.state_file, self.state)
+                try:
+                    path.rename(removing)
+                except OSError:
+                    if restores:
+                        self.state['snapshot_complete'] = True
+                        write_json(self.state_file, self.state)
+                    raise
+            elif removing.is_symlink() or not removing.is_dir():
+                raise LookupError('快照不存在')
+            remove_tree(removing)
+            self.record('snapshot_deleted', snapshot=name)
+        finally:
+            self.operation.release()
+        return self.snapshots()
 
     def status(self) -> dict:
         return {**self.state, 'current_version': self.backend.metadata()['version'], 'mode': self.deployment['mode'],
@@ -343,8 +448,9 @@ def server(controller: Controller) -> ThreadingHTTPServer:
             self.wfile.write(data)
 
         def authorized(self) -> bool:
-            supplied = self.headers.get('Authorization', '').removeprefix('Bearer ')
-            return secrets.compare_digest(supplied, controller.token) or secrets.compare_digest(supplied, controller.recovery_token)
+            # Compared as bytes: compare_digest refuses str with non-ASCII characters.
+            supplied = self.headers.get('Authorization', '').removeprefix('Bearer ').encode('utf-8', 'surrogatepass')
+            return any(secrets.compare_digest(supplied, token.encode()) for token in (controller.token, controller.recovery_token))
 
         def do_GET(self):
             path = urlsplit(self.path).path
@@ -369,6 +475,8 @@ def server(controller: Controller) -> ThreadingHTTPServer:
                     self.send(200, {'url': controller.reference['public_url'] + '/#session=' + controller.recovery_token})
                 elif path == '/api/log':
                     self.send(200, {'text': controller.log_text()})
+                elif path == '/api/snapshots':
+                    self.send(200, controller.snapshots())
                 else:
                     self.send(404, {'detail': 'Unknown endpoint'})
             except Exception as error:
@@ -395,6 +503,22 @@ def server(controller: Controller) -> ThreadingHTTPServer:
                 self.send(202, controller.submit(path.removeprefix('/api/'), payload))
             except (ValueError, KeyError) as error:
                 self.send(409, {'detail': str(error)})
+
+        def do_DELETE(self):
+            if not self.authorized():
+                self.send(401, {'detail': '使用管理面板交接的更新链接'})
+                return
+            path = urlsplit(self.path).path
+            try:
+                if not path.startswith('/api/snapshots/'):
+                    raise LookupError('Unknown endpoint')
+                self.send(200, controller.delete_snapshot(path.removeprefix('/api/snapshots/')))
+            except LookupError as error:
+                self.send(404, {'detail': str(error)})
+            except ValueError as error:
+                self.send(409, {'detail': str(error)})
+            except OSError as error:
+                self.send(422, {'detail': f'{type(error).__name__}: {error}'})
     address = controller.deployment.get('listen', {'host': '127.0.0.1', 'port': 0})
     http = ThreadingHTTPServer((address['host'], address['port']), Handler)
     endpoint = f'http://127.0.0.1:{http.server_port}'

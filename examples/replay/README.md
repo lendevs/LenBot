@@ -2,7 +2,7 @@
 
 这是一组通用的群聊情境，用来对比修改提示词或角色包前后的回复。人物、账号和对话都是虚构的，角色使用[示例角色小然](../personas/companion/)。
 
-在每个用例中，只有 @ Bot 的消息会触发回复，之前没有 @ 的消息作为上下文。`expect` 写的是期待的回应方式，由人工对照判断，不自动打分。
+在每个用例中，只有 @ Bot 的消息会触发回复，之前没有 @ 的消息作为上下文。`expect` 写的是期待的回应方式，由人工对照判断。
 
 ## 运行
 
@@ -11,7 +11,7 @@
 ```sh
 cp lenbot.config.example.json lenbot.config.json
 # 填写 models 里的接口地址、密钥和模型名
-uv run --no-sync lenbot-eval plan expression --profile current   # 只检查，不调用模型
+uv run --no-sync lenbot-eval plan expression --profile current   # 检查用例和配置
 uv run --no-sync lenbot-eval run expression --profile current    # 确认后输入 run 开始
 uv run --no-sync lenbot-eval report <run 目录名>
 ```
@@ -34,6 +34,7 @@ uv run --no-sync lenbot-eval report <run 目录名>
 | ordinary-update | 分享一顿普通的午饭 | 允许平常反应，不强行抖包袱或安排下一步 |
 | mixed-result | 有进展但仍为一个细节烦恼 | 理解具体烦恼，不保证未来一定成功 |
 | unknown-arrangement | 询问未知的活动库存安排 | 区分推测和已知安排，不凭安慰保证有货 |
+| corrected-by-a-friend | 说错面馆休息日后被群友纠正 | 大方认下，顺着新信息接着聊 |
 | capability-without-posturing | 询问当前是否能发语音 | 如实回答能力，不追加人设表演 |
 
 新增用例时沿用 `cases.json` 的格式。

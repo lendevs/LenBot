@@ -111,7 +111,7 @@ def register_host_resources(app: FastAPI, *, runtime: NetworkRuntime,
 
     def service(scene: str) -> TaskResources:
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
         if resources is None:
             raise HTTPException(409, '当前未配置 worker，无法定位工作资源')
         return resources

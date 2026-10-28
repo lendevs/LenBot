@@ -276,7 +276,7 @@ class OneBot:
                         if future is None or future.done():
                             raise ValueError(f"OneBot reply has no active request: {echo}")
                         future.set_result(packet)
-                    elif packet.get("post_type") in {"message", "notice", "request", "meta_event"}:
+                    elif packet.get("post_type") in {"message", "message_sent", "notice", "request", "meta_event"}:
                         if self.bot_id is not None and str(packet["self_id"]) != self.bot_id:
                             raise ValueError("OneBot event account does not match")
                         self.on_event(packet)

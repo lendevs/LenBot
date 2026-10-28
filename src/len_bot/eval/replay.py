@@ -35,7 +35,7 @@ from ..next.storage.store import FORMAT_VERSION, encode, turn_record
 
 
 LOCAL_TOOLS = {"say", "wait", "recall_chat", "schedule", "schedule_list", "schedule_cancel",
-               "persona_knowledge", "tool_search", "react", "scene_control", "memory", "web_read", "web_search", "look",
+               "knowledge", "tool_search", "react", "scene_control", "memory", "web_read", "web_search", "look",
                "attention", "end_turn"}
 
 
@@ -69,8 +69,8 @@ def check_initial_database(path: Path, config: LabConfig) -> None:
         if (db.execute("PRAGMA application_id").fetchone()[0] != 0x4C424E31
                 or db.execute("PRAGMA user_version").fetchone()[0] != FORMAT_VERSION):
             raise ValueError(
-                f"Initial database requires current next-core format {FORMAT_VERSION}; "
-                f"no automatic migration: {path}"
+                f"Initial database requires next-core format {FORMAT_VERSION}; "
+                f"migrate it offline first: {path}"
             )
         scenes = {row[0] for row in db.execute(" UNION ".join(
             f"SELECT scene FROM {table}" for table in (
@@ -165,7 +165,7 @@ def prepare(root: Path, set_name: str, profile: str) -> tuple[LabConfig, Persona
                                  for case in cases.cases},
         "memory": None if config.memory is None else {
             **config.memory.model_dump(mode="json", exclude={"local": {"directory"}}),
-            "initial_state": "per-case explicit seed or empty; template directory is never used"},
+            "initial_state": "per-case seed or empty"},
         "case_clocks": [
             {"case_id": case.id,
              "mode": "fixed-start-real-speed" if case.start_time is not None else "real-host-clock",
@@ -284,8 +284,8 @@ def observed_database(path: Path, *, scene: str, after_turn: int = 0, after_call
                 "chat_model_calls": len(chat_calls), "embedding_model_calls": len(embedding_calls),
                 "memory_model_calls": memory_count, "memory_errors": memory_errors,
                 "usage": calls, "tokens": token_summary([call["tokens"] for call in calls]),
-                "note": "仅统计本次新增聊天、表达embedding和本地记忆调用；用量按source保留各提供方原对象，"
-                        "缺失不计为零。初始历史及完整原文在数据库中。"}
+                "note": "统计本次新增的聊天、表达 embedding 和本地记忆调用；用量按 source 保留各提供方原对象，"
+                        "缺失记为未知。初始历史及完整原文在数据库中。"}
 
 
 async def run_case(directory: Path, config: LabConfig, persona: Persona,
@@ -757,9 +757,8 @@ def compare(root: Path, baseline_id: str, candidate_id: str) -> dict:
         "web_materials": web_materials,
         "image_materials": image_materials,
         "source_changed_files": changed_files(left / "source", right / "source"),
-        "notice": "同输入的配对人工判定观察，不是架构或模型优势结论。未完成脚本的人工fail仍保留；"
-                  "未评、uncertain和未配对不混入分母。配置和源码差异须结合原档案解释；"
-                  "脚本总耗时不是首答延迟，缺省宿主日期不是固定历史时机，未知费用不计零。",
+        "notice": "同输入配对回放的人工判定结果。未完成脚本的人工 fail 计入；"
+                  "未评、uncertain 和未配对不计入分母。脚本总耗时含全部轮次，未知费用记为未知。",
     }
     write_json(right / f"comparison-{baseline_id}.json", result)
     return result

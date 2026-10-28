@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowUpRight, ChevronDown } from '@lucide/vue'
 import { capabilitiesApi, capabilitiesOf, type Egress, type Worker } from '../../api/capabilities'
 import { keys } from '../../api/query'
+import { groupsTarget } from '../groups/route'
 import { settingsApi } from '../../api/settings'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { readPendingRestart } from '../../api/hostStore'
@@ -29,6 +30,11 @@ const settings = useQuery({
   queryFn: ({ signal }) => settingsApi.read(signal),
 })
 const saved = computed(() => (settings.data.value ? capabilitiesOf(settings.data.value).worker : undefined))
+const defaults = useQuery({
+  queryKey: keys.host.workerDefaults(),
+  queryFn: ({ signal }) => capabilitiesApi.workerDefaults(signal),
+  staleTime: Infinity,
+})
 const hasModel = computed(() => {
   const models = settings.data.value?.saved.models as { roles?: { worker?: unknown } } | undefined
   return Boolean(models?.roles?.worker)
@@ -95,7 +101,8 @@ const form = computed(() => draft.value!)
 const dirty = computed(() => saved.value !== undefined && !same(draft.value, saved.value))
 useUnsavedChanges(dirty, { keep: ['tab'] })
 function toggle(on: boolean) {
-  if (on) draft.value = parked.value ?? (saved.value ? copy(saved.value) : fresh())
+  if (on)
+    draft.value = parked.value ?? (saved.value ? copy(saved.value) : { ...fresh(), ...defaults.data.value })
   else {
     parked.value = draft.value
     draft.value = null
@@ -137,7 +144,6 @@ const errors = computed(() => {
   const result: Record<string, string> = {}
   if (!value) return result
   const required = t('capabilities.required')
-  if (!hasModel.value) result.model = t('capabilities.worker.noModel')
   if (!value.image.trim()) result.image = required
   for (const key of paths) {
     if (!value[key].trim()) result[key] = required
@@ -222,7 +228,7 @@ const pool = computed(() => {
           v-if="!hasModel"
           class="flex flex-wrap items-center gap-2 rounded-md bg-info-bg px-3 py-2 text-sm text-info"
         >
-          {{ t('capabilities.worker.noModel') }}
+          {{ t('capabilities.worker.followsChat') }}
           <Button
             size="sm"
             variant="ghost"
@@ -313,7 +319,12 @@ const pool = computed(() => {
         <FormSection :title="t('capabilities.worker.storage')" :columns="1">
           <p class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
             {{ pool }}
-            <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="{ name: 'host-resources' }">
+            <Button
+              size="sm"
+              variant="ghost"
+              :icon-right="ArrowUpRight"
+              :to="groupsTarget(undefined, 'tasks', { tab: 'resources' })"
+            >
               {{ t('capabilities.worker.usage') }}
             </Button>
           </p>

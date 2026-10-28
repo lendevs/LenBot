@@ -6,6 +6,7 @@ import json
 from typing import Literal, TYPE_CHECKING
 
 from .sticker_assets import CollectedSticker
+from ..models.usage import record_usage
 from ..storage.codec import encode
 
 if TYPE_CHECKING:
@@ -197,8 +198,12 @@ class StickerStore:
                             (self.store.now(), callid))
 
     def response(self, callid: int, response: object | None,
-                 usage: dict | None, tokens: dict | None) -> None:
+                 usage: dict | None, tokens: dict | None, *, model: tuple[str, str]) -> None:
         with self.db:
+            scene, started = self.db.execute(
+                "SELECT scene,model_started FROM sticker_calls WHERE id=?", (callid,)).fetchone()
+            record_usage(self.db, time=started, scene=scene, purpose="sticker",
+                         provider=model[0], model=model[1], tokens=tokens)
             self.db.execute(
                 "UPDATE sticker_calls SET response=?,usage=?,tokens=? WHERE id=?",
                 (None if response is None else encode(response),

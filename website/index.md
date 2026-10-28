@@ -4,7 +4,7 @@ layout: home
 hero:
   name: LenBot
   text: 自主决策的群聊 Agent
-  tagline: 何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。支持 QQ 和 Telegram。
+  tagline: 何时开口、回复谁、先查什么、何时跟进，由模型在多步工具循环中决定。接入 QQ。
   image:
     src: /lenbot-mark-animated.svg
     alt: LenBot
@@ -27,7 +27,7 @@ features:
     linkText: 在群里聊天
   - icon: 🔎
     title: 联网查证
-    details: 需要查证的问题，模型先搜索网页、读取正文或查询聊天记录和记忆。搜索和读网页均可选择免费方式或付费接口。
+    details: 需要查证的问题，模型先搜索网页、读取正文或查询聊天记录和记忆。搜索和读取网页均可选择免费方式或付费接口。
     link: /guide/web
     linkText: 联网与工具
   - icon: 🎭
@@ -66,7 +66,7 @@ features:
 <div class="shots">
   <figure class="wide"><img src="/screenshots/live.gif" alt="群聊现场：群友 @ Bot 后，回合卡片逐步展开，先查询聊天记录，再分两条回复"><figcaption>群聊现场。Bot 被 @ 后先查询聊天记录，再分两条回复，每一步实时显示。</figcaption></figure>
   <figure><img src="/screenshots/home.png" alt="面板总览，显示 QQ 连接状态、今天的消息量和群列表"><figcaption>总览：连接状态、当日统计、待处理事项和各群动态。</figcaption></figure>
-  <figure><img src="/screenshots/persona.png" alt="角色编辑页"><figcaption>角色编辑：修改设定后可以先试聊，确认后再保存。</figcaption></figure>
+  <figure><img src="/screenshots/persona.png" alt="角色效果页签的对话试聊：群友 @ 角色后收到两条回复"><figcaption>角色编辑：修改设定后可以先试聊，确认后再保存。</figcaption></figure>
 </div>
 
 <div class="home-section">
@@ -75,13 +75,13 @@ features:
     <li><strong>准备</strong><span>一个已登录 QQ 的 OneBot 实现（例如 NapCat），以及模型服务的 API Key。</span></li>
     <li><strong>启动</strong><span>克隆仓库，执行安装脚本，用 <code>uv</code> 启动。终端输出首次配置的链接。</span></li>
     <li><strong>首次配置</strong><span>按五步向导连接 QQ、选择模型和角色。发送方式建议先选模拟发送。</span></li>
-    <li><strong>试聊与上线</strong><span>在面板中试聊，确认效果后改为真实发送。</span></li>
+    <li><strong>试聊与上线</strong><span>在面板中试聊，确认效果后在总览切换为发送到 QQ。</span></li>
   </ol>
 </div>
 
 <div class="home-section">
   <div class="box">
     <h2>当前状态</h2>
-    <p>LenBot 仍在开发中，尚未发布版本，请<a href="./guide/quick-start">从源码运行</a>。主要面向 QQ，也可以<a href="./guide/telegram">接入 Telegram</a>。提示词只有中文，面板支持中文和英文。</p>
+    <p>LenBot 仍在开发中，尚未发布版本，请<a href="./guide/quick-start">从源码运行</a>。目前只支持 QQ。提示词只有中文，面板支持中文和英文。</p>
   </div>
 </div>

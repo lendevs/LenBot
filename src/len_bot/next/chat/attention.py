@@ -821,7 +821,7 @@ class SceneRunner:
         available = (self.config.compaction.input_tokens
                      - estimate_request([{"role": "system", "content": self.chat.context.system}],
                                         self.chat.toolset.tools, 0)
-                     - self.config.compaction.max_output_tokens)
+                     - self.config.recap_output_tokens)
         target = max(1, min(self.config.compaction.keep_recent_tokens, available))
         contents, selected = [], []
         text = ""

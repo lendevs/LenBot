@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Literal, TYPE_CHECKING
 
 from ..platform.messages import ChatMessage, plain_text
+from ..models.usage import record_usage
 from ..storage.codec import encode, decode_message
 
 if TYPE_CHECKING:
@@ -269,7 +270,7 @@ class LearningStore:
                 "SELECT id,situation FROM expressions WHERE scene=? AND status='adopted' ORDER BY id", (scene,),
             )]
             if current != snapshot:
-                raise ValueError(f"Adopted expressions changed during reindex in {scene}; old vectors unchanged")
+                raise ValueError(f"Adopted expressions changed during reindex in {scene}; run the reindex again")
             self.db.executemany("UPDATE expressions SET vector=?,vector_binding=?,vector_dimensions=? WHERE scene=? AND id=?",
                                 [(*vectors[id], scene, id) for id, _ in snapshot])
 
@@ -293,8 +294,12 @@ class LearningStore:
         return cursor.lastrowid
 
     def end_embedding_call(self, id: int, response: dict | None, usage: dict | None,
-                           tokens: dict | None, error: str | None = None) -> None:
+                           tokens: dict | None, error: str | None = None, *, model: tuple[str, str]) -> None:
         with self.db:
+            scene, started = self.db.execute(
+                "SELECT scene,started FROM expression_embedding_calls WHERE id=?", (id,)).fetchone()
+            record_usage(self.db, time=started, scene=scene, purpose="expression_embedding",
+                         provider=model[0], model=model[1], tokens=tokens)
             self.db.execute(
                 "UPDATE expression_embedding_calls SET ended=?,response=?,usage=?,tokens=?,error=? WHERE id=?",
                 (self.store.now(), None if response is None else encode(response),

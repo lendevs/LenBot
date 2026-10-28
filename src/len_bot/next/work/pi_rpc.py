@@ -165,7 +165,7 @@ class PiRpc:
     async def spawn(cls, argv: list[str], *, cwd: Path, env: Mapping[str, str],
                     stderr_path: Path,
                     max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES) -> PiRpc:
-        """Start the already-chosen Pi or container command; never choose a model here."""
+        """Start the given Pi or container command."""
         if max_frame_bytes <= 0:
             raise ValueError("max_frame_bytes must be positive")
         stderr_file = open_stderr(stderr_path)

@@ -3,17 +3,18 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-DISCOVERY_REQUIRED_NAMES = frozenset({"scene_control", "host_manage", "schedule_list", "schedule_cancel", "persona_knowledge", "open_forward", "member_info", "transcribe", "message_reaction"})
+DISCOVERY_REQUIRED_NAMES = frozenset({"scene_control", "host_manage", "schedule_list", "schedule_cancel", "open_forward", "member_info", "transcribe", "message_reaction"})
 
 
-DEFERRED_NAMES = frozenset({"schedule", "memory", "delegate", "task", "send_file", "web_search", "web_read", "scene_control", "host_manage", "schedule_list", "schedule_cancel", "persona_knowledge", "open_forward", "member_info", "transcribe", "message_reaction"})
+# knowledge is loaded with the core tools wherever the persona or the chat has files.
+DEFERRED_NAMES = frozenset({"schedule", "memory", "delegate", "task", "send_file", "web_search", "web_read", "scene_control", "host_manage", "schedule_list", "schedule_cancel", "open_forward", "member_info", "transcribe", "message_reaction"})
 
 
 def deferred_names(allowed_names: set[str], config) -> frozenset[str]:
     """Tools offered through tool_search; memory stays loaded while session upkeep writes with it."""
     if "tool_search" not in allowed_names:
         return frozenset()
-    if config.memory is not None and config.memory.ingest is not None:
+    if config.memory is not None and config.memory.ingest is not None and config.memory_plugin is None:
         return DEFERRED_NAMES - {"memory"}
     return DEFERRED_NAMES
 
@@ -56,7 +57,7 @@ class ToolSearchArguments(BaseModel):
 
 TOOL_SEARCH = {"type": "function", "function": {
     "name": "tool_search", "description": "按名称或说明中的原词查找当前已允许的低频工具，最多返回 5 项。"
-    "目录已给出明确工具名时直接用完整名称查询。命中工具从下一次模型请求开始可用；参数错误不会改变已加载工具。",
+    "目录已给出明确工具名时直接用完整名称查询。命中工具从下一次模型请求开始可用。",
     "parameters": ToolSearchArguments.model_json_schema(),
 }}
 

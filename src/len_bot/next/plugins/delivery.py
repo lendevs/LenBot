@@ -39,7 +39,7 @@ async def prepare_parts(plugin: str, content: Sequence[Content], max_chars: int,
     for item in content:
         if isinstance(item, Text):
             if not item.text:
-                raise ValueError("插件Text内容不能为空")
+                raise ValueError("插件 Text 内容不能为空")
             clusters = regex.findall(r"\X", item.text)
             offset = 0
             while offset < len(clusters):
@@ -51,7 +51,7 @@ async def prepare_parts(plugin: str, content: Sequence[Content], max_chars: int,
                     flush()
         elif isinstance(item, Mention):
             if item.user != "all" and re.fullmatch(r"[a-z][a-z0-9_-]*:[^:\s/\\]+", item.user) is None:
-                raise ValueError(f"插件Mention须为实际账号或all：{item.user!r}")
+                raise ValueError(f"插件 Mention 须为实际账号或 all：{item.user!r}")
             segments.append(Segment("mention", {"user": item.user}))
         elif isinstance(item, Image):
             if not item.description.strip():

@@ -1,6 +1,11 @@
 """Create the current database from domain-owned schemas in one transaction."""
 
+from contextlib import closing
+from functools import cache
 import sqlite3
+
+# Until the first release candidate a format change comes without an upgrade step.
+FORMAT_RESET = '发布前的格式变更不提供升级步骤，请使用新的实例目录重新配置，旧目录可保留作备份。'
 
 
 SCHEMA = """
@@ -49,7 +54,7 @@ CREATE TABLE model_calls (
     id INTEGER PRIMARY KEY, turn_id TEXT, role TEXT NOT NULL,
     started REAL NOT NULL, ended REAL, request TEXT NOT NULL,
     response TEXT, usage TEXT, error TEXT, mind_entry_seq INTEGER, tokens TEXT,
-    scene TEXT NOT NULL, plugin TEXT
+    scene TEXT NOT NULL, plugin TEXT, retries INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX turn_calls ON model_calls(turn_id, id);
 CREATE TABLE web_documents (
@@ -107,8 +112,17 @@ def create_database(db: sqlite3.Connection, version: int) -> None:
     from ..chat.schedule_store import SCHEMA as SCHEDULES
     from ..learning.sticker_store import SCHEMA as STICKERS
     from ..work.store import SCHEMA as TASKS
+    from ..models.usage import SCHEMA as USAGE
 
     domains = (SCHEMA, SCHEDULES, TASKS, AUDIO, LEARNING, JARGON, STICKERS,
-               REPLY_EFFECTS, PROACTIVE, PLUGINS)
+               REPLY_EFFECTS, PROACTIVE, PLUGINS, USAGE)
     db.executescript(f"BEGIN; PRAGMA application_id = 1279413809; PRAGMA user_version = {version};\n"
                      + "\n".join(domains) + "\nCOMMIT;")
+
+
+@cache
+def expected_tables() -> frozenset[str]:
+    """Names of the tables a database of the current format holds."""
+    with closing(sqlite3.connect(':memory:')) as db:
+        create_database(db, 0)
+        return frozenset(row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'"))

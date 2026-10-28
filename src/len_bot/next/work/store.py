@@ -9,6 +9,7 @@ from typing import Literal, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..platform.messages import UploadResult
+from ..models.usage import record_usage
 from ..storage.codec import encode
 from .materials import MATERIALS
 from ..memory.embeddings import _reject_constant
@@ -30,10 +31,7 @@ CREATE TABLE tasks (
     status TEXT NOT NULL CHECK(status IN
         ('queued','running','waiting_input','done','failed','cancelled')),
     created REAL NOT NULL, started REAL, ended REAL,
-    container TEXT, question TEXT, summary TEXT, error TEXT,
-    account_browser INTEGER NOT NULL DEFAULT 0 CHECK(account_browser IN (0,1)),
-    browser_active INTEGER NOT NULL DEFAULT 0 CHECK(browser_active IN (0,1)),
-    browser_session TEXT
+    container TEXT, question TEXT, summary TEXT, error TEXT
 );
 CREATE INDEX tasks_scene_status ON tasks(scene,status,id);
 CREATE INDEX tasks_status ON tasks(status,id);
@@ -82,9 +80,6 @@ class Task:
     question: dict | None
     summary: str | None
     error: str | None
-    account_browser: bool = False
-    browser_active: bool = False
-    browser_session: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +102,6 @@ def _task(row: sqlite3.Row) -> Task:
     except ValidationError as error:
         raise ValueError(f'Invalid task material selection: {error}; raw={raw_materials[:1000]!r}') from error
     values["question"] = None if values["question"] is None else json.loads(values["question"])
-    values["account_browser"] = bool(values["account_browser"])
-    values["browser_active"] = bool(values["browser_active"])
     return Task(**values)
 
 
@@ -120,22 +113,14 @@ class TaskStore:
         self.now = store.now
 
     def create(self, scene: str, requester: str, goal: str, deliverable: str,
-               context: str, input: str, *, account_browser: bool = False, materials: tuple[str, ...] = ()) -> Task:
+               context: str, input: str, *, materials: tuple[str, ...] = ()) -> Task:
         with self.db:
             cursor = self.db.execute(
-                "INSERT INTO tasks(scene,requester,goal,deliverable,context,input,materials,status,created,account_browser) "
-                "VALUES (?,?,?,?,?,?,?,'queued',?,?)",
-                (scene, requester, goal, deliverable, context, input, encode(list(materials)), self.now(), int(account_browser)),
+                "INSERT INTO tasks(scene,requester,goal,deliverable,context,input,materials,status,created) "
+                "VALUES (?,?,?,?,?,?,?,'queued',?)",
+                (scene, requester, goal, deliverable, context, input, encode(list(materials)), self.now()),
             )
         return self.get(scene, cursor.lastrowid)
-
-    def browser_in_use(self) -> list[Task]:
-        return [_task(row) for row in self.db.execute("SELECT * FROM tasks WHERE browser_active=1 ORDER BY id")]
-
-    def browser_binding(self, scene: str, id: int, *, active: bool, session: str | None) -> None:
-        with self.db:
-            self.db.execute("UPDATE tasks SET browser_active=?,browser_session=? WHERE scene=? AND id=?",
-                            (int(active), session, scene, id))
 
     def get(self, scene: str, id: int) -> Task:
         row = self.db.execute("SELECT * FROM tasks WHERE scene=? AND id=?", (scene, id)).fetchone()
@@ -175,7 +160,7 @@ class TaskStore:
         if environment == 'discarded':
             clause += ' AND ' + discarded
         elif environment == 'retained':
-            clause += " AND status IN ('done','failed','cancelled') AND account_browser=0 AND container IS NULL AND browser_active=0 AND NOT " + discarded
+            clause += " AND status IN ('done','failed','cancelled') AND container IS NULL AND NOT " + discarded
         rows = self.db.execute(
             "SELECT * FROM tasks WHERE scene=?" + clause + " ORDER BY id DESC LIMIT ? OFFSET ?",
             (scene, *values, limit, offset),
@@ -303,7 +288,6 @@ class TaskStore:
             "SELECT id,kind,created,delivered_at,"
             "CASE WHEN kind='native' THEN json_extract(body,'$.type') ELSE kind END AS event_type,"
             "CASE WHEN kind='native' THEN json_extract(body,'$.toolName') END AS tool_name,"
-            "CASE WHEN kind='native' THEN json_extract(body,'$.args.method') END AS browser_method,"
             "substr(body,1,1200) AS preview,length(body)>1200 AS truncated "
             "FROM task_events WHERE scene=? AND task_id=? AND id>? ORDER BY id LIMIT ?",
             (scene, id, after, limit),
@@ -351,7 +335,7 @@ class TaskStore:
     def finish_call(self, eventid: int, facts: dict) -> None:
         with self.db:
             row = self.db.execute(
-                "SELECT kind,body FROM task_events WHERE id=?", (eventid,)
+                "SELECT kind,body,scene,created FROM task_events WHERE id=?", (eventid,)
             ).fetchone()
             if row is None or row["kind"] != "model_call":
                 raise ValueError(f"No model call event {eventid}")
@@ -361,6 +345,9 @@ class TaskStore:
             body["response"] = facts
             body["ended"] = self.now()
             self.db.execute("UPDATE task_events SET body=? WHERE id=?", (encode(body), eventid))
+            record_usage(self.db, time=row["created"], scene=row["scene"], purpose="worker",
+                         provider=body["request"]["provider"], model=body["request"]["model"],
+                         tokens=facts.get("tokens"))
 
     def call_tokens(self, scene: str, id: int, *, for_budget: bool = False) -> list[dict | None]:
         self.get(scene, id)
@@ -462,11 +449,6 @@ class TaskStore:
                                "AND kind='browser_file' ORDER BY id", (scene, task_id))
         return {body['reference']['path']: {'created': row['created'], **body['source']}
                 for row in rows for body in [json.loads(row['body'])]}
-
-    def browser_start(self, scene: str, task_id: int) -> dict | None:
-        row = self.db.execute("SELECT created,body FROM task_events WHERE scene=? AND task_id=? "
-                              "AND kind='browser_started' ORDER BY id DESC LIMIT 1", (scene, task_id)).fetchone()
-        return None if row is None else {'created': row['created'], **json.loads(row['body'])}
 
     def file_deletions(self, scene: str, task_id: int) -> dict[int, dict]:
         return {row['file_id']: {'created': row['created'], 'requester': row['requester']}

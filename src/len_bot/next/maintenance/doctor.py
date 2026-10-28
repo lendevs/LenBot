@@ -11,8 +11,9 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sys
+import sqlite3
 
-from ..config import HostConfig, load_host_config
+from ..config import HostConfig, load_instance_config
 from ..memory.jobs import FORMAT_VERSION as MEMORY_JOBS_FORMAT
 from ..memory.local import FORMAT_VERSION as LOCAL_INDEX_FORMAT, _APPLICATION_ID as LOCAL_INDEX_APPLICATION, _INDEX_NAME
 from ..plugins.data import recorded_version
@@ -26,15 +27,14 @@ BUSINESS_APPLICATION = 0x4C424E31
 MEMORY_JOBS_APPLICATION = 0x4C424D4A
 
 
-def _database(path: Path, application: int, format_version: int, migrate: str,
+def _database(path: Path, application: int, format_version: int,
               relations: tuple[tuple[str, str], ...] = ()) -> dict:
     if not path.exists():
         return {'status': 'disabled', 'detail': f'{path} 尚未创建'}
     with closing(connect(path, readonly=True)) as db:
         actual = (db.execute('PRAGMA application_id').fetchone()[0], db.execute('PRAGMA user_version').fetchone()[0])
         if actual != (application, format_version):
-            return {'status': 'error', 'detail': f'{path} 格式 {actual!r}，当前需要 {(application, format_version)!r}；'
-                                                 f'停机执行 python -m len_bot.next.maintenance.{migrate}'}
+            return {'status': 'error', 'detail': f'{path} 格式 {actual!r}，当前需要 {(application, format_version)!r}'}
         problems = [row[0] for row in db.execute('PRAGMA quick_check').fetchall() if row[0] != 'ok']
         for name, query in relations:
             count = db.execute(query).fetchone()[0]
@@ -64,7 +64,7 @@ def _plugin_data(data_dir: Path, declared: int) -> list[str]:
     else:
         if recorded is not None and recorded > declared:
             problems.append(f'数据版本 {recorded} 比已安装插件的 data_version {declared} 新；'
-                            f'恢复 .backups 里的旧数据或安装新版本插件')
+                            f'请恢复 .backups 中的旧数据或安装新版本插件')
     kv = data_dir / 'kv.sqlite3'
     if kv.exists():
         with closing(connect(kv, readonly=True)) as db:
@@ -101,23 +101,29 @@ def _plugins(config: HostConfig) -> dict:
 
 def check(root: Path) -> list[dict]:
     try:
-        config = load_host_config(root)
+        config = load_instance_config(root)
     except ValueError as error:
         return [{'check': 'config', 'status': 'error', 'detail': str(error)}]
     results = [{'check': 'config', 'status': 'ok', 'detail': f'配置格式 {config.config_version}'}]
     database = config.database
-    results.append({'check': 'business_database', **_database(
-        database, BUSINESS_APPLICATION, BUSINESS_FORMAT, 'migrate', BUSINESS_RELATIONS)})
-    results.append({'check': 'memory_jobs', **_database(
-        database.with_name(database.name + '.memory.sqlite3'), MEMORY_JOBS_APPLICATION, MEMORY_JOBS_FORMAT,
-        'migrate_memory_jobs')})
-    if config.memory is None:
-        results.append({'check': 'local_memory_index', 'status': 'disabled', 'detail': '未配置记忆'})
-    else:
-        index = config.memory.local.directory.expanduser().resolve() / _INDEX_NAME
-        results.append({'check': 'local_memory_index', **_database(
-            index, LOCAL_INDEX_APPLICATION, LOCAL_INDEX_FORMAT, 'migrate_local_memory')})
-    results.append({'check': 'plugins', **_plugins(config)})
+    index = (None if config.memory is None
+             else config.memory.local.directory.expanduser().resolve() / _INDEX_NAME)
+    for name, location, application, version, relations in (
+        ('business_database', database, BUSINESS_APPLICATION, BUSINESS_FORMAT, BUSINESS_RELATIONS),
+        ('memory_jobs', database.with_name(database.name + '.memory.sqlite3'),
+         MEMORY_JOBS_APPLICATION, MEMORY_JOBS_FORMAT, ()),
+        ('local_memory_index', index, LOCAL_INDEX_APPLICATION, LOCAL_INDEX_FORMAT, ()),
+    ):
+        if location is None:
+            result = {'status': 'disabled', 'detail': '未配置记忆'}
+        else:
+            try:
+                result = _database(location, application, version, relations)
+            except (OSError, sqlite3.DatabaseError) as error:
+                result = {'status': 'error', 'detail': f'{location}：{error}'}
+        results.append({'check': name, **result})
+    if isinstance(config, HostConfig):
+        results.append({'check': 'plugins', **_plugins(config)})
     return results
 
 

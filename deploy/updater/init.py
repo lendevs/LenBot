@@ -1,4 +1,4 @@
-"""Create a new Docker deployment recipe, or switch an existing one to another updater image; never starts anything."""
+"""Create a new Docker deployment recipe, or switch an existing one to another updater image."""
 
 import argparse
 import json
@@ -19,7 +19,7 @@ def switch_updater(root: Path, version: str) -> None:
     recipe['services']['lenbot-updater']['image'] = image
     path.write_text(json.dumps(recipe, indent=2) + '\n')
     owned_like_parent(path)
-    print(f'更新器镜像已改为 {image}，宿主未改动。使用以下命令换上新的更新器：')
+    print(f'更新器镜像已改为 {image}。使用以下命令启用新的更新器：')
     print(f'docker compose -p {deployment["project"]} -f host.updater.compose.yaml up -d')
 
 
@@ -83,7 +83,7 @@ def main() -> None:
         'host_image': image, 'worker_image': prefix + '-worker:' + args.version, 'python_volume': python_volume})
     (root / 'backups').mkdir(mode=0o700)
     owned_like_parent(root / 'backups')
-    print('已创建配方和新卷，未启动。使用以下命令显式启动：')
+    print('已创建配方和新卷。启动：')
     print(f'docker compose -p {args.project} -f host.compose.yaml -f host.version.compose.yaml -f host.updater.compose.yaml up -d')
     print('后台任务另按任务挂载配方与根配置启用；更新器从根配置判断是否需要同步任务镜像。')
 

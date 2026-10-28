@@ -23,7 +23,7 @@ const views = computed(() =>
     label: t(`groups.tasks.views.${value}`),
   })),
 )
-// `tab` is the address the old task page and home page links use.
+// `tab` in the address selects the view, so other pages can link to one.
 const view = computed<View>(() => {
   const value = route.query.tab
   return views.value.some((item) => item.value === value) ? (value as View) : 'tasks'

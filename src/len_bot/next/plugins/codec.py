@@ -3,7 +3,7 @@
 import base64
 from dataclasses import asdict
 
-from ...plugin import Content, Image, Mention, Sent, Text
+from ...plugin import Content, Image, Mention, RecallBlock, RecallRequest, Sent, Text
 from ..platform.messages import ChatMessage, Notice, Segment, Sender
 
 # Exceptions keep their type across the process boundary; anything else arrives as RuntimeError.
@@ -31,6 +31,25 @@ def message_from(value: dict | None) -> ChatMessage | None:
         return None
     return ChatMessage(**{**value, "sender": Sender(**value["sender"]),
                           "segments": [Segment(**item) for item in value["segments"]]})
+
+
+def recall_value(request: RecallRequest) -> dict:
+    return asdict(request)
+
+
+def recall_from(value: dict) -> RecallRequest:
+    return RecallRequest(**{**value, "messages": tuple(message_from(item) for item in value["messages"]),
+                            "tasks": tuple(value["tasks"])})
+
+
+def blocks_value(blocks: object) -> list[dict]:
+    if not isinstance(blocks, (list, tuple)) or not all(isinstance(block, RecallBlock) for block in blocks):
+        raise TypeError("@recall 必须返回 RecallBlock 序列")
+    return [{"title": block.title, "text": block.text} for block in blocks]
+
+
+def blocks_from(value: list[dict]) -> list[RecallBlock]:
+    return [RecallBlock(item["title"], item["text"]) for item in value]
 
 
 def notice_value(notice: Notice) -> dict:

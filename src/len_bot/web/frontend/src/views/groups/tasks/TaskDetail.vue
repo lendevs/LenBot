@@ -10,6 +10,7 @@ import { formatDateTime } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
+import MarkdownText from '../../../ui/MarkdownText.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import { confirm } from '../../../ui/confirm'
@@ -56,7 +57,6 @@ const canContinue = computed(
     props.service.accepting &&
     props.sceneEnabled &&
     finished(task.value?.status) &&
-    !task.value?.account_browser &&
     !task.value?.workspace_discard_requested,
 )
 const canCancel = computed(
@@ -66,11 +66,7 @@ const canCancel = computed(
     (props.service.accepting || task.value?.status === 'queued'),
 )
 const canAnswer = computed(
-  () =>
-    props.service.accepting &&
-    task.value?.status === 'waiting_input' &&
-    Boolean(task.value.question) &&
-    task.value.question?.method !== 'request_help',
+  () => props.service.accepting && task.value?.status === 'waiting_input' && Boolean(task.value.question),
 )
 
 const append = ref('')
@@ -166,7 +162,8 @@ const facts = computed(() => {
       <dl v-if="facts.length" class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
         <template v-for="[key, text] in facts" :key="key">
           <dt class="text-muted">{{ t(`groups.tasks.facts.${key}`) }}</dt>
-          <dd class="break-words whitespace-pre-wrap text-ink">{{ text }}</dd>
+          <dd v-if="key === 'summary'" class="text-ink"><MarkdownText :text="text ?? ''" /></dd>
+          <dd v-else class="break-words whitespace-pre-wrap text-ink">{{ text }}</dd>
         </template>
       </dl>
       <ErrorNote v-if="task.error" :title="t('groups.tasks.failed')" :error="task.error" />
@@ -235,11 +232,9 @@ const facts = computed(() => {
       :can-keep="service.configured"
     />
     <TaskBrowser
-      :scene="scene"
       :task="task"
       :browser="first.browser"
       :configured="service.configured"
-      @changed="changed"
       @files="showFiles('out/browser')"
     />
     <template v-if="service.configured">

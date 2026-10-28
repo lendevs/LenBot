@@ -24,7 +24,7 @@ def register_host_reply_effects(app: FastAPI, *, runtime: NetworkRuntime,
     def chat_for(scene: str):
         chat = runtime.chats.get(scene)
         if chat is None:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         return chat
 
     def active(scene: str) -> bool:
@@ -69,7 +69,7 @@ def register_host_reply_effects(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         effect = records.effect(scene, id)
         if effect is None:
-            raise HTTPException(404, "当前场景没有这条回复效果样本")
+            raise HTTPException(404, "当前场景不存在此回复效果样本")
         observed = effect["observed_seqs"] or []
         return {**effect,
                 "expression": rendered(scene, effect["message_seqs"]),
@@ -89,7 +89,7 @@ def register_host_reply_effects(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         result = records.call(scene, id)
         if result is None:
-            raise HTTPException(404, "当前场景没有这一回复效果判断")
+            raise HTTPException(404, "当前场景不存在此回复效果判断")
         return result
 
     @app.get("/api/host/scenes/{scene}/turns/{turn_id}/reply-effects", response_model=responses.Records, response_model_exclude_unset=True)

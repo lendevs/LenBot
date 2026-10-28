@@ -13,7 +13,6 @@ import NumberInput from '../../../ui/NumberInput.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Select from '../../../ui/Select.vue'
 import ModelName from '../../models/ModelName.vue'
-import { useProtocolTitle } from '../../models/protocols'
 import MoreFields from '../MoreFields.vue'
 import TestResult from '../TestResult.vue'
 import { useStepErrors, useWizard } from '../wizard'
@@ -26,7 +25,7 @@ const error = useStepErrors('model')
 const presets = computed(() => [
   { value: 'deepseek' as const, label: 'DeepSeek' },
   { value: 'compatible' as const, label: t('setup.model.compatible') },
-  { value: 'other' as const, label: t('setup.model.other') },
+  { value: 'anthropic' as const, label: t('setup.model.anthropic') },
 ])
 const searchOptions = computed(() => [
   ...SEARCH_SERVICES.map((value) => ({ value, label: t(`capabilities.web.services.${value}`) })),
@@ -56,16 +55,7 @@ watch(
     if (n) vectorsOpen.value = true
   },
 )
-const protocolTitle = useProtocolTitle()
-
-const protocolOptions = computed(() =>
-  wizard.protocols.value.map((item) => ({ value: item.api, label: protocolTitle(item) })),
-)
-const protocol = computed({
-  get: () => draft.api || undefined,
-  set: (api: string | undefined) => api && wizard.chooseProtocol(api),
-})
-const thinking = computed(() => ['anthropic', 'gemini'].includes(draft.api))
+const thinking = computed(() => draft.api === 'anthropic')
 const outputFields = [
   { value: 'max_completion_tokens' as const, label: 'max_completion_tokens' },
   { value: 'max_tokens' as const, label: 'max_tokens' },
@@ -75,15 +65,7 @@ const kinds = computed(() => [
   { value: 'tools' as const, label: t('models.probe.tools') },
 ])
 
-const advancedFields = [
-  'baseUrl',
-  'proxy',
-  'contextWindow',
-  'inputBudget',
-  'maxOutput',
-  'thinkingBudget',
-  'maxSteps',
-]
+const advancedFields = ['proxy', 'contextWindow', 'inputBudget', 'maxOutput', 'thinkingBudget', 'maxSteps']
 const more = ref(false)
 watch(
   () => advancedFields.some((field) => error(field)),
@@ -158,22 +140,7 @@ const passed = computed(() => {
           @update:model-value="(value) => value && wizard.choosePreset(value)"
         />
       </Field>
-      <Field
-        v-if="draft.preset === 'other'"
-        :label="t('models.providers.api')"
-        :error="error('api')"
-        required
-        wide
-      >
-        <Select v-model="protocol" :options="protocolOptions" />
-      </Field>
-      <Field
-        v-if="draft.preset === 'compatible'"
-        :label="t('models.providers.url')"
-        :error="error('baseUrl')"
-        required
-        wide
-      >
+      <Field :label="t('models.providers.url')" :error="error('baseUrl')" required wide>
         <Input v-model="draft.baseUrl" type="url" mono placeholder="https://api.example.com/v1" />
       </Field>
       <Field :label="t('models.providers.key')" :error="error('apiKey')" required>
@@ -252,15 +219,6 @@ const passed = computed(() => {
       </template>
     </div>
     <MoreFields v-model="more" :title="t('models.roles.advanced')">
-      <Field
-        v-if="draft.preset !== 'compatible'"
-        :label="t('models.providers.url')"
-        :error="error('baseUrl')"
-        required
-        wide
-      >
-        <Input v-model="draft.baseUrl" type="url" mono placeholder="https://api.example.com/v1" />
-      </Field>
       <Field :label="t('models.providers.proxy')" :error="error('proxy')">
         <Input v-model="draft.proxy" type="url" mono placeholder="http://127.0.0.1:7890" />
       </Field>
@@ -276,16 +234,6 @@ const passed = computed(() => {
       </Field>
       <Field :label="t('models.roles.maxOutput')" :error="error('maxOutput')" required>
         <NumberInput v-model="draft.maxOutput" :min="1" :steppers="false" unit="tokens" />
-      </Field>
-      <Field :label="t('models.roles.temperature')">
-        <NumberInput
-          v-model="draft.temperature"
-          :min="0"
-          :max="2"
-          :step="0.1"
-          :snap="false"
-          :placeholder="t('models.roles.providerDefault')"
-        />
       </Field>
       <Field :label="t('models.roles.effort')">
         <Input v-model="draft.effort" mono :placeholder="t('models.roles.effortDefault')" />

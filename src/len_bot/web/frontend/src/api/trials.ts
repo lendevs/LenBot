@@ -92,9 +92,13 @@ export interface TrialInfo {
   root: string
   excluded_tools: string[]
   memory: string
+  /** The plugin that keeps the group's long-term memory; the trial runs on its own native memory. */
+  memory_plugin: string | null
   persona: string
   persona_source: 'running' | 'draft' | string
   draft_path: string | null
+  /** The role library directory of a draft trial. */
+  draft_source: string | null
   models: Record<string, string>
 }
 

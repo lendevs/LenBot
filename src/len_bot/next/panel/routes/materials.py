@@ -1,4 +1,4 @@
-"""Authenticated, explicit scene-material copies and downloads, never automatic task inputs."""
+"""Panel endpoints for copying and downloading scene materials."""
 
 import asyncio
 from collections.abc import Callable
@@ -64,7 +64,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
 
     def worker_for(scene: str) -> WorkerSettings:
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
         if runtime.config.worker is None:
             raise HTTPException(409, '当前运行配置没有 worker，无法定位共享资料和交付原件')
         return runtime.config.worker
@@ -77,8 +77,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
                 result = await finish_file_operation(list_materials, material_directory(worker.workspace_root, scene))
                 user(request)
                 return {**result, 'scene': scene,
-                        'notice': '当前运行配置的本场景普通共享文件；不是共享技能或公共资料。'
-                                  '当前只保全/下载，未自动挂入任务、读取内容或上传平台。'}
+                        'notice': '本群共享文件，可下载或供任务使用。'}
             except (ValueError, OSError) as error:
                 raise failure(error) from error
 
@@ -86,7 +85,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
     async def adoption(scene: str, body: MaterialAdoption, request: Request, _: str = Depends(user)):
         worker = worker_for(scene)
         if not body.confirmed:
-            raise HTTPException(422, '先明确确认已登记副本适合保存在本场景共享目录')
+            raise HTTPException(422, '请先确认已登记副本适合保存在本场景共享目录')
         directory = material_directory(worker.workspace_root, scene)
         if body.directory != str(directory):
             raise HTTPException(409, f'当前共享目录与页面读取不同，未采用：expected={str(directory)!r}, received={body.directory!r}')
@@ -102,7 +101,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
             except (ValueError, OSError, RuntimeError) as error:
                 raise failure(error) from error
             user(request)
-            return {**result, 'scene': scene, 'notice': '共享原件已复制，源交付副本保留；未挂入任务或上传平台。'}
+            return {**result, 'scene': scene, 'notice': '文件已复制到本群共享目录。'}
 
     @app.get('/api/host/materials/file')
     async def download(scene: str, name: Annotated[MaterialName, Query()], _: str = Depends(user)):

@@ -19,9 +19,12 @@ from ...chat.recall import RecallArguments, message_page
 from ...runtime.logs import credentials, redact, redact_record
 from ...memory.jobs import processing_records
 from ...maintenance.commands import maintenance_command
+from ...plugins.store import PluginStore
 
 
 logger = logging.getLogger(__name__)
+# Where a memory plugin's errors are recorded: its recall and its memory tool.
+MEMORY_ERRORS = frozenset({'自动召回', '工具 memory'})
 
 
 class SearchRequest(BaseModel):
@@ -38,17 +41,6 @@ class WriteRequest(BaseModel):
     scope: Literal["scene", "public"]
     content: str
     reason: str = Field(min_length=1)
-
-
-class PendingAdoption(BaseModel):
-    model_config = STRICT
-    scene: str
-    source: str = Field(min_length=1)
-    original: str
-    target: str = Field(min_length=1)
-    content: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
-    remove_source: bool
 
 
 class SummaryRequest(BaseModel):
@@ -82,7 +74,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
     @asynccontextmanager
     async def record_operation(scene: str):
         if scene not in runtime.chats:
-            raise HTTPException(404, '当前宿主未配置这一场景')
+            raise HTTPException(404, '当前宿主未配置此场景')
         try:
             with processing_records(runtime.config.database, None if runtime.memory is None else runtime.memory.jobs) as records:
                 if records is None:
@@ -96,7 +88,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
     @asynccontextmanager
     async def operation(scene: str):
         if scene not in runtime.chats:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         if runtime.memory is None:
             raise HTTPException(409, "当前运行配置未启用长期记忆后端")
         try:
@@ -107,6 +99,15 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                     404 if isinstance(error, FileNotFoundError) else
                     422 if isinstance(error, ValueError) else 500)
             raise HTTPException(code, redact(f"{type(error).__name__}: {error}", secrets)) from error
+
+    def memory_plugin(scene: str, name: str | None) -> dict | None:
+        if name is None:
+            return None
+        record = None if runtime.plugins is None else runtime.plugins.plugins.get(name)
+        errors = [] if record is None else [item for item in record.errors if item['where'] in MEMORY_ERRORS]
+        return {"name": name, "status": None if record is None else record.status,
+                "progress": PluginStore(runtime.store).memory_progress_detail(scene, name),
+                "last_error": errors[-1] if errors else None}
 
     @app.get("/api/host/memory/state", response_model=responses.MemoryState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
@@ -124,7 +125,9 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
             "index": None if memory is None else await asyncio.to_thread(memory.backend.index_status),
             "reindex_command": maintenance_command(root, 'len_bot.next.maintenance.memory_reindex'),
             "maintenance_container": container,
-            "scenes": [{"scene": scene, "persona": {"id": chat.persona.id, "name": chat.persona.name}}
+            "scenes": [{"scene": scene, "persona": {"id": chat.persona.id, "name": chat.persona.name},
+                        "plugin": memory_plugin(scene, chat.config.memory_plugin),
+                        "recap_plugin": chat.config.recap_plugin}
                        for scene, chat in runtime.chats.items()],
             'persona_ids': {} if memory is None else {scene: sorted(memory.known_persona_ids(scene))
                                                      for scene in runtime.chats},
@@ -188,12 +191,6 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         async with operation(body.scene) as memory:
             return await memory.write(body.scene, body.path, body.content, body.reason, scope=body.scope)
 
-    @app.post('/api/host/memory/adopt-pending', response_model=responses.MemoryAdopted, response_model_exclude_unset=True)
-    async def adopt_pending(body: PendingAdoption, _: str = Depends(user)):
-        async with operation(body.scene) as memory:
-            return await memory.adopt_pending(body.scene, body.source, body.original, body.target,
-                                              body.content, body.reason, remove_source=body.remove_source)
-
     @app.post("/api/host/memory/delete", response_model=responses.MemoryChange | responses.MemoryForgotten, response_model_exclude_unset=True)
     async def delete(body: DeleteRequest, _: str = Depends(user)):
         async with operation(body.scene) as memory:
@@ -249,7 +246,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         return {"enabled": ingestor is not None, "scenes": [] if ingestor is None else [
             {**ingestor.jobs.view(scene), "worker_error": (
                 f"{type(ingestor.errors[scene]).__name__}: {ingestor.errors[scene]}"
-                if scene in ingestor.errors else None)} for scene in runtime.chats
+                if scene in ingestor.errors else None)} for scene in runtime.chats if scene in ingestor.scenes
         ]}
 
     @app.post("/api/host/memory/ingest/{scene}/{action}", response_model=responses.IngestAction, response_model_exclude_unset=True)

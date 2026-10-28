@@ -13,10 +13,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .work.egress_policy import NetworkSettings
-from .browser.client import AccountBrowserSettings
 from .configuration.commands import CommandSettings
 from .models.asr import AudioSettings
 from .storage.files import sync_directory
+from .storage.schema import FORMAT_RESET
 from .runtime.identity import IdentitySettings, combine_identities
 from .models.limits import ResourceLimits
 from .configuration.mcp import MCPService, SERVICE_NAME
@@ -29,7 +29,6 @@ from .configuration.tasks import WorkerSettings
 from .tools.web_search import WebSearchSettings
 from .configuration.types import STRICT, _valid_timezone, _valid_scene
 from .configuration.onebot import OneBotSettings
-from .configuration.telegram import TelegramSettings
 from .configuration.models import Binding, Models
 from .configuration.chat import (
     Compaction,
@@ -48,16 +47,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 3
-# Startup never rewrites the root file; an old one is upgraded while stopped by the maintenance commands.
-UPGRADE_HINT = ("先停掉 Bot 并备份实例目录，在实例目录执行 python -m len_bot.next.maintenance.migrate_config"
-                "（原文件保留在旁边），再按 deploy/current/operations.md「升级与备份」执行其余迁移；"
-                "部署包和 Docker 安装请用面板的更新器")
+CONFIG_VERSION = 1
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[3] = 3
+    config_version: Literal[1] = 1
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -74,9 +69,8 @@ class SharedConfig(BaseModel):
     database: Path
     onebot: OneBotSettings | None = None
     # A second platform adapter; one host connects to one platform.
-    telegram: TelegramSettings | None = None
-    # "onebot" and "telegram" send through that platform; OneBot also enables its platform tools.
-    delivery: Literal["simulated", "onebot", "telegram"] = "simulated"
+    # "onebot" sends through OneBot and enables its platform tools.
+    delivery: Literal["simulated", "onebot"] = "simulated"
     max_steps: int = Field(default=16, gt=0)
     turn_timeout_seconds: float = Field(default=90.0, gt=0, allow_inf_nan=False)
     compaction: Compaction = Field(default_factory=Compaction)
@@ -103,7 +97,7 @@ class SharedConfig(BaseModel):
             if alias not in self.models.providers:
                 raise ValueError(f"{name}.connection references unknown provider {alias!r}")
             if self.models.providers[alias].api not in apis[settings.provider]:
-                raise ValueError(f"{name} 选的 {settings.provider} 不能使用 {self.models.providers[alias].api} 连接 {alias!r}")
+                raise ValueError(f"{name} 选择的 {settings.provider} 不能使用 {self.models.providers[alias].api} 连接 {alias!r}")
         if self.memory is not None and self.memory.local.embedding is not None:
             provider = self.memory.local.embedding.provider
             if provider not in self.models.providers:
@@ -148,11 +142,30 @@ class SharedConfig(BaseModel):
     def valid_timezone(cls, value: str) -> str:
         return _valid_timezone(value)
 
+    @property
+    def recap_output_tokens(self) -> int:
+        return self.compaction.max_output_tokens or self.models.roles.mind.max_output_tokens
+
+    @property
+    def recap_reasoning_reserve(self) -> int:
+        binding = self.models.roles.mind
+        settings = self.model_settings('mind')
+        if binding.quick_reasoning_effort is not None:
+            settings = settings.with_effort(binding.quick_reasoning_effort)
+        if settings.thinking == 'disabled' or settings.reasoning_effort in {'none', 'off'}:
+            return 0
+        if settings.thinking_budget_tokens is not None:
+            return settings.thinking_budget_tokens
+        # Provider-default and effort-based reasoning share the output allowance with the recap.
+        return self.recap_output_tokens // 2
+
     @model_validator(mode="after")
     def input_and_output_fit_window(self) -> SharedConfig:
         mind = self.models.roles.mind
-        if self.compaction.max_output_tokens >= mind.context_window_tokens:
+        if self.recap_output_tokens >= mind.context_window_tokens:
             raise ValueError("compaction.max_output_tokens must be less than mind.context_window_tokens")
+        if self.recap_reasoning_reserve >= self.recap_output_tokens:
+            raise ValueError("回想最大长度需要大于思考额度")
         trigger_tokens = self.compaction.input_tokens
         if trigger_tokens + mind.max_output_tokens > mind.context_window_tokens:
             raise ValueError(
@@ -165,12 +178,6 @@ class SharedConfig(BaseModel):
     def valid_delivery(self) -> SharedConfig:
         if self.delivery == "onebot" and self.onebot is None:
             raise ValueError("delivery=onebot requires onebot transport")
-        if self.delivery == "telegram" and self.telegram is None:
-            raise ValueError("delivery=telegram requires telegram transport")
-        if self.onebot is not None and self.telegram is not None:
-            raise ValueError("one host connects to one platform: configure onebot or telegram, not both")
-        if self.telegram is not None and re.fullmatch(r"telegram:[1-9][0-9]*", self.bot_id) is None:
-            raise ValueError("a Telegram host needs bot_id telegram:<bot user id>")
         return self
 
     @model_validator(mode="after")
@@ -286,7 +293,6 @@ class LabConfig(SharedConfig, SceneSettings):
 
 class HostConfig(SharedConfig):
     mode: Literal["isolated-multi"]
-    account_browser: AccountBrowserSettings | None = None
     onebot: OneBotSettings | None = Field(...)
     panel: PanelSettings | None = None
     scenes: dict[str, SceneSettings]
@@ -300,7 +306,7 @@ class HostConfig(SharedConfig):
                     if settings.replay_web is not None or settings.replay_images is not None]
         if recorded and self.onebot is not None:
             raise ValueError(f'Per-scene replay materials require the explicit stdin host, not platform input: {recorded!r}')
-        if self.onebot is None and self.telegram is None:
+        if self.onebot is None:
             incompatible = [name for name, enabled in (
                 ('delivery', self.delivery != 'simulated'),
             ) if enabled]
@@ -413,33 +419,18 @@ def _read_root(root: Path) -> tuple[Path, dict]:
         raise ValueError(f"{path}: invalid JSON at line {error.lineno}, column {error.colno}: {error.msg}") from error
     if not isinstance(source, dict):
         raise ValueError(f"{path}: configuration must be a JSON object")
+    version = source.get("config_version", CONFIG_VERSION)
+    if version != CONFIG_VERSION:
+        raise ValueError(f"{path}: 配置格式是 {version!r}，当前版本使用格式 {CONFIG_VERSION}。{FORMAT_RESET}")
     return path, source
 
 
-def _check_format(path: Path, source: dict) -> None:
-    """Name the way forward for a file from another version instead of listing its unknown fields."""
-    version = source.get("config_version")
-    if version is None or version == CONFIG_VERSION:
-        return
-    if type(version) is not int:
-        raise ValueError(f"{path}: config_version must be an integer, got {version!r}")
-    if version < CONFIG_VERSION:
-        raise ValueError(f"{path}: 配置格式 {version} 早于当前程序使用的格式 {CONFIG_VERSION}，启动时不会自动改写。"
-                         + UPGRADE_HINT)
-    raise ValueError(f"{path}: 配置格式 {version} 由更新的 LenBot 写入，当前程序只能读取格式 {CONFIG_VERSION}；"
-                     "请换回写入它的版本，或恢复升级前的快照")
-
-
-def _validation_error(path: Path, error: ValidationError, kind: str, source: dict) -> ValueError:
+def _validation_error(path: Path, error: ValidationError, kind: str) -> ValueError:
     details = "; ".join(
         f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
         for item in error.errors(include_input=False)
     )
-    message = f"{path}: invalid {kind} configuration: {details}"
-    if "config_version" not in source and any(item["type"] == "extra_forbidden" for item in error.errors()):
-        # Files from before format 1 carry no number; removed settings such as models.*.price are the usual cause.
-        message += "。这份配置没有 config_version，可能来自旧版本：" + UPGRADE_HINT
-    return ValueError(message)
+    return ValueError(f"{path}: invalid {kind} configuration: {details}")
 
 
 def _resolve_archive_paths(root: Path, source: dict) -> None:
@@ -467,7 +458,8 @@ def _resolve_worker_paths(root: Path, source: dict) -> None:
     binary = worker.get("docker_binary")
     if not isinstance(binary, str) or not Path(binary).is_absolute():
         raise ValueError("worker.docker_binary must be an explicit absolute path string")
-    worker["docker_binary"] = Path(binary).resolve()
+    # Kept as written: a package manager's link such as /opt/homebrew/bin/docker survives upgrades.
+    worker["docker_binary"] = Path(binary)
     pool = worker.get('storage_pool')
     if isinstance(pool, dict):
         pool['mount'] = _resolved_path(root, pool.get('mount'), within_root=False, field='worker.storage_pool.mount')
@@ -484,7 +476,6 @@ def _resolve_worker_paths(root: Path, source: dict) -> None:
 
 
 def _load_lab_source(path: Path, source: dict) -> LabConfig:
-    _check_format(path, source)
     root = path.parent
     for name in ('replay_web', 'replay_images'):
         if source.get(name) is not None:
@@ -519,11 +510,10 @@ def _load_lab_source(path: Path, source: dict) -> LabConfig:
         object.__setattr__(config, '_source_root', root)
         return config
     except ValidationError as error:
-        raise _validation_error(path, error, "lab", source) from error
+        raise _validation_error(path, error, "lab") from error
 
 
 def _load_host_source(path: Path, source: dict) -> HostConfig:
-    _check_format(path, source)
     root = path.parent
     source["database"] = _resolved_path(root, source.get("database"), within_root=True, field="database")
     panel = source.get("panel")
@@ -549,12 +539,6 @@ def _load_host_source(path: Path, source: dict) -> HostConfig:
     _resolve_archive_paths(root, source)
     _resolve_memory_path(root, source)
     _resolve_worker_paths(root, source)
-    browser = source.get("account_browser")
-    if isinstance(browser, dict):
-        for field in ("socket", "binary", "home"):
-            if isinstance(browser.get(field), str):
-                # Keep relative paths relative so the explicit-absolute validator can reject them.
-                browser[field] = Path(browser[field])
     plugins = source.get("plugins")
     if isinstance(plugins, dict):
         paths = plugins.get("paths", ["plugins"])
@@ -575,14 +559,14 @@ def _load_host_source(path: Path, source: dict) -> HostConfig:
     try:
         config = HostConfig.model_validate(source)
         object.__setattr__(config, '_source_root', root)
-        if config.onebot is None and config.telegram is None and config.worker is not None:
+        if config.onebot is None and config.worker is not None:
             for name in ('workspace_root', 'runtime_root', 'delivery_root'):
                 location = getattr(config.worker, name)
                 if location == root.resolve():
                     raise ValueError(f'stdin worker.{name} must be below its independent instance root: {location}')
         return config
     except ValidationError as error:
-        raise _validation_error(path, error, "host", source) from error
+        raise _validation_error(path, error, "host") from error
 
 
 def load_config(root: Path) -> LabConfig:
@@ -634,6 +618,11 @@ def load_host_config(root: Path) -> HostConfig:
 def load_instance_config(root: Path) -> LabConfig | HostConfig:
     """Select the explicitly declared instance format from the one root file."""
     path, source = _read_root(root)
+    return load_instance_source(path, source)
+
+
+def load_instance_source(path: Path, source: dict) -> LabConfig | HostConfig:
+    """Validate an instance source and resolve its paths relative to the configuration file."""
     if source.get("mode") == "isolated":
         return _load_lab_source(path, source)
     if source.get("mode") == "isolated-multi":

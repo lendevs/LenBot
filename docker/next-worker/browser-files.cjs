@@ -15,7 +15,7 @@ const help = `Task file commands (same public browser session):
   download <ref>                Click once, wait for the download, save under out/browser/.
   screenshot [ref] [--filename out/browser/name.png] [--type png|jpeg|webp] [--full-page] [--hires]
   pdf [--filename out/browser/name.pdf]
-Files returned by these commands are task resources, not registered deliveries or QQ uploads.
+Files returned by these commands are task resources; use deliver_file to deliver one.
 Other commands use the installed Playwright CLI; run <command> --help for its syntax.`;
 
 function refLocator(ref) {

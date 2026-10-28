@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
+import shutil
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -49,7 +51,7 @@ class WorkerSettings(BaseModel):
     max_running: int = Field(default=4, gt=0, strict=True)
     max_containers: int = Field(default=8, gt=0, strict=True)
     max_scene_containers: int = Field(default=4, gt=0, strict=True)
-    max_calls: int = Field(default=40, gt=0, strict=True, description="每次执行的模型调用上限；明确续接开始新一次执行，token 仍按任务累计。")
+    max_calls: int = Field(default=40, gt=0, strict=True, description="每次执行的模型调用上限；续接时开始新一次执行，token 仍按任务累计。")
     max_request_bytes: int = Field(default=8 * 1024 * 1024, gt=0, strict=True)
     max_response_bytes: int = Field(default=64 * 1024 * 1024, gt=0, strict=True)
     max_tokens: int | None = Field(default=None, gt=0, strict=True,
@@ -72,7 +74,14 @@ class WorkerSettings(BaseModel):
             raise ValueError("worker.public_browser requires worker.egress.enabled")
         return self
 
-    @field_validator("docker_binary", "workspace_root", "runtime_root", "delivery_root")
+    @field_validator("docker_binary")
+    @classmethod
+    def absolute_binary(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("must be an explicit absolute path")
+        return value
+
+    @field_validator("workspace_root", "runtime_root", "delivery_root")
     @classmethod
     def absolute_path(cls, value: Path) -> Path:
         if not value.is_absolute():
@@ -161,3 +170,28 @@ class TaskSettings(BaseModel):
         if len(values) != len(set(values)):
             raise ValueError("task roles must not repeat")
         return values
+
+
+WORKER_IMAGE = "lenbot-worker:local"
+
+
+def suggested_worker(root: Path) -> dict:
+    """Task settings this host can fill in when tasks are first switched on.
+
+    The directories are the ones ``deploy/current/host.tasks.compose.yaml`` binds at the same path.
+    """
+    suggestion: dict = {"image": WORKER_IMAGE}
+    for name, folder in (("workspace_root", "task-workspaces"), ("runtime_root", "task-runtime"),
+                         ("delivery_root", "deliveries")):
+        suggestion[name] = str(root / folder)
+    binary = shutil.which("docker")
+    if binary is not None:
+        suggestion["docker_binary"] = binary
+    host, desktop = os.environ.get("DOCKER_HOST", ""), Path.home() / ".docker/run/docker.sock"
+    if host.startswith("unix:///"):
+        suggestion["docker_host"] = host
+    elif desktop.exists():
+        suggestion["docker_host"] = f"unix://{desktop}"
+    if hasattr(os, "getuid") and os.getuid() > 0 and os.getgid() > 0:
+        suggestion["uid"], suggestion["gid"] = os.getuid(), os.getgid()
+    return suggestion

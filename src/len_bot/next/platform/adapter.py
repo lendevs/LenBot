@@ -8,7 +8,7 @@ runtime stores the raw dict next to the parsed message. Scenes are ``<platform>:
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .messages import ChatMessage, Notice, SendResult, UploadResult
@@ -59,19 +59,14 @@ class PlatformAdapter(Protocol):
         """The group name and member count, or the private contact's name, for labelling the scene."""
 
     async def call(self, action: str, params: dict) -> dict:
-        """A platform-specific action (OneBot action, Telegram Bot API method) with its raw answer."""
+        """A platform-specific action (a OneBot action) with its raw answer."""
 
 
 def open_platform(config: SharedConfig, *, on_event: Callable[[dict], None], on_error: Callable[[str], None],
-                  on_connection_change: Callable[[], None] | None = None,
-                  wait_for_events: Callable[[], Awaitable[None]] | None = None) -> PlatformAdapter | None:
+                  on_connection_change: Callable[[], None] | None = None) -> PlatformAdapter | None:
     """The adapter of the configured platform, or None for stdin and panel-only hosts."""
     if config.onebot is not None:
         from .onebot import OneBot
         return OneBot(config.onebot, bot_id=config.bot_id, on_event=on_event, on_error=on_error,
                       on_connection_change=on_connection_change)
-    if config.telegram is not None:
-        from .telegram import Telegram
-        return Telegram(config.telegram, bot_id=config.bot_id, on_event=on_event, on_error=on_error,
-                        on_connection_change=on_connection_change, wait_for_events=wait_for_events)
     return None

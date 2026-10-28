@@ -30,8 +30,22 @@ export interface MemoryState {
   summaries: boolean
   reindexing: boolean
   index: MemoryIndex | null
-  scenes: { scene: string; persona: { id: string; name: string } }[]
+  scenes: {
+    scene: string
+    persona: { id: string; name: string }
+    /** The running group's memory plugin; null when the native memory is in use. */
+    plugin: MemoryPlugin | null
+    recap_plugin: string | null
+  }[]
   persona_ids: Record<string, string[]>
+}
+
+export interface MemoryPlugin {
+  name: string
+  status: string | null
+  /** The last message the plugin reported as processed; null before its first report. */
+  progress: { through_seq: number; updated: number; message_time: number | null } | null
+  last_error: { at: number; where: string; error: string } | null
 }
 
 export interface MemoryNode {
@@ -132,15 +146,6 @@ export const memoryApi = {
     query: { query?: string; who?: string; offset?: number; snapshot?: number },
     signal?: AbortSignal,
   ) => http.get<SourcePage>('/api/host/memory/sources', { scene, ...query }, signal),
-  adoptPending: (body: {
-    scene: string
-    source: string
-    original: string
-    target: string
-    content: string
-    reason: string
-    remove_source: boolean
-  }) => http.post<{ target: string; source_removed: boolean }>('/api/host/memory/adopt-pending', body),
   summary: (scene: string, scope: MemoryScope, path: string, signal?: AbortSignal) =>
     http.get<DirectorySummary>('/api/host/memory/summary', { scene, scope, path }, signal),
   summarize: (scene: string, scope: MemoryScope, path: string) =>

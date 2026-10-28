@@ -1,7 +1,6 @@
 import { http, request } from './client'
 import type { ReadService, SearchService } from './webServices'
 import type { SettingsSnapshot } from './settings'
-import type { Task } from './tasks'
 
 /** Types of panel/routes/mcp.py, browser.py, skills.py and the capability parts of settings.py. */
 
@@ -67,6 +66,21 @@ export interface Egress {
 }
 export type StoragePool = { kind: 'ext4'; mount: string; image?: string } | { kind: 'apfs'; mount: string }
 
+/** What the host detects for a first task setup: Docker, its own account and directories in the instance. */
+export type WorkerDefaults = Partial<
+  Pick<
+    Worker,
+    | 'docker_binary'
+    | 'docker_host'
+    | 'image'
+    | 'workspace_root'
+    | 'runtime_root'
+    | 'delivery_root'
+    | 'uid'
+    | 'gid'
+  >
+>
+
 /** `configuration/tasks.py` WorkerSettings; number fields are null while their input is empty. */
 export interface Worker {
   docker_binary: string
@@ -112,23 +126,6 @@ export interface CapabilitySettings {
   worker: Worker | null
 }
 export const capabilitiesOf = (snapshot: SettingsSnapshot) => snapshot.saved as unknown as CapabilitySettings
-
-/** `browser/client.py` AccountBrowserSettings. */
-export interface BrowserSettings {
-  socket: string
-  browser_instance_id: string | null
-  binary: string
-  home: string
-  timeout_seconds: number | null
-  max_response_bytes: number | null
-}
-export interface BrowserState {
-  running: BrowserSettings | null
-  saved: BrowserSettings | null
-  restart_required: boolean
-  /** Tasks whose browser session is still open. */
-  occupied: Task[]
-}
 
 export type SkillSource = 'builtin' | 'shared' | 'scene' | 'task' | 'plugin'
 export interface SkillInfo {
@@ -198,24 +195,8 @@ export const capabilitiesApi = {
     http.put<SettingsSnapshot>('/api/host/settings/network', { network: value }),
   saveWorker: (value: Worker | null) =>
     http.put<SettingsSnapshot>('/api/host/settings/worker', { worker: value }),
-
-  browser: (signal?: AbortSignal) => http.get<BrowserState>('/api/host/browser', undefined, signal),
-  saveBrowser: (settings: BrowserSettings | null) =>
-    http.put<BrowserState>('/api/host/browser', { settings }),
-  browserStatus: () => http.post<Record<string, unknown>>('/api/host/browser/status'),
-  browserDevices: () =>
-    http.get<{ devices: { device_id: string; label: string; [key: string]: unknown }[] }>(
-      '/api/host/browser/devices',
-    ),
-  pairBrowser: () => http.post<{ pairing_link: string; [key: string]: unknown }>('/api/host/browser/pair'),
-  revokeDevice: (device: string) =>
-    request<{ revoked: string }>(`/api/host/browser/devices/${named(device)}`, { method: 'DELETE' }),
-  releaseBrowser: (scene: string, taskId: number, sessionId: string | null) =>
-    http.post<{ released: boolean }>('/api/host/browser/release', {
-      scene,
-      task_id: taskId,
-      session_id: sessionId,
-    }),
+  workerDefaults: (signal?: AbortSignal) =>
+    http.get<WorkerDefaults>('/api/host/settings/worker/defaults', undefined, signal),
 
   skills: (scene: string, signal?: AbortSignal) =>
     http.get<SkillsState>('/api/host/skills', { scene }, signal),

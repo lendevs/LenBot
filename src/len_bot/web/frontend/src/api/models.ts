@@ -35,6 +35,7 @@ export interface ChatBinding {
   temperature: number | null
   max_output_tokens: number | null
   timeout_seconds: number | null
+  thinking: 'enabled' | 'disabled' | null
   reasoning_effort: string | null
   quick_reasoning_effort: string | null
   thinking_budget_tokens: number | null
@@ -92,28 +93,30 @@ export interface ModelsChange {
   learning_embeddings: Record<string, EmbeddingBinding | null>
 }
 
-export interface UsageRow {
+export interface UsageTotals {
+  calls: number
   input: number
   output: number
   cached: number
-  calls: number
-  known_calls: number
-  unknown_calls: number
 }
 
 /** GET /api/host/usage */
-export interface Usage extends UsageRow {
+export interface Usage extends UsageTotals {
   timezone: string
   period: 'day' | 'month'
-  groups: (UsageRow & { scene: string; role: string })[]
-  wakes: (UsageRow & {
+  models: (UsageTotals & { provider: string; model: string })[]
+  days: (UsageTotals & { day: string; provider: string; model: string })[]
+  groups: (UsageTotals & { scene: string; purpose: string })[]
+  wakes: {
     scene: string
     day: string
     channel: string
     wakes: number
     spoken: number
     speech_rate: number
-  })[]
+    input: number
+    cached: number
+  }[]
 }
 
 export const trimUrl = (value: string | null | undefined) => (value ?? '').replace(/\/+$/, '')

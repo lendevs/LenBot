@@ -60,4 +60,4 @@ Do not send keys, tokens, cookies, full configuration files, databases, chat log
 
 Dashboard diagnostic exports retain text from model requests, replies and task events, which may contain names, private facts and chat content. Known credentials, media payloads and some numbers are masked.
 
-In scope: the LenBot host, the panel, built-in plugins, deployment scripts and image recipes. Problems in third-party plugins, OneBot implementations, model services or other separate services belong with their own maintainers. Plugins run in the host process with the host's permissions, so only trusted plugins should be installed. That by itself is not a vulnerability.
+In scope: the LenBot host, the panel, built-in plugins, deployment scripts and image recipes. Problems in third-party plugins, OneBot implementations, model services or other separate services belong with their own maintainers. Plugins run in the host process with the host's permissions, so install only trusted plugins.

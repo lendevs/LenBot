@@ -67,7 +67,7 @@ def register_host_persona_avatar(app: FastAPI, *, root: Path, runtime: NetworkRu
         _, path = selected(key, directory)
         image = load_avatar(path)
         if image is None:
-            raise FileNotFoundError('这个角色没有头像')
+            raise FileNotFoundError('此角色没有头像')
         return {'data': image.data}
 
     async def operation(function: Callable[..., dict], *args: object, writing: bool = False) -> dict:
@@ -75,7 +75,7 @@ def register_host_persona_avatar(app: FastAPI, *, root: Path, runtime: NetworkRu
             async with write_lock:
                 return await finish_role_write(function, *args) if writing else await asyncio.to_thread(function, *args)
         except LookupError as error:
-            raise HTTPException(404, '角色库里没有这个角色') from error
+            raise HTTPException(404, '角色库中不存在此角色') from error
         except FileNotFoundError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, OSError) as error:

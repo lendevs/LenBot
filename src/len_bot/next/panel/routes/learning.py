@@ -44,7 +44,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
     def chat_for(scene: str):
         chat = runtime.chats.get(scene)
         if chat is None:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         return chat
 
     def active(scene: str) -> bool:
@@ -118,7 +118,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         item = learning.batch(scene, id)
         if item is None:
-            raise HTTPException(404, "当前场景没有这一学习批次")
+            raise HTTPException(404, "当前场景不存在此学习批次")
         return item
 
     @app.get("/api/host/scenes/{scene}/learning/embedding-calls", response_model=responses.RecordPage, response_model_exclude_unset=True)
@@ -132,7 +132,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
         chat_for(scene)
         item = learning.embedding_call(scene, id)
         if item is None:
-            raise HTTPException(404, "当前场景没有这一表达向量请求")
+            raise HTTPException(404, "当前场景不存在此表达向量请求")
         return item
 
     @app.post("/api/host/scenes/{scene}/learning/request", response_model=responses.LearningRequested, response_model_exclude_unset=True)
@@ -155,7 +155,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
         chat = chat_for(scene)
         item = learning.expression(scene, id)
         if item is None:
-            raise HTTPException(404, "当前场景没有这条表达候选")
+            raise HTTPException(404, "当前场景不存在此表达候选")
         sources = []
         for record in item["sources"]:
             message = runtime.store.read_message(scene, record)
@@ -188,7 +188,7 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
             logger.exception("更新表达候选失败：scene=%s id=%s", scene, id)
             raise HTTPException(500, f"{type(error).__name__}: {error}") from error
         if item is None:
-            raise HTTPException(404, "当前场景没有这条表达候选")
+            raise HTTPException(404, "当前场景不存在此表达候选")
         runtime.notify()
         return item
 
@@ -209,6 +209,6 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
             logger.exception("删除表达候选失败：scene=%s id=%s", scene, id)
             raise HTTPException(500, f"{type(error).__name__}: {error}") from error
         if not deleted:
-            raise HTTPException(404, "当前场景没有这条表达候选")
+            raise HTTPException(404, "当前场景不存在此表达候选")
         runtime.notify()
         return {"deleted": True}

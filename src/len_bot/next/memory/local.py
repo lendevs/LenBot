@@ -3,7 +3,7 @@
 Embeddings are optional and separately configured; this module does not
 extract facts from a conversation.
 Manual text searches match a literal phrase; automatic text recall ranks
-overlapping literal trigrams from the recent chat, or a shorter literal query.
+overlapping literal trigrams, three shared Chinese bigrams, or a shorter literal query.
 """
 
 from __future__ import annotations
@@ -30,7 +30,8 @@ from pydantic import BaseModel, ConfigDict
 
 from .embeddings import EmbeddingBinding, EmbeddingClient
 from .types import MemoryDocument, MemoryNode, MemoryPage
-from .sections import SECTION_STATEMENTS, put_sections, split_sections
+from .sections import SECTION_STATEMENTS, put_sections, query_bigrams, query_terms, split_sections
+from ..storage.schema import FORMAT_RESET
 from ..storage.sqlite import connect
 from ..runtime.logs import log_event
 
@@ -41,9 +42,14 @@ _INDEX_NAME = ".memory-index.sqlite3"
 SUMMARY_FILES = (".abstract.md", ".overview.md")
 ABSTRACT_CHARS = 256
 OVERVIEW_CHARS = 4000
-PENDING_PREFIX = "legacy-import/"
+# A section found by vectors alone is kept only within MAX_VECTOR_DISTANCE and within VECTOR_MARGIN of
+# the nearest section, at most VECTOR_ONLY of them, so a question with no answer in memory does not
+# fill the recall with whatever lies nearest (the same rule as reference lookup).
+VECTOR_ONLY = 3
+MAX_VECTOR_DISTANCE = 0.6
+VECTOR_MARGIN = 0.03
 _APPLICATION_ID = 0x4C424D31
-FORMAT_VERSION = 4
+FORMAT_VERSION = 1
 SUMMARY_SCHEMA = """
 CREATE TABLE memory_summaries (
     scope TEXT NOT NULL,
@@ -199,11 +205,9 @@ def scope_directory(scene: str) -> str:
     return quote(scene, safe='') if sys.platform == 'win32' else scene
 
 
-def _eligible(exclude_pending: bool, bot_persona: str | None) -> str:
+def _eligible(bot_persona: str | None) -> str:
     """Extra retrieval conditions on ``path``; the role id becomes a quoted SQL literal."""
     conditions = []
-    if exclude_pending:
-        conditions.append("substr(path,1,14)!='legacy-import/'")
     if bot_persona is not None:
         prefix = f'bot/{bot_persona}/'
         literal = prefix.replace("'", "''")
@@ -288,8 +292,7 @@ def _scene_overview(root: Path, scene: str) -> str | None:
     with closing(connect(index, readonly=True)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version != FORMAT_VERSION:
-            raise ValueError(f"local memory index format {version} requires offline migration: {index}; "
-                             "run python -m len_bot.next.maintenance.migrate_local_memory")
+            raise ValueError(f"local memory index format {version}, expected {FORMAT_VERSION}: {index}")
         generated_at, changed_after = _summary_times(db, scene, "")
     if generated_at is None:
         raise ValueError(f"memory summary has no generation time: {base}")
@@ -380,12 +383,9 @@ class LocalMemory:
                         db.execute("PRAGMA user_version").fetchone()[0])
             if identity == (_APPLICATION_ID, FORMAT_VERSION):
                 return
-            if identity[0] == _APPLICATION_ID and 2 <= identity[1] < FORMAT_VERSION:
-                raise ValueError(f"local memory index format {identity[1]} requires offline migration: {self.index}; "
-                                 "run python -m len_bot.next.maintenance.migrate_local_memory")
             if identity != (0, 0) or db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is not None:
-                raise ValueError(f"unsupported local memory index format at {self.index}: "
-                                 f"application_id={identity[0]}, user_version={identity[1]}")
+                raise ValueError(f"{self.index} 不是当前版本使用的本地记忆索引格式 {FORMAT_VERSION}"
+                                 f"（application_id={identity[0]}, user_version={identity[1]}）。{FORMAT_RESET}")
             # One transaction: an interrupted first start leaves an empty file, not half a schema.
             db.executescript(f"""
                     BEGIN IMMEDIATE;
@@ -763,7 +763,7 @@ class LocalMemory:
                     vectors: list[tuple[float, ...]], create_only: bool = False) -> LocalMemoryChange:
         target = self._target(scope, path, file=True)
         if create_only and target.exists():
-            raise FileExistsError(f'New formal memory never overwrites an existing file: {target}')
+            raise FileExistsError(f'Memory file already exists: {target}')
         before = _source_text(target) if target.exists() else None
         changed_at = time.time()
         with self._file_mutation(scope, path, 'write', changed_at, [target]) as db:
@@ -791,7 +791,7 @@ class LocalMemory:
         async with self._lock(source):
             target = self._target(source, path, file=True)
             if create_only and target.exists():
-                raise FileExistsError(f'New formal memory never overwrites an existing file: {target}')
+                raise FileExistsError(f'Memory file already exists: {target}')
             vector = await self._embed_sections(source, content)
             return await _finish_write_thread(self._write_sync, source, path, content, reason, vector, create_only)
 
@@ -825,12 +825,12 @@ class LocalMemory:
 
     @staticmethod
     def _lexical_rows(db: sqlite3.Connection, scene: str, query: str,
-                      limit: int, include_public: bool, exclude_pending: bool,
+                      limit: int, include_public: bool,
                       bot_persona: str | None = None) -> list[sqlite3.Row]:
         folded = query.casefold()
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
-        eligible = _eligible(exclude_pending, bot_persona)
+        eligible = _eligible(bot_persona)
         if len(folded) >= 3:
             expression = '"' + folded.replace('"', '""') + '"'
             return db.execute(f"""
@@ -848,43 +848,48 @@ class LocalMemory:
 
     @staticmethod
     def _automatic_rows(db: sqlite3.Connection, scene: str, query: str,
-                        limit: int, include_public: bool, exclude_pending: bool,
+                        limit: int, include_public: bool,
                         bot_persona: str | None = None) -> list[sqlite3.Row]:
         # The existing recall budget also bounds the number of literal query fragments.
         folded = query.casefold()[-1200:]
         if len(folded) < 3:
-            return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, exclude_pending, bot_persona)
-        terms = dict.fromkeys(folded[index:index + 3] for index in range(len(folded) - 2))
-        expression = ' OR '.join('"' + term.replace('"', '""') + '"' for term in terms)
+            return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, bot_persona)
+        # A short message remains searchable when a following reply adds another line.
+        terms, short = query_terms(folded)
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
-        eligible = _eligible(exclude_pending, bot_persona)
-        # A short message remains searchable when a following reply adds another line.
-        short = list(dict.fromkeys(line.strip() for line in folded.splitlines() if 0 < len(line.strip()) < 3))
-        short_rows = ""
-        parameters = [expression, *scopes]
+        eligible = _eligible(bot_persona)
+        selects, parameters = [], []
+        if terms:
+            selects.append(f"""SELECT m.id, m.scope, m.path, memory_fts.rank AS relevance
+                FROM memory_fts JOIN memory_sections AS m ON m.id=memory_fts.rowid
+                WHERE memory_fts MATCH ? AND m.scope IN ({placeholders}) {eligible}""")
+            parameters += [' OR '.join('"' + term.replace('"', '""') + '"' for term in terms), *scopes]
         if short:
             matches = " OR ".join("instr(content, ?) > 0" for _ in short)
-            short_rows = f"""UNION ALL SELECT id, scope, path, 0 FROM memory_sections
-                WHERE scope IN ({placeholders}) AND ({matches}) {eligible}"""
-            parameters.extend([*scopes, *short])
+            selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
+                WHERE scope IN ({placeholders}) AND ({matches}) {eligible}""")
+            parameters += [*scopes, *short]
+        pairs = query_bigrams(folded)
+        if len(pairs) >= 3:
+            selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
+                WHERE scope IN ({placeholders}) {eligible}
+                  AND (SELECT count(*) FROM json_each(?) WHERE instr(content, value) > 0) >= 3""")
+            parameters += [*scopes, json.dumps(pairs, ensure_ascii=False)]
+        if not selects:
+            return []
         return db.execute(f"""
-            WITH hits AS MATERIALIZED (
-                SELECT m.id, m.scope, m.path, memory_fts.rank AS relevance
-                FROM memory_fts JOIN memory_sections AS m ON m.id=memory_fts.rowid
-                WHERE memory_fts MATCH ? AND m.scope IN ({placeholders}) {eligible}
-                {short_rows}
-            )
+            WITH hits(id, scope, path, relevance) AS MATERIALIZED ({" UNION ALL ".join(selects)})
             SELECT id, scope, path FROM hits GROUP BY id, scope, path
             ORDER BY CASE WHEN scope=? THEN 0 ELSE 1 END, MIN(relevance), path, id LIMIT ?
         """, (*parameters, scene, limit)).fetchall()
 
     def _search_sync(self, scene: str, query: str, limit: int,
-                     include_public: bool, exclude_pending: bool, automatic: bool,
+                     include_public: bool, automatic: bool,
                      bot_persona: str | None = None) -> list[LocalMemoryHit]:
         with self._db() as db:
             search = self._automatic_rows if automatic else self._lexical_rows
-            rows = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
+            rows = search(db, scene, query, limit, include_public, bot_persona)
         return self._section_hits([row['id'] for row in rows])
 
     def _section_hits(self, ids: list[int]) -> list[LocalMemoryHit]:
@@ -913,15 +918,15 @@ class LocalMemory:
 
     def _search_hybrid_sync(self, scene: str, query: str,
                             vector: tuple[float, ...], limit: int,
-                            include_public: bool, exclude_pending: bool, automatic: bool,
+                            include_public: bool, automatic: bool,
                             bot_persona: str | None = None) -> list[LocalMemoryHit]:
         with self._db() as db:
             dimensions = self._vector_binding(db)
             if dimensions is None or len(vector) != dimensions:
                 raise ValueError(f"memory query vector dimension {len(vector)} differs from index {dimensions}")
             search = self._automatic_rows if automatic else self._lexical_rows
-            lexical = search(db, scene, query, limit, include_public, exclude_pending, bot_persona)
-            conditions = _eligible(exclude_pending, bot_persona)
+            lexical = search(db, scene, query, limit, include_public, bot_persona)
+            conditions = _eligible(bot_persona)
             eligible = f" AND rowid IN (SELECT id FROM memory_sections WHERE 1{conditions})" if conditions else ""
             vector_rows: list[tuple[int, str, float]] = []
             query_bytes = self._vector_bytes(vector)
@@ -942,47 +947,56 @@ class LocalMemory:
             key = row['id']
             scopes[key] = row['scope']
             ranks[key] = ranks.get(key, 0.0) + 1 / position
-        for position, (key, scope, _) in enumerate(sorted(vector_rows, key=lambda row: row[2]), 1):
+        close = sorted((row for row in vector_rows if row[2] <= MAX_VECTOR_DISTANCE), key=lambda row: row[2])
+        kept, alone = [], 0
+        for row in close:
+            if row[0] not in scopes:
+                if alone == VECTOR_ONLY or row[2] > close[0][2] + VECTOR_MARGIN:
+                    continue
+                alone += 1
+            kept.append(row)
+        for position, (key, scope, _) in enumerate(kept, 1):
             scopes[key] = scope
             ranks[key] = ranks.get(key, 0.0) + 1 / position
         ordered = sorted(ranks, key=lambda key: (-ranks[key], scopes[key] != scene, key))[:limit]
         return self._section_hits(ordered)
 
     async def search(self, scene: str, query: str, limit: int = 10, *,
-                     include_public: bool = True, exclude_pending: bool = False,
+                     include_public: bool = True,
                      automatic: bool = False, text_query: str | None = None,
-                     bot_persona: str | None = None) -> list[LocalMemoryHit]:
-        """``bot_persona`` keeps other roles' ``bot/<id>/`` records out of the results."""
+                     bot_persona: str | None = None, literal: bool = False) -> list[LocalMemoryHit]:
+        """``bot_persona`` keeps other roles' ``bot/<id>/`` records out of the results; ``literal`` skips
+        the vectors and their query request."""
         if not query.strip() or not 1 <= limit <= 100:
             raise ValueError("search requires a nonblank query and limit 1..100")
         source = _scene_scope(scene)
-        literal = query if text_query is None else text_query
+        text = query if text_query is None else text_query
         async with AsyncExitStack() as locks:
             await locks.enter_async_context(self._lock(source))
             if include_public:
                 await locks.enter_async_context(self._lock("public"))
-            if self.embedding is None:
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
+            if self.embedding is None or literal:
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
+                                               include_public, automatic, bot_persona)
             try:
                 dimensions = await asyncio.to_thread(self._vector_preflight)
             except VectorIndexNeedsRebuild as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
+                                               include_public, automatic, bot_persona)
             if dimensions is None:
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
+                                               include_public, automatic, bot_persona)
             try:
                 batch = await self._embedding(source, [query], "query")
                 if batch.dimensions != dimensions:
                     raise ValueError(f"embedding dimensions {batch.dimensions} differ from memory index {dimensions}")
             except (ValueError, TimeoutError) as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
-                return await asyncio.to_thread(self._search_sync, source, literal, limit,
-                                               include_public, exclude_pending, automatic, bot_persona)
-            return await asyncio.to_thread(self._search_hybrid_sync, source, literal,
-                                           batch.vectors[0], limit, include_public, exclude_pending, automatic, bot_persona)
+                return await asyncio.to_thread(self._search_sync, source, text, limit,
+                                               include_public, automatic, bot_persona)
+            return await asyncio.to_thread(self._search_hybrid_sync, source, text,
+                                           batch.vectors[0], limit, include_public, automatic, bot_persona)
 
     def _history_sync(self, scope: str, path: str) -> list[LocalMemoryChange]:
         self._target(scope, path, file=True)
@@ -1084,14 +1098,10 @@ class LocalMemory:
         return scene_overview(self.root, scene)
 
     def _summary_inputs_sync(self, scope: str, path: str) -> dict:
-        if path == PENDING_PREFIX.rstrip("/") or path.startswith(PENDING_PREFIX):
-            raise ValueError("待确认旧记忆不能生成正式摘要；请先采用到正式记忆目录")
         directory = self._summary_directory(scope, path)
         files, directories = [], []
         for entry in sorted(directory.iterdir(), key=lambda item: item.name):
             relative = f"{path}/{entry.name}" if path else entry.name
-            if relative == PENDING_PREFIX.rstrip("/"):
-                continue
             if entry.is_dir():
                 self._target(scope, relative, file=False)
                 summary = self._summary_sync(scope, relative)

@@ -1,4 +1,4 @@
-"""Explicit frozen HTTP inputs for isolated development replay, never a network fallback."""
+"""Frozen HTTP inputs for isolated development replay."""
 
 from __future__ import annotations
 

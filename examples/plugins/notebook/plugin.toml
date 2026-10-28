@@ -1,0 +1,34 @@
+name = "notebook"
+version = "0.1.0"
+interface = 1
+requires_lenbot = ">=0.2,<1"
+requires_python = ">=3.13"
+platforms = ["linux", "darwin", "win32"]
+reload = "plugin"
+authors = ["LEN5010"]
+license = "AGPL-3.0-only"
+description = "示例记忆插件：把群聊整理成笔记，按当前对话召回，并提供本群的 memory 工具。"
+permissions = ["history", "generate", "memory"]
+
+[config.min_messages]
+type = "integer"
+label = "攒够多少条消息再整理"
+description = "后台每 10 分钟检查一次，新消息达到这个数量才整理"
+minimum = 1
+maximum = 500
+default = 30
+
+[config.model_role]
+type = "string"
+label = "整理用的模型"
+description = "把聊天整理成笔记时使用的模型用途"
+options = [{ value = "learner", label = "学习模型（learner）" }, { value = "mind", label = "聊天模型（mind）" }]
+default = "learner"
+
+[config.recall_limit]
+type = "integer"
+label = "每轮召回的笔记条数"
+description = "每轮自动召回时最多带上的笔记条数"
+minimum = 1
+maximum = 20
+default = 5

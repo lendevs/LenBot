@@ -170,3 +170,61 @@ async def test_panel_disconnect_while_the_peer_is_away_stops_cleanly(tmp_path, m
                 await runtime.disconnect()
                 await asyncio.wait_for(running, 3)
         assert runtime.status == 'stopped'
+
+
+@pytest.mark.asyncio
+async def test_forward_half_open_socket_recovers_after_ping_and_close_timeout(monkeypatch):
+    """A TCP proxy drops frames after setup while leaving both sockets open."""
+    monkeypatch.setattr(onebot_module, 'RECONNECT_INITIAL_SECONDS', .02)
+    errors, connections = [], []
+    stalled = asyncio.Event()
+    handlers = set()
+
+    async def peer(websocket):
+        connections.append(websocket)
+        async for frame in websocket:
+            request = json.loads(frame)
+            await websocket.send(json.dumps({**LOGIN, 'echo': request['echo']}))
+
+    async with serve(peer, '127.0.0.1', 0, ping_interval=None) as server:
+        upstream_port = server.sockets[0].getsockname()[1]
+        attempts = 0
+
+        async def proxy(reader, writer):
+            nonlocal attempts
+            task = asyncio.current_task()
+            handlers.add(task)
+            attempts += 1
+            first = attempts == 1
+            upstream, remote = await asyncio.open_connection('127.0.0.1', upstream_port)
+            async def pipe(source, target):
+                while data := await source.read(65536):
+                    if not (first and stalled.is_set()):
+                        target.write(data)
+                        await target.drain()
+            pipes = [asyncio.create_task(pipe(reader, remote)), asyncio.create_task(pipe(upstream, writer))]
+            try:
+                await asyncio.wait(pipes, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for item in pipes:
+                    item.cancel()
+                await asyncio.gather(*pipes, return_exceptions=True)
+                remote.close()
+                writer.close()
+                await asyncio.gather(remote.wait_closed(), writer.wait_closed(), return_exceptions=True)
+                handlers.remove(task)
+
+        async with await asyncio.start_server(proxy, '127.0.0.1', 0) as gateway:
+            settings = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{gateway.sockets[0].getsockname()[1]}',
+                                     request_timeout_seconds=.1, ping_interval_seconds=.05, ping_timeout_seconds=.05)
+            async with OneBot(settings, bot_id='onebot:90001', on_event=lambda event: None,
+                              on_error=errors.append) as bot:
+                assert await bot.identify() == 'onebot:90001'
+                started = asyncio.get_running_loop().time()
+                stalled.set()
+                await _until(lambda: len(connections) == 2 and bot.connected)
+                assert await bot.identify() == 'onebot:90001'
+                assert asyncio.get_running_loop().time() - started < 1
+            if handlers:
+                await asyncio.gather(*list(handlers))
+    assert any('keepalive ping timeout' in error for error in errors)

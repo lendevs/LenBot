@@ -14,9 +14,9 @@ from zoneinfo import ZoneInfo
 
 from ..media.audio import AudioService
 from ..media.audio_store import AudioStore
-from .context import ChatContext, turn_state
+from .context import ChatContext, style_text, turn_state
 from .expression import ChatExpression, MessageSender
-from .tools import SceneTools
+from .tools import MemoryPlugins, SceneTools
 from ..config import LabConfig
 from .recap import (CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction,
                     recap_source)
@@ -32,8 +32,13 @@ RESERVE_CHANNELS = frozenset({"schedule", "task"})
 # Calls that speak, wait or close a turn; any other call means the turn looked something up.
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
-PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "persona_knowledge", "member_info"})
-from ..memory.service import MemoryService
+PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info"})
+# Consecutive sends not confirmed as delivered after which the turn ends; rewriting the message again would
+# meet the same platform, and an unconfirmed send may already be in the group.
+SEND_FAILURE_LIMIT = 2
+from ..memory.service import MemoryService, MemorySettings, recall_cues
+from ..reference.library import ReferenceLibrary
+from ..reference.tool import changes_notice
 from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ModelReply
 from ..models.request import request_estimate, request_model
@@ -42,11 +47,24 @@ from ..persona.profile import Persona, select_style
 from ..platform.platform_tools import PlatformCall
 from ..storage.store import Store, encode
 from ..work.service import WorkTasks
+from ..work.store import TaskStore
+from ...plugin import CompactRequest, RecallRequest
 from ..runtime.logs import add_context, log_event
 from ..prompt_files import read_prompt
 from ...media.images import image_block
 
 logger = logging.getLogger(__name__)
+
+
+def recall_request(store: Store, config: LabConfig, persona: str, turn_id: str, observed_at: float,
+                   budget_chars: int) -> RecallRequest:
+    """What the scene's memory plugin receives for one turn, read in one snapshot."""
+    scene = config.scene
+    messages = tuple(message for message in store.recent_context_messages(scene, limit=8)
+                     if message.send_status in {"received", "sent", "simulated"})
+    tasks = tuple(f"#{task.id} [{task.status}] {task.goal}" for task in TaskStore(store).list(scene, limit=20))
+    return RecallRequest(scene, persona, turn_id, observed_at, messages, store.active_history(scene)[0], tasks,
+                         budget_chars)
 
 
 @dataclass(frozen=True)
@@ -85,6 +103,8 @@ class Chat:
                  platform_call: PlatformCall | None = None,
                  external_tools: list[ExternalTool] = (),
                  audio_service: AudioService | None = None,
+                 plugins: MemoryPlugins | None = None,
+                 reference: ReferenceLibrary | None = None,
                  on_update: Callable[[], None] | None = None,
                  on_compaction: Callable[[], None] | None = None,
                  on_reply_sample: Callable[[], None] | None = None,
@@ -101,6 +121,9 @@ class Chat:
         if (config.memory is None) != (memory is None):
             raise ValueError("memory 服务必须与根配置的记忆后端一起提供")
         self.memory = memory
+        if (config.memory_plugin is not None or config.recap_plugin is not None) and plugins is None:
+            raise ValueError("memory_plugin 和 recap_plugin 需要插件宿主")
+        self.plugins = plugins
         if (config.worker is None) != (tasks is None):
             raise ValueError("任务服务必须与根配置的 worker 一起提供")
         self.tasks = tasks
@@ -134,7 +157,7 @@ class Chat:
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
-            platform_call=platform_call, notify=self.notify, now=now)
+            platform_call=platform_call, notify=self.notify, now=now, plugins=plugins, reference=reference)
         self.set_external_tools(external_tools)
 
     def set_external_tools(self, external_tools: list[ExternalTool]) -> None:
@@ -187,17 +210,29 @@ class Chat:
                 if content_tokens > recap_target.summary_budget_tokens:
                     raise ContextBudgetError(
                         f"新回想正文估算 {content_tokens} token，超过本步回想预算 "
-                        f"{recap_target.summary_budget_tokens}；未切换起点")
+                        f"{recap_target.summary_budget_tokens}")
 
         return await request_model(
             self.config, self.store, model, messages, tools, scene=self.config.scene, role=role,
             turn_id=turn_id, slots=self.slots, direct=self.direct_request,
-            output_tokens=self.config.compaction.max_output_tokens if role == "recap" else None,
+            output_tokens=self.config.recap_output_tokens if role == "recap" else None,
             validate=validate, append_to_scene=role == "mind",
-            recap_for=None if recap_target is None else (self.config.scene, recap_target.through),
             expression_ids=self.expression_ids if role == "mind" else expression_ids,
-            input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick,
+            input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
             trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
+
+    async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True) -> str:
+        """Run the selected compaction strategy and commit its completed recap."""
+        plugin = self.config.recap_plugin if strategy else None
+        if plugin is not None:
+            recap = await self.plugins.compact(plugin, CompactRequest(
+                self.config.scene, self.persona.id, turn_id, plan.request_messages[-1]["content"],
+                plan.summary_budget_tokens))
+            log_event(logger, 'plugin_compaction', plugin=plugin, compact_through=plan.through)
+        else:
+            recap = (await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)).text
+        await self.store.call(self.store.commit_recap, self.config.scene, plan.through, recap)
+        return recap
 
     async def upkeep_fork(self) -> tuple[list[dict], list[dict]]:
         """The chat request's system, tools and history without the turn state; caller owns the scene lock."""
@@ -226,12 +261,13 @@ class Chat:
                     tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
                     trigger_tokens=self.config.compaction.input_tokens,
                     keep_recent_tokens=self.config.compaction.keep_recent_tokens,
-                    summary_output_tokens=self.config.compaction.max_output_tokens, recap=recap,
+                    summary_output_tokens=self.config.recap_output_tokens,
+                    reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=recap,
                     summary_template=read_prompt("next_recap.md"),
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
                 )
-                reply = await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)
+                recap = await self.compact(turn_id, plan)
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -240,7 +276,7 @@ class Chat:
         if self.on_compaction is not None:
             self.on_compaction()
         self.notify()
-        return {"turn_id": turn_id, "compact_through": plan.through, "recap": reply.text}
+        return {"turn_id": turn_id, "compact_through": plan.through, "recap": recap}
 
     async def hand_over(self, previous: str, current: str) -> str:
         """Fold the whole active session into a third-person handover; caller owns the scene lock.
@@ -265,7 +301,8 @@ class Chat:
                         self.context.project_entries(entries), system=projection[0], state=projection[-1],
                         tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
                         trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
-                        summary_output_tokens=self.config.compaction.max_output_tokens, recap=recap,
+                        summary_output_tokens=self.config.recap_output_tokens,
+                        reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=recap,
                         summary_template=template, window_tokens=binding.context_window_tokens,
                         source_entries=self.context.conversation_entries(entries), include_latest=True,
                     )
@@ -273,11 +310,12 @@ class Chat:
                     # Only an earlier recap is active; rewrite it in place.
                     through = self.store.db.execute("SELECT compact_through FROM mind_sessions WHERE scene=?",
                                                     (scene,)).fetchone()[0]
-                    budget = self.config.compaction.max_output_tokens
+                    budget = self.config.recap_output_tokens - self.config.recap_reasoning_reserve
                     plan = CompactionPlan(through, budget, [
                         {"role": "system", "content": Template(template).substitute(summary_budget_tokens=budget)},
                         {"role": "user", "content": recap_source(recap, [])}])
-                await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)
+                # A handover follows its own template for the next role; the scene's recap plugin does not write it.
+                await self.compact(turn_id, plan, strategy=False)
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -304,12 +342,21 @@ class Chat:
             self.set_external_tools(external_tools)
             raise
 
+    async def announce_reference(self, now: float) -> None:
+        """Tell the conversation which reference files it may have read have changed since."""
+        changes = await self.toolset.reference.announce(self.config.scene, self.persona.id)
+        if changes:
+            moment = datetime.fromtimestamp(now, ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
+            await self.store.call(self.store.append, self.config.scene,
+                                  {"role": "user", "content": changes_notice(self.config.scene, changes, moment)})
+
     async def prepare_context(self, turn_id: str, *, observed_at: float, expression_style: str | None = None,
                               recalled: str | None = None) -> PreparedContext:
         binding = self.config.models.roles.mind
         trigger = self.config.compaction.input_tokens
         token_scale = 1.0
         compacted = False
+        await self.announce_reference(observed_at)
         while True:
             await self.store.call(AudioStore(self.store).append_late, self.config.scene)
             recap, entries = await self.store.read(self.store.active_history, self.config.scene)
@@ -334,12 +381,13 @@ class Chat:
                 self.context.project_entries(entries), system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
                 output_tokens=binding.max_output_tokens, trigger_tokens=trigger,
                 keep_recent_tokens=self.config.compaction.keep_recent_tokens,
-                summary_output_tokens=self.config.compaction.max_output_tokens,
+                summary_output_tokens=self.config.recap_output_tokens,
+                reasoning_reserve_tokens=self.config.recap_reasoning_reserve,
                 recap=recap, summary_template=read_prompt("next_recap.md"),
                 window_tokens=binding.context_window_tokens,
                 source_entries=self.context.conversation_entries(entries), token_scale=scale,
             )
-            await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)
+            await self.compact(turn_id, plan)
             compacted = True
             if self.on_compaction is not None:
                 self.on_compaction()
@@ -408,6 +456,7 @@ class Chat:
         expressions: list[str] = []
         extensions = 0
         failed_tools = 0
+        failed_sends = 0
         status, error_text = "step_limit", None
         limit_until = limit_kind = None
         phase = None
@@ -418,10 +467,27 @@ class Chat:
                 recall_items = []
                 recall_error = None
                 try:
-                    if self.memory is not None and self.memory.settings.auto_recall:
+                    if self.config.memory_plugin is not None:
+                        phase = '插件自动召回'
+                        budget = (MemorySettings.model_fields['recall_budget_chars'].default if self.memory is None
+                                  else self.memory.settings.recall_budget_chars)
+                        request = await self.store.read(recall_request, self.store, self.config, self.persona.id,
+                                                        turn_id, observed_at, budget)
+                        try:
+                            recall_items = await self.plugins.recall(self.config.memory_plugin, request)
+                        except Exception as error:
+                            # Recorded on the plugin; this turn goes on without recalled memory.
+                            recall_error = f'{type(error).__name__}: {error}'
+                            log_event(logger, 'plugin_recall_failed', recall_error, level=logging.WARNING,
+                                      plugin=self.config.memory_plugin)
+                        if recall_items:
+                            recalled = encode({"backend": "plugin:" + self.config.memory_plugin,
+                                               "items": recall_items})
+                    elif self.memory is not None and self.memory.settings.auto_recall:
                         phase = '记忆自动召回'
                         recall = await self.memory.recall(
-                            scene, await self.store.call(self.store.recent_context_messages, scene, limit=8))
+                            scene, await self.store.call(self.store.recent_context_messages, scene, limit=8),
+                            recall_cues(await self.store.call(self.store.recap, scene)))
                         if recall["items"]:
                             recalled = encode({"backend": recall["backend"], "items": recall["items"]})
                         recall_items = recall['items']
@@ -461,11 +527,7 @@ class Chat:
                             expressions=encode([{ "情境": item["situation"], "说法": item["style"] } for item in selected]))
                 phase = None
                 style = select_style(self.persona)
-                expression_style = None
-                if style is not None:
-                    expression_style = Template(read_prompt("next_style.md")).substitute(
-                        name=style.name, note="" if style.note is None else style.note,
-                    )
+                expression_style = None if style is None else style_text(style)
                 if learned is not None:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
                 looked_up = stepped_lookup = False
@@ -543,10 +605,12 @@ class Chat:
                                             self.turn_messages += 1
                                         if delivery_status in {"sent", "simulated"}:
                                             end_turn = end_turn or expression.end_turn
+                                            failed_sends = 0
                                         else:
                                             group_failed = True
                                             tool_status = 'error'
                                             failed_tools += 1
+                                            failed_sends += 1
                                         self.trace('turn.step', turn_id, kind='expression', phase='end',
                                                    call_id=call.id, status=delivery_status, summary=content[:500])
                                     tool_summary = content
@@ -558,9 +622,14 @@ class Chat:
                                 self.trace('turn.step', turn_id, kind='tool', phase='end', call_id=call.id,
                                            name=call.name, status=tool_status, summary=tool_summary[:500])
                             self.notify()
+                            if failed_sends >= SEND_FAILURE_LIMIT:
+                                break
                     finally:
                         for started in prefetched.values():
                             started.cancel()
+                    if failed_sends >= SEND_FAILURE_LIMIT:
+                        status, error_text = "send_failed", f"连续 {failed_sends} 次发送没有确认送达"
+                        break
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the
                         # model as new input instead of waiting for the next turn.

@@ -3,8 +3,9 @@
 from collections.abc import Callable
 import json
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Path as PathParameter, Request
 import httpx
 
 from .. import responses
@@ -14,11 +15,13 @@ ERRORS = (OSError, ValueError, KeyError, TimeoutError, httpx.HTTPError)
 
 # Shown in the update confirmation of a managed installation, before the user applies an update.
 UPDATE_NOTICE = [
-    '更新期间聊天、提醒和后台任务暂停，通常几分钟；更新前已连接聊天平台时，还会等待新版本重新连上。',
+    '更新期间聊天、提醒和后台任务暂停，通常持续几分钟；更新前已连接聊天平台时，会等待新版本重新连接。',
     '备份完成后的更新失败时，会自动恢复更新前的程序和数据快照并启动旧版本。',
-    '自动回滚或之后手动恢复快照，都会丢掉更新开始后写入的数据，包括新消息、记忆、设置修改和任务记录。',
-    '快照保存在部署目录的 backups/ 下，按时间命名，不会自动删除。',
+    '自动回滚或手动恢复快照都会丢弃更新开始后写入的数据，包括新消息、记忆、设置修改和任务记录。',
+    '快照按时间保存在部署目录的 backups/ 下，可在本页删除。',
 ]
+# The controller's backups/<UTC time>-<8 hex> names.
+SNAPSHOT = r'^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$'
 
 
 def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request], str],
@@ -33,13 +36,16 @@ def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request],
             raise ValueError('请先更新安装控制器；控制协议不匹配')
         return value
 
-    async def request_control(path: str) -> dict | list:
+    async def request_control(path: str, method: str = 'GET') -> dict | list:
         reference = control()
         if reference is None:
             raise HTTPException(409, '源码安装不支持面板换版；请使用 Git 和离线迁移命令')
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(reference['endpoint'] + '/api/' + path,
-                                        headers={'Authorization': 'Bearer ' + reference['token']})
+            response = await client.request(method, reference['endpoint'] + '/api/' + path,
+                                            headers={'Authorization': 'Bearer ' + reference['token']})
+            if response.status_code in (404, 409):
+                # A missing snapshot or a refusal in the current update state; the controller words it for the user.
+                raise HTTPException(response.status_code, response.json()['detail'])
             if response.is_error:
                 raise HTTPException(502, f'更新控制器 HTTP {response.status_code}: {response.text[:2000]}')
             return response.json()
@@ -83,6 +89,20 @@ def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request],
     async def session(_: str = Depends(user)):
         try:
             return await request_control('session')
+        except ERRORS as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get('/api/host/updates/snapshots', response_model=list[responses.UpdateSnapshot])
+    async def snapshots(_: str = Depends(user)):
+        try:
+            return await request_control('snapshots')
+        except ERRORS as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.delete('/api/host/updates/snapshots/{name}', response_model=list[responses.UpdateSnapshot])
+    async def delete_snapshot(name: Annotated[str, PathParameter(pattern=SNAPSHOT)], _: str = Depends(user)):
+        try:
+            return await request_control('snapshots/' + name, 'DELETE')
         except ERRORS as error:
             raise HTTPException(422, str(error)) from error
 

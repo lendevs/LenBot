@@ -62,10 +62,19 @@ async def test_held_turn_is_recorded_as_simulated_and_counts_speech(tmp_path):
             turn = store.turn_detail(SCENE, result['turn_id'])['turn']
             assert turn['first_expression_delivery'] == 'simulated'
             assert store.db.execute('SELECT COUNT(*) FROM speech WHERE scene=?', (SCENE,)).fetchone()[0] == 1
-            reaction = await runtime.platform_call('set_msg_emoji_like', {'message_id': 1, 'emoji_id': '66', 'set': True})
-            assert reaction == {'status': 'ok', 'retcode': 0, 'data': None}
+            calls = []
+
+            async def recorded(action, params):
+                calls.append(action)
+                return {'status': 'ok', 'retcode': 0, 'data': {'group_name': '合成群'}}
+
+            runtime.platform.call = recorded
+            for action in ('set_msg_emoji_like', 'delete_msg', 'group_poke'):
+                assert await runtime.platform_call(action, {'message_id': 1}) == {'status': 'ok', 'retcode': 0, 'data': None}
+            assert (await runtime.platform_call('get_group_info', {'group_id': 80001}))['data'] == {'group_name': '合成群'}
+            assert calls == ['get_group_info']
             upload = await runtime.upload_file(SCENE, 'file', 'name')
-            assert upload.status == 'failed'
+            assert (upload.status, upload.error) == ('simulated', None)
 
 
 @pytest.mark.asyncio
@@ -124,4 +133,4 @@ async def test_scene_simulated_delivery_holds_only_that_scene(tmp_path):
             assert own and {message.send_status for message in own} == {'simulated'}
             reaction = await chat.toolset.platform_call('set_msg_emoji_like', {'message_id': 1, 'emoji_id': '66', 'set': True})
             assert reaction == {'status': 'ok', 'retcode': 0, 'data': None}
-            assert (await runtime.upload_file(SCENE, 'file', 'name')).status == 'failed'
+            assert (await runtime.upload_file(SCENE, 'file', 'name')).status == 'simulated'

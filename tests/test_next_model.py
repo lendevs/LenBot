@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from len_bot.next.models.client import (
     ChatModel,
     ModelHTTPError,
+    ModelOutputLimitError,
     ModelProtocolError,
     ModelSettings,
     parse_chat_completion,
@@ -112,7 +113,8 @@ def test_recorded_response_fault_injections_fail_before_tool_execution(change, r
     with pytest.raises(ModelProtocolError) as failure:
         parse_chat_completion(body)
     assert reason in str(failure.value)
-    assert "response fragment:" in str(failure.value)
+    if not isinstance(failure.value, ModelOutputLimitError):
+        assert "response fragment:" in str(failure.value)
     assert failure.value.response == body
     assert failure.value.response is not body
     assert failure.value.usage == body["usage"]
@@ -316,8 +318,9 @@ async def test_loopback_http_error_propagates_original_body_without_retry():
             api_key="replay-only", model="recorded-model",
         )
         async with ChatModel(settings) as model:
-            with pytest.raises(ModelHTTPError, match="replay rate limit") as failure:
+            with pytest.raises(ModelHTTPError, match="请求受限") as failure:
                 await model.complete([{"role": "user", "content": "hello"}], [])
+    assert "replay rate limit" in failure.value.response["detail"]
     assert "429" in str(failure.value)
     assert requests == 1
     assert "reasoning_effort" not in payloads[0]
@@ -346,10 +349,13 @@ async def test_configured_retry_resends_same_request_after_transient_errors():
         port = server.sockets[0].getsockname()[1]
         settings = ModelSettings(api="openai-chat", base_url=f"http://127.0.0.1:{port}/v1", api_key="replay-only",
                                  model="recorded-model", retry_delays_seconds=(0, 0, 0))
+        retried = []
         async with ChatModel(settings) as model:
-            reply = await model.complete([{"role": "user", "content": "hello"}], [])
+            reply = await model.complete([{"role": "user", "content": "hello"}], [],
+                                         on_retry=lambda: retried.append(len(payloads)))
     assert reply.text
     assert len(payloads) == 3 and payloads[0] == payloads[1] == payloads[2]
+    assert retried == [1, 2]
 
 
 @pytest.mark.asyncio

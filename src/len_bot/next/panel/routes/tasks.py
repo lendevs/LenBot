@@ -12,6 +12,8 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, ValidationError
 
+from len_bot.web.errors import validation_detail
+
 from .. import responses
 from ...configuration.types import STRICT
 from ..task_models import TaskDetail, TaskPage
@@ -70,7 +72,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
 
     def scene_exists(scene: str) -> None:
         if scene not in runtime.chats:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
 
     @app.get("/api/host/tasks/state", response_model=responses.TaskState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
@@ -84,8 +86,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                            for scene, chat in runtime.chats.items()],
                 "public_network": service is not None and service.settings.egress.enabled,
                 "file_upload": (runtime.config.delivery == "onebot" and service is not None
-                                and runtime.config.onebot.upload_visible_root is not None),
-                "notice": "模型与公共流量使用独立管道；是否启用与目标是否连通分开。文件登记与上传回执分别显示。"}
+                                and runtime.config.onebot.upload_visible_root is not None)}
 
     @app.get("/api/host/tasks", response_model=TaskPage)
     async def listing(scene: str, status: str = "active", offset: int = Query(0, ge=0),
@@ -109,7 +110,6 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                             "active_timeout_seconds": None if runtime.tasks is None else runtime.tasks.active_timeout(item)}, "events": events,
                     "network": None if runtime.tasks is None else runtime.tasks.egress.status(scene, id),
                     "browser": {"public_enabled": runtime.config.worker is not None and runtime.config.worker.public_browser,
-                                "binding": records.browser_start(scene, id),
                                 "output_count": len(records.browser_file_sources(scene, id))},
                     "next_after": events[-1]["id"] if events else after,
                     "files": [file_info(file, records) for file in records.list_files(scene, id)]}
@@ -128,7 +128,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
     async def discard(id: int, scene: str, body: WorkspaceDiscard, request: Request, _: str = Depends(user)):
         scene_exists(scene)
         if runtime.tasks is None:
-            raise HTTPException(409, '当前没有任务执行器，无法按当前worker定位/管理工作环境')
+            raise HTTPException(409, '当前没有任务执行器，无法按当前 worker 定位或管理工作环境')
         async with write_lock:
             try:
                 result = await runtime.tasks.discard_workspace(scene, id, requester=panel_owner(runtime), **body.model_dump())
@@ -270,7 +270,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         try:
             parsed = TaskArguments.model_validate(body)
         except ValidationError as error:
-            raise HTTPException(422, error.errors(include_url=False, include_input=False, include_context=False)) from error
+            raise HTTPException(422, validation_detail(error.errors(include_url=False, include_input=False))) from error
         try:
             return await perform_task_action(runtime.tasks, scene, parsed)
         except PermissionError as error:

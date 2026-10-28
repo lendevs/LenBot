@@ -107,7 +107,7 @@ def check_space(paths: list[str], destination: Path) -> None:
     free = shutil.disk_usage(existing).free
     if free < needed:
         raise OSError(f'快照需要约 {needed / 2**30:.2f} GiB（含 {HEADROOM // 2**20} MiB 余量），'
-                      f'{existing} 所在磁盘只剩 {free / 2**30:.2f} GiB；清理空间后再升级')
+                      f'{existing} 所在磁盘只剩 {free / 2**30:.2f} GiB；请清理空间后再升级')
 
 
 def create(paths: list[str], destination: Path) -> None:
@@ -135,6 +135,8 @@ def create(paths: list[str], destination: Path) -> None:
 
 
 def _remove(path: Path) -> None:
+    if path.name == LOCK:
+        return
     if path.is_dir() and not path.is_symlink():
         for child in path.iterdir():
             _remove(child)

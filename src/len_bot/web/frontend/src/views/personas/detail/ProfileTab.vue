@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PersonaRole } from '../../../api/personas'
 import Field from '../../../ui/Field.vue'
@@ -8,12 +9,18 @@ import SaveBar from '../../../ui/SaveBar.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import AvatarEditor from './AvatarEditor.vue'
+import MoreSection from './MoreSection.vue'
 import { useProfile } from './profileForm'
 
 defineProps<{ role: PersonaRole }>()
 
 const { t } = useI18n()
 const form = useProfile()
+// Folded unless the role already uses one of these, so nothing written is hidden. The tab opens after the draft.
+const draft = form.draft.value
+const more = ref(
+  Boolean(draft && (draft.behavior.trim() || draft.aliases.length || draft.self_reference.join() !== '我')),
+)
 </script>
 
 <template>
@@ -30,27 +37,31 @@ const form = useProfile()
       >
         <Input v-model="form.draft.value.name" class="sm:max-w-sm" />
       </Field>
-      <Field :label="t('personas.detail.profile.aliases')">
-        <TagInput v-model="form.draft.value.aliases" />
-      </Field>
-      <Field :label="t('personas.detail.profile.selfReference')">
-        <TagInput
-          v-model="form.draft.value.self_reference"
-          :placeholder="t('personas.detail.profile.selfReferenceExample')"
-        />
-      </Field>
     </FormSection>
     <FormSection :title="t('personas.detail.profile.character')" :columns="1">
       <Field :label="t('personas.detail.profile.brief')">
         <Textarea v-model="form.draft.value.brief" :rows="4" />
       </Field>
-      <Field :label="t('personas.detail.profile.behavior')">
-        <Textarea v-model="form.draft.value.behavior" :rows="4" />
-      </Field>
       <Field :label="t('personas.detail.profile.boundaries')">
         <Textarea v-model="form.draft.value.boundaries" :rows="4" />
       </Field>
     </FormSection>
+    <MoreSection v-model="more" :title="t('personas.detail.more')">
+      <FormSection>
+        <Field :label="t('personas.detail.profile.aliases')">
+          <TagInput v-model="form.draft.value.aliases" />
+        </Field>
+        <Field :label="t('personas.detail.profile.selfReference')">
+          <TagInput
+            v-model="form.draft.value.self_reference"
+            :placeholder="t('personas.detail.profile.selfReferenceExample')"
+          />
+        </Field>
+        <Field :label="t('personas.detail.profile.behavior')" wide>
+          <Textarea v-model="form.draft.value.behavior" :rows="4" />
+        </Field>
+      </FormSection>
+    </MoreSection>
     <SaveBar
       :dirty="form.dirty.value.identity"
       :saving="form.isSaving('identity')"

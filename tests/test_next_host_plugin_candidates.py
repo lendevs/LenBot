@@ -66,7 +66,15 @@ def test_candidate_cancel_disable_apply_and_rollback_preserve_matching_config(tm
                         assert result.status_code == 200, result.text
                         return result.json()
 
+                    loose = BytesIO()
+                    with zipfile.ZipFile(loose, 'w') as archive:
+                        archive.writestr('sample/README.md', '说明')
+                    refused = await client.post('/api/host/plugins/zip', files={'file': ('sample.zip', loose.getvalue())})
+                    assert refused.status_code >= 400
+                    assert '没有 plugin.toml 和 __init__.py' in refused.json()['detail']['message']
                     await upload('1.0.0')
+                    # The new plugin waits disabled for apply; the panel does not ask for a restart.
+                    assert (await client.get('/api/host/plugins')).json()['restart_required'] is False
                     await configure({'show_details': False})
                     await operate('apply')
                     await upload('2.0.0', text_value=True)

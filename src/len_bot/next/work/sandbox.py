@@ -217,7 +217,7 @@ class DockerSandbox:
                      skills: tuple[Skill, ...] = (),
                      input_names: tuple[str, ...] = (),
                      on_container: Callable[[str], None] | None = None) -> SandboxHandle:
-        """Create a fresh container; never infer a usable network from Docker defaults."""
+        """Create a task container with the configured network."""
         if _SCENE.fullmatch(scene) is None or _TASK.fullmatch(task_id) is None:
             raise ValueError("scene or task_id is not a valid task workspace identity")
         workspace_root = self.settings.workspace_root.resolve()
@@ -381,7 +381,7 @@ class DockerSandbox:
         try:
             rpc = await PiRpc.spawn(command, cwd=sandbox.workspace,
                                     env=_docker_environment(), stderr_path=stderr_path)
-            # A spawned Docker CLI is not proof that Pi started inside it.
+            # Pi has started once it answers get_state inside the container.
             state = await asyncio.wait_for(rpc.command("get_state"),
                                            timeout=self.settings.command_timeout_seconds)
             data = state.body.get("data")

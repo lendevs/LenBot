@@ -17,7 +17,6 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const text = ref('')
 const choice = ref<string>()
-const help = computed(() => props.question.method === 'request_help')
 const options = computed(() => (props.question.options ?? []).map((value) => ({ value, label: value })))
 watch(
   () => Boolean(text.value.trim() || choice.value !== undefined),
@@ -52,14 +51,13 @@ function reply() {
   <section class="flex flex-col gap-3 rounded-lg border border-line-strong px-4 py-3">
     <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
       <MessageCircleQuestion :size="16" class="text-warning" aria-hidden="true" />
-      {{ t(help ? 'groups.tasks.question.help' : 'groups.tasks.question.title') }}
+      {{ t('groups.tasks.question.title') }}
     </h3>
     <p class="text-sm break-words whitespace-pre-wrap text-ink">{{ question.title }}</p>
     <p v-if="question.message" class="text-sm break-words whitespace-pre-wrap text-ink-2">
       {{ question.message }}
     </p>
-    <p v-if="help" class="text-sm text-muted">{{ t('groups.tasks.question.helpText') }}</p>
-    <template v-else-if="canAnswer">
+    <template v-if="canAnswer">
       <div v-if="question.method === 'confirm'" class="flex gap-2">
         <Button variant="primary" size="sm" :loading="busy" @click="decide(true)">
           {{ t('groups.tasks.question.agree') }}

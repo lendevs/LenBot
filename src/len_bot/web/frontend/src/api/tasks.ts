@@ -1,14 +1,14 @@
 import { http, queryString, request, requestBlob, socketUrl } from './client'
 
-/** Types of panel/routes/tasks.py, materials.py, skills.py, browser.py and task_storage.py as one task uses them. */
+/** Types of panel/routes/tasks.py, materials.py, skills.py and task_storage.py as one task uses them. */
 
 export type TaskStatus = 'queued' | 'running' | 'waiting_input' | 'done' | 'failed' | 'cancelled'
 export type TaskFilter = 'active' | 'all' | 'done' | 'failed' | 'cancelled'
 
-/** A question from the task (`extension_ui_request`), or a browser handoff (`request_help`). */
+/** A question from the task (`extension_ui_request`). */
 export interface TaskQuestion {
   id: string
-  method: 'input' | 'editor' | 'confirm' | 'select' | 'request_help' | string
+  method: 'input' | 'editor' | 'confirm' | 'select' | string
   title: string
   message?: string
   options?: string[]
@@ -33,9 +33,6 @@ export interface Task {
   question: TaskQuestion | null
   summary: string | null
   error: string | null
-  account_browser: boolean
-  browser_active: boolean
-  browser_session: string | null
 }
 
 export interface RegisteredFile {
@@ -47,7 +44,7 @@ export interface RegisteredFile {
   status: 'registered'
   exists: boolean
   upload: {
-    status: 'uploaded' | 'failed' | 'unconfirmed' | string
+    status: 'uploaded' | 'failed' | 'unconfirmed' | 'simulated' | string
     error?: string | null
     [field: string]: unknown
   } | null
@@ -60,7 +57,6 @@ export interface TaskEventPreview {
   delivered_at: number | null
   event_type: string | null
   tool_name: string | null
-  browser_method: string | null
   preview: string
   truncated: boolean
 }
@@ -76,7 +72,7 @@ export interface TaskDetail {
   task: Task & { workspace_discard_requested: boolean; active_timeout_seconds: number | null }
   events: TaskEventPreview[]
   network: Record<string, unknown> | null
-  browser: { public_enabled: boolean; binding: Record<string, unknown> | null; output_count: number }
+  browser: { public_enabled: boolean; output_count: number }
   next_after: number
   files: RegisteredFile[]
 }
@@ -103,7 +99,6 @@ export interface DelegateInput {
   goal: string
   deliverable: string
   context: string
-  account_browser: boolean
   materials: string[]
   resources?: { reference: Record<string, unknown>; name: string }[]
 }
@@ -159,14 +154,9 @@ export const tasksApi = {
     request<unknown>('/api/host/tasks/action', { method: 'POST', query: { scene }, body: { ...body, id } }),
   download: (scene: string, id: number, file: number) =>
     requestBlob(taskPath(id, `/files/${file}`), { query: { scene } }),
-  sessionUrl: (scene: string, id: number) => `${taskPath(id, '/session')}?${queryString({ scene })}`,
-  exportUrl: (scene: string, id: number) => `${taskPath(id, '/export')}?${queryString({ scene })}`,
-  liveUrl: (scene: string, id: number) => socketUrl(`${taskPath(id, '/live')}?${queryString({ scene })}`),
-  browserStatus: (scene: string, id: number) =>
-    request<{
-      browser: Record<string, unknown> | null
-      session: { agent_window_id?: string; [field: string]: unknown } | null
-    }>(taskPath(id, '/browser/status'), { method: 'POST', query: { scene } }),
+  sessionUrl: (scene: string, id: number) => `${taskPath(id, '/session')}${queryString({ scene })}`,
+  exportUrl: (scene: string, id: number) => `${taskPath(id, '/export')}${queryString({ scene })}`,
+  liveUrl: (scene: string, id: number) => socketUrl(`${taskPath(id, '/live')}${queryString({ scene })}`),
   closeEnvironment: (scene: string, id: number) =>
     request<unknown>(taskPath(id, '/close-environment'), { method: 'POST', query: { scene } }),
 

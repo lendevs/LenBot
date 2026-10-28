@@ -38,6 +38,9 @@ class PluginChange(BaseModel):
 class ScenePlugins(BaseModel):
     model_config = STRICT
     plugins: list[str]
+    # Required, so a client that only knows the plugin list cannot reset the scene's memory by omission.
+    memory_plugin: str | None
+    recap_plugin: str | None
 
     @field_validator("plugins")
     @classmethod
@@ -45,6 +48,9 @@ class ScenePlugins(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("插件名不能重复")
         return value
+
+
+MEMORY_KEYS = ("memory_plugin", "recap_plugin")
 
 
 class PluginPaths(BaseModel):
@@ -192,10 +198,13 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                                and PLUGIN_NAME.fullmatch(path.name) and path.name not in configured]),
             "scene_choices": list(saved.scenes),
             "scenes": {scene: {"saved": saved.scenes[scene].plugins if scene in saved.scenes else None,
-                               "running": settings.plugins}
+                               "running": settings.plugins,
+                               **{key: {"saved": getattr(saved.scenes[scene], key) if scene in saved.scenes else None,
+                                        "running": getattr(settings, key)} for key in MEMORY_KEYS}}
                        for scene, settings in running.scenes.items()},
             "restart_required": any(item.requested for item in pending) or saved.plugins != running.plugins or any(
                 scene not in saved.scenes or saved.scenes[scene].plugins != settings.plugins
+                or any(getattr(saved.scenes[scene], key) != getattr(settings, key) for key in MEMORY_KEYS)
                 for scene, settings in running.scenes.items()),
         }
 
@@ -244,7 +253,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
         require_name(name)
         found = [entry for entry in (await market_view('', None)).entries if entry.name == name]
         if not found:
-            raise HTTPException(404, f'插件目录里没有 {name}')
+            raise HTTPException(404, f'插件目录中没有 {name}')
         return found[0]
 
     @app.post('/api/host/plugin-market/{name}/install', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
@@ -252,7 +261,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
         require_name(name)
         entry = await read_market_entry(name)
         if entry.installed:
-            raise HTTPException(409, f'插件 {name} 已经安装，请用更新')
+            raise HTTPException(409, f'插件 {name} 已安装，请使用更新')
         if not entry.compatible:
             raise HTTPException(422, f'插件 {name} 不能在本机加载：{entry.incompatible_reason}')
         # The repository's own manifest must be the plugin the catalog entry names, with the permissions it shows.
@@ -289,8 +298,11 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
         async with manager.lock:
             try:
                 saved = await manager.save(edit)
+                # Before the reload a scene leaves a plugin being switched off; after it, one just loaded serves.
+                await runtime.scene_service.apply_memory(saved)
                 for name in names:
                     await manager.apply(name, saved)
+                await runtime.scene_service.apply_memory(saved)
                 return await snapshot()
             except (ValueError, OSError, RuntimeError) as error:
                 raise HTTPException(422 if isinstance(error, ValueError) else 500,
@@ -395,7 +407,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             plugins = source['plugins']
             if not change.enabled:
                 if name not in plugins:
-                    raise ValueError(f"插件 {name} 本来就没有加载")
+                    raise ValueError(f"插件 {name} 未加载")
                 disabled = plugins.setdefault('disabled', [])
                 if name not in disabled:
                     disabled.append(name)
@@ -411,7 +423,7 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
     @app.put("/api/host/scenes/{scene}/plugins", response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
     async def put_scene_plugins(scene: str, request: Request, _: str = Depends(user)):
         if scene not in running.scenes:
-            raise HTTPException(404, "当前宿主未配置这一场景")
+            raise HTTPException(404, "当前宿主未配置此场景")
         change = await _body(request, ScenePlugins)
         changed: list[str] = []
 
@@ -423,7 +435,13 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                 if record_path.is_file() and manager.installer.read(name).installed is None:
                     raise ValueError(f'插件 {name} 尚未应用源码，请先完成安装')
             changed.extend(sorted(set(saved.scenes[scene].plugins) ^ set(change.plugins)))
-            source["scenes"][scene]["plugins"] = change.plugins
+            target = source["scenes"][scene]
+            target["plugins"] = change.plugins
+            for key in ("memory_plugin", "recap_plugin"):
+                if getattr(change, key) is None:
+                    target.pop(key, None)
+                else:
+                    target[key] = getattr(change, key)
 
         return await save(edit, changed)
 

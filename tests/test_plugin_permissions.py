@@ -29,12 +29,12 @@ async def test_declared_permissions_limit_the_context(tmp_path):
         for call, permission in ((lambda: ctx.generate(GROUP, '你好'), 'generate'),
                                  (lambda: ctx.memory(GROUP, {'action': 'search', 'query': 'x'}), 'memory'),
                                  (lambda: ctx.fetch_image('https://example.com/a.png'), 'network')):
-            with pytest.raises(PermissionError, match=f'没有在 plugin.toml 的 permissions 中声明 {permission}'):
+            with pytest.raises(PermissionError, match=f'未在 plugin.toml 的 permissions 中声明 {permission}'):
                 await call()
         with pytest.raises(PermissionError, match='声明 events'):
             await ctx.emit_event(GROUP, '有新动态')
         state = next(item for item in host.state()['plugins'] if item['name'] == 'sample')
-        assert state['permissions'] == [{'name': 'send', 'title': '在启用的群里发消息'},
+        assert state['permissions'] == [{'name': 'send', 'title': '在启用的群内发送消息'},
                                         {'name': 'history', 'title': '读取启用的群的聊天记录'}]
     finally:
         await host.close()

@@ -2,35 +2,29 @@
 
 ## 更新代码
 
-更新代码后，按以下步骤执行迁移。
-
 ```sh
 # 先按 Ctrl-C 停止 LenBot
 git pull
 ./scripts/install.sh
-uv run --no-sync python -m len_bot.next.maintenance.migrate_config
-uv run --no-sync python -m len_bot.next.maintenance.migrate
-uv run --no-sync python -m len_bot.next.maintenance.migrate_memory_jobs
-uv run --no-sync python -m len_bot.next.maintenance.migrate_local_memory
-uv run --no-sync python -m len_bot.next.maintenance.plugin_dependencies
-uv run --no-sync python -m len_bot.next.maintenance.doctor
+uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot ../lenbot-backup-20261023
 uv run --no-sync len-bot
 ```
 
-| 命令 | 作用 |
-|---|---|
-| `migrate_config` | 升级根配置。必须在数据库升级之前执行 |
-| `migrate` | 升级业务数据库 |
-| `migrate_memory_jobs` | 升级记忆处理库 |
-| `migrate_local_memory` | 升级本地记忆索引 |
-| `plugin_dependencies` | 恢复已安装插件的依赖，不执行插件代码 |
-| `doctor` | 检查升级结果，全部为 `ok` 或 `disabled` 后再启动 |
+`upgrade run` 先把实例目录（源码运行时是整个仓库目录）和配置引用的外部目录复制到 `--snapshot`，再恢复插件依赖，最后运行 doctor。任何一步失败都会从快照恢复。每次使用新的快照目录，放在实例目录和外部数据目录之外。
 
-已经是最新格式的步骤不做任何改动。升级前请先[备份](#备份)。
+升级后需要回退时：停止 LenBot，用 restore 恢复升级前的数据，再切回旧版本代码并运行 `./scripts/install.sh`。
 
-- 数据库迁移在数据库旁边保留一份升级前的副本，例如 `state.db.v2.bak`。确认运行正常后可以删除。同名副本已存在时命令拒绝执行。
-- 每一步升级在一个事务中完成，中途失败时数据停留在上一个完整的格式。
-- 跳过 `migrate_config` 直接启动时，LenBot 停止运行并报告配置格式过旧，同时给出需要执行的命令。
+```sh
+uv run --no-sync python -m len_bot.next.maintenance.upgrade restore --snapshot ../lenbot-backup-20261023
+```
+
+`doctor` 检查配置、各数据库的格式和完整性，以及插件。
+
+```sh
+uv run --no-sync python -m len_bot.next.maintenance.doctor
+```
+
+只恢复插件依赖时，单独执行 `plugin_dependencies`。
 
 所有命令和程序运行共用实例锁 `.lenbot-instance.lock`，同一时间只能运行一个。不要手动删除锁文件。
 
@@ -49,14 +43,14 @@ uv run --no-sync len-bot
 
 ## 测试副本
 
-不希望改动正在使用的数据时，停止 LenBot 后复制一份测试实例：
+需要在不改动现有数据的情况下测试时，停止 LenBot 后复制一份测试实例：
 
 ```sh
 uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test --panel-port 8089
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-命令只复制配置和配置中引用到的实例文件，不复制源码。副本改为模拟发送，不连接 OneBot 或 Telegram，面板使用指定的端口，指向原实例内部的绝对路径改为指向副本。模型、插件和后台任务在副本中照常运行，模型调用照常消耗 token。
+命令复制配置和配置中引用到的实例文件。副本改为模拟发送，不连接 OneBot，面板使用指定的端口，指向原实例内部的绝对路径改为指向副本。模型、插件和后台任务在副本中正常运行，模型调用同样消耗 token。
 
 ## 作为系统服务运行
 
@@ -71,6 +65,6 @@ sudo systemctl start lenbot
 sudo journalctl -u lenbot -n 100 --no-pager
 ```
 
-模板设置了 `Restart=no`，也不会开机自启，需要时自行执行 `systemctl enable lenbot`。
+模板设置了 `Restart=no`。需要开机自启时执行 `systemctl enable lenbot`。
 
 macOS 上可以双击 `deploy/current/start.command` 启动。

@@ -15,9 +15,9 @@ Render local HTML offline. Use inline or local assets.
 --pdf            Write PDF, using CSS page size or A4 by default.
 --screenshot     Write a full-page screen-layout PNG at the chosen viewport.
 --print-preview  With --pdf, render each actual PDF page to <prefix>-<page>.png.
---width/--height Set the screen viewport; they do not change the PDF paper size.
---help, -h       Show this help without opening a browser.
-The JSON result lists actual paths, viewport and PDF page count. Files are not registered for delivery.`;
+--width/--height Set the screen viewport. PDF paper size comes from CSS or A4.
+--help, -h       Show this help.
+The JSON result lists output paths, viewport and PDF page count. Use deliver_file to deliver a file.`;
 
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {

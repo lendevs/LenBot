@@ -122,7 +122,7 @@ class Native:
             return
         pid = int(self.pid_file.read_text())
         if instance_busy(self.instance):
-            print(f'上次的宿主进程 {pid} 仍在运行，先停止它', file=self.log)
+            print(f'上次的宿主进程 {pid} 仍在运行，请先停止', file=self.log)
             if sys.platform == 'win32':
                 subprocess.run(['taskkill', '/T', '/F', '/PID', str(pid)], stdout=self.log, stderr=self.log)
             else:
@@ -138,7 +138,7 @@ class Native:
             deadline = time.monotonic() + 10
             while instance_busy(self.instance):
                 if time.monotonic() > deadline:
-                    raise RuntimeError(f'实例仍被其他进程占用（记录的宿主进程 {pid}）；请先结束它')
+                    raise RuntimeError(f'实例仍被其他进程占用（记录的宿主进程 {pid}）；请先结束该进程')
                 time.sleep(0.2)
         self.pid_file.unlink()
 
@@ -162,7 +162,7 @@ class Native:
                 self.child.wait(timeout=self.stop_seconds)
             except subprocess.TimeoutExpired:
                 # Same limit as docker stop -t 180; the host's whole process tree goes, not only its first process.
-                print(f'宿主 {self.stop_seconds} 秒内没有退出，强制结束整个进程组', file=self.log)
+                print(f'宿主 {self.stop_seconds} 秒内未退出，强制结束整个进程组', file=self.log)
                 if sys.platform == 'win32':
                     subprocess.run(['taskkill', '/T', '/F', '/PID', str(self.child.pid)], stdout=self.log, stderr=self.log)
                 else:

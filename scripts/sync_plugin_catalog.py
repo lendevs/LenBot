@@ -42,7 +42,7 @@ def pinned_entry(repository: Path, ref: str = 'HEAD') -> dict:
                              f'plugin.toml 是 {manifest["permissions"]!r}')
         entry = {**entry, 'permissions': manifest['permissions']}
     if not _git(repository, 'branch', '--remotes', '--contains', commit).strip():
-        raise ValueError(f'{repository} {ref}: 提交 {commit[:12]} 还不在任何远端分支上，先推送再同步')
+        raise ValueError(f'{repository} {ref}: 提交 {commit[:12]} 尚未推送到任何远端分支，请先推送再同步')
     return {**entry, 'ref': commit}
 
 

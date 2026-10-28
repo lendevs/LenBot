@@ -20,7 +20,7 @@ from ..chat.attention import SceneRunner
 from ..media.audio import AudioService
 from ..chat.session import Chat
 from ..chat.commands import Commands
-from ..chat.tools import tool_catalog
+from ..chat.tools import task_data_tools, tool_catalog
 from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
 from .logs import credentials, log_context, log_event
@@ -38,6 +38,7 @@ from ..platform.adapter import PlatformCallError, open_platform
 from ..persona.profile import Persona
 from ..plugins.host import PluginHost
 from ..tools.mcp_host import MCPHost
+from ..reference.library import open_library
 from ..storage.store import Store
 from ..work.service import WorkTasks
 
@@ -70,9 +71,9 @@ class NetworkRuntime:
         self.events = EventHub()
         self.log_secrets = credentials(config)
         self.memory = memory
-        self.budget = ModelBudget(config, store, memory, root=config._instance_root) if budget is None else budget
+        self.budget = ModelBudget(config, store, root=config._instance_root) if budget is None else budget
         if slots is None and (config.limits.daily_tokens is not None or config.limits.scene_daily_tokens):
-            raise ValueError("配置模型金额预算时必须装配共享ModelSlots")
+            raise ValueError("配置每日 token 上限时必须装配共享 ModelSlots")
         if slots is not None:
             slots.admit = self.budget.check
         self.slots = slots
@@ -109,7 +110,6 @@ class NetworkRuntime:
         self.last_platform_error: str | None = None
         self.last_runtime_error: str | None = None
         self.stopped = asyncio.Event()
-        self.events_ready = asyncio.Event()
         self.connection_requested = asyncio.Event()
         self.disconnect_requested = False
         self.retention = Retention(self)
@@ -118,17 +118,19 @@ class NetworkRuntime:
         self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
-        self.accepting = config.onebot is None and config.telegram is None
+        self.reference = open_library(config._instance_root, memory, store, slots)
+        self.accepting = config.onebot is None
         self.storage_error: sqlite3.Error | None = None
         # Built-in scene commands (/help, /status ...); plugins keep priority for a name they register.
         self.commands = Commands()
         self.platform = open_platform(config, on_event=self._receive, on_error=self._platform_error,
-                                      on_connection_change=self._connection_changed, wait_for_events=self.events_ready.wait)
+                                      on_connection_change=self._connection_changed)
         self.audio = AudioService(store, {cfg.scene: cfg for cfg, _ in scene_configs},
                                   self.platform.call if config.delivery == "onebot" else None, slots,
                                   self.audio_updated)
         if tasks is not None:
             tasks.audio = self.audio
+            tasks.memory_call = lambda scene, arguments: self.chats[scene].toolset.run_memory(arguments)
         self.chats: dict[str, Chat] = {}
         for scene_config, persona in scene_configs:
             scene = scene_config.scene
@@ -166,6 +168,8 @@ class NetworkRuntime:
             external_tools=(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=True))
                             + ([] if self.mcp is None else self.mcp.tools_for(scene))),
             audio_service=self.audio,
+            plugins=self.plugins,
+            reference=self.reference,
             on_update=self.notify,
             on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
         )
@@ -182,11 +186,12 @@ class NetworkRuntime:
 
     async def upload_file(self, scene: str, file: str, name: str) -> UploadResult:
         if self.held(scene):
-            return UploadResult("failed", None, "宿主处于模拟发送，文件没有上传", None)
+            return UploadResult("simulated", None, None, None)
         return await self.platform.upload_file(scene, file, name)
 
     async def platform_call(self, action: str, params: dict, *, scene: str | None = None):
-        if action == "set_msg_emoji_like" and self.held(scene):
+        # While held only reads reach OneBot; actions that change QQ state are answered here.
+        if self.held(scene) and not action.startswith("get_"):
             return {"status": "ok", "retcode": 0, "data": None}
         return await self.platform.call(action, params)
 
@@ -210,6 +215,10 @@ class NetworkRuntime:
                     () if self.plugins is None else self.plugins.skills_for(scene))
                 chat.skills = select_skills(catalog, chat.persona.skills)
                 self.tasks.skills[scene] = chat.skills
+                # A memory plugin's tool comes and goes with the plugin.
+                self.tasks.data_tools[scene] = task_data_tools(chat.config, chat.persona,
+                                                               platform=self.config.delivery == 'onebot',
+                                                               memory=self.memory, plugins=self.plugins)
             chat.set_external_tools(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=self.status != "running"))
                                     + ([] if self.mcp is None else self.mcp.tools_for(scene)))
         self.notify()
@@ -305,8 +314,6 @@ class NetworkRuntime:
             return
         runner = self.runners.get(message.scene)
         if runner is None or message.scene in self.scene_service.retiring:
-            if message.scene.split(':', 2)[1] == 'group':
-                self.scene_service.observe(message.scene, raw)
             self._emit({"type": "receipt", "scene": message.scene, "status": "ignored",
                         "platform_message_id": message.platform_message_id})
             return
@@ -472,7 +479,6 @@ class NetworkRuntime:
                     self.refresh_external_tools()
                     self.accepting = self.platform.connected
                     self._status("running")
-                    self.events_ready.set()
                     self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
                                 "delivery": self.config.delivery})
                     pending.append(group.create_task(self.retention.run()))
@@ -528,6 +534,7 @@ class NetworkRuntime:
                             finally:
                                 try:
                                     await self.audio.close()
+                                    await self.reference.close()
                                 finally:
                                     await self.platform.close()
                     self._status("stopped")

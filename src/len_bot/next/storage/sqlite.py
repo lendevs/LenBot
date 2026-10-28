@@ -60,7 +60,7 @@ def checkpoint(path: Path) -> None:
         busy, frames, moved = db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
         if busy or frames != moved:
             raise sqlite3.OperationalError(f'{path} 的 WAL 未能完整写回（busy={busy}, frames={frames}, '
-                                           f'checkpointed={moved}）；确认实例已停止后重试')
+                                           f'checkpointed={moved}）；请确认实例已停止后重试')
 
 
 def fold_log(path: Path) -> bool:

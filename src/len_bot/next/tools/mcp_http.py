@@ -1,4 +1,4 @@
-"""Single-attempt MCP Streamable HTTP, without background GET, reconnection or request replay."""
+"""MCP Streamable HTTP request transport."""
 from __future__ import annotations
 
 import asyncio
@@ -99,7 +99,7 @@ class SingleHTTP:
                             await received.send(SessionMessage(reply))
                             if isinstance(reply, types.JSONRPCResponse | types.JSONRPCError):
                                 return
-                        raise MCPTransportError("MCP SSE ended without a final response; not resumed or replayed")
+                        raise MCPTransportError("MCP SSE ended before the final response")
                     else:
                         raise MCPTransportError(f"Unsupported MCP response content type {content_type!r}")
         except asyncio.CancelledError:

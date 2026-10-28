@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import Tabs from '../../ui/Tabs.vue'
-import BrowserTab from './BrowserTab.vue'
 import McpTab from './McpTab.vue'
 import SkillsTab from './SkillsTab.vue'
 import WebTab from './WebTab.vue'
@@ -12,7 +11,7 @@ import WorkerTab from './WorkerTab.vue'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const tabNames = ['mcp', 'skills', 'web', 'tasks', 'browser'] as const
+const tabNames = ['mcp', 'skills', 'web', 'tasks'] as const
 type Tab = (typeof tabNames)[number]
 const tab = computed<Tab>({
   get: () =>
@@ -29,8 +28,7 @@ const tabs = computed(() => tabNames.map((value) => ({ value, label: t(`capabili
       <McpTab v-if="tab === 'mcp'" />
       <SkillsTab v-else-if="tab === 'skills'" />
       <WebTab v-else-if="tab === 'web'" />
-      <WorkerTab v-else-if="tab === 'tasks'" />
-      <BrowserTab v-else />
+      <WorkerTab v-else />
     </KeepAlive>
   </div>
 </template>

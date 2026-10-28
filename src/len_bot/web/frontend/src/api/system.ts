@@ -23,7 +23,7 @@ export interface TextDelivery {
   max_interval_seconds: number | null
   chars_per_second: number | null
 }
-export type Delivery = 'simulated' | 'onebot' | 'telegram'
+export type Delivery = 'simulated' | 'onebot'
 
 /** `saved.connection`; number fields are null while their input is empty. */
 export interface Connection {
@@ -31,7 +31,6 @@ export interface Connection {
   owners: string[]
   onebot: SavedOneBot | null
   /** Edited in the config file only. */
-  telegram: Record<string, unknown> | null
   timezone: string
   delivery: Delivery
   max_steps: number | null
@@ -151,6 +150,17 @@ export interface UpdateState {
   notice: string[] | null
   rollback_loses_data: boolean
 }
+/** `deploy/updater/controller.py` Controller.snapshots(): one folder under the deployment's backups/. */
+export interface UpdateSnapshot {
+  name: string
+  /** Unix seconds, from the folder name. */
+  created: number
+  bytes: number
+  /** The snapshot finished writing its manifest. */
+  complete: boolean
+  /** The restore action offered now uses it; deleting it after a completed update removes that action. */
+  restore: boolean
+}
 export interface Release {
   tag: string
   version: string
@@ -164,7 +174,7 @@ const named = (value: string) => encodeURIComponent(value)
 export const systemApi = {
   /** `access_token` null keeps the saved one. */
   saveConnection: (
-    body: Omit<Connection, 'bot_id' | 'onebot' | 'telegram'> & {
+    body: Omit<Connection, 'bot_id' | 'onebot'> & {
       onebot: OneBot | null
       access_token: string | null
     },
@@ -201,4 +211,8 @@ export const systemApi = {
   updates: (signal?: AbortSignal) => http.get<UpdateState>('/api/host/updates', undefined, signal),
   releases: (signal?: AbortSignal) => http.get<Release[]>('/api/host/updates/releases', undefined, signal),
   updaterSession: () => http.post<{ url: string }>('/api/host/updates/session'),
+  snapshots: (signal?: AbortSignal) =>
+    http.get<UpdateSnapshot[]>('/api/host/updates/snapshots', undefined, signal),
+  deleteSnapshot: (name: string) =>
+    request<UpdateSnapshot[]>(`/api/host/updates/snapshots/${named(name)}`, { method: 'DELETE' }),
 }

@@ -149,7 +149,7 @@ def smoke_package(artifacts: Path, work: Path) -> dict:
             'mind': {'provider': 'primary', 'model': 'smoke', 'context_window_tokens': 8192},
             'compaction': {'input_tokens': 6000},
             'scene': 'onebot:group:80001', 'persona_id': 'smoke', 'persona_name': '冒烟角色', 'brief': '安装检查',
-            'voice_text': '简短', 'boundaries': '只用于安装检查', 'panel_port': panel_port,
+            'voice_text': '简短', 'boundaries': '安装检查', 'panel_port': panel_port,
             'username': 'smoke', 'password': 'smoke-password'}, headers={'X-Setup-Token': match[2]})
         assert status == 200, f'first setup answered {status}: {text}'
         result['setup'] = 'saved'

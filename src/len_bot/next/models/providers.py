@@ -14,7 +14,7 @@ CHAT_APIS = {'openai-chat', 'openai-responses', 'anthropic', 'gemini'}
 PROTOCOLS = [
     {'api': 'openai-chat', 'title': 'OpenAI 兼容聊天', 'base_url': '',
      'roles': ['mind', 'vision', 'memory', 'learner', 'worker', 'asr', 'embedding'],
-     'description': 'Chat Completions；兼容服务的工具、图片、语音和向量能力需以服务商说明为准。'},
+     'description': 'OpenAI Chat Completions 格式的服务。'},
     {'api': 'openai-responses', 'title': 'OpenAI Responses', 'base_url': 'https://api.openai.com/v1',
      'roles': ['mind', 'vision', 'memory', 'learner', 'worker'],
      'description': '原生 Responses；保留工具 ID 与加密推理续接，使用无服务端历史的请求。'},
@@ -25,9 +25,9 @@ PROTOCOLS = [
      'roles': ['mind', 'vision', 'memory', 'learner', 'worker'],
      'description': 'Gemini API（非 Vertex）；保留 thoughtSignature。图片使用内联数据。'},
     {'api': 'openai-audio', 'title': 'OpenAI 兼容语音转写', 'base_url': '',
-     'roles': ['asr'], 'description': '仅 audio/transcriptions，不能用于聊天。'},
+     'roles': ['asr'], 'description': 'audio/transcriptions 语音转写。'},
     {'api': 'openai-embeddings', 'title': 'OpenAI 兼容向量', 'base_url': '',
-     'roles': ['embedding'], 'description': '仅 embeddings，不能用于聊天。'},
+     'roles': ['embedding'], 'description': 'embeddings 向量。'},
     {'api': 'deepseek-search', 'title': 'DeepSeek 搜索与读取', 'base_url': 'https://api.deepseek.com/v1',
      'roles': ['search', 'read'], 'description': '按次计费的网页搜索和网页读取接口。'},
     {'api': 'tavily', 'title': 'Tavily', 'base_url': 'https://api.tavily.com',
@@ -73,16 +73,20 @@ def http_client(*, base_url: str, api_key: str, api: ProviderAPI,
 
 
 async def list_models(provider, *, timeout_seconds: float = 30) -> list[dict]:
-    """Read the provider's model catalog; capability limits are never guessed."""
-    from .client import ModelHTTPError, ModelProtocolError
+    """Read the provider's model catalog."""
+    from .client import ModelConnectionError, ModelHTTPError, ModelProtocolError
     items = []
     params = {}
     async with asyncio.timeout(timeout_seconds), http_client(base_url=provider.base_url, api_key=provider.api_key,
                            api=provider.api, timeout_seconds=timeout_seconds, proxy=provider.proxy) as client:
         while True:
-            response = await client.get('models', params=params)
+            try:
+                response = await client.get('models', params=params)
+            except httpx.TransportError as error:
+                raise ModelConnectionError(provider.base_url, error, provider.api_key) from error
             if not response.is_success:
-                raise ModelHTTPError(f'Model list HTTP {response.status_code}: {response.text.replace(provider.api_key, "[hidden]")[:2000]}')
+                raise ModelHTTPError(response.status_code, response.text.replace(provider.api_key, "[hidden]")[:2000],
+                                     response.headers.get("x-request-id"))
             body = response.text
             try:
                 body = response.json()

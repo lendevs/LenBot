@@ -1,4 +1,4 @@
-"""Build corresponding source and wheel in a separate tree; never replace a running panel."""
+"""Build matching source and wheel artifacts in a separate tree."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ REQUIRED_SOURCE = (
     'deploy/updater/controller.py', 'deploy/updater/native.py', 'deploy/updater/common.py', 'deploy/updater/recovery.html',
     'deploy/package/install.ps1',
     'deploy/package/install.sh', 'deploy/package/install.py',
-    'deploy/components.json', 'scripts/prepare_release.py', 'deploy/updater/init.py', 'deploy/browser/README.md',
-    '.github/workflows/release.yml', '.github/workflows/install-smoke.yml', 'scripts/smoke_install.py', 'scripts/prepare_component.py', 'scripts/package_browser.py',
+    'scripts/prepare_release.py', 'deploy/updater/init.py',
+    '.github/workflows/release.yml', '.github/workflows/install-smoke.yml', 'scripts/smoke_install.py',
     'scripts/collect_python_licenses.py',
     'scripts/collect_frontend_licenses.cjs', 'deploy/current/README.md',
     'deploy/current/lenbot.service', 'deploy/current/Dockerfile',
@@ -32,7 +32,6 @@ REQUIRED_SOURCE = (
     'deploy/current/first-setup.example.json',
     'deploy/current/services.compose.yaml',
     'deploy/current/start-asr.sh', 'deploy/current/asr.md',
-    'deploy/current/browserskill-files.md', 'deploy/current/browserskill-remote-files.patch', 'deploy/current/browserskill-LICENSE',
     'deploy/README.md', 'deploy/README.en.md', 'deploy/current/operations.md', 'CONTRIBUTING.md',
     'CONTRIBUTING.en.md', 'README.en.md', 'examples/personas/companion/persona.yaml', 'examples/replay/cases.json',
     'docker/next-worker/Dockerfile', 'docker/next-worker/lenbot-extension.ts',
@@ -43,7 +42,7 @@ FORBIDDEN_SOURCE = ('docs/', 'runtime/', '.runtime/', '.backups/', '.venv/', 'st
 
 
 def check_local_imports(package: dict[str, bytes]) -> int:
-    """Inspect literal package imports without importing business code or running the host."""
+    """Inspect literal package imports statically."""
     modules = {name[:-3].replace('/', '.') for name in package if name.endswith('.py')}
     prefixes = {name.rsplit('.', 1)[0] for name in modules}
     checked = 0
@@ -168,11 +167,11 @@ def build(project: Path, output: Path, *, offline: bool, npm_cache: Path | None)
     if output.is_relative_to(project) or project.is_relative_to(output):
         raise ValueError('Release output must be a separate directory outside the source tree')
     if output.exists():
-        raise FileExistsError(f'Release output is never overwritten: {output}')
+        raise FileExistsError(f'Release output directory already exists: {output}')
     output.mkdir(parents=True, mode=0o700)
     logs = output / 'logs'
     logs.mkdir()
-    # This controls dependency-build caches only, never application configuration.
+    # This controls dependency-build caches.
     environment = dict(os.environ)
     environment.setdefault('UV_CACHE_DIR', str(output / 'uv-cache'))
     npm_cache = output / 'npm-cache' if npm_cache is None else npm_cache.expanduser().resolve()
@@ -234,8 +233,8 @@ def build(project: Path, output: Path, *, offline: bool, npm_cache: Path | None)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('output', type=Path, help='New output directory outside this checkout; never overwritten')
-    parser.add_argument('--offline', action='store_true', help='Require build dependency caches; never retry online')
+    parser.add_argument('output', type=Path, help='New output directory outside this checkout')
+    parser.add_argument('--offline', action='store_true', help='Use cached build dependencies in offline mode')
     parser.add_argument('--npm-cache', type=Path, help='Explicit existing dependency cache; defaults to new output/npm-cache')
     args = parser.parse_args()
     result = build(Path(__file__).resolve().parents[1], args.output, offline=args.offline, npm_cache=args.npm_cache)

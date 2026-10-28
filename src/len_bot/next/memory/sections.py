@@ -107,3 +107,89 @@ def put_sections(db: sqlite3.Connection, scope: str, path: str, content: str) ->
         db.execute('INSERT INTO memory_fts(rowid,content) VALUES(?,?)', (rowid, folded))
         ids.append(rowid)
     return ids
+
+
+_SENTENCE = re.compile(r'[^。！？!?；;\n]*(?:[。！？!?；;]+\n?|\n|$)')
+GAP = '\n…\n'
+
+
+def query_terms(query: str) -> tuple[list[str], list[str]]:
+    """The distinct three-character fragments within each line of ``query``, and its one- or two-character
+    lines, case-folded. A fragment never spans a line break or starts or ends with a space, so two
+    messages joined into one query do not match a heading followed by a line."""
+    terms: dict[str, None] = {}
+    short: dict[str, None] = {}
+    for line in query.casefold().splitlines():
+        line = line.strip()
+        if 0 < len(line) < 3:
+            short[line] = None
+        for index in range(len(line) - 2):
+            term = line[index:index + 3]
+            if term.strip() == term:
+                terms[term] = None
+    return list(terms), list(short)
+
+
+def evidence(text: str, query: str) -> int:
+    """How many of the query's fragments and short lines ``text`` contains."""
+    folded = text.casefold()
+    count = sum(part in folded for part in (part for parts in query_terms(query) for part in parts))
+    if count:
+        return count
+    pairs = sum(part in folded for part in query_bigrams(query))
+    return pairs if pairs >= 3 else 0
+
+
+def query_bigrams(query: str) -> list[str]:
+    """Distinct Chinese two-character fragments, used together to match reordered wording."""
+    return list(dict.fromkeys(run[index:index + 2] for run in re.findall(r'[\u3400-\u9fff]{2,}', query)
+                             for index in range(len(run) - 1)))
+
+
+def excerpt(text: str, query: str, limit: int) -> str:
+    """The part of ``text`` that best answers ``query`` within ``limit`` characters.
+
+    Leading heading lines stay in front. The body is cut at sentence ends and the window holding the most
+    distinct query trigrams wins; among equal windows the one ending later wins, since a correction is
+    written after what it corrects, then the one starting earlier, for more context. A section found by
+    meaning alone shares no trigram, so its latest part is shown.
+    """
+    if len(text) <= limit:
+        return text
+    lines = text.splitlines(keepends=True)
+    head = ''
+    for line in lines:
+        if line.strip() and not line.lstrip().startswith('#'):
+            break
+        if len(head) + len(line) > limit // 4:
+            break
+        head += line
+    body = text[len(head):]
+    room = limit - len(head) - 2 * len(GAP)
+    terms = {term for term in query_terms(query)[0] if term in body.casefold()}
+    if not terms:
+        pairs = {term for term in query_bigrams(query) if term in body}
+        if len(pairs) >= 3:
+            terms = pairs
+    if room <= 0:
+        return text[:limit]
+    units: list[str] = []
+    for sentence in _SENTENCE.findall(body):
+        units.extend(sentence[offset:offset + room] for offset in range(0, len(sentence), room))
+    units = [unit for unit in units if unit]
+    best: tuple[int, int, int] = (-1, 0, 0)
+    end, length = 0, 0
+    for start in range(len(units)):
+        if end < start:
+            end, length = start, 0
+        while end < len(units) and length + len(units[end]) <= room:
+            length += len(units[end])
+            end += 1
+        window = ''.join(units[start:end]).casefold()
+        best = max(best, (sum(term in window for term in terms), end, -start))
+        length -= len(units[start])
+    _, end, start = best
+    start = -start
+    prefix = (head.rstrip('\n') + (GAP if start else '\n')) if head else (GAP.lstrip('\n') if start else '')
+    suffix = GAP.rstrip('\n') if end < len(units) else ''
+    return prefix + ''.join(units[start:end]).strip('\n') + suffix

@@ -199,7 +199,7 @@ const liveTone = computed(() =>
 
 <template>
   <section
-    class="flex h-[min(78vh,820px)] min-h-[420px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface"
+    class="flex h-[min(calc(100dvh-240px),820px)] min-h-[420px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface"
   >
     <header class="flex items-center gap-3 border-b border-line px-4 py-2.5">
       <div class="flex min-w-0 flex-1 flex-col">

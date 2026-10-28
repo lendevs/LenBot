@@ -69,16 +69,16 @@ def check_memory(source: InitialMemory, config: LabConfig, history: Path) -> Non
         vectors = db.execute("SELECT 1 FROM sqlite_master WHERE name='memory_vec'").fetchone() is not None
         if row is not None:
             if embedding is None:
-                raise ValueError('Seed has vectors but root configuration selects FTS-only; no automatic rebuild')
+                raise ValueError('Seed has vectors but root configuration selects FTS-only; rebuild the seed offline or configure the same embedding')
             expected = (embedding.provider, config.models.providers[embedding.provider].base_url, embedding.model)
             if row[:3] != expected or (embedding.dimensions is not None and row[3] != embedding.dimensions):
                 raise ValueError('Seed vector binding differs from configured memory model')
             if not vectors:
-                raise ValueError('Seed vector binding has no vector table; rebuild explicitly offline')
+                raise ValueError('Seed vector binding has no vector table; rebuild the seed offline')
         elif embedding is not None and db.execute('SELECT 1 FROM memory_files LIMIT 1').fetchone() is not None:
-            raise ValueError('Seed contains memories without configured vectors; rebuild explicitly while offline')
+            raise ValueError('Seed contains memories without configured vectors; rebuild the seed offline')
         elif vectors:
-            raise ValueError('Seed vector table has no binding; rebuild explicitly offline')
+            raise ValueError('Seed vector table has no binding; rebuild the seed offline')
     with closing(offline_database(source.jobs, 0x4C424D4A, FORMAT_VERSION)) as jobs:
         scopes = {row[0] for row in jobs.execute(' UNION '.join(
             f'SELECT scene FROM {name}' for name in ('memory_cursors', 'memory_jobs', 'memory_exclusions',

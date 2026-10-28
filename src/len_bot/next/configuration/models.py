@@ -47,6 +47,7 @@ class Binding(BaseModel):
     temperature: float | None = Field(default=0.6, ge=0, le=2, allow_inf_nan=False)
     max_output_tokens: int = Field(default=1024, gt=0)
     timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    thinking: Literal["enabled", "disabled"] | None = None
     reasoning_effort: str | None = None
     # Effort of a request that answers new messages rather than tool results; empty means reasoning_effort.
     quick_reasoning_effort: str | None = None
@@ -95,33 +96,6 @@ class Models(BaseModel):
 
     providers: dict[str, Provider]
     roles: Roles
-
-    @model_validator(mode="before")
-    @classmethod
-    def removed_failover(cls, data):
-        """Name the removed backup-model keys instead of letting them read as active settings.
-
-        An empty ``fallbacks`` list, as saved by an interim build's panel, is inert and dropped.
-        """
-        if not isinstance(data, dict):
-            return data
-        removed = []
-        if "failover" in data:
-            removed.append("models.failover")
-        roles = data.get("roles")
-        if isinstance(roles, dict):
-            cleaned = {}
-            for role, binding in roles.items():
-                if isinstance(binding, dict) and "fallbacks" in binding:
-                    if binding["fallbacks"] != []:
-                        removed.append(f"models.roles.{role}.fallbacks")
-                    binding = {key: value for key, value in binding.items() if key != "fallbacks"}
-                cleaned[role] = binding
-            data = {**data, "roles": cleaned}
-        if removed:
-            raise ValueError(f"{'、'.join(removed)} 已移除：LenBot 出错时不会自动更换模型或服务，"
-                             "这些备用模型设置不会生效，请从配置中删除")
-        return data
 
     @model_validator(mode="after")
     def known_providers(self) -> Models:

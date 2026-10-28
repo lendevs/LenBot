@@ -41,7 +41,7 @@ class TranscribeArguments(BaseModel):
 
 TRANSCRIBE_TOOL = {"type": "function", "function": {
     "name": "transcribe", "description": "把本场景已保存消息中的语音转成文字。message是实际平台消息ID，"
-    "audio从1开始按该消息record段顺序计数；refresh仅重新识别已保存音频，不重新下载。",
+    "audio从1开始按该消息record段顺序计数；refresh 用已保存的音频重新识别。",
     "parameters": TranscribeArguments.model_json_schema(),
 }}
 
@@ -102,10 +102,11 @@ async def process_audio(store, config, arguments, *, turn_id, platform, slots, d
             call_id = (store.start_call(turn_id, "asr", request) if turn_id is not None
                        else calls.start_call(*position, request))
             def end_call(response, usage, error=None, *, tokens=None):
+                served = (binding.provider, binding.model)
                 if turn_id is None:
-                    calls.end_call(call_id, response, usage, error, tokens=tokens)
+                    calls.end_call(call_id, response, usage, error, tokens=tokens, model=served)
                 else:
-                    store.end_call(call_id, response, usage, error, tokens=tokens)
+                    store.end_call(call_id, response, usage, error, tokens=tokens, model=served)
             notify()
             try:
                 reply = await transcribe_audio(binding, base_url=provider.base_url, api_key=provider.api_key, wav=row["wav"], proxy=provider.proxy)

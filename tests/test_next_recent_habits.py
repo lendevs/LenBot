@@ -45,6 +45,13 @@ def test_varied_short_lines_need_no_reminder():
     assert recent_habits(_history(*(_say(line) for line in VARIED))) is None
 
 
+def test_common_sentence_particles_are_not_habits():
+    lines = ["今天去不去吧", "那就这样吧呢", "你说呢啊", "好呀晚点吧", "真的假的啦", "也行嘛哦", "走啊", "来吧"]
+    assert recent_habits(_history(*(_say(line) for line in lines))) is None
+    text = recent_habits(_history(*(_say(line + "喵") for line in lines)))
+    assert "8 条用了「喵」" in text and "「吧」" not in text
+
+
 def test_punctuation_and_pictures_with_text_are_left_to_the_persona():
     lines = [line + "！~" for line in VARIED]
     assert recent_habits(_history(*(_say(line, f"{index}.webp") for index, line in enumerate(lines)))) is None

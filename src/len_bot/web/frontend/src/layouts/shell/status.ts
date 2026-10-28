@@ -17,7 +17,6 @@ const tones: Record<string, Tone> = {
 export function useConnectionStatus() {
   const { t } = useI18n()
   const state = computed(() => host.state as HostState | null)
-  const platform = computed(() => (state.value?.connection.mode === 'telegram' ? 'Telegram' : 'QQ'))
   const online = computed(() =>
     Boolean(state.value?.connection.connected && state.value.connection.accepting),
   )
@@ -31,12 +30,12 @@ export function useConnectionStatus() {
     const connection = value.connection
     if (online.value) return { text: t('shell.status.online'), tone: 'success' }
     if (connection.status === 'running') {
-      return { text: t('shell.status.platformOffline', { platform: platform.value }), tone: 'warning' }
+      return { text: t('shell.status.platformOffline'), tone: 'warning' }
     }
     return {
-      text: t(`shell.status.runtime.${connection.status}`, { platform: platform.value }),
+      text: t(`shell.status.runtime.${connection.status}`),
       tone: tones[connection.status] ?? 'neutral',
     }
   })
-  return { platform, online, status }
+  return { online, status }
 }

@@ -18,6 +18,7 @@ export const keys = {
     pendingRestart: () => ['host', 'pending-restart'] as const,
     availableScenes: () => ['host', 'available-scenes'] as const,
     settings: () => ['host', 'settings'] as const,
+    workerDefaults: () => ['host', 'worker-defaults'] as const,
     limits: () => ['host', 'limits'] as const,
     eventLoop: () => ['host', 'event-loop'] as const,
     modelProtocols: () => ['host', 'model-protocols'] as const,
@@ -32,6 +33,7 @@ export const keys = {
     prompt: (name: string) => ['system', 'prompts', name] as const,
     updates: () => ['system', 'updates'] as const,
     releases: () => ['system', 'updates', 'releases'] as const,
+    snapshots: () => ['system', 'updates', 'snapshots'] as const,
     /** Read on demand or by the page's own follow timer; host events would re-read files many times a second. */
     logs: (filter: object) => ['system', 'logs', filter] as const,
     logFiles: () => ['system', 'log-files'] as const,
@@ -81,7 +83,7 @@ export const keys = {
     all: () => ['personas'] as const,
     /** One role's files; outside `personas`, so a library refresh does not read an open form again. */
     role: (key: string) => ['persona', key] as const,
-    part: (key: string, part: 'profile' | 'knowledge' | 'stickers' | 'files' | 'abilities') =>
+    part: (key: string, part: 'profile' | 'knowledge' | 'stickers' | 'files' | 'abilities' | 'preview') =>
       ['persona', key, part] as const,
   },
   plugins: {
@@ -101,6 +103,12 @@ export const keys = {
     history: (scene: string, path: string) => ['memory', scene, 'history', path] as const,
     ingest: () => ['memory', 'ingest'] as const,
     embeddingCalls: (scene: string, scope: string) => ['memory', scene, scope, 'embedding-calls'] as const,
+  },
+  /** Under `host`, so the event raised when a group's files finish processing refreshes it. */
+  reference: {
+    scene: (scene: string) => ['host', 'reference', scene] as const,
+    groupFiles: (scene: string, folder: string | null) =>
+      ['reference', scene, 'group-files', folder] as const,
   },
   scene: {
     all: (scene: string) => ['scene', scene] as const,

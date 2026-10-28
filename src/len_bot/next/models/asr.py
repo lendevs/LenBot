@@ -1,4 +1,4 @@
-"""A single explicit audio/transcriptions request; no chat fallback or automatic retry."""
+"""Call the configured audio/transcriptions endpoint."""
 from __future__ import annotations
 
 import asyncio

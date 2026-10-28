@@ -13,7 +13,7 @@ from uuid import uuid4
 from .next.config import HostConfig
 from .next.platform.identity import validate_scene
 from .next.platform.messages import ChatMessage, Sender, Segment
-from .plugin import Content, Image, Sent, Text
+from .plugin import CompactRequest, Content, Image, RecallRequest, Sent, Text
 from .next.plugins.host import PluginHost
 from .next.plugins.data import write_version
 from .next.plugins.manifest import parse_manifest
@@ -90,12 +90,12 @@ class PluginTest:
     def __init__(self, package: Path, *, config: dict | None = None,
                  scenes: Sequence[str] = ('onebot:group:80001',), owners: Sequence[str] = (),
                  now: Callable[[], float] = time.time, models: dict | None = None,
-                 data: Path | None = None, data_version: int | None = None):
-        """``data`` is copied in as the plugin's existing data directory; ``data_version`` records the
+                 data: Path | None = None, data_version: int | None = None, memory: bool = False):
+        """``memory`` makes the plugin every scene's ``memory_plugin``. ``data`` is copied in as the plugin's existing data directory; ``data_version`` records the
         version it was written with (data without one counts as 1). A higher manifest ``data_version``
         then runs ``migrate_data`` before ``start``, as on a real upgrade."""
         self.now, self.models = now, models
-        self.data, self.data_version = data, data_version
+        self.data, self.data_version, self.memory_scenes = data, data_version, memory
         self.package = Path(package)
         self.manifest = parse_manifest(self.package / 'plugin.toml')
         self.manifest.require_compatible()
@@ -125,7 +125,8 @@ class PluginTest:
                                               'api_key': 'synthetic'}},
                        'roles': {'mind': {'provider': 'local', 'model': 'local', 'context_window_tokens': 8192}}},
             'plugins': {'paths': [plugins], 'data_directory': root / 'plugin-data', self.manifest.name: self.values},
-            'scenes': {scene: {'persona': root / 'unused-role', 'plugins': [self.manifest.name]}
+            'scenes': {scene: {'persona': root / 'unused-role', 'plugins': [self.manifest.name],
+                               **({'memory_plugin': self.manifest.name} if self.memory_scenes else {})}
                        for scene in self.scenes},
         })
         try:
@@ -197,6 +198,23 @@ class PluginTest:
         """Call the actual registered tool with normal schema and scene checks."""
         tools = {item.name: item for item in self.host.tools_for(scene)}
         return await tools[name].call(scene, arguments)
+
+    async def memory(self, arguments: dict, *, scene: str = 'onebot:group:80001') -> str:
+        """Call ``@memory_tool`` with normal schema and scene checks, as the chat memory tool would."""
+        return await self.host.run_memory_tool(self.manifest.name, scene, arguments)
+
+    async def recall(self, *, scene: str = 'onebot:group:80001', persona: str = 'test', recap: str | None = None,
+                     tasks: Sequence[str] = (), budget_chars: int = 1500) -> list[dict]:
+        """Run ``@recall`` on the scene's latest 8 added messages; return the items the chat would receive."""
+        messages = tuple(item for item in self.host.messages if item.scene == scene)[-8:]
+        return await self.host.recall(self.manifest.name, RecallRequest(
+            scene, persona, uuid4().hex, self.host.now(), messages, recap, tuple(tasks), budget_chars))
+
+    async def compact(self, source: str, *, scene: str = 'onebot:group:80001', persona: str = 'test',
+                      budget_tokens: int = 4096) -> str:
+        """Run ``@compact`` on ``source`` with the host's checks; return the recap the host would adopt."""
+        return await self.host.compact(self.manifest.name, CompactRequest(
+            scene, persona, uuid4().hex, source, budget_tokens))
 
     def events(self, scene: str = 'onebot:group:80001') -> list[dict]:
         return PluginStore(self.host.runtime.store).plugin_events(scene)

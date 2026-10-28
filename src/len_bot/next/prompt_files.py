@@ -87,7 +87,7 @@ def check(name: str, text: str) -> None:
         return  # the host reads this file as plain text, so `$` has no special meaning
     template = Template(text)
     if not template.is_valid():
-        raise ValueError("有无法识别的 $ 写法；要写字面的 $ 请写成 $$")
+        raise ValueError("有无法识别的 $ 写法；字面的 $ 请写作 $$")
     found = template.get_identifiers()
     missing = [f"${item}" for item in expected if item not in found]
     unknown = [f"${item}" for item in found if item not in expected]

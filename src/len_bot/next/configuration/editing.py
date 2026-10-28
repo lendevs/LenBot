@@ -42,7 +42,7 @@ def index_maintenance(config: HostConfig) -> list[dict]:
                          changed(stored, binding) if stored is not None else
                          db.execute('SELECT 1 FROM memory_files LIMIT 1').fetchone() is not None)
             if needs:
-                notes.append({'component': '记忆向量', 'message': '记忆索引与保存的向量配置不同，普通重启不会重建索引。',
+                notes.append({'component': '记忆向量', 'message': '记忆索引与保存的向量配置不同，需要停机重建。',
                               'command': 'python -m len_bot.next.maintenance.memory_reindex'})
     if config.database.is_file():
         with closing(connect(config.database, readonly=True)) as db:
@@ -129,7 +129,7 @@ def save_config(root: Path, running: HostConfig, edit: Callable[[dict, HostConfi
                    for key in ("docker_host", "workspace_root", "runtime_root", "storage_pool")):
                 raise ValueError(
                     "运行中不能保存任务 Docker 地址、工作区、运行目录或存储池的迁移；"
-                    "先停机清理任务容器，再搬迁原文件和修改根配置。根配置未保存"
+                    "请先停机清理任务容器，再迁移原文件并修改根配置。根配置未保存"
                 )
         temporary.replace(path)
         sync_directory(path.parent)

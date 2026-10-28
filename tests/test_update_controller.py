@@ -177,7 +177,7 @@ def test_blocked_plugin_is_listed_and_preparing_again_replaces_the_candidate(mak
     assert backend.discarded == ['0.2.0']
 
 
-@pytest.mark.parametrize('fail', ['stop', 'backup'])
+@pytest.mark.parametrize('fail', ['stop'])
 def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fail):
     backend = Backend(fail=fail)
     controller = make(backend)
@@ -185,8 +185,37 @@ def test_failure_before_snapshot_offers_starting_the_unchanged_program(make, fai
     state = run(controller, 'apply')
     assert state['status'] == 'failed' and state['stopped'] and not state['snapshot_complete']
     assert state['actions'] == ['start'] and state['current_version'] == '0.1.0'
-    with pytest.raises(ValueError, match='现在不能恢复快照；可以：启动程序'):
+    with pytest.raises(ValueError, match='当前不能恢复快照；可执行：启动程序'):
         controller.submit('restore', {})
+    backend.fail = None
+    assert run(controller, 'start')['status'] == 'complete' and backend.running
+
+
+def test_backup_failure_restarts_the_previous_program_and_removes_the_partial_snapshot(make):
+    backend = Backend(fail='backup')
+    def backup(snapshot):
+        (snapshot / '0').mkdir(parents=True)
+        (snapshot / '0/lenbot.db').write_bytes(b'partial')
+        backend.step('backup')
+    backend.backup = backup
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'rolled_back' and not state['stopped'] and not state['snapshot_complete']
+    assert not Path(state['snapshot']).exists() and controller.snapshots() == []
+    assert state['current_version'] == '0.1.0' and backend.running and state['actions'] == ['prepare']
+    assert state['error'] == '快照失败，已重新启动 0.1.0：RuntimeError: synthetic backup failure'
+    assert backend.calls[backend.calls.index('backup'):] == ['backup', 'start_previous', 'ready_previous']
+
+
+@pytest.mark.parametrize('fail', ['start_previous', 'ready_previous'])
+def test_backup_failure_with_failed_restart_keeps_both_errors_and_manual_start(make, fail):
+    backend = Backend(fail=('backup', fail))
+    controller = make(backend)
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    state = run(controller, 'apply')
+    assert state['status'] == 'failed' and state['actions'] == ['start'] and not state['snapshot_complete']
+    assert 'synthetic backup failure' in state['error'] and f'synthetic {fail} failure' in state['error']
     backend.fail = None
     assert run(controller, 'start')['status'] == 'complete' and backend.running
 
@@ -220,7 +249,7 @@ def test_rollback_that_cannot_restore_keeps_the_manual_restore(make):
     assert state['status'] == 'failed' and state['stage'] == 'rollback' and state['actions'] == ['restore']
     assert state['snapshot_complete'] and state['stopped']
     assert '自动恢复快照也失败' in state['error'] and 'synthetic ready failure' in state['error']
-    with pytest.raises(ValueError, match='现在不能启动程序'):
+    with pytest.raises(ValueError, match='当前不能启动程序'):
         controller.submit('start', {})
     backend.fail = None
     restored = run(controller, 'restore')
@@ -234,7 +263,7 @@ def test_rollback_whose_previous_program_does_not_start_offers_start(make):
     run(controller, 'prepare', {'tag': 'v0.2.0'})
     state = run(controller, 'apply')
     assert state['status'] == 'failed' and state['stage'] == 'rollback_start' and state['actions'] == ['start']
-    assert state['current_version'] == '0.1.0' and '已恢复快照，但旧版本没有启动' in state['error']
+    assert state['current_version'] == '0.1.0' and '已恢复快照，但旧版本未能启动' in state['error']
     backend.fail = None
     assert run(controller, 'start')['status'] == 'complete'
 
@@ -260,12 +289,12 @@ def test_new_version_that_never_reconnects_to_qq_is_rolled_back(make):
     assert state['status'] == 'rolled_back' and state['failed_stage'] == 'connect'
     assert state['current_version'] == '0.1.0' and backend.running
     assert state['error'] == ('更新到 0.2.0 失败，已自动恢复到 0.1.0：'
-                              'TimeoutError: 新版本 0.3 秒内没有连上 QQ（更新前是连上的）')
+                              'TimeoutError: 新版本 0.3 秒内未连接 QQ（更新前已连接）')
 
 
-@pytest.mark.parametrize(('before', 'warning'), [(False, '更新前后都没有连上 QQ；'),
-                                                 (None, '新版本没有连上 QQ，更新前的程序没有报告连接状态'),
-                                                 ('absent', '新版本没有连上 QQ，更新前的程序没有报告连接状态')])
+@pytest.mark.parametrize(('before', 'warning'), [(False, '更新前后均未连接 QQ；'),
+                                                 (None, '新版本未连接 QQ（更新前的程序未报告连接状态）'),
+                                                 ('absent', '新版本未连接 QQ（更新前的程序未报告连接状态）')])
 def test_qq_offline_before_the_update_only_warns(make, before, warning):
     backend = Backend(platform={'0.1.0': before, '0.2.0': False})
     controller = make(backend)
@@ -274,7 +303,7 @@ def test_qq_offline_before_the_update_only_warns(make, before, warning):
     state = run(controller, 'apply')
     assert state['status'] == 'complete' and state['current_version'] == '0.2.0'
     assert state['platform_before'] is (False if before is False else None)
-    assert state['warning'].startswith(warning) and state['warning'].endswith('请检查 QQ 端和连接设置。')
+    assert state['warning'].startswith(warning) and state['warning'].endswith('请检查 QQ 客户端和连接设置。')
     assert 'connect' not in [json.loads(line).get('stage') for line in
                              (controller.root / 'updates/updater.jsonl').read_text().splitlines()]
 
@@ -331,7 +360,7 @@ def test_unknown_and_out_of_order_actions_are_refused(make):
     controller = make(Backend())
     with pytest.raises(ValueError, match='未知'):
         controller.submit('rollback', {})
-    with pytest.raises(ValueError, match='现在不能停机升级；可以：准备更新'):
+    with pytest.raises(ValueError, match='当前不能停机升级；可执行：准备更新'):
         controller.submit('apply', {})
 
 
@@ -476,3 +505,176 @@ def test_next_action_waits_for_the_finishing_operation_to_release(make):
     assert controller.submit('restore', {}) == {'accepted': True}
     with controller.operation:
         assert controller.state['status'] == 'restored'
+
+
+def _snapshot(backups: Path, name: str, data: bytes, *, complete: bool = True) -> Path:
+    path = backups / name
+    (path / '0').mkdir(parents=True)
+    (path / '0/lenbot.db').write_bytes(data)
+    if complete:
+        (path / 'snapshot.json').write_text('[]\n', encoding='utf-8')
+    return path
+
+
+def test_snapshots_are_listed_newest_first_and_the_one_a_failed_update_needs_stays(make):
+    from datetime import datetime, timezone
+    controller = make(Backend())
+    backups = controller.root / 'backups'
+    older = _snapshot(backups, '20261001-080000-0000000a', b'x' * 10)
+    newer = _snapshot(backups, '20261020-093000-0000000b', b'y' * 100, complete=False)
+    (backups / 'notes.txt').write_text('其他文件', encoding='utf-8')
+    (backups / 'manual-copy').mkdir()
+    controller.state.update(status='failed', stage='migrate', snapshot=str(newer), snapshot_complete=True)
+    assert controller.snapshots() == [
+        {'name': newer.name, 'bytes': 100, 'complete': False, 'restore': True,
+         'created': datetime(2026, 10, 20, 9, 30, tzinfo=timezone.utc).timestamp()},
+        {'name': older.name, 'bytes': 13, 'complete': True, 'restore': False,
+         'created': datetime(2026, 10, 1, 8, tzinfo=timezone.utc).timestamp()}]
+    with pytest.raises(ValueError, match='恢复需要使用此快照'):
+        controller.delete_snapshot(newer.name)
+    for name in ('../updates', 'manual-copy', '20261021-000000-0000000c'):
+        with pytest.raises(LookupError):
+            controller.delete_snapshot(name)
+    assert [item['name'] for item in controller.delete_snapshot(older.name)] == [newer.name]
+    assert not older.exists() and (backups / 'notes.txt').exists() and (backups / 'manual-copy').exists()
+    assert controller.status()['actions'] == ['restore']
+    controller.state['status'] = 'restoring'
+    with pytest.raises(ValueError, match='正在执行'):
+        controller.delete_snapshot(newer.name)
+
+
+def test_deleting_the_snapshot_of_a_completed_update_removes_its_restore(make):
+    controller = make(Backend())
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    done = run(controller, 'apply')
+    assert done['actions'] == ['prepare', 'restore']
+    snapshot = Path(done['snapshot'])
+    _snapshot(snapshot.parent, snapshot.name, b'z')
+    assert controller.snapshots()[0]['restore']
+    assert controller.delete_snapshot(snapshot.name) == []
+    assert controller.status()['actions'] == ['prepare'] and not snapshot.exists()
+    assert json.loads(controller.state_file.read_text(encoding='utf-8'))['snapshot_complete'] is False
+
+
+def test_snapshot_endpoints_list_and_delete(make, tmp_path):
+    import threading
+    import urllib.error
+    import urllib.request
+    (tmp_path / 'instance').mkdir()
+    controller = make(Backend())
+    controller.backend.instance = tmp_path / 'instance'
+    kept = _snapshot(tmp_path / 'backups', '20261020-093000-0000000b', b'y')
+    _snapshot(tmp_path / 'backups', '20261001-080000-0000000a', b'x')
+    controller.state.update(status='failed', snapshot=str(kept), snapshot_complete=True)
+    http = updater.server(controller)
+    thread = threading.Thread(target=http.serve_forever)
+    thread.start()
+    reference = json.loads((tmp_path / 'instance/.runtime/update-control.json').read_text())
+
+    def call(method: str, path: str, token: str = reference['token']) -> tuple[int, object]:
+        request = urllib.request.Request(reference['endpoint'] + path, method=method,
+                                         headers={'Authorization': 'Bearer ' + token})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+    try:
+        assert call('GET', '/api/snapshots', 'wrong')[0] == 401
+        assert call('GET', '/api/snapshots', 'é')[0] == 401
+        code, listed = call('GET', '/api/snapshots')
+        assert code == 200 and [item['name'] for item in listed] == [kept.name, '20261001-080000-0000000a']
+        code, refused = call('DELETE', '/api/snapshots/' + kept.name)
+        assert code == 409 and '恢复需要使用此快照' in refused['detail']
+        assert call('DELETE', '/api/snapshots/20261001-080000-00000000')[0] == 404
+        assert call('DELETE', '/api/status')[0] == 404
+        code, left = call('DELETE', '/api/snapshots/20261001-080000-0000000a')
+        assert code == 200 and [item['name'] for item in left] == [kept.name]
+    finally:
+        http.shutdown()
+        thread.join(5)
+        http.server_close()
+
+
+def test_concurrent_deletes_of_one_snapshot_remove_it_once(make):
+    import threading
+    controller = make(Backend())
+    snapshot = _snapshot(controller.root / 'backups', '20261001-080000-0000000a', b'x')
+    results = []
+
+    def delete():
+        try:
+            results.append(controller.delete_snapshot(snapshot.name))
+        except LookupError as error:
+            results.append(error)
+    controller.operation.acquire()
+    threads = [threading.Thread(target=delete) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    time.sleep(0.1)
+    controller.operation.release()
+    for thread in threads:
+        thread.join(15)
+    assert sorted(map(type, results), key=str) == [LookupError, list] and not snapshot.exists()
+
+
+def test_snapshot_list_skips_other_names_and_files_removed_meanwhile(make, monkeypatch):
+    controller = make(Backend())
+    backups = controller.root / 'backups'
+    kept = _snapshot(backups, '20261001-080000-0000000a', b'x' * 10)
+    _snapshot(backups, '20261399-999999-0000000b', b'y')
+    _snapshot(backups, '２０２６１００１-０８００００-0000000c', b'z')
+    walk = updater.os.walk
+    monkeypatch.setattr(updater.os, 'walk', lambda path: [*walk(path), (str(path), [], ['removed-meanwhile'])])
+    assert [(item['name'], item['bytes']) for item in controller.snapshots()] == [(kept.name, 13)]
+
+
+def test_a_removal_that_stops_halfway_keeps_the_restore_off_and_can_be_repeated(make, monkeypatch):
+    controller = make(Backend())
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    snapshot = Path(run(controller, 'apply')['snapshot'])
+    _snapshot(snapshot.parent, snapshot.name, b'z')
+    remove_tree = updater.remove_tree
+
+    def halfway(path):
+        (path / 'snapshot.json').unlink()
+        raise PermissionError('synthetic removal failure')
+    monkeypatch.setattr(updater, 'remove_tree', halfway)
+    with pytest.raises(PermissionError):
+        controller.delete_snapshot(snapshot.name)
+    assert controller.status()['actions'] == ['prepare'] and not snapshot.exists()
+    listed, = controller.snapshots()
+    assert listed['name'] == snapshot.name and not listed['complete'] and not listed['restore']
+    monkeypatch.setattr(updater, 'remove_tree', remove_tree)
+    assert controller.delete_snapshot(snapshot.name) == [] and not list(snapshot.parent.iterdir())
+
+
+def test_a_snapshot_that_cannot_be_moved_keeps_its_restore(make, monkeypatch):
+    controller = make(Backend())
+    run(controller, 'prepare', {'tag': 'v0.2.0'})
+    snapshot = Path(run(controller, 'apply')['snapshot'])
+    _snapshot(snapshot.parent, snapshot.name, b'z')
+
+    def refused(self, target):
+        raise PermissionError('synthetic rename failure')
+    monkeypatch.setattr(updater.Path, 'rename', refused)
+    with pytest.raises(PermissionError):
+        controller.delete_snapshot(snapshot.name)
+    assert controller.status()['actions'] == ['prepare', 'restore'] and snapshot.is_dir()
+    assert json.loads(controller.state_file.read_text(encoding='utf-8'))['snapshot_complete'] is True
+
+
+def test_read_only_files_are_removed_with_their_snapshot(make, monkeypatch):
+    import stat
+    controller = make(Backend())
+    snapshot = _snapshot(controller.root / 'backups', '20261001-080000-0000000a', b'x')
+    (snapshot / '0/lenbot.db').chmod(stat.S_IREAD)
+    unlink = os.unlink
+
+    def windows_unlink(path, *, dir_fd=None):
+        # Windows refuses to delete a file with the read-only attribute.
+        if not os.stat(path, dir_fd=dir_fd).st_mode & stat.S_IWRITE:
+            raise PermissionError(13, 'Access is denied', path)
+        unlink(path, dir_fd=dir_fd)
+    monkeypatch.setattr(os, 'unlink', windows_unlink)
+    assert controller.delete_snapshot(snapshot.name) == [] and not snapshot.exists()

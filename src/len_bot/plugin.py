@@ -73,6 +73,35 @@ def background(every: str):
     return _mark(("background", seconds))
 
 
+def memory_tool(description: str):
+    """The chat ``memory`` tool for scenes whose ``memory_plugin`` names this plugin.
+
+    Handler ``(self, ctx: Invocation, ...)`` with typed named arguments, as for ``tool``; it replaces
+    the native memory tool there, and ``ctx.memory`` and task workers in those scenes call it too.
+    At most one per plugin; in-process plugins only.
+    """
+    return _mark(("memory_tool", description))
+
+
+def recall():
+    """Automatic recall for scenes whose ``memory_plugin`` names this plugin.
+
+    Handler ``(self, request: RecallRequest) -> Sequence[RecallBlock]``, in the order to show; the host
+    keeps the blocks within ``request.budget_chars``. At most one per plugin.
+    """
+    return _mark(("recall",))
+
+
+def compact():
+    """Compaction for scenes whose ``recap_plugin`` names this plugin.
+
+    Handler ``(self, request: CompactRequest) -> str``: the recap that replaces the current one and
+    the entries in ``request.source``. The host checks it against ``request.budget_tokens`` and
+    adopts it. At most one per plugin.
+    """
+    return _mark(("compact",))
+
+
 def _mark(value: tuple):
     def decorate(function: Callable) -> Callable:
         if hasattr(function, MARK):
@@ -110,6 +139,45 @@ Content = Text | Image | Mention
 GenerationRole = Literal["mind", "learner"]
 
 
+@dataclass(frozen=True)
+class RecallRequest:
+    """One turn's automatic recall, taken once before the turn's first model request.
+
+    ``messages`` are the latest messages the bot has read or delivered, oldest first; undelivered
+    bot messages are left out. ``recap`` is the scene's current compaction recap and ``tasks`` one
+    line per unfinished work task.
+    """
+    scene: str
+    persona: str
+    turn_id: str
+    observed_at: float
+    messages: tuple[ChatMessage, ...]
+    recap: str | None
+    tasks: tuple[str, ...]
+    budget_chars: int
+
+
+@dataclass(frozen=True)
+class CompactRequest:
+    """One compaction: ``source`` is the current recap and the oldest complete conversation entries, as text.
+
+    The returned recap must fit ``budget_tokens`` by the host's estimate of about three UTF-8 bytes
+    per token.
+    """
+    scene: str
+    persona: str
+    turn_id: str
+    source: str
+    budget_tokens: int
+
+
+@dataclass(frozen=True)
+class RecallBlock:
+    """One piece of recalled material; ``title`` names its source in the panel and the prompt."""
+    title: str
+    text: str
+
+
 
 
 class HostPort(Protocol):
@@ -129,6 +197,8 @@ class HostPort(Protocol):
     async def set_kv(self, plugin: str, key: str, value: JsonValue) -> None: ...
     async def delete_kv(self, plugin: str, key: str) -> bool: ...
     async def memory(self, plugin: str, scene: str, arguments: dict) -> str: ...
+    async def native_memory(self, plugin: str, scene: str, arguments: dict) -> str: ...
+    async def report_memory_progress(self, plugin: str, scene: str, message_id: str) -> None: ...
     async def generate(self, plugin: str, scene: str, prompt: str, role: GenerationRole,
                        system: str | None) -> str: ...
     async def delegate(self, plugin: str, scene: str, requester: str, goal: str, deliverable: str,
@@ -242,8 +312,20 @@ class PluginContext:
         return await self.host.delete_kv(self.name, key)
 
     async def memory(self, scene: str, arguments: dict) -> str:
-        """Use the scene's permitted memory service; public content remains read-only."""
+        """Call the scene's memory tool: the native one, or its ``memory_plugin``'s; public content remains read-only."""
         return await self.host.memory(self.name, self._scene(scene), arguments)
+
+    async def native_memory(self, scene: str, arguments: dict) -> str:
+        """Read the scene's native memory files whichever memory is in use: browse, read, search or history."""
+        return await self.host.native_memory(self.name, self._scene(scene), arguments)
+
+    async def report_memory_progress(self, scene: str, message_id: str) -> None:
+        """As the scene's ``memory_plugin``: messages through ``message_id`` are processed.
+
+        Retention then may remove those originals once they expire; before the first report the
+        plugin does not hold any back. The position never moves back.
+        """
+        await self.host.report_memory_progress(self.name, self._scene(scene), message_id)
 
 
 @dataclass(frozen=True)

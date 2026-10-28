@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import asyncio
 from typing import TYPE_CHECKING
 
 from ..chat.proactive import ProactiveStore
@@ -31,10 +30,6 @@ class LiveSettings:
                 setattr(running, name, deepcopy(web))
         apply_speech_limits(running, saved)
         if runtime.slots is not None:
-            if ((saved.limits.daily_tokens is not None or saved.limits.scene_daily_tokens)
-                    and (saved.limits.daily_tokens, saved.limits.scene_daily_tokens)
-                    != (running.limits.daily_tokens, running.limits.scene_daily_tokens)):
-                await asyncio.to_thread(runtime.budget.validate_sources)
             running.limits.daily_tokens = saved.limits.daily_tokens
             running.limits.scene_daily_tokens = dict(saved.limits.scene_daily_tokens)
             running.max_model_requests = saved.max_model_requests
@@ -89,7 +84,8 @@ class LiveSettings:
             if runtime.tasks is not None:
                 from ..chat.tools import task_data_tools
                 runtime.tasks.data_tools[scene] = task_data_tools(
-                    chat.config, chat.persona, platform=running.delivery == 'onebot', memory=runtime.memory)
+                    chat.config, chat.persona, platform=running.delivery == 'onebot', memory=runtime.memory,
+                    plugins=runtime.plugins)
             runner.changed.set()
         runtime.events.publish('host.state')
         runtime.notify()

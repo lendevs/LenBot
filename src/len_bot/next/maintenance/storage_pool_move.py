@@ -1,4 +1,4 @@
-"""Offline task-tree relocation without rewriting conversations, task rows or Pi sessions."""
+"""Move task trees and update their root configuration while offline."""
 
 from contextlib import closing
 from collections.abc import Iterator
@@ -37,10 +37,10 @@ def stopped_tasks(config: HostConfig, sources: tuple[Path, Path]) -> None:
         version = (db.execute('PRAGMA application_id').fetchone()[0], db.execute('PRAGMA user_version').fetchone()[0])
         if version != (0x4C424E31, FORMAT_VERSION):
             raise ValueError(f'Task storage move needs the current database format: {version!r}')
-        active = db.execute("SELECT scene,id,status,container,browser_active FROM tasks WHERE "
-                            "status IN ('running','waiting_input') OR container IS NOT NULL OR browser_active=1").fetchall()
+        active = db.execute("SELECT scene,id,status,container FROM tasks WHERE "
+                            "status IN ('running','waiting_input') OR container IS NOT NULL").fetchall()
         if active:
-            raise ValueError(f'Finish task processes and browser sessions before moving their files: {active!r}')
+            raise ValueError(f'Finish task processes before moving their files: {active!r}')
         for id, raw in db.execute('SELECT id,path FROM task_files'):
             path = Path(raw)
             if any(path.is_relative_to(source) for source in sources):
@@ -159,4 +159,4 @@ def move_to_pool(root: Path, pool: StoragePool) -> dict:
             raise
         return {**progress, **copied, 'storage_pool': pool.model_dump(mode='json'),
                 'source_roots': [str(p) for p in sources], 'pool_before_move': asdict(usage),
-                'notice': 'Task trees moved and root config switched. Database, Pi session contents and independent deliveries are unchanged.'}
+                'notice': 'Task trees moved and root config switched.'}

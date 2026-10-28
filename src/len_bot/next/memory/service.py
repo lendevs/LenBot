@@ -14,11 +14,13 @@ from .local import LocalMemory, LocalMemorySettings
 from .jobs import MemoryJobs
 from .summary import MemorySummarizer
 from .role_paths import require_bot_path
+from .sections import evidence, excerpt
 from ..platform.messages import ChatMessage, plain_text, render_message
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
 from ..storage.store import Store, encode
 from ..models.tokens import token_record
+from ..models.usage import record_usage
 
 if TYPE_CHECKING:
     from ..config import SharedConfig
@@ -26,8 +28,6 @@ if TYPE_CHECKING:
 
 STRICT = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 Scope = Literal["scene", "public"]
-# Offline-imported legacy memories awaiting operator confirmation (M11 migration).
-LEGACY_IMPORT = "legacy-import"
 
 
 class IngestSettings(BaseModel):
@@ -143,6 +143,25 @@ MEMORY_TOOL = {"type": "function", "function": {
 }}
 
 
+# Recall characters each query fragment found in a section earns it in text-only recall.
+EVIDENCE_CHARS = 200
+# Recap sections whose items lead recall to the matters they concern, and how much of them is used.
+CUE_SECTIONS = ("我答应的事", "没回答的问题")
+CUE_CHARS = 400
+CUE_HITS = 2
+
+
+def recall_cues(recap: str | None) -> str:
+    """The recap's promises and unanswered questions, latest last, as extra recall wording."""
+    lines, keep = [], False
+    for line in (recap or "").splitlines():
+        if line.startswith("## "):
+            keep = line[3:].strip() in CUE_SECTIONS
+        elif keep and line.strip():
+            lines.append(line.strip().removeprefix("- ").removeprefix("* ").strip())
+    return "\n".join(lines)[-CUE_CHARS:]
+
+
 class MemoryService:
     def __init__(self, settings: LocalMemoryConfig,
                  backend: LocalMemory, *, jobs: MemoryJobs, store: Store,
@@ -193,10 +212,11 @@ class MemoryService:
         return ["browse", "read", "search", "write", "delete", "history", "forget"]
 
     async def search(self, scene: str, query: str, limit: int, *, automatic: bool = False,
-                     text_query: str | None = None, persona: str | None = None) -> list[dict]:
+                     text_query: str | None = None, persona: str | None = None,
+                     literal: bool = False) -> list[dict]:
         """``persona`` hides other roles' Bot records; the panel searches without it."""
-        hits = await self.backend.search(scene, query, limit, exclude_pending=automatic,
-                                         automatic=automatic, text_query=text_query, bot_persona=persona)
+        hits = await self.backend.search(scene, query, limit, automatic=automatic, text_query=text_query,
+                                         bot_persona=persona, literal=literal)
         return [{**asdict(hit), "score": None} for hit in hits]
 
     def own_bot_path(self, scene: str, path: str) -> None:
@@ -237,31 +257,6 @@ class MemoryService:
             result = await self.backend.delete(scene, path, reason)
             return asdict(result)
 
-    async def adopt_pending(self, scene: str, source: str, original: str, target: str,
-                            content: str, reason: str, *, remove_source: bool) -> dict:
-        """One explicit owner operation, not a model tool or a multi-file transaction."""
-        if not source.startswith(LEGACY_IMPORT + '/'):
-            raise ValueError(f'采用源必须是本场景实际待确认原件：{source!r}')
-        if target == LEGACY_IMPORT or target.startswith(LEGACY_IMPORT + '/'):
-            raise ValueError('正式目标不能继续位于待确认区域')
-        if not reason.strip() or not content.strip():
-            raise ValueError('采用须明确核对后的非空正文与实际原因')
-        async with self.write_lock(scene):
-            saved = await self.backend.read(scene, source, scope='scene')
-            if saved.content != original:
-                raise ValueError(f'待确认原件已变化，本次未创建正式文件：{source!r}。请重读原文后明确核对。')
-            require_bot_path(target, self.known_persona_ids(scene))
-            change = await self.backend.write(scene, target, content, reason, create_only=True)
-            if remove_source:
-                try:
-                    await self.backend.delete(scene, source, reason)
-                except Exception as error:
-                    raise RuntimeError(f'正式文件{target!r}已保存，但待确认原件{source!r}删除失败：'
-                                       f'{type(error).__name__}: {error}。请核对两边，不自动重试。') from error
-            return {'source': source, 'target': target, 'target_saved': True, 'source_removed': remove_source,
-                    'change': asdict(change), 'notice': '仅本场景正式正文采用；源普通删除仍留历史，不是完整遗忘。'
-                    '原聊天、抽取位置/排除与角色样例未改，无公共提升。'}
-
     async def history(self, scene: str, path: str) -> list[dict]:
         return [asdict(change) for change in await self.backend.history(scene, path)]
 
@@ -289,8 +284,11 @@ class MemoryService:
             result = {"changes": await self.history(scene, item.path)}
         return encode(result)
 
-    async def recall(self, scene: str, messages: list[ChatMessage]) -> dict:
-        """Recall from actual chat only; returned text never becomes a native history entry."""
+    async def recall(self, scene: str, messages: list[ChatMessage], cues: str = "") -> dict:
+        """Recall from actual chat only; returned text never becomes a native history entry.
+
+        ``cues`` (see ``recall_cues``) find what the recent chat does not name; their hits only use the
+        budget the chat's own hits leave, and are searched by wording alone, with no vector request."""
         relevant = [message for message in messages if not message.is_self]
         # Semantic retrieval keeps speakers; literal retrieval must not match timestamps/accounts.
         text_only = self.backend.embedding is None
@@ -325,12 +323,28 @@ class MemoryService:
         text_query = "\n".join(plain_text(message) for message in messages
                                if plain_text(message).strip() and message.send_status in {"received", "sent", "simulated"})[-1200:]
         if query and budget > 0:
-            for hit in await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query,
-                                         persona=self.active_personas.get(scene)):
-                append(hit["scope"], hit["path"], hit["preview"], budget,
+            hits = await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query,
+                                     persona=self.active_personas.get(scene))
+            for position, hit in enumerate(hits):
+                # Each remaining hit gets an equal share; what a short one leaves goes to the next.
+                share = max(budget // (len(hits) - position), min(budget, 200))
+                if text_only:
+                    # Without vectors the only sign of relevance is the shared wording: a section sharing
+                    # one fragment with the recent chat is shown around that fragment only.
+                    share = min(share, EVIDENCE_CHARS * evidence(hit["preview"], text_query))
+                append(hit["scope"], hit["path"], excerpt(hit["preview"], text_query, share), share,
                        kind="excerpt",
                        source_chars=hit["total_chars"], sections=hit["sections"])
-        return {"backend": self.settings.backend, "query": query, "items": items,
+        cues = cues.strip()
+        if cues and budget > 0:
+            hits = [hit for hit in await self.search(scene, cues, CUE_HITS, automatic=True,
+                                                     persona=self.active_personas.get(scene), literal=True)
+                    if (hit["scope"], hit["path"]) not in seen]
+            for position, hit in enumerate(hits):
+                share = min(budget // (len(hits) - position), EVIDENCE_CHARS * evidence(hit["preview"], cues))
+                append(hit["scope"], hit["path"], excerpt(hit["preview"], cues, share), share, kind="excerpt",
+                       source_chars=hit["total_chars"], sections=hit["sections"])
+        return {"backend": self.settings.backend, "query": query, "cues": cues, "items": items,
                 "content_chars": self.settings.recall_budget_chars - budget,
                 "budget_chars": self.settings.recall_budget_chars}
 
@@ -368,10 +382,11 @@ async def open_memory(config: SharedConfig, store: Store, *, active_personas: di
             if backend.embedding is not None:
                 async def embed(source, texts, purpose):
                     async with (slots.slot(scene=source) if slots is not None else nullcontext()):
+                        started = store.now()
                         with jobs.db:
                             call_id = jobs.db.execute(
                                 "INSERT INTO memory_embedding_calls(scene,purpose,started,request) VALUES(?,?,?,?)",
-                                (source, purpose, store.now(), encode({"texts": texts,
+                                (source, purpose, started, encode({"texts": texts,
                                  "settings": backend.embedding.settings.model_dump(mode="json", exclude={"api_key"})})),
                             ).lastrowid
                         try:
@@ -387,6 +402,10 @@ async def open_memory(config: SharedConfig, store: Store, *, active_personas: di
                                             (store.now(), encode({"vector_count":len(batch.vectors),"dimensions":batch.dimensions}),
                                              None if batch.usage is None else encode(batch.usage),
                                              None if tokens is None else encode(tokens), call_id))
+                        with store.db:
+                            record_usage(store.db, time=started, scene=source, purpose="memory_embedding",
+                                         provider=backend.embedding.settings.provider,
+                                         model=backend.embedding.settings.model, tokens=tokens)
                         return batch
                 backend.track_embedding = embed
 
@@ -394,5 +413,5 @@ async def open_memory(config: SharedConfig, store: Store, *, active_personas: di
                 yield service
                 return
             async with ChatModel(config.model_settings("memory")) as model:
-                service.summarizer = MemorySummarizer(config, backend, jobs, model, slots=slots)
+                service.summarizer = MemorySummarizer(config, backend, jobs, model, store, slots=slots)
                 yield service

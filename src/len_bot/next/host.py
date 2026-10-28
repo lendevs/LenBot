@@ -15,6 +15,7 @@ from .runtime.lifecycle import HostLifecycle, RESTART_EXIT
 from .runtime.logs import configure_logging, credentials, redact
 from .chat.tools import task_data_tools, tool_catalog
 from .panel.app import create_app
+from .panel.auth import trusted_proxies
 from .models.client import ChatModel
 from .models.slots import ModelSlots
 from .models.limits import ModelBudget
@@ -113,17 +114,15 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
     with configure_logging(config.logging, credentials(config)), Store(config.database) as store:
         activate_prompts(root)
         PluginStore(store).recover_plugin_calls()
-        if config.onebot is None and config.telegram is None and (TaskStore(store).containers() or TaskStore(store).browser_in_use()):
-            raise ValueError('stdin模拟宿主不能清理原库中残留的容器或账号浏览会话；先在所属原实例明确处理，不使用导入的定位访问外部实例')
-        budget = ModelBudget(config, store, None, root=config._instance_root)
+        if config.onebot is None and TaskStore(store).containers():
+            raise ValueError('stdin模拟宿主不能清理原库中残留的容器；先在所属原实例明确处理，不使用导入的定位访问外部实例')
+        budget = ModelBudget(config, store, root=config._instance_root)
         budget.trials_root = root / ".runtime" / "chat-tests"
         slots.admit = budget.check
         sticker_records = StickerStore(store)
         for scene, settings in config.scenes.items():
             if settings.learning is None or not settings.learning.collect_stickers:
                 sticker_records.recover(scene)
-        if TaskStore(store).browser_in_use() and (config.account_browser is None or config.worker is None):
-            raise ValueError('仍有未清理的账号浏览会话；保留原account_browser与worker配置完成清理后再停用')
         if config.worker is None and TaskStore(store).containers():
             raise ValueError("仍有未清理的任务容器；保留原 worker 配置完成清理后再停用任务执行器")
         async with (
@@ -135,7 +134,6 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
             open_session_upkeep(config, store, mind, memory=memory, expression_service=expression_service,
                                 slots=slots) as upkeep,
         ):
-            budget.memory = memory
             def task_update(scene: str) -> None:
                 runner = runtime.runners.get(scene)
                 if runner is not None:
@@ -143,7 +141,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                 runtime.notify()
 
             data_tools = {settings.scene: task_data_tools(settings, persona, platform=config.delivery == "onebot",
-                                                          memory=memory)
+                                                          memory=memory, plugins=plugins)
                           for settings, persona in scenes}
             tasks = (WorkTasks(config, store, slots, task_update, skills=skills,
                               memory=memory, data_tools=data_tools,
@@ -178,6 +176,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                     # log_config=None: Uvicorn's records go through the host's own log handlers.
                     server = HostPanelServer(uvicorn.Config(
                         app, host=config.panel.host, port=config.panel.port, log_config=None,
+                        forwarded_allow_ips=trusted_proxies(config.panel, container=container),
                     ))
                     await run_with_panel(runtime, server, lifecycle)
             finally:

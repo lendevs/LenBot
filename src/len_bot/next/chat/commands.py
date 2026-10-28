@@ -145,12 +145,12 @@ async def _help(call: CommandCall) -> str:
     lines = ["可用的宿主命令："]
     for command in call.runtime.commands.available(call.runtime, call.runner, call.message):
         lines.append(f"{command.usage} — {command.summary}")
-    lines.append("其他消息照常交给我。")
+    lines.append("其他消息按普通聊天处理。")
     return "\n".join(lines)
 
 
 async def _id(call: CommandCall) -> str:
-    return f"场景：{call.scene}\n你的账号：{call.requester}\n机器人账号：{call.runner.config.bot_id}"
+    return f"场景：{call.scene}\n发送者账号：{call.requester}\nBot 账号：{call.runner.config.bot_id}"
 
 
 # The same sender's same member command is answered at most once in this many seconds.
@@ -170,12 +170,12 @@ def _clock(call: CommandCall, timestamp: float) -> str:
 async def _between_turns(call: CommandCall):
     """Hold the scene between turns, as the panel does, so a turn ending later keeps the change."""
     if not call.runtime.accepting:
-        raise CommandError("宿主正在停止，没有改变")
+        raise CommandError("宿主正在停止，未做修改")
     try:
         async with asyncio.timeout(EXECUTION_WAIT_SECONDS):
             await call.runner.execution.acquire()
     except TimeoutError:
-        raise CommandError("我正在处理上一轮，稍后再试；这次没有改变") from None
+        raise CommandError("上一轮仍在处理，请稍后重试；本次未做修改") from None
     try:
         yield
     finally:
@@ -189,7 +189,7 @@ def _chat_line(call: CommandCall) -> str:
     period = runner.quiet_period(now)
     if period is None or not period[0] <= now < period[1]:
         return "聊天：开启"
-    direct = "被叫到时仍回应" if runner.quiet_direct(now) == "allow" else "被叫到也延后"
+    direct = "被叫到时照常回复" if runner.quiet_direct(now) == "allow" else "被叫到时同样延后"
     return f"聊天：安静到 {_clock(call, period[1])}，{direct}"
 
 
@@ -225,7 +225,7 @@ async def _chat(call: CommandCall) -> str:
         call.runner.set_paused(not enabled)
     log_event(logger, "command_chat", scene=call.scene, enabled=enabled, requester=call.requester)
     if before != enabled:
-        return "本群聊天本来就是开启的" if enabled else "本群聊天本来就是关闭的"
+        return "本群聊天已处于开启状态" if enabled else "本群聊天已处于关闭状态"
     return ("已打开本群聊天；关闭期间的消息只作为背景，不逐条回复" if enabled
             else "已关闭本群聊天；消息照常记录，/chat on 重新打开")
 
@@ -241,7 +241,7 @@ async def _quiet(call: CommandCall) -> str:
     async with _between_turns(call):
         state = call.runner.set_temporary_quiet(minutes * 60, direct, call.requester)
     return (f"本群安静到 {_clock(call, state['temporary_quiet']['until'])}；"
-            + ("被叫到也延后，/resume 提前恢复" if direct == "defer" else "被@或回复时仍会回应，/resume 提前恢复"))
+            + ("被叫到时同样延后，/resume 提前恢复" if direct == "defer" else "被 @ 或回复时照常回复，/resume 提前恢复"))
 
 
 async def _resume(call: CommandCall) -> str:
@@ -261,7 +261,7 @@ async def _reset(call: CommandCall) -> str:
     store, scene = call.runner.store, call.scene
     async with _between_turns(call):
         if store.db.execute("SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1", (scene,)).fetchone():
-            raise CommandError("本群还有没结束或等待恢复的一轮，没有重置")
+            raise CommandError("本群有未结束或等待恢复的回合，未重置")
         through = store.new_context(scene)
         call.runner.chat.toolset.discovered_tools = set()
     log_event(logger, "command_reset", scene=scene, compact_through=through, requester=call.requester)
@@ -274,7 +274,7 @@ async def _model(call: CommandCall) -> str:
     if call.arguments:
         raise CommandError("用法：/model。更换主脑服务请在面板的模型页修改")
     binding = call.runtime.config.models.roles.mind
-    return f"主脑服务：{binding.provider} / {binding.model}\n出错时不会自动更换模型或服务"
+    return f"主脑服务：{binding.provider} / {binding.model}"
 
 
 async def _limit(call: CommandCall) -> str:
@@ -317,16 +317,16 @@ async def _limit(call: CommandCall) -> str:
 
 async def _role(call: CommandCall) -> str:
     if call.runtime.personas is None:
-        raise CommandError("角色库还没准备好")
+        raise CommandError("角色库尚未就绪")
     return await call.runtime.personas.command_reply(call.scene, " ".join(call.arguments))
 
 
 BUILTIN: list[Command] = [
-    Command("help", "/help", "列出你可以使用的命令", "member", _help),
-    Command("id", "/id", "显示本场景、你和机器人的账号，用于填写权限", "member", _id),
+    Command("help", "/help", "列出发送者可以使用的命令", "member", _help),
+    Command("id", "/id", "显示本场景、发送者和 Bot 的账号，用于填写权限", "member", _id),
     Command("status", "/status", "查看本群聊天开关、安静、发言余量和主脑模型", "control", _status),
     Command("chat", "/chat on|off", "打开或关闭本群聊天，关闭时消息照常记录", "switch", _chat),
-    Command("quiet", "/quiet <分钟> [defer]", "本群临时安静；defer 时被叫到也延后", "control", _quiet),
+    Command("quiet", "/quiet <分钟> [defer]", "本群临时安静；加 defer 时被叫到同样延后", "control", _quiet),
     Command("resume", "/resume", "提前结束本群的临时安静", "control", _resume),
     Command("reset", "/reset", "开始新的对话上下文，原记录和记忆保留", "switch", _reset),
     Command("model", "/model", "查看主脑服务", "manage", _model),

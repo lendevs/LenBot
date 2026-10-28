@@ -25,13 +25,14 @@ from ..config import HostConfig
 from ..tools.external_tools import ExternalTool
 from ..platform.messages import ChatMessage
 from ...plugin import (MARK, Content, GenerationRole, Image, Text,
-                     Invocation, Notice, Plugin, PluginContext, Sent)
+                     CompactRequest, Invocation, Notice, Plugin, PluginContext, RecallBlock, RecallRequest, Sent)
 from .kv import PluginKV
 from .data import prepare_data
 from ..models.client import ChatModel, ModelReply
 from ..models.request import request_model
 from ..chat.schedule_time import Cron, next_cron, parse_cron
 from ..chat.request_source import SOURCE_DESCRIPTION, source_message
+from ..chat.recap import estimate_content
 from ..runtime.logs import SECRETS, error_text, log_context, log_event, recorded_errors
 from ..tools.skills import Skill, load_plugin_skills
 from .process import describe, proxy_class
@@ -53,6 +54,12 @@ ERROR_LIMIT = 20
 # scene) or the shutdown. Data migration before start() has no limit: it may legitimately be long.
 PLUGIN_START_SECONDS = 60.0
 PLUGIN_STOP_SECONDS = 30.0
+# Recall runs before the turn's first model request, so it is part of the wait for the first reply.
+RECALL_SECONDS = 10.0
+# Compaction runs while a request waits for room; a plugin may write the recap with its own model call.
+COMPACT_SECONDS = 120.0
+# What ``ctx.native_memory`` may do: the native files stay as they are while a plugin is the memory.
+NATIVE_READS = ("browse", "read", "search", "history")
 JSON_RESULT = TypeAdapter(JsonValue, config=ConfigDict(strict=True, allow_inf_nan=False))
 
 
@@ -64,7 +71,7 @@ async def _limited(call: Coroutine, seconds: float, what: str) -> None:
     except TimeoutError as error:
         if not limit.expired():
             raise
-        raise TimeoutError(f"插件 {what} 超过 {seconds:g} 秒没有返回，已取消") from error
+        raise TimeoutError(f"插件 {what} 超过 {seconds:g} 秒未返回，已取消") from error
 
 
 @dataclass
@@ -115,6 +122,9 @@ class Loaded:
     patterns: list[Pattern] = field(default_factory=list)
     notices: dict[str, str] = field(default_factory=dict)                   # type -> method
     tools: dict[str, ToolEntry] = field(default_factory=dict)
+    recall: str | None = None                                               # method
+    compact: str | None = None                                              # method
+    memory_tool: ToolEntry | None = None
     backgrounds: list[Background] = field(default_factory=list)
     crons: dict[tuple[str, str], CronJob] = field(default_factory=dict)
     instructions: str | None = None
@@ -261,6 +271,19 @@ class PluginHost:
                 if mark[1] in record.notices:
                     raise ValueError(f"通知 {mark[1]} 在本插件重复登记")
                 record.notices[mark[1]] = attribute
+            elif mark[0] == "recall":
+                if record.recall is not None:
+                    raise ValueError(f"recall 入口只能有一个，已有 {record.recall}")
+                record.recall = attribute
+            elif mark[0] == "memory_tool":
+                if record.memory_tool is not None:
+                    raise ValueError(f"memory_tool 入口只能有一个，已有 {record.memory_tool.method}")
+                record.memory_tool = ToolEntry(mark[1], None, _arguments("memory", getattr(cls, attribute),
+                                                                         needs_source=False), attribute, False)
+            elif mark[0] == "compact":
+                if record.compact is not None:
+                    raise ValueError(f"compact 入口只能有一个，已有 {record.compact}")
+                record.compact = attribute
             elif mark[0] == "tool":
                 if mark[1] in core_tools or mark[1] in self.tool_owner or mark[1] in record.tools:
                     raise ValueError(f"工具名 {mark[1]} 与核心工具或其他插件工具重复")
@@ -269,7 +292,7 @@ class PluginHost:
             else:
                 record.backgrounds.append(Background(attribute, mark[1]))
         if unused:
-            logger.warning("插件 %s 没有这些规则，plugins.disabled_rules 里的条目未起作用：%s",
+            logger.warning("插件 %s 不存在以下规则，plugins.disabled_rules 中的条目未生效：%s",
                            record.name, "、".join(sorted(unused)))
         data_dir.mkdir(parents=True, exist_ok=True)
         record.context = PluginContext(name=record.name, config=parsed.model_dump(), data_dir=data_dir,
@@ -349,7 +372,7 @@ class PluginHost:
         if requester_id in self.config.scene_config(scene).permissions.blacklist:
             raise PermissionError(f'账号 {requester_id} 在当前场景黑名单中')
         if requester_id not in self.config.owners:
-            raise PermissionError(f"账号 {requester_id} 没有主人账号权限（按根配置 owners 判断）")
+            raise PermissionError(f"账号 {requester_id} 不具备主人账号权限（按根配置 owners 判断）")
 
     def redact(self, plugin: str, text: str) -> str:
         record = self.plugins[plugin]
@@ -383,7 +406,7 @@ class PluginHost:
     def _permit(self, record: Loaded, permission: str) -> Loaded:
         """A capability the manifest's ``permissions`` must list; manifests without the field keep all."""
         if record.manifest is not None and not record.manifest.granted(permission):
-            raise PermissionError(f"插件 {record.name} 没有在 plugin.toml 的 permissions 中声明 {permission}"
+            raise PermissionError(f"插件 {record.name} 未在 plugin.toml 的 permissions 中声明 {permission}"
                                   f"（{PERMISSION_TITLES[permission]}）")
         return record
 
@@ -452,11 +475,42 @@ class PluginHost:
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         chat = self.runtime.chats[scene]
-        if chat.memory is None:
-            raise ValueError(f"场景 {scene} 未配置长期记忆服务")
         if "memory" not in chat.toolset.allowed_tool_names:
-            raise PermissionError(f"场景 {scene} 当前加载角色未允许 memory")
+            raise PermissionError(f"场景 {scene} 当前加载角色未允许 memory，或场景没有记忆")
+        return await chat.toolset.run_memory(arguments)
+
+    async def native_memory(self, plugin: str, scene: str, arguments: dict) -> str:
+        self._permit(self._active(plugin, scene), "memory")
+        if self.runtime is None:
+            raise RuntimeError("插件宿主尚未接入运行中的场景")
+        chat = self.runtime.chats[scene]
+        if chat.memory is None:
+            raise ValueError(f"场景 {scene} 未配置原生记忆")
+        if arguments.get("action") not in NATIVE_READS:
+            raise PermissionError(f"原生记忆只读，允许的 action：{'、'.join(NATIVE_READS)}")
         return await chat.memory.execute(scene, arguments)
+
+    def memory_definition(self, plugin: str) -> dict | None:
+        """The ``memory`` tool from ``plugin``'s ``@memory_tool`` while the plugin is loaded, else None."""
+        record = self.plugins.get(plugin)
+        if record is None or record.memory_tool is None or record.status not in {"loaded", "running"}:
+            return None
+        return self._external_tool(record, "memory", record.memory_tool).definition
+
+    async def run_memory_tool(self, plugin: str, scene: str, arguments: dict) -> str:
+        """One ``memory`` call in a scene whose memory is ``plugin``, with the checks of a plugin tool."""
+        record = self._active(plugin, scene)
+        if record.memory_tool is None:
+            raise ValueError(f"插件 {plugin} 没有 @memory_tool 入口")
+        return await self._tool_call(record, "memory", record.memory_tool)(scene, arguments)
+
+    async def report_memory_progress(self, plugin: str, scene: str, message_id: str) -> None:
+        self._active(plugin, scene)
+        if self.config.scenes[scene].memory_plugin != plugin:
+            raise PermissionError(f"插件 {plugin} 不是场景 {scene} 的记忆实现，不能报告处理位置")
+        if self.runtime is None:
+            raise RuntimeError("插件宿主尚未接入运行中的场景")
+        await self.runtime.store.call(PluginStore(self.runtime.store).report_memory_progress, scene, plugin, message_id)
 
     async def generate(self, plugin: str, scene: str, prompt: str, role: GenerationRole,
                        system: str | None) -> str:
@@ -603,7 +657,7 @@ class PluginHost:
             try:
                 self._speaking(record.name, scene)
                 if record.status != "running":
-                    raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已经停止'}")
+                    raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
                 unavailable = record.instance.unavailable_tools(scene)
                 if name in unavailable:
                     raise ValueError(unavailable[name])
@@ -630,6 +684,69 @@ class PluginHost:
                 raise
             return redact_values(result, record.manifest, record.values)
         return call
+
+    async def _entry(self, record: Loaded, attribute: str | None, where: str, mark: str, seconds: float,
+                     argument: object) -> object:
+        """Run one host-awaited entry under a time limit, as a task that stopping the plugin cancels."""
+        if record.status != "running":
+            raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
+        if attribute is None:
+            raise ValueError(f"插件 {record.name} 没有 @{mark} 入口")
+        with log_context(plugin=record.name):
+            task = asyncio.create_task(getattr(record.instance, attribute)(argument), name=f"{record.name}:{mark}")
+        self.tasks[task] = record.name
+        task.add_done_callback(lambda done: self.tasks.pop(done, None))
+        limit = asyncio.timeout(seconds)
+        try:
+            async with limit:
+                return await task
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
+            raise RuntimeError(f"插件 {record.name} 已停止或重载，本次{where}中断") from None
+        except TimeoutError:
+            if not limit.expired():
+                raise
+            raise TimeoutError(f"插件 {record.name} 的{where}超过 {seconds:g} 秒未返回，已取消") from None
+
+    async def recall(self, plugin: str, request: RecallRequest) -> list[dict]:
+        """Recall items from the scene's memory plugin in the native item shape, cut to the budget.
+
+        A failure is recorded on the plugin and raised; the turn goes on without recall.
+        """
+        record = self._active(plugin, request.scene)
+        try:
+            blocks = await self._entry(record, record.recall, "自动召回", "recall", RECALL_SECONDS, request)
+            if not isinstance(blocks, (list, tuple)) or not all(isinstance(block, RecallBlock) for block in blocks):
+                raise TypeError("@recall 必须返回 RecallBlock 序列")
+        except Exception as error:
+            raise RuntimeError(self._record(record, "自动召回", error)) from None
+        items, budget = [], request.budget_chars
+        for block in blocks:
+            text = redact_values(block.text, record.manifest, record.values)
+            if budget <= 0:
+                break
+            if not text.strip():
+                continue
+            shown = text[:budget]
+            items.append({"scope": f"plugin:{plugin}", "path": redact_values(block.title, record.manifest, record.values),
+                          "content": shown, "kind": "plugin", "truncated": len(shown) < len(text)})
+            budget -= len(shown)
+        return items
+
+    async def compact(self, plugin: str, request: CompactRequest) -> str:
+        """A recap from the scene's compaction plugin, checked against the budget; failures are recorded and raised."""
+        record = self._active(plugin, request.scene)
+        try:
+            recap = await self._entry(record, record.compact, "压缩", "compact", COMPACT_SECONDS, request)
+            if not isinstance(recap, str) or not recap.strip():
+                raise TypeError("@compact 必须返回非空文字")
+            recap = redact_values(recap.strip(), record.manifest, record.values)
+            if estimate_content(recap) > request.budget_tokens:
+                raise ValueError(f"回想估算 {estimate_content(recap)} token，超过预算 {request.budget_tokens}")
+        except Exception as error:
+            raise RuntimeError(self._record(record, "压缩", error)) from None
+        return recap
 
     def match_message(self, message: ChatMessage, other_bots: tuple[str, ...]) -> Matched | None:
         if (self.closing or message.is_self or message.sender.uid in other_bots
@@ -911,6 +1028,10 @@ class PluginHost:
                            "parameters": entry.model.model_json_schema(), "needs_source": entry.needs_source}
                           for name, entry in record.tools.items()],
                 "instructions": record.instructions,
+                # Memory entries a group may choose this plugin for: recall, memory_tool, compact.
+                "memory_entries": [name for name, present in (("recall", record.recall is not None),
+                                                              ("memory_tool", record.memory_tool is not None),
+                                                              ("compact", record.compact is not None)) if present],
                 "backgrounds": [{"method": item.method, "every_seconds": item.seconds,
                                  "last_started": item.last_started, "last_finished": item.last_finished,
                                  "last_error": item.last_error} for item in record.backgrounds],

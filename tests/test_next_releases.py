@@ -96,6 +96,9 @@ def test_managed_update_status_warns_that_rolling_back_loses_later_data(tmp_path
     write_json(control.state_file, {'status': 'rolled_back', 'stage': 'rolled_back', 'rolled_back_from': '0.2.0',
                                     'error': '更新到 0.2.0 失败，已自动恢复到 0.1.0：TimeoutError: x'})
     control.state = updater.read_json(control.state_file)
+    for name in ('20261001-080000-0000000a', '20261020-093000-0000000b'):
+        (tmp_path / 'backups' / name).mkdir(parents=True)
+        (tmp_path / 'backups' / name / 'snapshot.json').write_text('[]\n', encoding='utf-8')
     http = updater.server(control)
     thread = threading.Thread(target=http.serve_forever)
     thread.start()
@@ -107,6 +110,14 @@ def test_managed_update_status_warns_that_rolling_back_loses_later_data(tmp_path
         register_host_updates(app, root=tmp_path / 'instance', user=operator, check_enabled=False)
         with TestClient(app) as client:
             body = client.get('/api/host/updates').json()
+            listed = client.get('/api/host/updates/snapshots').json()
+            assert client.delete('/api/host/updates/snapshots/..%2Fupdates').status_code == 404
+            assert client.delete('/api/host/updates/snapshots/manual-copy').status_code == 422
+            control.state.update(status='failed', snapshot=str(tmp_path / 'backups/20261020-093000-0000000b'),
+                                 snapshot_complete=True)
+            refused = client.delete('/api/host/updates/snapshots/20261020-093000-0000000b')
+            left = client.delete('/api/host/updates/snapshots/20261001-080000-0000000a')
+            missing = client.delete('/api/host/updates/snapshots/20261001-080000-0000000a')
     finally:
         http.shutdown()
         http.server_close()
@@ -116,5 +127,11 @@ def test_managed_update_status_warns_that_rolling_back_loses_later_data(tmp_path
     assert body['managed'] is True and body['rollback_loses_data'] is True
     assert body['status']['status'] == 'rolled_back' and body['status']['actions'] == ['prepare']
     assert body['status']['rolled_back_from'] == '0.2.0'
-    assert any('丢掉更新开始后写入的数据' in line for line in body['notice'])
+    assert any('丢弃更新开始后写入的数据' in line for line in body['notice'])
     assert any('backups/' in line for line in body['notice'])
+    assert [item['name'] for item in listed] == ['20261020-093000-0000000b', '20261001-080000-0000000a']
+    assert listed[0] == {'name': '20261020-093000-0000000b', 'created': listed[0]['created'], 'bytes': 3,
+                         'complete': True, 'restore': False}
+    assert refused.status_code == 409 and '恢复需要使用此快照' in refused.json()['detail']
+    assert left.status_code == 200 and [item['name'] for item in left.json()] == ['20261020-093000-0000000b']
+    assert missing.status_code == 404 and missing.json()['detail'] == '快照不存在'

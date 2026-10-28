@@ -64,10 +64,21 @@ export interface ProfileState extends Applied {
 export const personaFiles = ['persona.yaml', 'voice.md', 'boundaries.md', 'examples.yaml'] as const
 export type PersonaFile = (typeof personaFiles)[number]
 export type PersonaFiles = Record<PersonaFile, string>
+/** The persona's own versions of the framework expression rules; a blank one uses the framework's. */
+export const expressionFiles = ['response_choice.md', 'expression_principles.md', 'chat_examples.md'] as const
+export type ExpressionFile = (typeof expressionFiles)[number]
 
 export interface KnowledgeListing extends Applied {
   saved_path: string
-  files: { filename: string; tags: string[]; chars: number }[]
+  files: {
+    filename: string
+    tags: string[]
+    chars: number
+    /** Reference index state; only the listing gives it. */
+    index?: 'processing' | 'indexed' | 'failed' | null
+    chunks?: number | null
+    vectors?: number | null
+  }[]
   document?: { filename: string; content: string; tags: string[] } | null
 }
 
@@ -91,8 +102,19 @@ export interface AvatarState extends Applied {
 }
 
 export interface FilesState extends Applied {
-  saved: PersonaFiles
+  saved: PersonaFiles & Record<ExpressionFile, string>
   saved_path: string
+  /** The framework rules a blank expression file falls back to. */
+  defaults: Record<ExpressionFile, string>
+}
+
+/** What the role adds to the system text in one group, and one style drawn as a turn draws it. */
+export interface RolePreview {
+  scene: string | null
+  sections: { name: 'character' | ExpressionFile; own: boolean; text: string }[]
+  examples: number
+  styles: { name: string; weight: number; note: string | null }[]
+  style: string | null
 }
 
 export interface ToolInfo {
@@ -134,6 +156,8 @@ export interface Trial {
   scene: string
   persona: string
   active: boolean
+  draft_source: string | null
+  memory_plugin: string | null
 }
 
 const base = (key: string) => `/api/host/personas/${encodeURIComponent(key)}`
@@ -209,8 +233,16 @@ export const personasApi = {
     `${base(key)}/sticker-files/image?file=${encodeURIComponent(file)}&directory=${encodeURIComponent(directory)}`,
 
   files: (key: string, signal?: AbortSignal) => http.get<FilesState>(`${base(key)}/files`, undefined, signal),
-  saveFile: (key: string, directory: string, filename: PersonaFile, content: string) =>
+  saveFile: (key: string, directory: string, filename: PersonaFile | ExpressionFile, content: string) =>
     http.put<FilesState>(`${base(key)}/files/${filename}`, { directory, content }),
+
+  /** Without a draft the saved package is previewed. */
+  preview: (
+    key: string,
+    scene: string | null,
+    draft: { directory: string; profile: PersonaProfile } | null,
+    signal?: AbortSignal,
+  ) => request<RolePreview>(`${base(key)}/preview`, { method: 'POST', body: { scene, draft }, signal }),
 
   abilities: (key: string, signal?: AbortSignal) =>
     http.get<Abilities>(`${base(key)}/abilities`, undefined, signal),

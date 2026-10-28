@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict
 from datetime import datetime
 import json
@@ -16,7 +16,6 @@ from zoneinfo import ZoneInfo
 
 from ..config import HostConfig
 from ..media.audio import AudioService
-from ..browser.client import AccountBrowser
 from ..runtime.identity import roles_for
 from .egress_usage import EgressUsage
 from ..models.slots import ModelSlots
@@ -28,7 +27,6 @@ from ..storage.store import Store
 from .execution import TaskExecution
 from .files import TaskFiles, file_info
 from .resources import ResourceFileRef, TaskResources, resource_purpose
-from ..browser.tasks import TaskBrowser
 from .store import TERMINAL, Task, TaskStore
 from .worker_model import Limits
 from .materials import MaterialName, finish_file_operation, material_directory, save_shared
@@ -54,12 +52,13 @@ class WorkTasks:
                  tool_permissions: dict[str, Literal["all"] | list[str]]):
         self.config, self.store, self.slots = config, store, slots
         self.settings = config.worker
-        self.browser = None if config.account_browser is None else AccountBrowser(config.account_browser)
         self.records = TaskStore(store)
         self.on_update = on_update
         self.skills = skills
         self.skill_permissions = skill_permissions
         self.memory = memory
+        # The scene memory tool for task workers; the network runtime routes it like the chat's.
+        self.memory_call: Callable[[str, dict], Awaitable[str]] | None = None if memory is None else memory.execute
         self.audio: AudioService | None = None
         self.data_tools = data_tools
         self.tool_permissions = tool_permissions
@@ -76,7 +75,6 @@ class WorkTasks:
         ))
         self.files = TaskFiles(settings, self.records, self.sandbox, self._notify)
         self.resources = TaskResources(settings, self.records)
-        self.task_browser = TaskBrowser(config, self.records, self.browser)
         self.running: dict[int, TaskExecution] = {}
         self.file_changes = asyncio.Lock()
         self.live_listeners: dict[int, set[asyncio.Event]] = {}
@@ -114,8 +112,6 @@ class WorkTasks:
     def _can_manage(self, item: Task, requester: str) -> None:
         if requester != item.requester and requester in self.config.scene_config(item.scene).permissions.blacklist:
             raise PermissionError('黑名单账号只能取消本人的任务，不能管理他人任务')
-        if item.account_browser:
-            self.task_browser.require_owner(requester)
         roles = self._roles(item.scene, requester)
         if requester != item.requester and not roles.intersection(
                 self.config.scenes[item.scene].tasks.manage_roles):
@@ -136,7 +132,7 @@ class WorkTasks:
                 "workspace_discard_requested": self.records.workspace_discarded(scene, id),
                 "model_calls": len(token_records), "tokens": token_summary(token_records), "active_timeout_seconds": self.active_timeout(item),
                 "network": self.egress.status(scene, id),
-                "notice": "done 表示执行正常结束；上传到平台用 send_file。"}
+                "notice": "上传到平台用 send_file。"}
 
     def live_snapshot(self, scene: str, id: int) -> dict:
         item = self.records.get(scene, id)
@@ -150,8 +146,6 @@ class WorkTasks:
         roles = self._roles(scene, requester)
         if requester in self.config.scene_config(scene).permissions.blacklist:
             raise PermissionError('黑名单账号不能读取任务过程')
-        if item.account_browser and requester not in self.config.owners:
-            raise PermissionError('账号浏览过程仅允许当前根主人账号读取')
         if requester != item.requester and not roles.intersection(self.config.scenes[scene].tasks.manage_roles):
             raise PermissionError('只能读取本人任务过程，或由当前场景任务管理者读取')
         return item
@@ -231,8 +225,7 @@ class WorkTasks:
                 item = self.records.get(scene, reference.task_id)
                 self._can_manage(item, requester)
                 if reference.scope == 'workspace':
-                    if (item.status not in TERMINAL or item.container is not None or item.browser_active
-                            or item.id in self.running):
+                    if item.status not in TERMINAL or item.container is not None or item.id in self.running:
                         raise ValueError('任务执行收尾后再删除工作文件')
                     if resource_purpose(reference.scope, reference.path) == 'session':
                         raise ValueError('Pi 会话由释放整个环境操作管理')
@@ -281,12 +274,8 @@ class WorkTasks:
         return {"items": [asdict(item) for item in items[:limit]],
                 "next_offset": offset + limit if len(items) > limit else None}
 
-    def _admit_delegate(self, scene: str, requester: str, account_browser: bool) -> None:
+    def _admit_delegate(self, scene: str, requester: str) -> None:
         self._can_delegate(scene, requester)
-        if account_browser:
-            self.task_browser.require_owner(requester)
-            if self.records.browser_in_use():
-                raise ValueError('专用账号浏览器仍被任务占用；先结束或明确清理原会话')
         timezone = self.config.scene_timezone(scene)
         local = datetime.fromtimestamp(self.store.now(), ZoneInfo(timezone))
         midnight = local.replace(hour=0, minute=0, second=0, microsecond=0, fold=0).timestamp()
@@ -294,9 +283,9 @@ class WorkTasks:
             raise PermissionError(f"账号 {requester} 今天在本场景的任务次数已达上限")
 
     async def delegate(self, scene: str, *, requester: str, goal: str,
-                       deliverable: str, context: str, account_browser: bool = False,
+                       deliverable: str, context: str,
                        materials: Sequence[MaterialName] = (), resources: Sequence[ResourceInput] = ()) -> dict:
-        self._admit_delegate(scene, requester, account_browser)
+        self._admit_delegate(scene, requester)
         await finish_file_operation(worker_pool_usage, self.settings)
         selected = (*materials, *(item.name for item in resources))
         stage = create_stage(self.settings, scene) if selected else None
@@ -312,10 +301,9 @@ class WorkTasks:
                 size = await finish_file_operation(self.resources.copy_opened, opened, stage / selection.name)
                 copies.append({'name': selection.name, 'size': size, 'source_path': str(opened.path),
                                'reference': selection.reference.model_dump(), 'container_path': f'/inputs/{selection.name}'})
-            self._admit_delegate(scene, requester, account_browser)
-            item = self._register_delegate(scene, requester, goal, deliverable, context, account_browser, selected)
-            log_event(logger, 'task_created', task_id=item.id, requester=requester, account_browser=account_browser,
-                      inputs=len(selected))
+            self._admit_delegate(scene, requester)
+            item = self._register_delegate(scene, requester, goal, deliverable, context, selected)
+            log_event(logger, 'task_created', task_id=item.id, requester=requester, inputs=len(selected))
             if stage is not None:
                 inputs = publish_inputs(stage, self.settings, scene, item.id, selected)
                 self.records.add_event(scene, item.id, 'material_inputs', {'directory': str(inputs), 'files': copies})
@@ -342,16 +330,13 @@ class WorkTasks:
         return self.status(scene, item.id)
 
     def _register_delegate(self, scene: str, requester: str, goal: str, deliverable: str, context: str,
-                           account_browser: bool, materials: tuple[str, ...]) -> Task:
+                           materials: tuple[str, ...]) -> Task:
         timezone = self.config.scene_timezone(scene)
         local = datetime.fromtimestamp(self.store.now(), ZoneInfo(timezone))
         prompt = Template(read_prompt("next_worker.md")).substitute(
             scene=scene, requester=requester, goal=goal, deliverable=deliverable, context=context,
             timezone=timezone, created_at=local.isoformat())
-        if account_browser:
-            prompt += '\n\n' + read_prompt('next_worker_account_browser.md')
-        return self.records.create(scene, requester, goal, deliverable, context, prompt,
-                                   account_browser=account_browser, materials=materials)
+        return self.records.create(scene, requester, goal, deliverable, context, prompt, materials=materials)
 
     async def append(self, scene: str, id: int, *, requester: str, text: str) -> dict:
         if not self.accepting:
@@ -375,8 +360,6 @@ class WorkTasks:
             self._can_manage(item, requester)
             if self.records.workspace_discarded(scene, id):
                 raise ValueError('本任务的工作环境已被明确放弃，不能作为原任务续接；请明确新建任务')
-            if item.account_browser:
-                raise ValueError('账号浏览任务不续接旧工作区；请由主人明确新建独立任务')
             self._can_delegate(scene, requester)
             self._limits(item)
             self.records.requeue(scene, id, text, requester=requester)
@@ -393,8 +376,8 @@ class WorkTasks:
             self._can_manage(item, requester)
             if not confirmed:
                 raise ValueError('须明确确认放弃本任务工作环境及原生会话；交付副本和执行记录保留')
-            if (item.status not in TERMINAL or item.container is not None or item.browser_active or id in self.running):
-                raise ValueError('只可放弃终态、容器/账号会话已关闭且宿主已完成收尾的任务环境')
+            if item.status not in TERMINAL or item.container is not None or id in self.running:
+                raise ValueError('任务结束、容器关闭且宿主完成收尾后才能放弃工作环境')
             progress = await self.files.discard(item, requester=requester, workspace=workspace, runtime=runtime)
             return {'task': self.status(scene, id), 'removal': progress,
                     'notice': '工作区与运行目录已释放；交付副本、共享原件和执行记录保留。'}
@@ -409,8 +392,8 @@ class WorkTasks:
         async with self.file_changes:
             item = self.records.get(scene, id)
             self._can_manage(item, requester)
-            if item.status not in TERMINAL or item.container is not None or item.browser_active or id in self.running:
-                raise ValueError('执行与浏览器关闭、宿主完成收尾后再清理临时文件')
+            if item.status not in TERMINAL or item.container is not None or id in self.running:
+                raise ValueError('执行结束、宿主完成收尾后再清理临时文件')
             return await self.files.clean_temporary(item, requester=requester)
 
     async def close_task_environment(self, scene: str, id: int, *, requester: str) -> dict:
@@ -424,8 +407,6 @@ class WorkTasks:
                     await self.sandbox.stop_recorded(scene, str(id), item.container)
                     self.records.set_container(scene, id, None)
                     self.records.add_event(scene, id, 'container_released', {'container': item.container, 'requester': requester})
-                if item.browser_active:
-                    await self.task_browser.stop(item)
             finally:
                 self._notify(scene)
             return self.status(scene, id)
@@ -441,10 +422,6 @@ class WorkTasks:
             raise PermissionError('黑名单账号不能恢复等待回答的任务')
         if item.status != "waiting_input":
             raise ValueError("任务当前没有等待回答的问题")
-        if item.account_browser:
-            self.task_browser.require_owner(requester)
-        if item.question["method"] == "request_help":
-            raise ValueError("请在专用浏览器完成当前人工接手；此处不能代答")
         if item.question["id"] != question_id:
             raise ValueError("当前问题已经变化；请重读任务后针对新的问题回答，没有发送这次旧答复")
         current = self.running[id]
@@ -453,11 +430,11 @@ class WorkTasks:
         if item.question["method"] == "confirm":
             self._can_manage(item, requester)
             if confirmed is None or text is not None:
-                raise ValueError("操作确认必须使用 confirmed 布尔值，普通文字不能替代授权")
+                raise ValueError("操作确认用 confirmed 布尔值回答")
             response = {"confirmed": confirmed}
         else:
             if text is None or confirmed is not None:
-                raise ValueError("补充信息必须用 text，不是操作授权")
+                raise ValueError("补充信息用 text 回答，操作确认用 confirmed")
             if item.question["method"] == "select" and text not in item.question["options"]:
                 raise ValueError("回答必须是当前问题提供的一个选项")
             response = {"value": text}
@@ -608,8 +585,8 @@ class WorkTasks:
                     if self._room(item.scene, new_container=True):
                         current = TaskExecution(
                             self.records.start(item.scene, item.id), self.config, self.store,
-                            sandbox=self.sandbox, files=self.files, browser=self.task_browser, egress=self.egress,
-                            slots=self.slots, memory=self.memory, audio=self.audio, mcp=self.mcp,
+                            sandbox=self.sandbox, files=self.files, egress=self.egress,
+                            slots=self.slots, memory_call=self.memory_call, audio=self.audio, mcp=self.mcp,
                             skills=self.skills, skill_permissions=self.skill_permissions,
                             tool_permissions=self.tool_permissions, data_tools=self.data_tools,
                             active_timeout=self.active_timeout, limits=self._limits,
@@ -628,7 +605,7 @@ class WorkTasks:
 
     def _finish(self, item: Task, status: str, summary: str | None, error: str | None) -> None:
         recent = []
-        if status == 'failed' and not item.account_browser:
+        if status == 'failed':
             page = self.records.event_page(item.scene, item.id, offset=0, snapshot=None)
             recent = [{'event': event['id'], 'kind': event['kind'], 'created': event['created']} for event in page['events']]
         finished = self.records.finish(item.scene, item.id, status, summary, error)
@@ -639,8 +616,6 @@ class WorkTasks:
         notice = f"[任务执行结束] #{item.id}；请求人 {item.requester}；{item.goal}\n" + json.dumps(body, ensure_ascii=False)
         if recent:
             notice += '\n最近过程编号（原文由请求人或任务管理者按event读取）：\n' + json.dumps(recent, ensure_ascii=False)
-        elif status == 'failed' and item.account_browser:
-            notice += '\n账号浏览过程未公开；仅根主人可按权限读取原事件。'
         self.records.add_event(item.scene, item.id, "finished", body, notice=notice)
         with log_context(scene=item.scene, task_id=item.id):
             log_event(logger, 'task_finished', level=logging.INFO if status == 'done' else logging.WARNING,

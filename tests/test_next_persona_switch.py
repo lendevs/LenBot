@@ -231,7 +231,7 @@ def test_handover_rewrites_the_session_for_the_next_role(tmp_path):
         chat.mind.complete = broken
         failed = (await client.post('/api/host/personas/fixture/scenes', json={'scenes': [SCENE]})).json()['results'][0]
         assert failed['status'] == 'switched' and failed['handover'] == 'failed' and '合成故障' in failed['error']
-        assert chat.persona.id == 'fixture' and '不是你说的' in chat.context.host_state
+        assert chat.persona.id == 'fixture' and '此前 assistant 的发言和承诺都属于' in chat.context.host_state
 
     run_host(tmp_path, exercise)
 
@@ -249,15 +249,15 @@ def test_owner_command_switches_without_waking_the_mind(tmp_path):
 
         replies = await send(70001, 1, '/角色 第二角色')
         assert runner.chat.persona.id == 'second' and runner.state.pending is None
-        assert replies[-1].segments[-1].data['text'] == '已换成 第二角色'
+        assert replies[-1].segments[-1].data['text'] == '已切换为 第二角色'
         assert replies[-1].reply_to == '1' and replies[-1].send_status == 'simulated'
         assert any(message.platform_message_id == '1' for _, message, _ in store.pending_messages(SCENE))
 
         await send(70002, 2, '/角色 合成角色')
         assert runner.chat.persona.id == 'second'
-        assert (await send(70001, 3, '/角色'))[-1].segments[-1].data['text'] == '现在是 第二角色。可以换：合成角色、第二角色'
-        assert (await send(70001, 4, '/角色 second'))[-1].segments[-1].data['text'] == '现在就是 第二角色'
-        assert (await send(70001, 5, '/角色 不存在'))[-1].segments[-1].data['text'].startswith('没有叫 不存在 的角色')
+        assert (await send(70001, 3, '/角色'))[-1].segments[-1].data['text'] == '当前角色：第二角色。可切换：合成角色、第二角色'
+        assert (await send(70001, 4, '/角色 second'))[-1].segments[-1].data['text'] == '当前已是 第二角色'
+        assert (await send(70001, 5, '/角色 不存在'))[-1].segments[-1].data['text'].startswith('不存在名为 不存在 的角色')
         parsed = parse_event(group_message(70001, 6, '/角色 合成角色'))
         call = None if parsed is None else runtime.commands.match(runtime, runner, parsed)
         assert call is not None and call.command.name == '角色' and call.arguments == ['合成角色']

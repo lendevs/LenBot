@@ -1,4 +1,4 @@
-"""Private snapshots of explicitly selected scene files, never a live shared-folder mount."""
+"""Create task input snapshots from selected scene files."""
 
 import os
 from pathlib import Path

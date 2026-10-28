@@ -34,7 +34,7 @@ class StickerAssetName(PersonaTarget):
         if (value == 'index.yaml' or '\\' in value
                 or any(part in {'', '.', '..'} or any(ord(char) < 32 for char in part)
                        for part in value.split('/'))):
-            raise ValueError(f'表情原件须为stickers内的相对文件，不能是index.yaml：{value!r}')
+            raise ValueError(f'表情原件须为 stickers 目录内的相对文件，不能是 index.yaml：{value!r}')
         return value
 
 
@@ -53,7 +53,7 @@ def asset_target(persona: Path, name: str) -> Path:
         if path.is_symlink():
             raise ValueError(f'表情原件不能穿越目录链接：{path}')
     if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
-        raise ValueError(f'表情原件不能通过链接或离开stickers：{target}')
+        raise ValueError(f'表情原件不能通过链接或离开 stickers 目录：{target}')
     return target
 
 
@@ -139,24 +139,24 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
         _, persona = selected(key, item.directory)
         index = source_index(persona)
         if index is None:
-            raise ValueError('尚无stickers/index.yaml；先明确保存索引（可为[]），再上传原件')
+            raise ValueError('尚无 stickers/index.yaml；请先保存索引（可为 []），再上传原件')
         sticker_entries(persona / 'stickers' / 'index.yaml', index)
         target = asset_target(persona, item.file)
         if target.exists():
-            raise FileExistsError(f'上传原件不覆盖已有文件：{target}')
+            raise FileExistsError(f'文件已存在，请更换文件名：{target}')
         mime, width, height, animated = inspect_image(data)
         atomic_file(target, data, create=True)
         return {'file': item.file, 'bytes': len(data), 'mime_type': mime, 'width': width,
                 'height': height, 'animated': animated, 'registered_automatically': False,
-                'notice': '原件已存到宿主角色包；未改索引、运行表情或向平台发送。请明确编辑索引后保存。'}
+                'notice': '原件已存到角色包，请编辑并保存表情索引。'}
 
     def delete(key: str, item: StickerAssetName) -> dict:
         _, persona = selected(key, item.directory)
         index = source_index(persona)
         if index is None:
-            raise ValueError('无表情索引，不能确认原件是否被引用；先明确建立索引')
+            raise ValueError('无表情索引，无法确认原件是否被引用；请先建立索引')
         if any(entry.file == item.file for entry in sticker_entries(persona / 'stickers' / 'index.yaml', index)):
-            raise ValueError('原件仍被保存索引引用；先明确删除索引项并保存，再删除原件')
+            raise ValueError('原件仍被已保存的索引引用；请先删除索引项并保存，再删除原件')
         target = asset_target(persona, item.file)
         if not stat.S_ISREG(target.stat(follow_symlinks=False).st_mode):
             raise ValueError(f'只删除常规表情原件，不删除目录：{target}')
@@ -168,7 +168,7 @@ def register_host_persona_stickers(app: FastAPI, *, root: Path, runtime: Network
             async with write_lock:
                 return await finish_role_write(function, *args) if writing else await asyncio.to_thread(function, *args)
         except LookupError as error:
-            raise HTTPException(404, '角色库里没有这个角色') from error
+            raise HTTPException(404, '角色库中不存在此角色') from error
         except FileExistsError as error:
             raise HTTPException(409, str(error)) from error
         except FileNotFoundError as error:

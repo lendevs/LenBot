@@ -67,22 +67,24 @@ export function newBinding(provider: string): ChatBinding {
     provider,
     model: '',
     context_window_tokens: 128000,
-    temperature: 0.6,
+    temperature: null,
     max_output_tokens: 1024,
     timeout_seconds: 60,
+    thinking: null,
     reasoning_effort: null,
     quick_reasoning_effort: null,
     thinking_budget_tokens: null,
     image_input: true,
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',
-    retry_delays_seconds: [],
+    retry_delays_seconds: [2, 5],
   }
 }
 
 /** Protocol-specific fields the host refuses for other protocols. */
 export function fitProtocol(binding: ChatBinding, api: string | undefined) {
   if (api !== 'openai-chat') {
+    binding.thinking = null
     binding.history_policy = 'native'
     binding.output_token_field = 'max_completion_tokens'
   }

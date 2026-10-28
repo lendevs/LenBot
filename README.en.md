@@ -10,10 +10,10 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-b4476a">
   <img alt="Python" src="https://img.shields.io/badge/python-3.13%2B-b4476a">
-  <img alt="Platforms" src="https://img.shields.io/badge/platform-QQ%20%7C%20Telegram-b4476a">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by the model in a multi-step tool loop. It runs on QQ (OneBot v11) and Telegram and needs only one chat model and its API key.
+**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by the model in a multi-step tool loop. It runs on QQ (OneBot v11) and needs only one chat model and its API key.
 
 <img src="website/public/screenshots/live.gif" alt="Live view of a group: after the bot is mentioned, its turn unfolds step by step, first searching the chat history, then replying in two messages" width="860">
 
@@ -40,7 +40,7 @@ cd LenBot
 uv run --no-sync len-bot
 ```
 
-On first start the terminal prints a setup link. Open it in a browser and follow the five-step wizard to connect QQ and choose a model and persona. Pick simulated delivery first, try a few rounds in the panel's test chat, then switch to real delivery.
+On first start the terminal prints a setup link. Open it in a browser and follow the five-step wizard to connect QQ and choose a model and persona. Pick simulated delivery first, try a few rounds in the panel's test chat, then switch to sending to QQ on the overview.
 
 <img src="website/public/screenshots/home.png" alt="Panel overview" width="860">
 

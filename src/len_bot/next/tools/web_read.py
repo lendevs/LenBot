@@ -55,7 +55,7 @@ class WebReadArguments(BaseModel):
 WEB_READ_TOOL = {"type": "function", "function": {
     "name": "web_read",
     "description": "读取公开 HTTP(S) 网页、文本、JSON 或 PDF 文本层。url 首读保存完整实际提取结果并显示前4000字符；"
-                   "document 用返回的文档编号和字符 offset 稳定续读，不重新联网。",
+                   "document 用返回的文档编号和字符 offset 续读已保存的结果。",
     "parameters": WebReadArguments.model_json_schema(),
 }}
 
@@ -102,8 +102,8 @@ async def _extract(url: str, content_type: str, body: bytes) -> tuple[str, str, 
     if media_type == "application/pdf" or body.startswith(b"%PDF-"):
         document = await read_pdf(body)
         notice = (f"PDF文本层：共{document['page_count']}页，实际提取{document['pages_extracted']}页；"
-                  f"20万字符上限{'已达到，仅保证已提取范围' if document['truncated'] else '未达到'}；"
-                  "不含OCR、图像或可靠的图表版式。")
+                  f"20万字符上限{'已达到，正文已截断' if document['truncated'] else '未达到'}；"
+                  "内容来自文本层，图像和图表需查看原文件。")
         if not document["has_text"]:
             notice += " 页面未提取到文字，可能是扫描页；需查看原图。"
         return "application/pdf", document["text"], notice
@@ -174,7 +174,7 @@ async def execute_web_read(store: Store, scene: str, settings: WebReadSettings,
             if len(body) > _web_limit(media_type, body[:8]):
                 raise ValueError(f'Frozen web_read response exceeds the normal {media_type} byte limit')
             media_type, content, notice = await _extract(final_url, content_type, body)
-            notice += " 本次读取的是冻结响应，不是实时联网查询；抓取时间来自原始资料清单。"
+            notice += " 本次读取的是录制的响应，抓取时间来自原始资料清单。"
             page = WebPage(url=arguments.url, final_url=final_url, fetched_at=fetched_at,
                            media_type=media_type, content=content, notice=notice)
             document = store.save_web_page(scene, page)

@@ -242,6 +242,69 @@ async def joined_groups(call: PlatformCall) -> list[dict]:
         raise ValueError(f'get_group_list 返回无法解析：{error}; raw={repr(raw)[:500]}') from error
 
 
+GROUP_FILE_COUNT = 200
+
+
+def _count(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _entries(value: object, field: str) -> list[dict]:
+    # go-cqhttp reports an empty folder as null.
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError(f"{field} must be a list of objects")
+    return value
+
+
+def parse_group_files(raw: object, action: str) -> dict:
+    """One folder of get_group_root_files or get_group_files_by_folder (NapCat and SnowLuma share the fields)."""
+    data = _succeeded(raw, action)
+    try:
+        files = []
+        for item in _entries(data["files"], "files"):
+            name = item["file_name"]
+            if not isinstance(name, str) or not name:
+                raise ValueError("file_name must be nonempty text")
+            files.append({"file_id": _id(item["file_id"], "file_id"), "busid": _count(item["busid"], "busid"),
+                          "name": name, "size": _count(item["file_size"], "file_size"),
+                          "uploaded": _count(item["upload_time"], "upload_time"),
+                          "uploader": _optional_text(item.get("uploader_name"), "uploader_name")})
+        folders = []
+        for item in _entries(data["folders"], "folders"):
+            name = item["folder_name"]
+            if not isinstance(name, str) or not name:
+                raise ValueError("folder_name must be nonempty text")
+            folders.append({"folder_id": _id(item["folder_id"], "folder_id"), "name": name,
+                            "files": _count(item["total_file_count"], "total_file_count")})
+        return {"files": files, "folders": folders}
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"{action} 返回无法解析：{error}; raw={repr(raw)[:500]}") from error
+
+
+async def group_files(call: PlatformCall, group_id: str, folder: str | None) -> dict:
+    """A group's files and folders at the root, or inside ``folder``."""
+    params: dict = {"group_id": int(group_id)}
+    if folder is None:
+        action = "get_group_root_files"
+    else:
+        action, params["folder_id"] = "get_group_files_by_folder", folder
+    # NapCat returns file_count entries, 50 when left out; SnowLuma reads the whole folder.
+    params["file_count"] = GROUP_FILE_COUNT
+    return parse_group_files(await call(action, params), action)
+
+
+async def group_file_url(call: PlatformCall, group_id: str, file_id: str, busid: int) -> str:
+    raw = await call("get_group_file_url", {"group_id": int(group_id), "file_id": file_id, "busid": busid})
+    url = _succeeded(raw, "get_group_file_url").get("url")
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        raise ValueError(f"get_group_file_url 返回无法解析：url must be an http address; raw={repr(raw)[:500]}")
+    return url
+
+
 def parse_member(raw: object, *, group_id: str, qq: str) -> dict:
     """Parse get_group_member_info once; identity fields must match the request."""
     try:

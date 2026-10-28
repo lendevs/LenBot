@@ -104,7 +104,7 @@ class ReleaseCheck:
             try:
                 await self.refresh()
             except Exception:
-                log_event(logger, 'release_check', '检查新版本失败，下个周期再试', level=logging.WARNING,
+                log_event(logger, 'release_check', '检查新版本失败，下个周期重试', level=logging.WARNING,
                           error=self.error, current=self.current)
             else:
                 log_event(logger, 'release_check', current=self.current, **self.summary)

@@ -7,6 +7,7 @@ export interface TurnRecord {
   scene: string
   started: number
   status: string
+  model_error?: boolean
   error?: string | null
 }
 
@@ -22,6 +23,16 @@ export interface Activity {
   spoke?: boolean
 }
 
+export interface HealthCall {
+  id: number
+  scene: string
+  turn_id: string | null
+  started: number
+  provider: string | null
+  model: string | null
+  error?: string
+}
+
 export interface Overview {
   timezone: string
   sampled_at: number
@@ -32,10 +43,11 @@ export interface Overview {
   turns: Record<string, number>
   model_calls: number
   tokens: { input: number; output: number; cached: number }
-  /** Calls whose provider reported no token counts. */
-  unknown_token_calls: number
   pending_schedules: number
   recent_errors: TurnRecord[]
+  model_errors: { id: number; scene: string; turn_id: string | null; error: string; count: number }[]
+  /** Per model call purpose over the last seven days: the latest success and failure. */
+  model_health: { purpose: string; success: HealthCall | null; failure: HealthCall | null }[]
   reply_effects: Record<string, number>
   /** Messages per group that failed or may not have been sent today. */
   undelivered: Record<string, number>

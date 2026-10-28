@@ -1,4 +1,4 @@
-"""Host-owned isolated chat sessions, never a switch on the production outlet."""
+"""Panel endpoints for isolated chat sessions."""
 from __future__ import annotations
 
 import asyncio
@@ -65,6 +65,10 @@ class Trial:
     excluded: list[str]
     context: list[str]
     persona_source: Literal['running', 'draft'] = 'running'
+    # The role library directory a draft trial was made from.
+    draft_source: str | None = None
+    # The plugin that keeps the group's long-term memory; the trial runs on its own native memory.
+    memory_plugin: str | None = None
     stopped: float | None = None
     final_state: dict | None = None
 
@@ -72,9 +76,11 @@ class Trial:
         return {'id': self.id, 'scene': self.scene, 'created': self.created, 'stopped': self.stopped,
                 'context': self.context, 'active': self.stopped is None, 'root': str(self.root), 'excluded_tools': self.excluded,
                 'memory': '独立空白本地记忆' if self.config.memory is not None else '本次不装配记忆',
+                'memory_plugin': self.memory_plugin,
                 'persona': self.session.chat.persona.name,
                 'persona_source': self.persona_source,
                 'draft_path': str(self.root / 'persona-draft') if self.persona_source == 'draft' else None,
+                'draft_source': self.draft_source,
                 'models': {'mind': self.config.models.roles.mind.model}}
 
     def snapshot(self) -> dict:
@@ -120,6 +126,8 @@ def write_trial_files(config: LabConfig, persona: Persona, draft: PersonaDraft |
     (snapshot_dir / 'voice.md').write_text(persona.voice, encoding='utf-8')
     (snapshot_dir / 'boundaries.md').write_text(persona.boundaries, encoding='utf-8')
     (snapshot_dir / 'examples.yaml').write_text(yaml.safe_dump([example.model_dump() for example in persona.examples], allow_unicode=True), encoding='utf-8')
+    for filename, content in persona.expression.items():
+        (snapshot_dir / filename).write_text(content, encoding='utf-8')
     if persona.avatar is not None:
         (snapshot_dir / 'avatar.png').write_bytes(persona.avatar.data)
     for filename, document in persona.knowledge.items():
@@ -144,7 +152,7 @@ def load_draft_persona(root: Path, scene: str, draft: PersonaDraft) -> Persona:
         raise ValueError('场景已从保存配置移除，不能读取其角色资料用于新草稿试聊')
     path = next((role.path for role in roles(root, saved) if str(role.path) == draft.directory), None)
     if path is None:
-        raise ValueError(f'试聊草稿须来自角色库里的角色；directory={draft.directory!r}')
+        raise ValueError(f'试聊草稿须来自角色库中的角色；directory={draft.directory!r}')
     return parse_persona_files(path, draft.files)
 
 
@@ -162,7 +170,7 @@ class HostTrials:
 
     def get(self, trial_id: str) -> Trial:
         if trial_id not in self.records:
-            raise HTTPException(404, '本次宿主启动中没有这个试聊；不会自动恢复旧试聊')
+            raise HTTPException(404, '本次运行中找不到此试聊，请新建试聊')
         return self.records[trial_id]
 
     async def start(self, scene: str, context_messages: int = 0,
@@ -173,7 +181,7 @@ class HostTrials:
             if scene not in self.config.scenes:
                 raise HTTPException(404, '未配置此场景')
             if any(trial.stopped is None for trial in self.records.values()):
-                raise HTTPException(409, '已有活动试聊，请先停止；切换页面不会自动停止或重开')
+                raise HTTPException(409, '已有活动试聊，请先停止再新建')
             if persona_draft is None:
                 persona = self.runtime.chats[scene].persona.model_copy(deep=True)
             else:
@@ -199,7 +207,7 @@ class HostTrials:
                 # log directory, which lies outside the trial root that offline migrations reload it from.
                 candidate = source.model_copy(update={'mode':'isolated', 'onebot':None, 'delivery':'simulated', 'logging':LoggingSettings(directory=root / 'logs'),
                     'database':root / 'state.db', 'persona':root / 'persona-snapshot', 'owners':[],
-                    'permissions': IdentitySettings(), 'panel':None, 'plugins':[], 'worker':None, 'tasks':source.tasks.model_copy(update={'enabled':False}),
+                    'permissions': IdentitySettings(), 'panel':None, 'plugins':[], 'memory_plugin':None, 'recap_plugin':None, 'worker':None, 'tasks':source.tasks.model_copy(update={'enabled':False}),
                     'learning':None, 'proactive':None, 'transcribe_audio':False, 'memory':memory,
                     'web_read':None, 'web_search':None})
                 config = LabConfig.model_validate_json(candidate.model_dump_json())
@@ -227,7 +235,9 @@ class HostTrials:
                 session = PanelSession(config, store, mind, vision=vision, memory=local_memory,
                                        persona=persona, slots=self.runtime.chats[scene].slots)
                 trial = Trial(root.name, scene, root, time.time(), config, session, stack, excluded, context,
-                              persona_source='running' if persona_draft is None else 'draft')
+                              persona_source='running' if persona_draft is None else 'draft',
+                              draft_source=None if persona_draft is None else persona_draft.directory,
+                              memory_plugin=source_chat.config.memory_plugin)
                 self.records[trial.id] = trial
                 return trial
             except BaseException as error:
@@ -252,7 +262,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     @app.post('/api/host/trials', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def start(item: TrialStart, _: str = Depends(user)):
         if not item.acknowledge_model_cost:
-            raise HTTPException(422, '开始前需明确知道模型请求仍会计费；平台发送始终模拟')
+            raise HTTPException(422, '开始前须确认模型请求照常计费；平台发送始终为模拟')
         try:
             return (await trials.start(item.scene, item.context_messages, item.persona_draft)).info()
         except InstanceBusyError as error:
@@ -275,7 +285,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     async def message(trial_id: str, item: TestMessage, _: str = Depends(user)):
         trial = trials.get(trial_id)
         if trial.stopped is not None:
-            raise HTTPException(409, '这个试聊已经停止，不接收消息')
+            raise HTTPException(409, '此试聊已停止，不接收消息')
         return trial.session.receive(item)
 
     @app.get('/api/host/trials/{trial_id}/messages/{seq}/images/{image_index}')
@@ -298,7 +308,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
                 return store.turn_detail(trial.scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
-            raise HTTPException(404, '这一轮不属于当前试聊')
+            raise HTTPException(404, '此回合不属于当前试聊')
         return result
 
     @app.get('/api/host/trials/{trial_id}/turns/{turn_id}/steps', response_model=TurnDetail)
@@ -310,7 +320,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
                 return read_turn(store, trial.scene, turn_id)
         result = await asyncio.to_thread(read)
         if result is None:
-            raise HTTPException(404, '这一轮不属于当前试聊')
+            raise HTTPException(404, '此回合不属于当前试聊')
         return result
 
     @app.websocket('/api/host/trials/{trial_id}/events')

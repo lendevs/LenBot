@@ -237,7 +237,7 @@ async def test_unencodable_host_answer_is_an_error_and_a_broken_line_ends_the_wo
         await until(lambda: state(plugins, 'boxed')['status'] == 'failed', 10)
         assert '进程协议出错' in state(plugins, 'boxed')['error']
         # The pending invocation fails instead of waiting forever.
-        await until(lambda: any('本次调用没有完成' in item['error'] for item in state(plugins, 'boxed')['errors']), 10)
+        await until(lambda: any('本次调用未完成' in item['error'] for item in state(plugins, 'boxed')['errors']), 10)
 
 
 @pytest.mark.asyncio

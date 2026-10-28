@@ -1,4 +1,4 @@
-"""Offline preservation of actual terminal task rows and native files; never a task restore."""
+"""Archive terminal task records and native files while offline."""
 
 from contextlib import closing
 import json
@@ -55,9 +55,9 @@ def read_metadata(config: HostConfig | LabConfig) -> dict:
                 raise ValueError(f'Selected scene has no actual task records: {scene}')
         for raw in tasks:
             task = _task(raw)
-            if task.status not in TERMINAL or task.container is not None or task.browser_active:
+            if task.status not in TERMINAL or task.container is not None:
                 raise ValueError(f'Task is not a stopped terminal record: scene={task.scene!r}, id={task.id}, '
-                                 f'status={task.status}, container={task.container!r}, browser_active={task.browser_active}')
+                                 f'status={task.status}, container={task.container!r}')
         result = {'tasks': tasks}
         for table in ('task_events', 'task_files'):
             result[table] = [dict(row) for row in db.execute(
@@ -101,7 +101,7 @@ def add_node(archive: tarfile.TarFile, path: Path, member: str, result: dict) ->
     else:
         result['metadata_only'].append({'name': member, 'mode': info.st_mode, 'uid': info.st_uid,
             'gid': info.st_gid, 'mtime_ns': info.st_mtime_ns, 'rdev': info.st_rdev,
-            'notice': 'Special node metadata only; no pipe/device/socket content read or node creation.'})
+            'notice': 'Special nodes are recorded as metadata.'})
 
 
 def archive_tasks(config: HostConfig | LabConfig) -> dict:
@@ -111,7 +111,7 @@ def archive_tasks(config: HostConfig | LabConfig) -> dict:
     worker = config.worker
     destination = settings.destination
     if os.path.lexists(destination):
-        raise FileExistsError(f'Task archive never overwrites or resumes a directory: {destination}')
+        raise FileExistsError(f'Archive destination already exists: {destination}')
     require_directory(destination)
     for root in (worker.workspace_root, worker.runtime_root, worker.delivery_root):
         if destination.is_relative_to(root) or root.is_relative_to(destination):
@@ -132,9 +132,8 @@ def archive_tasks(config: HostConfig | LabConfig) -> dict:
     destination.mkdir(parents=True, mode=0o700)
     result = {'destination': str(destination), 'complete': False, 'started_at': time.time(), 'ended_at': None,
               'members': [], 'absent_roots': [], 'metadata_only': [], 'error': None,
-              'notice': 'Original rows and native file preservation only. Raw links are preserved, not followed; '
-                        'no automatic extraction/restore, task resume, configuration switch, source deletion or platform send. '
-                        'Keep complete original databases, config, shared materials and external service/browser data separately.'}
+              'notice': 'Archives terminal task rows and native files; links are stored as links. '
+                        'Back up the database, config, shared materials and external service/browser data separately.'}
     original_error: BaseException | None = None
     try:
         write_json(destination / 'metadata.json', {'database': str(config.database), 'scenes': settings.scenes,
@@ -170,7 +169,7 @@ def archive_tasks(config: HostConfig | LabConfig) -> dict:
     except BaseException as error:
         original_error = error
         result['error'] = ''.join(traceback.format_exception_only(error)).strip()
-        error.add_note(f'Task archive is incomplete; retain and inspect {destination}; no automatic retry')
+        error.add_note(f'Task archive is incomplete; inspect {destination} before retrying')
         raise
     finally:
         try:

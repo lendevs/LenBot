@@ -103,7 +103,6 @@ async function submit() {
             <span class="tabular">{{ formatBytes(file.size) }}</span>
           </span>
         </div>
-        <p class="text-xs text-muted">{{ t('plugins.install.zipLayout') }}</p>
       </template>
       <Checkbox
         v-if="request.kind !== 'update'"

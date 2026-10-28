@@ -1,4 +1,4 @@
-"""Read an actual ext4 filesystem limit or APFS volume quota; never a configured size estimate."""
+"""Read ext4 capacity or APFS volume quota."""
 
 from dataclasses import asdict, dataclass
 import os

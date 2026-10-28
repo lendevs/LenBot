@@ -17,9 +17,9 @@ DIRECTORY_FLAGS = os.O_RDONLY if sys.platform == 'win32' else os.O_RDONLY | os.O
 def continuation_state(item: Task, discarded: bool) -> str:
     if discarded:
         return 'discarded'
-    if item.status not in TERMINAL or item.container is not None or item.browser_active:
+    if item.status not in TERMINAL or item.container is not None:
         return 'active'
-    return 'account_new_task' if item.account_browser else 'retained'
+    return 'retained'
 
 
 def temporary_paths(settings: WorkerSettings, scene: str, task_id: int) -> list[tuple[Path, str]]:

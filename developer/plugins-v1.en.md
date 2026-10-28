@@ -28,7 +28,7 @@ Interface 1 is the supported generation and is frozen from 0.2.0: later changes 
 from len_bot.plugin import Plugin, Invocation, command
 
 class Example(Plugin):
-    @command("hello", "Reply without a model call")
+    @command("hello", "Reply with a greeting")
     async def hello(self, ctx: Invocation, args: str):
         await ctx.reply(f"Hello {args}")
 ```
@@ -41,10 +41,19 @@ class Example(Plugin):
 | `on_notice(type)` | `ctx: Invocation, notice` | Platform notice type or type.sub_type |
 | `tool(name, description, summary=..., needs_source=False)` | `ctx: Invocation`, typed named arguments | Model-discovered tool; text or native JSON result |
 | `background(every="5m")` | `ctx: PluginContext` | Wait after completion; minimum interval 10 seconds |
+| `recall()` | `request: RecallRequest` | Automatic recall for scenes whose `memory_plugin` names this plugin; returns `RecallBlock`s |
+| `memory_tool(description)` | `ctx: Invocation`, typed named arguments | The `memory` tool of scenes whose `memory_plugin` names this plugin |
+| `compact()` | `request: CompactRequest` | Compaction recap for scenes whose `recap_plugin` names this plugin; returns text |
 
-Methods are async and use one decorator each. Command, exact-text, then regex matching takes precedence; regex priority sorts descending. At most one handler consumes a message, without waking the chat model. Returning text records a result; sending requires `ctx.reply`. A model selecting a plugin tool and the tool itself calling a model are separate actions.
+Methods are async and use one decorator each. Command, exact-text, then regex matching takes precedence; regex priority sorts descending. At most one handler consumes a message; its result becomes background context for the next chat turn. Returning text records a result; sending requires `ctx.reply`. If a plugin tool calls a model internally, say so in its description.
 
 Plugin commands are matched first. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
+
+When a scene's `memory_plugin` names a plugin enabled there, that scene's automatic recall comes from the plugin's `@recall` entry, and the native memory no longer recalls or extracts for it; existing native memory files stay as they are. A `memory_plugin` or `recap_plugin` saved from the panel takes over when the scene's current turn ends; uninstalling a plugin returns the scenes that used it to the native implementation. With `@memory_tool(description)` the plugin supplies that scene's `memory` tool, with arguments generated from typed parameters as for `@tool`; the chat model, other plugins' `ctx.memory()` and task workers all reach it there, and the role must still allow `memory`. Without `@memory_tool` the scene has no `memory` tool. Native memory prose and the group profile leave that scene's prompt; a short note that the plugin provides the memory takes their place. To import native memory, `await self.ctx.native_memory(scene, arguments)` reads it with the native tool's arguments, limited to browse, read, search and history. A plugin has at most one `@recall`. It runs once per turn before the first model request and receives `RecallRequest(scene, persona, turn_id, observed_at, messages, recap, tasks, budget_chars)`: `messages` are the latest 8 messages the bot has read or delivered, oldest first, without undelivered bot messages; `recap` is the current compaction recap or None; `tasks` has one line per unfinished work task; `budget_chars` is the root `memory.recall_budget_chars`, or 1500 without native memory. The host keeps the blocks in order, skips blank ones and cuts what exceeds the budget; kept blocks appear in the turn state and the panel's recall record with source `plugin:<name>` and `title` as the path, and every model request of the turn uses the same result. Recall has 10 seconds; a timeout, an exception or a value that is not a sequence of `RecallBlock` is recorded on the plugin and the turn goes on without recall.
+
+A plugin that reads original messages with `ctx.messages_between` for its own processing calls `await self.ctx.report_memory_progress(scene, message.id)` after each part: everything through that message is processed. Only the scene's `memory_plugin` may report, and the position never moves back. When retention removes expired originals under `retention.message_days`, it keeps only what the plugin has not processed; before the first report it keeps nothing back for the plugin, and the native extraction position does not count while the plugin is in use. After switching back to native memory, native extraction starts from the latest message at that time; messages from the plugin period are not extracted.
+
+When the session nears the compaction threshold, or an operator compacts it from the panel, the host picks the oldest complete conversation entries and replaces them and the current recap with a new recap. When a scene's `recap_plugin` names a plugin enabled there, that plugin's `@compact` entry writes the new recap; a plugin has at most one. It receives `CompactRequest(scene, persona, turn_id, source, budget_tokens)`: `source` is the current recap and the entries to fold, as the same text the native recap reads, and `budget_tokens` is the length limit by the host's estimate of UTF-8 bytes divided by 3. The host chooses the boundary and never separates a tool call from its results. It strips the returned text and, in one transaction, stores the recap, moves the compaction position and clears discovered tools; native recaps use the same commit. Compaction has 120 seconds; a timeout, an exception, blank text or text over `budget_tokens` is recorded on the plugin and the current turn. The turn ends with the existing recap, compaction position and history preserved. A role handover recap is always written by the native recap.
 
 A deployment can switch off single rules while the rest of a plugin keeps working: list them under `plugins.disabled_rules` by plugin name, as `/command`, the exact text, or the regex pattern string, for example `"disabled_rules": {"asoul": ["今日直播"]}`. Switched-off text is handled as ordinary chat. A rule the plugin does not have is reported as a log warning.
 
@@ -52,12 +61,12 @@ A deployment can switch off single rules while the rest of a plugin keeps workin
 
 Time limits:
 
-- `start()` has 60 seconds. When it overruns, the host cancels it and marks the plugin failed with `TimeoutError: 插件 start() 超过 60 秒没有返回，已取消`; the rest of the host starts normally.
-- `stop()` has 30 seconds. An overrunning `stop()` is cancelled and reported the same way, so it does not block shutdown.
+- `start()` has 60 seconds. When it overruns, the host cancels it and marks the plugin failed with `TimeoutError: 插件 start() 超过 60 秒未返回，已取消`; the rest of the host starts normally.
+- `stop()` has 30 seconds. An overrunning `stop()` is cancelled and reported the same way, and shutdown continues.
 - Slow preparation, such as waiting for the network or warming a cache, belongs in `start_task` rather than being awaited in `start()`.
 - `migrate_data` has no time limit.
 
-A handler error ends that call. The host writes the original error to the run log (`plugin_error`) and does not retry. Use `self.ctx.log` (a standard `logging.Logger`) for the plugin's own records. They are written to the host's `logs/lenbot.jsonl` with the plugin name and the current scene, turn and tool call IDs, and the system log in the panel can filter by plugin.
+A handler error ends that call. The host writes the original error to the run log (`plugin_error`), and the plugin keeps handling later events. Use `self.ctx.log` (a standard `logging.Logger`) for the plugin's own records. They are written to the host's `logs/lenbot.jsonl` with the plugin name and the current scene, turn and tool call IDs, and the system log in the panel can filter by plugin.
 
 ## Configuration and data
 
@@ -86,7 +95,7 @@ The host records `.lenbot-data.json` in the data directory with the `data_versio
 
 Optional `permissions` in `plugin.toml` lists the host capabilities the plugin uses: `send` (including `ctx.reply`), `events`, `history`, `memory`, `generate`, `delegate`, `network` (`fetch_image`) and `schedule` (`ctx.cron`). A plugin that declares the field gets only those; anything else raises `PermissionError`. Its own KV, data directory, commands, rules, tools and notices need no permission. A manifest without the field keeps every capability and is shown as undeclared.
 
-`isolation = "process"` runs the plugin in its own worker process. Commands, full-text and regex rules, notices and `@background` loops are forwarded as JSON lines; every `ctx` capability is answered by the host under the plugin's own name with the same scene and permission checks. The requester of `ctx.delegate` is taken by the host from the real message that triggered the invocation, never from the worker; background loops and finished invocations cannot delegate. If the worker dies, or writes a protocol line the host cannot parse (the host then ends it), pending calls fail, its `@background` loops stop and only that plugin is marked failed; reloading starts a fresh worker. `@tool`, `ctx.cron` and `ctx.start_task` are not supported in a process yet. This isolates crashes; it is not a security sandbox.
+`isolation = "process"` runs the plugin in its own worker process. Commands, full-text and regex rules, notices, `@background` loops, `@recall` and `@compact` are forwarded as JSON lines; every `ctx` capability is answered by the host under the plugin's own name with the same scene and permission checks. The requester of `ctx.delegate` is taken by the host from the real message that triggered the invocation, never from the worker; background loops and finished invocations cannot delegate. If the worker dies, or writes a protocol line the host cannot parse (the host then ends it), pending calls fail, its `@background` loops stop and only that plugin is marked failed; reloading starts a fresh worker. `@tool`, `@memory_tool`, `ctx.cron` and `ctx.start_task` are not supported in a process yet. Process isolation contains crashes; the plugin keeps the host's permissions.
 
 Each plugin state carries `health` with `level` (`ok`, `degraded`, `failed`, `stopped`, `starting`), `errors_last_hour`, `failing` and `last_error_at`; `GET /api/host/plugins/health` returns it without reading the disk.
 
@@ -100,34 +109,34 @@ Scene IDs are qualified, for example `onebot:group:80001`; accounts use `onebot:
 | Message parts | `Text(text)`, `Image(bytes, description)`, `Mention("onebot:70001")` |
 | History | `ctx.recent_messages(limit=20)`, current scene only, up to 100 |
 | Time range | `ctx.messages_between(after, before, offset=0, limit=200)`, Unix times with `after <= time < before`, oldest first, up to 500 per page; page with offset |
-| Memory | `await ctx.memory(arguments)` through the permitted scene service |
+| Memory | `await ctx.memory(arguments)` calls the scene's `memory` tool, native or the scene's memory plugin; `ctx.native_memory(scene, arguments)` reads native memory files |
 | Wake chat | `await ctx.emit_event(text)` |
 | One model request | `await ctx.generate(prompt, role="mind", system=None)` |
 | Work | `await ctx.delegate(goal, deliverable, context="", materials=())` |
 | Time | `ctx.now()`, `ctx.timezone()` |
 | Owner permission | `ctx.require_owner()` |
 
-`generate` uses the mind or learner binding (learner falls back to mind when it has none of its own), without tools, history injection or automatic sending; the request goes only to that binding's provider and model and never switches on failure. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. A returned task record confirms only that the task was submitted; it says nothing about delivery.
+`generate` runs one model generation with the mind or learner binding (learner falls back to mind when it has none of its own) and returns the text; the plugin sends it with `reply`. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. The returned task record confirms submission; completion arrives as a task event.
 
 `self.ctx` is a `PluginContext`; scene-specific capabilities require a scene argument. Calls are limited to enabled scenes. `self.ctx.scenes` lists enabled scenes whose chat is on: when an operator switches a group's chat off in the panel, that group drops out of the list, commands and notices there are not dispatched, and sending or emitting events to it raises an error. Sends return `Sent` with sent, failed, unconfirmed, simulated or partial status. Only sent means platform confirmation.
 
-Register five-field cron jobs in start with `self.ctx.cron(name, expression, handler, scene=..., timezone=...)`. The handler receives an Invocation without a message. Use an IANA timezone. Restart calculates the next run from the current time and does not replay missed occurrences. Plugin `skills/<name>/SKILL.md` resources are read-only for workers and remain subject to persona skill permissions.
+Register five-field cron jobs in start with `self.ctx.cron(name, expression, handler, scene=..., timezone=...)`. The handler receives an Invocation without a message. Use an IANA timezone. Restart calculates the next run from the current time and skips occurrences missed while offline. Plugin `skills/<name>/SKILL.md` resources are read-only for workers and remain subject to persona skill permissions.
 
 ## Installation, updates and restart
 
 Git uses complete HTTP(S) or ssh:// repository URLs and local Git credentials. The repository root is the plugin root. Select a branch, tag or commit; an omitted ref follows the recorded default branch. ZIP accepts files at archive root or inside a single top-level directory with a direct manifest. Paths, duplicate files, symlinks and a 200 MiB extracted limit are checked. ZIP preparation can be offline; dependency installation may need network access.
 
-Both sources prepare a candidate without importing it, stopping the current plugin or changing dependencies. Save candidate configuration, then explicitly apply it. New plugins begin disabled; enable them and select scenes after source application. The panel shows installed, candidate and actual running versions separately.
+Both sources prepare a candidate while the current plugin keeps running. Save candidate configuration, then explicitly apply it. New plugins begin disabled; enable them and select scenes after source application. The panel shows installed, candidate and actual running versions separately.
 
-Everything lives under the instance `plugins/` directory: managed source is `plugins/<name>`, staging is `plugins/.candidates/<name>`, source/application records are `plugins/.installations/<name>.json`, and plugin data defaults to `plugins/.data/<name>`. `plugins.paths` defaults to `["plugins"]`, so a plugin copied into `plugins/` by hand is discovered too. Builtin and manual directories are never taken over. Switching repositories or Git/ZIP source requires explicit source replacement. Git application rejects local changes, including untracked files except host-generated __pycache__.
+Everything lives under the instance `plugins/` directory: managed source is `plugins/<name>`, staging is `plugins/.candidates/<name>`, source/application records are `plugins/.installations/<name>.json`, and plugin data defaults to `plugins/.data/<name>`. `plugins.paths` defaults to `["plugins"]`, so a plugin copied into `plugins/` by hand is discovered too. Builtin and manually copied directories stay under manual control. Switching repositories or Git/ZIP source requires explicit source replacement. Git application rejects local changes, including untracked files except host-generated __pycache__.
 
-If dependencies are unchanged and reload=plugin, applying stops only that plugin, switches files and reloads it. Dependency changes or reload=host require an explicit host restart. After clean host shutdown, the launcher runs `maintenance.apply_plugins` once with the instance lock: validate selected candidates, resolve combined requirements, switch source, then start the host. Existing installed packages constrain resolution; conflicts preserve the original error. Failure ends that launcher run, without automatic retry or environment rollback. Ordinary startup never consumes candidates.
+If dependencies are unchanged and reload=plugin, applying stops only that plugin, switches files and reloads it. Dependency changes or reload=host require an explicit host restart. After clean host shutdown, the launcher runs `maintenance.apply_plugins` once with the instance lock: validate selected candidates, resolve combined requirements, switch source, then start the host. Existing installed packages constrain resolution; conflicts preserve the original error. Failure ends that launcher run and keeps the candidate and the original error; fix the problem and restart to apply again. Candidates are applied only on an explicit restart.
 
 For direct host runs, stop the instance, run `python -m len_bot.next.maintenance.apply_plugins` from its root, then explicitly start it. Rebuilt environments can restore installed plugin requirements with `maintenance.plugin_dependencies`. Use the target interpreter and uv.
 
-Applying a new version moves the replaced source to `plugins/.previous/<name>`; the panel can go back to it once. If the new version fails to load, start or migrate its data, the host returns to the previous source automatically; if the new version had already migrated the data, the pre-migration backup is restored too. Going back by hand from the panel changes only the source, not the data. Canceling a candidate preserves installed source. Canceling an unapplied first install removes its configuration entry. Disabling preserves configuration and data. Uninstall removes source and enabled configuration but retains data and shared packages. Data deletion is a separate action after the plugin stops.
+Applying a new version moves the replaced source to `plugins/.previous/<name>`; the panel can go back to it once. If the new version fails to load, start or migrate its data, the host returns to the previous source automatically; if the new version had already migrated the data, the pre-migration backup is restored too. Going back by hand from the panel restores the previous source and parameters; data follows the data-version rules above. Canceling a candidate preserves installed source. Canceling an unapplied first install removes its configuration entry. Disabling preserves configuration and data. Uninstall removes source and enabled configuration but retains data and shared packages. Data deletion is a separate action after the plugin stops.
 
-The discovery page uses a [static catalog](plugin-catalog.md). The first release does not include a marketplace backend.
+The discovery page uses a [static catalog](plugin-catalog.md).
 
 ## Local tests and publishing
 
@@ -142,7 +151,7 @@ async def check():
         result = await bot.tool("counter_read", {})
 ```
 
-PluginTest runs real lifecycle, matching, tool validation, scene permissions and on-disk KV in a temporary installation. Specify scenes and owners in the constructor; message accepts scene and sender. Deliveries contain captured parts, reply_to and simulated status. events() exposes actual stored plugin events. Handler/start failures fail the call. Context exit stops the plugin and deletes its temporary installation. To test a data migration, pass the old data: `PluginTest(package, data=Path('tests/data-v1'), data_version=1)` runs `migrate_data` before `start()` as a real upgrade does.
+PluginTest runs real lifecycle, matching, tool validation, scene permissions and on-disk KV in a temporary installation. Specify scenes and owners in the constructor; message accepts scene and sender. Deliveries contain captured parts, reply_to and simulated status. events() exposes actual stored plugin events. `recall(scene=..., recap=None, tasks=(), budget_chars=1500)` runs `@recall` on the latest 8 messages added with `add_message` and returns the items the chat would receive. `memory(arguments, scene=...)` calls `@memory_tool` with the chat memory tool's checks. `compact(source, scene=..., budget_tokens=4096)` runs `@compact` with the host's checks and returns the recap the host would adopt. Handler/start failures fail the call. Context exit stops the plugin and deletes its temporary installation. To test a data migration, pass the old data: `PluginTest(package, data=Path('tests/data-v1'), data_version=1)` runs `migrate_data` before `start()` as a real upgrade does.
 
 The local harness disables model calls by default; explicitly pass models for protocol tests through the host request and usage path. Memory and worker calls raise an explicit error. A plugin's own external network calls still execute.
 
@@ -152,7 +161,7 @@ Publish a standalone repository containing source, manifest, documentation and a
 
 ## Model-facing tool contract (unreleased 0.2.0 development)
 
-Use `@tool(name, description, summary="...", needs_source=False)`. The explicit summary appears in discovery and search, while the full description and `Annotated[..., Field(description=..., examples=...)]` schema accompany the callable tool. Without a summary the full description remains unchanged. README and docstrings are not loaded automatically.
+Use `@tool(name, description, summary="...", needs_source=False)`. The explicit summary appears in discovery and search, while the full description and `Annotated[..., Field(description=..., examples=...)]` schema accompany the callable tool. Without a summary the full description is used as is. README and docstrings are not loaded automatically.
 
 An optional `[model] instructions = "prompts/tools.md"` names a package-relative shared guide. It is loaded once after an allowed tool is discovered, refreshed on plugin reload and withdrawn on disable, removal or discovery reset after compaction.
 
@@ -166,7 +175,7 @@ Use `await ctx.fetch_image(url, timeout_seconds=15)` for verified public image b
 
 `PluginTest.preview_tools()` shows the model-facing summaries, schemas, shared guides and availability. Inject a clock with `now=...`, save a source with `add_message(...)`, and explicitly configure `models=...` only for model protocol tests. Sending stays simulated. The template includes native JSON lookup and background generation/delivery examples. See the [Chinese guide](plugins-v1.md) for full examples and compatibility details.
 
-Group related search/detail operations into a single capability using strict discriminated request models; keep data queries separate from sending and account writes. Model schemas omit generated titles while preserving property names, descriptions, examples and constraints. Check context size as well as tool count. Development continues without a version tag or Release.
+Group related search/detail operations into a single capability using strict discriminated request models; keep data queries separate from sending and account writes. Model schemas omit generated titles while preserving property names, descriptions, examples and constraints. Check context size as well as tool count.
 
 ## Command mentions and precedence
 
@@ -174,6 +183,6 @@ Commands use text-only matching by default. Opt in to body mentions with `@comma
 
 Plugin commands run before host commands. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
 
-Declare the host APIs actually used in `permissions`. The current official plugin updates and template do so; older manifests without this field retain the documented unrestricted host capabilities. This is not a Python or network sandbox. The official plugins use tools, and some use cron or start_task, so they remain inline.
+Declare the host APIs actually used in `permissions`. The current official plugin updates and template do so; older manifests without this field retain the documented unrestricted host capabilities. The official plugins use tools, and some use cron or start_task, so they remain inline.
 
-`PluginTest.message(..., parts=[Segment(...)])` and `add_message(..., parts=...)` append real message segments after the text to test mention and media matching. The harness does not provide memory or task workers: verify those capabilities in a temporary host instance. Simulated sends and protocol fixtures do not establish live delivery or model quality.
+`PluginTest.message(..., parts=[Segment(...)])` and `add_message(..., parts=...)` append real message segments after the text to test mention and media matching. Memory and task workers are tested in a temporary host instance; live delivery and model quality are checked with real sends and expression replay.

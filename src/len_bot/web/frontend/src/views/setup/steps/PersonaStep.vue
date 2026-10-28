@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
 import RadioGroup from '../../../ui/RadioGroup.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Textarea from '../../../ui/Textarea.vue'
-import { useStepErrors, useWizard } from '../wizard'
+import MoreFields from '../MoreFields.vue'
+import { personaFolder, useStepErrors, useWizard } from '../wizard'
 
 const { t } = useI18n()
 const { draft } = useWizard()
@@ -20,6 +21,12 @@ const kinds = computed(() => [
   { value: 'group' as const, label: t('setup.persona.group') },
   { value: 'private' as const, label: t('setup.persona.private') },
 ])
+const more = ref(false)
+watch(
+  () => error('personaId'),
+  (wrong) => wrong && (more.value = true),
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -28,9 +35,6 @@ const kinds = computed(() => [
       <RadioGroup v-model="draft.persona" :options="templates" />
     </Field>
     <div v-if="draft.persona === 'custom'" class="grid animate-rise gap-x-5 gap-y-5 sm:grid-cols-2">
-      <Field :label="t('setup.persona.id')" :error="error('personaId')" required>
-        <Input v-model="draft.personaId" mono :placeholder="t('setup.persona.idPlaceholder')" />
-      </Field>
       <Field :label="t('setup.persona.name')" :error="error('personaName')" required>
         <Input v-model="draft.personaName" />
       </Field>
@@ -62,5 +66,10 @@ const kinds = computed(() => [
         <Input v-model="draft.sceneId" mono inputmode="numeric" />
       </Field>
     </div>
+    <MoreFields v-if="draft.persona === 'custom'" v-model="more" :title="t('setup.persona.more')">
+      <Field :label="t('setup.persona.id')" :error="error('personaId')">
+        <Input v-model.trim="draft.personaId" mono :placeholder="personaFolder(draft.personaName)" />
+      </Field>
+    </MoreFields>
   </div>
 </template>

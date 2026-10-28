@@ -28,6 +28,7 @@ import SessionTab from './session/SessionTab.vue'
 import SettingsTab from './settings/SettingsTab.vue'
 import LearningTab from './learning/LearningTab.vue'
 import MemoryTab from './memory/MemoryTab.vue'
+import ReferenceTab from './reference/ReferenceTab.vue'
 import TasksTab from './tasks/TasksTab.vue'
 
 const { t } = useI18n()
@@ -153,6 +154,7 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
                 :time-zone="current.timezone"
                 @dirty="(value: boolean) => (dirty.memory = value)"
               />
+              <ReferenceTab v-else-if="tab === 'reference'" :scene="scene" />
               <TasksTab
                 v-else-if="tab === 'tasks'"
                 :scene="scene"

@@ -7,8 +7,11 @@ import httpx
 import pytest
 
 from len_bot.next.config import load_host_config
+from len_bot.next.chat.context import build_system
 from len_bot.next.persona.profile import load_persona
-from len_bot.next.panel.setup import create_setup_app
+from len_bot.next.panel import setup as first_run
+from len_bot.next.panel.setup import FirstSetup, create_setup_app, initialize, opens_browser
+from len_bot.next.runtime.send_hold import SendHold
 from len_bot.web.auth import verify_password
 
 
@@ -52,7 +55,8 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
             assert response.status_code == 200, response.text
             assert complete.is_set() and 'synthetic-secret' not in response.text
             cfg = load_host_config(tmp_path)
-            assert cfg.delivery == 'simulated' and cfg.models.roles.mind.model == 'fixture'
+            assert cfg.delivery == 'onebot' and cfg.models.roles.mind.model == 'fixture'
+            assert SendHold(tmp_path).enabled is True
             assert cfg.memory is not None
             if embedding_mode == 'skip':
                 assert cfg.memory.local.embedding is None and set(cfg.models.providers) == {'primary'}
@@ -66,16 +70,43 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
             if default_persona:
                 assert persona.id == 'companion' and persona.name == '小然'
                 assert persona.voice and persona.knowledge and persona.stickers
-                assert persona.examples == []
+                assert len(persona.examples) == 8
                 assert persona.skills == 'all' and '小然' in persona.aliases
             else:
                 assert persona.name == '合成角色'
+                assert persona.brief == body['brief'] and persona.behavior == ''
+                system = build_system(cfg.scene_config(body['scene']), persona, [], platform=False)
+                assert system.count(body['brief']) == 1
             assert verify_password(body['password'], cfg.panel.password_hash)
             before = (tmp_path/'lenbot.config.json').read_bytes()
             assert body['password'] not in before.decode()
             assert (await client.post('/api/setup', json=body)).status_code == 409
             assert (tmp_path/'lenbot.config.json').read_bytes() == before
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('delivery', ['simulated', 'onebot'])
+def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path, monkeypatch, delivery: str):
+    item = FirstSetup.model_validate({
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': delivery,
+        'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
+        'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-secret'},
+        'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
+        'compaction': {'input_tokens': 6000},
+        'scene': 'onebot:group:80001', 'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
+    })
+    published = []
+    link = first_run.os.link
+
+    def observed(source, target):
+        published.append(SendHold(tmp_path).enabled)
+        link(source, target)
+
+    monkeypatch.setattr(first_run.os, 'link', observed)
+    initialize(tmp_path, item)
+    assert published == [delivery == 'simulated']
+    assert load_host_config(tmp_path).delivery == 'onebot'
+    assert SendHold(tmp_path).enabled is (delivery == 'simulated')
 
 
 @pytest.mark.asyncio
@@ -271,6 +302,7 @@ def test_local_setup_keeps_the_chosen_port_and_serves_the_panel_frontend(tmp_pat
                                      headers={'X-Setup-Token': 'fixture-token'}) as client:
             page = (await client.get('/api/setup/protocols')).json()
             assert page['container'] is False and page['panel_port'] is None
+            assert [item['api'] for item in page['protocols']] == ['openai-chat', 'anthropic']
             # The page itself needs no token: the token is read from the link by the frontend.
             del client.headers['X-Setup-Token']
             assert (await client.get('/api/panel-context')).json() == {'mode': 'setup', 'home': '/setup'}
@@ -287,6 +319,22 @@ def test_local_setup_keeps_the_chosen_port_and_serves_the_panel_frontend(tmp_pat
             message = response.json()['detail']['message']
             assert str(tmp_path / 'absent' / 'index.html') in message and 'npm run build' in message
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(('container', 'interactive', 'platform', 'environ', 'expected'), [
+    (False, True, 'darwin', {}, True),
+    (False, True, 'win32', {}, True),
+    (False, True, 'linux', {'DISPLAY': ':0'}, True),
+    (False, True, 'linux', {'WAYLAND_DISPLAY': 'wayland-0'}, True),
+    (False, True, 'linux', {}, False),
+    (False, True, 'darwin', {'SSH_CONNECTION': '10.0.0.2 50000 10.0.0.1 22'}, False),
+    (False, True, 'linux', {'DISPLAY': ':0', 'SSH_TTY': '/dev/pts/1'}, False),
+    (True, True, 'linux', {'DISPLAY': ':0'}, False),
+    # Smoke tests, the demo instance and services read the output through a pipe.
+    (False, False, 'darwin', {}, False),
+])
+def test_wizard_link_opens_only_from_a_local_desktop_terminal(container, interactive, platform, environ, expected):
+    assert opens_browser(container=container, interactive=interactive, platform=platform, environ=environ) is expected
 
 
 def test_docker_smoke_goes_through_the_wizard_port():

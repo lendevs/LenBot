@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import secrets
+import re
 import time
 from typing import Optional
 from fastapi import HTTPException, status
@@ -42,21 +43,23 @@ def clear_login_failures(key: str) -> None:
     _FAILED_LOGINS.pop(key, None)
 
 
+PASSWORD_HASH_PATTERN = r"pbkdf2_sha256\$[1-9][0-9]*\$[^$]+\$[0-9a-f]{64}"
+
+
 def hash_password(password: str, salt: Optional[str] = None) -> str:
     """PBKDF2-HMAC-SHA256 password hasher with random salt."""
     if not salt:
         salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
-    return f"{salt}${dk.hex()}"
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 600_000)
+    return f"pbkdf2_sha256$600000${salt}${dk.hex()}"
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    """Verifies a password against the stored salt$hash."""
-    try:
-        salt, expected_hex = stored_hash.split("$")
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
-        return hmac.compare_digest(dk.hex(), expected_hex)
-    except Exception:
+    """Verify a pbkdf2_sha256$iterations$salt$hash record."""
+    if re.fullmatch(PASSWORD_HASH_PATTERN, stored_hash) is None:
         return False
+    _, iterations, salt, expected_hex = stored_hash.split("$")
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations))
+    return hmac.compare_digest(dk.hex(), expected_hex)
 
 def create_session(username: str) -> str:
     """Creates a new session token for the user."""

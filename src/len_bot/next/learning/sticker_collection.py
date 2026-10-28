@@ -68,7 +68,7 @@ def _annotation(reply: ModelReply) -> tuple[str, str, list[str], list[str], bool
 
 
 class StickerCollector:
-    """Per-scene queued candidates; failed work is never silently replayed."""
+    """Per-scene sticker candidate queue; failed items keep a failed status."""
 
     def __init__(self, config: HostConfig, store: Store, vision: ChatModel, *,
                  recording: Callable[[str], RecordedImages | None],
@@ -258,11 +258,13 @@ class StickerCollector:
                     reply = await self.vision.complete(messages, [])
                 except ModelProtocolError as error:
                     self.records.response(call_id, error.response, error.usage,
-                                          token_record(error.token_usage))
+                                          token_record(error.token_usage),
+                                          model=(binding.provider, self.vision.settings.model))
                     raise
             self.records.response(call_id,
                                   {"message": reply.message, "finish_reason": reply.finish_reason},
-                                  reply.usage, token_record(reply.token_usage))
+                                  reply.usage, token_record(reply.token_usage),
+                                  model=(binding.provider, self.vision.settings.model))
             description, text_value, emotions, tags, is_sticker = _annotation(reply)
             self.records.complete(call_id, description=description, text=text_value,
                                   emotions=emotions, tags=tags, is_sticker=is_sticker)

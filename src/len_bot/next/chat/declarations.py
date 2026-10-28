@@ -1,4 +1,4 @@
-"""Persistent attention intents. Structural matches are candidates, never completion decisions."""
+"""Persistent attention intents and their structural matching."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class Condition(BaseModel):
         if not required <= supplied or supplied - allowed:
             raise ValueError(f'{self.type} 需要 {sorted(required)}，只接受 {sorted(allowed)}')
         if self.people is not None and any(':' not in person or not person.split(':', 1)[1] for person in self.people):
-            raise ValueError('people 必须是平台账号，例如 onebot:70001 或 telegram:7001')
+            raise ValueError('people 必须是平台账号，例如 onebot:70001')
         if self.keywords is not None:
             self.keywords = list(dict.fromkeys(word.strip().casefold() for word in self.keywords))
             if any(not word for word in self.keywords):
@@ -69,11 +69,11 @@ class AttentionArguments(BaseModel):
 ATTENTION_TOOL = {'type': 'function', 'function': {
     'name': 'attention',
     'description': '持续关注未来事件或等待补充。intend 创建意图，带 id 修改；keep 保持；resolve 确认已完成；drop 放弃。'
-        '意图跨无关回合保留，不受 open/closed 影响。person 匹配指定账号，thread 匹配回复链，'
-        'open_question 匹配回复链或关键词，topic 匹配关键词；这些都只是候选，醒来后自行判断是否完成。'
+        '意图跨回合保留，与 open/closed 收尾互相独立。person 匹配指定账号，thread 匹配回复链，'
+        'open_question 匹配回复链或关键词，topic 匹配关键词；条件命中后你会醒来，自行判断是否完成。'
         'at 在指定分钟后检查一次，必须早于意图到期；没有新消息也可触发。'
-        'any 是任一条件满足，all 是全部消息条件满足。遗漏 keep 不会删除意图；只有 resolve、drop 或到期才结束。'
-        '当前事情已结束且没有后续需要时不必创建意图。end_turn=true 可在操作后结束本轮。',
+        'any 是任一条件满足，all 是全部消息条件满足。意图在 resolve、drop 或到期时结束。'
+        'end_turn=true 可在操作后结束本轮。',
     'parameters': AttentionArguments.model_json_schema(),
 }}
 

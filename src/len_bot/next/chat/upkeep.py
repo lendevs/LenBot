@@ -121,7 +121,9 @@ class SessionUpkeep:
         self.started = False
         self.errors: dict[str, BaseException] = {}
         for scene, settings in self.scenes.items():
-            if self.memory_enabled:
+            if self.memory_enabled and settings.memory_plugin is not None:
+                self.memory.jobs.release(scene, f"记忆改由插件 {settings.memory_plugin} 处理")
+            elif self.memory_enabled:
                 self.enable(scene, "memory")
             learning = settings.learning
             for part, flag in (("expressions", "extract"), ("jargon", "jargon_extract"), ("effects", "reply_effects")):

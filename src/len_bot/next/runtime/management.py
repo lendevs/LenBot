@@ -345,7 +345,7 @@ class HostManagement:
         if target not in self.runtime.runners:
             raise ValueError(f'运行中没有场景 {target}')
         if not self.runtime.accepting:
-            raise RuntimeError('宿主没有在运行，聊天开关未改变')
+            raise RuntimeError('宿主未运行，请先启动再切换聊天开关')
         runner = self.runtime.runners[target]
         titles, _ = await self.runtime.scene_titles.read()
         result = {'scene': target, 'title': titles.get(target)}
@@ -362,7 +362,7 @@ class HostManagement:
                     before = runner.state.paused
                     state = runner.set_paused(not args.enabled)
         except TimeoutError as error:
-            raise RuntimeError(f'目标群 {target} 正在执行，1 秒内未取得场景锁，聊天开关未改变') from error
+            raise RuntimeError(f'目标群 {target} 正在执行，请稍后再切换聊天开关') from error
         return {**result, 'chat': 'off' if state['paused'] else 'on', 'changed': before != state['paused']}
 
     async def finish_turn(self) -> None:

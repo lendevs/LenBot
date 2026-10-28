@@ -1,4 +1,4 @@
-"""Byte-preserving native role ZIPs; import creates an unbound package, never a live replacement."""
+"""Export native role ZIPs and import them as new role packages."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ import tempfile
 import zipfile
 import zlib
 
-from .profile import PERSONA_FILES, REQUIRED_FILES, load_persona
+from .profile import EXPRESSION_FILES, PERSONA_FILES, REQUIRED_FILES, load_persona
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 MAX_EXPANDED_BYTES = 128 * 1024 * 1024
 MAX_ENTRIES = 2048
-ROOT_FILES = frozenset((*PERSONA_FILES, 'avatar.png', 'README.md', 'LICENSE', 'NOTICE'))
+ROOT_FILES = frozenset((*PERSONA_FILES, *EXPRESSION_FILES, 'avatar.png', 'README.md', 'LICENSE', 'NOTICE'))
 ROOT_DIRECTORIES = frozenset(('knowledge', 'stickers'))
 
 
@@ -123,7 +123,7 @@ def import_package(root: Path, name: str, data: bytes) -> dict:
     collection.mkdir(mode=0o700, exist_ok=True)
     destination = collection / name
     if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f'Role import never overwrites an existing directory: {destination}')
+        raise FileExistsError(f'Role directory already exists: {destination}')
     with tempfile.TemporaryDirectory(prefix='.persona-import-', dir=collection) as temporary:
         # Named like the destination so a package without an id reads the id it will have.
         package = Path(temporary) / name
@@ -142,4 +142,4 @@ def import_package(root: Path, name: str, data: bytes) -> dict:
             'persona': {'id': persona.id, 'name': persona.name, 'brief': persona.brief},
             'files': len(files), 'examples': len(persona.examples), 'knowledge': len(persona.knowledge),
             'stickers': len(persona.stickers), 'bound': False,
-            'notice': '仅创建独立角色包；未修改场景绑定、根配置或运行人格。请核对后在场景配置中明确采用。'}
+            'notice': '角色包已创建，可在群设置中选用。'}
