@@ -353,7 +353,8 @@ class HostConfig(SharedConfig):
             if settings.learning is not None:
                 if scene.split(":", 2)[1] != "group":
                     raise ValueError(f"scenes.{scene}.learning is only supported for group scenes")
-                if settings.learning.collect_stickers and not self.binding("vision").image_input:
+                if (settings.learning.collect_stickers
+                        and not (self.models.roles.mind.image_input or self.binding("vision").image_input)):
                     raise ValueError(f"scenes.{scene}.learning.collect_stickers needs a model that accepts images")
                 if (settings.learning.embedding is not None
                         and settings.learning.embedding.provider not in self.models.providers):

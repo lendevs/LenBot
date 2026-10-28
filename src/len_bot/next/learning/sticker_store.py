@@ -126,15 +126,29 @@ class StickerStore:
             conditions.append("c.status=?")
             values.append(status)
         clause = " AND ".join(conditions)
+        # Pending images the group posts most come first.
+        order = ("(SELECT COUNT(*) FROM message_media mm JOIN messages msg ON msg.seq=mm.message_seq "
+                 "WHERE mm.media_id=c.media_id AND msg.scene=c.scene "
+                 "AND NOT json_extract(msg.body,'$.is_self')) DESC,"
+                 if review == "pending" else "")
         rows = self.db.execute(
-            CANDIDATE_SELECT + "WHERE " + clause + " ORDER BY c.id DESC LIMIT ? OFFSET ?",
+            CANDIDATE_SELECT + "WHERE " + clause + f" ORDER BY {order}c.id DESC LIMIT ? OFFSET ?",
             (*values, limit, offset),
         )
         total = self.db.execute(
             "SELECT COUNT(*) FROM sticker_candidates c WHERE " + clause, values,
         ).fetchone()[0]
-        return {"items": [self._candidate(row) for row in rows], "total": total,
-                "limit": limit, "offset": offset}
+        items = [self._candidate(row) for row in rows]
+        posted = {row[0]: (row[1], row[2]) for row in self.db.execute(
+            "SELECT mm.media_id,COUNT(*),COUNT(DISTINCT json_extract(msg.body,'$.sender.uid')) "
+            "FROM message_media mm JOIN messages msg ON msg.seq=mm.message_seq "
+            "WHERE mm.media_id IN (SELECT value FROM json_each(?)) "
+            "AND msg.scene=? AND NOT json_extract(msg.body,'$.is_self') GROUP BY mm.media_id",
+            (encode([item["media_id"] for item in items if item["media_id"] is not None]), scene),
+        )}
+        for item in items:
+            item["posts"], item["posters"] = posted.get(item["media_id"], (0, 0))
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     def begin(self, scene: str, id: int) -> int:
         with self.db:
@@ -181,6 +195,42 @@ class StickerStore:
                  ORIGINAL_NOTICE, "[]", "[]"),
             )
 
+    def merge_duplicate(self, scene: str, id: int, callid: int, data: bytes) -> int | None:
+        """Fold a running candidate into an annotated one of this scene with the same original bytes.
+
+        The message's image then points at the earlier original and keeps its annotation; the
+        candidate and its call are removed and the earlier review stands. Returns the earlier id."""
+        with self.db:
+            earlier = self.db.execute(
+                "SELECT c.id,c.media_id,c.description,c.emotions,c.tags FROM sticker_candidates c "
+                "JOIN media m ON m.id=c.media_id WHERE c.scene=? AND c.id!=? AND c.status='complete' "
+                "AND length(m.data)=? AND m.data=? ORDER BY c.id LIMIT 1",
+                (scene, id, len(data), data),
+            ).fetchone()
+            if earlier is None:
+                return None
+            candidate = self.db.execute(
+                "SELECT source_message_seq,image_index,media_id FROM sticker_candidates "
+                "WHERE scene=? AND id=? AND status='running'", (scene, id),
+            ).fetchone()
+            if candidate is None:
+                raise ValueError(f"No running sticker candidate {id} in {scene}")
+            self.db.execute(
+                "INSERT INTO message_media(message_seq,image_index,media_id,description,emotions,tags) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(message_seq,image_index) DO UPDATE SET "
+                "media_id=excluded.media_id,description=excluded.description,"
+                "emotions=excluded.emotions,tags=excluded.tags",
+                (candidate["source_message_seq"], candidate["image_index"], earlier["media_id"],
+                 earlier["description"], earlier["emotions"], earlier["tags"]),
+            )
+            self.db.execute("DELETE FROM sticker_calls WHERE id=?", (callid,))
+            self.db.execute("DELETE FROM sticker_candidates WHERE scene=? AND id=?", (scene, id))
+            if candidate['media_id'] is not None:
+                self.db.execute('DELETE FROM media WHERE id=? AND id NOT IN (SELECT media_id FROM message_media) '
+                                'AND id NOT IN (SELECT media_id FROM sticker_candidates WHERE media_id IS NOT NULL)',
+                                (candidate['media_id'],))
+        return earlier["id"]
+
     def original(self, scene: str, id: int) -> tuple[str, bytes] | None:
         row = self.db.execute(
             "SELECT m.mime_type,m.data FROM sticker_candidates c "
@@ -224,10 +274,13 @@ class StickerStore:
             if candidate is None or candidate["media_id"] is None:
                 raise ValueError(f"Sticker call {callid} has no running candidate with an original")
             now = self.store.now()
+            # An image the model does not take for a sticker skips review.
             self.db.execute(
                 "UPDATE sticker_candidates SET status='complete',description=?,text=?,emotions=?,"
-                "tags=?,is_sticker=?,updated=?,error=NULL WHERE id=?",
-                (description, text, encode(emotions), encode(tags), int(is_sticker), now, candidate["id"]),
+                "tags=?,is_sticker=?,review=CASE WHEN ? THEN review ELSE 'rejected' END,"
+                "updated=?,error=NULL WHERE id=?",
+                (description, text, encode(emotions), encode(tags), int(is_sticker), int(is_sticker),
+                 now, candidate["id"]),
             )
             self.db.execute(
                 "UPDATE message_media SET description=?,emotions=?,tags=? "
@@ -293,10 +346,9 @@ class StickerStore:
             if current["media_id"] is not None:
                 self.db.execute(
                     "UPDATE message_media SET description=?,emotions=?,tags=? "
-                    "WHERE message_seq=? AND image_index=? AND media_id=?",
+                    "WHERE media_id=?",
                     (ORIGINAL_NOTICE if description is None else description,
-                     encode(emotions), encode(tags), current["source_message_seq"],
-                     current["image_index"], current["media_id"]),
+                     encode(emotions), encode(tags), current["media_id"]),
                 )
         return self.item(scene, id)
 

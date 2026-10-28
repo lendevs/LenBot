@@ -156,13 +156,13 @@ async def test_look_registration_requires_role_configuration_and_vision_client(t
         async with ChatModel(config.model_settings("mind")) as mind:
             assert "look" in Chat(config, persona, store, mind).toolset.tool_names
 
-    config, persona = _chat_inputs(tmp_path / "missing-client", tools=["look"], vision=True)
+    config, persona = _chat_inputs(tmp_path / "missing-client", tools=["look"], vision=True, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind:
             with pytest.raises(ValueError, match="look|vision"):
                 Chat(config, persona, store, mind)
 
-    config, persona = _chat_inputs(tmp_path / "allowed", tools=["look"], vision=True)
+    config, persona = _chat_inputs(tmp_path / "allowed", tools=["look"], vision=True, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind, ChatModel(config.model_settings("vision")) as vision:
             chat = Chat(config, persona, store, mind, vision=vision)
@@ -177,7 +177,7 @@ async def test_look_registration_requires_role_configuration_and_vision_client(t
             assert "获准场景的已缓存描述" in content
             assert expression is None and discovered is None
 
-    config, persona = _chat_inputs(tmp_path / "forbidden", tools=[], vision=True)
+    config, persona = _chat_inputs(tmp_path / "forbidden", tools=[], vision=True, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind, ChatModel(config.model_settings("vision")) as vision:
             chat = Chat(config, persona, store, mind, vision=vision)
@@ -186,3 +186,28 @@ async def test_look_registration_requires_role_configuration_and_vision_client(t
                 await chat.toolset.execute("unused-turn", ToolCall(
                     id="unused-call", name="look", arguments={"message": "400", "image": 1},
                 ), wait_for_messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('separate_vision', [False, True])
+async def test_image_capable_mind_receives_pixels_even_with_a_separate_vision_binding(tmp_path, separate_vision):
+    from contextlib import AsyncExitStack
+
+    config, persona = _chat_inputs(tmp_path, tools=['look'], vision=separate_vision)
+    async with AsyncExitStack() as stack:
+        mind = await stack.enter_async_context(ChatModel(config.model_settings('mind')))
+        vision = (await stack.enter_async_context(ChatModel(config.model_settings('vision')))
+                  if separate_vision else None)
+        with Store(config.database) as store:
+            _receive_image(store, config.scene, '500')
+            asset = _asset('purple', '旧视觉转述')
+            store.save_image(config.scene, '500', 1, asset)
+            chat = Chat(config, persona, store, mind, vision=vision)
+
+            async def wait_for_messages(_: float) -> str:
+                return ''
+
+            content, _, _ = await chat.toolset.execute('unused-turn', ToolCall(
+                id='direct-image', name='look', arguments={'message': '500'}), wait_for_messages)
+            assert '旧视觉转述' not in content
+            assert chat.toolset.looked == [('消息 500 的第 1 张图片', asset.jpeg)]

@@ -179,6 +179,58 @@ def test_the_action_follows_the_arguments_and_read_names_one_scope():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('query', ['生日', '生日日期'])
+async def test_search_filename_filters_before_paging_and_preserves_scope(tmp_path, query):
+    library = ReferenceLibrary(tmp_path)
+    directory = files(library)
+    for number in range(7):
+        (directory / f'活动{number}.md').write_text('生日日期安排在活动表中。\n', encoding='utf-8')
+    (directory / '档案.md').write_text('生日日期是三月七日。\n', encoding='utf-8')
+    persona = SimpleNamespace(id='birthday-role', knowledge={
+        '档案.md': PersonaDocument('生日日期是五月二日。\n', ())})
+    result = await ask(library, persona=persona, query=query, filename='档案.md')
+    assert result['action'] == 'search' and result['filename'] == '档案.md'
+    assert {(hit['scope'], hit['text'].strip()) for hit in result['matches']} == {
+        ('chat', '生日日期是三月七日。'), ('persona', '生日日期是五月二日。')}
+    assert result['next_offset'] is None
+    local = await ask(library, persona=persona, query=query, filename='档案.md', scope='chat')
+    assert [hit['scope'] for hit in local['matches']] == ['chat']
+    assert not (await ask(library, OTHER, query=query, filename='档案.md', scope='chat'))['matches']
+    assert not (await ask(library, query=query, filename='../档案.md'))['matches']
+
+
+@pytest.mark.asyncio
+async def test_filename_limits_vector_neighbours_before_ranking(tmp_path):
+    from len_bot.next.memory.embeddings import EmbeddingClient, EmbeddingSettings
+    from len_bot.next.reference.library import reference_embedding
+    from len_bot.next.storage.store import Store
+    from test_next_native_models import peer_server
+
+    def response(count):
+        return (200, 'application/json', json.dumps({'data': [
+            {'index': index, 'embedding': [1.0, 0.0]} for index in range(count)],
+            'usage': {'prompt_tokens': count}}).encode())
+
+    received = []
+    server = await peer_server([response(21), response(1), response(1)], received)
+    async with server:
+        settings = EmbeddingSettings(provider='vectors', model='sample-vector', dimensions=2,
+            base_url=f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1', api_key='synthetic-unused')
+        async with EmbeddingClient(settings) as client:
+            with Store(tmp_path / 'state.db') as store:
+                library = ReferenceLibrary(tmp_path, embedding=reference_embedding(client, store, None))
+                directory = files(library)
+                for number in range(20):
+                    (directory / f'a{number:02}.md').write_text('集合地点是西门。\n', encoding='utf-8')
+                (directory / 'z.md').write_text('集合地点是东门。\n', encoding='utf-8')
+                result = await ask(library, scope='chat', query='碰头', filename='z.md')
+                assert [hit['text'].strip() for hit in result['matches']] == ['集合地点是东门。']
+                assert result['matches'][0]['matched'] == []
+                assert not (await ask(library, scope='chat', query='碰头', filename='missing.md'))['matches']
+    assert len(received) == 3
+
+
+@pytest.mark.asyncio
 async def test_the_tool_is_offered_once_the_chat_has_files(tmp_path):
     from len_bot.next.chat.session import Chat
     from len_bot.next.models.client import ChatModel, ToolCall

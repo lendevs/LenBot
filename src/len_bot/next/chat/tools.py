@@ -170,7 +170,7 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
         reasons.append("还没有设置记忆")
     if name == 'attention' and config.attention.declarations is None:
         reasons.append('本群没有开启持续关注')
-    if name == "look" and not config.binding("vision").image_input:
+    if name == "look" and not (config.models.roles.mind.image_input or config.binding("vision").image_input):
         reasons.append("还没有设置看图模型")
     if name == "transcribe" and config.models.roles.asr is None:
         reasons.append("还没有设置语音转写模型")
@@ -498,7 +498,7 @@ class SceneTools:
             async with self.expression.outlet:
                 self.expression.check_send_available()
                 return await message_reaction(self.store, self.config.scene, arguments, self.platform_call), None, None
-        if call.name == "look" and self.vision is None:
+        if call.name == "look" and self.config.models.roles.mind.image_input:
             arguments = LookArguments.model_validate(call.arguments)
             asset, reused, source = await load_look_image(
                 self.store, self.config.scene, arguments, self.config.images, recording=self.replay_images,
