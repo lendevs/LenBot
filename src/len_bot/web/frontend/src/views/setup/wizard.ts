@@ -189,10 +189,11 @@ export function personaFolder(name: string): string {
   return words?.join('-').slice(0, 64).replace(/-+$/, '') || 'my-bot'
 }
 
+// The URL parser accepts `ws:/host` and `http:host` for these schemes; the server needs the `//`.
 function httpUrl(text: string): boolean {
   try {
     const url = new URL(text)
-    return ['http:', 'https:'].includes(url.protocol) && Boolean(url.host)
+    return /^https?:\/\//i.test(text) && ['http:', 'https:'].includes(url.protocol) && Boolean(url.host)
   } catch {
     return false
   }
@@ -201,7 +202,7 @@ function httpUrl(text: string): boolean {
 function wsUrl(text: string): boolean {
   try {
     const url = new URL(text)
-    return ['ws:', 'wss:'].includes(url.protocol) && Boolean(url.host)
+    return /^wss?:\/\//i.test(text) && ['ws:', 'wss:'].includes(url.protocol) && Boolean(url.host)
   } catch {
     return false
   }

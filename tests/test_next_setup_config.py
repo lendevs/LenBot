@@ -161,6 +161,34 @@ async def test_setup_reads_account_from_onebot_before_configuration(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('answer,expected', [
+    (b'HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n', '协议端拒绝了访问令牌'),
+    (b'', '端口接受了连接但没有完成 WebSocket 握手'),
+    (None, '这个地址和端口上没有服务在监听'),
+])
+async def test_setup_platform_probe_names_the_step_a_dial_stopped_at(tmp_path, answer, expected):
+    async def peer(reader, writer):
+        await reader.readuntil(b'\r\n\r\n')
+        writer.write(answer)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(peer, '127.0.0.1', 0)
+    port = server.sockets[0].getsockname()[1]
+    if answer is None:
+        server.close()
+        await server.wait_closed()
+    app = create_setup_app(tmp_path, 'fixture-token', asyncio.Event())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://127.0.0.1',
+                                 headers={'X-Setup-Token': 'fixture-token'}) as client:
+        result = await client.post('/api/setup/platform', json={
+            'onebot': {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{port}', 'access_token': 'synthetic-token'}})
+    server.close()
+    assert result.status_code == 422
+    assert result.json()['detail']['message'].startswith(expected) and 'synthetic-token' not in result.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('status', [200, 429])
 async def test_setup_model_probe_makes_one_request_and_returns_original_error(tmp_path, status):
     response = (Path(__file__).parent / 'fixtures/next/model/response-text.json').read_bytes()
