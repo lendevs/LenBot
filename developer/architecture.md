@@ -301,7 +301,7 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 业务数据库的公开格式从 v1 开始。修改结构时，按以下步骤操作。
 
 1. 在 `schema.py` 中直接写入新的结构。
-2. 在 `maintenance/migrate.py` 中增加一步升级。
+2. 在 `maintenance/upgrade.py` 的 `_apply_locked`（`apply` 和 `run` 子命令都经过这里）中增加一步升级。
 3. 提高 `FORMAT_VERSION`。
 
 升级只由停机后的维护命令执行，运行时不兼容旧格式。
