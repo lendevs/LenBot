@@ -192,7 +192,8 @@ async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_a_turn_ends_after_two_sends_that_are_not_delivered(tmp_path):
+@pytest.mark.parametrize('batch_sizes', [(1, 1, 1), (3,), (1, 2)])
+async def test_a_turn_ends_after_two_sends_that_are_not_delivered(tmp_path, batch_sizes):
     peers = asyncio.Queue()
 
     async def peer(ws):
@@ -207,7 +208,16 @@ async def test_a_turn_ends_after_two_sends_that_are_not_delivered(tmp_path):
             await ws.send(json.dumps(result))
 
     requests = []
-    responses = [response('say', {'content': f'合成回答{index}', 'end_turn': True}, f'say{index}') for index in range(3)]
+    calls = [json.loads(response('say', {'content': f'合成回答{index}', 'end_turn': True}, f'say{index}')[2])
+             for index in range(3)]
+    responses = []
+    offset = 0
+    for size in batch_sizes:
+        body = {**calls[offset], 'choices': [{'message': {'role': 'assistant', 'content': None, 'tool_calls': [
+            item['choices'][0]['message']['tool_calls'][0] for item in calls[offset:offset + size]]},
+            'finish_reason': 'tool_calls'}]}
+        responses.append((200, 'application/json', json.dumps(body).encode()))
+        offset += size
     model = await peer_server(responses, requests)
     async with model, serve(peer, '127.0.0.1', 0) as platform:
         def configure(root):
@@ -238,11 +248,18 @@ async def test_a_turn_ends_after_two_sends_that_are_not_delivered(tmp_path):
                     status, error = runtime.store.db.execute('SELECT status, error FROM turns WHERE id=?',
                                                              (event['turn_id'],)).fetchone()
                     assert status == 'send_failed' and '2 次' in error
-                    assert len(requests) == 2
+                    assert len(requests) == (1 if batch_sizes[0] == 3 else 2)
                     sends = runtime.store.db.execute(
                         "SELECT count(*) FROM messages WHERE scene=? AND json_extract(body, '$.send_status')='failed'",
                         (SCENE,)).fetchone()[0]
                     assert sends == 2
+                    history = runtime.store.entries(SCENE)
+                    declared = [call['id'] for entry in history if entry['role'] == 'assistant'
+                                for call in entry.get('tool_calls') or []]
+                    results = {entry['tool_call_id']: entry['content'] for entry in history if entry['role'] == 'tool'}
+                    assert set(results) == set(declared)
+                    if batch_sizes != (1, 1, 1):
+                        assert '中断：连续 2 次发送没有确认送达' in results['say2']
                 finally:
                     runtime.stop()
                     await asyncio.wait_for(running, 3)

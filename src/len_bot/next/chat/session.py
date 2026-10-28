@@ -633,6 +633,8 @@ class Chat:
                                 self.trace('turn.step', turn_id, kind='tool', phase='end', call_id=call.id,
                                            name=call.name, status=tool_status, summary=tool_summary[:500])
                             self.notify()
+                            if failed_sends >= SEND_FAILURE_LIMIT:
+                                break
                     finally:
                         for started in prefetched.values():
                             started.cancel()
