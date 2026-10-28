@@ -82,7 +82,7 @@ docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
   -f host.updater.compose.yaml logs lenbot
 ```
 
-日志中的 `http://127.0.0.1:11307/#token=...` 是首次配置链接，在浏览器中打开后按[快速开始](https://lendevs.github.io/LenBot/guide/quick-start#_3-填写向导)填写向导。容器内的面板固定使用 `11307`，向导中的端口不可修改；`--panel-port` 改过宿主端口时，把链接中的端口换成该值。OneBot 地址填写容器可以访问的地址；使用反向 WebSocket 时，在 `host.compose.yaml` 发布对应监听端口。保存后页面跳转到登录页。配置保存在数据卷内的 `lenbot.config.json`。
+日志中的 `http://127.0.0.1:11307/#token=...` 是首次配置链接，在浏览器中打开后按[快速开始](https://lendevs.github.io/LenBot/guide/quick-start#_3-填写向导)填写向导。容器内的面板固定使用 `11307`，向导中的端口不可修改；`--panel-port` 改过宿主端口时，把链接中的端口换成该值。容器里的 `127.0.0.1` 指容器自己，协议端或模型服务运行在同一台机器上时，地址里的主机写 `host.docker.internal`，例如 `ws://host.docker.internal:3001`、`http://host.docker.internal:8317/v1`；向导在容器中默认填写前者，部署配方在 Linux 上也提供这个主机名。使用反向 WebSocket 时，在 `host.compose.yaml` 发布对应监听端口。保存后页面跳转到登录页。配置保存在数据卷内的 `lenbot.config.json`。
 
 远程部署可用 SSH 转发面板端口；后台任务的额外挂载见[任务存储](task-storage.md)。
 

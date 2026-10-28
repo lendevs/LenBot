@@ -54,6 +54,11 @@ watch(
     wizard.protocols.value = value.protocols
     wizard.container.value = value.container
     if (value.container && value.panel_port) wizard.draft.port = value.panel_port
+    // Inside a container 127.0.0.1 is the container itself; a protocol client on the same machine is the host.
+    if (value.container) {
+      if (wizard.draft.wsUrl === 'ws://127.0.0.1:3001') wizard.draft.wsUrl = 'ws://host.docker.internal:3001'
+      if (wizard.draft.listenHost === '127.0.0.1') wizard.draft.listenHost = '0.0.0.0'
+    }
     wizard.settleProtocol()
   },
   { immediate: true },

@@ -22,7 +22,7 @@ LenBot 的配置和数据保存在实例目录中。实例目录中没有配置�
 
 连接方式有两种。
 
-- **LenBot 连接 OneBot**（正向 WebSocket）。填写 OneBot 地址，默认 `ws://127.0.0.1:3001`，按 OneBot 实际端口修改。两者在同一台机器上时，这种方式最简单。
+- **LenBot 连接 OneBot**（正向 WebSocket）。填写 OneBot 地址，默认 `ws://127.0.0.1:3001`，按 OneBot 实际端口修改。两者在同一台机器上时，这种方式最简单。在 Docker 中运行时默认 `ws://host.docker.internal:3001`，指向运行 Docker 的这台机器。
 - **OneBot 连接 LenBot**（反向 WebSocket）。填写 LenBot 的监听地址和端口，再在 OneBot 中把反向连接地址指向该地址。
 
 两种方式的区别和 OneBot 一侧的设置见[接入 QQ](./onebot)。
