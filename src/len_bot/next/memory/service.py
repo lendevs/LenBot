@@ -14,7 +14,7 @@ from .local import LocalMemory, LocalMemorySettings
 from .jobs import MemoryJobs
 from .summary import MemorySummarizer
 from .role_paths import require_bot_path
-from .sections import evidence, excerpt
+from .sections import evidence, excerpt, split_sections
 from ..platform.messages import ChatMessage, plain_text, render_message
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
@@ -318,7 +318,26 @@ class MemoryService:
         # Keep room for the latest topic; source and dates remain in the real file text.
         per_profile = min(900, budget // 2 // len(profiles)) if profiles else 0
         for profile in profiles:
-            append("scene", profile.path, profile.content, per_profile)
+            sections = split_sections(profile.content)
+            preferences = [section for section in sections if section.heading
+                           and section.heading[-1] == '相处偏好与雷点']
+            if not preferences:
+                append("scene", profile.path, profile.content, per_profile)
+                continue
+            ordered = preferences + [section for section in sections if section not in preferences]
+            remaining, parts = per_profile, []
+            for index, section in enumerate(ordered):
+                if remaining <= 0:
+                    break
+                # Preferences go first; share the rest so a long facts section leaves room for
+                # dated recent circumstances and uncertain observations in the same profile.
+                share = (remaining if index == len(ordered) - 1 else remaining // 2
+                         if index < len(preferences) else remaining // (len(ordered) - index))
+                part = section.text(profile.content)[:share].rstrip()
+                parts.append(part)
+                remaining -= len(part) + 2
+            append("scene", profile.path, '\n\n'.join(parts), per_profile, kind='excerpt',
+                   source_chars=len(profile.content))
         query = "\n".join(queries)[-1200:]
         text_query = "\n".join(plain_text(message) for message in messages
                                if plain_text(message).strip() and message.send_status in {"received", "sent", "simulated"})[-1200:]

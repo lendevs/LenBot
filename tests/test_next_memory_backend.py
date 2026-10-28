@@ -254,3 +254,34 @@ def test_text_only_automatic_recall_uses_chat_topics_without_message_metadata(tm
             # Explicit search retains its complete literal query, without automatic expansion.
             assert await service.search(scene, '读书会在哪里？ BOOK CLUB meet?', 5) == []
     asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_profile_recall_keeps_speaker_preferences_and_dated_context_within_existing_budget(tmp_path):
+    scene = 'onebot:group:80001'
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'))
+    backend = LocalMemory(settings.local)
+    path = 'people/onebot:70001/profile.md'
+    original = ('# 陈青山\n\n## 身份与称呼\n2026-10-20，消息 m1：画插画的。\n\n'
+                '## 稳定事实\n' + '2026-10-20，消息 m2：喜欢画街边的小店和早餐。\n' * 60
+                + '\n## 相处偏好与雷点\n2026-10-21，消息 m3：叫我阿青，别喊全名。\n\n'
+                '## 近期情况\n2026-10-21，消息 m4：当时感冒，后来没有状态更新。\n\n'
+                '## 不确定\n2026-10-21，消息 m5：废物是画废草稿后的自嘲。\n')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, backend, jobs=jobs, store=store, active_personas={})
+        await service.execute(scene, {'action': 'write', 'path': path, 'content': original, 'reason': '虚构来源 m1 到 m5'})
+        await backend.write('onebot:group:80002', path, '另一个群独有秘密蓝紫石', '隔离样本')
+        message = parse_message({'post_type': 'message', 'message_type': 'group', 'self_id': 90001,
+                                 'group_id': 80001, 'user_id': 70001, 'message_id': 'ask', 'time': 1791060000,
+                                 'sender': {'nickname': '陈青山', 'role': 'member'},
+                                 'message': [{'type': 'text', 'data': {'text': '你会怎么称呼我？'}}]},
+                                own_message_ids=set())
+        recalled = await service.recall(scene, [message])
+        text = '\n'.join(item['content'] for item in recalled['items'])
+        assert recalled['content_chars'] <= recalled['budget_chars'] == 1500
+        assert text.startswith('## 相处偏好与雷点')
+        assert all(part in text for part in ['叫我阿青', '消息 m3', '当时感冒', '没有状态更新', '画废草稿后的自嘲'])
+        assert '蓝紫石' not in text
+        assert recalled['items'][0]['truncated']
+        assert (await backend.read(scene, path)).content == original
+        assert len(await backend.history(scene, path)) == 1
