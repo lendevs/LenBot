@@ -193,7 +193,9 @@ async def test_repeated_member_command_is_answered_once_and_counts_as_speech(tmp
         # Another command, or the same one from someone else, is a separate answer.
         await ask(peer, '/help', user=MEMBER, role='member')
         await ask(peer, '/id', user=70003, role='member')
-        assert speech(store) == 3 and runtime.runners[SCENE].state.pending is None
+        # The peer sees the frame before the send result returns and the speech row is written.
+        await until(lambda: speech(store) == 3)
+        assert runtime.runners[SCENE].state.pending is None
 
 
 @pytest.mark.asyncio
