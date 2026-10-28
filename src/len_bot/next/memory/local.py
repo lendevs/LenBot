@@ -3,7 +3,7 @@
 Embeddings are optional and separately configured; this module does not
 extract facts from a conversation.
 Manual text searches match a literal phrase; automatic text recall ranks
-overlapping literal trigrams from the recent chat, or a shorter literal query.
+overlapping literal trigrams, three shared Chinese bigrams, or a shorter literal query.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .embeddings import EmbeddingBinding, EmbeddingClient
 from .types import MemoryDocument, MemoryNode, MemoryPage
-from .sections import SECTION_STATEMENTS, put_sections, query_terms, split_sections
+from .sections import SECTION_STATEMENTS, put_sections, query_bigrams, query_terms, split_sections
 from ..storage.schema import FORMAT_RESET
 from ..storage.sqlite import connect
 from ..runtime.logs import log_event
@@ -870,6 +870,12 @@ class LocalMemory:
             selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
                 WHERE scope IN ({placeholders}) AND ({matches}) {eligible}""")
             parameters += [*scopes, *short]
+        pairs = query_bigrams(folded)
+        if len(pairs) >= 3:
+            selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
+                WHERE scope IN ({placeholders}) {eligible}
+                  AND (SELECT count(*) FROM json_each(?) WHERE instr(content, value) > 0) >= 3""")
+            parameters += [*scopes, json.dumps(pairs, ensure_ascii=False)]
         if not selects:
             return []
         return db.execute(f"""

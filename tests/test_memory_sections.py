@@ -212,6 +212,24 @@ async def test_text_recall_shows_a_section_sharing_little_wording_only_around_it
 
 
 @pytest.mark.asyncio
+async def test_reordered_chinese_recall_keeps_scene_and_persona_boundaries(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'))
+    memory = LocalMemory(settings.local)
+    content = '# 出游\n出游集合点是南门，周日上午九点出发。\n'
+    await memory.write(SCENE, 'events/trip.md', content, '合成样本')
+    await memory.write(SCENE, 'events/other.md', '# 秋游\n集合时间是七点半。\n', '合成样本')
+    await memory.write('onebot:group:80002', 'events/trip.md', content + '其他群资料。', '群隔离样本')
+    await memory.write(SCENE, 'bot/other/trip.md', content + '其他角色资料。', '角色隔离样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={SCENE: 'current'})
+        result = await service.recall(SCENE, chat('南门出游几点集合？'))
+        assert [item['path'] for item in result['items']] == ['events/trip.md']
+        assert '周日上午九点' in result['items'][0]['content']
+        await memory.forget(SCENE, 'events/trip.md')
+        assert (await service.recall(SCENE, chat('南门出游几点集合？')))['items'] == []
+
+
+@pytest.mark.asyncio
 async def test_recap_promises_lead_recall_to_what_the_chat_no_longer_names(tmp_path):
     settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
                                  recall_budget_chars=1500, recall_limit=5)

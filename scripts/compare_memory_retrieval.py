@@ -72,12 +72,14 @@ CASES = [
     ('second-source', ['秋游集合时间最新是几点', '聚餐由谁订位'], ['周日早上七点半', '阿杰订位']),
     ('similar-event', ['南门出游几点集合？'], ['出游集合点是南门，周日上午九点出发']),
     ('forgotten', ['南门出游集合'], []),
+    ('missing-event', ['南门出游几点集合？'], []),
     ('promise-cue', ['那个弄好了没', '周五了哦'], ['《小王子》和《夜航西飞》'], RECAP),
     ('paraphrase', ['看书那个小组最后定在哪儿碰头？'], ['图书馆二楼']),
+    ('small-talk', ['今天有点累，先休息了'], []),
+    ('unrelated-plan', ['晚上打算吃什么？'], []),
 ]
 # What a correct reply says; None means the corpus has no answer and the reply should say it does not know.
-# ABSENT is what a correct reply does not say: the other outing's time, or the outing that was forgotten.
-# ``says_unknown`` is recorded for every reply, so forgotten can also be read as a case that must say it does not know.
+# Deletion checks and answer correctness are reported separately.
 ANSWERS = {
     'long-section': [r'图书馆(二|2)楼', r'(三|3)点'],
     'latest-correction': [r'周六中午'],
@@ -89,11 +91,16 @@ ANSWERS = {
     'correction-past-budget': [r'(七|7)点半|7[:：]30'],
     'second-source': [r'(七|7)点半|7[:：]30', r'阿杰'],
     'similar-event': [r'(九|9)点'],
-    'forgotten': [],
+    'forgotten': None,
+    'missing-event': None,
     'promise-cue': [r'小王子', r'夜航西飞'],
     'paraphrase': [r'图书馆(二|2)楼'],
+    'small-talk': [],
+    'unrelated-plan': [],
 }
-ABSENT = {'similar-event': r'(七|7)点半|7[:：]30', 'forgotten': r'(九|9)点|9[:：]00'}
+ABSENT = {'similar-event': r'(七|7)点半|7[:：]30', 'missing-event': r'(七|7)点半|7[:：]30|(九|9)点|9[:：]00'}
+FORGOTTEN_CASES = {'forgotten', 'missing-event'}
+FORGOTTEN_TIME = r'(九|9)点|9[:：]00'
 FORGOTTEN = '出游集合点是南门'
 UNKNOWN = r'不知道|哪知道|不清楚|不记得|没(有)?(印象|记录|听说|看到|找到|查到)|没说过|不太确定'
 
@@ -141,7 +148,7 @@ async def compare(client: EmbeddingClient | None = None, binding=None) -> list[d
                              'covered': [part for part in expected if part in content],
                              'chars': result['content_chars'], 'elapsed_ms': round(elapsed, 3),
                              'excluded_scope_leaked': any(word in content for word in ['海蓝石', '紫云石']),
-                             **({'forgotten_leaked': FORGOTTEN in content} if name == 'forgotten' else {}),
+                             **({'forgotten_leaked': FORGOTTEN in content} if name in FORGOTTEN_CASES else {}),
                              'items': result['items']})
         return rows
 
@@ -155,7 +162,7 @@ async def notebook() -> list[dict]:
     for name, texts, expected, *recap in CASES:
         async with PluginTest(package, config={'recall_limit': 5}, memory=True) as bot:
             for path, content in DOCUMENTS.items():
-                if name == 'forgotten' and path == 'events/week.md':
+                if name in FORGOTTEN_CASES and path == 'events/week.md':
                     continue
                 for line in content.splitlines():
                     if line.strip() and not line.startswith('#'):
@@ -208,9 +215,12 @@ async def ask(store: Store, chat, name: str, texts: list[str], group: int, ident
                              "FROM usage WHERE purpose='mind'").fetchone()
     expected = ANSWERS[name]
     return {'case': name, 'reply': reply,
-            'correct': (re.search(UNKNOWN, reply) is not None if expected is None
-                        else all(re.search(pattern, reply) for pattern in expected)
+            'correct': (None if name == 'forgotten' else
+                        bool(reply.strip()) and (re.search(UNKNOWN, reply) is not None if expected is None
+                        else all(re.search(pattern, reply) for pattern in expected))
                         and not (name in ABSENT and re.search(ABSENT[name], reply))),
+            **({'forgotten_leaked': re.search(FORGOTTEN_TIME, reply) is not None}
+               if name in FORGOTTEN_CASES else {}),
             'says_unknown': re.search(UNKNOWN, reply) is not None,
             'first_reply_seconds': None if wait is None or wait[0] is None else round(wait[0], 1),
             'requests': after[2] - before[2],
@@ -251,7 +261,7 @@ async def answers(host, client: EmbeddingClient | None, binding) -> list[dict]:
                     group = groups[name]
                     scene = f'onebot:group:{group}'
                     await corpus(backend, scene)
-                    if name == 'forgotten':
+                    if name in FORGOTTEN_CASES:
                         await backend.forget(scene, 'events/week.md')
                     if recap:
                         set_recap(store, scene, recap[0])
@@ -307,7 +317,7 @@ async def notebook_answers(instance: Path) -> list[dict]:
                     for ident, (name, texts, _, *recap) in enumerate(CASES, 3001):
                         scene = f'onebot:group:{groups[name]}'
                         for path, content in DOCUMENTS.items():
-                            if name == 'forgotten' and path == 'events/week.md':
+                            if name in FORGOTTEN_CASES and path == 'events/week.md':
                                 continue
                             for line in content.splitlines():
                                 if line.strip() and not line.startswith('#'):

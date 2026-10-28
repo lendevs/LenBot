@@ -133,7 +133,17 @@ def query_terms(query: str) -> tuple[list[str], list[str]]:
 def evidence(text: str, query: str) -> int:
     """How many of the query's fragments and short lines ``text`` contains."""
     folded = text.casefold()
-    return sum(part in folded for part in (part for parts in query_terms(query) for part in parts))
+    count = sum(part in folded for part in (part for parts in query_terms(query) for part in parts))
+    if count:
+        return count
+    pairs = sum(part in folded for part in query_bigrams(query))
+    return pairs if pairs >= 3 else 0
+
+
+def query_bigrams(query: str) -> list[str]:
+    """Distinct Chinese two-character fragments, used together to match reordered wording."""
+    return list(dict.fromkeys(run[index:index + 2] for run in re.findall(r'[\u3400-\u9fff]{2,}', query)
+                             for index in range(len(run) - 1)))
 
 
 def excerpt(text: str, query: str, limit: int) -> str:
@@ -157,6 +167,10 @@ def excerpt(text: str, query: str, limit: int) -> str:
     body = text[len(head):]
     room = limit - len(head) - 2 * len(GAP)
     terms = {term for term in query_terms(query)[0] if term in body.casefold()}
+    if not terms:
+        pairs = {term for term in query_bigrams(query) if term in body}
+        if len(pairs) >= 3:
+            terms = pairs
     if room <= 0:
         return text[:limit]
     units: list[str] = []
