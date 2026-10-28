@@ -278,8 +278,23 @@ export function createWizard() {
     }
   }
 
-  /** Only an OpenAI-compatible chat provider also serves embeddings. */
-  const chatServesVectors = computed(() => draft.api === 'openai-chat')
+  /** DeepSeek search and reading reuse the chat connection only when it is DeepSeek's own API. */
+  const chatIsDeepSeek = computed(() => {
+    try {
+      return new URL(draft.baseUrl.trim()).hostname === 'api.deepseek.com'
+    } catch {
+      return false
+    }
+  })
+  watch(chatIsDeepSeek, (official) => {
+    if (!official && draft.searchConnection === 'primary') draft.searchConnection = 'separate'
+  })
+
+  /** An OpenAI-compatible chat provider also serves embeddings; DeepSeek's own API has none. */
+  const chatServesVectors = computed(() => draft.api === 'openai-chat' && !chatIsDeepSeek.value)
+  watch(chatServesVectors, (serves) => {
+    if (!serves && draft.vectorMode === 'primary') draft.vectorMode = 'separate'
+  })
 
   function vectorProvider(): SetupProvider {
     return draft.vectorMode === 'primary'
@@ -361,7 +376,7 @@ export function createWizard() {
     if (service === 'off' || !SEARCH_APIS[service]) return
     const preset = SERVICE_PROVIDER[service as keyof typeof SERVICE_PROVIDER]
     draft.searchBaseUrl = preset.url
-    draft.searchConnection = service === 'deepseek' && draft.preset === 'deepseek' ? 'primary' : 'separate'
+    draft.searchConnection = service === 'deepseek' && chatIsDeepSeek.value ? 'primary' : 'separate'
   }
 
   function chooseRead(service: Draft['read']) {
@@ -380,7 +395,7 @@ export function createWizard() {
   function readAlias(): 'primary' | 'search' | 'reader' | null {
     if (draft.read === 'off' || !READ_APIS[draft.read]) return null
     if ((draft.read as string) === draft.search) return searchAlias()
-    if (draft.read === 'deepseek' && draft.preset === 'deepseek') return 'primary'
+    if (draft.read === 'deepseek' && chatIsDeepSeek.value) return 'primary'
     return 'reader'
   }
 
@@ -446,7 +461,11 @@ export function createWizard() {
         if (draft.searchProxy.trim()) need('searchProxy', httpUrl(draft.searchProxy.trim()), 'httpUrl')
       }
       if (draft.search === 'deepseek' && draft.searchConnection === 'primary')
-        need('searchConnection', ['openai-chat', 'openai-responses'].includes(draft.api), 'searchConnection')
+        need(
+          'searchConnection',
+          ['openai-chat', 'openai-responses'].includes(draft.api) && chatIsDeepSeek.value,
+          'searchConnection',
+        )
       if (readAlias() === 'reader') {
         need('readBaseUrl', httpUrl(draft.readBaseUrl.trim()), 'httpUrl')
         need('readKey', Boolean(draft.readKey.trim()))
@@ -570,6 +589,7 @@ export function createWizard() {
     modelReady,
     platformSignature,
     modelSignature,
+    chatIsDeepSeek,
     chatServesVectors,
     onebot,
     provider,

@@ -25,7 +25,7 @@ LenBot 通过一个已登录 QQ 的 OneBot 实现收发消息。回复由用户�
 - **一个 OneBot 实现**，例如 [NapCat](https://github.com/NapNeko/NapCatQQ)。需要已登录 Bot 的 QQ 号并开启 WebSocket。
 - **一个模型服务**。支持 OpenAI 兼容接口、OpenAI Responses、Anthropic 和 Gemini 四种协议。
 
-向量检索、语音转写、付费搜索和 Docker 都是可选的，需要时再配置。
+向量检索、语音转写、需要 Key 的搜索服务和 Docker 都是可选的，需要时再配置。
 
 ## 术语
 

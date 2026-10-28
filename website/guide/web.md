@@ -6,27 +6,27 @@
 
 在**能力 → 网页**中选择搜索服务，首次配置时也可以选择。
 
-| 搜索服务 | 费用 | 连接 |
-|---|---|---|
-| Yahoo | 免费 | 不需要 Key |
-| Bing RSS | 免费 | 不需要 Key |
-| DeepSeek | 按次收费 | 可以复用 DeepSeek 聊天连接，也可以单独填写 |
-| Tavily | 按次收费 | Tavily 的 Key |
-| Brave Search | 按次收费 | Brave 的 Key |
-| 博查 | 按次收费 | 博查的 Key |
+| 搜索服务 | 连接 |
+|---|---|
+| Yahoo | 不需要 Key |
+| Bing RSS | 不需要 Key |
+| DeepSeek | 可以复用 DeepSeek 官方接口的聊天连接，也可以单独填写 |
+| Tavily | Tavily 的 Key |
+| Brave Search | Brave 的 Key |
+| 博查 | 博查的 Key |
 
 可以设置每次最多返回的结果数（默认 5，最多 20）和超时时间。
 
 ## 读取网页
 
-| 读取方式 | 费用 | 说明 |
-|---|---|---|
-| 本机直接读取 | 免费 | 默认。由 LenBot 抓取网页并提取正文 |
-| DeepSeek | 按次收费 | 复用 DeepSeek 搜索或聊天的连接 |
-| Tavily | 按次收费 | 与 Tavily 搜索共用一个 Key |
-| Jina Reader | 按用量收费 | Jina 的 Key |
+| 读取方式 | 说明 |
+|---|---|
+| 本机直接读取 | 默认。由 LenBot 抓取网页并提取正文，不需要 Key |
+| DeepSeek | 复用 DeepSeek 搜索或聊天的连接 |
+| Tavily | 与 Tavily 搜索共用一个 Key |
+| Jina Reader | Jina 的 Key |
 
-搜索和读取选择同一家服务时共用一个连接，选择不同服务时分别填写。连接在**模型 → 服务商**中管理。DeepSeek 搜索和读取的价格见[官方说明](https://api-docs.deepseek.com/zh-cn/guides/search/)。
+搜索和读取选择同一家服务时共用一个连接，选择不同服务时分别填写。连接在**模型 → 服务商**中管理。
 
 对应的配置：
 
