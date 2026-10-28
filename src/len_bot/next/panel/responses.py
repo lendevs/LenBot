@@ -150,6 +150,17 @@ class SettingsSnapshot(PanelResponse):
     restart_required: JsonObject
 
 
+class WorkerDefaults(PanelResponse):
+    docker_binary: str | None = None
+    docker_host: str | None = None
+    image: str | None = None
+    workspace_root: str | None = None
+    runtime_root: str | None = None
+    delivery_root: str | None = None
+    uid: int | None = None
+    gid: int | None = None
+
+
 class LearningSettingsSnapshot(PanelResponse):
     scene: str
     running: JsonObject | None

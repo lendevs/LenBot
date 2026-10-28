@@ -27,6 +27,7 @@ from ...config import HostConfig, _read_root
 from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
 from ...configuration.models import Roles
+from ...configuration.tasks import suggested_worker
 from ..model_access import model_error_detail, ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
 from ...models.providers import PROTOCOLS, list_models
 from ...persona.profile import Persona
@@ -633,10 +634,23 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         change: NetworkChange = await _body(request, NetworkChange)
         return await save(lambda source, _: source.update(network=change.network.model_dump(mode="json")))
 
+    @app.get("/api/host/settings/worker/defaults", response_model=responses.WorkerDefaults, response_model_exclude_unset=True)
+    async def worker_defaults(_: str = Depends(user)):
+        return suggested_worker(root)
+
     @app.put("/api/host/settings/worker", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_worker(request: Request, _: str = Depends(user)):
         change: WorkerChange = await _body(request, WorkerChange)
-        return await save(lambda source, _: source.update(worker=change.worker))
+
+        def edit(source: dict, _: HostConfig) -> None:
+            source["worker"] = change.worker
+            if change.worker is None:
+                # Without a worker no group can delegate; each group's other task settings stay.
+                for scene in source["scenes"].values():
+                    if isinstance(scene.get("tasks"), dict):
+                        scene["tasks"]["enabled"] = False
+
+        return await save(edit)
 
     @app.put("/api/host/settings/scenes/{scene}/tasks", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_tasks(scene: str, request: Request, _: str = Depends(user)):

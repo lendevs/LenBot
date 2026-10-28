@@ -12,6 +12,8 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, ValidationError
 
+from len_bot.web.errors import validation_detail
+
 from .. import responses
 from ...configuration.types import STRICT
 from ..task_models import TaskDetail, TaskPage
@@ -268,7 +270,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         try:
             parsed = TaskArguments.model_validate(body)
         except ValidationError as error:
-            raise HTTPException(422, error.errors(include_url=False, include_input=False, include_context=False)) from error
+            raise HTTPException(422, validation_detail(error.errors(include_url=False, include_input=False))) from error
         try:
             return await perform_task_action(runtime.tasks, scene, parsed)
         except PermissionError as error:

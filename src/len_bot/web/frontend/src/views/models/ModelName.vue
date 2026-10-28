@@ -54,7 +54,7 @@ const field = useFieldControl(props)
       <ComboboxTrigger
         v-if="models?.length"
         class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center text-subtle hover:text-ink"
-        :aria-label="t('ui.combobox.placeholder')"
+        :aria-label="t('ui.combobox.options')"
       >
         <ChevronsUpDown :size="15" aria-hidden="true" />
       </ComboboxTrigger>

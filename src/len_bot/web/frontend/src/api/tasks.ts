@@ -154,9 +154,9 @@ export const tasksApi = {
     request<unknown>('/api/host/tasks/action', { method: 'POST', query: { scene }, body: { ...body, id } }),
   download: (scene: string, id: number, file: number) =>
     requestBlob(taskPath(id, `/files/${file}`), { query: { scene } }),
-  sessionUrl: (scene: string, id: number) => `${taskPath(id, '/session')}?${queryString({ scene })}`,
-  exportUrl: (scene: string, id: number) => `${taskPath(id, '/export')}?${queryString({ scene })}`,
-  liveUrl: (scene: string, id: number) => socketUrl(`${taskPath(id, '/live')}?${queryString({ scene })}`),
+  sessionUrl: (scene: string, id: number) => `${taskPath(id, '/session')}${queryString({ scene })}`,
+  exportUrl: (scene: string, id: number) => `${taskPath(id, '/export')}${queryString({ scene })}`,
+  liveUrl: (scene: string, id: number) => socketUrl(`${taskPath(id, '/live')}${queryString({ scene })}`),
   closeEnvironment: (scene: string, id: number) =>
     request<unknown>(taskPath(id, '/close-environment'), { method: 'POST', query: { scene } }),
 

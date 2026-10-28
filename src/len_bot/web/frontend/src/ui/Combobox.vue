@@ -105,6 +105,7 @@ function remove(value: T) {
       />
       <ComboboxTrigger
         class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle hover:text-ink"
+        :aria-label="t('ui.combobox.options')"
       >
         <ChevronsUpDown :size="15" aria-hidden="true" />
       </ComboboxTrigger>

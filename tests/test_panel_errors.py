@@ -43,6 +43,35 @@ def test_host_http_validation_origin_and_resource_errors(tmp_path):
     exercise(tmp_path, check)
 
 
+def test_an_invalid_task_action_is_a_validation_error(tmp_path):
+    from types import SimpleNamespace
+
+    from len_bot.next.config import load_host_config
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.panel.app import create_app
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.runtime.network import NetworkRuntime
+    from len_bot.next.storage.store import Store
+
+    write_instance(tmp_path, ['onebot:70001'])
+    config = load_host_config(tmp_path)
+
+    async def run():
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind:
+                runtime = NetworkRuntime(config, [(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona))],
+                                         store, mind)
+                # 参数校验在调用任务服务之前完成。
+                runtime.tasks = SimpleNamespace()
+                app = create_app(config, runtime, root=tmp_path)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+                    await client.post('/api/auth/login', json={'username': 'host-operator', 'password': 'synthetic-password'})
+                    invalid = await client.post(f'/api/host/tasks/action?scene={SCENE}', json={'action': 'status', 'task_id': 1})
+                    detail = check_error(invalid, 422, 'validation_error')
+                    assert detail['data']['errors'][0]['loc'] == ['task_id']
+    asyncio.run(run())
+
+
 def test_setup_http_and_validation_errors(tmp_path):
     app = create_setup_app(tmp_path, 'test-token', asyncio.Event())
     async def run():

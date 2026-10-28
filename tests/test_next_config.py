@@ -2016,3 +2016,25 @@ def test_configuration_format_other_than_the_current_one_is_refused(tmp_path, ve
     _write_config(root, source)
     with pytest.raises(ValueError, match="配置格式是 .*当前版本使用格式 1。发布前的格式变更不提供升级步骤"):
         load_host_config(root)
+
+
+def test_worker_docker_binary_keeps_the_link_it_names(tmp_path):
+    cellar = tmp_path / "Cellar/docker/29.8.0/bin"
+    cellar.mkdir(parents=True)
+    (cellar / "docker").write_text("")
+    link = tmp_path / "bin/docker"
+    link.parent.mkdir()
+    link.symlink_to(cellar / "docker")
+    root = tmp_path / "lab"
+    source = _host_config()
+    source["worker"] = {"docker_binary": str(link), "docker_host": "unix:///var/run/docker.sock",
+                        "image": "lenbot-worker:local", "workspace_root": "tasks/workspaces",
+                        "runtime_root": "tasks/runtime", "delivery_root": "tasks/deliveries",
+                        "uid": 501, "gid": 20, "model_reasoning": True,
+                        "compaction_reserve_tokens": 1000, "compaction_keep_recent_tokens": 2000}
+    _write_config(root, source)
+
+    worker = load_host_config(root).worker
+
+    assert worker.docker_binary == link
+    assert worker.workspace_root == (root / "tasks/workspaces").resolve()

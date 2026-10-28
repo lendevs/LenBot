@@ -66,15 +66,10 @@ docker exec lenbot-embeddings ollama pull bge-m3:567m
 后台任务把耗时较长的工作交给独立 Docker 容器中的 Pi 执行，聊天无需等待任务完成。启用步骤如下。
 
 1. 构建任务镜像：`docker build -t lenbot-worker:local -f docker/next-worker/Dockerfile .`。
-2. 在能力页配置任务环境。需要填写以下内容。
-   - Docker 命令的绝对路径
-   - Docker socket
-   - 工作目录
-   - 运行目录
-   - 交付目录
+2. 在能力页配置任务环境。打开开关后，表单按本机填好任务镜像、Docker 程序路径和 socket、当前账号的 `uid/gid`，以及实例目录下的 `task-workspaces`、`task-runtime` 和 `deliveries`，与 `host.tasks.compose.yaml` 挂载的路径一致。核对后保存。
 
    三个目录必须互相独立、Docker 主机可以访问，且容器的 `uid/gid` 有读写权限。
-3. 为 `worker` 用途绑定模型。
+3. 任务默认使用聊天模型。需要单独的模型时，为 `worker` 用途绑定模型。
 4. 在群聊设置的**提醒与任务**中开启任务，并在同一页的权限中指定可以发起任务的人。
 5. 角色的工具许可中包含 `delegate`、`task` 和 `tool_search`。需要使用的技能也要包含在角色的技能许可中。
 

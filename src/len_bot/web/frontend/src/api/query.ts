@@ -18,6 +18,7 @@ export const keys = {
     pendingRestart: () => ['host', 'pending-restart'] as const,
     availableScenes: () => ['host', 'available-scenes'] as const,
     settings: () => ['host', 'settings'] as const,
+    workerDefaults: () => ['host', 'worker-defaults'] as const,
     limits: () => ['host', 'limits'] as const,
     eventLoop: () => ['host', 'event-loop'] as const,
     modelProtocols: () => ['host', 'model-protocols'] as const,

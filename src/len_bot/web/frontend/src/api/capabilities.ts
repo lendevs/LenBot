@@ -66,6 +66,21 @@ export interface Egress {
 }
 export type StoragePool = { kind: 'ext4'; mount: string; image?: string } | { kind: 'apfs'; mount: string }
 
+/** What the host detects for a first task setup: Docker, its own account and directories in the instance. */
+export type WorkerDefaults = Partial<
+  Pick<
+    Worker,
+    | 'docker_binary'
+    | 'docker_host'
+    | 'image'
+    | 'workspace_root'
+    | 'runtime_root'
+    | 'delivery_root'
+    | 'uid'
+    | 'gid'
+  >
+>
+
 /** `configuration/tasks.py` WorkerSettings; number fields are null while their input is empty. */
 export interface Worker {
   docker_binary: string
@@ -180,6 +195,8 @@ export const capabilitiesApi = {
     http.put<SettingsSnapshot>('/api/host/settings/network', { network: value }),
   saveWorker: (value: Worker | null) =>
     http.put<SettingsSnapshot>('/api/host/settings/worker', { worker: value }),
+  workerDefaults: (signal?: AbortSignal) =>
+    http.get<WorkerDefaults>('/api/host/settings/worker/defaults', undefined, signal),
 
   skills: (scene: string, signal?: AbortSignal) =>
     http.get<SkillsState>('/api/host/skills', { scene }, signal),
