@@ -157,6 +157,7 @@ export interface Trial {
   persona: string
   active: boolean
   draft_source: string | null
+  memory_plugin: string | null
 }
 
 const base = (key: string) => `/api/host/personas/${encodeURIComponent(key)}`

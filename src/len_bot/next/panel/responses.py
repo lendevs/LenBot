@@ -579,6 +579,7 @@ class TrialInfo(PanelResponse):
     root: str
     excluded_tools: list[str]
     memory: str
+    memory_plugin: str | None
     persona: str
     persona_source: str
     draft_path: str | None

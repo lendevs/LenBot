@@ -67,6 +67,8 @@ class Trial:
     persona_source: Literal['running', 'draft'] = 'running'
     # The role library directory a draft trial was made from.
     draft_source: str | None = None
+    # The plugin that keeps the group's long-term memory; the trial runs on its own native memory.
+    memory_plugin: str | None = None
     stopped: float | None = None
     final_state: dict | None = None
 
@@ -74,6 +76,7 @@ class Trial:
         return {'id': self.id, 'scene': self.scene, 'created': self.created, 'stopped': self.stopped,
                 'context': self.context, 'active': self.stopped is None, 'root': str(self.root), 'excluded_tools': self.excluded,
                 'memory': '独立空白本地记忆' if self.config.memory is not None else '本次不装配记忆',
+                'memory_plugin': self.memory_plugin,
                 'persona': self.session.chat.persona.name,
                 'persona_source': self.persona_source,
                 'draft_path': str(self.root / 'persona-draft') if self.persona_source == 'draft' else None,
@@ -233,7 +236,8 @@ class HostTrials:
                                        persona=persona, slots=self.runtime.chats[scene].slots)
                 trial = Trial(root.name, scene, root, time.time(), config, session, stack, excluded, context,
                               persona_source='running' if persona_draft is None else 'draft',
-                              draft_source=None if persona_draft is None else persona_draft.directory)
+                              draft_source=None if persona_draft is None else persona_draft.directory,
+                              memory_plugin=source_chat.config.memory_plugin)
                 self.records[trial.id] = trial
                 return trial
             except BaseException as error:

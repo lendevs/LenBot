@@ -95,6 +95,9 @@ async function end() {
       <h3 class="min-w-0 flex-1 truncate text-base font-semibold">
         {{ t('personas.detail.trial.running', { name: trial.persona, group: groupLabel(trial.scene) }) }}
       </h3>
+      <Badge v-if="trial.memory_plugin">
+        {{ t('playground.nativeMemory', { name: trial.memory_plugin }) }}
+      </Badge>
       <Badge v-if="changed" tone="warning">{{ t('personas.detail.trial.changed') }}</Badge>
       <Button
         v-if="changed"

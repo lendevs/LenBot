@@ -2556,6 +2556,7 @@ export default {
     stopFailed: 'Could not end the session',
     listFailed: 'Could not read the sessions',
     draft: 'Persona draft',
+    nativeMemory: 'Native memory (the group uses {name})',
     ended: 'Ended',
     context: 'Started with {n} copied group message | Started with {n} copied group messages',
     scope: 'Isolation scope',

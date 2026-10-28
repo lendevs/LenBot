@@ -2482,6 +2482,7 @@ export default {
     stopFailed: '结束失败',
     listFailed: '读取测试记录失败',
     draft: '角色草稿',
+    nativeMemory: '原生记忆（本群用 {name}）',
     ended: '已结束',
     context: '初始上下文复制了 {n} 条群聊消息',
     scope: '隔离范围',

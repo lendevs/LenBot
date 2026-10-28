@@ -147,6 +147,36 @@ async def test_the_panel_switches_the_group_memory_between_turns(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_trial_of_a_plugin_memory_group_runs_on_native_memory_and_names_the_plugin(tmp_path):
+    import httpx
+    from len_bot.next.panel.app import create_app
+    async with running(tmp_path, [], [], plugin=NOTEBOOK, tools=['say', 'memory']) as runtime:
+        runtime.accepting = True
+        app = create_app(runtime.config, runtime, root=tmp_path)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+            assert (await client.post('/api/auth/login', json={'username': 'operator',
+                                                               'password': 'fixture-password'})).status_code == 200
+            started = await client.post('/api/host/trials', json={'scene': SCENE, 'acknowledge_model_cost': True})
+            assert started.status_code == 200, started.text
+            info = started.json()
+            assert info['memory_plugin'] == 'notes' and info['memory'] == '独立空白本地记忆'
+            trial = app.state.trials.records[info['id']]
+            assert trial.config.memory_plugin is None and trial.config.plugins == []
+            assert 'action' in definition(trial.session.chat)['parameters']['properties']
+            listed, = (await client.get('/api/host/trials')).json()['items']
+            assert listed['memory_plugin'] == 'notes'
+            assert (await client.post(f"/api/host/trials/{info['id']}/stop")).status_code == 200
+            # The marker follows the group's running setting after a live switch.
+            saved = await client.put(f'/api/host/scenes/{SCENE}/plugins',
+                                     json={'plugins': ['notes'], 'memory_plugin': None, 'recap_plugin': None})
+            assert saved.status_code == 200, saved.text
+            native = await client.post('/api/host/trials', json={'scene': SCENE, 'acknowledge_model_cost': True})
+            assert native.status_code == 200, native.text
+            assert native.json()['memory_plugin'] is None
+            assert (await client.post(f"/api/host/trials/{native.json()['id']}/stop")).status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_a_live_switch_moves_native_extraction_as_a_restart_does(tmp_path):
     async with running(tmp_path, [], [], plugin=NOTEBOOK, tools=['say', 'memory'], upkeep=True) as runtime:
         store, ingestor = runtime.store, runtime.ingestor
