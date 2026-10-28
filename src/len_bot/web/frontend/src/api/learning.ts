@@ -71,6 +71,9 @@ export interface Sticker {
   review: Review
   status: 'queued' | 'running' | 'complete' | 'failed' | 'interrupted'
   error?: string | null
+  /** Times group members posted this image and how many of them; only in list pages. */
+  posts?: number
+  posters?: number
   meta: {
     mime_type: string
     width: number | null
