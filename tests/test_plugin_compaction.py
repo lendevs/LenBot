@@ -1,13 +1,12 @@
 """A scene whose recap_plugin names a plugin gets its compaction recap from that plugin's @compact entry.
 
-Native and plugin recaps go through the same commit; a failing or oversized plugin recap is recorded
-on the plugin and the native recap takes that compaction; a role handover always uses the native one.
+Native and plugin recaps go through the same commit. Failed plugin compaction preserves the session
+and records the error; a role handover uses the native recap.
 """
 
 from contextlib import asynccontextmanager
 import json
 
-import httpx
 import pytest
 
 from len_bot.next.chat.session import Chat
@@ -20,6 +19,7 @@ from len_bot.plugin import CompactRequest
 from test_model_failure_protocol import FIXTURE, instance
 from test_next_panel_acts_as_owner import SCENE
 from test_next_plugins import CORE, _copy_sample
+from test_next_native_models import peer_server
 
 NOTES = '''
 from len_bot.plugin import Plugin, compact
@@ -67,23 +67,20 @@ async def chat_with_notes(root):
     body = json.loads(FIXTURE.read_text())
     body['choices'][0]['message']['content'] = NATIVE
 
-    def respond(request):
-        captured.append(json.loads(request.content))
-        return httpx.Response(200, json=body)
-
+    server = await peer_server([(200, 'application/json', json.dumps(body).encode())], captured)
+    config.models.providers[config.models.roles.mind.provider].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
     host = PluginHost(config, core_tools=CORE)
     await host.start()
     try:
-        with Store(config.database) as store:
-            async with ChatModel(config.model_settings('mind')) as model:
-                await model._client.aclose()
-                model._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url='https://fixture.invalid/')
-                chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, model,
-                            plugins=host)
-                for content in ['明天讨论报告。' * 100, '报告主题是连接恢复。' * 100, '好的。']:
-                    store.append(SCENE, {'role': 'user', 'content': content})
-                store.save_discovered_tools(SCENE, ['schedule'])
-                yield chat, host.plugins['notes'], store, captured
+        async with server:
+            with Store(config.database) as store:
+                async with ChatModel(config.model_settings('mind')) as model:
+                    chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, model,
+                                plugins=host)
+                    for content in ['明天讨论报告。' * 100, '报告主题是连接恢复。' * 100, '好的。']:
+                        store.append(SCENE, {'role': 'user', 'content': content})
+                    store.save_discovered_tools(SCENE, ['schedule'])
+                    yield chat, host.plugins['notes'], store, captured
     finally:
         await host.close()
 
@@ -110,12 +107,16 @@ async def test_the_scene_plugin_writes_the_recap_through_the_shared_commit(tmp_p
 @pytest.mark.parametrize('reply,error', [('fail', 'RuntimeError: 摘要服务不可用'),
                                          ('长' * 20000, 'ValueError: 回想估算 20000 token，超过预算 4096'),
                                          ('   ', 'TypeError: @compact 必须返回非空文字')])
-async def test_a_failed_plugin_recap_is_recorded_and_the_native_recap_takes_over(tmp_path, reply, error):
+async def test_a_failed_plugin_recap_preserves_the_session_and_records_the_error(tmp_path, reply, error):
     async with chat_with_notes(tmp_path) as (chat, notes, store, captured):
         notes.instance.reply = reply
-        result = await chat.compact_now()
-        assert result['recap'] == NATIVE and len(captured) == 1
-        assert session(store)['recap'] == NATIVE
+        before = tuple(session(store)), store.entries(SCENE)
+        with pytest.raises(RuntimeError, match=error):
+            await chat.compact_now()
+        assert (tuple(session(store)), store.entries(SCENE)) == before
+        assert not captured
+        turn = store.db.execute('SELECT status,error FROM turns ORDER BY started DESC LIMIT 1').fetchone()
+        assert turn['status'] == 'error' and error in turn['error']
         assert [(item['where'], item['error']) for item in notes.errors] == [('压缩', error)]
         assert notes.status == 'running'
 

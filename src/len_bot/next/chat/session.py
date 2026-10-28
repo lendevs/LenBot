@@ -222,25 +222,14 @@ class Chat:
             trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
 
     async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True) -> str:
-        """Fold the plan's entries into a new recap and adopt it through the one recap commit.
-
-        With ``strategy`` the scene's ``recap_plugin`` writes the recap; when it fails, the native recap
-        does, so the session still fits its window.
-        """
-        recap = None
+        """Run the selected compaction strategy and commit its completed recap."""
         plugin = self.config.recap_plugin if strategy else None
         if plugin is not None:
-            try:
-                recap = await self.plugins.compact(plugin, CompactRequest(
-                    self.config.scene, self.persona.id, turn_id, plan.request_messages[-1]["content"],
-                    plan.summary_budget_tokens))
-            except Exception as error:
-                # Recorded on the plugin; the native recap takes this compaction.
-                log_event(logger, 'plugin_compaction_failed', f'{type(error).__name__}: {error}',
-                          level=logging.WARNING, plugin=plugin)
-            else:
-                log_event(logger, 'plugin_compaction', plugin=plugin, compact_through=plan.through)
-        if recap is None:
+            recap = await self.plugins.compact(plugin, CompactRequest(
+                self.config.scene, self.persona.id, turn_id, plan.request_messages[-1]["content"],
+                plan.summary_budget_tokens))
+            log_event(logger, 'plugin_compaction', plugin=plugin, compact_through=plan.through)
+        else:
             recap = (await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)).text
         await self.store.call(self.store.commit_recap, self.config.scene, plan.through, recap)
         return recap
