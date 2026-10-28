@@ -107,7 +107,7 @@ def test_role_load_rejects_external_links_but_accepts_a_file_link_inside_knowled
 
 
 @pytest.mark.asyncio
-async def test_chat_only_exposes_current_role_documents_after_allowed_discovery(tmp_path: Path) -> None:
+async def test_chat_only_exposes_current_role_documents(tmp_path: Path) -> None:
     async def wait_for_messages(_: float) -> str:
         return "unused"
 
@@ -128,26 +128,14 @@ async def test_chat_only_exposes_current_role_documents_after_allowed_discovery(
             assert "knowledge" not in chat.toolset.tool_names
             # Files of the chat can arrive later, so a role that lists the tool still loads.
             assert "knowledge" not in Chat(config, load_persona(explicit_missing), store, mind).toolset.tool_names
-            with pytest.raises(ValueError, match="tool_search"):
-                Chat(config, load_persona(no_search), store, mind)
 
-            chat = Chat(config, load_persona(allowed), store, mind)
-            assert "tool_search" in chat.toolset.tool_names and "knowledge" not in chat.toolset.tool_names
-            read = ToolCall(id="synthetic-read", name="knowledge",
-                            arguments={"action": "read", "scope": "persona", "filename": "one.md"})
-            with pytest.raises(ValueError, match="knowledge"):
-                await chat.toolset.execute("unused-turn", read, wait_for_messages)
-
-            search = ToolCall(id="synthetic-search", name="tool_search",
-                              arguments={"query": "knowledge"})
-            result, expression, discovered = await chat.toolset.execute(
-                "unused-turn", search, wait_for_messages,
-            )
-            assert expression is None and "knowledge" in discovered
-            assert "knowledge" not in chat.toolset.tool_names  # same request still cannot use it
-            store.complete_tool(config.scene, search.id, result, discovered_tools=discovered)
+            # A role with documents has knowledge among its loaded tools.
+            assert "knowledge" in Chat(config, load_persona(no_search), store, mind).toolset.tool_names
             chat = Chat(config, load_persona(allowed), store, mind)
             assert "knowledge" in chat.toolset.tool_names
+            assert "knowledge" not in chat.toolset.deferred_names
+            read = ToolCall(id="synthetic-read", name="knowledge",
+                            arguments={"action": "read", "scope": "persona", "filename": "one.md"})
             content, expression, discovered = await chat.toolset.execute(
                 "unused-turn", read, wait_for_messages,
             )
@@ -155,7 +143,7 @@ async def test_chat_only_exposes_current_role_documents_after_allowed_discovery(
             assert "无权限角色的合成资料" not in content
             assert expression is None and discovered is None
 
-            # Persisted discovery is not permission: a different loaded role loses access.
+            # A role without the permission has no knowledge tool.
             chat = Chat(config, load_persona(forbidden), store, mind)
             assert "knowledge" not in chat.toolset.tool_names
             with pytest.raises(ValueError, match="knowledge"):

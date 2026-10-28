@@ -199,9 +199,7 @@ async def test_the_tool_is_offered_once_the_chat_has_files(tmp_path):
             directory.mkdir(parents=True)
             (directory / "通知.md").write_text("周六在东门集合。\n", encoding="utf-8")
             chat = Chat(config, load_persona(role), store, mind)
-            assert "knowledge" in chat.toolset.allowed_tool_names
-            store.save_discovered_tools(config.scene, ["knowledge"])
-            chat = Chat(config, load_persona(role), store, mind)
+            assert "knowledge" in chat.toolset.tool_names
             call = ToolCall(id="synthetic-search", name="knowledge", arguments={"action": "search", "query": "东门"})
             content, _, _ = await chat.toolset.execute("unused-turn", call, wait_for_messages)
     assert "来自本群的资料文件" in content and "周六在东门集合" in content

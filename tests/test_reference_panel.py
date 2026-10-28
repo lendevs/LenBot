@@ -66,7 +66,6 @@ async def search(runtime, scene: str, query: str) -> str:
     async def wait_for_messages(_: float) -> str:
         return "unused"
     chat = runtime.chats[scene]
-    chat.toolset.discovered_tools = {"knowledge"}
     call = ToolCall(id="synthetic-search", name="knowledge", arguments={"query": query})
     content, _, _ = await chat.toolset.execute("unused-turn", call, wait_for_messages)
     return content
