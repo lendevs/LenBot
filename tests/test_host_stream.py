@@ -36,10 +36,11 @@ async def panel(root, configure=None):
                     (ChatModel(config.model_settings('vision')) if config.models.roles.vision is not None else nullcontext(None)) as vision,
                     open_memory(config, store) as memory,
                     open_session_upkeep(config, store, model, memory=memory, slots=slots) as upkeep):
+            seeing = model if config.models.roles.mind.image_input else vision
             runtime = NetworkRuntime(config, [(config.scene_config(scene), load_persona(settings.persona))
                                               for scene, settings in config.scenes.items()],
                                      store, model, memory=memory, slots=slots, vision=vision, **upkeep_parts(upkeep),
-                                     sticker_collection=None if vision is None else StickerCollector(config, store, vision, slots=slots,
+                                     sticker_collection=None if seeing is None else StickerCollector(config, store, seeing, slots=slots,
                                          recording=lambda scene: runtime.chats[scene].toolset.replay_images))
             app = create_app(config, runtime, root=root)
             with socket.socket() as listener:

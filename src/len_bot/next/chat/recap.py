@@ -16,7 +16,7 @@ class ContextBudgetError(ValueError):
 
 
 def estimate_request(messages: list[dict], tools: list[dict], output_tokens: int) -> int:
-    # A UTF-8 / 3 heuristic, not a provider tokenizer or a billing measurement.
+    # Estimates tokens as UTF-8 bytes divided by 3.
     payload = encode({"messages": messages, "tools": tools})
     return ceil(len(payload.encode("utf-8")) / 3) + output_tokens
 

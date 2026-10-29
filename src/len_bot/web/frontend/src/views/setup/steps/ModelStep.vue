@@ -44,7 +44,7 @@ const connectionOptions = computed(() => [
   {
     value: 'primary' as const,
     label: t('setup.model.sameConnection'),
-    disabled: !['openai-chat', 'openai-responses'].includes(draft.api),
+    disabled: !['openai-chat', 'openai-responses'].includes(draft.api) || !wizard.chatIsDeepSeek.value,
   },
   { value: 'separate' as const, label: t('setup.model.separateConnection') },
 ])
@@ -188,6 +188,12 @@ const passed = computed(() => {
       >
         <Select v-model="draft.searchConnection" :options="connectionOptions" />
       </Field>
+      <p
+        v-if="draft.search === 'deepseek' && !wizard.chatIsDeepSeek.value"
+        class="text-sm text-ink-2 sm:col-span-2"
+      >
+        {{ t('setup.model.searchOwnKey') }}
+      </p>
       <template v-if="wizard.searchAlias() === 'search'">
         <Field :label="t('models.providers.url')" :error="error('searchBaseUrl')" required wide>
           <Input v-model="draft.searchBaseUrl" type="url" mono />
@@ -245,7 +251,7 @@ const passed = computed(() => {
         <Select v-model="draft.outputField" :options="outputFields" />
       </Field>
     </MoreFields>
-    <MoreFields v-model="vectorsOpen" :title="t('setup.steps.vectors')">
+    <MoreFields v-model="vectorsOpen" :title="t('setup.vectors.title')">
       <div class="sm:col-span-2"><VectorStep /></div>
     </MoreFields>
     <div class="flex flex-col gap-3 border-t border-line pt-5">

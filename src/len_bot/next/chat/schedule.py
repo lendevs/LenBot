@@ -259,5 +259,5 @@ def execute_schedule(store: Store, config: LabConfig, name: Literal["schedule", 
     more = len(items) > page.limit
     content = "\n\n".join(describe(item) for item in items[:page.limit]) or "没有符合条件的安排。"
     if more:
-        content += f"\n\n尚有记录；下页 offset={page.offset + page.limit}。列表可能随新安排或状态变化。"
+        content += f"\n\n尚有记录；下页 offset={page.offset + page.limit}。"
     return content

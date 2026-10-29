@@ -201,7 +201,10 @@ class JargonStore:
             if completed.rowcount != 1:
                 raise ValueError(f"No running jargon discovery call {id}")
 
-    def complete_meaning(self, id: int, meaning: str, confidence: float) -> None:
+    def complete_meaning(self, id: int, meaning: str, confidence: float, *,
+                         ordinary_meaning: str | None = None, same_meaning: bool = False) -> None:
+        """A candidate still pending whose group usage is ``same_meaning`` as the word's ordinary sense
+        is rejected; the call keeps both judgements, which ``items`` reports with the term."""
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             call = self.db.execute(
@@ -211,15 +214,20 @@ class JargonStore:
             if call is None:
                 raise ValueError(f"No running jargon meaning call {id}")
             now = self.store.now()
-            # Deletion or rejection while the model ran never recreates or changes the decision.
+            row = self.db.execute("SELECT status FROM jargon WHERE scene=? AND id=?",
+                                  (call["scene"], call["term_id"])).fetchone()
+            # Deletion, rejection or adoption while the model ran never recreates or changes the decision.
+            rejected = same_meaning and row is not None and row["status"] == "pending"
             self.db.execute(
-                "UPDATE jargon SET latest_meaning=?,confidence=?,last_inference_count=?,updated=? "
-                "WHERE scene=? AND id=?",
+                "UPDATE jargon SET latest_meaning=?,confidence=?,last_inference_count=?,updated=?"
+                + (",status='rejected'" if rejected else "") + " WHERE scene=? AND id=?",
                 (meaning, confidence, call["inference_count"], now,
                  call["scene"], call["term_id"]),
             )
-            self.db.execute("UPDATE jargon_calls SET status='complete',ended=? WHERE id=?",
-                            (now, id))
+            self.db.execute(
+                "UPDATE jargon_calls SET status='complete',ended=?,"
+                "response=json_set(COALESCE(response,'{}'),'$.result',json(?)) WHERE id=?",
+                (now, encode({"ordinary_meaning": ordinary_meaning, "same_meaning": same_meaning}), id))
 
     def pending(self, scene: str) -> list[dict]:
         rows = self.db.execute(
@@ -244,13 +252,23 @@ class JargonStore:
             return None
         result = dict(row)
         result["sample_seqs"] = json.loads(result["sample_seqs"])
+        if "same_meaning" in result:
+            result["same_meaning"] = None if result["same_meaning"] is None else bool(result["same_meaning"])
         return result
 
+    # The latest completed inference's comparison with the word's ordinary sense.
+    _JUDGED = (
+        "SELECT jargon.*,json_extract(judged.response,'$.result.ordinary_meaning') AS ordinary_meaning,"
+        "json_extract(judged.response,'$.result.same_meaning') AS same_meaning FROM jargon "
+        "LEFT JOIN jargon_calls AS judged ON judged.id=(SELECT MAX(id) FROM jargon_calls WHERE term_id=jargon.id "
+        "AND purpose='meaning' AND status='complete') WHERE "
+    )
+
     def items(self, scene: str, status: str | None, limit: int, offset: int) -> dict:
-        clause = "scene=?" if status is None else "scene=? AND status=?"
-        values = (scene,) if clause == "scene=?" else (scene, status)
+        clause = "jargon.scene=?" if status is None else "jargon.scene=? AND jargon.status=?"
+        values = (scene,) if status is None else (scene, status)
         rows = self.db.execute(
-            "SELECT * FROM jargon WHERE " + clause + " ORDER BY id DESC LIMIT ? OFFSET ?",
+            self._JUDGED + clause + " ORDER BY jargon.id DESC LIMIT ? OFFSET ?",
             (*values, limit, offset),
         )
         total = self.db.execute("SELECT COUNT(*) FROM jargon WHERE " + clause, values).fetchone()[0]
@@ -259,7 +277,7 @@ class JargonStore:
 
     def item(self, scene: str, id: int) -> dict | None:
         return self._item(self.db.execute(
-            "SELECT * FROM jargon WHERE scene=? AND id=?", (scene, id),
+            self._JUDGED + "jargon.scene=? AND jargon.id=?", (scene, id),
         ).fetchone())
 
     def update(self, scene: str, id: int, meaning: str | None, status: str) -> dict | None:

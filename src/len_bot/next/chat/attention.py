@@ -24,6 +24,7 @@ from ..configuration.chat import Attention
 from ..platform.delivery import report_parts, split_expression
 from ..platform.messages import ChatMessage, Segment, plain_text
 from ..platform.onebot_messages import parse_message
+from ..learning.reply_effect_store import ReplyEffectStore
 from .proactive import ProactiveStore, idle_text
 from .quiet import next_quiet_start, quiet_period
 from .schedule import effective_settings, check_creation, platform_role, wake_text
@@ -39,6 +40,12 @@ from ..tools.skills import Skill
 logger = logging.getLogger(__name__)
 
 Channel = Literal["direct", "named", "attention", "focus", "ambient", "explore"]
+# How the group took the bot's recent ambient interjections scales the participation score.
+EFFECT_VALUES = {"agree": 1.0, "continue": 1.0, "negative": -1.0, "unrelated": -1.0}
+EFFECT_SAMPLES = 10
+EFFECT_WINDOW_SECONDS = 3 * 86400
+EFFECT_HALF_LIFE_SECONDS = 86400
+EFFECT_FLOOR = 0.5
 PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
 HELP = re.compile(r"(?<!不)怎么|如何|为什么|有没有|帮我|帮忙|你们觉得")
@@ -62,6 +69,7 @@ class WakeVerdict:
     reason: str
     score: float | None = None
     threshold: float | None = None
+    effect_factor: float | None = None
 
 
 @dataclass
@@ -426,17 +434,17 @@ class SceneRunner:
             for match in matches:
                 log_event(logger, 'attention_candidate', **match, mode=settings.mode)
 
-        def offered(wake: PendingWake, reason: str) -> WakeVerdict:
+        def offered(wake: PendingWake, reason: str, factor: float | None = None) -> WakeVerdict:
             previous = None if state.pending is None else state.pending.channel
             state.offer(wake)
             threshold = self.settings.ambient_threshold if wake.channel in {'ambient', 'explore'} else None
             if state.paused:
-                return WakeVerdict(False, None, '群聊已暂停', wake.score, threshold)
+                return WakeVerdict(False, None, '群聊已暂停', wake.score, threshold, factor)
             if self.quiet_period(at) is not None and self.quiet_direct(at) != 'allow':
-                return WakeVerdict(False, None, '安静时段，不开启对话回合', wake.score, threshold)
+                return WakeVerdict(False, None, '安静时段，不开启对话回合', wake.score, threshold, factor)
             if previous is not None and PRIORITY[previous] <= PRIORITY[wake.channel]:
-                return WakeVerdict(False, None, '本轮已有待处理唤醒', wake.score, threshold)
-            return WakeVerdict(True, wake.channel, reason, wake.score, threshold)
+                return WakeVerdict(False, None, '本轮已有待处理唤醒', wake.score, threshold, factor)
+            return WakeVerdict(True, wake.channel, reason, wake.score, threshold, factor)
 
         if is_direct(message):
             state.contact(at, self.settings.focus_seconds)
@@ -467,22 +475,23 @@ class SceneRunner:
             if self.local_allows(state, 'focus', message, at):
                 return offered(PendingWake('focus', at), '持续对话')
             local_blocked = True
-        score = None
+        score = factor = None
         if open_for_ambient(state):
-            score = (participation_score(pending, recent, self.settings, self.config.bot_id)
-                     if self.settings.activity > 0 else None)
+            if self.settings.activity > 0:
+                factor = self.effect_factor()
+                score = participation_score(pending, recent, self.settings, self.config.bot_id) * factor
             if score is not None and score > self.settings.ambient_threshold:
                 if self.local_allows(state, 'ambient', message, at):
                     log_event(logger, 'attention_ambient', score=score, threshold=self.settings.ambient_threshold,
-                              message_id=message.platform_message_id)
-                    return offered(PendingWake('ambient', at, score=score), '参与分超过门槛')
+                              effect_factor=factor, message_id=message.platform_message_id)
+                    return offered(PendingWake('ambient', at, score=score), '参与分超过门槛', factor)
                 local_blocked = True
             if state.pending is None and self.settings.explore_probability > 0:
                 woke = self.random.random() < self.settings.explore_probability
                 log_event(logger, 'attention_explore', woke=woke, probability=self.settings.explore_probability,
                           score=score, message_id=message.platform_message_id)
                 if woke:
-                    return offered(PendingWake('explore', at, score=score, explored=True), '随机探索命中')
+                    return offered(PendingWake('explore', at, score=score, explored=True), '随机探索命中', factor)
         if local_blocked:
             reason = '局部收尾不允许'
         elif not open_for_ambient(state):
@@ -494,7 +503,7 @@ class SceneRunner:
         else:
             reason = '参与分未达门槛'
         return WakeVerdict(False, None, reason, score,
-                           self.settings.ambient_threshold if score is not None else None)
+                           self.settings.ambient_threshold if score is not None else None, factor)
 
     def receive(self, raw: dict, *, ignore_other_scenes: bool = False) -> dict:
         message = parse_message(raw, own_message_ids=set())
@@ -617,6 +626,19 @@ class SceneRunner:
         observed = datetime.fromtimestamp(self.now(), ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
         return f"等待结束 {observed}：实际等待 {time.monotonic() - started:.3f} 秒；{reason}。"
 
+    def effect_factor(self) -> float:
+        """Up to EFFECT_SAMPLES judged reactions to this group's ambient interjections in the window, each
+        weighted by age: ignored or disliked ones lower the participation score toward EFFECT_FLOOR;
+        welcomed ones never raise it. With no reactions the factor is 1."""
+        now = self.now()
+        reactions = ReplyEffectStore(self.store).reactions(
+            self.config.scene, ("ambient", "explore"), now - EFFECT_WINDOW_SECONDS, EFFECT_SAMPLES)
+        weights = [(0.5 ** (max(0.0, now - at) / EFFECT_HALF_LIFE_SECONDS), EFFECT_VALUES.get(reaction, 0.0))
+                   for at, reaction in reactions]
+        # Two neutral samples' worth of prior keeps one bad reaction from halving the score.
+        balance = sum(weight * value for weight, value in weights) / (sum(weight for weight, _ in weights) + 2)
+        return 1 + min(0.0, balance) * (1 - EFFECT_FLOOR)
+
     def ambient_interval(self) -> float:
         base, maximum = self.settings.ambient_min_interval_seconds, self.settings.ambient_max_interval_seconds
         cap = math.ceil(math.log2(maximum) - math.log2(base))
@@ -629,10 +651,26 @@ class SceneRunner:
         if wake.channel == "ambient":
             return max(wake.first_at, wake.first_at if self.state.ambient_last_at is None else
                        self.state.ambient_last_at + self.ambient_interval())
-        latest = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids)
         timing = 'focus' if wake.channel in {'attention', 'explore'} else wake.channel
         idle = getattr(self.settings, timing + "_idle_seconds")
         maximum = getattr(self.settings, timing + "_max_seconds")
+        pending = [(message, at) for _, message, at in self.store.pending_messages(self.config.scene)
+                   if at >= wake.first_at and not message.is_self
+                   and (is_direct(message) or message.sender.uid not in self.settings.other_bot_ids)]
+        if not pending:
+            latest = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids)
+        else:
+            # A sender already in this batch extends the idle wait; a new voice keeps the current one.
+            speakers, latest = set(), pending[0][1]
+            for message, at in pending:
+                if message.sender.uid in speakers:
+                    latest = at
+                speakers.add(message.sender.uid)
+            last, last_at = pending[-1]
+            if (last_at == latest and any(segment.type == 'image' for segment in last.segments)
+                    and not plain_text(last).strip()
+                    and all(segment.type in {'image', 'mention', 'reply', 'text'} for segment in last.segments)):
+                idle = min(maximum, idle * 2)
         return min((wake.first_at if latest is None else latest) + idle, wake.first_at + maximum)
 
     def due_schedules(self, now: float) -> list[tuple[int, str]]:
@@ -1037,7 +1075,8 @@ class SceneRunner:
                     if self.settings.activity > 0:
                         pending = self.store.pending_attention_sample(self.config.scene, self.settings.other_bot_ids)
                         recent = self.store.attention_sample(self.config.scene, exclude_uids=self.settings.other_bot_ids)
-                        score = participation_score(pending, recent, self.settings, self.config.bot_id)
+                        score = (participation_score(pending, recent, self.settings, self.config.bot_id)
+                                 * self.effect_factor())
                         if score > self.settings.ambient_threshold:
                             state.offer(PendingWake('ambient', first_at, score=score))
         if self.settings.disposition is not None and result['status'] == 'settled':

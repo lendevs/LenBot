@@ -34,6 +34,8 @@ from ..next.models.tokens import token_summary
 from ..next.storage.store import FORMAT_VERSION, encode, turn_record
 
 
+# Counted in social replies: narrated reactions and stock comfort that read as an assistant.
+ASSISTANT_PHRASES = ('记在小本本', '这话我认', '接住', '一定会好起来', '你已经很棒', '加油哦')
 LOCAL_TOOLS = {"say", "wait", "recall_chat", "schedule", "schedule_list", "schedule_cancel",
                "knowledge", "tool_search", "react", "scene_control", "memory", "web_read", "web_search", "look",
                "attention", "end_turn"}
@@ -46,6 +48,7 @@ class Annotation(BaseModel):
     repeat: int = Field(gt=0, strict=True)
     verdict: Literal["unreviewed", "pass", "fail", "uncertain"]
     reason: str
+    sticker_fit: bool | None = None
 
     @model_validator(mode="after")
     def reviewed_reason(self) -> Annotation:
@@ -178,7 +181,7 @@ def prepare(root: Path, set_name: str, profile: str) -> tuple[LabConfig, Persona
         "turn_timeout_seconds": config.turn_timeout_seconds,
         "delivery": "simulated",
         "estimated_model_calls": None, "estimated_cost": None,
-        "notice": "调用数取决于实际工具、压缩与表达向量查询，费用未核定。"
+        "notice": "调用数取决于实际工具、压缩与表达向量查询。"
                   "配置embedding表示本轮可按已采用表达检索。"
                   "固定起点按真实秒数推进。",
     }
@@ -240,7 +243,7 @@ def snapshot_code(destination: Path) -> dict:
                             check=True, text=True, capture_output=True).stdout
     (destination / "working-tree.txt").write_text(status, encoding="utf-8")
     return {"revision": revision, "working_tree": status,
-            "note": "本次实际源码、提示词与依赖锁随附；运行期间不要修改源码。"}
+            "note": "本次实际源码、提示词与依赖锁随附。"}
 
 
 def observed_database(path: Path, *, scene: str, after_turn: int = 0, after_call: int = 0,
@@ -311,7 +314,7 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
     changed = asyncio.Condition()
     processes = []
     inputs = []
-    after_turn = after_call = after_embedding_call = 0
+    after_turn = after_call = after_embedding_call = after_message = 0
     memory_baseline = None if config.memory is None else MemoryBaseline()
 
     async def consume(child, stream) -> None:
@@ -368,6 +371,7 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
         write_json(directory / "case.json", case.model_dump(mode="json"))
         if initial_database is not None:
             with closing(sqlite3.connect(initial_database.as_uri() + "?mode=ro&immutable=1", uri=True)) as db:
+                after_message = db.execute('SELECT COALESCE(MAX(seq),0) FROM messages').fetchone()[0]
                 after_turn = db.execute("SELECT COALESCE(MAX(rowid),0) FROM turns").fetchone()[0]
                 after_call = db.execute("SELECT COALESCE(MAX(id),0) FROM model_calls").fetchone()[0]
                 after_embedding_call = db.execute(
@@ -454,6 +458,32 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
               **observed_database(directory / "chat.sqlite3", scene=config.scene,
                                   after_turn=after_turn, after_call=after_call,
                                   after_embedding_call=after_embedding_call, memory_baseline=memory_baseline)}
+    if case.social is not None and result['database'] is not None:
+        with closing(sqlite3.connect((directory / 'chat.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
+            messages = [json.loads(row[0]) for row in db.execute(
+                "SELECT body FROM messages WHERE scene=? AND seq>? AND json_extract(body,'$.is_self')=1 "
+                "AND json_extract(body,'$.send_status') IN ('sent','simulated') ORDER BY seq", (config.scene, after_message))]
+        text = '\n'.join(segment['data']['text'] for message in messages for segment in message['segments']
+                         if segment['type'] == 'text')
+        stickers = [segment['data'].get('summary', '') for message in messages for segment in message['segments']
+                    if segment['type'] == 'image']
+        expected = case.social
+        spoke = bool(messages)
+        wait = next((turn['first_expression_at'] - turn['wake_received_at'] for turn in result['turns']
+                     if turn['first_expression_at'] is not None and turn['wake_received_at'] is not None), None)
+        result['social'] = {
+            'category': expected.category, 'spoke': spoke,
+            'false_interruption': spoke and not expected.speak,
+            'missed_reply': expected.speak and not spoke,
+            'answer_correct': all(re.search(pattern, text) is not None for pattern in expected.answer_patterns)
+                              and not any(re.search(pattern, text) for pattern in expected.absent_patterns),
+            'ai_phrases': {phrase: text.count(phrase) for phrase in ASSISTANT_PHRASES if phrase in text},
+            'ai_phrase_count': sum(text.count(phrase) for phrase in ASSISTANT_PHRASES),
+            'sticker_match': (None if not expected.sticker_files else bool(stickers)
+                              and all(any(name in summary for name in expected.sticker_files) for summary in stickers)),
+            'stickers': stickers, 'reply': text, 'first_reply_seconds': wait,
+            'requests': result['chat_model_calls'], 'tokens': result['tokens'],
+        }
     write_json(directory / "result.json", result)
     if interruption is not None:
         raise interruption
@@ -566,10 +596,13 @@ def read_report(directory: Path) -> dict:
             token_records.extend([None] * len(result["usage"]))
         else:
             token_records.extend(call["tokens"] for call in result["usage"])
-    summary = {"run": metadata, "quality": counts, "scored": scored,
+    social = [{"case_id": item['case_id'], "repeat": item['repeat'], **item['result']['social'],
+               'verdict': item['annotation']['verdict'], 'sticker_fit': item['annotation']['sticker_fit']}
+              for item in results if item['result'] is not None and 'social' in item['result']]
+    summary = {"run": metadata, "quality": counts, "scored": scored, "social": social,
                "pass_rate": None if scored == 0 else counts["pass"] / scored,
                "tokens": {**token_summary(token_records), "unobserved_cases": unobserved_cases}, "results": results,
-               "notice": "1 倍速开发回放；每例时间轴见结果，未标注不计通过，费用未知不计零，完整输出见各实例数据库。"}
+               "notice": "1 倍速开发回放；每例时间轴见结果，未标注的不计通过，完整输出见各实例数据库。"}
     return summary
 
 
@@ -758,7 +791,7 @@ def compare(root: Path, baseline_id: str, candidate_id: str) -> dict:
         "image_materials": image_materials,
         "source_changed_files": changed_files(left / "source", right / "source"),
         "notice": "同输入配对回放的人工判定结果。未完成脚本的人工 fail 计入；"
-                  "未评、uncertain 和未配对不计入分母。脚本总耗时含全部轮次，未知费用记为未知。",
+                  "未评、uncertain 和未配对不计入分母。脚本总耗时含全部轮次。",
     }
     write_json(right / f"comparison-{baseline_id}.json", result)
     return result

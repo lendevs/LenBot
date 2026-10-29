@@ -28,7 +28,7 @@ const text = computed(() =>
   props.message.text
     .replace(/\[提及全体成员\]/g, `@${t('groups.live.everyone')}`)
     .replace(/\[提及 (onebot:[0-9]+)\]/g, (_, uid: string) => `@${props.nameOf(uid)} `)
-    .replace(/\[图片[0-9]+(?:：[^\]]*)?\]/g, '')
+    .replace(/\[图片[0-9]+(?:：(?:\[[^\]]*\]|[^\]])*)?\]/g, '')
     .trim(),
 )
 const status = computed(() =>
@@ -84,6 +84,7 @@ const status = computed(() =>
               :src="image.url"
               :alt="image.summary || t('groups.live.image')"
               loading="lazy"
+              referrerpolicy="no-referrer"
               class="block max-h-44 max-w-44 object-cover"
             />
           </a>

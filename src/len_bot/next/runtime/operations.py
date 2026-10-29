@@ -32,5 +32,5 @@ def diagnostic_zip(payload: dict, config, *, plugin_redactor=None) -> bytes:
     with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
         archive.writestr("diagnostic.txt", text)
         archive.writestr("README.txt", "用于排障的文本诊断包。已隐去配置凭据与至少5位的数字（时间、消息号等也会被遮盖）。\n"
-                         "正文含昵称、聊天内容和第三方返回内容，分享前请自行检查；附件、原图、语音和文件原件不在包内。\n")
+                         "正文含昵称、聊天内容和第三方返回内容，不含附件、原图、语音和文件原件。\n")
     return buffer.getvalue()

@@ -87,7 +87,7 @@ async def test_one_pass_writes_memory_learns_and_records_one_upkeep_call(tmp_pat
                      ('say', {'content': '我也想玩', 'end_turn': True})),
         _text({'expressions': [{'situation': '有人约周末打游戏', 'style': '冲冲冲', 'sources': ['40001']}],
                'terms': [{'term': 'yyds', 'sources': ['40001', '40002']}]}),
-        _text({'meanings': [{'term': 'yyds', 'meaning': '夸东西很厉害', 'confidence': 0.8}]}),
+        _text({'meanings': [{'term': 'yyds', 'meaning': '夸东西很厉害', 'ordinary_meaning': '永远的神', 'same_meaning': False, 'confidence': 0.8}]}),
     ]
     async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
         _group_messages(store)
@@ -278,3 +278,79 @@ async def test_the_worker_keeps_running_after_an_unexpected_error(tmp_path, monk
         finally:
             await upkeep.close()
         assert len(calls) == 2 and SCENE not in upkeep.errors
+
+
+@pytest.mark.asyncio
+async def test_meaning_protocol_rejects_ordinary_usage_and_keeps_adopted_decisions(tmp_path):
+    result = {'meanings': [
+        {'term': '早餐', 'meaning': '早晨吃的一餐', 'ordinary_meaning': '早晨吃的一餐',
+         'same_meaning': True, 'confidence': 0.99},
+        {'term': '洗锅', 'meaning': '本群指清理构建缓存', 'ordinary_meaning': '清洗炊具',
+         'same_meaning': False, 'confidence': 0.95},
+        {'term': 'yyds', 'meaning': '模型返回的新解释', 'ordinary_meaning': '永远的神',
+         'same_meaning': True, 'confidence': 0.9},
+    ]}
+    async with _upkeep(tmp_path, [_text(result)]) as (upkeep, store, memory, forks, bodies):
+        records = JargonStore(store)
+        proposals = []
+        for index, term in enumerate(['早餐', '洗锅', 'yyds']):
+            for repeat in range(4):
+                ident = 52000 + index * 10 + repeat
+                _receive(store, f'{term} 今天也提到一次', 70002, ident)
+                if repeat == 0:
+                    proposals.append((term, store.max_message_seq(SCENE)))
+        call = records.begin_discovery(SCENE, 0, store.max_message_seq(SCENE), {})
+        records.complete_discovery(call, proposals, exclude_uids=[])
+        by_term = {item['term']: item for item in records.items(SCENE, None, 100, 0)['items']}
+        adopted = records.update(SCENE, by_term['yyds']['id'], '人工固定含义', 'adopted')
+        changed = asyncio.Event()
+        upkeep.on_update = changed.set
+        upkeep.start()
+        try:
+            upkeep.request(SCENE, 'jargon')
+            async with asyncio.timeout(5):
+                while records.pending(SCENE):
+                    await changed.wait()
+                    changed.clear()
+        finally:
+            await upkeep.close()
+        ordinary = records.item(SCENE, by_term['早餐']['id'])
+        special = records.item(SCENE, by_term['洗锅']['id'])
+        assert (ordinary['status'], ordinary['latest_meaning']) == ('rejected', '早晨吃的一餐')
+        assert (ordinary['ordinary_meaning'], ordinary['same_meaning']) == ('早晨吃的一餐', True)
+        assert (special['status'], special['latest_meaning']) == ('pending', '本群指清理构建缓存')
+        assert (special['ordinary_meaning'], special['same_meaning']) == ('清洗炊具', False)
+        rejected = records.items(SCENE, 'rejected', 20, 0)['items']
+        assert [(item['term'], item['same_meaning']) for item in rejected] == [('早餐', True)]
+        # An adopted term keeps its decision and fixed meaning; only the latest inference changes.
+        relearned = records.item(SCENE, adopted['id'])
+        assert (relearned['status'], relearned['meaning']) == ('adopted', '人工固定含义')
+        assert (relearned['latest_meaning'], relearned['same_meaning']) == ('模型返回的新解释', True)
+        assert store.db.execute("SELECT count(*) FROM jargon_calls WHERE term_id=?", (adopted['id'],)).fetchone()[0] == 1
+        assert len(bodies()) == 1
+        raw = records.call(SCENE, records.latest(SCENE)['id'])
+        assert 'ordinary_meaning' in str(raw) and 'same_meaning' in str(raw)
+
+
+def test_adoption_during_meaning_request_preserves_manual_record(tmp_path):
+    from len_bot.next.platform.onebot_messages import parse_message
+
+    with Store(tmp_path / 'chat.db') as store:
+        records = JargonStore(store)
+        records.initialize(SCENE, 0)
+        for index in range(4):
+            raw = {'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
+                   'user_id': 70002, 'message_id': f'usage-{index}', 'time': 1790000000,
+                   'sender': {'nickname': '成员', 'role': 'member'},
+                   'message': [{'type': 'text', 'data': {'text': '洗锅表示清缓存'}}]}
+            store.enqueue(parse_message(raw, own_message_ids=set()), raw, 1790000000)
+        discovery = records.begin_discovery(SCENE, 0, store.max_message_seq(SCENE), {})
+        records.complete_discovery(discovery, [('洗锅', 1)], exclude_uids=[])
+        term = records.pending(SCENE)[0]
+        call = records.begin_meaning(SCENE, term['id'], term['count'], {})
+        records.update(SCENE, term['id'], '人工确认：清缓存', 'adopted')
+        records.complete_meaning(call, '异步返回的另一种解释', 0.7, ordinary_meaning='清洗炊具', same_meaning=True)
+        item = records.item(SCENE, term['id'])
+        assert (item['status'], item['meaning'], item['latest_meaning']) == ('adopted', '人工确认：清缓存', '异步返回的另一种解释')
+        assert records.pending(SCENE) == []
+        assert records.call(SCENE, call)['status'] == 'complete'

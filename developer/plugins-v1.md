@@ -2,7 +2,7 @@
 
 ## 最小插件
 
-一个插件目录包含 `plugin.toml` 和 `__init__.py`，`__init__.py` 中必须恰好定义一个 `Plugin` 子类。可以从[插件模板](https://github.com/lendevs/lenbot-plugin-template)开始编写。插件只使用 `len_bot.plugin`，不需要引用 Chat、Store 或 NetworkRuntime。
+一个插件目录包含 `plugin.toml` 和 `__init__.py`，`__init__.py` 中必须恰好定义一个 `Plugin` 子类。可以从[插件模板](https://github.com/lendevs/lenbot-plugin-template)开始编写。插件通过公开的 `len_bot.plugin` 接口与宿主交互。
 
 清单中必须填写以下字段。`name` 等于安装后的目录名，仓库根目录或 ZIP 根目录不要求事先使用这个目录名。
 
@@ -304,7 +304,7 @@ default = []
 - 几种互斥的方式（例如 `文字`／`图片`）用一个带 `options` 的字段声明，不要拆成几个 `boolean`。候选值少且短时显示为分段按钮，全部选项一眼可见。
 - 半行字段尽量成对声明，避免一行只放一个短字段、另一半空着。
 
-运行参数仍然只保存在根目录的 `lenbot.config.json` 中。不要把 KV 当作第二份配置，也不要用环境变量覆盖面板中的值。
+运行参数保存在实例根目录的 `lenbot.config.json` 中，KV 仅用于插件运行期业务数据。
 
 ## 工具说明如何交给聊天模型
 
@@ -558,9 +558,9 @@ async def publish(self, ctx):
 
 插件自己的日志使用 `self.ctx.log`（标准的 `logging.Logger`），写入宿主的 `logs/lenbot.jsonl`，并自动带上插件名和当前的群，以及当前的回复轮次和工具调用 ID。面板的系统日志可以按插件筛选。需要特殊权限的入口可以使用 `ctx.require_owner()`，普通查询不需要加上主人限制。
 
-默认的插件是同进程的代码，与宿主共享依赖环境，不能声称具备沙箱隔离；`isolation = "process"` 只隔离崩溃，不限制文件和网络访问。
+默认的 `inline` 模式与宿主同进程运行并共享依赖环境；`isolation = "process"` 隔离工作进程崩溃，插件进程仍拥有与宿主相同的文件与网络访问权限。
 
-每个插件的状态带有 `health`：`level` 为 `ok`、`degraded`（运行中，但最近一小时记录过错误，或有后台循环、定点任务最近一次失败）、`failed`、`stopped` 或 `starting`，另有 `errors_last_hour`、`failing` 和 `last_error_at`。面板可以轮询 `GET /api/host/plugins/health`，这个接口不读磁盘。不要通过 `ctx.plugin.host` 访问内部运行时。接口扩展随版本发布，安装和生效方式见[安装与维护](#安装与维护)。
+每个插件的状态带有 `health`：`level` 为 `ok`、`degraded`（运行中，但最近一小时记录过错误，或有后台循环、定点任务最近一次失败）、`failed`、`stopped` 或 `starting`，另有 `errors_last_hour`、`failing` 和 `last_error_at`。面板可以轮询 `GET /api/host/plugins/health`，该接口直接读取内存状态。接口扩展随版本发布，安装和生效方式见[安装与维护](#安装与维护)。
 
 ## 本地测试与发布
 
@@ -595,10 +595,10 @@ async def check():
 测试数据迁移时，传入旧的数据目录，例如 `PluginTest(package, data=Path('tests/data-v1'), data_version=1)`。进入上下文时，会像真实升级一样先运行 `migrate_data`，再调用 `start()`。
 
 - 固定时钟使用 `PluginTest(..., now=lambda: 1791298800)`。
-- `add_message(text, sender=..., scene=..., message_id=..., timestamp=...)` 保存一条测试消息并返回 ChatMessage，可以用它的 platform_message_id 调用需要来源的工具。不需要修改宿主的私有字段。
+- `add_message(text, sender=..., scene=..., message_id=..., timestamp=...)` 保存一条测试消息并返回 ChatMessage，可以用它的 platform_message_id 调用需要来源的工具。
 - `preview_tools(scene)` 返回发现简介、完整说明、共享指南、参数、needs_source、允许的群和配置原因。
 - `tool()` 经过真实的调用边界，结果是模型实际收到的字符串。
-- `wait_tasks(name_prefix)` 只等待插件作者明确命名的后台任务。请不要用它等待永久轮询或常驻连接的任务。
+- `wait_tasks(name_prefix)` 等待插件通过 `start_task` 登记且名称匹配前缀的一次性后台任务完成。
 
 测试本机的模型协议时，可以传入完整的模型配置，例如：
 
@@ -613,15 +613,15 @@ async with PluginTest(package, models=models, now=lambda: fixed_time) as bot:
     print(bot.preview_tools())
 ```
 
-模型配置不提供网络隔离。请用本机的协议服务验证，不要填写生产环境的凭据。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。四个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。
+测试模型配置直接发起真实 HTTP 请求，协议测试可指向本机模拟服务。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。四个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。
 
 在 GitHub 上打开[插件模板仓库](https://github.com/lendevs/lenbot-plugin-template)，点击 Use this template 生成自己的仓库。
 
 - 模板的 CI 调用 LenBot 提供的可复用工作流 `plugin-ci.yml`，默认用宿主的 `master` 运行插件测试和打包检查，可以传入 `host_ref` 固定宿主版本。
 - 推送 `v*` 标签时，发布工作流把完整的运行源码、prompts／skills／assets 资源和许可说明打包成可导入的 ZIP，附加到 Release 上。
-- 发布前请填写自己的 name 和 authors，并更新版本和兼容范围。
+- 发布前填写插件自己的 `name` 和 `authors`，并更新版本和兼容范围。
 
-**许可证**。LenBot 宿主采用 AGPL-3.0-only，插件模板和计数示例采用 GPL-3.0-only。插件和宿主运行在同一个进程中，推荐插件也使用 GPL-3.0。GPLv3 第 13 条允许 GPLv3 作品与 AGPLv3 作品组合使用。选择其他许可证之前，请自行确认它与 GPLv3／AGPLv3 兼容。
+**许可证**。LenBot 宿主采用 AGPL-3.0-only，插件模板和计数示例采用 GPL-3.0-only。插件和宿主运行在同一个进程中，推荐插件使用 GPL-3.0；GPLv3 第 13 条允许 GPLv3 作品与 AGPLv3 作品组合使用。
 
 [English](plugins-v1.en.md)
 

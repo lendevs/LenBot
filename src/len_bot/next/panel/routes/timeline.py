@@ -21,6 +21,7 @@ class Verdict(BaseModel):
     reason: str
     score: float | None
     threshold: float | None
+    effect_factor: float | None = None
 
 
 class Image(BaseModel):

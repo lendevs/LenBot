@@ -455,7 +455,8 @@ class SessionUpkeep:
         if plan.meanings:
             tasks.append(Template(read_prompt("next_upkeep_meanings.md")).substitute(
                 terms=encode([self._meaning_item(scene, term) for term in plan.meanings])).strip())
-            formats["meanings"] = [{"term": "词", "meaning": "在这个群里的用法", "confidence": 0.5}]
+            formats["meanings"] = [{"term": "词", "meaning": "在这个群里的用法",
+                                    "ordinary_meaning": "通常含义", "same_meaning": False, "confidence": 0.5}]
         if plan.effects:
             samples = [self._effect_sample(scene, item) for item in self.effects.effects(scene, plan.effects)]
             tasks.append(Template(read_prompt("next_upkeep_effects.md")).substitute(samples=encode(samples)).strip())
@@ -652,8 +653,10 @@ class SessionUpkeep:
             if term["term"] in meanings:
                 call_id = self.jargon.begin_meaning(scene, term["id"], term["count"], begun.request)
                 self.jargon.response(call_id, response, None, None)
-                self.jargon.complete_meaning(call_id, meanings[term["term"]]["meaning"],
-                                             meanings[term["term"]]["confidence"])
+                item = meanings[term["term"]]
+                self.jargon.complete_meaning(call_id, item["meaning"], item["confidence"],
+                                             ordinary_meaning=item["ordinary_meaning"],
+                                             same_meaning=item["same_meaning"])
         if begun.effect_call is not None:
             self.effects.response(begun.effect_call, response, None, None)
             # Samples the reply left out stay unjudged on this call.
@@ -742,9 +745,12 @@ def _term(item: dict, humans: set[str], texts: dict[str, str]) -> dict:
 
 def _meaning(item: dict) -> dict:
     confidence = item.get("confidence")
-    if (not isinstance(item.get("term"), str) or not isinstance(item.get("meaning"), str)
-            or not item["meaning"].strip() or type(confidence) not in {int, float} or not 0 <= confidence <= 1):
-        raise ValueError("needs term, nonblank meaning and confidence in 0..1")
+    if (not isinstance(item.get("term"), str) or not item['term'].strip()
+            or any(not isinstance(item.get(key), str) or not item[key].strip()
+                   for key in ('meaning', 'ordinary_meaning'))
+            or type(item.get('same_meaning')) is not bool
+            or type(confidence) not in {int, float} or not 0 <= confidence <= 1):
+        raise ValueError("needs term, meaning, ordinary_meaning, boolean same_meaning and confidence in 0..1")
     return item
 
 

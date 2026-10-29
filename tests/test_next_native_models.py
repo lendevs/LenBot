@@ -1,7 +1,7 @@
 """Native HTTP contracts based on the providers' published response shapes.
 
 Identifiers and signatures are synthetic. Loopback peers verify actual HTTP,
-including tool-result continuation and SSE bytes; they do not call paid APIs.
+including tool-result continuation and SSE bytes.
 """
 import asyncio
 import json

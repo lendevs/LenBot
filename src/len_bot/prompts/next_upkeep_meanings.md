@@ -1,3 +1,5 @@
-【黑话含义】下面这些词在群里出现得多了。结合例句和你知道的上下文，说说每个词在这个群里的用法；语境不够时说明哪里还不明确，confidence 给低一些。confidence 是 0 到 1 的数。
+【黑话含义】下面这些词在群里出现得多了。每个词同时写出本群用法 meaning 和通常含义 ordinary_meaning，并用 same_meaning 判断两者是否相同。
+
+根据例句里的实际指代和用法比较：沿用普通词义或常见比喻时 same_meaning 为 true；本群约定了特定指代或不同含义时为 false。通常含义不明确时如实说明。本群语境不足以判断时，说明尚不明确的部分，same_meaning 给 false，confidence 给低一些；有证据再更新。confidence 是 0 到 1 的数。
 
 $terms

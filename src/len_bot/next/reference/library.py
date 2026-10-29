@@ -593,7 +593,7 @@ class ReferenceLibrary:
         return await self._run(scene, persona, scope, listing)
 
     async def search(self, scene: str, persona: KnowledgeOwner, query: str, *, scope: Scope = "all",
-                     limit: int = 50) -> list[ReferenceHit]:
+                     filename: str | None = None, limit: int = 50) -> list[ReferenceHit]:
         """Full-text hits hold at least half of the keywords, or as many as the best chunk of the same
         owner holds when that is fewer; most keywords first, then full-text rank.
 
@@ -604,14 +604,18 @@ class ReferenceLibrary:
         terms = search_terms(query)
 
         def found(db: sqlite3.Connection, owners: list[str], vector: tuple[float, ...] | None) -> list[ReferenceHit]:
-            lexical = self._lexical(db, owners, terms, limit)
+            lexical = self._lexical(db, owners, terms, limit, filename)
             ranks = {rowid: 1 / position for position, rowid in enumerate(lexical, 1)}
             if vector is not None and _has_vectors(db):
                 nearest = []
                 for owner in owners:
-                    nearest += db.execute("""SELECT rowid, distance FROM reference_vec
-                        WHERE embedding MATCH ? AND k=? AND owner=? ORDER BY distance""",
-                                          (_vector_bytes(vector), VECTOR_NEIGHBOURS, owner)).fetchall()
+                    condition = (" AND rowid IN (SELECT c.id FROM reference_chunks c "
+                                 "JOIN reference_sources s ON s.id=c.source WHERE s.owner=? AND s.path=?)"
+                                 if filename is not None else "")
+                    nearest += db.execute(f"""SELECT rowid, distance FROM reference_vec
+                        WHERE embedding MATCH ? AND k=? AND owner=?{condition} ORDER BY distance""",
+                        (_vector_bytes(vector), VECTOR_NEIGHBOURS, owner,
+                         *((owner, filename) if filename is not None else ()))).fetchall()
                 close = sorted((row for row in nearest if row["distance"] <= MAX_VECTOR_DISTANCE),
                                key=lambda row: row["distance"])
                 added = 0
@@ -628,7 +632,8 @@ class ReferenceLibrary:
         return await self._run(scene, persona, scope, found, query=query)
 
     @staticmethod
-    def _lexical(db: sqlite3.Connection, owners: list[str], terms: tuple[str, ...], limit: int) -> list[int]:
+    def _lexical(db: sqlite3.Connection, owners: list[str], terms: tuple[str, ...], limit: int,
+                 filename: str | None = None) -> list[int]:
         placeholders = ",".join("?" for _ in owners)
         long_terms = [term for term in terms if len(term) >= 3]
         short_terms = [term for term in terms if len(term) < 3]
@@ -639,11 +644,17 @@ class ReferenceLibrary:
                 JOIN reference_sources AS s ON s.id = c.source
                 WHERE reference_fts MATCH ? AND s.owner IN ({placeholders})""")
             parameters += [" OR ".join('"' + term.replace('"', '""') + '"' for term in long_terms), *owners]
+            if filename is not None:
+                parts[-1] += " AND s.path=?"
+                parameters.append(filename)
         if short_terms:
             # The trigram index cannot hold one- or two-character keywords.
             parts.append(f"""SELECT c.id, 0.0 FROM reference_chunks AS c JOIN reference_sources AS s ON s.id = c.source
                 WHERE s.owner IN ({placeholders}) AND ({" OR ".join("instr(c.folded, ?) > 0" for _ in short_terms)})""")
             parameters += [*owners, *short_terms]
+            if filename is not None:
+                parts[-1] += " AND s.path=?"
+                parameters.append(filename)
         matched = " + ".join("(instr(c.folded, ?) > 0)" for _ in terms)
         return [row[0] for row in db.execute(f"""
             WITH hits(id, relevance) AS MATERIALIZED ({" UNION ALL ".join(parts)}),

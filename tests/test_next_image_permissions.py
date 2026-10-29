@@ -156,13 +156,13 @@ async def test_look_registration_requires_role_configuration_and_vision_client(t
         async with ChatModel(config.model_settings("mind")) as mind:
             assert "look" in Chat(config, persona, store, mind).toolset.tool_names
 
-    config, persona = _chat_inputs(tmp_path / "missing-client", tools=["look"], vision=True)
+    config, persona = _chat_inputs(tmp_path / "missing-client", tools=["look"], vision=True, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind:
             with pytest.raises(ValueError, match="look|vision"):
                 Chat(config, persona, store, mind)
 
-    config, persona = _chat_inputs(tmp_path / "allowed", tools=["look"], vision=True)
+    config, persona = _chat_inputs(tmp_path / "allowed", tools=["look"], vision=True, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind, ChatModel(config.model_settings("vision")) as vision:
             chat = Chat(config, persona, store, mind, vision=vision)
@@ -177,7 +177,7 @@ async def test_look_registration_requires_role_configuration_and_vision_client(t
             assert "获准场景的已缓存描述" in content
             assert expression is None and discovered is None
 
-    config, persona = _chat_inputs(tmp_path / "forbidden", tools=[], vision=True)
+    config, persona = _chat_inputs(tmp_path / "forbidden", tools=[], vision=True, mind_images=False)
     with Store(config.database) as store:
         async with ChatModel(config.model_settings("mind")) as mind, ChatModel(config.model_settings("vision")) as vision:
             chat = Chat(config, persona, store, mind, vision=vision)
@@ -186,3 +186,77 @@ async def test_look_registration_requires_role_configuration_and_vision_client(t
                 await chat.toolset.execute("unused-turn", ToolCall(
                     id="unused-call", name="look", arguments={"message": "400", "image": 1},
                 ), wait_for_messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('separate_vision', [False, True])
+async def test_image_capable_mind_receives_pixels_even_with_a_separate_vision_binding(tmp_path, separate_vision):
+    from contextlib import AsyncExitStack
+
+    config, persona = _chat_inputs(tmp_path, tools=['look'], vision=separate_vision)
+    async with AsyncExitStack() as stack:
+        mind = await stack.enter_async_context(ChatModel(config.model_settings('mind')))
+        vision = (await stack.enter_async_context(ChatModel(config.model_settings('vision')))
+                  if separate_vision else None)
+        with Store(config.database) as store:
+            _receive_image(store, config.scene, '500')
+            asset = _asset('purple', '旧视觉转述')
+            store.save_image(config.scene, '500', 1, asset)
+            chat = Chat(config, persona, store, mind, vision=vision)
+
+            async def wait_for_messages(_: float) -> str:
+                return ''
+
+            content, _, _ = await chat.toolset.execute('unused-turn', ToolCall(
+                id='direct-image', name='look', arguments={'message': '500'}), wait_for_messages)
+            assert '旧视觉转述' not in content
+            assert chat.toolset.looked == [('消息 500 的第 1 张图片', asset.jpeg)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mind_images", "vision_images", "expected"), [
+    (True, False, True), (False, True, True), (False, None, False),
+])
+async def test_capabilities_report_image_support_of_mind_or_vision(tmp_path, mind_images, vision_images, expected):
+    from contextlib import AsyncExitStack
+
+    import httpx
+
+    from len_bot.next.config import load_host_config
+    from len_bot.next.panel.app import create_app
+    from len_bot.next.runtime.network import NetworkRuntime
+    from len_bot.web.auth import hash_password
+
+    _chat_inputs(tmp_path, tools=[], vision=False)
+    root = tmp_path / "isolated"
+    roles = {"mind": {"provider": "local", "model": "synthetic-mind", "context_window_tokens": 8192,
+                      "image_input": mind_images}}
+    if vision_images is not None:
+        roles["vision"] = {"provider": "local", "model": "synthetic-vision", "context_window_tokens": 4096,
+                           "image_input": vision_images}
+    (root / "lenbot.config.json").write_text(json.dumps({"compaction": {"input_tokens": 2000},
+        "mode": "isolated-multi", "bot_id": "onebot:90001", "timezone": "UTC",
+        "database": "data/capabilities.sqlite3", "delivery": "simulated",
+        "onebot": {"mode": "forward_ws", "ws_url": "ws://127.0.0.1:9"},
+        "panel": {"host": "127.0.0.1", "port": 0, "username": "fixture",
+                  "password_hash": hash_password("synthetic-password")},
+        "models": {"providers": {"local": {"api": "openai-chat", "base_url": "http://127.0.0.1:9/v1",
+                                           "api_key": "synthetic-unused-key"}},
+                   "roles": roles},
+        "scenes": {"onebot:group:80001": {"persona": "persona"}},
+    }), encoding="utf-8")
+    config = load_host_config(root)
+    async with AsyncExitStack() as stack:
+        mind = await stack.enter_async_context(ChatModel(config.model_settings("mind")))
+        vision = (await stack.enter_async_context(ChatModel(config.model_settings("vision")))
+                  if vision_images is not None else None)
+        store = stack.enter_context(Store(config.database))
+        runtime = NetworkRuntime(config, [(config.scene_config("onebot:group:80001"),
+                                           load_persona(root / "persona"))], store, mind, vision=vision)
+        client = await stack.enter_async_context(httpx.AsyncClient(
+            transport=httpx.ASGITransport(create_app(config, runtime, root=root)), base_url="http://testserver"))
+        assert (await client.post("/api/auth/login", json={
+            "username": "fixture", "password": "synthetic-password"})).status_code == 200
+        result = await client.get("/api/host/capabilities", params={"scene": "onebot:group:80001"})
+        assert result.status_code == 200, result.text
+        assert result.json()["services"]["vision"] is expected

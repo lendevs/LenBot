@@ -60,6 +60,17 @@ DOCUMENTS = {
 }
 # The recap of an earlier conversation: what the bot promised, which the recent chat no longer names.
 RECAP = '## 话题脉络\n- 读书会选书\n\n## 我答应的事\n- 周五前把十一月书单发到群里（小林问的）\n\n## 没回答的问题\n'
+SOCIAL_DOCUMENTS = {
+    'people/onebot:70001/profile.md': (
+        '# 阿青\n\n## 身份与称呼\n'
+        '- 2026-10-20，消息 social-1：陈青山，画插画的。\n\n'
+        '## 稳定事实\n' + '- 2026-10-20，消息 social-2：喜欢画街边的小店和早餐。\n' * 30
+        + '\n## 相处偏好与雷点\n- 2026-10-21，消息 social-3：叫我阿青就好，别喊全名。\n\n'
+        '## 近期情况\n- 2026-10-21，消息 social-4：当日说感冒、嗓子哑；之后没有健康状态更新。\n\n'
+        '## 不确定\n- 2026-10-21，消息 social-5：画废一张草稿后自嘲“我是废物”，属于当时的玩笑。\n'
+    ),
+}
+SOCIAL_CASES = {'self-deprecation', 'preferred-name', 'expired-status'}
 CASES = [
     ('long-section', ['读书会最终地点和时间是什么？'], ['图书馆二楼', '周六下午三点']),
     ('latest-correction', ['报告最新什么时候交？'], ['最新更正为周六中午提交']),
@@ -77,6 +88,9 @@ CASES = [
     ('paraphrase', ['看书那个小组最后定在哪儿碰头？'], ['图书馆二楼']),
     ('small-talk', ['今天有点累，先休息了'], []),
     ('unrelated-plan', ['晚上打算吃什么？'], []),
+    ('self-deprecation', ['阿青是做什么的？他那句我是废物你怎么看？'], ['属于当时的玩笑']),
+    ('preferred-name', ['你会怎么称呼我？'], ['叫我阿青就好']),
+    ('expired-status', ['我现在还感冒吗？'], ['之后没有健康状态更新']),
 ]
 # What a correct reply says; None means the corpus has no answer and the reply should say it does not know.
 # Deletion checks and answer correctness are reported separately.
@@ -97,8 +111,12 @@ ANSWERS = {
     'paraphrase': [r'图书馆(二|2)楼'],
     'small-talk': [],
     'unrelated-plan': [],
+    'self-deprecation': [r'插画', r'自嘲|玩笑|调侃|气话'],
+    'preferred-name': [r'阿青'],
+    'expired-status': None,
 }
 ABSENT = {'similar-event': r'(七|7)点半|7[:：]30', 'missing-event': r'(七|7)点半|7[:：]30|(九|9)点|9[:：]00'}
+ABSENT.update({'self-deprecation': r'阿青(就是|是个?)废物', 'preferred-name': r'陈青山'})
 FORGOTTEN_CASES = {'forgotten', 'missing-event'}
 FORGOTTEN_TIME = r'(九|9)点|9[:：]00'
 FORGOTTEN = '出游集合点是南门'
@@ -115,10 +133,10 @@ async def corpus(backend: LocalMemory, scene: str) -> None:
         await backend.write(scene, path, content, '人工可核对的合成对照样本')
 
 
-def chat(texts: list[str]):
+def chat(texts: list[str], user: int = 90001):
     return [parse_message({
         'post_type': 'message', 'message_type': 'group', 'group_id': 80001,
-        'user_id': 90001, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
+        'user_id': user, 'self_id': 80000, 'message_id': index, 'time': 1791060000,
         'sender': {'nickname': '提问者', 'role': 'member'},
         'message': [{'type': 'text', 'data': {'text': text}}]}, own_message_ids=set())
         for index, text in enumerate(texts, 1)]
@@ -136,12 +154,16 @@ async def compare(client: EmbeddingClient | None = None, binding=None) -> list[d
         with Store(root / 'chat.db') as store, MemoryJobs(root / 'jobs.db') as jobs:
             service = MemoryService(settings, backend, jobs=jobs, store=store, active_personas={SCENE: 'current'})
             for name, texts, expected, *recap in CASES:
+                if name in SOCIAL_CASES:
+                    for path, content in SOCIAL_DOCUMENTS.items():
+                        await backend.write(SCENE, path, content, '虚构的人物画像对照样本')
                 if name == 'forgotten':
                     await backend.forget(SCENE, 'events/week.md')
                 if name == 'promise-cue':
                     await backend.write(SCENE, 'events/week.md', DOCUMENTS['events/week.md'], '恢复样本')
                 started = time.perf_counter()
-                result = await service.recall(SCENE, chat(texts), recall_cues(recap[0] if recap else None))
+                result = await service.recall(SCENE, chat(texts, 70001 if name in SOCIAL_CASES else 90001),
+                                              recall_cues(recap[0] if recap else None))
                 elapsed = (time.perf_counter() - started) * 1000
                 content = '\n'.join(item['content'] for item in result['items'])
                 rows.append({'case': name, 'query': texts, 'expected_evidence': expected,
@@ -161,7 +183,7 @@ async def notebook() -> list[dict]:
     rows = []
     for name, texts, expected, *recap in CASES:
         async with PluginTest(package, config={'recall_limit': 5}, memory=True) as bot:
-            for path, content in DOCUMENTS.items():
+            for path, content in (DOCUMENTS | (SOCIAL_DOCUMENTS if name in SOCIAL_CASES else {})).items():
                 if name in FORGOTTEN_CASES and path == 'events/week.md':
                     continue
                 for line in content.splitlines():
@@ -200,7 +222,10 @@ async def ask(store: Store, chat, name: str, texts: list[str], group: int, ident
     last = store.db.execute('SELECT coalesce(max(seq), 0) FROM messages').fetchone()[0]
     started = time.time()
     for position, text in enumerate(texts):
-        runner.receive(group_event(group, ident * 10 + position, text, bot, at=position == len(texts) - 1))
+        event = group_event(group, ident * 10 + position, text, bot, at=position == len(texts) - 1)
+        if name == 'preferred-name':
+            event['sender'].update(nickname='陈青山', card='陈青山')
+        runner.receive(event)
     await asyncio.wait_for(done.get(), 300)
     runner.close_input()
     await asyncio.gather(task, return_exceptions=True)
@@ -248,9 +273,22 @@ async def answers(host, client: EmbeddingClient | None, binding) -> list[dict]:
         settings = config(root, binding)
         base = host.scene_config(next(iter(host.scenes)))
         bot = host.bot_id.split(':', 1)[1]
-        backend = LocalMemory(settings.local, embedding=client)
+        backend = LocalMemory(settings.local.model_copy(update={'embedding': None}))
         with Store(root / 'state.db') as store, MemoryJobs(root / 'jobs.db') as jobs:
             groups = {name: 80101 + index for index, (name, *_) in enumerate(CASES)}
+            # Prepare every fictional group offline, then use the backend's batch reindex. Reply
+            # requests and recall are unchanged; repeated copies of the corpus need fewer uploads.
+            for name, *_ in CASES:
+                scene = f'onebot:group:{groups[name]}'
+                await corpus(backend, scene)
+                if name in SOCIAL_CASES:
+                    for path, content in SOCIAL_DOCUMENTS.items():
+                        await backend.write(scene, path, content, '虚构的人物画像对照样本')
+                if name in FORGOTTEN_CASES:
+                    await backend.forget(scene, 'events/week.md')
+            backend = LocalMemory(settings.local, embedding=client)
+            if client is not None:
+                await backend.reindex_embeddings()
             service = MemoryService(settings, backend, jobs=jobs, store=store,
                                     active_personas={f'onebot:group:{group}': persona.id for group in groups.values()})
             async with AsyncExitStack() as stack:
@@ -260,9 +298,6 @@ async def answers(host, client: EmbeddingClient | None, binding) -> list[dict]:
                 for ident, (name, texts, _, *recap) in enumerate(CASES, 1001):
                     group = groups[name]
                     scene = f'onebot:group:{group}'
-                    await corpus(backend, scene)
-                    if name in FORGOTTEN_CASES:
-                        await backend.forget(scene, 'events/week.md')
                     if recap:
                         set_recap(store, scene, recap[0])
                     scene_config = base.model_copy(update={
@@ -316,7 +351,7 @@ async def notebook_answers(instance: Path) -> list[dict]:
                 try:
                     for ident, (name, texts, _, *recap) in enumerate(CASES, 3001):
                         scene = f'onebot:group:{groups[name]}'
-                        for path, content in DOCUMENTS.items():
+                        for path, content in (DOCUMENTS | (SOCIAL_DOCUMENTS if name in SOCIAL_CASES else {})).items():
                             if name in FORGOTTEN_CASES and path == 'events/week.md':
                                 continue
                             for line in content.splitlines():
@@ -330,12 +365,96 @@ async def notebook_answers(instance: Path) -> list[dict]:
     return rows
 
 
+async def profile_upkeep(host) -> dict:
+    """Record the real upkeep's files from a fixed fictional person's messages."""
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.chat.upkeep import SessionUpkeep
+    from len_bot.next.memory.service import IngestSettings
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.persona.profile import load_persona
+
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        package = root / 'persona'
+        shutil.copytree(Path(__file__).resolve().parents[1] / 'examples/personas/companion', package)
+        persona = load_persona(package)
+        settings = config(root)
+        settings.ingest = IngestSettings(idle_seconds=0, min_messages=1)
+        base = host.scene_config(next(iter(host.scenes))).model_copy(update={
+            'scene': SCENE, 'delivery': 'simulated', 'onebot': None, 'database': root / 'chat.db',
+            'persona': package, 'memory': settings, 'worker': None, 'learning': None, 'proactive': None,
+            'memory_plugin': None, 'recap_plugin': None})
+        object.__setattr__(base, '_source_root', root)
+        now = time.time()
+        messages = [
+            (0, '我叫陈青山，是画插画的。'),
+            (0, '平时叫我阿青就好，别喊全名。小满是我的室友。'),
+            (0, '哈哈这张草稿又画废了，我就是个废物。'),
+            (7 * 86400, '今天感冒嗓子哑，先休息。'),
+            (0, '我喜欢画街边的小店和早餐，今天去看了画展。'),
+        ]
+        with Store(base.database) as store, MemoryJobs(root / 'jobs.db') as jobs:
+            backend = LocalMemory(settings.local)
+            service = MemoryService(settings, backend, jobs=jobs, store=store,
+                                    active_personas={SCENE: persona.id})
+            async with AsyncExitStack() as stack:
+                mind = await stack.enter_async_context(ChatModel(base.model_settings('mind')))
+                vision = (await stack.enter_async_context(ChatModel(base.model_settings('vision')))
+                          if base.models.roles.vision is not None else None)
+                chat_session = Chat(base, persona, store, mind, vision=vision, memory=service)
+                upkeep = SessionUpkeep(base, store, mind, memory=service)
+
+                async def fork(scene):
+                    return await chat_session.upkeep_fork()
+                upkeep.fork = fork
+                changed = asyncio.Event()
+                upkeep.on_update = changed.set
+                for index, (age, text) in enumerate(messages):
+                    raw = group_event(80001, 51000 + index, text, base.bot_id.split(':', 1)[1], at=False)
+                    raw['time'] = now - age
+                    store.enqueue(parse_message(raw, own_message_ids=set()), raw, now)
+                upkeep.start()
+                try:
+                    upkeep.request(SCENE, 'memory')
+                    async with asyncio.timeout(300):
+                        while True:
+                            job = jobs.latest(SCENE)
+                            if job is not None and job['status'] in {'complete', 'failed', 'interrupted'}:
+                                break
+                            await changed.wait()
+                            changed.clear()
+                finally:
+                    await upkeep.close()
+            files = {str(path.relative_to(settings.local.directory)): path.read_text()
+                     for path in settings.local.directory.rglob('*.md')
+                     if not any(part.startswith('.') for part in path.relative_to(settings.local.directory).parts)}
+            calls = [dict(row) for row in store.db.execute(
+                "SELECT role,request,response,error,tokens FROM model_calls ORDER BY id")]
+            return {'job': job, 'files': files, 'calls': calls, 'requests': len(calls),
+                    'messages': [{'id': 51000 + index, 'time': now - age, 'text': text}
+                                 for index, (age, text) in enumerate(messages)]}
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--instance', type=Path)
+    parser.add_argument('--prompt-instance', type=Path, help='Use prompt overrides from this isolated instance')
     parser.add_argument('--answer', action='store_true')
+    parser.add_argument('--ingest-profile', action='store_true', help='Run real upkeep on fictional profile messages')
     parser.add_argument('--notebook', action='store_true', help='Also run the cases through examples/plugins/notebook')
+    parser.add_argument('--case', nargs='+', choices=[case[0] for case in CASES], help='Only run these fixed cases')
     options = parser.parse_args()
+    if options.prompt_instance is not None:
+        from len_bot.next.prompt_files import activate
+        activate(options.prompt_instance.resolve())
+    if options.case:
+        CASES[:] = [case for case in CASES if case[0] in options.case]
+    if options.ingest_profile:
+        if options.instance is None:
+            parser.error('--ingest-profile requires --instance')
+        from len_bot.next.config import load_host_config
+        print(json.dumps(await profile_upkeep(load_host_config(options.instance.resolve())), ensure_ascii=False, indent=2))
+        return
     result = {'budget_chars': 1500, 'text': await compare()}
     if options.notebook:
         result['notebook'] = await notebook()

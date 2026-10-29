@@ -9,6 +9,7 @@ import ErrorNote from '../../../ui/ErrorNote.vue'
 import Timeline from '../../../ui/Timeline.vue'
 import TimelineItem from '../../../ui/TimelineItem.vue'
 import { useLiveLabels } from './labels'
+import StickerCandidates from './StickerCandidates.vue'
 
 const props = defineProps<{ detail: TurnDetail }>()
 
@@ -36,6 +37,24 @@ function modelMeta(model: ModelStep): string {
     )
   }
   return parts.join(' · ')
+}
+// The candidate number a later say or react in this turn sent from a react preview.
+function chosenCandidate(tool: ToolDetail): number | null {
+  const tools = props.detail.steps.flatMap((step) => step.tools)
+  for (const later of tools.slice(tools.indexOf(tool) + 1)) {
+    if (later.name === 'react' && later.arguments.preview === true) return null
+    const choice =
+      later.name === 'say'
+        ? (later.arguments.sticker as Record<string, unknown> | undefined)
+        : later.arguments
+    if (
+      (later.name === 'react' || later.name === 'say') &&
+      later.status === 'complete' &&
+      typeof choice?.candidate === 'number'
+    )
+      return choice.candidate
+  }
+  return null
 }
 const stepRunning = (step: Step) =>
   running() &&
@@ -121,6 +140,11 @@ const stepFailed = (step: Step) =>
               :code="tool.arguments"
               :max-lines="8"
               :label="t('groups.live.step.arguments')"
+            />
+            <StickerCandidates
+              v-if="tool.name === 'react' && tool.arguments.preview === true && tool.result"
+              :result="tool.result"
+              :chosen="chosenCandidate(tool)"
             />
             <CodeBlock
               v-if="tool.result"

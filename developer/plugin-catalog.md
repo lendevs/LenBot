@@ -20,7 +20,7 @@
 
 - `GET /api/host/plugin-market?query=&category=`：按关键词（名称、标题、描述、分类、能力、作者，多个词需同时出现）和分类筛选，返回全部分类、目录总数和条目。每个条目附带 `installed`、`installed_version`、`update_available`（按版本号比较）、`compatible` 和 `incompatible_reason`（接口版本或宿主版本范围不符）。
 - `GET /api/host/plugin-market/{name}`：单个条目，格式同上。
-- `POST /api/host/plugin-market/{name}/install`：用条目里的仓库和 ref 准备候选版本，之后的配置和应用与手动安装相同。已经安装的返回 409，请改用更新；不兼容的返回 422。仓库 `plugin.toml` 中的插件名与条目的 `name` 不一致时返回 422，不准备候选版本。更新已安装的插件时同样要求清单名称不变。
+- `POST /api/host/plugin-market/{name}/install`：用条目里的仓库和 ref 准备候选版本，之后的配置和应用与手动安装相同。已经安装的返回 409；不兼容的返回 422。仓库 `plugin.toml` 中的插件名与条目的 `name` 不一致时返回 422，不准备候选版本。更新已安装的插件时同样要求清单名称不变。
 
 ## 索引格式
 

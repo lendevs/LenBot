@@ -150,8 +150,9 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                               tool_permissions={settings.scene: persona.tools
                                                 for settings, persona in scenes})
                      if config.worker is not None else None)
-            sticker_collection = (None if vision is None else
-                StickerCollector(config, store, vision, slots=slots,
+            seeing = mind if config.models.roles.mind.image_input else vision
+            sticker_collection = (None if seeing is None else
+                StickerCollector(config, store, seeing, slots=slots,
                                  recording=lambda scene: runtime.chats[scene].toolset.replay_images))
             mcp = MCPHost(config.mcp, reserved_tools={tool["function"]["name"] for tool in tool_catalog(platform=True)}
                           | (set() if plugins is None else set(plugins.tool_owner)), log_directory=config.logging.directory)

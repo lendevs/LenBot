@@ -1,0 +1,1049 @@
+{
+  "format": "structured-development",
+  "source": "全为维护者新写的虚构群聊情境；固定用于阶段 7 的配对回放。",
+  "cases": [
+    {
+      "id": "listen-others",
+      "set": "social",
+      "expect": [
+        "旁听群友之间的交流。"
+      ],
+      "social": {
+        "category": "listen",
+        "speak": false,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "listen-others-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "70002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "你昨天买的那支笔到了吗"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "listen-others-1",
+            "time": 1791201601,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "到了，我晚点给你拍"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "observe",
+          "seconds": 15.0
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "listen-unrelated",
+      "set": "social",
+      "expect": [
+        "旁听群友之间的交流。"
+      ],
+      "social": {
+        "category": "listen",
+        "speak": false,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "listen-unrelated-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "我去取个快递"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "listen-unrelated-1",
+            "time": 1791201601,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "好，我继续拼我的模型"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "observe",
+          "seconds": 15.0
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "listen-answered",
+      "set": "social",
+      "expect": [
+        "旁听群友之间的交流。"
+      ],
+      "social": {
+        "category": "listen",
+        "speak": false,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "listen-answered-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "70002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "你家的快递柜在哪？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "listen-answered-1",
+            "time": 1791201601,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "70002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "在西门门卫旁边，密码私发你了"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "observe",
+          "seconds": 15.0
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "listen-named-excluded",
+      "set": "social",
+      "expect": [
+        "被点名但对方说明不用回答，不开口。"
+      ],
+      "social": {
+        "category": "listen",
+        "speak": false,
+        "answer_patterns": [],
+        "absent_patterns": [
+          "1000",
+          "一千"
+        ],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "listen-named-excluded-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "小然先别回答哈，我考考小满：一升水等于多少毫升？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "listen-named-redirect",
+      "set": "social",
+      "expect": [
+        "被点名后对方改问别人，不开口。"
+      ],
+      "social": {
+        "category": "listen",
+        "speak": false,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "listen-named-redirect-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "小然在吗？算了没事，我直接问小满。小满，周六几点集合？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "join-public",
+      "set": "social",
+      "expect": [
+        "回应公开问题并给出正确答案。"
+      ],
+      "social": {
+        "category": "join",
+        "speak": true,
+        "answer_patterns": [
+          "1000|一千"
+        ],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "join-public-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "有人知道一升水等于多少毫升吗？怎么换算？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "join-named",
+      "set": "social",
+      "expect": [
+        "回应公开问题并给出正确答案。"
+      ],
+      "social": {
+        "category": "join",
+        "speak": true,
+        "answer_patterns": [
+          "橙"
+        ],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "join-named-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "小然，你知道红色和黄色颜料混起来是什么颜色吗？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "fact-profile",
+      "set": "social",
+      "expect": [
+        "依据已有资料或消息回答具体事实。"
+      ],
+      "social": {
+        "category": "accuracy",
+        "speak": true,
+        "answer_patterns": [
+          "3\\s*月\\s*7|三月七|3[./-]7"
+        ],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70003,
+            "message_id": "fact-profile-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "老周",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "你的生日具体是哪天？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "fact-correction",
+      "set": "social",
+      "expect": [
+        "依据已有资料或消息回答具体事实。"
+      ],
+      "social": {
+        "category": "accuracy",
+        "speak": true,
+        "answer_patterns": [
+          "西门",
+          "三点|3点|3 点|三 点|15[:：]00"
+        ],
+        "absent_patterns": [
+          "东门.*两点"
+        ],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "fact-correction-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "这次读书会在东门，周六两点"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "fact-correction-1",
+            "time": 1791201601,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "更正：这次读书会改在西门，周六三点"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70003,
+            "message_id": "fact-correction-2",
+            "time": 1791201602,
+            "sender": {
+              "nickname": "老周",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "读书会最终在哪儿、几点？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "specific-misfortune",
+      "set": "social",
+      "expect": [
+        "回应具体处境，观察人机味。"
+      ],
+      "social": {
+        "category": "expression",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [
+          "记在小本本|这话我认|接住|一定会好起来|你已经很棒"
+        ],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "specific-misfortune-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "交作业前平板没电，明天还得重新去交，烦死了"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "sticker-quiet-joy",
+      "set": "social",
+      "expect": [
+        "发出语气贴合的表情。"
+      ],
+      "social": {
+        "category": "sticker",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": [
+          "01.png"
+        ]
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "sticker-quiet-joy-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "刚收到录用通知，还不敢信。给我发一张咧嘴笑脸庆祝一下，别只打个勾表示收到"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "sticker-approval",
+      "set": "social",
+      "expect": [
+        "发出语气贴合的表情。"
+      ],
+      "social": {
+        "category": "sticker",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": [
+          "02.png"
+        ]
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "sticker-approval-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "我想先把报名表按姓氏排序再交。你觉得可以的话，发张带对勾的表情表示同意"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "sticker-wry",
+      "set": "social",
+      "expect": [
+        "发出语气贴合的表情。"
+      ],
+      "social": {
+        "category": "sticker",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": [
+          "03.png"
+        ]
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "sticker-wry-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "笑死，我把作业文件改名成最终版最终版2又交错了。发张冒汗的无奈表情吐槽我吧"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "sticker-context-received",
+      "set": "social",
+      "expect": [
+        "按确认收到的语境发出带对勾的表情。"
+      ],
+      "social": {
+        "category": "sticker",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": [
+          "02.png"
+        ]
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "sticker-context-received-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "报名表交上去了，你收到的话回个表情就行，不用打字"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "sticker-context-celebrate",
+      "set": "social",
+      "expect": [
+        "按庆祝的语境发出咧嘴笑脸。"
+      ],
+      "social": {
+        "category": "sticker",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": [
+          "01.png"
+        ]
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "sticker-context-celebrate-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "驾照考过了！！！回个表情陪我庆祝一下"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "prefer-short-name",
+      "set": "social",
+      "expect": [
+        "遵守这个人的明确偏好。"
+      ],
+      "social": {
+        "category": "preference",
+        "speak": true,
+        "answer_patterns": [
+          "阿青"
+        ],
+        "absent_patterns": [
+          "陈青山"
+        ],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "prefer-short-name-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "我叫陈青山，不过叫我阿青就行，别喊全名"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "prefer-short-name-1",
+            "time": 1791201601,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "帮我想一个群里的短昵称，你会怎么称呼我？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "prefer-no-pressure",
+      "set": "social",
+      "expect": [
+        "遵守这个人的明确偏好。"
+      ],
+      "social": {
+        "category": "preference",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [
+          "每天.{0,8}(画|练)|明天.{0,8}(记得|一定|必须)|加油哦"
+        ],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "prefer-no-pressure-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "最近画画有点卡住。我不喜欢别人催进度，也别给我排计划"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "prefer-no-pressure-1",
+            "time": 1791201601,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "今天还是只画了半页，有点烦"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    }
+  ]
+}

@@ -50,6 +50,8 @@ export interface Expression {
   updated: number
   indexed: boolean
   count: number
+  /** Times its word-for-word use drew a correction or dislike in the last 30 days. */
+  disliked?: number
 }
 
 export interface JargonTerm {
@@ -60,6 +62,9 @@ export interface JargonTerm {
   confidence: number | null
   meaning: string | null
   status: Review
+  /** The latest inference's ordinary sense of the word, and whether the group uses it that way. */
+  ordinary_meaning?: string | null
+  same_meaning?: boolean | null
 }
 
 export interface Sticker {
@@ -71,6 +76,9 @@ export interface Sticker {
   review: Review
   status: 'queued' | 'running' | 'complete' | 'failed' | 'interrupted'
   error?: string | null
+  /** Times group members posted this image and how many of them; only in list pages. */
+  posts?: number
+  posters?: number
   meta: {
     mime_type: string
     width: number | null

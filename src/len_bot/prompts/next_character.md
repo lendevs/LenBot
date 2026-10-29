@@ -14,7 +14,7 @@ $boundaries
 </character>
 
 <examples>
-以下样例由角色作者编写，用来参考情境和说法：
+以下样例由角色作者编写，用来参考情境和说法，样例里的对话没有在群里发生过：
 $examples
 </examples>
 $scene_material

@@ -573,11 +573,14 @@ class Store:
                     self.db.execute("INSERT INTO audio_cache(scene,platform_id,audio_index,status,created,updated) "
                                     "VALUES (?,?,?,'queued',?,?)",
                                     (message.scene, message.platform_message_id, index, received_at, received_at))
-            if collect_stickers:
+            if collect_stickers and not message.is_self:
                 image_index = 0
                 for segment in message.segments:
                     if segment.type == "image":
                         image_index += 1
+                        # QQ marks photos and screenshots sub_type 0 and stickers other values.
+                        if segment.data.get("sub_type") in (0, "0"):
+                            continue
                         self.db.execute(
                             "INSERT INTO sticker_candidates(scene,source_message_seq,image_index,"
                             "status,review,created,updated) VALUES (?,?,?,'queued','pending',?,?)",

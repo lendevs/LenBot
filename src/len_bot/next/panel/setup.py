@@ -27,7 +27,7 @@ from ..tools.web_search import WebSearchSettings
 from ..configuration.chat import Compaction, WebReadSettings
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
-from ..platform.onebot import OneBot
+from ..platform.onebot import OneBot, OneBotCallError
 from .model_access import model_error_detail, probe_model as run_model_probe
 from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
@@ -247,6 +247,9 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
         try:
             async with OneBot(item.onebot, bot_id=None, on_event=lambda event: None, on_error=failed) as platform:
                 return {'bot_id': await platform.identify()}
+        except OneBotCallError as error:
+            # The message already names the step and the underlying error.
+            raise HTTPException(422, str(error)) from error
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 

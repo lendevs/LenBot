@@ -46,6 +46,10 @@ const number = (value: number) => formatNumber(value, { maximumFractionDigits: 2
             </span>
           </dd>
         </template>
+        <template v-if="verdict.effect_factor != null && verdict.effect_factor < 1">
+          <dt class="text-muted">{{ t('groups.live.verdict.effect') }}</dt>
+          <dd class="tabular">{{ number(verdict.effect_factor) }}</dd>
+        </template>
       </dl>
     </div>
   </Popover>

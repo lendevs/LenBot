@@ -7,6 +7,7 @@ import asyncio
 import base64
 import json
 import re
+import socket
 from collections.abc import Callable
 from http import HTTPStatus
 from urllib.parse import quote
@@ -14,7 +15,7 @@ from urllib.parse import quote
 import httpx
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.asyncio.server import Server, ServerConnection, serve
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidMessage, InvalidStatus
 from websockets.http11 import Request, Response
 
 from ..configuration.onebot import OneBotForward, OneBotReverse
@@ -38,6 +39,20 @@ def _non_json_number(value: str) -> None:
 
 class OneBotCallError(PlatformCallError):
     """Whether an unsuccessful call had entered the actual send phase."""
+
+
+def dial_error(error: Exception) -> str:
+    """A failed WebSocket dial: the step it stopped at, then the library's text."""
+    text = f"{type(error).__name__}: {error}"
+    if isinstance(error, InvalidStatus) and error.response.status_code in {401, 403}:
+        return f"协议端拒绝了访问令牌，访问令牌要与协议端的设置一致：{text}"
+    if isinstance(error, InvalidMessage):
+        return f"端口接受了连接但没有完成 WebSocket 握手，协议端登录 QQ 并开启正向 WebSocket 服务后才会应答：{text}"
+    if isinstance(error, ConnectionRefusedError):
+        return f"这个地址和端口上没有服务在监听：{text}"
+    if isinstance(error, socket.gaierror):
+        return f"无法解析主机名：{text}"
+    return text
 
 
 class OneBot:
@@ -124,7 +139,7 @@ class OneBot:
             raise
         except Exception as error:
             await self.close()
-            raise OneBotCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=False) from None
+            raise OneBotCallError(self._safe(dial_error(error)), submitted=False) from None
 
     async def close(self) -> None:
         self._running = False
@@ -186,8 +201,7 @@ class OneBot:
                         return
                     self._attach(websocket)
                     break
-                self.on_error(self._safe(f"OneBot reconnect failed, next attempt in {delay:g}s: "
-                                         f"{type(error).__name__}: {error}"))
+                self.on_error(self._safe(f"OneBot reconnect failed, next attempt in {delay:g}s: {dial_error(error)}"))
 
     async def _connect_forward(self) -> ClientConnection:
         return await connect(self.settings.ws_url, **self._dial)

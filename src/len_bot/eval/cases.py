@@ -61,6 +61,26 @@ class InitialMemory(BaseModel):
         return Path(value)
 
 
+class SocialExpectation(BaseModel):
+    model_config = STRICT
+
+    category: Literal['listen', 'join', 'accuracy', 'expression', 'sticker', 'preference']
+    speak: bool
+    answer_patterns: list[str] = Field(default_factory=list)
+    absent_patterns: list[str] = Field(default_factory=list)
+    sticker_files: list[str] = Field(default_factory=list)
+
+    @field_validator('answer_patterns', 'absent_patterns')
+    @classmethod
+    def valid_patterns(cls, values: list[str]) -> list[str]:
+        for value in values:
+            try:
+                re.compile(value)
+            except re.PatternError as error:
+                raise ValueError(f'invalid answer pattern {value!r}: {error}') from error
+        return values
+
+
 class ReplayCase(BaseModel):
     model_config = STRICT
 
@@ -72,6 +92,7 @@ class ReplayCase(BaseModel):
     web_materials: Path | None = None
     image_materials: Path | None = None
     expect: list[str] = Field(min_length=1)
+    social: SocialExpectation | None = None
     steps: list[ReplayStep] = Field(min_length=1)
 
     @model_validator(mode="after")

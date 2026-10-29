@@ -21,6 +21,13 @@ const row = computed(() => form.providerFor(binding.value?.provider))
 const api = computed(() => row.value?.api)
 const title = computed(() => form.roleTitle(props.role))
 const errors = computed(() => form.problems.value.filter((item) => item.place === `roles.${props.role}`))
+/**
+ * A chat model that accepts images looks at them itself; a saved vision binding is kept for a chat
+ * model without image input and shown again while it has a problem to fix.
+ */
+const mindSees = computed(
+  () => props.role === 'vision' && form.draft.value!.roles.mind.image_input && !errors.value.length,
+)
 /** Marked once the provider's list was read and the model typed here is not in it, e.g. after a retirement. */
 const unlisted = computed(() => {
   const listed = binding.value && form.catalog.value[binding.value.provider]
@@ -97,12 +104,18 @@ watch(retries, (text) => {
   <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-5">
     <header class="flex min-h-8 items-center justify-between gap-3">
       <h3 class="text-base font-semibold text-ink">{{ title }}</h3>
-      <Switch v-if="role !== 'mind'" v-model="enabled" :aria-label="title" />
+      <Switch v-if="role !== 'mind' && !mindSees" v-model="enabled" :aria-label="title" />
     </header>
-    <p v-if="!binding" class="text-sm text-muted">
-      {{ role === 'vision' ? t('models.roles.mindSees') : t('models.roles.followsMind') }}
+    <p v-if="!binding || mindSees" class="text-sm text-muted">
+      {{
+        mindSees
+          ? t('models.roles.mindSees')
+          : role === 'vision'
+            ? t('models.roles.noVision')
+            : t('models.roles.followsMind')
+      }}
     </p>
-    <template v-if="binding">
+    <template v-if="binding && !mindSees">
       <div class="grid gap-x-5 gap-y-5 sm:grid-cols-3">
         <Field :label="t('models.roles.provider')">
           <Select

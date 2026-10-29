@@ -255,7 +255,6 @@ export const personasApi = {
   trial: (scene: string, context: number, draft: { directory: string; files: PersonaFiles }) =>
     http.post<Trial>('/api/host/trials', {
       scene,
-      acknowledge_model_cost: true,
       context_messages: context,
       persona_draft: draft,
     }),

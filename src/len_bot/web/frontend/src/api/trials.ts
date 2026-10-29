@@ -104,11 +104,10 @@ export interface TrialInfo {
 
 export const trialsApi = {
   list: (signal?: AbortSignal) => http.get<{ items: TrialInfo[] }>('/api/host/trials', undefined, signal),
-  /** Model requests still cost; platform sending is always simulated. */
+  /** Platform sending is always simulated. */
   start: (scene: string, context: number, draft?: { directory: string; files: PersonaFiles }) =>
     http.post<TrialInfo>('/api/host/trials', {
       scene,
-      acknowledge_model_cost: true,
       context_messages: context,
       ...(draft ? { persona_draft: draft } : {}),
     }),

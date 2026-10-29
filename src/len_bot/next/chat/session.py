@@ -22,13 +22,16 @@ from .recap import (CompactionPlan, ContextBudgetError, estimate_content, estima
                     recap_source)
 from ..learning.expression_match import select_by_words
 from ..learning.expression_selection import ExpressionService
-from ..learning.store import LearningStore
+from ..learning.store import DISLIKED_DAYS, LearningStore
 from ..tools.external_tools import ExternalTool
 from ..tools.skills import Skill
 from ..models.limits import LimitReached, ModelBudget, SpeechLimitReached, check_speech
 
 # Turn channels that may use the direct reserve besides direct wakes themselves.
 RESERVE_CHANNELS = frozenset({"schedule", "task"})
+# Learned expressions shown per turn, picked from a pool so lowered ones can drop out.
+EXPRESSIONS_SHOWN = 5
+EXPRESSION_POOL = 10
 # Calls that speak, wait or close a turn; any other call means the turn looked something up.
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
@@ -513,15 +516,26 @@ class Chat:
                         if query:
                             phase = '群内说法向量检索'
                             selected = await self.expression_service.select(
-                                scene, query, turn_id=turn_id, direct=direct, exclude_uids=exclude)
+                                scene, query, turn_id=turn_id, direct=direct, exclude_uids=exclude,
+                                limit=EXPRESSION_POOL)
                     else:
                         # Without embeddings, rank by the words the recent chat shares with each situation.
                         query = "\n".join(self.context.render_text(message) for message in others)
                         if query.strip():
                             phase = '群内说法检索'
                             selected = select_by_words(await self.store.call(
-                                LearningStore(self.store).adopted, scene, exclude_uids=exclude), query)
+                                LearningStore(self.store).adopted, scene, exclude_uids=exclude), query,
+                                limit=EXPRESSION_POOL)
                     if selected:
+                        # Ones whose use drew corrections or dislike move behind the rest; their review stays.
+                        disliked = await self.store.call(LearningStore(self.store).disliked, scene,
+                                                         self.now() - DISLIKED_DAYS * 86400)
+                        demoted = [item["id"] for item in selected if disliked.get(item["id"])]
+                        selected = sorted(selected, key=lambda item: bool(disliked.get(item["id"])))[:EXPRESSIONS_SHOWN]
+                        if demoted:
+                            log_event(logger, 'expression_demoted', turn_id=turn_id, demoted=demoted,
+                                      counts={id: disliked[id] for id in demoted},
+                                      shown=[item["id"] for item in selected])
                         self.expression_ids = [item["id"] for item in selected]
                         learned = Template(read_prompt("next_learned_expressions.md")).substitute(
                             expressions=encode([{ "情境": item["situation"], "说法": item["style"] } for item in selected]))
@@ -532,6 +546,7 @@ class Chat:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
                 looked_up = stepped_lookup = False
                 self.toolset.looked = []
+                self.expression.sticker_candidates = []
                 for step in range(self.config.max_steps):
                     self.trace_step = step + 1
                     self.check_limits()

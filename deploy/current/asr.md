@@ -1,6 +1,6 @@
 # macOS 本地语音转写
 
-本文使用官方 `whisper.cpp v1.9.4` 的 `whisper-server`，多语言模型为 `large-v3-turbo-q5_0`，模型文件约 547 MiB。安装数据放在 Git 忽略的目录 `state/services/asr` 中，独立于 LenBot 的 Python 环境。
+本文使用官方 `whisper.cpp v1.9.4` 的 `whisper-server` 部署本地自动语音识别（ASR）服务，多语言模型为 `large-v3-turbo-q5_0`，模型文件约 547 MiB。安装数据放在 Git 忽略的目录 `state/services/asr` 中，独立于 LenBot 的 Python 环境。
 
 `start-asr.sh` 固定了模型和回环地址，以及原生 HTTP 路径，可以直接接入现有的 `audio/transcriptions` 客户端。
 
@@ -66,7 +66,7 @@ state/services/asr/build-tools/bin/cmake --build state/services/asr/build \
 
 配置中没有写 `max_frame_bytes` 时，加载配置时会按这个公式计算一个有限的默认值，并且至少保留原来 1 MiB 的消息容量。显式填写的值需要满足这个公式，小于所需值时会报告配置冲突。
 
-首次配置向导和面板的连接设置在保存时会把上限写入文件。因此即使从未手动调整过，旧实例也可能已经保存了 1 MiB。启用 ASR 之前，请先在面板的「连接 QQ → 高级设置」中增大「单条数据上限」。如果旧配置已经因此无法加载，请停止 LenBot，在根目录的 `lenbot.config.json` 中调整这个字段后再启动。
+首次配置向导和面板的连接设置在保存时会把上限写入文件。因此即使从未手动调整过，旧实例也可能已经保存了 1 MiB。启用语音转写前，先在面板的**系统 → 设置 → 连接 → 更多设置**中增大**单条数据上限**（`onebot.max_frame_bytes`）。如果旧配置已经因此无法加载，先停止 LenBot，在根目录的 `lenbot.config.json` 中调整 `onebot.max_frame_bytes` 后再启动。
 
 增大 `audio.max_bytes` 时，也要同步调整已保存的 `max_frame_bytes`。另外两种做法是减小允许的音频大小，或者显式配置已有的 HTTP actions（`action_transport: "http"` 和 `http_url`）。这项容量检查只在启用 ASR、真实发送并使用 WebSocket actions 时执行。
 

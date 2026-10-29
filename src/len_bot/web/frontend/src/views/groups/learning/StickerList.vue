@@ -105,6 +105,9 @@ const busy = (item: Sticker) => save.isPending.value && save.variables.value?.it
               <p v-if="item.text" class="text-xs break-words text-muted">
                 {{ t('groups.learning.sticker.text') }}：{{ item.text }}
               </p>
+              <p v-if="item.posts && item.posts > 1" class="text-xs text-muted tabular">
+                {{ t('groups.learning.sticker.posts', { n: item.posts, people: item.posters }) }}
+              </p>
               <div v-if="item.emotions.length || item.tags.length" class="flex flex-wrap gap-1">
                 <Badge v-for="emotion in item.emotions" :key="`e${emotion}`" tone="brand">
                   {{ emotion }}

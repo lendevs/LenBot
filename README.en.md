@@ -4,6 +4,7 @@
   <a href="README.md">中文</a> ·
   <a href="https://lendevs.github.io/LenBot/">Documentation (zh)</a> ·
   <a href="https://lendevs.github.io/LenBot/guide/quick-start">Quick start (zh)</a> ·
+  <a href="https://lendevs.github.io/LenBot/develop/personas">Personas (zh)</a> ·
   <a href="developer/plugins-v1.en.md">Plugin interface</a>
 </p>
 
@@ -13,7 +14,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by the model in a multi-step tool loop. It runs on QQ (OneBot v11) and needs only one chat model and its API key.
+**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by one chat model in a multi-step tool loop. It connects to QQ (OneBot v11) and requires only a chat model and its API key.
 
 <img src="website/public/screenshots/live.gif" alt="Live view of a group: after the bot is mentioned, its turn unfolds step by step, first searching the chat history, then replying in two messages" width="860">
 
@@ -21,17 +22,17 @@
 
 ## Highlights
 
-- **One decision loop.** Once woken, the same chat model decides, looks things up and replies within one tool loop. Staying silent is a decision too.
-- **Checks before answering.** Web search, page reading, chat history, memory, images, forwarded messages and MCP servers. Search and page reading can use free options or paid APIs.
-- **Schedules its own follow-ups.** The model can set reminders for group members or for itself, and hand long work to background tasks.
-- **Memory and learning.** Memory is stored locally as Markdown files, one directory per group. While the group is idle, the chat model continues the same session to update memory and learn the group's phrases, slang and how its replies landed, reusing the provider's prompt cache.
-- **Personas.** A persona needs only a name and a short profile. Each group can use a different persona, switched without a restart.
-- **Plugins.** Python plugins add commands, scheduled posts and model tools, enabled per group, with settings applied without a restart.
-- **Web panel.** First-time setup, settings, test chats and logs all live in the panel, and every turn can be inspected step by step.
+- **One decision loop.** Once woken, the same chat model decides, looks things up and replies within one tool loop. Staying silent and continuing to listen is a decision too.
+- **Checks before answering.** Searches the web, reads pages, queries chat history and long-term memory, retrieves persona and group reference files, inspects images, opens forwarded threads and calls MCP (Model Context Protocol) servers on demand.
+- **Follow-ups and background tasks.** The model can set reminders for group members, register ongoing topics to watch on its own, or hand long-running work to background tasks in isolated containers.
+- **Memory, reference files and learning.** Memory is stored locally as Markdown files per group, and persona or group files support hybrid full-text and vector retrieval. While the group is idle, the chat model continues the same session prefix to curate memory and learn group phrasing, slang and reply reception, reusing the provider's prompt cache.
+- **Persona packages.** A persona package requires only a name and a short profile, and can include voice notes, weighted rotating styles, dialogue examples, reference documents and stickers. Each group binds its own persona and switches without a restart.
+- **Plugins.** Python plugins add commands, scheduled broadcasts, model tools or custom long-term memory backends, enabled per group and run either inline or in an isolated worker process.
+- **Web panel.** First-time setup, daily settings, draft trial chats, token usage and step-by-step turn diagnostics all live in the web panel.
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/), Node.js 22, a OneBot implementation logged in to QQ (for example [NapCat](https://github.com/NapNeko/NapCatQQ)) and an API key for a model service.
+You need [uv](https://docs.astral.sh/uv/), Node.js 22, a OneBot v11 implementation logged in to QQ (for example [NapCat](https://github.com/NapNeko/NapCatQQ)) and an API key for a chat model service.
 
 ```sh
 git clone https://github.com/lendevs/LenBot.git
@@ -40,25 +41,28 @@ cd LenBot
 uv run --no-sync len-bot
 ```
 
-On first start the terminal prints a setup link. Open it in a browser and follow the five-step wizard to connect QQ and choose a model and persona. Pick simulated delivery first, try a few rounds in the panel's test chat, then switch to sending to QQ on the overview.
+On first start the terminal prints a one-time setup link. Open it in a browser and follow the five-step wizard to set up the panel account, connect QQ, fill in the owner account, and choose a chat model and persona. Start with simulated delivery, test a few turns in the panel's test chat, then switch to sending to QQ on the overview page.
+
+Full setup and operations instructions are on the [quick-start page (zh)](https://lendevs.github.io/LenBot/guide/quick-start).
 
 <img src="website/public/screenshots/home.png" alt="Panel overview" width="860">
 
 ## Documentation
 
-The documentation site is in Chinese. The panel is available in Chinese and English.
+The documentation site is in Chinese. The web panel is available in Chinese and English.
 
-| Topic | Where |
+| Audience and topic | Entry |
 |---|---|
-| Setup and daily use | [Documentation site](https://lendevs.github.io/LenBot/) |
-| Writing plugins | [Plugin interface v1](developer/plugins-v1.en.md), [plugin template](https://github.com/lendevs/lenbot-plugin-template) |
-| Writing personas | [Persona packages](developer/personas.md), [example persona](examples/personas/companion/) |
-| Local companion services | [Deployment notes](deploy/README.en.md) |
-| Contributing | [CONTRIBUTING](CONTRIBUTING.en.md) |
+| Setup and daily operations | [Documentation site (zh)](https://lendevs.github.io/LenBot/guide/introduction) |
+| Writing persona packages | [Authoring personas (zh)](https://lendevs.github.io/LenBot/develop/personas), [example persona](examples/personas/companion/) |
+| Writing plugins | [Authoring plugins (zh)](https://lendevs.github.io/LenBot/develop/plugins), [Plugin interface v1](developer/plugins-v1.en.md), [plugin template](https://github.com/lendevs/lenbot-plugin-template) |
+| Deployment bundles, containers and host operations | [Deployment guide](deploy/README.en.md) |
+| Core architecture and module notes | [Developer docs (zh)](developer/README.md) |
+| Contributing to core | [CONTRIBUTING](CONTRIBUTING.en.md) |
 
 ## Status
 
-LenBot is under development and has no release yet; run it from source. Prompts are Chinese only.
+LenBot is under active development and has no formal release yet; run it from source. Built-in prompts are in Chinese; the web panel supports Chinese and English.
 
 ## License
 

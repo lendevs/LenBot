@@ -156,7 +156,7 @@ async def test_a_trial_of_a_plugin_memory_group_runs_on_native_memory_and_names_
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
             assert (await client.post('/api/auth/login', json={'username': 'operator',
                                                                'password': 'fixture-password'})).status_code == 200
-            started = await client.post('/api/host/trials', json={'scene': SCENE, 'acknowledge_model_cost': True})
+            started = await client.post('/api/host/trials', json={'scene': SCENE})
             assert started.status_code == 200, started.text
             info = started.json()
             assert info['memory_plugin'] == 'notes' and info['memory'] == '独立空白本地记忆'
@@ -170,7 +170,7 @@ async def test_a_trial_of_a_plugin_memory_group_runs_on_native_memory_and_names_
             saved = await client.put(f'/api/host/scenes/{SCENE}/plugins',
                                      json={'plugins': ['notes'], 'memory_plugin': None, 'recap_plugin': None})
             assert saved.status_code == 200, saved.text
-            native = await client.post('/api/host/trials', json={'scene': SCENE, 'acknowledge_model_cost': True})
+            native = await client.post('/api/host/trials', json={'scene': SCENE})
             assert native.status_code == 200, native.text
             assert native.json()['memory_plugin'] is None
             assert (await client.post(f"/api/host/trials/{native.json()['id']}/stop")).status_code == 200

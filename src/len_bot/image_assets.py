@@ -59,3 +59,30 @@ def inspect_image(data: bytes) -> tuple[str, int, int, bool]:
         return mime_type, width, height, animated
     except (OSError, ValueError, EOFError, SyntaxError, Image.DecompressionBombError) as error:
         raise ValueError(f"invalid image asset: {error}; original prefix={data[:32]!r}") from error
+
+
+SHEET_CELL = 200
+
+
+def sticker_sheet(images: list[bytes], *, columns: int = 3) -> bytes:
+    """One JPEG with each sticker's first frame on white, numbered from 1 in reading order."""
+    from PIL import ImageDraw, ImageFont
+
+    rows = -(-len(images) // columns)
+    sheet = Image.new('RGB', (columns * SHEET_CELL, rows * SHEET_CELL), 'white')
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default(28)
+    for index, data in enumerate(images):
+        left, top = index % columns * SHEET_CELL, index // columns * SHEET_CELL
+        with Image.open(BytesIO(data)) as image:
+            frame = image.convert('RGBA')
+        frame.thumbnail((SHEET_CELL - 24, SHEET_CELL - 24), Image.Resampling.LANCZOS)
+        sheet.paste(frame, (left + (SHEET_CELL - frame.width) // 2, top + (SHEET_CELL - frame.height) // 2), frame)
+        draw.rectangle((left, top, left + SHEET_CELL - 1, top + SHEET_CELL - 1), outline='#c8c8c8')
+        label = str(index + 1)
+        box = draw.textbbox((0, 0), label, font=font)
+        draw.rectangle((left, top, left + box[2] + 12, top + box[3] + 8), fill='black')
+        draw.text((left + 6, top + 2), label, fill='white', font=font)
+    output = BytesIO()
+    sheet.save(output, format='JPEG', quality=85)
+    return output.getvalue()

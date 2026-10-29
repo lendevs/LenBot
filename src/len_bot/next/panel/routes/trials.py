@@ -48,7 +48,6 @@ class PersonaDraft(PersonaTarget):
 class TrialStart(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     scene: str
-    acknowledge_model_cost: bool
     context_messages: int = Field(default=0, ge=0, le=100)
     persona_draft: PersonaDraft | None = None
 
@@ -261,8 +260,6 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
 
     @app.post('/api/host/trials', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def start(item: TrialStart, _: str = Depends(user)):
-        if not item.acknowledge_model_cost:
-            raise HTTPException(422, '开始前须确认模型请求照常计费；平台发送始终为模拟')
         try:
             return (await trials.start(item.scene, item.context_messages, item.persona_draft)).info()
         except InstanceBusyError as error:

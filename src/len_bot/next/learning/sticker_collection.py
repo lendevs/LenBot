@@ -24,7 +24,7 @@ from ..models.tokens import token_record
 from ...image_assets import MAX_IMAGE_BYTES, inspect_image
 from .sticker_store import StickerStore
 from ..storage.store import Store, encode
-from ..runtime.logs import log_context
+from ..runtime.logs import log_context, log_event
 from ..prompt_files import read_prompt
 
 
@@ -214,11 +214,19 @@ class StickerCollector:
                                 fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
                             )
                             pixels_source = 'public_url'
+                    else:
+                        _, data = original
+                    earlier = self.records.merge_duplicate(scene, id, call_id, data)
+                    if earlier is not None:
+                        log_event(LOG, 'sticker_duplicate', '重复表情复用已有标注',
+                                  scene=scene, candidate=id, original=earlier)
+                        if self.on_update is not None:
+                            self.on_update()
+                        return
+                    if original is None:
                         mime_type, width, height, animated = await asyncio.to_thread(inspect_image, data)
                         self.records.save_original(scene, id, data=data, mime_type=mime_type,
                                                    width=width, height=height, animated=animated)
-                    else:
-                        _, data = original
                     jpeg, animated_first_frame_only, width, height = await prepare_pixels(data, self.config.images)
             except TimeoutError as error:
                 if deadline.expired():
@@ -240,7 +248,7 @@ class StickerCollector:
                         {"role": "user", "content": [
                             {"type": "text", "text": encode(source)}, image_block(jpeg),
                         ]}]
-            binding = self.config.binding("vision")
+            binding = self.config.binding("mind" if self.config.models.roles.mind.image_input else "vision")
             estimated = estimate_text_request(messages, [], binding.max_output_tokens)
             request = {"provider": binding.provider,
                        "settings": self.vision.settings.model_dump(exclude={"api_key"}),
