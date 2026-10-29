@@ -325,7 +325,7 @@ async def test_question_answer_delivery_and_platform_receipts(tmp_path, upstream
                 assert unknown['status'] == 'unconfirmed' and unknown['platform_file_id'] is None
         assert [upload['action'] for upload in uploads] == ['upload_group_file'] * 3
         platform_path = uploads[0]['params']['file']
-        assert platform_path == f'{VISIBLE_ROOT}/{SCENE}/{id}/{Path(registered.path).name}'
+        assert platform_path == f'{VISIBLE_ROOT}/{scene_directory(SCENE)}/{id}/{Path(registered.path).name}'
         assert uploads[0]['params'] == {'group_id': 80001, 'file': platform_path, 'name': '报告.txt'}
         latest = tasks.status(SCENE, id)['files'][0]['upload']
         assert latest['status'] == 'unconfirmed' and latest['ended'] is not None
@@ -515,6 +515,8 @@ async def network_task(tasks: WorkTasks, requests: list[dict], seconds: float = 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode', ['off', 'allowlist', 'public'])
 async def test_network_mode_refuses_hosts_before_dialing_and_records_why(tmp_path, upstream, environment, mode):
+    if mode != 'off' and sys.platform == 'win32':
+        pytest.skip('the egress bridge runs inside the Linux task container; the stand-in cannot host it on Windows')
     port, received = upstream
     egress = {'mode': mode, 'allowed_hosts': ['example.com', '*.example.org']}
     config = host_config(tmp_path, port, environment, egress=egress)
@@ -542,6 +544,7 @@ async def test_network_mode_refuses_hosts_before_dialing_and_records_why(tmp_pat
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.environ.get('LENBOT_NETWORK_TESTS'), reason='reaches example.com; set LENBOT_NETWORK_TESTS')
+@pytest.mark.skipif(sys.platform == 'win32', reason='the egress bridge runs inside the Linux task container')
 async def test_allowed_host_connects_and_the_upload_limit_stops_a_large_body(tmp_path, upstream, environment):
     """LENBOT_NETWORK_TESTS is 1, or this machine's network settings as JSON when a fake-ip proxy answers DNS."""
     value = os.environ['LENBOT_NETWORK_TESTS']

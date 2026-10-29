@@ -48,7 +48,16 @@ jobs:
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --python 3.13
       # The deployment package starts the host in UTF-8 mode (deploy/updater/native.py).
-      - run: uv run --no-sync pytest -q -p no:cacheprovider -rfE
+      - name: Task tests
+        run: >-
+          uv run --no-sync pytest -q -p no:cacheprovider -rfE tests/test_task_lifecycle.py
+          tests/test_docker_copy_out.py tests/test_open_no_follow.py tests/test_worker_settings_panel.py
+          tests/test_next_pi_protocol.py tests/test_next_native_models.py
+        env:
+          PYTHONUTF8: '1'
+      # Other areas still assume POSIX paths in places; reported here until the Windows package work covers them.
+      - name: Full suite (reported)
+        run: uv run --no-sync pytest -q -p no:cacheprovider -rfE
         continue-on-error: true
         env:
           PYTHONUTF8: '1'
