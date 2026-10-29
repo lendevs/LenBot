@@ -95,6 +95,8 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
         system += "\n" + read_prompt("next_react.md")
     if "schedule" in names:
         system += "\n" + read_prompt("next_schedule.md")
+    if "attention" in names:
+        system += "\n" + read_prompt("next_attention.md")
     if config.memory_plugin is not None:
         system += "\n" + Template(read_prompt("next_memory_plugin.md")).substitute(plugin=config.memory_plugin)
     elif "memory" in names:

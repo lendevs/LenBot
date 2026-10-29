@@ -715,6 +715,17 @@ class SceneControl(PanelResponse):
     scope: str
 
 
+class SceneFocus(PanelResponse):
+    scene: str
+    # Configured modes; None means the feature is off for this group.
+    declarations: str | None
+    disposition: str | None
+    persona_allows: bool
+    persona: str
+    intents: list[JsonObject]
+    wrap_up: JsonObject | None
+
+
 class AllChatControl(Enabled):
     scenes: int
 

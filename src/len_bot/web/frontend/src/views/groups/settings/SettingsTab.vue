@@ -6,6 +6,7 @@ import SaveBar from '../../../ui/SaveBar.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import { toast } from '../../../ui/toast'
 import ParticipationSection from './ParticipationSection.vue'
+import FocusSection from './FocusSection.vue'
 import PermissionsSection from './PermissionsSection.vue'
 import PersonaSection from './PersonaSection.vue'
 import PluginsSection from './PluginsSection.vue'
@@ -50,6 +51,7 @@ async function save() {
     <form v-else-if="form.draft" class="flex flex-col gap-8" @submit.prevent="save">
       <RoleSection :scene="scene" />
       <ParticipationSection />
+      <FocusSection :scene="scene" />
       <QuietSection />
       <SpeechSection v-if="group" :scene="scene" :time-zone="timeZone" />
       <ProactiveSection v-if="group" />

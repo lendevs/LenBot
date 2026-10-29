@@ -325,6 +325,42 @@ class SceneRunner:
                 'direct': self.quiet_direct(now),
                 'scope': Template(read_prompt('next_scene_control.md')).substitute(scene=self.config.scene).strip()}
 
+    def focus_state(self) -> dict:
+        """Persistent intents and the wrap-up state in effect now, for the panel."""
+        now = self.now()
+        persona = self.chat.persona
+        declared, disposition = self.state.declared, self.state.disposition
+        return {'scene': self.config.scene,
+                'declarations': None if self.settings.declarations is None else self.settings.declarations.mode,
+                'disposition': None if self.settings.disposition is None else self.settings.disposition.mode,
+                'persona_allows': persona.tools == 'all' or 'attention' in persona.tools,
+                'persona': persona.id,
+                'intents': [] if declared is None else [
+                    {'id': intent.id, 'reason': intent.reason, 'match': intent.match,
+                     'created': intent.created, 'until': intent.until,
+                     'when': [{key: value for key, value in condition.items() if key != 'chain'}
+                              for condition in intent.conditions]}
+                    for intent in declared.intents if intent.until > now],
+                'wrap_up': (None if disposition is None or disposition.until <= now
+                            else {'state': disposition.state, 'people': disposition.people,
+                                  'until': disposition.until})}
+
+    def drop_intent(self, identifier: str) -> dict:
+        """Cancel one intent from the panel, as the attention tool's drop would."""
+        state, now = copy.deepcopy(self.state), self.now()
+        self.expire_attention(state, now)
+        if state.declared is None:
+            raise ValueError('本群没有开启持续关注')
+        intent = state.declared.find(identifier)
+        state.declared.intents.remove(intent)
+        state.declared.matches = [match for match in state.declared.matches if match['intent'] != intent.id]
+        self.expire_attention(state, now)
+        self.save_state(state)
+        self.changed.set()
+        self.chat.notify()
+        log_event(logger, 'attention_intent', action='drop', id=intent.id, source='panel', at=now)
+        return self.focus_state()
+
     def chat_status(self) -> dict:
         """Whether the Bot may speak here unprompted now, and when that next changes without an event."""
         now = self.now()

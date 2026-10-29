@@ -25,7 +25,14 @@
 }
 ```
 
-不配置即关闭。配置在场景重新装配时生效。面板的群设置会保留这些字段，目前没有专用编辑控件。
+不配置即关闭。配置在场景重新装配时生效。面板群设置的持续关注与对话收尾一节提供两个开关，运行模式和上限在高级设置中。
+
+面板读取与取消：
+
+- `GET /api/host/scenes/{scene}/focus`：配置的两种模式、角色是否允许 `attention`、生效中的意图（条件、创建与到期时间）和当前局部状态。
+- `DELETE /api/host/scenes/{scene}/focus/intents/{id}`：等当前回合结束后移除该意图及其待处理候选，效果与模型调用 `drop` 相同，日志 `attention_intent` 带 `source=panel`。
+
+工具可用时系统提示词附加 `next_attention.md`，说明留意窗口的时长限制和何时登记意图。
 
 `declarations` 默认限制：最多 5 个意图、每个 4 个条件，每个条件最多 5 个账号或关键词，有效期最长 240 分钟。参数名为 `max_intents`、`max_conditions`、`max_people`、`max_keywords`、`max_minutes`。
 
