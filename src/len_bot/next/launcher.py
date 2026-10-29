@@ -1,5 +1,6 @@
 """Hold one host child; only an explicit, clean restart launches another."""
 
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -93,7 +94,31 @@ def main(argv: list[str] | None = None) -> None:
     raise SystemExit(run())
 
 
+# The image's lenbot user; the host container starts as root only to join the Docker socket's group.
+CONTAINER_USER = 10000
+DOCKER_SOCKET = Path('/var/run/docker.sock')
+
+
+def drop_container_root(socket: Path = DOCKER_SOCKET) -> None:
+    """Join the group of a mounted Docker socket, then run as the image's lenbot user."""
+    if os.getuid() != 0:
+        return
+    groups = {CONTAINER_USER}
+    try:
+        groups.add(socket.stat().st_gid)
+    except FileNotFoundError:
+        pass
+    os.setgroups(sorted(groups))
+    os.setgid(CONTAINER_USER)
+    os.setuid(CONTAINER_USER)
+    # A plain `docker run` leaves root's HOME; the lenbot user's home is the instance root.
+    if os.environ.get('HOME') in (None, '', '/root'):
+        import pwd
+        os.environ['HOME'] = pwd.getpwuid(CONTAINER_USER).pw_dir
+
+
 def container_main(argv: list[str] | None = None) -> None:
+    drop_container_root()
     parse_arguments(argv, container=True)
     announce_root(Path.cwd())
     raise SystemExit(run(container=True))

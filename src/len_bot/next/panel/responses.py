@@ -161,6 +161,7 @@ class WorkerDefaults(PanelResponse):
     delivery_root: str | None = None
     uid: int | None = None
     gid: int | None = None
+    task_volume: JsonObject | None = None
 
 
 class TaskSceneReadiness(PanelResponse):

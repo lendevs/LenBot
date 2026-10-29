@@ -430,6 +430,11 @@ function addPackageHosts() {
             <Field :label="t('capabilities.worker.gid')" required :error="errors.gid">
               <NumberInput v-model="form.gid" :min="1" :steppers="false" />
             </Field>
+            <Field v-if="form.task_volume" :label="t('capabilities.worker.taskVolume')" wide>
+              <p class="font-mono text-sm text-ink-2">
+                {{ form.task_volume.name }} → {{ form.task_volume.root }}
+              </p>
+            </Field>
             <div class="flex min-w-0 flex-col items-start gap-3 sm:col-span-2">
               <Button
                 size="sm"

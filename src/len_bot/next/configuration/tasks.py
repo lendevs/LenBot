@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import socket
+import subprocess
 from importlib.metadata import version as installed_version
 from pathlib import Path, PurePosixPath
 import shutil
@@ -74,6 +77,21 @@ def local_docker_endpoint(value: str) -> str:
     return value
 
 
+class TaskVolume(BaseModel):
+    """The Docker volume that holds the task directories when the host itself runs in a container."""
+    model_config = STRICT
+
+    name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", description="数据卷名称。")
+    root: Path = Field(description="宿主容器内该数据卷的挂载路径；任务工作目录和运行目录须在其下。")
+
+    @field_validator("root")
+    @classmethod
+    def absolute_root(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("task_volume.root must be an explicit absolute path")
+        return value
+
+
 class WorkerSettings(BaseModel):
     model_config = STRICT
 
@@ -88,6 +106,8 @@ class WorkerSettings(BaseModel):
     workspace_root: Path
     runtime_root: Path
     delivery_root: Path
+    task_volume: TaskVolume | None = Field(
+        default=None, description="Docker 部署时任务目录所在的数据卷；任务容器以子目录方式挂载，需要 Docker Engine 26 及以上。")
     storage_pool: StoragePool | None = None
     skills_directory: Path | None = None
     uid: int | None = Field(default=None, gt=0, strict=True)
@@ -135,6 +155,16 @@ class WorkerSettings(BaseModel):
     def disk_thresholds(self) -> WorkerSettings:
         if self.disk_stop_bytes >= self.disk_reserve_bytes:
             raise ValueError("worker.disk_stop_bytes must be below worker.disk_reserve_bytes")
+        return self
+
+    @model_validator(mode="after")
+    def volume_holds_task_trees(self) -> WorkerSettings:
+        if self.task_volume is not None:
+            if self.sandbox != "docker":
+                raise ValueError("worker.task_volume applies only to the docker sandbox")
+            for name in ("workspace_root", "runtime_root"):
+                if not getattr(self, name).is_relative_to(self.task_volume.root):
+                    raise ValueError(f"worker.{name} must be inside worker.task_volume.root")
         return self
 
     @model_validator(mode="after")
@@ -244,10 +274,25 @@ WORKER_IMAGE = "lenbot-worker:local"
 OFFICIAL_WORKER = "ghcr.io/lendevs/lenbot-worker"
 
 
+def _instance_volume(root: Path, suggestion: dict) -> str | None:
+    """The named volume mounted at the instance root when this host runs in a container, read from Docker."""
+    if not Path("/.dockerenv").exists() or "docker_binary" not in suggestion or "docker_host" not in suggestion:
+        return None
+    try:
+        result = subprocess.run(
+            [suggestion["docker_binary"], "--host", suggestion["docker_host"], "inspect", "--type", "container",
+             "--format", "{{json .Mounts}}", socket.gethostname()], capture_output=True, text=True, timeout=10)
+        mounts = json.loads(result.stdout) if result.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return next((mount.get("Name") for mount in mounts
+                 if mount.get("Type") == "volume" and mount.get("Destination") == str(root)), None)
+
+
 def suggested_worker(root: Path) -> dict:
     """Task settings this host can fill in when tasks are first switched on.
 
-    The directories are the ones ``deploy/current/host.tasks.compose.yaml`` binds at the same path.
+    In a Docker deployment the directories sit in the instance volume, which task containers mount by subpath.
     """
     # A release installation (deployment package or Docker) follows the same-version official image,
     # as the updater does; a source checkout builds lenbot-worker:local.
@@ -274,6 +319,8 @@ def suggested_worker(root: Path) -> dict:
     elif sys.platform == "win32":
         # Docker Desktop bind mounts do not map Windows owners; run as the image's agent user.
         suggestion["uid"] = suggestion["gid"] = WORKER_IMAGE_USER
+    if (volume := _instance_volume(root, suggestion)) is not None:
+        suggestion["task_volume"] = {"name": volume, "root": str(root)}
     # Linux hosts with bwrap run tasks in the local sandbox; a Docker deployment's host container has none.
     bwrap = shutil.which("bwrap") if sys.platform == "linux" else None
     suggestion["sandbox"] = "docker" if bwrap is None else "bwrap"

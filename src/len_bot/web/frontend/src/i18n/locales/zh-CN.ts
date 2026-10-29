@@ -2152,6 +2152,7 @@ export default {
       },
       sandbox: '运行方式',
       sandboxes: { docker: 'Docker 任务容器', bwrap: 'Linux 本机沙箱' },
+      taskVolume: '任务数据卷',
       bwrapBinary: 'bwrap 程序路径',
       taskRuntime: '任务运行时目录',
       check: '检查本机沙箱',

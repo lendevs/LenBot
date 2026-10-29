@@ -85,6 +85,7 @@ export type WorkerDefaults = Partial<
     | 'delivery_root'
     | 'uid'
     | 'gid'
+    | 'task_volume'
   >
 >
 
@@ -123,6 +124,8 @@ export interface Worker {
   workspace_root: string
   runtime_root: string
   delivery_root: string
+  /** Docker deployments: the volume holding the task directories, mounted into task containers by subpath. */
+  task_volume?: { name: string; root: string } | null
   storage_pool: StoragePool | null
   skills_directory: string | null
   uid: number | null

@@ -2221,6 +2221,7 @@ export default {
       },
       sandbox: 'Runs in',
       sandboxes: { docker: 'Docker task container', bwrap: 'Linux local sandbox' },
+      taskVolume: 'Task volume',
       bwrapBinary: 'bwrap path',
       taskRuntime: 'Task runtime directory',
       check: 'Check the local sandbox',
