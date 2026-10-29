@@ -146,6 +146,23 @@ class WorkerSettings(BaseModel):
     egress: EgressSettings = Field(default_factory=EgressSettings)
     mcp: bool = False
 
+    def missing_programs(self) -> frozenset[str]:
+        """Programs built-in skills need that this task environment lacks.
+
+        The worker image has them all. The local sandbox sees the system's /usr and the task runtime's bin/.
+        """
+        if self.sandbox == "docker":
+            return frozenset()
+        missing = set()
+        for name in ("ffmpeg",):
+            found = shutil.which(name, path="/usr/local/bin:/usr/bin:/bin")
+            if found is None:
+                missing.add(name)
+        for name in ("lenbot-render", "lenbot-browser"):
+            if self.task_runtime is None or not (self.task_runtime / "bin" / name).exists():
+                missing.add(name)
+        return frozenset(missing)
+
     @property
     def public_browser(self) -> bool:
         """The browser reaches websites only through the egress proxy, so it follows the network mode."""
