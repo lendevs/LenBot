@@ -36,7 +36,7 @@ uv run --no-sync python -m len_bot.next.maintenance.plugin_dependencies
 - 在面板**系统 → 设置 → 版本与更新**中可查看每日自动检查到的发行版本，或点击**打开更新与恢复页**在线切换版本、从 `backups/` 快照一键回滚。
 - 更新控制器的端口、环境变量与目录约定见仓库中的[部署包与容器安装](https://github.com/lendevs/LenBot/blob/master/deploy/current/installation.md)与[运维参考](https://github.com/lendevs/LenBot/blob/master/deploy/current/operations.md)。
 
-宿主进程与所有 `maintenance` 维护命令共用单实例文件锁 `.lenbot-instance.lock`，确保同一时刻只有一个进程读写数据库；请勿手动删除锁文件。
+宿主进程与所有 `maintenance` 维护命令共用单实例文件锁 `.lenbot-instance.lock`，同一时刻只有一个进程读写数据库。
 
 ## 手动备份与数据保留
 

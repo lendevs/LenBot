@@ -56,5 +56,5 @@ uv run --no-sync python -m len_bot.next.maintenance.doctor
 在 [GitHub Issues](https://github.com/lendevs/LenBot/issues) 提交缺陷报告时，建议附上：
 
 1. 当前代码版本（源码运行执行 `git rev-parse --short HEAD`，部署包查看面板**系统 → 设置 → 版本与更新**）。
-2. 出错回合或任务的诊断包（或从 `logs/lenbot.jsonl` 中按 `turn_id`／`task_id` 摘出的日志行），上传前请确认已移除不宜公开的对话正文。
+2. 出错回合或任务的诊断包（或从 `logs/lenbot.jsonl` 中按 `turn_id`／`task_id` 摘出的日志行）。
 3. `doctor` 命令的 JSON 输出。
