@@ -181,6 +181,15 @@ class TaskStore:
         rows = self.db.execute("SELECT * FROM tasks WHERE container IS NOT NULL ORDER BY id").fetchall()
         return [_task(row) for row in rows]
 
+    def expired_workspaces(self, ended_before: float) -> list[Task]:
+        """Ended tasks whose environment is still kept, oldest first."""
+        rows = self.db.execute(
+            "SELECT * FROM tasks WHERE status IN ('done','failed','cancelled') AND ended < ? "
+            "AND container IS NULL AND NOT EXISTS (SELECT 1 FROM task_events AS event WHERE event.scene=tasks.scene "
+            "AND event.task_id=tasks.id AND event.kind='workspace_discard') ORDER BY ended LIMIT 50",
+            (ended_before,)).fetchall()
+        return [_task(row) for row in rows]
+
     def count_created(self, scene: str, requester: str, since: float) -> int:
         return self.db.execute(
             "SELECT COUNT(*) FROM tasks WHERE scene=? AND requester=? AND created>=?",

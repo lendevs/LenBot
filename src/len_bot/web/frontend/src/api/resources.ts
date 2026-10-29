@@ -63,6 +63,12 @@ export interface ResourceInput {
   name: string
 }
 
+export interface TaskDisk {
+  free_bytes: number
+  reserve_bytes: number
+  stop_bytes: number
+}
+
 export interface PoolUsage {
   kind: 'apfs' | 'ext4' | string
   mount: string
@@ -183,7 +189,7 @@ export const resourcesApi = {
 
 export const storageApi = {
   pool: (signal?: AbortSignal) =>
-    http.get<{ configured: boolean; usage: PoolUsage | null }>(
+    http.get<{ configured: boolean; usage: PoolUsage | null; disk: TaskDisk | null }>(
       '/api/host/task-storage/pool',
       undefined,
       signal,

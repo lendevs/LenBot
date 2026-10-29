@@ -77,6 +77,7 @@ class TaskExecution:
         self.active_limit = 0.0
         self.input_ready = False
         self.cancelled = False
+        self.stop_reason: str | None = None
         self._last_progress: str | None = None
         self._next_progress = 300.0
         self._live_text = TaskLiveText()
@@ -86,6 +87,11 @@ class TaskExecution:
     def start(self) -> asyncio.Task:
         self.job = asyncio.create_task(self._run())
         return self.job
+
+    def stop(self, reason: str) -> None:
+        """End this run as failed with the host's reason, such as a storage limit."""
+        self.stop_reason = reason
+        self.interrupt()
 
     def interrupt(self, *, explicit: bool = False) -> None:
         if explicit:
@@ -188,7 +194,8 @@ class TaskExecution:
                 status = "done"
         except asyncio.CancelledError:
             status = "cancelled" if self.cancelled else "failed"
-            error_text = "任务被明确取消" if self.cancelled else "宿主停止，中断活动任务"
+            error_text = ("任务被明确取消" if self.cancelled
+                          else self.stop_reason or "宿主停止，中断活动任务")
         except Exception as error:
             error_text = "".join(traceback.format_exception_only(error)).strip()
         finally:
@@ -230,6 +237,8 @@ class TaskExecution:
         environment = Template(read_prompt("next_worker_environment.md")).substitute(
             facts=json.dumps({
                 "public_network": session.egress is not None,
+                "network_mode": self.settings.egress.mode,
+                "allowed_hosts": self.settings.egress.allowed_hosts if self.settings.egress.mode == "allowlist" else None,
                 "proxy": None if session.egress is None else f"http://127.0.0.1:{session.egress.port}",
                 "task_traffic": self.egress.status(item.scene, item.id),
                 "scene_today_traffic": self.egress.status(item.scene),

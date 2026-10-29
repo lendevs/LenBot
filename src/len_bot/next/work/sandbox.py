@@ -112,7 +112,8 @@ class TaskSandbox(Protocol):
     async def ensure(self, scene: str, task_id: str, *, skills: tuple[Skill, ...] = (),
                      input_names: tuple[str, ...] = (),
                      on_container: Callable[[str], None] | None = None) -> SandboxHandle: ...
-    async def browser_cli_version(self, sandbox: SandboxHandle) -> str: ...
+    async def browser_cli_version(self, sandbox: SandboxHandle) -> str | None:
+        """The browser CLI version, or None when this sandbox has no browser."""
     async def spawn_model_bridge(self, sandbox: SandboxHandle, *, proxy: WorkerModelProxy, stderr_path: Path,
                                  task_request: Callable[[str, bytes], Awaitable[dict]] | None = None
                                  ) -> WorkerTransport: ...

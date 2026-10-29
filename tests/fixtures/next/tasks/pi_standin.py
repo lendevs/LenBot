@@ -12,6 +12,8 @@ host directory mounted at ``/run/lenbot`` when the stand-in runs unsandboxed. Ma
 - ``[失败]`` ends the assistant message with ``stopReason: error``
 - ``[探测]`` tries the writes, reads and connections listed after ``探测：`` and
   reports each outcome
+- ``[联网]`` sends the requests listed after ``联网：`` through ``HTTP_PROXY``
+- ``[写入]`` writes one file per size listed after ``写入：`` into ``out/``
 
 Every prompt is appended to ``session.jsonl`` in the working directory, so a
 continued task can show that it reopened the same session.
@@ -25,6 +27,7 @@ import queue
 import socket
 import sys
 import threading
+import urllib.error
 import urllib.request
 
 
@@ -116,6 +119,26 @@ def probe(targets: dict) -> dict:
     return results
 
 
+def fetch(requests: list[dict]) -> list[str]:
+    """Each request's status, the proxy's refusal text, or the client error."""
+    proxy = os.environ.get("HTTP_PROXY")
+    if proxy is None:
+        return ["no proxy"] * len(requests)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    results = []
+    for item in requests:
+        body = b"x" * item["bytes"] if item.get("bytes") else None
+        request = urllib.request.Request(item["url"], data=body, method=item.get("method", "GET"))
+        try:
+            with opener.open(request, timeout=30) as response:
+                results.append(f"{response.status}")
+        except urllib.error.HTTPError as error:
+            results.append(f"HTTP {error.code}: {error.read().decode(errors='replace')[:300]}")
+        except OSError as error:
+            results.append(f"{type(error).__name__}: {error}")
+    return results
+
+
 def question(number: int, body: dict) -> dict:
     ident = f"standin-question-{number}"
     emit({"type": "extension_ui_request", "id": ident, **body})
@@ -142,12 +165,20 @@ def run(message: str) -> None:
     if "[确认]" in message:
         answer = question(2, {"method": "confirm", "title": "确认执行？", "message": "覆盖 out/report.txt"})
         lines.append(f"确认：{answer.get('confirmed')}")
+    if "[写入]" in message:
+        sizes, _ = json.JSONDecoder().raw_decode(message.split("写入：", 1)[1])
+        Path("out").mkdir(exist_ok=True)
+        for number, size in enumerate(sizes):
+            Path(f"out/fill-{number}.bin").write_bytes(b"x" * size)
     if "[等待]" in message:
         while not steering:
             handle(receive(lambda record: record.get("type") == "steer"))
     if "[探测]" in message:
         targets, _ = json.JSONDecoder().raw_decode(message.split("探测：", 1)[1])
         lines.append("探测结果：" + json.dumps(probe(targets), ensure_ascii=False))
+    if "[联网]" in message:
+        requests, _ = json.JSONDecoder().raw_decode(message.split("联网：", 1)[1])
+        lines.append("联网结果：" + json.dumps(fetch(requests), ensure_ascii=False))
     lines.extend(f"追加：{text}" for text in steering)
     steering.clear()
     if "[交付]" in message:

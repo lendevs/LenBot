@@ -55,8 +55,13 @@ export interface Network {
   public_dns_url: string
 }
 
+export type EgressMode = 'off' | 'allowlist' | 'public'
+/** The package-registry preset the task settings offer for allowlist mode. */
+export const PACKAGE_HOSTS = ['pypi.org', 'files.pythonhosted.org', 'registry.npmjs.org']
 export interface Egress {
-  enabled: boolean
+  mode: EgressMode
+  allowed_hosts: string[]
+  max_task_upload_bytes: number | null
   max_task_bytes: number | null
   max_scene_daily_bytes: number | null
   max_connections: number | null
@@ -83,9 +88,12 @@ export type WorkerDefaults = Partial<
 
 /** `configuration/tasks.py` WorkerSettings; number fields are null while their input is empty. */
 export interface Worker {
+  sandbox?: 'docker' | 'bwrap'
   docker_binary: string
   docker_host: string
   image: string
+  bwrap_binary?: string | null
+  task_runtime?: string | null
   workspace_root: string
   runtime_root: string
   delivery_root: string
@@ -111,10 +119,14 @@ export interface Worker {
   input_timeout_seconds: number | null
   max_file_bytes: number | null
   max_delivery_bytes: number | null
+  max_workspace_bytes: number | null
+  disk_reserve_bytes: number | null
+  disk_stop_bytes: number | null
+  workspace_retention_days: number | null
+  storage_check_seconds: number | null
   input_support: 'text' | 'text-image'
   model_reasoning: boolean | null
   egress: Egress
-  public_browser: boolean
   mcp: boolean
 }
 

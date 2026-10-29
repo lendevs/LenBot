@@ -72,6 +72,22 @@ def byte_size(value: str) -> int:
     return int(value[:-1]) * 1024 ** "kmg".index(value[-1].lower()) * 1024
 
 
+class _WriteProtocol(asyncio.streams.FlowControlMixin):
+    """A write pipe's protocol with the close waiter ``StreamWriter.wait_closed`` needs, as asyncio's own subprocess pipes have."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._closed = asyncio.get_running_loop().create_future()
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        super().connection_lost(exc)
+        if not self._closed.done():
+            self._closed.set_result(None)
+
+    def _get_close_waiter(self, stream: asyncio.StreamWriter) -> asyncio.Future:
+        return self._closed
+
+
 class SandboxProcess:
     """The parts of ``asyncio.subprocess.Process`` the task transports use."""
 
@@ -167,8 +183,7 @@ class _Session:
         try:
             read_transport, _ = await loop.connect_read_pipe(
                 lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(host_stdout, "rb", 0))
-            write_transport, protocol = await loop.connect_write_pipe(
-                asyncio.streams.FlowControlMixin, os.fdopen(host_stdin, "wb", 0))
+            write_transport, protocol = await loop.connect_write_pipe(_WriteProtocol, os.fdopen(host_stdin, "wb", 0))
             child = SandboxProcess(self, ident, asyncio.StreamWriter(write_transport, protocol, None, loop), reader)
             # Registered before the request: a quick exit can be reported right after its start.
             started = self.starting[ident] = loop.create_future()
@@ -338,7 +353,10 @@ class BwrapSandbox:
         err_path.unlink()
         return result
 
-    async def browser_cli_version(self, sandbox: SandboxHandle) -> str:
+    async def browser_cli_version(self, sandbox: SandboxHandle) -> str | None:
+        """None when this task runtime has no browser installed."""
+        if not (self.settings.task_runtime / "bin" / "lenbot-browser").exists():
+            return None
         output = await self._run(sandbox, "lenbot-browser", "--version")
         try:
             result = json.loads(output.stdout)

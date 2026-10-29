@@ -232,7 +232,7 @@ async def worker_session(
                              "navigation": sandbox.settings.command_timeout_seconds * 1000},
             })
             browser_version = await sandbox.browser_cli_version(handle)
-        else:
+        if browser_version is None:
             browser_config.unlink(missing_ok=True)
         _configure_pi(
             handle, token=token, port=bridge.port, settings=settings,

@@ -34,6 +34,7 @@ from .worker_model import Limits
 from .materials import MaterialName, finish_file_operation, material_directory, save_shared
 from ..storage.pool import worker_pool_usage
 from .inputs import ResourceInput, copy_inputs, create_stage, publish_inputs, remove_stage
+from .storage import disk_free, task_tree_bytes
 from ..runtime.logs import credentials, log_context, log_event, redact, redact_record
 from ..runtime.operations import diagnostic_value
 from ..prompt_files import read_prompt
@@ -93,6 +94,8 @@ class WorkTasks:
         self.accepting = False
         self.retiring_scenes: set[str] = set()
         self._pump: asyncio.Task | None = None
+        self._upkeep: asyncio.Task | None = None
+        self.disk_waiting = False
         self.error: str | None = None
         self._failure: asyncio.Future[BaseException] = asyncio.get_running_loop().create_future()
 
@@ -285,8 +288,16 @@ class WorkTasks:
         return {"items": [asdict(item) for item in items[:limit]],
                 "next_offset": offset + limit if len(items) > limit else None}
 
+    def _disk_refusal(self) -> str | None:
+        free = disk_free(self.settings)
+        if free < self.settings.disk_reserve_bytes:
+            return f"任务目录所在磁盘剩余 {free} 字节，低于 {self.settings.disk_reserve_bytes}，暂不接新任务"
+        return None
+
     def _admit_delegate(self, scene: str, requester: str) -> None:
         self._can_delegate(scene, requester)
+        if (refusal := self._disk_refusal()) is not None:
+            raise ValueError(refusal)
         timezone = self.config.scene_timezone(scene)
         local = datetime.fromtimestamp(self.store.now(), ZoneInfo(timezone))
         midnight = local.replace(hour=0, minute=0, second=0, microsecond=0, fold=0).timestamp()
@@ -370,7 +381,7 @@ class WorkTasks:
             item = self.records.get(scene, id)
             self._can_manage(item, requester)
             if self.records.workspace_discarded(scene, id):
-                raise ValueError('本任务的工作环境已被明确放弃，不能作为原任务续接；请明确新建任务')
+                raise ValueError('本任务的工作环境已释放，不能作为原任务续接；请新建任务')
             self._can_delegate(scene, requester)
             self._limits(item)
             self.records.requeue(scene, id, text, requester=requester)
@@ -497,10 +508,53 @@ class WorkTasks:
         await finish_file_operation(worker_pool_usage, self.settings)
         self.accepting = True
         self._pump = asyncio.create_task(self._schedule())
+        self._upkeep = asyncio.create_task(self._keep_storage())
+
+    async def _keep_storage(self) -> None:
+        """Stop runs over the task or disk limit, resume a queue held for space, and remove expired workspaces."""
+        settings = self.settings
+        while self.accepting:
+            await asyncio.sleep(settings.storage_check_seconds)
+            try:
+                free = await asyncio.to_thread(disk_free, settings)
+                for current in list(self.running.values()):
+                    item = current.item
+                    if current.stop_reason is not None:
+                        continue
+                    if free < settings.disk_stop_bytes:
+                        facts = {"reason": "disk", "free_bytes": free, "limit": settings.disk_stop_bytes}
+                        reason = f"任务目录所在磁盘剩余 {free} 字节，低于 {settings.disk_stop_bytes}，停止运行中的任务"
+                    else:
+                        used = await asyncio.to_thread(task_tree_bytes, settings, item.scene, item.id)
+                        if used <= settings.max_workspace_bytes:
+                            continue
+                        facts = {"reason": "task", "used_bytes": used, "limit": settings.max_workspace_bytes}
+                        reason = f"任务目录占用 {used} 字节，超过单任务上限 {settings.max_workspace_bytes}"
+                    self.records.add_event(item.scene, item.id, "storage_limit", {**facts, "message": reason})
+                    log_event(logger, "task_storage_limit", level=logging.WARNING, task_id=item.id, **facts)
+                    current.stop(reason)
+                if self.disk_waiting and free >= settings.disk_reserve_bytes:
+                    self.changed.set()
+                await self._expire_workspaces()
+            except Exception as error:
+                log_event(logger, "task_storage_check_failed", level=logging.WARNING, error=error)
+
+    async def _expire_workspaces(self) -> None:
+        cutoff = self.store.now() - self.settings.workspace_retention_days * 86400
+        for item in self.records.expired_workspaces(cutoff):
+            if item.id in self.running:
+                continue
+            async with self.file_changes:
+                await self.files.discard(
+                    item, requester="host:retention",
+                    workspace=str(self.settings.workspace_root / item.scene / "tasks" / str(item.id)),
+                    runtime=str(self.settings.runtime_root / item.scene / str(item.id)))
 
     def stop(self) -> None:
         self.accepting = False
         self.changed.set()
+        if self._upkeep is not None:
+            self._upkeep.cancel()
 
     async def close(self) -> None:
         self.stop()
@@ -508,6 +562,8 @@ class WorkTasks:
             if self._pump is not None:
                 await self._pump
         finally:
+            if self._upkeep is not None:
+                await asyncio.gather(self._upkeep, return_exceptions=True)
             executions = list(self.running.values())
             for current in executions:
                 current.interrupt()
@@ -581,7 +637,9 @@ class WorkTasks:
                     # Woken question consumers claim capacity before new work.
                     await self.changed.wait()
                     continue
-                for item in self.records.queued():
+                queued = self.records.queued()
+                self.disk_waiting = bool(queued) and self._disk_refusal() is not None
+                for item in [] if self.disk_waiting else queued:
                     if item.scene in self.retiring_scenes:
                         continue
                     if item.scene not in self.config.scenes:

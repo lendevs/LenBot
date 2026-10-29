@@ -3,7 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowUpRight, ChevronDown } from '@lucide/vue'
-import { capabilitiesApi, capabilitiesOf, type Egress, type Worker } from '../../api/capabilities'
+import {
+  capabilitiesApi,
+  capabilitiesOf,
+  PACKAGE_HOSTS,
+  type Egress,
+  type Worker,
+} from '../../api/capabilities'
 import { keys } from '../../api/query'
 import { groupsTarget } from '../groups/route'
 import { settingsApi } from '../../api/settings'
@@ -20,6 +26,7 @@ import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
+import TagInput from '../../ui/TagInput.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
@@ -69,10 +76,17 @@ const fresh = (): Worker => ({
   input_timeout_seconds: 1800,
   max_file_bytes: 25 * 1024 * 1024,
   max_delivery_bytes: 500 * 1024 * 1024,
+  max_workspace_bytes: 2 * 1024 ** 3,
+  disk_reserve_bytes: 5 * 1024 ** 3,
+  disk_stop_bytes: 2 * 1024 ** 3,
+  workspace_retention_days: 14,
+  storage_check_seconds: 30,
   input_support: 'text',
   model_reasoning: null,
   egress: {
-    enabled: true,
+    mode: 'off',
+    allowed_hosts: [],
+    max_task_upload_bytes: 20 * 1024 * 1024,
     max_task_bytes: 524288000,
     max_scene_daily_bytes: 2147483648,
     max_connections: 16,
@@ -80,7 +94,6 @@ const fresh = (): Worker => ({
     connect_timeout_seconds: 30,
     header_timeout_seconds: 30,
   },
-  public_browser: false,
   mcp: false,
 })
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -109,7 +122,7 @@ function toggle(on: boolean) {
   }
 }
 
-type NumberKey = { [K in keyof Worker]: Worker[K] extends number | null ? K : never }[keyof Worker]
+type NumberKey = { [K in keyof Worker]-?: Worker[K] extends number | null ? K : never }[keyof Worker]
 type EgressKey = { [K in keyof Egress]: Egress[K] extends number | null ? K : never }[keyof Egress]
 const limits: { key: NumberKey; unit?: string; decimals?: boolean }[] = [
   { key: 'cpus', decimals: true },
@@ -125,10 +138,15 @@ const limits: { key: NumberKey; unit?: string; decimals?: boolean }[] = [
   { key: 'input_timeout_seconds', unit: 's', decimals: true },
   { key: 'max_file_bytes', unit: 'B' },
   { key: 'max_delivery_bytes', unit: 'B' },
+  { key: 'max_workspace_bytes', unit: 'B' },
+  { key: 'disk_reserve_bytes', unit: 'B' },
+  { key: 'disk_stop_bytes', unit: 'B' },
+  { key: 'workspace_retention_days', decimals: true },
   { key: 'compaction_reserve_tokens', unit: 'tokens' },
   { key: 'compaction_keep_recent_tokens', unit: 'tokens' },
 ]
 const egressLimits: { key: EgressKey; unit?: string; decimals?: boolean }[] = [
+  { key: 'max_task_upload_bytes', unit: 'B' },
   { key: 'max_task_bytes', unit: 'B' },
   { key: 'max_scene_daily_bytes', unit: 'B' },
   { key: 'max_connections' },
@@ -138,6 +156,8 @@ const egressLimits: { key: EgressKey; unit?: string; decimals?: boolean }[] = [
 ]
 const paths = ['docker_binary', 'workspace_root', 'runtime_root', 'delivery_root'] as const
 const SIZE = /^[1-9][0-9]*[kmgKMG]$/
+/** Same rule as the host: a lowercase domain, or *. and a domain for its subdomains. */
+const HOST = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
 
 const errors = computed(() => {
   const value = draft.value
@@ -159,8 +179,16 @@ const errors = computed(() => {
   if (!SIZE.test(value.tmpfs_size)) result.tmpfs_size = t('capabilities.worker.size')
   for (const { key } of limits) if (value[key] === null) result[key] = required
   for (const { key } of egressLimits) if (value.egress[key] === null) result[`egress.${key}`] = required
-  if (value.public_browser && !value.egress.enabled)
-    result.public_browser = t('capabilities.worker.browserNeedsNetwork')
+  if (value.egress.mode === 'allowlist' && value.egress.allowed_hosts.length === 0)
+    result.allowed_hosts = t('capabilities.worker.hostsRequired')
+  const badHost = value.egress.allowed_hosts.find((host) => !HOST.test(host))
+  if (badHost) result.allowed_hosts = t('capabilities.worker.hostRule', { host: badHost })
+  if (
+    value.disk_stop_bytes !== null &&
+    value.disk_reserve_bytes !== null &&
+    value.disk_stop_bytes >= value.disk_reserve_bytes
+  )
+    result.disk_stop_bytes = t('capabilities.worker.diskOrder')
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)
@@ -203,11 +231,17 @@ const inputs = computed(() => [
   { value: 'text' as const, label: t('capabilities.worker.textOnly') },
   { value: 'text-image' as const, label: t('capabilities.worker.withImages') },
 ])
-const pool = computed(() => {
-  const value = draft.value?.storage_pool
-  if (!value) return t('capabilities.worker.noPool')
-  return t(`capabilities.worker.pool.${value.kind}`, { mount: value.mount })
-})
+const networkModes = computed(() =>
+  (['off', 'allowlist', 'public'] as const).map((value) => ({
+    value,
+    label: t(`capabilities.worker.networkModes.${value}`),
+  })),
+)
+function addPackageHosts() {
+  if (!draft.value) return
+  const hosts = draft.value.egress.allowed_hosts
+  draft.value.egress.allowed_hosts = [...hosts, ...PACKAGE_HOSTS.filter((host) => !hosts.includes(host))]
+}
 </script>
 
 <template>
@@ -266,14 +300,32 @@ const pool = computed(() => {
           </Field>
         </FormSection>
         <FormSection :title="t('capabilities.worker.abilities')">
-          <Field :label="t('capabilities.worker.network')" inline>
-            <Switch v-model="form.egress.enabled" />
+          <Field :label="t('capabilities.worker.network')" wide>
+            <div>
+              <SegmentedControl
+                v-model="form.egress.mode"
+                :options="networkModes"
+                :label="t('capabilities.worker.network')"
+              />
+            </div>
           </Field>
-          <Field :label="t('capabilities.worker.browser')" inline :error="errors.public_browser">
-            <Switch v-model="form.public_browser" />
-          </Field>
-          <Field :label="t('capabilities.worker.mcp')" inline>
-            <Switch v-model="form.mcp" />
+          <Field
+            v-if="form.egress.mode === 'allowlist'"
+            :label="t('capabilities.worker.allowedHosts')"
+            required
+            :error="errors.allowed_hosts"
+            wide
+          >
+            <div class="flex min-w-0 flex-col items-start gap-2">
+              <TagInput
+                v-model="form.egress.allowed_hosts"
+                placeholder="example.com、*.example.org"
+                class="w-full"
+              />
+              <Button size="sm" variant="ghost" @click="addPackageHosts">
+                {{ t('capabilities.worker.packageHosts') }}
+              </Button>
+            </div>
           </Field>
         </FormSection>
         <FormSection :title="t('capabilities.worker.runtime')">
@@ -318,7 +370,6 @@ const pool = computed(() => {
         </FormSection>
         <FormSection :title="t('capabilities.worker.storage')" :columns="1">
           <p class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
-            {{ pool }}
             <Button
               size="sm"
               variant="ghost"

@@ -34,12 +34,13 @@ from len_bot.next.platform.file_delivery import SendFileArguments, execute_send_
 from len_bot.next.platform.messages import UploadResult
 from len_bot.next.platform.onebot import OneBot
 from len_bot.next.storage.store import Store
-from len_bot.next.work import worker_bridge
+from len_bot.next.work import service as service_module, worker_bridge
 from len_bot.next.work.bwrap import check_local_sandbox
 from len_bot.next.work.pi_rpc import PiRpc
 from len_bot.next.work.sandbox import DockerSandbox, SandboxHandle
 from len_bot.next.work.service import WorkTasks
 from len_bot.next.work.store import TaskStore
+from len_bot.next.work.worker_egress import EgressTransport
 from len_bot.next.work.worker_transport import WorkerTransport
 
 SCENE, OTHER_SCENE = 'onebot:group:80001', 'onebot:group:80002'
@@ -76,14 +77,30 @@ class StandinSandbox(DockerSandbox):
             env=os.environ, stderr_path=stderr_path, proxy=proxy,
             startup_timeout_seconds=self.settings.command_timeout_seconds, task_request=task_request)
 
+    async def spawn_egress_bridge(self, sandbox, *, settings, fake_ip_networks, bytes_per_second, before_bytes,
+                                  on_connection, on_bytes, stderr_path, public_dns_url=None):
+        return await EgressTransport.spawn(
+            [sys.executable, str(Path(worker_bridge.__file__).with_name('worker_egress_bridge.py')), '--port', '0',
+             '--max-connections', str(settings.max_connections),
+             '--header-timeout-seconds', str(settings.header_timeout_seconds)],
+            cwd=sandbox.workspace, env=os.environ, stderr_path=stderr_path,
+            max_connections=settings.max_connections, connect_timeout_seconds=settings.connect_timeout_seconds,
+            fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url, bytes_per_second=bytes_per_second,
+            before_bytes=before_bytes, on_connection=on_connection, on_bytes=on_bytes)
+
     async def spawn_pi(self, sandbox, *, provider, model, stderr_path, proxy_port=None, skills=()):
+        proxy = {} if proxy_port is None else {'HTTP_PROXY': f'http://127.0.0.1:{proxy_port}'}
+        environment = {name: value for name, value in os.environ.items() if 'proxy' not in name.lower()}
         rpc = await PiRpc.spawn(
             [sys.executable, '-I', '-u', str(STANDIN), '--provider', provider, '--model', model],
             cwd=sandbox.workspace, stderr_path=stderr_path,
-            env={**os.environ, 'LENBOT_CONTROL': str(sandbox.control),
+            env={**environment, **proxy, 'LENBOT_CONTROL': str(sandbox.control),
                  'PI_CODING_AGENT_DIR': str(sandbox.home / '.pi' / 'agent')})
         await asyncio.wait_for(rpc.command('get_state'), self.settings.command_timeout_seconds)
         return rpc
+
+    async def browser_cli_version(self, sandbox):
+        return None
 
     async def stop(self, sandbox):
         self.active.discard(sandbox.container_id)
@@ -151,7 +168,8 @@ async def upstream():
 
 
 def host_config(root: Path, port: int, environment: str, *, scene_running: int = 2,
-                scene_containers: int = 4) -> HostConfig:
+                scene_containers: int = 4, egress: dict | None = None, network: dict | None = None,
+                worker: dict | None = None) -> HostConfig:
     tasks = {'enabled': True, 'admins': [ADMIN], 'whitelist': [WHITELISTED],
              'max_running': scene_running, 'max_daily_tasks': 20}
     sandbox = ({'sandbox': 'bwrap', 'bwrap_binary': Path(shutil.which('bwrap')), 'task_runtime': task_runtime(root)}
@@ -161,6 +179,7 @@ def host_config(root: Path, port: int, environment: str, *, scene_running: int =
     return HostConfig.model_validate({
         'compaction': {'input_tokens': 2000}, 'mode': 'isolated-multi', 'bot_id': BOT, 'timezone': 'UTC',
         'owners': [OWNER], 'database': root / 'host.sqlite3', 'delivery': 'simulated', 'onebot': None,
+        **({} if network is None else {'network': network}),
         'models': {
             'providers': {'fixture': {'api': 'openai-chat', 'base_url': f'http://127.0.0.1:{port}/v1',
                                       'api_key': 'synthetic-upstream-key'}},
@@ -170,7 +189,7 @@ def host_config(root: Path, port: int, environment: str, *, scene_running: int =
             **sandbox, 'model_reasoning': False,
             'workspace_root': root / 'workspaces', 'runtime_root': root / 'runtime',
             'delivery_root': root / 'deliveries', 'max_scene_containers': scene_containers,
-            'command_timeout_seconds': 10.0, 'egress': {'enabled': False},
+            'command_timeout_seconds': 10.0, 'egress': egress or {'mode': 'off'}, **(worker or {}),
         },
         'scenes': {SCENE: {'persona': root / 'unused-role', 'tasks': tasks},
                    OTHER_SCENE: {'persona': root / 'unused-role', 'tasks': tasks}},
@@ -202,9 +221,9 @@ async def until(condition, seconds: float = 15):
     return result
 
 
-def reached(tasks: WorkTasks, id: int, *statuses: str):
+def reached(tasks: WorkTasks, id: int, *statuses: str, seconds: float = 15):
     async def wait():
-        return await until(lambda: (status := tasks.status(SCENE, id))['status'] in statuses and status)
+        return await until(lambda: (status := tasks.status(SCENE, id))['status'] in statuses and status, seconds)
     return wait()
 
 
@@ -474,3 +493,119 @@ async def test_local_sandbox_check_names_each_step_and_the_first_failure(tmp_pat
     (runtime / 'lenbot-extension.ts').unlink()
     steps = await check_local_sandbox(binary, runtime)
     assert steps[-1] == {'step': 'task_runtime', 'ok': False, 'detail': f'{runtime} 缺少 lenbot-extension.ts'}
+
+
+def egress_events(tasks: WorkTasks, id: int) -> list[dict]:
+    rows = tasks.store.db.execute("SELECT body FROM task_events WHERE scene=? AND task_id=? AND kind='egress_connection' "
+                                  'ORDER BY id', (SCENE, id))
+    return [json.loads(row[0]) for row in rows]
+
+
+async def network_task(tasks: WorkTasks, requests: list[dict], seconds: float = 15) -> tuple[dict, list[str]]:
+    id = (await tasks.delegate(SCENE, requester=WHITELISTED, goal='联网 [联网]', deliverable='无',
+                               context='联网：' + json.dumps(requests)))['id']
+    done = await reached(tasks, id, 'done', 'failed', seconds=seconds)
+    assert done['status'] == 'done', done['error']
+    return done, json.loads(done['summary'].split('联网结果：', 1)[1].splitlines()[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['off', 'allowlist', 'public'])
+async def test_network_mode_refuses_hosts_before_dialing_and_records_why(tmp_path, upstream, environment, mode):
+    port, received = upstream
+    egress = {'mode': mode, 'allowed_hosts': ['example.com', '*.example.org']}
+    config = host_config(tmp_path, port, environment, egress=egress)
+    requests = [{'url': 'http://not-listed.invalid/'}, {'url': 'http://example.com.evil.invalid/'},
+                {'url': 'http://192.0.2.1/'}, {'url': 'http://10.0.0.1/'}]
+    async with task_host(config, config.database) as tasks:
+        done, results = await network_task(tasks, requests)
+        events = egress_events(tasks, done['id'])
+    assert len(received) == 1
+    if mode == 'off':
+        assert results == ['no proxy'] * 4 and events == []
+        return
+    errors = [event['error'] for event in events]
+    assert all(result.startswith('HTTP 502') for result in results), results
+    if mode == 'allowlist':
+        assert [event['status'] for event in events] == ['refused'] * 4
+        assert errors == ['not-listed.invalid 不在出网域名名单中', 'example.com.evil.invalid 不在出网域名名单中',
+                          '按域名放行时不能直接连接 IP 地址 192.0.2.1', '按域名放行时不能直接连接 IP 地址 10.0.0.1']
+        assert all(error in result for error, result in zip(errors, results))
+    else:
+        # Public mode looks the names up and checks every address; none of these four is public, so none is dialed.
+        assert len(events) == 4 and all(error for error in errors)
+        assert '10.0.0.1' in errors[3] and events[2]['status'] != 'refused'
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.environ.get('LENBOT_NETWORK_TESTS'), reason='reaches example.com; set LENBOT_NETWORK_TESTS')
+async def test_allowed_host_connects_and_the_upload_limit_stops_a_large_body(tmp_path, upstream, environment):
+    """LENBOT_NETWORK_TESTS is 1, or this machine's network settings as JSON when a fake-ip proxy answers DNS."""
+    value = os.environ['LENBOT_NETWORK_TESTS']
+    egress = {'mode': 'allowlist', 'allowed_hosts': ['example.com'], 'max_task_upload_bytes': 8192}
+    config = host_config(tmp_path, upstream[0], environment, egress=egress,
+                         network=None if value == '1' else json.loads(value))
+    async with task_host(config, config.database) as tasks:
+        done, results = await network_task(tasks, [
+            {'url': 'https://example.com/'}, {'url': 'https://example.com/', 'method': 'POST', 'bytes': 20000}],
+            seconds=60)
+        events = egress_events(tasks, done['id'])
+    assert results[0] == '200' and results[1] != '200', results
+    assert [event['host'] for event in events] == ['example.com', 'example.com']
+    # The origin may reset the connection after its response; the bytes show the exchange happened.
+    assert events[0]['ip'] is not None and events[0]['down'] > 0
+    assert '上传字节将超过上限 8192' in events[1]['error'] and events[1]['up'] <= 8192
+
+
+@pytest.mark.asyncio
+async def test_task_over_its_directory_limit_is_stopped_with_the_reason(tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment,
+                         worker={'max_workspace_bytes': 1024 * 1024, 'storage_check_seconds': .1})
+    async with task_host(config, config.database) as tasks:
+        id = (await tasks.delegate(SCENE, requester=WHITELISTED, goal='写满 [写入][等待]', deliverable='无',
+                                   context='写入：[600000, 600000]'))['id']
+        failed = await reached(tasks, id, 'done', 'failed', 'cancelled')
+        kinds = event_kinds(tasks, id)
+    assert failed['status'] == 'failed' and '超过单任务上限 1048576' in failed['error']
+    assert failed['error'].startswith('任务目录占用 ') and 'storage_limit' in kinds
+
+
+@pytest.mark.asyncio
+async def test_low_disk_holds_new_tasks_and_stops_running_ones(tmp_path, upstream, environment, monkeypatch):
+    gib = 1024 ** 3
+    free = {'bytes': 10 * gib}
+    monkeypatch.setattr(service_module, 'disk_free', lambda settings: free['bytes'])
+    config = host_config(tmp_path, upstream[0], environment, scene_running=1, worker={'storage_check_seconds': .1})
+    async with task_host(config, config.database) as tasks:
+        first = await delegate(tasks, '先运行 [等待]')
+        await until(lambda: prompted(tasks, first))
+        held = await delegate(tasks, '排队等空间 [等待]')
+        free['bytes'] = 3 * gib
+        with pytest.raises(ValueError, match='暂不接新任务'):
+            await tasks.delegate(SCENE, requester=WHITELISTED, goal='空间不足', deliverable='无', context='无')
+        await tasks.append(SCENE, first, requester=WHITELISTED, text='结束')
+        assert (await reached(tasks, first, 'done', 'failed'))['status'] == 'done'
+        await asyncio.sleep(.5)
+        assert tasks.status(SCENE, held)['status'] == 'queued'
+        free['bytes'] = 10 * gib
+        await until(lambda: prompted(tasks, held))
+        free['bytes'] = gib
+        stopped = await reached(tasks, held, 'done', 'failed')
+        kinds = event_kinds(tasks, held)
+    assert stopped['status'] == 'failed' and '停止运行中的任务' in stopped['error'] and 'storage_limit' in kinds
+
+
+@pytest.mark.asyncio
+async def test_expired_workspace_is_removed_and_its_delivery_kept(tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment,
+                         worker={'workspace_retention_days': 1 / 86400, 'storage_check_seconds': .1})
+    async with task_host(config, config.database) as tasks:
+        id = await delegate(tasks, '交付后到期 [交付]')
+        done = await reached(tasks, id, 'done', 'failed')
+        workspace = config.worker.workspace_root / SCENE / 'tasks' / str(id)
+        await until(lambda: 'workspace_discard_result' in event_kinds(tasks, id), 10)
+        [file] = TaskStore(tasks.store).list_files(SCENE, id)
+        with pytest.raises(ValueError, match='工作环境已释放'):
+            await tasks.resume(SCENE, id, requester=WHITELISTED, text='继续')
+    assert done['status'] == 'done' and not workspace.exists()
+    assert not (config.worker.runtime_root / SCENE / str(id)).exists() and Path(file.path).is_file()

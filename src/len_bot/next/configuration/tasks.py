@@ -18,16 +18,42 @@ STRICT = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 TaskRole = Literal["owner", "admin", "group_manager", "whitelist", "member"]
 
 
+EgressMode = Literal["off", "allowlist", "public"]
+# Offered as one preset in the task settings; package installs also need the redirect hosts below.
+PACKAGE_HOSTS = ("pypi.org", "files.pythonhosted.org", "registry.npmjs.org")
+_HOST_PATTERN = re.compile(r"(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?")
+
+
 class EgressSettings(BaseModel):
     model_config = STRICT
 
-    enabled: bool = True
+    mode: EgressMode = Field(default="off", description=(
+        "任务联网方式：off 只能经宿主调用模型；allowlist 只连 allowed_hosts 中的域名；public 可连公网地址。"))
+    allowed_hosts: list[str] = Field(default_factory=list, description=(
+        "allowlist 模式可连接的域名；*.example.com 匹配它的所有子域名，不含 example.com 本身。"))
+    max_task_upload_bytes: int = Field(default=20 * 1024 * 1024, gt=0, strict=True,
+                                       description="单任务经出网上传的字节上限。")
     max_task_bytes: int = Field(default=500 * 1024 * 1024, gt=0, strict=True)
     max_scene_daily_bytes: int = Field(default=2 * 1024 * 1024 * 1024, gt=0, strict=True)
     max_connections: int = Field(default=16, gt=0, strict=True)
     bytes_per_second: int = Field(default=8 * 1024 * 1024, gt=0, strict=True)
     connect_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     header_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def host_patterns(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if _HOST_PATTERN.fullmatch(value) is None:
+                raise ValueError(f"{value!r} must be a lowercase domain name or *.domain, without scheme, port or path")
+        if len(values) != len(set(values)):
+            raise ValueError("allowed_hosts must not repeat")
+        return values
+
+    @property
+    def enabled(self) -> bool:
+        """Whether tasks get the egress proxy at all."""
+        return self.mode != "off"
 
 
 class WorkerSettings(BaseModel):
@@ -68,17 +94,29 @@ class WorkerSettings(BaseModel):
     max_file_bytes: int = Field(default=25 * 1024 * 1024, gt=0, strict=True)
     max_delivery_bytes: int = Field(default=500 * 1024 * 1024, gt=0, strict=True)
     max_workspace_bytes: int = Field(default=2 * 1024 * 1024 * 1024, gt=0, strict=True,
-                                     description="单任务写入文件的大小上限；本机沙箱用作单个文件的硬上限。")
+                                     description="单任务工作区与运行目录的合计上限，超过时停止任务；本机沙箱另用作单个文件的硬上限。")
+    disk_reserve_bytes: int = Field(default=5 * 1024 * 1024 * 1024, gt=0, strict=True,
+                                    description="任务目录所在磁盘剩余空间低于此值时不接新任务，已排队的任务等空间恢复。")
+    disk_stop_bytes: int = Field(default=2 * 1024 * 1024 * 1024, gt=0, strict=True,
+                                 description="剩余空间低于此值时停止运行中的任务。")
+    workspace_retention_days: float = Field(default=14.0, gt=0, allow_inf_nan=False,
+                                            description="任务结束后保留工作区与运行目录的天数，到期删除；交付文件保留。")
+    storage_check_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False,
+                                         description="检查任务目录大小、磁盘余量和到期工作区的间隔。")
     input_support: Literal["text", "text-image"] = "text"
     model_reasoning: bool
     egress: EgressSettings = Field(default_factory=EgressSettings)
-    public_browser: bool = False
     mcp: bool = False
 
+    @property
+    def public_browser(self) -> bool:
+        """The browser reaches websites only through the egress proxy, so it follows the network mode."""
+        return self.egress.enabled
+
     @model_validator(mode="after")
-    def browser_requires_proxy(self) -> WorkerSettings:
-        if self.public_browser and not self.egress.enabled:
-            raise ValueError("worker.public_browser requires worker.egress.enabled")
+    def disk_thresholds(self) -> WorkerSettings:
+        if self.disk_stop_bytes >= self.disk_reserve_bytes:
+            raise ValueError("worker.disk_stop_bytes must be below worker.disk_reserve_bytes")
         return self
 
     @model_validator(mode="after")
