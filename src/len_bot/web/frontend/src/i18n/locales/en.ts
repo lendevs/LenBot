@@ -875,6 +875,8 @@ export default {
         fixed: 'Fixed',
         meaning: 'Meaning',
         latest: 'Latest guess: ',
+        ordinary: 'Ordinary meaning: ',
+        sameAsOrdinary: 'Same as ordinary meaning',
         noMeaning: 'No guess yet; more examples needed',
         fix: 'Fix meaning',
         automatic: 'Back to learned meaning',

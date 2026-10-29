@@ -168,7 +168,7 @@ OneBot ────────────> 平台适配器 ──> 消息入�
 
 说法去重：没有向量时，同一说法且情境字词重合度不低于 0.6 的新候选并入已有说法；有向量时按余弦相似度 0.9 合并。
 
-黑话含义在同一整理结果中返回本群用法 `meaning`、通常含义 `ordinary_meaning`、是否相同 `same_meaning` 和 `confidence`。待审核的候选与通常含义相同时归入已拒绝，`latest_meaning` 记下原因和两种含义；原始结果保留在 `jargon_calls`。语境不足的候选以较低信心保留待审核。已采用的词出现次数跨过下一档时继续推断，只更新 `latest_meaning`，聊天时使用人工确认的含义。
+黑话含义在同一整理结果中返回本群用法 `meaning`、通常含义 `ordinary_meaning`、是否相同 `same_meaning` 和 `confidence`。待审核的候选与通常含义相同时归入已拒绝。每次推断的通常含义和比较结果记在对应的 `jargon_calls`，词条接口随最近一次推断返回 `ordinary_meaning` 和 `same_meaning`，学习页的已拒绝列表据此显示原因。语境不足的候选以较低信心保留待审核。已采用的词出现次数跨过下一档时继续推断，只更新 `latest_meaning`，聊天时使用人工确认的含义。
 
 `memory` 绑定只用于目录摘要，`learner` 绑定只供插件 `generate` 使用。
 

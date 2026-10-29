@@ -87,6 +87,9 @@ const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?
             <Badge v-if="item.status === 'adopted'" tone="brand">
               {{ t('groups.learning.jargon.fixed') }}
             </Badge>
+            <Badge v-else-if="item.status === 'rejected' && item.same_meaning">
+              {{ t('groups.learning.jargon.sameAsOrdinary') }}
+            </Badge>
           </div>
           <Field v-if="edits.editing(item.id)" :label="t('groups.learning.jargon.meaning')">
             <Input v-model="edits.draft(item.id).meaning" />
@@ -96,6 +99,12 @@ const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?
             <p class="text-sm break-words" :class="item.status === 'adopted' ? 'text-muted' : 'text-ink-2'">
               {{ t('groups.learning.jargon.latest')
               }}{{ item.latest_meaning || t('groups.learning.jargon.noMeaning') }}
+            </p>
+            <p
+              v-if="item.status === 'rejected' && item.same_meaning && item.ordinary_meaning"
+              class="text-sm break-words text-muted"
+            >
+              {{ t('groups.learning.jargon.ordinary') }}{{ item.ordinary_meaning }}
             </p>
           </template>
           <div class="flex flex-wrap items-center justify-end gap-2">

@@ -60,6 +60,9 @@ export interface JargonTerm {
   confidence: number | null
   meaning: string | null
   status: Review
+  /** The latest inference's ordinary sense of the word, and whether the group uses it that way. */
+  ordinary_meaning?: string | null
+  same_meaning?: boolean | null
 }
 
 export interface Sticker {

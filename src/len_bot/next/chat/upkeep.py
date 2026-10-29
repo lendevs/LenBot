@@ -655,7 +655,8 @@ class SessionUpkeep:
                 self.jargon.response(call_id, response, None, None)
                 item = meanings[term["term"]]
                 self.jargon.complete_meaning(call_id, item["meaning"], item["confidence"],
-                                             ordinary_meaning=item["ordinary_meaning"] if item["same_meaning"] else None)
+                                             ordinary_meaning=item["ordinary_meaning"],
+                                             same_meaning=item["same_meaning"])
         if begun.effect_call is not None:
             self.effects.response(begun.effect_call, response, None, None)
             # Samples the reply left out stay unjudged on this call.

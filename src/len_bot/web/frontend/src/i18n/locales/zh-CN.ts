@@ -853,6 +853,8 @@ export default {
         fixed: '已固定',
         meaning: '词义',
         latest: '最新推断：',
+        ordinary: '通常含义：',
+        sameAsOrdinary: '与通常含义相同',
         noMeaning: '暂无推断，用例积累中',
         fix: '固定词义',
         automatic: '恢复自动词义',
