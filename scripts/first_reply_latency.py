@@ -297,6 +297,8 @@ async def batches() -> dict:
         'different-speaker': [(0, 70001, 'text'), (0.6, 70002, 'text')],
         'several-speakers': [(0, 70001, 'text'), (0.6, 70002, 'text'), (1.2, 70003, 'text')],
         'at-cap': [(index * 0.8, 70001, 'text') for index in range(6)],
+        'interleaved-follow-up': [(0, 70001, 'text'), (0.3, 70002, 'text'), (0.6, 70001, 'text'), (1.2, 70001, 'text')],
+        'bystander-image': [(0, 70001, 'text'), (0.9, 70002, 'image')],
     }
     rows = []
     with tempfile.TemporaryDirectory() as folder:
@@ -340,10 +342,14 @@ async def batches() -> dict:
                                 raise RuntimeError(f'{channel}/{name} did not wake')
                             consumed.append(index)
                         wait = deadline - start
+                        # A cut batch leaves out a follow-up from someone already in it before the channel cap.
+                        speakers = {pattern[index][1] for index in consumed}
+                        cut = any(user in speakers and offset * idle < maximum
+                                  for offset, user, _ in pattern[len(consumed):])
                         rows.append({'channel': channel, 'case': name, 'arrivals': pattern,
                                      'idle_seconds': idle, 'maximum_seconds': maximum,
                                      'first_batch_seconds': round(wait, 3), 'consumed': consumed,
-                                     'cut': name == 'image-then-caption' and len(consumed) < len(pattern),
+                                     'cut': cut,
                                      'within_cap': wait <= maximum,
                                      'model_requests': store.db.execute('SELECT count(*) FROM model_calls').fetchone()[0]})
     return {'clock': 'synthetic arrivals after a seeded wake; offsets are multiples of channel idle seconds', 'rows': rows,

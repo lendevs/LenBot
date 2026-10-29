@@ -410,4 +410,9 @@ async def test_onebot_bursts_wait_for_image_caption_extend_same_speaker_and_keep
     assert rows['image-then-caption']['consumed'] == [0, 1]
     assert not rows['image-then-caption']['cut']
     assert rows['at-cap']['first_batch_seconds'] == maximum
+    # The waker's follow-ups keep extending across another speaker; a bystander's image does not.
+    assert rows['interleaved-follow-up']['consumed'] == [0, 1, 2, 3]
+    assert rows['interleaved-follow-up']['first_batch_seconds'] == pytest.approx(min(idle * 2.2, maximum))
+    assert rows['bystander-image']['first_batch_seconds'] == idle
+    assert not any(row['cut'] for row in rows.values())
     assert all(row['within_cap'] and row['model_requests'] == 0 for row in rows.values())

@@ -629,20 +629,23 @@ class SceneRunner:
         if wake.channel == "ambient":
             return max(wake.first_at, wake.first_at if self.state.ambient_last_at is None else
                        self.state.ambient_last_at + self.ambient_interval())
-        latest = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids)
         timing = 'focus' if wake.channel in {'attention', 'explore'} else wake.channel
         idle = getattr(self.settings, timing + "_idle_seconds")
         maximum = getattr(self.settings, timing + "_max_seconds")
         pending = [(message, at) for _, message, at in self.store.pending_messages(self.config.scene)
                    if at >= wake.first_at and not message.is_self
                    and (is_direct(message) or message.sender.uid not in self.settings.other_bot_ids)]
-        if pending:
-            latest = pending[0][1]
-            for (previous, _), (message, at) in zip(pending, pending[1:]):
-                if message.sender.uid == previous.sender.uid:
+        if not pending:
+            latest = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids)
+        else:
+            # A sender already in this batch extends the idle wait; a new voice keeps the current one.
+            speakers, latest = set(), pending[0][1]
+            for message, at in pending:
+                if message.sender.uid in speakers:
                     latest = at
-            last = pending[-1][0]
-            if (any(segment.type == 'image' for segment in last.segments)
+                speakers.add(message.sender.uid)
+            last, last_at = pending[-1]
+            if (last_at == latest and any(segment.type == 'image' for segment in last.segments)
                     and not plain_text(last).strip()
                     and all(segment.type in {'image', 'mention', 'reply', 'text'} for segment in last.segments)):
                 idle = min(maximum, idle * 2)
