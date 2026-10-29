@@ -400,13 +400,13 @@ class TaskStore:
         ).fetchall()
         return [TaskFile(**dict(row)) for row in rows]
 
-    def start_file_upload(self, file: TaskFile, platform_path: str) -> int:
-        """Persist the actual upload attempt before the platform call begins."""
+    def start_file_upload(self, file: TaskFile, sha256: str) -> int:
+        """Persist the actual upload attempt, with the digest of the bytes sent, before the platform call begins."""
         return self.add_event(file.scene, file.task_id, "file_upload", {
             "file_id": file.id,
             "name": file.name,
             "size": file.size,
-            "platform_path": platform_path,
+            "sha256": sha256,
             "status": "unconfirmed",
             "error": "尚未记录可靠平台回执",
             "platform_file_id": None,

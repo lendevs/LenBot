@@ -220,7 +220,6 @@ class OneBotPublic(BaseModel):
     ping_interval_seconds: float
     ping_timeout_seconds: float
     max_frame_bytes: int
-    upload_visible_root: str | None = None
 
 
 class ForwardPublic(OneBotPublic):
@@ -703,7 +702,6 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         return {"worker": saved.worker is not None, "running": running.worker is not None,
                 "sandbox": None if saved.worker is None else saved.worker.sandbox,
                 "delivery": saved.delivery,
-                "upload_visible_root": None if saved.onebot is None else saved.onebot.upload_visible_root,
                 "scenes": scenes}
 
     @app.post("/api/host/settings/worker/check", response_model=responses.SandboxCheck)

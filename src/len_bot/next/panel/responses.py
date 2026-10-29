@@ -177,7 +177,6 @@ class TaskReadiness(PanelResponse):
     running: bool
     sandbox: Literal['docker', 'bwrap'] | None
     delivery: str
-    upload_visible_root: str | None
     scenes: list[TaskSceneReadiness]
 
 

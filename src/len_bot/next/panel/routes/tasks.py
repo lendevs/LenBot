@@ -87,8 +87,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                             "network_today": None if service is None else service.egress.status(scene)}
                            for scene, chat in runtime.chats.items()],
                 "public_network": service is not None and service.settings.egress.enabled,
-                "file_upload": (runtime.config.delivery == "onebot" and service is not None
-                                and runtime.config.onebot.upload_visible_root is not None)}
+                "file_upload": runtime.config.delivery == "onebot" and service is not None}
 
     @app.get("/api/host/tasks", response_model=TaskPage)
     async def listing(scene: str, status: str = "active", offset: int = Query(0, ge=0),

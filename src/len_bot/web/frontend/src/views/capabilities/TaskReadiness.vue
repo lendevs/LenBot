@@ -100,16 +100,18 @@ const items = computed<Item[]>(() => {
         sample: value.running ? scene.scene : undefined,
       })
   }
+  const onebot = value.delivery === 'onebot'
   result.push({
     key: 'delivery',
     label: t('capabilities.worker.ready.delivery'),
-    state: value.delivery === 'onebot' && value.upload_visible_root ? 'ok' : 'neutral',
-    value:
-      value.delivery === 'simulated'
-        ? t('capabilities.worker.ready.simulated')
-        : (value.upload_visible_root ?? t('capabilities.worker.ready.sharedFiles')),
-    to: { name: 'host-system', query: { tab: 'connection' } },
-    action: t('capabilities.worker.ready.toConnection'),
+    state: onebot ? 'ok' : 'neutral',
+    value: t(`capabilities.worker.ready.${onebot ? 'onebot' : 'simulated'}`),
+    ...(onebot
+      ? {}
+      : {
+          to: { name: 'host-system', query: { tab: 'connection' } },
+          action: t('capabilities.worker.ready.toConnection'),
+        }),
   })
   return result
 })
