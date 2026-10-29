@@ -383,3 +383,10 @@ async def download_group_file(call: PlatformCall, group_id: str, file_id: str, b
                 if len(data) > max_bytes:
                     raise ValueError(f"群文件超过 worker.max_file_bytes：{len(data)} > {max_bytes}")
     return bytes(data)
+
+
+def group_file_fetch(call: PlatformCall, group_id: str):
+    """The delegate fetcher for one group's files: download by file_id and busid."""
+    async def fetch(item, max_bytes: int) -> bytes:
+        return await download_group_file(call, group_id, item.file_id, item.busid, max_bytes)
+    return fetch
