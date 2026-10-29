@@ -16,6 +16,9 @@ import os
 import re
 import shutil
 import stat
+import subprocess
+import sys
+import tarfile
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -172,7 +175,8 @@ async def copy_regular_out(workspace: Path, source: str, dest: Path, max_bytes: 
 
 def _docker_environment() -> dict[str, str]:
     # The daemon is fixed by DockerSettings, never by Docker environment.
-    names = ("PATH", "HOME", "TMPDIR")
+    # Docker Desktop's CLI on Windows also needs the system root and the user's profile directories.
+    names = ("PATH", "HOME", "TMPDIR", "SYSTEMROOT", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP")
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
@@ -245,6 +249,52 @@ def _copy_out(workspace: Path, source: str, dest: Path, max_bytes: int) -> None:
         directory.close()
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def _copy_through_docker(command: list[str], dest: Path, max_bytes: int) -> None:
+    """Publish the single regular file ``docker cp ... -`` writes as a tar stream."""
+    descriptor, name = tempfile.mkstemp(prefix=".lenbot-delivery-", dir=dest.parent)
+    temporary = Path(name)
+    try:
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=_docker_environment()) as process:
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    extract_regular_member(process.stdout, output, max_bytes)
+            except BaseException as error:
+                process.kill()
+                if detail := process.stderr.read().decode("utf-8", errors="replace").strip():
+                    error.add_note(f"docker cp stderr: {detail}")
+                raise
+            detail = process.stderr.read().decode("utf-8", errors="replace").strip()
+            if process.wait() != 0:
+                raise SandboxError(f"docker cp failed ({process.returncode}): {detail}")
+        os.link(temporary, dest)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def extract_regular_member(stream, output, max_bytes: int) -> int:
+    """Copy the only member of a tar stream, which must be a regular file of at most ``max_bytes``."""
+    try:
+        with tarfile.open(fileobj=stream, mode="r|") as archive:
+            member = archive.next()
+            if member is None or not member.isreg():
+                raise SandboxError("deliver_file source is not a regular file")
+            if member.size > max_bytes:
+                raise SandboxError(f"deliver_file exceeds {max_bytes} bytes")
+            source = archive.extractfile(member)
+            count = 0
+            while chunk := source.read(1024 * 1024):
+                count += len(chunk)
+                if count > max_bytes:
+                    raise SandboxError(f"deliver_file exceeds {max_bytes} bytes")
+                output.write(chunk)
+            if archive.next() is not None:
+                raise SandboxError("deliver_file source is not a regular file")
+    except tarfile.TarError as error:
+        raise SandboxError(f"docker cp did not return one file: {error}") from error
+    return count
 
 
 class DockerSandbox:
@@ -453,10 +503,21 @@ class DockerSandbox:
                     error.add_note(f"Pi RPC cleanup also failed: {cleanup_error}")
             raise
 
+    # Windows bind mounts cannot be walked by directory descriptor; the container resolves the path instead.
+    copy_through_docker = sys.platform == "win32"
+
     async def copy_out(self, sandbox: SandboxHandle, source: str, dest: Path, *,
                        max_bytes: int) -> None:
         """Copy a current task's regular out/ file without following symlinks."""
-        await copy_regular_out(sandbox.workspace, source, dest, max_bytes)
+        if not self.copy_through_docker:
+            await copy_regular_out(sandbox.workspace, source, dest, max_bytes)
+            return
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        path = "/workspace/out/" + "/".join(_source_parts(source))
+        command = [str(self.settings.docker_binary), "--host", self.settings.docker_host,
+                   "cp", f"{sandbox.container_id}:{path}", "-"]
+        await finish_file_operation(_copy_through_docker, command, dest, max_bytes)
 
     async def stop(self, sandbox: SandboxHandle) -> None:
         """Stop the whole container; keep workspace/home and clear current controls."""

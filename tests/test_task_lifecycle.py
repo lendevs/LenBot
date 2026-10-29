@@ -37,6 +37,7 @@ from len_bot.next.storage.store import Store
 from len_bot.next.work import service as service_module, worker_bridge
 from len_bot.next.work.bwrap import check_local_sandbox
 from len_bot.next.work.pi_rpc import PiRpc
+from len_bot.next.platform.identity import scene_directory
 from len_bot.next.work.sandbox import DockerSandbox, SandboxHandle
 from len_bot.next.work.service import WorkTasks
 from len_bot.next.work.store import TaskStore
@@ -53,14 +54,16 @@ LOGIN = {'status': 'ok', 'retcode': 0, 'data': {'user_id': 90001, 'nickname': '�
 class StandinSandbox(DockerSandbox):
     """Task directories and pipes as in a container, without Docker or isolation."""
 
+    copy_through_docker = False
+
     def __init__(self, settings):
         super().__init__(settings)
         self.active: set[str] = set()
         self.reconciled: list[str] = []
 
     async def ensure(self, scene, task_id, *, skills=(), input_names=(), on_container=None):
-        workspace = self.settings.workspace_root / scene / 'tasks' / task_id
-        runtime = self.settings.runtime_root / scene / task_id
+        workspace = self.settings.workspace_root / scene_directory(scene) / 'tasks' / task_id
+        runtime = self.settings.runtime_root / scene_directory(scene) / task_id
         for directory in (workspace / 'out', workspace / '.pi-sessions', runtime / 'home' / '.pi' / 'agent',
                           runtime / 'control'):
             directory.mkdir(parents=True, exist_ok=True)
@@ -109,7 +112,7 @@ class StandinSandbox(DockerSandbox):
     async def stop_recorded(self, scene, task_id, container):
         self.active.discard(container)
         self.reconciled.append(container)
-        control = self.settings.runtime_root / scene / task_id / 'control'
+        control = self.settings.runtime_root / scene_directory(scene) / task_id / 'control'
         if control.exists():
             shutil.rmtree(control)
 
@@ -436,7 +439,7 @@ async def test_restart_keeps_queue_interrupts_active_work_and_continues_the_same
 
     async with task_host(config, crashed) as tasks:
         assert getattr(tasks.sandbox, 'reconciled', [container]) == [container]
-        assert not (config.worker.runtime_root / SCENE / str(active) / 'control').exists()
+        assert not (config.worker.runtime_root / scene_directory(SCENE) / str(active) / 'control').exists()
         interrupted = tasks.status(SCENE, active)
         assert interrupted['status'] == 'failed' and '须显式继续' in interrupted['error']
         assert (await reached(tasks, queued, 'done', 'failed'))['status'] == 'done'
@@ -448,7 +451,7 @@ async def test_restart_keeps_queue_interrupts_active_work_and_continues_the_same
         done = await reached(tasks, active, 'done', 'failed')
         assert done['status'] == 'done', done['error']
         assert '第2次执行' in done['summary'] and len(done['files']) == 1
-        session = config.worker.workspace_root / SCENE / 'tasks' / str(active) / 'session.jsonl'
+        session = config.worker.workspace_root / scene_directory(SCENE) / 'tasks' / str(active) / 'session.jsonl'
         prompts = [json.loads(line)['prompt'] for line in session.read_text(encoding='utf-8').splitlines()]
         assert len(prompts) == 2 and '继续并交付' in prompts[1] and '继续并交付' not in prompts[0]
 
@@ -459,7 +462,7 @@ async def test_local_sandbox_denies_paths_and_networks_outside_the_task(tmp_path
         pytest.skip('only an isolating sandbox can deny these')
     port, received = upstream
     config = host_config(tmp_path, port, environment)
-    neighbour = config.worker.workspace_root / OTHER_SCENE / 'tasks' / '1' / 'out' / 'secret.txt'
+    neighbour = config.worker.workspace_root / scene_directory(OTHER_SCENE) / 'tasks' / '1' / 'out' / 'secret.txt'
     neighbour.parent.mkdir(parents=True)
     neighbour.write_text('其他群的产物')
     (tmp_path / 'lenbot.config.json').write_text('{"models": "synthetic-secret"}')
@@ -602,10 +605,10 @@ async def test_expired_workspace_is_removed_and_its_delivery_kept(tmp_path, upst
     async with task_host(config, config.database) as tasks:
         id = await delegate(tasks, '交付后到期 [交付]')
         done = await reached(tasks, id, 'done', 'failed')
-        workspace = config.worker.workspace_root / SCENE / 'tasks' / str(id)
+        workspace = config.worker.workspace_root / scene_directory(SCENE) / 'tasks' / str(id)
         await until(lambda: 'workspace_discard_result' in event_kinds(tasks, id), 10)
         [file] = TaskStore(tasks.store).list_files(SCENE, id)
         with pytest.raises(ValueError, match='工作环境已释放'):
             await tasks.resume(SCENE, id, requester=WHITELISTED, text='继续')
     assert done['status'] == 'done' and not workspace.exists()
-    assert not (config.worker.runtime_root / SCENE / str(id)).exists() and Path(file.path).is_file()
+    assert not (config.worker.runtime_root / scene_directory(SCENE) / str(id)).exists() and Path(file.path).is_file()

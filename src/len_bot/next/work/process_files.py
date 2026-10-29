@@ -16,7 +16,8 @@ def open_stderr(path: Path):
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ValueError(f"Task stderr must be a regular file: {path}")
-        os.set_blocking(descriptor, True)
+        if NONBLOCK:
+            os.set_blocking(descriptor, True)
         return os.fdopen(descriptor, "ab")
     except BaseException:
         os.close(descriptor)

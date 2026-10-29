@@ -5,6 +5,7 @@ script: run a shell command, ask the requester, deliver the file, then finish.
 Everything else is the task service, the sandbox and Pi as deployed: a worker
 image under Docker, or a task runtime (``build_task_runtime.py``) under bwrap.
 ``--network-probe`` adds a curl step in allowlist mode with only example.com listed.
+``--copy-through-docker`` reads the delivery with ``docker cp`` as on Windows.
 """
 
 import argparse
@@ -20,6 +21,7 @@ import tempfile
 
 from len_bot.next.config import HostConfig
 from len_bot.next.storage.store import Store
+from len_bot.next.work.sandbox import DockerSandbox
 from len_bot.next.work.service import WorkTasks
 from len_bot.next.work.store import TaskStore
 
@@ -193,7 +195,10 @@ def main() -> None:
     parser.add_argument('--task-runtime', type=Path, help='directory built by build_task_runtime.py')
     parser.add_argument('--network-probe', nargs='?', const='{}', metavar='NETWORK_JSON',
                         help="add the allowlist curl step; optional JSON of this machine's network settings")
+    parser.add_argument('--copy-through-docker', action='store_true', help='read the delivery as on Windows')
     arguments = parser.parse_args()
+    if arguments.copy_through_docker:
+        DockerSandbox.copy_through_docker = True
     if arguments.sandbox == 'docker':
         if arguments.docker is None:
             sys.exit('docker CLI not found; pass --docker')
