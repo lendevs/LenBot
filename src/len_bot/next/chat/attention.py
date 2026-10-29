@@ -70,6 +70,8 @@ class WakeVerdict:
     score: float | None = None
     threshold: float | None = None
     effect_factor: float | None = None
+    # Terms of the participation score, see participation_parts; None when no score was computed.
+    parts: dict | None = None
 
 
 @dataclass
@@ -141,41 +143,52 @@ def open_for_ambient(state: AttentionState) -> bool:
     return state.pending is None or state.pending.channel == 'explore'
 
 
-def participation_score(pending: list[tuple[ChatMessage, float]],
-                        recent: list[tuple[ChatMessage, float]], config: Attention, bot_id: str) -> float:
+PART_NAMES = ('base', 'question', 'help', 'filler', 'no_text', 'other_bots', 'self_share', 'gap')
+
+
+def participation_parts(pending: list[tuple[ChatMessage, float]],
+                        recent: list[tuple[ChatMessage, float]], config: Attention, bot_id: str) -> dict:
+    """Each term of the participation score; ``raw`` is their sum, before ``activity`` and the effect factor."""
     humans = [(message, at) for message, at in pending
               if not message.is_self and message.sender.uid not in config.other_bot_ids]
-    if not humans:
-        return 0.0
-    texts = [plain_text(message).strip() for message, _ in humans]
-    substantial = [text for text in texts if text.strip(" ?？!！。~") not in REACTIONS]
-    # A question put to a particular member is theirs to answer.
-    open_texts = [text for (message, _), text in zip(humans, texts)
-                  if text.strip(" ?？!！。~") not in REACTIONS and not addressed_to_others(message, bot_id)]
-    score = 0.2 + min(len(humans) / 10, 2.0)
-    if any(("?" in text or "？" in text) and len(re.sub(r"[\W_]", "", text)) >= 3
-           for text in open_texts):
-        score += 1.0
-    if any(HELP.search(text) for text in open_texts):
-        score += 1.0
-    if not substantial:
-        score -= 0.8
-    if not any(texts):
-        score -= 0.7
-    other_targets = sum(any(segment.type == "mention" and str(segment.data["user"]) in config.other_bot_ids
-                            for segment in message.segments) for message, _ in humans)
-    score -= other_targets / len(humans)
-    sample = [(message, at) for message, at in recent
-              if message.is_self or message.sender.uid not in config.other_bot_ids]
-    if sample:
-        score -= 1.5 * sum(message.is_self and message.send_status != "failed"
-                           for message, _ in sample) / len(sample)
-    times = [at for message, at in sample if not message.is_self]
-    if len(times) >= 3:
-        prior_gaps = [later - earlier for earlier, later in zip(times[:-2], times[1:-1])]
-        if times[-1] - times[-2] > sum(prior_gaps) / len(prior_gaps):
-            score += 0.5
-    return max(0.0, score) * config.activity
+    parts = {'messages': len(humans), **{name: 0.0 for name in PART_NAMES}}
+    if humans:
+        texts = [plain_text(message).strip() for message, _ in humans]
+        substantial = [text for text in texts if text.strip(" ?？!！。~") not in REACTIONS]
+        # A question put to a particular member is theirs to answer.
+        open_texts = [text for (message, _), text in zip(humans, texts)
+                      if text.strip(" ?？!！。~") not in REACTIONS and not addressed_to_others(message, bot_id)]
+        parts['base'] = 0.2 + min(len(humans) / 10, 2.0)
+        if any(("?" in text or "？" in text) and len(re.sub(r"[\W_]", "", text)) >= 3
+               for text in open_texts):
+            parts['question'] = 1.0
+        if any(HELP.search(text) for text in open_texts):
+            parts['help'] = 1.0
+        if not substantial:
+            parts['filler'] = -0.8
+        if not any(texts):
+            parts['no_text'] = -0.7
+        other_targets = sum(any(segment.type == "mention" and str(segment.data["user"]) in config.other_bot_ids
+                                for segment in message.segments) for message, _ in humans)
+        parts['other_bots'] = -other_targets / len(humans)
+        sample = [(message, at) for message, at in recent
+                  if message.is_self or message.sender.uid not in config.other_bot_ids]
+        if sample:
+            parts['self_share'] = -1.5 * sum(message.is_self and message.send_status != "failed"
+                                             for message, _ in sample) / len(sample)
+        times = [at for message, at in sample if not message.is_self]
+        if len(times) >= 3:
+            prior_gaps = [later - earlier for earlier, later in zip(times[:-2], times[1:-1])]
+            if times[-1] - times[-2] > sum(prior_gaps) / len(prior_gaps):
+                parts['gap'] = 0.5
+    parts['raw'] = sum(parts[name] for name in PART_NAMES)
+    parts['activity'] = config.activity
+    return parts
+
+
+def participation_score(pending: list[tuple[ChatMessage, float]],
+                        recent: list[tuple[ChatMessage, float]], config: Attention, bot_id: str) -> float:
+    return max(0.0, participation_parts(pending, recent, config, bot_id)['raw']) * config.activity
 
 
 class SceneRunner:
@@ -470,17 +483,18 @@ class SceneRunner:
             for match in matches:
                 log_event(logger, 'attention_candidate', **match, mode=settings.mode)
 
-        def offered(wake: PendingWake, reason: str, factor: float | None = None) -> WakeVerdict:
+        def offered(wake: PendingWake, reason: str, factor: float | None = None,
+                    parts: dict | None = None) -> WakeVerdict:
             previous = None if state.pending is None else state.pending.channel
             state.offer(wake)
             threshold = self.settings.ambient_threshold if wake.channel in {'ambient', 'explore'} else None
             if state.paused:
-                return WakeVerdict(False, None, '群聊已暂停', wake.score, threshold, factor)
+                return WakeVerdict(False, None, '群聊已暂停', wake.score, threshold, factor, parts)
             if self.quiet_period(at) is not None and self.quiet_direct(at) != 'allow':
-                return WakeVerdict(False, None, '安静时段，不开启对话回合', wake.score, threshold, factor)
+                return WakeVerdict(False, None, '安静时段，不开启对话回合', wake.score, threshold, factor, parts)
             if previous is not None and PRIORITY[previous] <= PRIORITY[wake.channel]:
-                return WakeVerdict(False, None, '本轮已有待处理唤醒', wake.score, threshold, factor)
-            return WakeVerdict(True, wake.channel, reason, wake.score, threshold, factor)
+                return WakeVerdict(False, None, '本轮已有待处理唤醒', wake.score, threshold, factor, parts)
+            return WakeVerdict(True, wake.channel, reason, wake.score, threshold, factor, parts)
 
         if is_direct(message):
             state.contact(at, self.settings.focus_seconds)
@@ -511,23 +525,24 @@ class SceneRunner:
             if self.local_allows(state, 'focus', message, at):
                 return offered(PendingWake('focus', at), '持续对话')
             local_blocked = True
-        score = factor = None
+        score = factor = parts = None
         if open_for_ambient(state):
             if self.settings.activity > 0:
                 factor = self.effect_factor()
-                score = participation_score(pending, recent, self.settings, self.config.bot_id) * factor
+                parts = participation_parts(pending, recent, self.settings, self.config.bot_id)
+                score = max(0.0, parts['raw']) * self.settings.activity * factor
             if score is not None and score > self.settings.ambient_threshold:
                 if self.local_allows(state, 'ambient', message, at):
                     log_event(logger, 'attention_ambient', score=score, threshold=self.settings.ambient_threshold,
                               effect_factor=factor, message_id=message.platform_message_id)
-                    return offered(PendingWake('ambient', at, score=score), '参与分超过门槛', factor)
+                    return offered(PendingWake('ambient', at, score=score), '参与分超过门槛', factor, parts)
                 local_blocked = True
             if state.pending is None and self.settings.explore_probability > 0:
                 woke = self.random.random() < self.settings.explore_probability
                 log_event(logger, 'attention_explore', woke=woke, probability=self.settings.explore_probability,
                           score=score, message_id=message.platform_message_id)
                 if woke:
-                    return offered(PendingWake('explore', at, score=score, explored=True), '随机探索命中', factor)
+                    return offered(PendingWake('explore', at, score=score, explored=True), '随机探索命中', factor, parts)
         if local_blocked:
             reason = '局部收尾不允许'
         elif not open_for_ambient(state):
@@ -539,7 +554,7 @@ class SceneRunner:
         else:
             reason = '参与分未达门槛'
         return WakeVerdict(False, None, reason, score,
-                           self.settings.ambient_threshold if score is not None else None, factor)
+                           self.settings.ambient_threshold if score is not None else None, factor, parts)
 
     def receive(self, raw: dict, *, ignore_other_scenes: bool = False) -> dict:
         message = parse_message(raw, own_message_ids=set())

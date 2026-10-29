@@ -14,6 +14,26 @@
 
 `uv run --no-sync python scripts/first_reply_latency.py batches` 用固定 OneBot 到达序列核对图片后补文字、同一人续发、换人、隔着别人续发、旁人发图和上限；`report <数据库>` 读取实际回合的首句等待与合批、模型、工具、发送耗时。
 
+## 唤醒判定记录
+
+每条收到的消息在 `messages.wake_verdict` 里保存一次判定：`woke`、`channel`、`reason`、`score`、`threshold`、`effect_factor` 和 `parts`。算过参与分时 `parts` 记录各项分量，没算时为 `null`：
+
+| 字段 | 含义 |
+|---|---|
+| `messages` | 参与计算的待处理群友消息条数 |
+| `base` | `0.2 + min(条数 / 10, 2)` |
+| `question` | 有未指定对象、至少 3 个字的问句时为 `1` |
+| `help` | 有未指定对象的求助词时为 `1` |
+| `filler` | 全部为水话时为 `-0.8` |
+| `no_text` | 全部没有文字时为 `-0.7` |
+| `other_bots` | `@` 其他 Bot 的消息占比的相反数 |
+| `self_share` | 最近消息中 Bot 自身发言占比乘 `-1.5` |
+| `gap` | 最新一条与上一条的间隔大于此前平均间隔时为 `0.5` |
+| `raw` | 以上八项之和 |
+| `activity` | 当时的 `attention.activity` |
+
+`score = max(0, raw) × activity × effect_factor`。现场时间线的唤醒详情列出非零分量。
+
 ## 配置
 
 在群的 `attention` 中配置，或在隔离实例根配置的 `attention` 中配置：
