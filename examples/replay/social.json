@@ -228,6 +228,99 @@
       "image_materials": "social-images.json"
     },
     {
+      "id": "listen-named-excluded",
+      "set": "social",
+      "expect": [
+        "被点名但对方说明不用回答，不开口。"
+      ],
+      "social": {
+        "category": "listen",
+        "speak": false,
+        "answer_patterns": [],
+        "absent_patterns": [
+          "1000",
+          "一千"
+        ],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "listen-named-excluded-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "小然先别回答哈，我考考小满：一升水等于多少毫升？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "listen-named-redirect",
+      "set": "social",
+      "expect": [
+        "被点名后对方改问别人，不开口。"
+      ],
+      "social": {
+        "category": "listen",
+        "speak": false,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "listen-named-redirect-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "小然在吗？算了没事，我直接问小满。小满，周六几点集合？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
       "id": "join-public",
       "set": "social",
       "expect": [
@@ -678,6 +771,112 @@
                 "type": "text",
                 "data": {
                   "text": "笑死，我把作业文件改名成最终版最终版2又交错了。发张冒汗的无奈表情吐槽我吧"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "sticker-context-received",
+      "set": "social",
+      "expect": [
+        "按确认收到的语境发出带对勾的表情。"
+      ],
+      "social": {
+        "category": "sticker",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": [
+          "02.png"
+        ]
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "sticker-context-received-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "报名表交上去了，你收到的话回个表情就行，不用打字"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "sticker-context-celebrate",
+      "set": "social",
+      "expect": [
+        "按庆祝的语境发出咧嘴笑脸。"
+      ],
+      "social": {
+        "category": "sticker",
+        "speak": true,
+        "answer_patterns": [],
+        "absent_patterns": [],
+        "sticker_files": [
+          "01.png"
+        ]
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "sticker-context-celebrate-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "驾照考过了！！！回个表情陪我庆祝一下"
                 }
               }
             ]

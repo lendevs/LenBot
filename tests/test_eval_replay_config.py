@@ -262,8 +262,8 @@ def test_public_social_cases_keep_expected_speech_and_protocol_inputs():
     cases = load_cases(path, set_name='social', scene=SCENE, bot_id='onebot:90002')
     assert {case.social.category for case in cases.cases} == {
         'listen', 'join', 'accuracy', 'expression', 'sticker', 'preference'}
-    assert sum(not case.social.speak for case in cases.cases) == 3
-    assert sum(bool(case.social.sticker_files) for case in cases.cases) == 3
+    assert sum(not case.social.speak for case in cases.cases) == 5
+    assert sum(bool(case.social.sticker_files) for case in cases.cases) == 5
 
 
 def test_social_expectation_rejects_unknown_metric_configuration(tmp_path):
