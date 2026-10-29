@@ -320,7 +320,7 @@ class MemoryService:
         for profile in profiles:
             sections = split_sections(profile.content)
             preferences = [section for section in sections if section.heading
-                           and section.heading[-1] == '相处偏好与雷点']
+                           and section.heading[-1].startswith('相处偏好')]
             if not preferences:
                 append("scene", profile.path, profile.content, per_profile)
                 continue

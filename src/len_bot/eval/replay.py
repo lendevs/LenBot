@@ -34,6 +34,8 @@ from ..next.models.tokens import token_summary
 from ..next.storage.store import FORMAT_VERSION, encode, turn_record
 
 
+# Counted in social replies: narrated reactions and stock comfort that read as an assistant.
+ASSISTANT_PHRASES = ('记在小本本', '这话我认', '接住', '一定会好起来', '你已经很棒', '加油哦')
 LOCAL_TOOLS = {"say", "wait", "recall_chat", "schedule", "schedule_list", "schedule_cancel",
                "knowledge", "tool_search", "react", "scene_control", "memory", "web_read", "web_search", "look",
                "attention", "end_turn"}
@@ -457,7 +459,7 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
                                   after_turn=after_turn, after_call=after_call,
                                   after_embedding_call=after_embedding_call, memory_baseline=memory_baseline)}
     if case.social is not None and result['database'] is not None:
-        with sqlite3.connect((directory / 'chat.sqlite3').as_uri() + '?mode=ro', uri=True) as db:
+        with closing(sqlite3.connect((directory / 'chat.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
             messages = [json.loads(row[0]) for row in db.execute(
                 "SELECT body FROM messages WHERE scene=? AND seq>? AND json_extract(body,'$.is_self')=1 "
                 "AND json_extract(body,'$.send_status') IN ('sent','simulated') ORDER BY seq", (config.scene, after_message))]
@@ -467,7 +469,6 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
                     if segment['type'] == 'image']
         expected = case.social
         spoke = bool(messages)
-        markers = ['记在小本本', '这话我认', '接住', '一定会好起来', '你已经很棒', '加油哦']
         wait = next((turn['first_expression_at'] - turn['wake_received_at'] for turn in result['turns']
                      if turn['first_expression_at'] is not None and turn['wake_received_at'] is not None), None)
         result['social'] = {
@@ -476,8 +477,8 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
             'missed_reply': expected.speak and not spoke,
             'answer_correct': all(re.search(pattern, text) is not None for pattern in expected.answer_patterns)
                               and not any(re.search(pattern, text) for pattern in expected.absent_patterns),
-            'ai_phrases': {phrase: text.count(phrase) for phrase in markers if phrase in text},
-            'ai_phrase_count': sum(text.count(phrase) for phrase in markers),
+            'ai_phrases': {phrase: text.count(phrase) for phrase in ASSISTANT_PHRASES if phrase in text},
+            'ai_phrase_count': sum(text.count(phrase) for phrase in ASSISTANT_PHRASES),
             'sticker_match': (None if not expected.sticker_files else bool(stickers)
                               and all(any(name in summary for name in expected.sticker_files) for summary in stickers)),
             'stickers': stickers, 'reply': text, 'first_reply_seconds': wait,
