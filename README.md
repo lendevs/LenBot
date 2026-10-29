@@ -1,38 +1,107 @@
-<p align="center"><img src="website/public/brand/lenbot-banner.png" alt="LenBot：自主决策的群聊 Agent" width="860"></p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/hero.dark.svg">
+  <img src="website/public/readme/hero.svg" alt="LenBot：自主决策的群聊 Agent" width="100%">
+</picture>
 
 <p align="center">
-  <a href="README.en.md">English</a> ·
-  <a href="https://lendevs.github.io/LenBot/">文档站</a> ·
-  <a href="https://lendevs.github.io/LenBot/guide/quick-start">快速开始</a> ·
+  <a href="https://lendevs.github.io/LenBot/"><b>文档</b></a> ·
+  <a href="https://lendevs.github.io/LenBot/start/quick-start">快速开始</a> ·
   <a href="https://lendevs.github.io/LenBot/develop/personas">写角色包</a> ·
-  <a href="https://lendevs.github.io/LenBot/develop/plugins">写插件</a>
+  <a href="https://lendevs.github.io/LenBot/develop/plugins">写插件</a> ·
+  <a href="README.en.md">English</a>
 </p>
 
 <p align="center">
+  <a href="https://github.com/lendevs/LenBot/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/lendevs/LenBot?include_prereleases&color=b4476a&label=release"></a>
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-b4476a">
   <img alt="Python" src="https://img.shields.io/badge/python-3.13%2B-b4476a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由同一个聊天模型在多步工具循环中决定。接入 QQ（OneBot v11），只需要一个聊天模型和它的 API Key。
+**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由同一个聊天模型在多步工具循环中决定。接入 QQ（OneBot v11），需要一个聊天模型和它的 API Key。
 
-<img src="website/public/screenshots/live.gif" alt="群聊现场：群友 @ Bot 后，回合卡片逐步展开，先查询聊天记录，再分两条回复" width="860">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.dark.svg">
+  <img src="website/public/readme/turn.svg" alt="小满在群里 @ 小然问周六带什么零食，小然先查询聊天记录，再分两条回复" width="100%">
+</picture>
 
-<sub>面板的群聊现场实时显示每一个回合：查询了哪些聊天记录、每一步的想法、最后发出的消息。录屏来自演示实例。</sub>
+## 能力
 
-## 特点
+<p align="center">
+  <a href="https://lendevs.github.io/LenBot/use/chatting"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/listen.dark.svg"><img src="website/public/readme/listen.svg" alt="何时开口" width="49%"></picture></a>
+  <a href="https://lendevs.github.io/LenBot/connect/web"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/lookup.dark.svg"><img src="website/public/readme/lookup.svg" alt="先查再答" width="49%"></picture></a>
+  <a href="https://lendevs.github.io/LenBot/use/tasks"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/follow.dark.svg"><img src="website/public/readme/follow.svg" alt="定时提醒" width="49%"></picture></a>
+  <a href="https://lendevs.github.io/LenBot/use/memory"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/memory.dark.svg"><img src="website/public/readme/memory.svg" alt="长期记忆" width="49%"></picture></a>
+  <a href="https://lendevs.github.io/LenBot/use/personas"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/persona.dark.svg"><img src="website/public/readme/persona.svg" alt="角色包" width="49%"></picture></a>
+  <a href="https://lendevs.github.io/LenBot/use/plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/plugin.dark.svg"><img src="website/public/readme/plugin.svg" alt="Python 插件" width="49%"></picture></a>
+</p>
 
-- **统一的决策回合**：唤醒后，判断、查询和回复由同一个聊天模型在一个工具循环中完成。保持沉默、继续旁听同样是模型的决定。
+- **一个决策回合**：唤醒后，判断、查询和回复在同一个工具循环中完成，保持沉默、继续旁听也是模型的选择。
 - **先查证再回答**：按需搜索网页、读取正文、查询聊天记录与长期记忆、检索角色和本群资料、识别图片、读取合并转发，也可接入 MCP（Model Context Protocol，模型上下文协议）服务。
-- **主动跟进与后台任务**：模型可以为群友创建提醒，为自己登记持续关注的事项，或把耗时工作委托给隔离容器中的后台任务。
-- **记忆、资料与学习**：记忆以 Markdown 文件按群保存在本地，角色与群文件支持全文和向量混合检索。群内空闲时，聊天模型沿用同一会话前缀整理记忆，并学习群内的说法、黑话和回复效果，复用服务商的提示词缓存。
-- **角色包**：角色包至少包含名字和人物设定，也可附带说话方式、轮换风格、样例、设定资料与表情库。各群独立绑定角色，切换无需重启。
-- **插件**：用 Python 添加命令、定时播报、模型工具或自定义长期记忆实现，按群启用，支持同进程运行或独立进程隔离。
-- **网页面板**：首次配置、日常设置、草稿试聊、用量统计和回合诊断都在网页面板中完成。
+- **主动跟进**：模型可以为群友创建提醒、登记持续关注的事项，或把耗时工作交给隔离容器中的后台任务。
+- **记忆与学习**：记忆以 Markdown 文件按群保存在本地。群内空闲时，聊天模型沿用同一会话前缀整理记忆，学习群内的说法、黑话和回复效果。
+- **角色包**：名字和人物设定即可组成一个角色，也可附带说话方式、轮换风格、样例、资料与表情库。各群独立绑定角色，切换无需重启。
+- **插件**：用 Python 添加命令、定时播报、模型工具或长期记忆实现，按群启用，可在同进程或独立进程中运行。
+
+## 对话测试
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/playground.dark.svg">
+  <img src="website/public/readme/playground.svg" alt="对话测试页：依次以老周、橘子、小满的身份发言，小然在左侧回复，右侧列出每个回合" width="100%">
+</picture>
+
+面板的对话测试在隔离实例中模拟一个群：添加群友、选择发言身份、复制群内最近的消息作为初始上下文。回合与真实群聊相同，回复只显示在面板中。[对话测试 →](https://lendevs.github.io/LenBot/start/playground)
 
 ## 快速开始
 
-需要 [uv](https://docs.astral.sh/uv/)、Node.js 22、一个已登录 QQ 的 OneBot v11 实现（例如 [NapCat](https://github.com/NapNeko/NapCatQQ)）和聊天模型服务的 API Key。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/setup.dark.svg">
+  <img src="website/public/readme/setup.svg" alt="四步：选择部署方式、首次配置、模拟群聊、接入群聊" width="100%">
+</picture>
+
+准备一个已登录 QQ 的 OneBot v11 实现（例如 [NapCat](https://github.com/NapNeko/NapCatQQ)）和聊天模型服务的 API Key，再选一种部署方式：
+
+| 部署方式 | 运行环境 | 文档 |
+|---|---|---|
+| Docker | Docker Engine 或 Docker Desktop，Compose v2 | [Docker 部署](https://lendevs.github.io/LenBot/start/docker) |
+| 部署包 | Linux、macOS、Windows，需要 [uv](https://docs.astral.sh/uv/) | [部署包](https://lendevs.github.io/LenBot/start/package) |
+| 源码 | uv 与 Node.js 22，跟随 `master` 开发 | [源码运行](https://lendevs.github.io/LenBot/start/source) |
+
+<details>
+<summary><b>Docker</b></summary>
+
+```sh
+mkdir lenbot && cd lenbot
+docker run --rm --entrypoint python \
+  -v "$PWD:/deployment" -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/lendevs/lenbot-updater:0.2.0 /opt/lenbot-updater/init.py --version 0.2.0
+docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
+  -f host.updater.compose.yaml up -d
+docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
+  -f host.updater.compose.yaml logs lenbot
+```
+
+</details>
+
+<details>
+<summary><b>部署包</b></summary>
+
+从 [Releases](https://github.com/lendevs/LenBot/releases/latest) 下载对应平台的部署包，解压后在包目录中执行：
+
+```sh
+./install.sh install "$HOME/lenbot"
+"$HOME/lenbot/run"
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 install "$env:USERPROFILE\lenbot"
+& "$env:USERPROFILE\lenbot\run.cmd"
+```
+
+</details>
+
+<details>
+<summary><b>源码</b></summary>
 
 ```sh
 git clone https://github.com/lendevs/LenBot.git
@@ -41,26 +110,24 @@ cd LenBot
 uv run --no-sync len-bot
 ```
 
-首次启动时，终端输出一次性配置链接。在浏览器中打开，按五步向导设置管理员账号、连接 QQ、填写主人账号、选择聊天模型和角色。发送方式可先选模拟发送，在面板的**对话测试**中验证效果后，再从**总览**切换为发送到 QQ。
+</details>
 
-完整安装方式与日常运营说明见[快速开始](https://lendevs.github.io/LenBot/guide/quick-start)。
+首次启动时，终端或容器日志输出一次性配置链接。打开后按五步向导设置面板账号、连接 QQ、填写主人账号、选择聊天模型和角色，进入面板后在对话测试中试聊，再到总览把发送方式切换为发送到 QQ。
 
-<img src="website/public/screenshots/home.png" alt="面板总览" width="860">
+<img src="website/public/screenshots/home.png" alt="面板总览" width="100%">
 
-## 文档导航
+## 文档
 
-| 读者与用途 | 入口 |
+| 用途 | 入口 |
 |---|---|
-| 部署与日常运营 | [文档站指南](https://lendevs.github.io/LenBot/guide/introduction) |
+| 部署、接入与日常使用 | [文档站](https://lendevs.github.io/LenBot/) |
 | 编写角色包 | [写角色包](https://lendevs.github.io/LenBot/develop/personas)、[示例角色小然](examples/personas/companion/) |
 | 编写插件 | [写插件](https://lendevs.github.io/LenBot/develop/plugins)、[插件接口 v1](developer/plugins-v1.md)、[插件模板](https://github.com/lendevs/lenbot-plugin-template) |
 | 部署包、容器配方与本机运维 | [部署资料](deploy/README.md) |
 | 核心架构与模块说明 | [开发者文档](developer/README.md) |
 | 参与核心开发 | [CONTRIBUTING](CONTRIBUTING.md) |
 
-## 状态
-
-LenBot 仍在开发中，尚未发布正式版本，当前从源码运行。内置提示词为中文，网页面板支持中文和英文。
+内置提示词为中文，网页面板支持中文和英文。
 
 ## 许可证
 

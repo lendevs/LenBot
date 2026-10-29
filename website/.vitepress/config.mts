@@ -1,8 +1,11 @@
-import { defineConfig } from 'vitepress'
+import { readFileSync } from 'node:fs'
+import { defineConfigWithTheme, type DefaultTheme } from 'vitepress'
 
 const repo = 'https://github.com/lendevs/LenBot'
+// The release the deployment commands on the site refer to.
+const version = readFileSync(new URL('../../pyproject.toml', import.meta.url), 'utf8').match(/^version = "(.+)"$/m)![1]
 
-export default defineConfig({
+export default defineConfigWithTheme<DefaultTheme.Config & { version: string }>({
   lang: 'zh-CN',
   title: 'LenBot',
   description: '自主决策的群聊 Agent，接入 QQ（OneBot v11），通过网页面板配置与管理',
@@ -15,49 +18,50 @@ export default defineConfig({
     ['meta', { property: 'og:image', content: 'https://lendevs.github.io/LenBot/brand/lenbot-social-preview.png' }],
   ],
   themeConfig: {
+    version,
     logo: '/lenbot-mark.svg',
     nav: [
-      { text: '指南', link: '/guide/introduction', activeMatch: '^/guide/' },
-      { text: '扩展开发', link: '/develop/personas', activeMatch: '^/develop/' },
+      { text: '开始', link: '/start/introduction', activeMatch: '^/start/' },
+      { text: '接入', link: '/connect/onebot', activeMatch: '^/connect/' },
+      { text: '使用', link: '/use/panel', activeMatch: '^/use/' },
+      { text: '开发', link: '/develop/personas', activeMatch: '^/develop/' },
     ],
-    sidebar: {
-      '/guide/': [
-        { text: '开始使用', items: [
-          { text: '认识 LenBot', link: '/guide/introduction' },
-          { text: '快速开始', link: '/guide/quick-start' },
-          { text: '首次配置', link: '/guide/first-setup' },
-          { text: '接入 QQ（OneBot）', link: '/guide/onebot' },
-        ] },
-        { text: '面板与日常运营', items: [
-          { text: '面板一览', link: '/guide/panel' },
-          { text: '在群里聊天', link: '/guide/chatting' },
-          { text: '角色管理', link: '/guide/personas' },
-          { text: '群内命令与权限', link: '/guide/commands' },
-        ] },
-        { text: '记忆、资料与能力', items: [
-          { text: '记忆与学习', link: '/guide/memory' },
-          { text: '资料检索', link: '/guide/reference' },
-          { text: '模型与用量', link: '/guide/models' },
-          { text: '联网与工具', link: '/guide/web' },
-          { text: '插件管理', link: '/guide/plugins' },
-          { text: '后台任务', link: '/guide/tasks' },
-        ] },
-        { text: '维护与排错', items: [
-          { text: '更新与备份', link: '/guide/maintenance' },
-          { text: '日志与排查', link: '/guide/logs' },
-          { text: '常见问题', link: '/guide/faq' },
-        ] },
-      ],
-      '/develop/': [
-        { text: '角色与插件', items: [
-          { text: '写角色包', link: '/develop/personas' },
-          { text: '写插件', link: '/develop/plugins' },
-        ] },
-        { text: '核心贡献', items: [
-          { text: '参与开发', link: '/develop/contributing' },
-        ] },
-      ],
-    },
+    sidebar: [
+      { text: '开始', collapsed: false, items: [
+        { text: '认识 LenBot', link: '/start/introduction' },
+        { text: '快速开始', link: '/start/quick-start' },
+        { text: 'Docker 部署', link: '/start/docker' },
+        { text: '部署包', link: '/start/package' },
+        { text: '源码运行', link: '/start/source' },
+        { text: '首次配置', link: '/start/first-setup' },
+        { text: '对话测试', link: '/start/playground' },
+      ] },
+      { text: '接入', collapsed: false, items: [
+        { text: 'QQ（OneBot）', link: '/connect/onebot' },
+        { text: '模型与用量', link: '/connect/models' },
+        { text: '联网与工具', link: '/connect/web' },
+      ] },
+      { text: '使用', collapsed: false, items: [
+        { text: '面板一览', link: '/use/panel' },
+        { text: '在群里聊天', link: '/use/chatting' },
+        { text: '角色管理', link: '/use/personas' },
+        { text: '群内命令与权限', link: '/use/commands' },
+        { text: '记忆与学习', link: '/use/memory' },
+        { text: '资料检索', link: '/use/reference' },
+        { text: '插件管理', link: '/use/plugins' },
+        { text: '后台任务', link: '/use/tasks' },
+      ] },
+      { text: '维护', collapsed: false, items: [
+        { text: '更新与备份', link: '/use/maintenance' },
+        { text: '日志与排查', link: '/use/logs' },
+        { text: '常见问题', link: '/use/faq' },
+      ] },
+      { text: '开发', collapsed: false, items: [
+        { text: '写角色包', link: '/develop/personas' },
+        { text: '写插件', link: '/develop/plugins' },
+        { text: '参与开发', link: '/develop/contributing' },
+      ] },
+    ],
     socialLinks: [{ icon: 'github', link: repo }],
     editLink: { pattern: `${repo}/edit/master/website/:path`, text: '在 GitHub 上修改这一页' },
     search: {

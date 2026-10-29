@@ -6,7 +6,7 @@
 尚无根配置。请打开 http://127.0.0.1:52811/#token=...
 ```
 
-向导仅监听 `127.0.0.1`，端口每次启动随机分配，`token` 仅对本次进程有效。已填写的非敏感草稿暂存在当前浏览器标签页的会话存储中，刷新页面不会丢失；密码与 API Key 不落入浏览器存储，刷新后需重新输入并重新测试 QQ 连接。
+向导仅监听 `127.0.0.1`，端口每次启动随机分配，`token` 仅对本次进程有效。Docker 部署的向导固定使用容器端口 `11307`，见 [Docker 部署](./docker#_3-首次配置)。已填写的非敏感草稿暂存在当前浏览器标签页的会话存储中，刷新页面不会丢失；密码与 API Key 不落入浏览器存储，刷新后需重新输入并重新测试 QQ 连接。
 
 首次保存后向导不再出现，后续所有设置均在管理面板中修改。无浏览器环境下也可通过 JSON 文件完成非交互初始化，见[部署包与容器安装](https://github.com/lendevs/LenBot/blob/master/deploy/current/installation.md#无交互初始化)。
 
@@ -23,7 +23,7 @@
 - **LenBot 连接 OneBot（正向 WebSocket）**：填写 **OneBot 地址**，宿主机直接运行时默认 `ws://127.0.0.1:3001`，在 Docker 容器中运行时默认 `ws://host.docker.internal:3001`。
 - **OneBot 连接 LenBot（反向 WebSocket）**：填写 LenBot 的**监听地址**与**监听端口**，并在 OneBot 客户端侧把反向 WebSocket 地址指向该端口。
 
-OneBot 客户端一侧的配置要求见[接入 QQ](./onebot)。
+OneBot 客户端一侧的配置要求见[接入 QQ](../connect/onebot)。
 
 **访问令牌**需与 OneBot 客户端中的设置完全一致，未设置时留空；反向 WebSocket 监听非回环地址时必须设置访问令牌。
 
@@ -39,7 +39,7 @@ OneBot 客户端一侧的配置要求见[接入 QQ](./onebot)。
 
 ## 4. 聊天模型
 
-本步配置主聊天模型（`mind` 用途）。看图、记忆摘要、插件生成与后台任务未单独指定模型时均默认复用该聊天模型，详见[模型与用量](./models#模型用途)。
+本步配置主聊天模型（`mind` 用途）。看图、记忆摘要、插件生成与后台任务未单独指定模型时均默认复用该聊天模型，详见[模型与用量](../connect/models#模型用途)。
 
 服务商预设提供 **DeepSeek**、**OpenAI 兼容**和 **Anthropic 兼容**三项：
 
@@ -103,3 +103,7 @@ ssh -L 8088:127.0.0.1:8088 你的服务器
 1. 在**系统 → 设置 → 面板账号**中开启**只允许通过 HTTPS 登录**（`panel.secure_cookies: true`）。
 2. 反向代理保留原始 `Host` 头，并传递 `X-Forwarded-For` 与 `X-Forwarded-Proto`，同时支持 WebSocket 升级（用于面板实时推送流）。
 3. 反向代理与 LenBot 不在同一台机器上时，停止 LenBot 后将代理服务器 IP 写入 `lenbot.config.json` 的 `panel.trusted_proxies`，使登录限流按真实客户端 IP 计数。
+
+## 下一步
+
+进入面板后，在[对话测试](./playground)中模拟一个群试聊，再接入真实群聊。

@@ -56,7 +56,7 @@ OneBot 客户端的消息上报格式需设为 **array（消息段数组）**，
 ## 语音大小与文件上传路径
 
 - **大体积语音消息**：开启语音转写且调大了单条语音字节上限时，OneBot WebSocket 帧包含 Base64 编码的音频数据，需在**系统 → 设置 → 连接 → 更多设置**中同步调大**单条数据上限**（`onebot.max_frame_bytes`），计算公式见 [ASR 部署说明](https://github.com/lendevs/LenBot/blob/master/deploy/current/asr.md)。
-- **发送任务交付文件**：后台任务产出的文件发送到群聊时，OneBot 进程必须能按路径读取 LenBot 的交付目录。若两者运行在不同容器中，先将交付目录只读挂载给 OneBot 容器，再在**系统 → 设置 → 连接 → 更多设置**中将 **OneBot 可见的文件目录**（`onebot.upload_visible_root`）设为 OneBot 容器内的挂载绝对路径，详见[后台任务](./tasks#发送到-qq)。
+- **发送任务交付文件**：后台任务产出的文件发送到群聊时，OneBot 进程必须能按路径读取 LenBot 的交付目录。若两者运行在不同容器中，先将交付目录只读挂载给 OneBot 容器，再在**系统 → 设置 → 连接 → 更多设置**中将 **OneBot 可见的文件目录**（`onebot.upload_visible_root`）设为 OneBot 容器内的挂载绝对路径，详见[后台任务](../use/tasks#发送到-qq)。
 
 ## 分享卡片解析
 

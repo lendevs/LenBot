@@ -26,9 +26,20 @@ curl -H 'Content-Type: application/json' -d '{"group": 80001, "user": 70002, "te
 
 第一次截图前，需要先执行 `uv run --no-project --with playwright playwright install chromium-headless-shell`。
 
-## 横幅和社交预览图
+## 动态卡片
 
-`public/brand/lenbot-banner.png`（README 顶部的横幅）和 `public/brand/lenbot-social-preview.png`（GitHub 社交预览图）由脚本生成。修改标语或图标后，重新执行下面的命令。
+`public/readme/` 下的 SVG 卡片同时用于仓库 README 和文档站，由 `scripts/readme_cards.py` 生成。每张卡片有中文、英文、浅色、深色四个版本，只用 CSS 动画和系统字体，在 GitHub 的图片中也能播放。修改文案或画面后重新生成：
+
+```sh
+python3 website/scripts/readme_cards.py              # 全部卡片
+python3 website/scripts/readme_cards.py turn setup   # 指定卡片
+```
+
+文档站首页的群聊演示、部署方式选择和面板截图轮播是 `.vitepress/theme/components/` 中的 Vue 组件，`CardImage` 组件按站点的深浅色切换卡片版本。
+
+## 社交预览图
+
+`public/brand/lenbot-social-preview.png`（GitHub 社交预览图）由脚本生成。修改标语或图标后，重新执行下面的命令。
 
 ```sh
 uv run --no-project --with playwright python website/scripts/brand_images.py

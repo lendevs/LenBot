@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-This directory contains deployment recipes, system service templates, and command-line maintenance guides for running LenBot. Operator panel documentation is on the [documentation site (zh)](https://lendevs.github.io/LenBot/): source setup is in [quick start (zh)](https://lendevs.github.io/LenBot/guide/quick-start), deployment archives and Docker Compose setup are in [current/installation.md](current/installation.md) (zh), and source upgrades are in [maintenance and backups (zh)](https://lendevs.github.io/LenBot/guide/maintenance).
+This directory contains deployment recipes, system service templates, and command-line maintenance guides for running LenBot. Operator panel documentation is on the [documentation site (zh)](https://lendevs.github.io/LenBot/): setup is in [packages (zh)](https://lendevs.github.io/LenBot/start/package), [Docker (zh)](https://lendevs.github.io/LenBot/start/docker) and [from source (zh)](https://lendevs.github.io/LenBot/start/source), CI candidate packages and images are covered in [current/installation.md](current/installation.md) (zh), and source upgrades are in [maintenance and backups (zh)](https://lendevs.github.io/LenBot/use/maintenance).
 
 ## Instance directory
 
