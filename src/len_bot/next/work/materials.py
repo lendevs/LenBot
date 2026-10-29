@@ -12,7 +12,7 @@ from typing import Annotated, BinaryIO, TYPE_CHECKING
 
 from pydantic import AfterValidator, Field, TypeAdapter
 from ..platform.identity import scene_directory
-from ..storage.files import NONBLOCK, open_no_follow
+from ..storage.files import NONBLOCK, Directory, is_link, open_no_follow
 
 if TYPE_CHECKING:
     from .store import TaskFile
@@ -68,21 +68,18 @@ def require_directory(path: Path) -> None:
 def list_materials(directory: Path) -> dict:
     require_directory(directory)
     try:
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        opened = Directory.open(directory)
     except FileNotFoundError:
         return {'directory': str(directory), 'exists': False, 'files': []}
-    try:
+    with opened:
         files = []
-        with os.scandir(descriptor) as entries:
-            for entry in entries:
-                info = os.stat(entry.name, dir_fd=descriptor, follow_symlinks=False)
-                if not stat.S_ISREG(info.st_mode):
-                    raise ValueError(f'Shared material must be a regular file: {directory / entry.name}; '
-                                     f'mode={oct(info.st_mode)}')
-                files.append({'name': entry.name, 'size': info.st_size})
+        for name in opened.names():
+            info = opened.stat(name)
+            if not stat.S_ISREG(info.st_mode) or is_link(info):
+                raise ValueError(f'Shared material must be a regular file: {directory / name}; '
+                                 f'mode={oct(info.st_mode)}')
+            files.append({'name': name, 'size': info.st_size})
         return {'directory': str(directory), 'exists': True, 'files': sorted(files, key=lambda file: file['name'])}
-    finally:
-        os.close(descriptor)
 
 
 def open_regular(path: Path) -> tuple[BinaryIO, int]:

@@ -31,6 +31,7 @@ from .worker_egress import EgressTransport
 from .worker_model import WorkerModelProxy
 from .worker_transport import WorkerTransport
 from ..platform.identity import scene_directory
+from ..storage.files import NONBLOCK, Directory
 
 
 _SCENE = re.compile(r"[a-z][a-z0-9_-]*:(group|private):[^:\s/\\]+\Z")
@@ -211,21 +212,17 @@ def _copy_out(workspace: Path, source: str, dest: Path, max_bytes: int) -> None:
     parts = _source_parts(source)
     if max_bytes <= 0:
         raise ValueError("max_bytes must be positive")
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
-    workspace_fd = os.open(workspace, flags)
-    try:
-        directory_fd = os.open("out", flags, dir_fd=workspace_fd)
-    finally:
-        os.close(workspace_fd)
+    with Directory.open(workspace) as root:
+        directory = root.child("out")
     source_fd: int | None = None
     temporary: Path | None = None
     try:
         for part in parts[:-1]:
-            child_fd = os.open(part, flags, dir_fd=directory_fd)
-            os.close(directory_fd)
-            directory_fd = child_fd
+            child = directory.child(part)
+            directory.close()
+            directory = child
         # A FIFO must not block open before fstat can reject the non-regular source.
-        source_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+        source_fd = directory.open_file(parts[-1], os.O_RDONLY | NONBLOCK)
         metadata = os.fstat(source_fd)
         if not stat.S_ISREG(metadata.st_mode):
             raise SandboxError("deliver_file source is not a regular file")
@@ -245,7 +242,7 @@ def _copy_out(workspace: Path, source: str, dest: Path, max_bytes: int) -> None:
     finally:
         if source_fd is not None:
             os.close(source_fd)
-        os.close(directory_fd)
+        directory.close()
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 

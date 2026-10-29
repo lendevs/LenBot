@@ -10,9 +10,7 @@ import sys
 from ..configuration.tasks import WorkerSettings
 from .store import TERMINAL, Task
 from ..platform.identity import scene_directory
-
-
-DIRECTORY_FLAGS = os.O_RDONLY if sys.platform == 'win32' else os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+from ..storage.files import Directory, is_link
 
 
 def continuation_state(item: Task, discarded: bool) -> str:
@@ -74,30 +72,29 @@ def output_entries(root: Path, path: str, offset: int, limit: int) -> dict:
     if root.resolve(strict=False) != root:
         raise ValueError(f'Task output root must not traverse a symbolic link: {root}')
     try:
-        descriptor = os.open(root, DIRECTORY_FLAGS)
+        directory = Directory.open(root)
     except FileNotFoundError:
         return {'exists': False, 'entries': [], 'next_offset': None}
     try:
         if path:
             for part in path.split('/'):
-                nested = os.open(part, DIRECTORY_FLAGS, dir_fd=descriptor)
-                os.close(descriptor)
-                descriptor = nested
-        with os.scandir(descriptor) as children:
-            names = sorted(child.name for child in children)
+                nested = directory.child(part)
+                directory.close()
+                directory = nested
+        names = sorted(directory.names())
         entries = []
         for name in names[offset:offset + limit]:
-            info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-            kind = ('file' if stat.S_ISREG(info.st_mode) else
-                    'directory' if stat.S_ISDIR(info.st_mode) else
-                    'symlink' if stat.S_ISLNK(info.st_mode) else 'other')
+            info = directory.stat(name)
+            kind = ('symlink' if is_link(info) else
+                    'file' if stat.S_ISREG(info.st_mode) else
+                    'directory' if stat.S_ISDIR(info.st_mode) else 'other')
             entries.append({'path': f'{path}/{name}' if path else name, 'kind': kind,
                             'size': info.st_size if kind == 'file' else None,
                             'modified': info.st_mtime})
         return {'exists': True, 'entries': entries,
                 'next_offset': offset + limit if offset + limit < len(names) else None}
     finally:
-        os.close(descriptor)
+        directory.close()
 
 
 @dataclass
@@ -115,7 +112,7 @@ def directory_usage(root: Path) -> TreeUsage | None:
     if root.resolve(strict=False) != root:
         raise ValueError(f'Task storage root must not traverse a symbolic link: {root}')
     try:
-        descriptor = os.open(root, DIRECTORY_FLAGS)
+        opened = Directory.open(root)
     except FileNotFoundError:
         return None
     usage = TreeUsage()
@@ -125,36 +122,33 @@ def directory_usage(root: Path) -> TreeUsage | None:
         identity = (info.st_dev, info.st_ino)
         if identity not in allocated:
             allocated.add(identity)
-            usage.allocated_bytes += info.st_blocks * 512
+            # Windows reports no allocated blocks; its file size stands in.
+            blocks = getattr(info, 'st_blocks', None)
+            usage.allocated_bytes += info.st_size if blocks is None else blocks * 512
 
-    def scan(directory: int) -> None:
-        allocation(os.fstat(directory))
+    def scan(directory: Directory) -> None:
+        allocation(directory.stat())
         usage.directories += 1
-        with os.scandir(directory) as children:
-            for child in children:
-                info = os.stat(child.name, dir_fd=directory, follow_symlinks=False)
-                if stat.S_ISDIR(info.st_mode):
-                    nested = os.open(child.name, DIRECTORY_FLAGS, dir_fd=directory)
-                    try:
-                        scan(nested)
-                    finally:
-                        os.close(nested)
+        for name in directory.names():
+            info = directory.stat(name)
+            if is_link(info):
+                allocation(info)
+                usage.links += 1
+            elif stat.S_ISDIR(info.st_mode):
+                with directory.child(name) as nested:
+                    scan(nested)
+            else:
+                allocation(info)
+                if stat.S_ISREG(info.st_mode):
+                    usage.files += 1
+                    usage.file_bytes += info.st_size
+                    if info.st_nlink > 1:
+                        usage.hardlinked_files += 1
                 else:
-                    allocation(info)
-                    if stat.S_ISREG(info.st_mode):
-                        usage.files += 1
-                        usage.file_bytes += info.st_size
-                        if info.st_nlink > 1:
-                            usage.hardlinked_files += 1
-                    elif stat.S_ISLNK(info.st_mode):
-                        usage.links += 1
-                    else:
-                        usage.special_files += 1
+                    usage.special_files += 1
 
-    try:
-        scan(descriptor)
-    finally:
-        os.close(descriptor)
+    with opened:
+        scan(opened)
     return usage
 
 
@@ -194,7 +188,9 @@ def disk_free(settings: WorkerSettings) -> int:
 
 
 def discard_task_trees(workspace: Path, runtime: Path, progress: dict) -> None:
-    if not shutil.rmtree.avoids_symlink_attacks:
+    # Windows rmtree removes links and junctions without entering them but works by name; callers only
+    # discard trees of ended tasks whose container is gone, so nothing writes to them meanwhile.
+    if not shutil.rmtree.avoids_symlink_attacks and sys.platform != 'win32':
         raise RuntimeError('Current platform does not support descriptor-based task-tree removal')
     present = []
     for path in (workspace, runtime):
