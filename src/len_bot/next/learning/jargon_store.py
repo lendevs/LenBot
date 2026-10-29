@@ -201,7 +201,10 @@ class JargonStore:
             if completed.rowcount != 1:
                 raise ValueError(f"No running jargon discovery call {id}")
 
-    def complete_meaning(self, id: int, meaning: str, confidence: float) -> None:
+    def complete_meaning(self, id: int, meaning: str, confidence: float, *,
+                         ordinary_meaning: str | None = None) -> None:
+        """``ordinary_meaning`` is given when the group uses the word in its ordinary sense; a candidate
+        still pending is then rejected, with both meanings kept as the reason."""
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             call = self.db.execute(
@@ -211,10 +214,15 @@ class JargonStore:
             if call is None:
                 raise ValueError(f"No running jargon meaning call {id}")
             now = self.store.now()
-            # Inferred meanings update pending candidates; reviewed decisions keep their contents.
+            row = self.db.execute("SELECT status FROM jargon WHERE scene=? AND id=?",
+                                  (call["scene"], call["term_id"])).fetchone()
+            # Deletion, rejection or adoption while the model ran never recreates or changes the decision.
+            rejected = ordinary_meaning is not None and row is not None and row["status"] == "pending"
+            if rejected:
+                meaning = f"自动拒绝：本群用法与通常含义相同。\n本群用法：{meaning}\n通常含义：{ordinary_meaning}"
             self.db.execute(
-                "UPDATE jargon SET latest_meaning=?,confidence=?,last_inference_count=?,updated=? "
-                "WHERE scene=? AND id=? AND status='pending'",
+                "UPDATE jargon SET latest_meaning=?,confidence=?,last_inference_count=?,updated=?"
+                + (",status='rejected'" if rejected else "") + " WHERE scene=? AND id=?",
                 (meaning, confidence, call["inference_count"], now,
                  call["scene"], call["term_id"]),
             )
@@ -223,7 +231,7 @@ class JargonStore:
 
     def pending(self, scene: str) -> list[dict]:
         rows = self.db.execute(
-            "SELECT * FROM jargon WHERE scene=? AND status='pending' ORDER BY id", (scene,),
+            "SELECT * FROM jargon WHERE scene=? AND status!='rejected' ORDER BY id", (scene,),
         )
         return [item for row in rows if (item := self._item(row)) is not None and
                 any(item["last_inference_count"] < threshold <= item["count"]

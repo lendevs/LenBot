@@ -281,7 +281,7 @@ async def test_the_worker_keeps_running_after_an_unexpected_error(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_meaning_protocol_rejects_ordinary_usage_and_preserves_adopted_terms(tmp_path):
+async def test_meaning_protocol_rejects_ordinary_usage_and_keeps_adopted_decisions(tmp_path):
     result = {'meanings': [
         {'term': '早餐', 'meaning': '早晨吃的一餐', 'ordinary_meaning': '早晨吃的一餐',
          'same_meaning': True, 'confidence': 0.99},
@@ -319,8 +319,11 @@ async def test_meaning_protocol_rejects_ordinary_usage_and_preserves_adopted_ter
         assert ordinary['status'] == 'rejected'
         assert all(part in ordinary['latest_meaning'] for part in ['自动拒绝', '本群用法', '通常含义', '早晨吃的一餐'])
         assert special['status'] == 'pending' and special['latest_meaning'] == '本群指清理构建缓存'
-        assert records.item(SCENE, adopted['id']) == adopted
-        assert store.db.execute("SELECT count(*) FROM jargon_calls WHERE term_id=?", (adopted['id'],)).fetchone()[0] == 0
+        # An adopted term keeps its decision and fixed meaning; only the latest inference changes.
+        relearned = records.item(SCENE, adopted['id'])
+        assert (relearned['status'], relearned['meaning']) == ('adopted', '人工固定含义')
+        assert relearned['latest_meaning'] == '模型返回的新解释'
+        assert store.db.execute("SELECT count(*) FROM jargon_calls WHERE term_id=?", (adopted['id'],)).fetchone()[0] == 1
         assert len(bodies()) == 1
         raw = records.call(SCENE, records.latest(SCENE)['id'])
         assert 'ordinary_meaning' in str(raw) and 'same_meaning' in str(raw)
@@ -342,8 +345,9 @@ def test_adoption_during_meaning_request_preserves_manual_record(tmp_path):
         records.complete_discovery(discovery, [('洗锅', 1)], exclude_uids=[])
         term = records.pending(SCENE)[0]
         call = records.begin_meaning(SCENE, term['id'], term['count'], {})
-        adopted = records.update(SCENE, term['id'], '人工确认：清缓存', 'adopted')
-        records.complete_meaning(call, '异步返回的另一种解释', 0.7)
-        assert records.item(SCENE, term['id']) == adopted
+        records.update(SCENE, term['id'], '人工确认：清缓存', 'adopted')
+        records.complete_meaning(call, '异步返回的另一种解释', 0.7, ordinary_meaning='清洗炊具')
+        item = records.item(SCENE, term['id'])
+        assert (item['status'], item['meaning'], item['latest_meaning']) == ('adopted', '人工确认：清缓存', '异步返回的另一种解释')
         assert records.pending(SCENE) == []
         assert records.call(SCENE, call)['status'] == 'complete'

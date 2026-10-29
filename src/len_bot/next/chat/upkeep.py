@@ -654,15 +654,8 @@ class SessionUpkeep:
                 call_id = self.jargon.begin_meaning(scene, term["id"], term["count"], begun.request)
                 self.jargon.response(call_id, response, None, None)
                 item = meanings[term["term"]]
-                meaning = item['meaning']
-                if item['same_meaning']:
-                    meaning = (f"自动拒绝：本群用法与通常含义相同。\n本群用法：{meaning}\n"
-                               f"通常含义：{item['ordinary_meaning']}")
-                self.jargon.complete_meaning(call_id, meaning, item['confidence'])
-                if item['same_meaning']:
-                    with self.store.db:
-                        self.store.db.execute("UPDATE jargon SET status='rejected' "
-                                              "WHERE scene=? AND id=? AND status='pending'", (scene, term['id']))
+                self.jargon.complete_meaning(call_id, item["meaning"], item["confidence"],
+                                             ordinary_meaning=item["ordinary_meaning"] if item["same_meaning"] else None)
         if begun.effect_call is not None:
             self.effects.response(begun.effect_call, response, None, None)
             # Samples the reply left out stay unjudged on this call.
