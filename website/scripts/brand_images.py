@@ -1,4 +1,4 @@
-"""Render the README banner and the social preview from the tile icon.
+"""Render the GitHub social preview from the tile icon.
 
 The text is drawn by the local browser, so run this on a machine with PingFang SC or another CJK font.
 """
@@ -10,11 +10,8 @@ from playwright.sync_api import sync_playwright
 
 BRAND = Path(__file__).resolve().parents[1] / 'public/brand'
 ZH = ('自主决策的群聊 Agent', 'QQ · 网页面板 · Python 插件')
-EN = ('A group chat agent that decides for itself', 'QQ · Web panel · Python plugins')
 # name: (width, height, icon size, name size, tagline size, text, show detail line)
 IMAGES = {
-    'lenbot-banner.png': (1280, 400, 216, 104, 34, ZH, True),
-    'lenbot-banner.en.png': (1280, 400, 216, 104, 34, EN, True),
     'lenbot-social-preview.png': (1280, 640, 300, 128, 40, ZH, False),
 }
 PAGE = """<!doctype html><meta charset="utf-8"><style>

@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-本目录存放运行 LenBot 的部署配方、系统服务模板和命令行运维说明。面向运营者的日常界面操作说明在[文档站](https://lendevs.github.io/LenBot/)：源码安装见[快速开始](https://lendevs.github.io/LenBot/guide/quick-start)，部署包与 Docker 镜像安装见 [current/installation.md](current/installation.md)，源码安装的日常更新见[更新与备份](https://lendevs.github.io/LenBot/guide/maintenance)。
+本目录存放运行 LenBot 的部署配方、系统服务模板和命令行运维说明。面向运营者的日常界面操作说明在[文档站](https://lendevs.github.io/LenBot/)：安装方式见[部署包](https://lendevs.github.io/LenBot/start/package)、[Docker 部署](https://lendevs.github.io/LenBot/start/docker)和[源码运行](https://lendevs.github.io/LenBot/start/source)，CI 候选构建的部署包与镜像用法见 [current/installation.md](current/installation.md)，源码安装的日常更新见[更新与备份](https://lendevs.github.io/LenBot/use/maintenance)。
 
 ## 实例目录
 

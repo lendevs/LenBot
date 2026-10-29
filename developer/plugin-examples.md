@@ -1,6 +1,6 @@
 # 独立插件与示例
 
-业务插件独立发布和更新，不随宿主打包。面板中的安装、候选应用和群启用操作见文档站[插件](https://lendevs.github.io/LenBot/guide/plugins)，插件发现目录格式见[静态插件目录](plugin-catalog.md)。
+业务插件独立发布和更新，不随宿主打包。面板中的安装、候选应用和群启用操作见文档站[插件](https://lendevs.github.io/LenBot/use/plugins)，插件发现目录格式见[静态插件目录](plugin-catalog.md)。
 
 | 插件 | 群内入口与工具 | 依赖条件 | 仓库 |
 |---|---|---|---|

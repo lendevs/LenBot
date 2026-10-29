@@ -15,7 +15,7 @@ cd lenbot-0.2.0-macos
 "$HOME/lenbot/run"
 ```
 
-Linux 使用对应的文件名和解压目录，安装命令相同。安装器下载 Python 3.13 和锁定的依赖，安装到新目录；目标目录由安装器创建。首次启动输出向导链接，按[首次配置](https://lendevs.github.io/LenBot/guide/first-setup)填写后进入面板。
+Linux 使用对应的文件名和解压目录，安装命令相同。安装器下载 Python 3.13 和锁定的依赖，安装到新目录；目标目录由安装器创建。首次启动输出向导链接，按[首次配置](https://lendevs.github.io/LenBot/start/first-setup)填写后进入面板。
 
 ## Windows 部署包
 
@@ -38,7 +38,7 @@ Windows 的安装脚本创建 `run.cmd` 和 `run.ps1`。首次启动后按终端
 | `logs/` | 更新器和子进程日志 |
 | `run` / `run.cmd` | 启动更新器和 Bot |
 
-日常设置在面板修改。版本发布后，在**系统 → 版本与更新**执行更新、查看快照和恢复。安装或启动失败时先查看终端错误和 `logs/`；模型与群聊问题见[日志与排查](https://lendevs.github.io/LenBot/guide/logs)。
+日常设置在面板修改。版本发布后，在**系统 → 版本与更新**执行更新、查看快照和恢复。安装或启动失败时先查看终端错误和 `logs/`；模型与群聊问题见[日志与排查](https://lendevs.github.io/LenBot/use/logs)。
 
 ## Docker
 
@@ -82,7 +82,7 @@ docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
   -f host.updater.compose.yaml logs lenbot
 ```
 
-日志中的 `http://127.0.0.1:11307/#token=...` 是首次配置链接，在浏览器中打开后按[首次配置](https://lendevs.github.io/LenBot/guide/first-setup)填写向导。容器内的面板固定使用 `11307`，向导中的端口不可修改；`--panel-port` 改过宿主端口时，把链接中的端口换成该值。容器里的 `127.0.0.1` 指容器自己，协议端或模型服务运行在同一台机器上时，地址里的主机写 `host.docker.internal`，例如 `ws://host.docker.internal:3001`、`http://host.docker.internal:8317/v1`；向导在容器中默认填写前者，部署配方在 Linux 上也提供这个主机名。使用反向 WebSocket 时，在 `host.compose.yaml` 发布对应监听端口。保存后页面跳转到登录页。配置保存在数据卷内的 `lenbot.config.json`。
+日志中的 `http://127.0.0.1:11307/#token=...` 是首次配置链接，在浏览器中打开后按[首次配置](https://lendevs.github.io/LenBot/start/first-setup)填写向导。容器内的面板固定使用 `11307`，向导中的端口不可修改；`--panel-port` 改过宿主端口时，把链接中的端口换成该值。容器里的 `127.0.0.1` 指容器自己，协议端或模型服务运行在同一台机器上时，地址里的主机写 `host.docker.internal`，例如 `ws://host.docker.internal:3001`、`http://host.docker.internal:8317/v1`；向导在容器中默认填写前者，部署配方在 Linux 上也提供这个主机名。使用反向 WebSocket 时，在 `host.compose.yaml` 发布对应监听端口。保存后页面跳转到登录页。配置保存在数据卷内的 `lenbot.config.json`。
 
 远程部署可用 SSH 转发面板端口；后台任务的额外挂载见[任务存储](task-storage.md)。
 
