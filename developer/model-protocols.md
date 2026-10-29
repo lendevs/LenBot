@@ -75,7 +75,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 
 ## 网页搜索和读取服务
 
-`web_search.provider` 可选 `yahoo`、`bing_rss`、`deepseek`、`tavily`、`brave`、`bocha`；`web_read.provider` 可选 `local`（默认，本机抓取）、`deepseek`、`tavily`、`jina`。付费服务用 `connection` 引用 `models.providers` 中的连接，复用地址、Key 和代理；免费服务不设置 `connection`。可用的连接协议：
+`web_search.provider` 可选 `yahoo`、`bing_rss`、`deepseek`、`tavily`、`brave`、`bocha`；`web_read.provider` 可选 `local`（默认，本机抓取）、`deepseek`、`tavily`、`jina`。需要密钥的服务通过 `connection` 引用 `models.providers` 中的连接，复用地址、密钥和代理；无需密钥的服务不设置 `connection`。可用的连接协议：
 
 | 服务 | 连接协议 | 请求 |
 |---|---|---|
@@ -83,7 +83,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 | DeepSeek 读取 | 同上 | `POST tools/fetch`，`{"url"}`，返回 `title`、`content`（Markdown） |
 | Tavily 搜索 | `tavily` | `POST search`，`{"query", "max_results"}` |
 | Tavily 读取 | `tavily` | `POST extract`，`{"urls": [url], "format": "markdown"}` |
-| Brave Search | `brave-search` | `GET web/search?q=&count=`，Key 放在 `X-Subscription-Token` |
+| Brave Search | `brave-search` | `GET web/search?q=&count=`，密钥放在 `X-Subscription-Token` |
 | 博查 | `bocha` | `POST web-search`，`{"query", "count", "summary": true}` |
 | Jina Reader | `jina-reader` | `GET <地址>/<网页地址>`，`Accept: application/json` |
 
@@ -97,4 +97,4 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 
 已有连接可即时切换搜索和读取设置；新增或修改服务商连接沿用模型连接的重启流程，重启前保持原设置。`connection` 默认为空，已有配置不用迁移。
 
-协议依据：[DeepSeek Search 与 Fetch](https://api-docs.deepseek.com/zh-cn/guides/search/)，[Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)，[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)，[Brave Web Search](https://api-dashboard.search.brave.com/api-reference/web/search/get)，[博查开放平台](https://open.bochaai.com/)，[Jina Reader](https://jina.ai/reader/)。Tavily、Brave、博查、Jina 没有用真实 Key 调用过。
+协议依据：[DeepSeek Search 与 Fetch](https://api-docs.deepseek.com/zh-cn/guides/search/)，[Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)，[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)，[Brave Web Search](https://api-dashboard.search.brave.com/api-reference/web/search/get)，[博查开放平台](https://open.bochaai.com/)，[Jina Reader](https://jina.ai/reader/)。Tavily、Brave、博查、Jina 按公开文档实现并由本地模拟响应测试覆盖。

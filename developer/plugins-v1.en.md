@@ -2,7 +2,13 @@
 
 [中文](plugins-v1.md)
 
-A plugin is a Python package containing `plugin.toml`, `__init__.py`, and exactly one `Plugin` subclass. Start by clicking Use this template on the [plugin template repository](https://github.com/lendevs/lenbot-plugin-template). Plugins run in the host process and share its Python environment.
+## Minimal plugin
+
+A plugin package directory contains `plugin.toml` and `__init__.py`, and `__init__.py` defines exactly one `Plugin` subclass. Start from the [plugin template repository](https://github.com/lendevs/lenbot-plugin-template). Plugins interact with the host through the public `len_bot.plugin` package.
+
+The manifest requires the fields below. `name` matches the installed directory name; a Git repository root or ZIP root does not need that directory name beforehand.
+
+The public interface generation is **1**, frozen starting from 0.2.0. Subsequent 0.x releases only make compatible additions (optional parameters, new methods, optional manifest fields) without changing existing signatures or semantics; breaking changes increment the generation. The host loads plugins targeting the current generation.
 
 ```toml
 name = "counter"
@@ -15,130 +21,332 @@ platforms = ["linux", "darwin", "win32"]
 reload = "plugin"
 authors = ["Plugin maintainer"]
 license = "GPL-3.0-only"
-description = "A separate counter for each scene"
+description = "Per-scene counter"
 ```
 
-All fields above are required. The installed directory must match `name`. Versions use Python packaging's version rules; compatibility ranges are explicit specifiers checked against the actual host and Python versions. Platform names are Python's `sys.platform` values; host packages exist for Linux (`linux`), macOS (`darwin`) and Windows (`win32`). `reload` is `plugin` or `host`. Optional fields are `repository`, `homepage`, `dependencies`, `config`, and `data_version` (a positive integer, default 1, numbering the shape of the plugin's data directory and KV; see Data versions).
+- `version` is parsed and normalized with Python packaging rules (`X.Y.Z` recommended).
+- `requires_lenbot` and `requires_python` are explicit version specifiers checked against the running host and Python interpreter.
+- `platforms` uses Python `sys.platform` values. Host deployment packages target Linux (`linux`), macOS (`darwin`), and Windows (`win32`).
+- `reload` is `plugin` (hot-reloadable without stopping other plugins) or `host` (applied on host restart).
+- Optional `repository` and `homepage` are HTTP(S) URLs.
+- Optional `data_version` (positive integer, default `1`) numbers the format of the plugin's data directory and KV store; see [Data versions](#data-versions).
 
-Interface 1 is the supported generation and is frozen from 0.2.0: later changes only add (new optional parameters, methods, optional manifest fields) and never change existing signatures or behavior; a breaking change requires a new generation. Public imports are `len_bot.plugin` (including the `ChatMessage`, `Notice`, `Sender` and `Segment` message types it exports), `len_bot.plugin_testing`, plus the `len_bot.image_assets` and `len_bot.text_cards` helpers documented below. Modules under `len_bot.next` are internal and not library APIs.
+`dependencies = ["pkg>=version"]` declares Python package requirements resolved by `uv`. Packages already installed in the host environment act as constraints, and conflicts report the underlying resolver output. Document external binaries, services, and credentials in the plugin's README.
 
-## Handlers and lifecycle
+### Permissions
 
-```python
-from len_bot.plugin import Plugin, Invocation, command
+Optional `permissions` lists the host capabilities the plugin calls. When declared, only listed capabilities are permitted; calling any unlisted capability raises `PermissionError` naming the missing permission.
 
-class Example(Plugin):
-    @command("hello", "Reply with a greeting")
-    async def hello(self, ctx: Invocation, args: str):
-        await ctx.reply(f"Hello {args}")
+```toml
+permissions = ["send", "history"]
 ```
 
-| Decorator | Handler arguments after self | Behavior |
-| --- | --- | --- |
-| `command(name, description)` | `ctx: Invocation, args: str` | `/name` and remaining arguments |
-| `fullmatch(text, description)` | `ctx: Invocation` | Exact plain text after trimming |
-| `regex(pattern, description, priority=0)` | `ctx: Invocation, match` | Full regular expression match |
-| `on_notice(type)` | `ctx: Invocation, notice` | Platform notice type or type.sub_type |
-| `tool(name, description, summary=..., needs_source=False)` | `ctx: Invocation`, typed named arguments | Model-discovered tool; text or native JSON result |
-| `background(every="5m")` | `ctx: PluginContext` | Wait after completion; minimum interval 10 seconds |
-| `recall()` | `request: RecallRequest` | Automatic recall for scenes whose `memory_plugin` names this plugin; returns `RecallBlock`s |
-| `memory_tool(description)` | `ctx: Invocation`, typed named arguments | The `memory` tool of scenes whose `memory_plugin` names this plugin |
-| `compact()` | `request: CompactRequest` | Compaction recap for scenes whose `recap_plugin` names this plugin; returns text |
+| Permission | Capability |
+|---|---|
+| `send` | Send messages in enabled scenes, including `ctx.reply` |
+| `events` | Wake the chat model via `emit_event` |
+| `history` | Read `recent_messages` and `messages_between` |
+| `memory` | Call `ctx.memory` |
+| `generate` | Run single-shot model calls via `ctx.generate` |
+| `delegate` | Create background worker tasks via `ctx.delegate` on behalf of the requester |
+| `network` | Download public images via `fetch_image` |
+| `schedule` | Register cron jobs via `ctx.cron` |
 
-Methods are async and use one decorator each. Command, exact-text, then regex matching takes precedence; regex priority sorts descending. At most one handler consumes a message; its result becomes background context for the next chat turn. Returning text records a result; sending requires `ctx.reply`. If a plugin tool calls a model internally, say so in its description.
+Plugin-local KV, `data_dir`, logging, commands, message rules, tools, and notices require no permission entry. Duplicate or unknown permission names invalidate the manifest. Manifests without `permissions` retain full capabilities and appear as **Undeclared permissions** in the panel. New plugins and official plugins declare the exact capabilities they call.
 
-Plugin commands are matched first. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
+### Process isolation
 
-When a scene's `memory_plugin` names a plugin enabled there, that scene's automatic recall comes from the plugin's `@recall` entry, and the native memory no longer recalls or extracts for it; existing native memory files stay as they are. A `memory_plugin` or `recap_plugin` saved from the panel takes over when the scene's current turn ends; uninstalling a plugin returns the scenes that used it to the native implementation. With `@memory_tool(description)` the plugin supplies that scene's `memory` tool, with arguments generated from typed parameters as for `@tool`; the chat model, other plugins' `ctx.memory()` and task workers all reach it there, and the role must still allow `memory`. Without `@memory_tool` the scene has no `memory` tool. Native memory prose and the group profile leave that scene's prompt; a short note that the plugin provides the memory takes their place. To import native memory, `await self.ctx.native_memory(scene, arguments)` reads it with the native tool's arguments, limited to browse, read, search and history. A plugin has at most one `@recall`. It runs once per turn before the first model request and receives `RecallRequest(scene, persona, turn_id, observed_at, messages, recap, tasks, budget_chars)`: `messages` are the latest 8 messages the bot has read or delivered, oldest first, without undelivered bot messages; `recap` is the current compaction recap or None; `tasks` has one line per unfinished work task; `budget_chars` is the root `memory.recall_budget_chars`, or 1500 without native memory. The host keeps the blocks in order, skips blank ones and cuts what exceeds the budget; kept blocks appear in the turn state and the panel's recall record with source `plugin:<name>` and `title` as the path, and every model request of the turn uses the same result. Recall has 10 seconds; a timeout, an exception or a value that is not a sequence of `RecallBlock` is recorded on the plugin and the turn goes on without recall.
+`isolation = "process"` runs the plugin in a dedicated worker subprocess; the default `inline` runs in the host process.
 
-A plugin that reads original messages with `ctx.messages_between` for its own processing calls `await self.ctx.report_memory_progress(scene, message.id)` after each part: everything through that message is processed. Only the scene's `memory_plugin` may report, and the position never moves back. When retention removes expired originals under `retention.message_days`, it keeps only what the plugin has not processed; before the first report it keeps nothing back for the plugin, and the native extraction position does not count while the plugin is in use. After switching back to native memory, native extraction starts from the latest message at that time; messages from the plugin period are not extracted.
+- The host imports the plugin inside the subprocess, inspects its entry points, and registers commands, exact-text and regex rules, notices, `@background` loops, `@recall`, and `@compact`. Calls are forwarded over standard input/output as JSON lines.
+- All `ctx` capabilities execute back in the host process under the host's recorded plugin name, scene checks, and `permissions`. For `ctx.delegate`, the host resolves the requester from the real triggering message rather than trusting subprocess input; background loops and completed invocations cannot delegate.
+- If the subprocess crashes, exits, or writes an unparseable protocol line, pending calls fail, `@background` loops stop, and only that plugin is marked failed with its exit code while the host and other plugins continue. Reloading the plugin in the panel starts a fresh subprocess.
+- On shutdown the host requests `stop()` first and terminates the subprocess on timeout or cancellation. Subprocess `print` output goes to `stderr`.
+- `@tool`, `@memory_tool`, `ctx.cron`, and `ctx.start_task` are not supported in `process` mode; plugins using them report the reason on load. Cross-process values must serialize to JSON (images transfer as base64).
+- Subprocesses share the host Python environment; `process` mode isolates crashes while keeping the same OS file and network permissions as the host.
 
-When the session nears the compaction threshold, or an operator compacts it from the panel, the host picks the oldest complete conversation entries and replaces them and the current recap with a new recap. When a scene's `recap_plugin` names a plugin enabled there, that plugin's `@compact` entry writes the new recap; a plugin has at most one. It receives `CompactRequest(scene, persona, turn_id, source, budget_tokens)`: `source` is the current recap and the entries to fold, as the same text the native recap reads, and `budget_tokens` is the length limit by the host's estimate of UTF-8 bytes divided by 3. The host chooses the boundary and never separates a tool call from its results. It strips the returned text and, in one transaction, stores the recap, moves the compaction position and clears discovered tools; native recaps use the same commit. Compaction has 120 seconds; a timeout, an exception, blank text or text over `budget_tokens` is recorded on the plugin and the current turn. The turn ends with the existing recap, compaction position and history preserved. A role handover recap is always written by the native recap.
+Public imports for plugin authors are `len_bot.plugin` (including `ChatMessage`, `Notice`, `Sender`, `Segment`), `len_bot.plugin_testing`, `len_bot.image_assets`, and `len_bot.text_cards`. Modules under `len_bot.next` are internal.
 
-A deployment can switch off single rules while the rest of a plugin keeps working: list them under `plugins.disabled_rules` by plugin name, as `/command`, the exact text, or the regex pattern string, for example `"disabled_rules": {"asoul": ["今日直播"]}`. Switched-off text is handled as ordinary chat. A rule the plugin does not have is reported as a log warning.
+## Installation and maintenance
 
-`start()` acquires resources and `stop()` releases them. Register background coroutines through `self.ctx.start_task(name, coroutine)`. The host cancels and waits for owned calls before stop. Keep blocking operations out of the event loop.
+### Sources
 
-Time limits:
+- **Git**: Provide a complete HTTPS or `ssh://` URL in the panel, optionally pinned to a tag, branch, or commit. The repository root must contain `plugin.toml` and `__init__.py`. Private repositories use local Git credentials. Omitting `ref` tracks the default branch on updates; specifying `ref` re-fetches that ref.
+- **ZIP**: `plugin.toml` and `__init__.py` sit either at the archive root or inside a single top-level directory. Archives fail validation on path traversal, duplicate paths, symlinks, `.pyc` bytecode, more than 4096 entries, or more than 200 MiB compressed/extracted (macOS Finder metadata is ignored). ZIP preparation works offline; installing new Python dependencies may still access the network.
 
-- `start()` has 60 seconds. When it overruns, the host cancels it and marks the plugin failed with `TimeoutError: 插件 start() 超过 60 秒未返回，已取消`; the rest of the host starts normally.
-- `stop()` has 30 seconds. An overrunning `stop()` is cancelled and reported the same way, and shutdown continues.
-- Slow preparation, such as waiting for the network or warming a cache, belongs in `start_task` rather than being awaited in `start()`.
-- `migrate_data` has no time limit.
+Both sources prepare a **candidate version** without interrupting the currently running plugin. After saving candidate configuration in the panel, click apply. Newly installed plugins start disabled until enabled and assigned to scenes.
 
-A handler error ends that call. The host writes the original error to the run log (`plugin_error`), and the plugin keeps handling later events. Use `self.ctx.log` (a standard `logging.Logger`) for the plugin's own records. They are written to the host's `logs/lenbot.jsonl` with the plugin name and the current scene, turn and tool call IDs, and the system log in the panel can filter by plugin.
+### File layout
 
-## Configuration and data
+All plugin files live under `plugins/` in the instance root:
 
-The panel builds a form from `[config.field]` declarations, so operators do not write JSON. Each field needs `type` and `description`. A field with `default` is optional; otherwise required. Supported types: string (`multiline = true` for a text area), secret, integer, number, boolean, string_list (a tag input: Enter adds an item, pasted lines become items), `scene` (one configured group, picked by name), `scene_list` (several), `path` (absolute path), `url` (http or https) and object_list. Optional attributes: `label` (display name, defaults to the key), `group` (section heading, top-level fields only), `placeholder`, `options` for string/integer/number as plain values or `{ value = "auto", label = "Auto" }` (up to three options whose labels have at most eight characters show as a segmented control, more as a dropdown), and `minimum`/`maximum` for numbers. Object lists can declare one level of child fields of any type except secret and object_list; each row collapses to a one-line summary and opens to edit its fields. Undeclared object lists fall back to JSON editing. `path` and `url` may stay empty only when declared with `default = ""`. Scene values are checked against the host's configured scenes when saving and loading; `scene` cannot have a default and `scene_list` defaults only to `[]`. Unknown or invalid values are rejected.
+| Content | Path |
+|---|---|
+| Installed source | `plugins/<name>` |
+| Staged candidate | `plugins/.candidates/<name>` |
+| Installation record | `plugins/.installations/<name>.json` |
+| Staged configuration | `plugins/.installations/.candidate-values/` |
+| Business data | `plugins.data_directory/<name>` (defaults to `plugins/.data/<name>`) |
 
-How the panel lays out the form (plugins cannot override placement or styling):
+Active plugin configuration and enabled scenes are stored in `lenbot.config.json`. Staged candidate values move into `lenbot.config.json` when the candidate is applied and are discarded if the candidate is canceled. `plugins.paths` defaults to `["plugins"]`; directories copied into `plugins/` manually are discovered as unmanaged plugins.
 
-- Each `group` is a card titled with the group name, in order of first appearance. Ungrouped plain fields share an untitled card that comes first; an ungrouped object_list gets a card of its own, titled with its `label` and showing the row count.
-- Cards have two columns. Half-width: single-line string, secret, integer, number, boolean (a switch row), dropdown or segmented options, and `scene`. Full-width: multiline string, string_list, `scene_list`, path, url and object_list. Narrow screens use one column. Numbers show their range inside the input, except a lone lower bound of 0 or 1; an integer with both bounds no more than 100 apart also gets − and + buttons.
-- With four or more cards, wide screens show a section index on the left.
-- The label sits above the control; `description` lives in an info tooltip next to it. Required fields (no `default`) get a red asterisk; a required secret loses it once saved. Secrets that are already saved are marked as saved. After an edit, or when enabling is tried, a missing required value, an out-of-range number or invalid JSON shows its reason under the field, and an object_list row with a problem gets a red border while collapsed.
-- A collapsed object_list row is titled by its first filled string child, falling back to the first filled number; the other numbers and strings follow as `label value`, a `scene_list` child shows its group count, and true booleans and chosen options show as badges.
-- Edits raise a save bar at the bottom of the page. While the plugin is stopped the button reads save and enable, since the host stores parameters only when enabling.
+### Applying changes
 
-Declaring for a tidy form: keep labels short enough for half a row and put units in them (`超时（秒）`); put meanings and limits in `description` (0 turns it off, needs SESSDATA first); declare the string that names an object_list row first; split more than six fields into groups and move rarely changed ones into their own group such as `高级`; declare mutually exclusive modes as one field with `options` rather than several booleans; and pair half-width fields so a row is not left half empty.
+- Applying a managed Git candidate aborts if the installed working tree has local modifications or untracked files (excluding host-generated `__pycache__`).
+- Switching a plugin's Git repository URL or switching between Git and ZIP requires explicit source replacement in the panel and preserves the plugin's data directory.
+- When dependencies are unchanged and `reload = "plugin"`, the host stops only that plugin, swaps source directories, re-imports, and calls `start()`. Saving configuration or enabled scenes also reloads only that plugin.
+- When dependencies change or `reload = "host"`, applying marks the candidate pending restart. On explicit restart, after the old host exits cleanly, the launcher runs `len_bot.next.maintenance.apply_plugins` under the instance lock to validate candidate configuration, resolve combined Python dependencies, swap source directories, and start the new host. If dependency resolution fails, the launcher exits while keeping the candidate and error message intact.
 
-Validated values are in `ctx.config`. Runtime configuration, enabled state and scenes live only in root `lenbot.config.json`. Secrets are masked in the panel; null preserves an existing secret when saving. Do not use KV or environment variables as alternate runtime configuration.
+For instances running `len_bot.next.host` directly without the launcher, stop the host, run `python -m len_bot.next.maintenance.apply_plugins` in the instance root, and start the host again. After rebuilding a Python virtual environment, restore installed plugin requirements with `python -m len_bot.next.maintenance.plugin_dependencies`. Deployment details are in [deploy/current/README.md](../deploy/current/README.md).
 
-`ctx.get_kv`, `set_kv`, `delete_kv` operate on JSON business values in the plugin's own `data_dir/kv.sqlite3`. KV is isolated by plugin; include the scene in keys for per-scene data.
+### Canceling, disabling and uninstalling
+
+- **Cancel candidate** keeps the installed source; canceling an unapplied first installation removes its configuration entry.
+- **Disable** stops the plugin while keeping configuration, scene assignments, and data.
+- **Uninstall** removes source, candidates, and configuration while keeping business data and shared Python packages. Data deletion is a separate action while the plugin is stopped.
+
+### Rollback
+
+Applying a new version moves the previous source to `plugins/.previous/<name>` alongside its previous parameters, enabling one-step rollback in the panel. If the new version fails during import, `migrate_data`, or `start()`, the host automatically restores the previous source, parameters, and pre-migration data backup.
 
 ### Data versions
 
-The host records `.lenbot-data.json` in the data directory with the `data_version` the data was written with; existing data without it counts as 1, and a new empty directory takes the manifest's current version. When the manifest's `data_version` is higher than the record, before `start()` the host copies the whole data directory to `plugins.data_directory/.backups/<name>-v<old>-<time>`, calls `await plugin.migrate_data(from_version)` (the plugin is loaded and may use `ctx.data_dir` and KV, but has not started), then records the new version. If the migration raises, the data directory is put back as it was and the plugin is marked failed. Raising `data_version` without implementing `migrate_data` fails. A manifest `data_version` lower than the record is refused: an older plugin never reads newer data, so going back also needs the matching data backup.
+Plugin data and `kv.sqlite3` live in `ctx.data_dir`. The host records the current `data_version` in `.lenbot-data.json` (existing directories without that file count as version `1`; new empty directories take the manifest's `data_version`).
 
-## Permissions and isolation
+When the manifest's `data_version` exceeds the recorded version, before calling `start()` the host:
 
-Optional `permissions` in `plugin.toml` lists the host capabilities the plugin uses: `send` (including `ctx.reply`), `events`, `history`, `memory`, `generate`, `delegate`, `network` (`fetch_image`) and `schedule` (`ctx.cron`). A plugin that declares the field gets only those; anything else raises `PermissionError`. Its own KV, data directory, commands, rules, tools and notices need no permission. A manifest without the field keeps every capability and is shown as undeclared.
+1. Copies `ctx.data_dir` to `plugins.data_directory/.backups/<name>-v<old>-<timestamp>`.
+2. Calls `await plugin.migrate_data(from_version)` while `ctx.data_dir` and KV are available.
+3. Writes the new version number and calls `start()`, or restores the backup and marks the plugin failed if `migrate_data` raises.
 
-`isolation = "process"` runs the plugin in its own worker process. Commands, full-text and regex rules, notices, `@background` loops, `@recall` and `@compact` are forwarded as JSON lines; every `ctx` capability is answered by the host under the plugin's own name with the same scene and permission checks. The requester of `ctx.delegate` is taken by the host from the real message that triggered the invocation, never from the worker; background loops and finished invocations cannot delegate. If the worker dies, or writes a protocol line the host cannot parse (the host then ends it), pending calls fail, its `@background` loops stop and only that plugin is marked failed; reloading starts a fresh worker. `@tool`, `@memory_tool`, `ctx.cron` and `ctx.start_task` are not supported in a process yet. Process isolation contains crashes; the plugin keeps the host's permissions.
+Raising `data_version` without implementing `migrate_data` fails startup. A manifest `data_version` lower than the recorded version is rejected; rolling back across a data migration requires restoring the matching directory from `.backups`.
 
-Each plugin state carries `health` with `level` (`ok`, `degraded`, `failed`, `stopped`, `starting`), `errors_last_hour`, `failing` and `last_error_at`; `GET /api/host/plugins/health` returns it without reading the disk.
+See [plugin-examples.md](plugin-examples.md) for standalone plugins and [plugin-catalog.md](plugin-catalog.md) for the static discovery catalog format.
 
-## Context capabilities
+## Entry points
 
-Scene IDs are qualified, for example `onebot:group:80001`; accounts use `onebot:70001`. `Invocation.message` contains the actual triggering sender; a tool or scheduled call may have no message. Never invent a requester.
+```python
+from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, background, on_notice
+```
 
-| Capability | Public call |
-| --- | --- |
-| Send | `await ctx.reply(text)`, `reply_image(bytes, description)`, `reply_parts(parts)` |
+| Decorator | Async handler signature | Behavior |
+|---|---|---|
+| `@command("query", "Description")` | `self, ctx: Invocation, args: str` | Matches `/query` and passes remaining text in `args` |
+| `@fullmatch("live today", "Description")` | `self, ctx: Invocation` | Matches exact trimmed plain text |
+| `@regex(r"find (?P<name>.+)", "Description", priority=0)` | `self, ctx: Invocation, match` | Python `re.fullmatch`; read named groups from `match` |
+| `@on_notice("group_increase")` | `self, ctx: Invocation, notice` | OneBot `notice_type` or `type.sub_type` |
+| `@tool("plugin_read", "Full description", summary="Short summary", needs_source=False)` | `self, ctx: Invocation, ...` | Typed schema for chat model tool discovery; returns `str` or JSON value |
+| `@background(every="5m")` | `self, ctx: PluginContext` | Waits one interval after each run finishes (minimum 10 seconds) |
+| `@recall()` | `self, request: RecallRequest` | Supplies per-turn automatic recall when `memory_plugin` names this plugin |
+| `@memory_tool("Description")` | `self, ctx: Invocation, ...` | Supplies the scene's `memory` tool when `memory_plugin` names this plugin |
+| `@compact()` | `self, request: CompactRequest` | Writes compaction recaps when `recap_plugin` names this plugin |
+
+Each method takes one entry decorator. Matching order is command, `fullmatch`, then `regex` (sorted by `priority` descending). At most one handler consumes a message and does not wake the chat model. By default matching considers plain text after stripping a leading reply segment or mention of the bot itself. Pass `allow_mentions=True` to `@command` to accept mentions inside command arguments: real target segments remain in `ctx.message.segments` while each mention becomes a single space in `args`. Media segments are not matched by text rules.
+
+Plugin commands match before built-in host commands. Registering `/角色` overrides the host persona-switching command in scenes where the plugin is active.
+
+Operators can disable individual text rules per plugin via `plugins.disabled_rules` in `lenbot.config.json` (for example `"disabled_rules": {"asoul": ["今日直播"]}` using `/command`, exact text, or regex pattern strings); disabled rules pass through as normal chat messages.
+
+Handler return values are recorded as background context for subsequent chat turns; sending a message to the scene requires `await ctx.reply(...)`. If a `@tool` calls a model internally, state that in its description.
+
+### Automatic recall
+
+Setting a scene's `memory_plugin` to an enabled plugin delegates per-turn automatic recall to that plugin's `@recall` entry (at most one per plugin) and suspends native recall and background extraction for that scene while keeping existing native memory files intact. Saving `memory_plugin` or `recap_plugin` in the panel switches at the end of the scene's current turn; uninstalling the plugin returns the scene to native memory.
+
+`@memory_tool("Description")` provides that scene's `memory` tool for the chat model, other plugins' `ctx.memory()`, and task workers (subject to persona `memory` tool permission; without `@memory_tool`, the scene has no `memory` tool). To read existing native files during migration, call `await self.ctx.native_memory(scene, arguments)` (`browse`, `read`, `search`, `history`).
+
+```python
+from len_bot.plugin import Plugin, RecallBlock, RecallRequest, recall
+
+class Notes(Plugin):
+    @recall()
+    async def remember(self, request: RecallRequest) -> list[RecallBlock]:
+        hits = await self.search(request.scene, request.messages, limit=5)
+        return [RecallBlock(hit.title, hit.text) for hit in hits]
+```
+
+| `RecallRequest` field | Content |
+|---|---|
+| `scene`, `persona`, `turn_id` | Scene ID, active persona ID, current turn ID |
+| `observed_at` | Turn start timestamp in Unix seconds |
+| `messages` | Latest 8 read or delivered messages in chronological order (excluding undelivered bot messages) |
+| `recap` | Current compaction recap or `None` |
+| `tasks` | Active work tasks, one line per task |
+| `budget_chars` | Character budget from `memory.recall_budget_chars` (or `1500` when native memory is unconfigured) |
+
+The host keeps non-blank `RecallBlock`s in order, truncating output past `budget_chars`, and records them under `plugin:<name>` with `title` as path for all requests in that turn. Recall times out after 10 seconds; timeouts or errors log on the plugin and continue the turn without recall.
+
+Plugins indexing raw chat messages via `ctx.messages_between` report progress with `await self.ctx.report_memory_progress(scene, message.id)` (monotonic, restricted to the scene's active `memory_plugin`) so `retention.message_days` preserves unprocessed messages. Switching back to native memory resumes native extraction from the latest message at switch time.
+
+### Compaction recap
+
+When a scene's `recap_plugin` names an enabled plugin, conversation compaction calls that plugin's `@compact` entry (at most one per plugin):
+
+```python
+from len_bot.plugin import CompactRequest, Plugin, compact
+
+class Notes(Plugin):
+    @compact()
+    async def fold(self, request: CompactRequest) -> str:
+        return await self.ctx.generate(request.scene, "Summarize into a recap:\n" + request.source)
+```
+
+`CompactRequest(scene, persona, turn_id, source, budget_tokens)` provides the current recap plus complete oldest conversation entries (`source`, never splitting a tool call from its results) and `budget_tokens` (estimated by the host as UTF-8 bytes divided by 3). Within a 120-second timeout, non-blank output within `budget_tokens` commits the new recap, advances the compaction cursor, and resets discovered tools in one transaction; failures preserve existing history and end the current turn. Persona handover recaps always use the native prompt.
+
+## Configuration form
+
+The panel renders a settings form from `[config.<field>]` declarations in `plugin.toml`. Every field requires `type` and `description`; fields with `default` are optional and others are required. Validated values appear in `ctx.config`.
+
+| Type | Value | Panel control | Width |
+|---|---|---|---|
+| `string` | Text | Single-line input, or textarea when `multiline = true` | Half; full when multiline |
+| `secret` | Masked text | Password input; leaving an already-saved secret empty preserves it | Half |
+| `integer`, `number` | Numeric | Number input showing bounds (`integer` spans ≤ 100 get `−`/`+` buttons) | Half |
+| `boolean` | Boolean | Switch row | Half |
+| `string_list` | List of strings | Tag input (Enter or pasted lines add items) | Full |
+| `scene` | Single scene ID | Scene picker showing configured group avatars and names (no `default`) | Half |
+| `scene_list` | Multiple scene IDs | Multi-scene picker (`default` may only be `[]`) | Full |
+| `path` | Absolute path | Monospace input (`default = ""` permits blank) | Full |
+| `url` | HTTP(S) URL | URL input (`default = ""` permits blank) | Full |
+| `object_list` | List of objects | Collapsible summary rows expanding into child fields | Full |
+
+Optional attributes: `label`, `group` (top-level fields only), `placeholder`, `options` (values or `{ value = "auto", label = "Auto" }`; ≤ 3 options with labels ≤ 8 characters render as segmented buttons, otherwise a dropdown), `minimum`/`maximum`, and `object_list.fields.<child>` (one level of child fields of any type except `secret` and `object_list`).
+
+### Form layout
+
+- Each `group` renders as a two-column card in order of first appearance; ungrouped plain fields share a leading untitled card, and each ungrouped `object_list` gets its own card showing its item count. Four or more cards display a section jump list on wide screens.
+- Labels sit above controls with `description` in a tooltip; missing required values, out-of-range numbers, or invalid JSON show inline errors. Collapsed `object_list` rows summarize their first non-empty string (or numeric) child followed by secondary fields and badges.
+- Runtime parameters live in `lenbot.config.json`; `ctx.get_kv` / `set_kv` / `delete_kv` are reserved for runtime business state.
+
+### Declaration guidelines
+
+Keep `label` concise (include units such as `Timeout (s)`), explain limits in `description`, place the identifying string field first in `object_list.fields`, group forms with more than 6 fields, represent mutually exclusive modes with `options`, and pair half-width fields cleanly.
+
+## How tool definitions reach the chat model
+
+Each `@tool` carries three layers of documentation:
+
+- `summary`: shown in the discovery catalog and `tool_search` results (defaults to the full `description` verbatim when omitted).
+- `description`: full callable instructions loaded after discovery.
+- Typed parameters with defaults and `Annotated[..., Field(description=..., examples=...)]`: exported as JSON Schema (with auto-generated Pydantic titles stripped). Python docstrings, `README.md`, manifest `description`, and worker `SKILL.md` files are not injected into chat prompts.
+
+The active persona must allow both `tool_search` and the tool name. Discovered tools become callable on the next model request within the session until compaction resets discovery.
+
+Cross-tool workflows belong in an optional package-relative guide declared in `plugin.toml`:
+
+```toml
+[model]
+instructions = "prompts/tools.md"
+```
+
+When at least one allowed tool from the plugin has been discovered, `instructions` is loaded once into the system prompt, refreshed on plugin reload, and withdrawn on disable, uninstall, or compaction.
+
+Tools may return `str` or JSON-serializable `dict`, `list`, `int`, `float`, `bool`, or `None` (no tuples, arbitrary objects, non-string dict keys, or non-finite floats). Current scene IDs come from `ctx.scene` rather than model parameters. Distinguish data lookups, confirmed platform deliveries (`Sent.status == "sent"`), and background jobs (`{"status": "started", "delivery": "plugin"}`) in return values.
+
+## Organizing tools by capability
+
+Group related list, search, and detail operations into one capability tool discriminated by a strict `action` union, while keeping read queries separate from message sending and account writes:
+
+| Plugin | Tools |
+|---|---|
+| `asoul` | 4 (`schedule`, `dynamics`, `creations`, card sending) |
+| `bilibili` | 5 (video info, search, live/follow monitor, account read, account write) |
+| `group_digest` | 2 |
+| `gscore_adapter` | 1 |
+| `counter` (template) | 2 |
+
+```python
+from typing import Annotated, Literal
+from pydantic import BaseModel, ConfigDict, Field
+
+class Query(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+class Search(Query):
+    action: Literal["search"]
+    query: str = Field(description="Search keywords")
+
+class Read(Query):
+    action: Literal["read"]
+    item_id: str = Field(description="Item ID returned by search")
+
+Request = Annotated[Search | Read, Field(discriminator="action")]
+
+@tool("content_query", "Search or read items.", summary="Query items")
+async def query(self, ctx: Invocation,
+                request: Annotated[Request, Field(description="Search or read request")]) -> dict:
+    if request.action == "search":
+        return await self.search_source(request.query)
+    return await self.read_source(request.item_id)
+```
+
+## Verified request source
+
+Tools that delegate worker tasks or perform account-level actions set `needs_source=True`. The host automatically adds a required `source_message_id` parameter to the model schema (do not declare `source_message_id` in the Python signature), verifies the referenced message in the current scene, and populates `Invocation.message`:
+
+```python
+@tool("owner_action", "Run an owner-requested action.",
+      summary="Owner action", needs_source=True)
+async def action(self, ctx: Invocation) -> dict:
+    ctx.require_owner()
+    return {"requester": ctx.message.sender.uid}
+```
+
+A valid source message must be saved in the current scene, not recalled, received from a non-self user, and not sent by a known bot or blocklisted account.
+
+## Configuration availability
+
+Override synchronous `unavailable_tools(self, scene: str) -> dict[str, str]` to map unconfigured tool names to human-readable reasons (never include credentials). Unavailable tools remain visible in the panel's **Tools & skills** preview tab alongside scene enablement, persona permission, schema, and shared guides, while discovery and execution skip them.
+
+## Invocation context
+
+- Command, `fullmatch`, `regex`, and `needs_source=True` tool calls populate `Invocation.message`; ordinary tools and cron handlers have `ctx.message == None`.
+- Scene IDs (`onebot:group:80001`) and user IDs (`onebot:70001`) always carry their platform prefix.
+
+| Capability | Usage |
+|---|---|
+| Reply | `await ctx.reply(text)`, `reply_image(data, description)`, `reply_parts(parts)` |
 | Message parts | `Text(text)`, `Image(bytes, description)`, `Mention("onebot:70001")` |
-| History | `ctx.recent_messages(limit=20)`, current scene only, up to 100 |
-| Time range | `ctx.messages_between(after, before, offset=0, limit=200)`, Unix times with `after <= time < before`, oldest first, up to 500 per page; page with offset |
-| Memory | `await ctx.memory(arguments)` calls the scene's `memory` tool, native or the scene's memory plugin; `ctx.native_memory(scene, arguments)` reads native memory files |
-| Wake chat | `await ctx.emit_event(text)` |
-| One model request | `await ctx.generate(prompt, role="mind", system=None)` |
-| Work | `await ctx.delegate(goal, deliverable, context="", materials=())` |
-| Time | `ctx.now()`, `ctx.timezone()` |
-| Owner permission | `ctx.require_owner()` |
+| KV store | `await ctx.get_kv(key, default=None)`, `set_kv(key, value)`, `delete_kv(key)` (plugin-scoped; include `scene` in keys for per-scene records) |
+| Recent history | `ctx.recent_messages(limit=20)` (current scene, up to 100) |
+| Time-window history | `ctx.messages_between(after, before, offset=0, limit=200)` (`after <= time < before`, chronological, up to 500 per page) |
+| Memory | `await ctx.memory(arguments)` (active scene memory tool); `await self.ctx.native_memory(scene, arguments)` (read-only native files) |
+| Wake chat model | `await ctx.emit_event(text)` |
+| Scene clock | `ctx.now()`, `ctx.timezone()` |
+| Owner check | `ctx.require_owner()` |
+| Verified public image | `await ctx.fetch_image(url, timeout_seconds=15)` |
 
-`generate` runs one model generation with the mind or learner binding (learner falls back to mind when it has none of its own) and returns the text; the plugin sends it with `reply`. `delegate` requires an actual non-self triggering message; the host uses its sender's task permissions. The returned task record confirms submission; completion arrives as a task event.
+`self.ctx` (`PluginContext`) is used in `start()`, `stop()`, and `@background`, where scene-bound methods take an explicit `scene` argument. `self.ctx.scenes` lists enabled scenes whose chat switch is currently on. `Sent.status` is one of `sent`, `failed`, `unconfirmed`, `simulated`, or `partial`.
 
-`self.ctx` is a `PluginContext`; scene-specific capabilities require a scene argument. Calls are limited to enabled scenes. `self.ctx.scenes` lists enabled scenes whose chat is on: when an operator switches a group's chat off in the panel, that group drops out of the list, commands and notices there are not dispatched, and sending or emitting events to it raises an error. Sends return `Sent` with sent, failed, unconfirmed, simulated or partial status. Only sent means platform confirmation.
+Public image and card rendering helpers are `len_bot.image_assets` (`inspect_image`, `MAX_IMAGE_BYTES`, `MAX_IMAGE_PIXELS`, `OriginalImage`) and `len_bot.text_cards` (`CardSection`, `TextCards`, `CardPage`). Run CPU-bound rendering in `await asyncio.to_thread(...)`.
 
-Register five-field cron jobs in start with `self.ctx.cron(name, expression, handler, scene=..., timezone=...)`. The handler receives an Invocation without a message. Use an IANA timezone. Restart calculates the next run from the current time and skips occurrences missed while offline. Plugin `skills/<name>/SKILL.md` resources are read-only for workers and remain subject to persona skill permissions.
+## Single generation, work tasks and scheduled jobs
 
-## Installation, updates and restart
+### `generate`
 
-Git uses complete HTTP(S) or ssh:// repository URLs and local Git credentials. The repository root is the plugin root. Select a branch, tag or commit; an omitted ref follows the recorded default branch. ZIP accepts files at archive root or inside a single top-level directory with a direct manifest. Paths, duplicate files, symlinks and a 200 MiB extracted limit are checked. ZIP preparation can be offline; dependency installation may need network access.
+`await ctx.generate(prompt, role="mind", system=...)` (`role` is `"mind"` or `"learner"`, falling back to `"mind"` when `"learner"` is unconfigured) runs one model request under host concurrency slots and usage accounting (`plugin` recorded on `model_calls`) and returns text without sending.
 
-Both sources prepare a candidate while the current plugin keeps running. Save candidate configuration, then explicitly apply it. New plugins begin disabled; enable them and select scenes after source application. The panel shows installed, candidate and actual running versions separately.
+### `delegate`
 
-Everything lives under the instance `plugins/` directory: managed source is `plugins/<name>`, staging is `plugins/.candidates/<name>`, source/application records are `plugins/.installations/<name>.json`, and plugin data defaults to `plugins/.data/<name>`. `plugins.paths` defaults to `["plugins"]`, so a plugin copied into `plugins/` by hand is discovered too. Builtin and manually copied directories stay under manual control. Switching repositories or Git/ZIP source requires explicit source replacement. Git application rejects local changes, including untracked files except host-generated __pycache__.
+`await ctx.delegate(goal, deliverable, context="", materials=())` requires a verified non-self `ctx.message` (from a command/rule or `needs_source=True` tool) and submits a container work task under the sender's permissions; completion returns to the scene session asynchronously.
 
-If dependencies are unchanged and reload=plugin, applying stops only that plugin, switches files and reloads it. Dependency changes or reload=host require an explicit host restart. After clean host shutdown, the launcher runs `maintenance.apply_plugins` once with the instance lock: validate selected candidates, resolve combined requirements, switch source, then start the host. Existing installed packages constrain resolution; conflicts preserve the original error. Failure ends that launcher run and keeps the candidate and the original error; fix the problem and restart to apply again. Candidates are applied only on an explicit restart.
+### Scheduled jobs
 
-For direct host runs, stop the instance, run `python -m len_bot.next.maintenance.apply_plugins` from its root, then explicitly start it. Rebuilt environments can restore installed plugin requirements with `maintenance.plugin_dependencies`. Use the target interpreter and uv.
+Register five-field cron jobs in `start()` with `self.ctx.cron(name, "0 8 * * *", handler, scene=scene, timezone=self.ctx.timezone(scene))` using explicit IANA timezones. Registrations live for the current plugin run; restarts schedule from the current time without replaying offline intervals.
 
-Applying a new version moves the replaced source to `plugins/.previous/<name>`; the panel can go back to it once. If the new version fails to load, start or migrate its data, the host returns to the previous source automatically; if the new version had already migrated the data, the pre-migration backup is restored too. Going back by hand from the panel restores the previous source and parameters; data follows the data-version rules above. Canceling a candidate preserves installed source. Canceling an unapplied first install removes its configuration entry. Disabling preserves configuration and data. Uninstall removes source and enabled configuration but retains data and shared packages. Data deletion is a separate action after the plugin stops.
+### Plugin skills
 
-The discovery page uses a [static catalog](plugin-catalog.md).
+Files under `skills/<skill-name>/SKILL.md` are exposed read-only to task workers in scenes where the plugin is enabled, subject to persona `skills` permissions.
 
-## Local tests and publishing
+## Lifecycle and errors
+
+`start()` (60-second timeout) acquires resources and `stop()` (30-second timeout) releases them; `migrate_data` has no timeout. Register long-lived plugin coroutines via `self.ctx.start_task(name, coroutine)` so the host cancels them on shutdown. Unhandled handler exceptions log `plugin_error` and end only that invocation. Use `self.ctx.log` (`logging.Logger`) to write structured entries to `logs/lenbot.jsonl` tagged with plugin, scene, turn, and tool call IDs.
+
+Each plugin exposes in-memory `health` (`level` in `ok`, `degraded`, `failed`, `stopped`, `starting`, plus `errors_last_hour`, `failing`, `last_error_at`) via `GET /api/host/plugins/health`.
+
+## Local testing and publishing
+
+`len_bot.plugin_testing.PluginTest` runs the real plugin lifecycle, config validation, rule matching, tool boundary serialization, and on-disk KV in a temporary directory without OneBot, panel, or worker containers (all sends record as `simulated`):
 
 ```python
 from pathlib import Path
@@ -149,40 +357,20 @@ async def check():
         assert await bot.message("计数加一")
         assert bot.deliveries[-1].text == "本群计数：2"
         result = await bot.tool("counter_read", {})
+        assert "2" in result
 ```
 
-PluginTest runs real lifecycle, matching, tool validation, scene permissions and on-disk KV in a temporary installation. Specify scenes and owners in the constructor; message accepts scene and sender. Deliveries contain captured parts, reply_to and simulated status. events() exposes actual stored plugin events. `recall(scene=..., recap=None, tasks=(), budget_chars=1500)` runs `@recall` on the latest 8 messages added with `add_message` and returns the items the chat would receive. `memory(arguments, scene=...)` calls `@memory_tool` with the chat memory tool's checks. `compact(source, scene=..., budget_tokens=4096)` runs `@compact` with the host's checks and returns the recap the host would adopt. Handler/start failures fail the call. Context exit stops the plugin and deletes its temporary installation. To test a data migration, pass the old data: `PluginTest(package, data=Path('tests/data-v1'), data_version=1)` runs `migrate_data` before `start()` as a real upgrade does.
+- Pass `scenes`, `owners`, `now=lambda: 1791298800`, or `data=Path("tests/data-v1"), data_version=1` (runs `migrate_data` before `start()`) in the constructor.
+- `message(text, scene=..., sender=..., parts=...)` and `add_message(...)` support `Segment` lists to test mention and media matching boundaries; `add_message` returns a `ChatMessage` whose `platform_message_id` can be passed as `source_message_id`.
+- `recall(...)`, `memory(...)`, and `compact(...)` exercise `@recall`, `@memory_tool`, and `@compact` under host checks.
+- `preview_tools(scene)` returns discovery summaries, full descriptions, shared guides, schemas, `needs_source`, allowed scenes, and unavailability reasons.
+- `wait_tasks(name_prefix)` awaits one-shot background tasks registered via `start_task` matching `name_prefix`.
+- Model calls are disabled by default; pass `models={...}` pointing at a local synthetic protocol server when testing `ctx.generate`.
 
-The local harness disables model calls by default; explicitly pass models for protocol tests through the host request and usage path. Memory and worker calls raise an explicit error. A plugin's own external network calls still execute.
+To publish, generate a repository from [lenbot-plugin-template](https://github.com/lendevs/lenbot-plugin-template):
 
-Publish a standalone repository containing source, manifest, documentation and a license. Release ZIPs contain the same root package. Set your own name and authors, update version and compatibility ranges, document configuration/data changes, and test the published package. The [plugin template](https://github.com/lendevs/lenbot-plugin-template) calls LenBot's reusable workflows: `plugin-ci.yml` tests and packages the plugin against host `master` by default (pass `host_ref` to pin), and `plugin-release.yml` attaches an importable ZIP to each `v*` tag after checking the tag matches the manifest version.
+- `plugin-ci.yml` runs the plugin's tests and `scripts/package_plugin.py` against LenBot `master` (or a pinned `host_ref`).
+- Pushing a `v*` tag matching `plugin.toml` triggers `plugin-release.yml` to attach an importable release ZIP containing source, `prompts/`, `skills/`, `assets/`, and license files.
+- **License**: The LenBot host is `AGPL-3.0-only`, and the plugin template is `GPL-3.0-only`. Because `inline` plugins run in the host process, `GPL-3.0` is recommended (GPLv3 Section 13 permits combining GPLv3 works with AGPLv3 works).
 
-**License**: the LenBot host is AGPL-3.0-only; the plugin template and the counter example are GPL-3.0-only. Plugins run in the host process, so GPL-3.0 is the recommended plugin license; section 13 of GPLv3 permits combining GPLv3 works with AGPLv3 works. If you choose another license, check its compatibility with GPLv3 and AGPLv3 yourself.
-
-## Model-facing tool contract (unreleased 0.2.0 development)
-
-Use `@tool(name, description, summary="...", needs_source=False)`. The explicit summary appears in discovery and search, while the full description and `Annotated[..., Field(description=..., examples=...)]` schema accompany the callable tool. Without a summary the full description is used as is. README and docstrings are not loaded automatically.
-
-An optional `[model] instructions = "prompts/tools.md"` names a package-relative shared guide. It is loaded once after an allowed tool is discovered, refreshed on plugin reload and withdrawn on disable, removal or discovery reset after compaction.
-
-Tools return text or native JSON values; the host serializes non-string results. Tuples, arbitrary objects, non-string dictionary keys and non-finite floats are invalid. Explain whether a result is data, an actual delivery receipt or background work started. Only a `sent` receipt confirms platform delivery.
-
-`needs_source=True` adds a host-owned required `source_message_id`. Select the actual request message from this scene's records; the host populates `Invocation.message` from that message. Do not declare this parameter in the handler or provide an arbitrary owner account. Use `ctx.require_owner()` and `ctx.delegate()` with that actual sender.
-
-Override synchronous `Plugin.unavailable_tools(scene)` to return tool names and configuration reasons. Unavailable tools remain visible in the panel preview but are excluded from discovery and execution. Keep the actual caller checks in the handler; never include credentials in reasons or guides.
-
-Use `await ctx.fetch_image(url, timeout_seconds=15)` for verified public image bytes under host network/image limits. `image_assets` validation, limits and OriginalImage, plus `text_cards` CardSection, CardPage and TextCards are public helpers. Render expensive images with `asyncio.to_thread`.
-
-`PluginTest.preview_tools()` shows the model-facing summaries, schemas, shared guides and availability. Inject a clock with `now=...`, save a source with `add_message(...)`, and explicitly configure `models=...` only for model protocol tests. Sending stays simulated. The template includes native JSON lookup and background generation/delivery examples. See the [Chinese guide](plugins-v1.md) for full examples and compatibility details.
-
-Group related search/detail operations into a single capability using strict discriminated request models; keep data queries separate from sending and account writes. Model schemas omit generated titles while preserving property names, descriptions, examples and constraints. Check context size as well as tool count.
-
-## Command mentions and precedence
-
-Commands use text-only matching by default. Opt in to body mentions with `@command("forward", "Forward a command", allow_mentions=True)`. Real targets remain in `ctx.message.segments`; each body mention becomes one space in `args`. Other media segments are not accepted. Full-text and regex rules remain text-only. An initial reply or mention of the bot may still precede a command.
-
-Plugin commands run before host commands. If a plugin explicitly registers `/角色`, it handles that command; otherwise the host requires an owner or global administrator to switch personas. Avoid the same name when the host command must remain available.
-
-Declare the host APIs actually used in `permissions`. The current official plugin updates and template do so; older manifests without this field retain the documented unrestricted host capabilities. The official plugins use tools, and some use cron or start_task, so they remain inline.
-
-`PluginTest.message(..., parts=[Segment(...)])` and `add_message(..., parts=...)` append real message segments after the text to test mention and media matching. Memory and task workers are tested in a temporary host instance; live delivery and model quality are checked with real sends and expression replay.
+Before 0.2.0 is released, official plugin CI tracks host `master` and host CI runs the pinned official plugin test suites from `plugin_catalog.json` on every push.

@@ -1,132 +1,53 @@
-# 角色包
+# 角色包装配
 
-角色包规定了 Bot 的身份和说话方式。一个角色包就是一个目录，可以在面板的角色页编辑，也可以直接编写文件。完整的例子见[示例角色小然](../examples/personas/companion/)。
+角色包的完整目录结构、`persona.yaml` 字段含义与材料编写方法见文档站[编写角色包](https://lendevs.github.io/LenBot/develop/personas)，可运行的完整示例见 [examples/personas/companion/](../examples/personas/companion/)。本文说明宿主在 `persona/`、`runtime/personas.py` 和 `chat/context.py` 中对角色包的校验、原子读写、提示词拼装与运行期切换机制。
 
-运行中换角色会等当前回合结束，再执行交接和装配。装配失败时恢复原角色绑定及其称呼、关系和额外要求，运行中的角色保持原样；其他设置不回退。交接模型调用失败会报告原始错误，按已有会话继续换角色。
+## 目录校验与原子读写
 
-```text
-companion/
-  persona.yaml       名字、身份、性格、许可
-  voice.md           说话方式（可选）
-  boundaries.md      底线（可选）
-  examples.yaml      情境和台词样例（可选）
-  knowledge/         可检索的资料（可选）
-  stickers/          表情图片和 index.yaml（可选）
-  avatar.png         头像（可选）
-  response_choice.md        替换框架的回应判断（可选）
-  expression_principles.md  替换框架的一般说法（可选）
-  chat_examples.md          替换框架的情境示范（可选）
-```
+`persona/profile.py` 负责角色包的读取、校验与保存。
 
-## persona.yaml
+- 必选文件只有 `persona.yaml`。`voice.md`、`boundaries.md`、`examples.yaml` 不存在时按空内容读取；面板保存一次角色资料后会写入这四个文件。
+- `Persona` 模型启用 `extra="forbid"` 和 `strict=True`。`persona.yaml` 中不能内联填写 `voice`、`boundaries`、`examples`、`knowledge`、`stickers` 或 `avatar`，这些内容必须放在各自的文件或子目录中。
+- `name`、`aliases` 元素、`example_tags` 元素和 `styles[].name` 均不可为空白字符串。`example_tags` 列出的每个标签都必须在 `examples.yaml` 的样例标签中出现过。
+- `styles` 非空时，每项 `weight` 取值范围为 `0` 到 `1`，各项权重之和必须等于 `1`（浮点容差 `1e-12`）。
+- 保存角色核心四文件时，`save_persona_files` 先把旧内容写入同目录的 `.persona-pending.json`，再逐个原子替换目标文件，最后删除 `.persona-pending.json` 并同步目录。写入中途中断时，下次 `read_persona_files` 发现 `.persona-pending.json` 会自动还原上一版完整文件。
 
-只有 `name` 和 `brief` 必须填写，最简单的角色包只有一个 `persona.yaml`：
+## ZIP 导入导出与删除
 
-```yaml
-name: 小一
-brief: 班里爱聊天的同学，说话直接，喜欢接梗。
-```
+`persona/packages.py` 处理原生角色包 ZIP 归档：
 
-| 字段 | 内容 | 不填写时 |
-|---|---|---|
-| `name` | 名字 | 必填 |
-| `brief` | 用一两句话说明角色的身份 | 必填 |
-| `id` | 只能使用小写英文字母、数字和 `-` | 目录名 |
-| `behavior` | 性格和相处方式，包括对什么感兴趣，以及遇到不同情况时如何反应 | 空 |
-| `self_reference` | 自称，例如 `[我]` | `[我]` |
-| `aliases` | 其他人对角色的称呼。群里提到这些名字时，Bot 会注意到这条消息 | `[]` |
-| `tools` | 允许使用的工具，填 `all` 或名字列表。`[]` 表示不使用工具 | `all` |
-| `skills` | 允许后台任务使用的技能，填 `all` 或名字列表 | `all` |
-| `styles` | 轮换风格。每项包含 `name`、`weight` 和 `note`，权重之和等于 1 | `[]` |
-| `example_tags` | 只使用带有这些标签的样例 | 使用前 8 条 |
+- 上传与导出的 ZIP 体积上限为 64 MiB，解压后总字节数上限为 128 MiB，条目上限为 2048 项。
+- 仅允许根目录白名单文件（四个核心文件、三份表达规则覆盖文件、`avatar.png`、`README.md`、`LICENSE`、`NOTICE`）以及 `knowledge/`、`stickers/` 两个子目录；拒绝符号链接、特殊文件、隐藏路径、路径越界和加密条目。
+- 导入时先在 `personas/` 下的临时目录展开并通过 `load_persona` 完整校验，校验通过后重命名发布。若包内 `id` 已被实例中其他角色占用，`runtime/personas.py` 的 `import_role` 会将包内 `id` 改写为新目录名。
+- 面板删除角色时，仅允许删除位于实例 `personas/` 下且当前没有任何群绑定的角色目录。原目录移动到 `.runtime/deleted-personas/<目录名>-<时间戳>`，`memory/` 下属于该角色 ID 的长期记忆保留。
 
-`voice`、`boundaries` 和 `examples` 写在各自的文件中，不能放进 `persona.yaml`。这三个文件不存在时按空内容处理；在面板里保存一次角色后会生成它们。
+## 提示词拼装与每轮抽样
 
-## 写法建议
+`chat/context.py` 在构造系统消息和每轮参考材料时消费 `Persona` 对象：
 
-### 描述人物
-
-`behavior` 和 `voice.md` 描述这个人平时的样子，具体场合如何应对由模型自行判断。罗列一长串禁止事项，往往会让回复变得僵硬。
-
-框架提示词不规定口吻。标点、语气词、颜文字、口头禅和表情包用量都由角色材料决定，没写到的地方按群聊里的一般做法，见[群聊表达](expression-materials.md#框架和角色的分工)。
-
-### 角色特点
-
-角色的特点应该是背景，不要写成口头禅。例如在设定中写角色爱吃东西，模型就可能每句话都提到吃的。请写清楚这个特点在什么时候出现，或者只在样例中自然地带出一次。
-
-### 打字习惯
-
-请写明句子的长短，是否使用句号和感叹号，以及是否会只回复一个词。比起形容词，这些习惯更能让回复接近真人。
-
-### 轮换风格与口吻素材
-
-为现有角色补几种接话方式时，可以在 `persona.yaml` 的 `styles` 中写明适用情境、句子长短和关注的细节。每轮按权重抽取一条作为参考，权重之和为 1；`[]` 使用角色已有的性格、说话方式和样例。
-
-```yaml
-styles:
-  - name: 随口联想
-    weight: 0.25
-    note: 轻松日常里，遇到一个有趣的具体细节，可以顺口说个关联，再回到对方正在讲的事。事实问题直接回答。
-  - name: 简短接话
-    weight: 0.75
-    note: 对象已经清楚时可以省略主语。平常消息用短句回应，具体问题把必要信息说清楚。
-```
-
-`note` 写可观察的说法，角色的身份、关系和态度继续放在 `behavior`、`voice.md` 与样例中。以下情境和例句都是虚构的：
-
-| 写法 | 情境 | 例句 |
-|---|---|---|
-| 联想一句后回到眼前的事 | 群友把衣架排得像手机信号，还在找衣服 | 这信号满格了。你要找哪件？ |
-| 对象清楚时省略主语 | 刚才一直在聊打印任务，进度显示还差一页，群友问好了没 | 还差一页 |
-| 平淡接话 | 群友说周末改成在家看电影 | 也挺好 |
-
-先保留原角色，在草稿或隔离副本里试一个风格；需要观察素材效果时，可用权重 1 单独试。用相同情境比较原版和候选，看联想是否回到话题、短句的对象是否清楚，以及日期、数字等事实是否仍然准确。采用时再决定各风格的比例，回放方式见[表达回放](../examples/replay/)。
-
-### 表情
-
-有表情包时，在 `voice.md` 中写明角色用表情包的习惯：用得多不多，常常只发一张图，还是多半和一句话一起发。
-
-### 关心人的方式
-
-角色怎样关心人，写进 `behavior` 或 `voice.md`，例如问一句怎么了、接着聊那件事。没有写时，模型容易在句尾叮嘱对方多喝水、早点睡。
-
-### 样例
-
-每条样例写一个情境和一句台词。`context` 写当时的情境，`line` 写角色的回复。样例只用来示范语气，内容不要和真实的群聊经历混在一起。准备多套样例时，用 `tags` 区分，再用 `example_tags` 选择。
-
-```yaml
-- context: 群友：刚下班，今天被甲方改了八版
-  line: 八版，甲方是来许愿的吧
-  tags: [daily]
-```
-
-样例可以留空。先用设定和说话方式建立基线，再补需要示范的少量情境。样例写得太像某个人时，模型容易照抄。
-
-### 事实资料
-
-需要准确的内容写进 `knowledge/` 下的 Markdown 文件，例如生日和经历，也包括作品。模型在需要时会检索这些资料。资料中没有的内容，模型应该回答不知道。
+1. `character_material` 读取 `next_character.md`，填入 `brief`、`self_reference`、`aliases`、`behavior`、`voice`、`boundaries` 以及 `select_examples` 选出的最多 8 条样例（未填 `example_tags` 时取前 8 条，否则按标签交集按原顺序取前 8 条）。若当前群配置了 `persona_aliases`、`relationships` 或 `behavior_addendum`，再由 `next_scene_persona.md` 渲染为本群补充段落拼入 `$scene_material`。
+2. `build_system` 读取 `next_mind.md`，填入 `$name`、`$scene`、`$bot_id`、`$character`、`$response_choice`、`$expression_principles` 和发送出口说明，随后追加 `chat_examples.md` 以及当前场景已开放工具对应的能力说明段落。
+3. `styles` 非空时，每轮开始由 `select_style` 按权重随机抽取一条正权重风格，经 `next_style.md` 渲染后放入当轮宿主参考材料，不进入稳定系统前缀，也不写入会话历史。
 
 ## 替换框架的表达规则
 
-框架给每个角色附加三份通用的表达规则：开口前怎样判断（`next_response_choice.md`）、群聊里的一般说法（`next_expression_principles.md`）和几个情境示范（`next_chat_examples.md`）。角色包里放同名的 `response_choice.md`、`expression_principles.md` 或 `chat_examples.md`，这个角色就用自己的版本，其他角色不受影响。文件不存在或内容为空时，用框架的版本，包括在**系统 → 设置 → 提示词**里改过的全局版本。
+`EXPRESSION_FILES` 定义了角色包可单独覆盖的三份表达提示词：
 
-文件里的 `$name` 会换成角色名字，其他 `$` 原样保留。面板角色页的**文件**里可以编辑这三份文件，空白时显示框架当前的内容，可以一键填入后再改；清空并保存就回到框架版本。
+| 角色包文件 | 替换的框架提示词 | 用途 |
+|---|---|---|
+| `response_choice.md` | `next_response_choice.md` | 开口前的回应判断 |
+| `expression_principles.md` | `next_expression_principles.md` | 群聊默认表达做法 |
+| `chat_examples.md` | `next_chat_examples.md` | 情境判断与工具选择示范 |
 
-## 表情
+角色包内对应文件存在且去掉空白后非空时，该角色使用自己的文件，并通过 `Template.safe_substitute(name=persona.name)` 替换 `$name`，其余 `$` 原样保留。文件不存在或为空白时，回退到框架提示词（包括实例 `state/prompts/` 中保存的全局覆盖版本）。框架与角色材料的职责边界见[群聊表达](expression-materials.md#框架和角色的分工)。
 
-`stickers/index.yaml` 是一个列表，每一项对应一张图片。
+## 运行期切换与回退
 
-```yaml
-- file: happy.png
-  description: 笑脸：眯眼咧嘴笑，脸颊泛红。适合：开心、被逗笑、替别人高兴。
-  emotions: [开心, 被逗笑]
-  tags: [笑, 开心]
-```
+`runtime/personas.py` 的 `PersonaService` 管理运行中场景的角色切换与热重载：
 
-`description` 需要写清画面内容和适用的场合。模型按情绪或关键词选择图片，同一类图片中，使用次数较少的优先。
-
-## 测试和采用
-
-在角色页编辑后，可以先用草稿开始一次试聊，满意后再保存。各群使用哪个角色，在群设置中选择，保存后立即生效；正在回复的群等这一轮结束后切换。
-
-改动较大时，可以用[表达回放](../examples/replay/)对比改动前后的回复。
+- 角色库同时汇总实例 `personas/` 下的非符号链接角色目录和 `scenes.*.persona` 直接引用的外部目录。库中存在重复角色 `id` 时，拒绝切换到该 `id`。
+- 切换角色（`switch`）和保存角色后热重载（`reload`）都会获取目标群的回合执行锁 `runner.execution`。若当前回合正在执行，面板请求最多同步等待 3 秒；超时未完成时转入后台继续等待，同时在 `switching` 中公布待切换目标供面板展示。热重载不允许直接修改运行中角色的 `id`。
+- 切换到不同 `id` 的角色时，`_bind` 将当前群配置的 `persona_aliases`、`relationships`、`behavior_addendum` 存入该群配置的 `inactive_personas[<旧ID>]`；若新角色 `id` 此前在 `inactive_personas` 中存有记录，则自动恢复到当前群配置。
+- 保存根配置后，若新旧角色 `id` 不同，宿主先调用 `chat.hand_over` 生成一份角色交接回想，再由 `_apply` 同步更新运行态场景配置、任务技能许可、外部工具目录和记忆服务的活动角色。
+- 交接模型调用失败时，记录 `persona_handover` 警告日志并按既有会话继续切换，同时在本轮 `host_state` 注入提示，标明当前会话中此前 `assistant` 的发言和承诺归属上一角色；交接成功时则标明较早群聊回想中的发言和承诺归属上一角色。
+- 若 `_apply` 装配阶段抛出异常，运行态配置立即还原，并重新获取配置写锁将 `lenbot.config.json` 恢复为切换前的角色绑定。

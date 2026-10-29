@@ -2,36 +2,35 @@
 
 [中文](README.md)
 
-This directory holds templates, companion service configuration and maintenance notes for running LenBot. Setup and daily use are covered on the [documentation site (zh)](https://lendevs.github.io/LenBot/). For source installation, see [quick start (zh)](https://lendevs.github.io/LenBot/guide/quick-start). Candidate packages and Docker images are covered in [deployment installation (zh)](current/installation.md).
+This directory contains deployment recipes, system service templates, and command-line maintenance guides for running LenBot. Operator panel documentation is on the [documentation site (zh)](https://lendevs.github.io/LenBot/): source setup is in [quick start (zh)](https://lendevs.github.io/LenBot/guide/quick-start), deployment archives and Docker Compose setup are in [current/installation.md](current/installation.md) (zh), and source upgrades are in [maintenance and backups (zh)](https://lendevs.github.io/LenBot/guide/maintenance).
 
-## The instance directory
+## Instance directory
 
-The instance directory holds everything for one bot. When running from source, the repository root is the instance directory.
+An instance directory stores all runtime state for one bot. When running from a Git checkout, the repository root is the instance directory; when installed from a deployment archive, runtime data lives under `instance/`.
 
-| What | Where |
+| Content | Path |
 |---|---|
-| Runtime configuration (with secrets) | `lenbot.config.json` |
-| Chat database and memory job database | `database` from the configuration, plus the matching `.memory.sqlite3` |
-| Persona packages | `personas/<persona id>/` |
+| Runtime configuration (including secrets) | `lenbot.config.json` |
+| Chat database and memory job database | `database` from configuration, plus matching `<database>.memory.sqlite3` |
+| Persona packages | `personas/<persona-id>/` |
 | Plugins and plugin data | `plugins/`, `plugins/.data/` |
-| Memory, prompt overrides, task directories | `state/` and others, as configured |
+| Long-term memory, prompt overrides, reference index, runtime state | `state/` (subpaths follow configuration) |
 | Runtime log | `logs/lenbot.jsonl` |
 
-The runtime configuration lives in `lenbot.config.json`. Change settings in the panel while LenBot runs, and stop LenBot before editing the file by hand.
+Modify settings through the web panel while LenBot is running; stop LenBot before editing `lenbot.config.json` manually or running offline maintenance commands.
 
-## Files
+## Directory layout
 
-| File | Contents |
+| File or directory | Contents |
 |---|---|
-| [current/README.md](current/README.md) (zh) | Optional services: OneBot, models, embeddings, speech recognition, background tasks, public browser, panel access |
-| [current/operations.md](current/operations.md) (zh) | Operations: panel details, plugins, memory, logs, upgrades, data formats |
-| [current/lenbot.service](current/lenbot.service) | Linux systemd template |
-| [current/start.command](current/start.command) | macOS double-click launcher |
-| [current/services.compose.yaml](current/services.compose.yaml) | Embedding service (Ollama) |
-| [current/start-asr.sh](current/start-asr.sh), [current/asr.md](current/asr.md) (zh) | Local speech recognition (whisper.cpp) |
-| [current/task-storage.md](current/task-storage.md) (zh) | Storage pool and quotas for background tasks |
-| [current/first-setup.example.json](current/first-setup.example.json) | Example first-setup submission |
+| [current/installation.md](current/installation.md) (zh) | Linux, macOS, and Windows deployment packages, Docker Compose setup, unattended JSON initialization |
+| [current/README.md](current/README.md) (zh) | System service templates, companion containers (Ollama embeddings, worker image), startup order |
+| [current/operations.md](current/operations.md) (zh) | Maintenance CLI commands, reverse proxies, local proxy `fake-ip`, snapshot upgrades, usage accounting |
+| [current/asr.md](current/asr.md) (zh), [current/start-asr.sh](current/start-asr.sh) | Local macOS speech recognition (`whisper.cpp`) build and configuration |
+| [current/task-storage.md](current/task-storage.md) (zh) | Dedicated filesystem storage pools for background tasks (Linux `ext4` / macOS `APFS`) |
+| [current/lenbot.service](current/lenbot.service), [current/start.command](current/start.command) | Linux `systemd` service template and macOS double-click launcher |
+| [current/Dockerfile](current/Dockerfile), `current/host*.compose.yaml`, [current/services.compose.yaml](current/services.compose.yaml) | Host container image, Compose recipes, and local embedding service |
+| [current/first-setup.example.json](current/first-setup.example.json) | Sample JSON payload for unattended initialization |
+| `package/`, `updater/` | Cross-platform archive installers and local update controller |
 
-`deploy/updater/` and `deploy/package/` provide the installer and updater; `current/Dockerfile` and `current/host*.compose.yaml` provide Docker recipes. CI produces candidate deployment packages. The Release workflow with `publish=false` builds candidate images for each architecture.
-
-To update a source installation, follow the Chinese guide [更新与备份](../website/guide/maintenance.md).
+CI builds candidate deployment packages for each platform; running the Release workflow with `publish=false` builds multi-architecture candidate images for the host, task worker, and updater.
