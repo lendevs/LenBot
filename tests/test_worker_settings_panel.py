@@ -119,3 +119,16 @@ def test_docker_host_accepts_a_local_socket_or_named_pipe() -> None:
     for host in ('tcp://127.0.0.1:2375', 'npipe:////remote/pipe/docker_engine', 'unix://relative.sock'):
         with pytest.raises(ValidationError):
             worker(host)
+
+
+def test_readiness_names_what_delegation_still_needs(tmp_path: Path) -> None:
+    write_instance(tmp_path, ['onebot:70001'])
+
+    async def check(client) -> None:
+        response = await client.get('/api/host/settings/worker/readiness')
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body['worker'], body['running'], body['sandbox'], body['delivery']) == (False, False, None, 'simulated')
+        assert body['scenes'] == [{'scene': SCENE, 'enabled': False, 'delegate_roles': ['owner', 'admin', 'whitelist'],
+                                   'persona': 'synthetic-owner', 'missing_tools': ['delegate', 'task', 'send_file']}]
+    exercise(tmp_path, check)

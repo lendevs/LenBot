@@ -163,6 +163,23 @@ class WorkerDefaults(PanelResponse):
     gid: int | None = None
 
 
+class TaskSceneReadiness(PanelResponse):
+    scene: str
+    enabled: bool
+    delegate_roles: list[str]
+    persona: str | None
+    missing_tools: list[str]
+
+
+class TaskReadiness(PanelResponse):
+    worker: bool
+    running: bool
+    sandbox: Literal['docker', 'bwrap'] | None
+    delivery: str
+    upload_visible_root: str | None
+    scenes: list[TaskSceneReadiness]
+
+
 class SandboxCheck(PanelResponse):
     steps: list[JsonObject]
 

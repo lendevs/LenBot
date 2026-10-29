@@ -400,6 +400,10 @@ async def _body(request: Request, kind: type[BaseModel]) -> BaseModel:
         raise HTTPException(422, _validation_detail(error)) from error
 
 
+# Tools a group's role must allow before members can delegate and receive task files.
+TASK_TOOLS = ("delegate", "task", "send_file", "tool_search")
+
+
 def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                            runtime,
                            personas: Callable[[], dict[str, Persona]],
@@ -652,6 +656,32 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.get("/api/host/settings/worker/defaults", response_model=responses.WorkerDefaults, response_model_exclude_unset=True)
     async def worker_defaults(_: str = Depends(user)):
         return suggested_worker(root)
+
+    @app.get("/api/host/settings/worker/readiness", response_model=responses.TaskReadiness)
+    async def worker_readiness(_: str = Depends(user)):
+        """What delegation still needs, from the saved settings and each group's current role."""
+        async with write_lock:
+            try:
+                saved = await asyncio.to_thread(_read_saved, root)
+            except (ValueError, OSError) as error:
+                raise HTTPException(422 if isinstance(error, ValueError) else 500,
+                                    f"{type(error).__name__}: {error}") from error
+        roles = personas()
+        scenes = []
+        for scene, settings in saved.scenes.items():
+            role = roles.get(scene)
+            scenes.append({
+                "scene": scene, "enabled": settings.tasks.enabled,
+                "delegate_roles": list(settings.tasks.delegate_roles),
+                "persona": None if role is None else role.id,
+                "missing_tools": [] if role is None or role.tools == "all"
+                                 else [name for name in TASK_TOOLS if name not in role.tools],
+            })
+        return {"worker": saved.worker is not None, "running": running.worker is not None,
+                "sandbox": None if saved.worker is None else saved.worker.sandbox,
+                "delivery": saved.delivery,
+                "upload_visible_root": None if saved.onebot is None else saved.onebot.upload_visible_root,
+                "scenes": scenes}
 
     @app.post("/api/host/settings/worker/check", response_model=responses.SandboxCheck)
     async def check_worker(request: Request, _: str = Depends(user)):

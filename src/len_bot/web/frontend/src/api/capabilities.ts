@@ -88,6 +88,22 @@ export type WorkerDefaults = Partial<
   >
 >
 
+/** What delegation still needs: saved task settings, each group's switch, roles and tools, and the file exit. */
+export interface TaskReadiness {
+  worker: boolean
+  running: boolean
+  sandbox: 'docker' | 'bwrap' | null
+  delivery: 'simulated' | 'onebot'
+  upload_visible_root: string | null
+  scenes: {
+    scene: string
+    enabled: boolean
+    delegate_roles: string[]
+    persona: string | null
+    missing_tools: string[]
+  }[]
+}
+
 /** One step of `check_local_sandbox`, in order; ``detail`` is the original output. */
 export interface SandboxStep {
   step: 'bwrap' | 'namespaces' | 'task_runtime' | 'sandbox' | 'pi'
@@ -219,6 +235,8 @@ export const capabilitiesApi = {
     http.put<SettingsSnapshot>('/api/host/settings/worker', { worker: value }),
   workerDefaults: (signal?: AbortSignal) =>
     http.get<WorkerDefaults>('/api/host/settings/worker/defaults', undefined, signal),
+  workerReadiness: (signal?: AbortSignal) =>
+    http.get<TaskReadiness>('/api/host/settings/worker/readiness', undefined, signal),
   checkSandbox: (draft: { bwrap_binary: string; task_runtime: string }) =>
     http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/check', draft),
 

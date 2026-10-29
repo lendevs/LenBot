@@ -20,6 +20,7 @@ import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
+import TaskReadiness from './TaskReadiness.vue'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
@@ -251,6 +252,7 @@ const save = useMutation({
   mutationFn: () => capabilitiesApi.saveWorker(draft.value && stored(draft.value)),
   onSuccess: (snapshot) => {
     client.setQueryData(keys.host.settings(), snapshot)
+    void client.invalidateQueries({ queryKey: keys.host.workerReadiness() })
     const next = capabilitiesOf(snapshot).worker
     draft.value = next && editable(next)
     void readPendingRestart()
@@ -322,20 +324,7 @@ function addPackageHosts() {
         <Switch :model-value="draft !== null" @update:model-value="toggle" />
       </Field>
       <template v-if="draft">
-        <p
-          v-if="!hasModel"
-          class="flex flex-wrap items-center gap-2 rounded-md bg-info-bg px-3 py-2 text-sm text-info"
-        >
-          {{ t('capabilities.worker.followsChat') }}
-          <Button
-            size="sm"
-            variant="ghost"
-            :icon-right="ArrowUpRight"
-            :to="{ name: 'host-models', query: { tab: 'roles' } }"
-          >
-            {{ t('capabilities.worker.toModels') }}
-          </Button>
-        </p>
+        <TaskReadiness :has-model="hasModel" />
         <FormSection :title="t('capabilities.worker.model')">
           <Field :label="t('capabilities.worker.reasoning')" required :error="errors.model_reasoning">
             <Select
