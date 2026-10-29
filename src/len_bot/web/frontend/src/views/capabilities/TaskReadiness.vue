@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useQuery } from '@tanstack/vue-query'
+import { useMutation, useQuery } from '@tanstack/vue-query'
+import { useRouter } from 'vue-router'
 import type { RouteLocationRaw } from 'vue-router'
 import { ArrowUpRight, Check, Circle, X } from '@lucide/vue'
 import { capabilitiesApi } from '../../api/capabilities'
+import { tasksApi } from '../../api/tasks'
 import { keys } from '../../api/query'
 import { sceneTitles } from '../../api/scenes'
 import { groupsTarget } from '../groups/route'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
+import { describeError } from '../../ui/errors'
+import { toast } from '../../ui/toast'
 
 const props = defineProps<{
   /** Whether the worker model role is bound; tasks use the chat model otherwise. */
@@ -29,6 +33,8 @@ interface Item {
   value: string
   to?: RouteLocationRaw
   action?: string
+  /** A ready group where the sample task can run. */
+  sample?: string
 }
 
 const titles = sceneTitles as Record<string, string>
@@ -91,6 +97,7 @@ const items = computed<Item[]>(() => {
         label: name,
         state: 'ok',
         value: t('capabilities.worker.ready.groupReady'),
+        sample: value.running ? scene.scene : undefined,
       })
   }
   result.push({
@@ -105,6 +112,18 @@ const items = computed<Item[]>(() => {
     action: t('capabilities.worker.ready.toConnection'),
   })
   return result
+})
+const router = useRouter()
+const sample = useMutation({
+  mutationFn: (scene: string) =>
+    tasksApi.delegate(scene, {
+      goal: t('capabilities.worker.ready.sampleGoal'),
+      deliverable: 'hello.txt',
+      context: t('capabilities.worker.ready.sampleContext'),
+      materials: [],
+    }),
+  onSuccess: (task, scene) => void router.push(groupsTarget(scene, 'tasks', { id: task.id })),
+  onError: (error) => toast.error(describeError(error, t('ui.error.network')).message),
 })
 const icons = { ok: Check, missing: X, neutral: Circle }
 const tones = { ok: 'text-success', missing: 'text-error', neutral: 'text-subtle' }
@@ -146,6 +165,16 @@ const tones = { ok: 'text-success', missing: 'text-error', neutral: 'text-subtle
         :to="item.to"
       >
         {{ item.action }}
+      </Button>
+      <Button
+        v-if="item.sample"
+        class="ml-auto"
+        size="sm"
+        variant="secondary"
+        :loading="sample.isPending.value && sample.variables.value === item.sample"
+        @click="sample.mutate(item.sample)"
+      >
+        {{ t('capabilities.worker.ready.sample') }}
       </Button>
     </li>
   </ul>
