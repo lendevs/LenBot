@@ -26,7 +26,7 @@ def test_turning_tasks_off_stops_delegation_in_every_group(tmp_path: Path) -> No
     async def check(client) -> None:
         # Saved while this host runs without tasks; the panel edits the root file.
         source = json.loads(path.read_text())
-        source['worker'] = {'docker_binary': '/usr/bin/docker', 'docker_host': 'unix:///var/run/docker.sock',
+        source['worker'] = {'docker_binary': str(tmp_path / 'docker'), 'docker_host': 'unix:///var/run/docker.sock',
                             'image': 'lenbot-worker:local', 'workspace_root': 'tasks/workspaces',
                             'runtime_root': 'tasks/runtime', 'delivery_root': 'tasks/deliveries',
                             'uid': 1000, 'gid': 1000, 'model_reasoning': True,
@@ -73,7 +73,7 @@ def test_task_space_reports_free_disk_without_a_storage_pool(tmp_path: Path) -> 
     write_instance(tmp_path, ['onebot:70001'])
     config = load_host_config(tmp_path)
     worker = WorkerSettings.model_validate({
-        'docker_binary': Path('/usr/bin/docker'), 'docker_host': 'unix:///var/run/docker.sock',
+        'docker_binary': tmp_path / 'docker', 'docker_host': 'unix:///var/run/docker.sock',
         'image': 'lenbot-worker:local', 'workspace_root': tmp_path / 'tasks/workspaces',
         'runtime_root': tmp_path / 'tasks/runtime', 'delivery_root': tmp_path / 'tasks/deliveries',
         'uid': 1000, 'gid': 1000, 'model_reasoning': True})

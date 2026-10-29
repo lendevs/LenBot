@@ -11,6 +11,7 @@ from typing import Literal
 
 import yaml
 from ..platform.identity import scene_directory
+from ..storage.files import NONBLOCK, open_no_follow
 
 
 BUILTIN_DIRECTORY = Path(__file__).resolve().parents[2] / "builtin_skills"
@@ -46,7 +47,7 @@ class Skill:
 def load_skill(path: Path, source: Literal["builtin", "shared", "scene", "task", "plugin"],
                container_path: str) -> Skill:
     file = path / "SKILL.md"
-    descriptor = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_no_follow(file, os.O_RDONLY | NONBLOCK)
     with os.fdopen(descriptor, 'rb') as source_file:
         if not stat.S_ISREG(os.fstat(source_file.fileno()).st_mode):
             raise ValueError(f"{file}: SKILL.md must be a regular file, not a symbolic link")

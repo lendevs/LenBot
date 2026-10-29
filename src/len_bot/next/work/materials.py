@@ -12,6 +12,7 @@ from typing import Annotated, BinaryIO, TYPE_CHECKING
 
 from pydantic import AfterValidator, Field, TypeAdapter
 from ..platform.identity import scene_directory
+from ..storage.files import NONBLOCK, open_no_follow
 
 if TYPE_CHECKING:
     from .store import TaskFile
@@ -87,7 +88,7 @@ def list_materials(directory: Path) -> dict:
 def open_regular(path: Path) -> tuple[BinaryIO, int]:
     if path.resolve(strict=True) != path:
         raise ValueError(f'Material source must not traverse a symbolic link: {path}')
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_no_follow(path, os.O_RDONLY | NONBLOCK)
     source = os.fdopen(descriptor, 'rb')
     try:
         info = os.fstat(source.fileno())
@@ -100,7 +101,7 @@ def open_regular(path: Path) -> tuple[BinaryIO, int]:
 
 
 def copy_stream(source: BinaryIO, target: Path, max_bytes: int) -> int:
-    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    descriptor = open_no_follow(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, 'wb') as output:
         total = 0
         while chunk := source.read(1024 * 1024):

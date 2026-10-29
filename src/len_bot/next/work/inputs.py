@@ -12,6 +12,7 @@ from .materials import MaterialName, list_materials, material_directory, open_re
 from .resources import ResourceFileRef
 from ..configuration.tasks import WorkerSettings
 from ..platform.identity import scene_directory
+from ..storage.files import open_no_follow
 
 
 class ResourceInput(BaseModel):
@@ -45,7 +46,7 @@ def copy_inputs(stage: Path, settings: WorkerSettings, scene: str, names: tuple[
         with source:
             if size > settings.max_file_bytes:
                 raise ValueError(f'Task input exceeds worker.max_file_bytes: {name!r}; {size} > {settings.max_file_bytes}')
-            descriptor = os.open(stage / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            descriptor = open_no_follow(stage / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, 'wb') as output:
                 remaining = size
                 while remaining:

@@ -174,7 +174,7 @@ def host_config(root: Path, port: int, environment: str, *, scene_running: int =
              'max_running': scene_running, 'max_daily_tasks': 20}
     sandbox = ({'sandbox': 'bwrap', 'bwrap_binary': Path(shutil.which('bwrap')), 'task_runtime': task_runtime(root)}
                if environment == 'bwrap' else
-               {'docker_binary': Path('/usr/bin/docker'), 'docker_host': 'unix:///var/run/docker.sock',
+               {'docker_binary': root / 'docker', 'docker_host': 'unix:///var/run/docker.sock',
                 'image': 'lenbot-worker:local', 'uid': 1000, 'gid': 1000})
     return HostConfig.model_validate({
         'compaction': {'input_tokens': 2000}, 'mode': 'isolated-multi', 'bot_id': BOT, 'timezone': 'UTC',

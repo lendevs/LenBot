@@ -26,6 +26,7 @@ from .owner import panel_owner
 from .resources import ResourceDownload
 from ...work.resources import TaskResources, ResourceFileRef
 from ...platform.identity import scene_directory
+from ...storage.files import NONBLOCK, open_no_follow
 
 
 class WorkspaceDiscard(BaseModel):
@@ -176,7 +177,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         try:
             if path.resolve(strict=True) != path:
                 raise HTTPException(409, "任务会话路径含符号链接，不是本任务的原生文件")
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            descriptor = open_no_follow(path, os.O_RDONLY | NONBLOCK)
         except FileNotFoundError as error:
             raise HTTPException(404, "本任务尚无 session.jsonl；启动失败或尚未写入首条消息时可能没有文件") from error
         except OSError as error:
