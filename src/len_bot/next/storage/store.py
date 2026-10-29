@@ -810,6 +810,15 @@ class Store:
         ).fetchall()
         return [(row[0], decode_message(row[1])) for row in reversed(rows)]
 
+    def wake_verdicts(self, scene: str, seqs: list[int]) -> dict[int, dict]:
+        """The attention verdict stored with each of these received messages, where one was recorded."""
+        if not seqs:
+            return {}
+        rows = self.db.execute(
+            f"SELECT seq,wake_verdict FROM messages WHERE scene=? AND seq IN ({','.join('?' * len(seqs))}) "
+            "AND wake_verdict IS NOT NULL", (scene, *seqs))
+        return {row[0]: json.loads(row[1]) for row in rows}
+
     def recent_turns(self, scene: str, limit: int = 20) -> list[dict]:
         return [turn_record(row) for row in self.db.execute(
             "SELECT * FROM turns WHERE scene=? ORDER BY started DESC,id DESC LIMIT ?", (scene, limit))]

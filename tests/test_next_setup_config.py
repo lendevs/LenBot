@@ -94,6 +94,7 @@ def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path,
         'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
         'compaction': {'input_tokens': 6000},
         'scene': 'onebot:group:80001', 'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
+        'attention': {'only_direct': False, 'activity': 0.2},
     })
     published = []
     link = first_run.os.link
@@ -107,6 +108,8 @@ def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path,
     assert published == [delivery == 'simulated']
     assert load_host_config(tmp_path).delivery == 'onebot'
     assert SendHold(tmp_path).enabled is (delivery == 'simulated')
+    attention = load_host_config(tmp_path).scene_config('onebot:group:80001').attention
+    assert (attention.only_direct, attention.activity) == (False, 0.2)
 
 
 @pytest.mark.asyncio

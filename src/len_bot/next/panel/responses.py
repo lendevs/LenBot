@@ -64,6 +64,8 @@ class HostScene(ScenePersona):
     timezone: str
     chat_enabled: bool
     chat_status: JsonObject
+    # The running chat's only_direct and activity.
+    attention: JsonObject
 
 
 class ServiceAlert(PanelResponse):
@@ -585,6 +587,7 @@ class TrialInfo(PanelResponse):
     draft_path: str | None
     draft_source: str | None
     models: dict[str, str]
+    attention: JsonObject
 
 
 class TrialList(PanelResponse):

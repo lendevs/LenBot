@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { http } from './client'
+import type { Participation } from './participation'
 
 export interface ItemHealth {
   name: string
@@ -25,6 +26,7 @@ export interface HostScene {
   timezone: string
   chat_enabled: boolean
   chat_status: ChatStatus
+  attention: Participation
 }
 
 export interface HostState {
@@ -115,8 +117,8 @@ export const hostApi = {
   resume: (scene: string) => http.post<SceneControl>(`${scenePath(scene)}/control/resume`),
   availableScenes: (signal?: AbortSignal) =>
     http.get<{ items: AvailableScene[] }>('/api/host/settings/scenes/available', undefined, signal),
-  addScene: (scene: string, persona: string) =>
-    http.post<unknown>('/api/host/settings/scenes', { scene, persona }),
+  addScene: (scene: string, persona: string, attention: Participation) =>
+    http.post<unknown>('/api/host/settings/scenes', { scene, persona, attention }),
   personas: (signal?: AbortSignal) =>
     http.get<{ roles: PersonaSummary[] }>('/api/host/personas', undefined, signal),
 }

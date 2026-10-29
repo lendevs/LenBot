@@ -1,6 +1,7 @@
 import { computed, inject, reactive, ref, watch, type InjectionKey } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Protocol } from '../../api/models'
+import { ACTIVITY_LEVELS, type Participation } from '../../api/participation'
 import type {
   FirstSetup,
   OneBotLink,
@@ -76,6 +77,7 @@ export interface Draft {
   boundaries: string
   sceneKind: 'group' | 'private'
   sceneId: string
+  participation: Participation
   plugins: string[]
 }
 
@@ -154,6 +156,7 @@ function initial(): Draft {
     boundaries: '',
     sceneKind: 'group',
     sceneId: '',
+    participation: { only_direct: true, activity: ACTIVITY_LEVELS.medium },
     plugins: [],
   }
 }
@@ -557,6 +560,10 @@ export function createWizard() {
       voice_mode: 'direct',
       compaction: { input_tokens: draft.inputBudget ?? 0 },
       scene: `onebot:${draft.sceneKind}:${draft.sceneId.trim()}`,
+      attention:
+        draft.sceneKind === 'group'
+          ? draft.participation
+          : { only_direct: true, activity: ACTIVITY_LEVELS.medium },
       ...persona,
       panel_port: draft.port ?? 0,
       username: draft.username,
