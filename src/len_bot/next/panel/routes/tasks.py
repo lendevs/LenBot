@@ -3,12 +3,14 @@
 import asyncio
 from collections.abc import Callable
 from dataclasses import asdict
+from functools import partial
 import os
 import stat
 import traceback
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+import httpx
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, ValidationError
 
@@ -20,7 +22,9 @@ from ..task_models import TaskDetail, TaskPage
 from ...runtime.network import NetworkRuntime
 from ...work.files import file_info
 from ...work.store import TERMINAL, TaskStore
-from ...work.tools import DelegateArguments, TaskArguments, perform_task_action
+from ...work.tools import DelegateArguments, TaskArguments, group_file_inputs, perform_task_action
+from ...platform.adapter import PlatformCallError
+from ...platform.platform_tools import group_file_fetch
 from ..auth import require_panel_origin
 from .owner import panel_owner
 from .resources import ResourceDownload
@@ -87,6 +91,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                             "network_today": None if service is None else service.egress.status(scene)}
                            for scene, chat in runtime.chats.items()],
                 "public_network": service is not None and service.settings.egress.enabled,
+                "group_files": runtime.config.onebot is not None,
                 "file_upload": runtime.config.delivery == "onebot" and service is not None}
 
     @app.get("/api/host/tasks", response_model=TaskPage)
@@ -249,9 +254,19 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         scene_exists(scene)
         if runtime.tasks is None:
             raise HTTPException(409, "尚未配置任务执行器")
+        _, kind, target = scene.split(":", 2)
+        fetch = (group_file_fetch(partial(runtime.platform_call, scene=scene), target)
+                 if runtime.config.onebot is not None and kind == "group" else None)
         try:
-            return await runtime.tasks.delegate(scene, **body.model_dump(exclude={'resources', 'requester'}),
-                                                requester=panel_owner(runtime), resources=body.resources)
+            downloads = await group_file_inputs(body.group_files, fetch, runtime.tasks.settings.max_file_bytes)
+        except (PlatformCallError, httpx.HTTPError) as error:
+            raise HTTPException(502, f"下载群文件失败：{type(error).__name__}: {error}") from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        try:
+            return await runtime.tasks.delegate(scene, **body.model_dump(exclude={'resources', 'group_files', 'requester'}),
+                                                requester=panel_owner(runtime), resources=body.resources,
+                                                downloads=downloads)
         except PermissionError as error:
             raise HTTPException(403, ''.join(traceback.format_exception_only(error)).strip()) from error
         except (ValueError, RuntimeError) as error:

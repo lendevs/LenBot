@@ -26,7 +26,7 @@ from ..models.request import ChatRequest
 from ..persona.profile import Persona
 from ..platform.platform_tools import (GROUP_FILES_TOOL, MEMBER_INFO_TOOL, OPEN_FORWARD_TOOL, GroupFilesArguments,
                              MemberInfoArguments, MESSAGE_REACTION_TOOL, MessageReactionArguments,
-                             OpenForwardArguments, PlatformCall, download_group_file, list_group_files,
+                             OpenForwardArguments, PlatformCall, group_file_fetch, list_group_files,
                              member_info, message_reaction, open_forward)
 from .recall import RECALL_TOOL, RecallArguments, recall_chat
 from ..reference.library import ReferenceLibrary
@@ -423,10 +423,7 @@ class SceneTools:
         kind, group_id = self.config.scene.split(":", 2)[1:]
         if self.platform_call is None or self.config.delivery != "onebot" or kind != "group":
             return None
-
-        async def fetch(item, max_bytes: int) -> bytes:
-            return await download_group_file(self.platform_call, group_id, item.file_id, item.busid, max_bytes)
-        return fetch
+        return group_file_fetch(self.platform_call, group_id)
 
     def _connection(self, settings):
         """The provider a web search or read setting names, if it uses one."""

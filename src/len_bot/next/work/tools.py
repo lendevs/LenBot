@@ -147,18 +147,22 @@ TASK_TOOL = {"type": "function", "function": {
 }}
 
 
+async def group_file_inputs(items: list[GroupFileInput], fetch: GroupFileFetch | None,
+                            max_bytes: int) -> list[DownloadedInput]:
+    """Download each group file's current version, keeping where it came from."""
+    if items and fetch is None:
+        raise ValueError('当前场景读取不到群文件：只有通过 OneBot 实际发送的群聊可以使用 group_files')
+    return [DownloadedInput(item.name, await fetch(item, max_bytes), {'group_file': {
+                'file_id': item.file_id, 'busid': item.busid}})
+            for item in items]
+
+
 async def execute_tasks(service: WorkTasks, scene: str, name: str, args: dict,
                         fetch_group_file: GroupFileFetch | None = None) -> dict:
     """Validate one native call, then let the owning service check permissions."""
     if name == "delegate":
         parsed = DelegateArguments.model_validate(args)
-        if parsed.group_files and fetch_group_file is None:
-            raise ValueError('当前场景读取不到群文件：只有通过 OneBot 实际发送的群聊可以使用 group_files')
-        downloads = []
-        for item in parsed.group_files:
-            data = await fetch_group_file(item, service.settings.max_file_bytes)
-            downloads.append(DownloadedInput(item.name, data, {'group_file': {
-                'file_id': item.file_id, 'busid': item.busid}}))
+        downloads = await group_file_inputs(parsed.group_files, fetch_group_file, service.settings.max_file_bytes)
         result = await service.delegate(
             scene, requester=parsed.requester, goal=parsed.goal,
             deliverable=parsed.deliverable, context=parsed.context,

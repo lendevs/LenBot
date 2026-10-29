@@ -524,6 +524,7 @@ class TaskState(PanelResponse):
     scenes: list[JsonObject]
     public_network: bool
     file_upload: bool
+    group_files: bool
 
 
 class TaskDisk(PanelResponse):
