@@ -151,6 +151,8 @@ class SettingsSnapshot(PanelResponse):
 
 
 class WorkerDefaults(PanelResponse):
+    sandbox: Literal['docker', 'bwrap']
+    bwrap_binary: str | None = None
     docker_binary: str | None = None
     docker_host: str | None = None
     image: str | None = None

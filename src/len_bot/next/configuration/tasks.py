@@ -266,4 +266,9 @@ def suggested_worker(root: Path) -> dict:
     elif sys.platform == "win32":
         # Docker Desktop bind mounts do not map Windows owners; run as the image's agent user.
         suggestion["uid"] = suggestion["gid"] = WORKER_IMAGE_USER
+    # Linux hosts with bwrap run tasks in the local sandbox; a Docker deployment's host container has none.
+    bwrap = shutil.which("bwrap") if sys.platform == "linux" else None
+    suggestion["sandbox"] = "docker" if bwrap is None else "bwrap"
+    if bwrap is not None:
+        suggestion["bwrap_binary"] = bwrap
     return suggestion

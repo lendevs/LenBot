@@ -75,6 +75,8 @@ export type StoragePool = { kind: 'ext4'; mount: string; image?: string } | { ki
 export type WorkerDefaults = Partial<
   Pick<
     Worker,
+    | 'sandbox'
+    | 'bwrap_binary'
     | 'docker_binary'
     | 'docker_host'
     | 'image'
@@ -86,12 +88,20 @@ export type WorkerDefaults = Partial<
   >
 >
 
+/** One step of `check_local_sandbox`, in order; ``detail`` is the original output. */
+export interface SandboxStep {
+  step: 'bwrap' | 'namespaces' | 'task_runtime' | 'sandbox' | 'pi'
+  ok: boolean
+  detail: string
+}
+
 /** `configuration/tasks.py` WorkerSettings; number fields are null while their input is empty. */
 export interface Worker {
   sandbox?: 'docker' | 'bwrap'
-  docker_binary: string
-  docker_host: string
-  image: string
+  /** Docker fields are null in the local sandbox. */
+  docker_binary: string | null
+  docker_host: string | null
+  image: string | null
   bwrap_binary?: string | null
   task_runtime?: string | null
   workspace_root: string
@@ -209,6 +219,8 @@ export const capabilitiesApi = {
     http.put<SettingsSnapshot>('/api/host/settings/worker', { worker: value }),
   workerDefaults: (signal?: AbortSignal) =>
     http.get<WorkerDefaults>('/api/host/settings/worker/defaults', undefined, signal),
+  checkSandbox: (draft: { bwrap_binary: string; task_runtime: string }) =>
+    http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/check', draft),
 
   skills: (scene: string, signal?: AbortSignal) =>
     http.get<SkillsState>('/api/host/skills', { scene }, signal),

@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+import shutil
+import sys
 
 from len_bot.next.config import load_host_config
 from test_next_panel_acts_as_owner import SCENE, exercise, write_instance
@@ -13,6 +15,8 @@ def test_worker_defaults_name_this_instance(tmp_path: Path) -> None:
     async def check(client) -> None:
         defaults = (await client.get('/api/host/settings/worker/defaults')).json()
         assert defaults['image'] == 'lenbot-worker:local'
+        local = sys.platform == 'linux' and shutil.which('bwrap') is not None
+        assert defaults['sandbox'] == ('bwrap' if local else 'docker')
         assert defaults['workspace_root'] == str(tmp_path / 'task-workspaces')
         assert {defaults['runtime_root'], defaults['delivery_root']} == {
             str(tmp_path / 'task-runtime'), str(tmp_path / 'deliveries')}
