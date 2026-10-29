@@ -586,6 +586,9 @@ export default {
         retries: '重试 {n} 次',
         failed: '本步出错',
         toolStatus: { pending: '执行中', complete: '完成', error: '失败', interrupted: '中断' },
+        candidates: '表情候选',
+        candidateSent: '已发送',
+        candidateSource: { persona: '角色表情 {file}', group: '本群表情 #{id}' },
       },
       roles: {
         mind: '聊天',

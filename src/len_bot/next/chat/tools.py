@@ -64,18 +64,23 @@ if TYPE_CHECKING:
     from ..runtime.management import HostManagement
 
 
+STICKER_CANDIDATES = 9
+
+
 class StickerChoice(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     emotion: str | None = Field(default=None, min_length=1)
     query: str | None = Field(default=None, min_length=1)
     file: str | None = Field(default=None, min_length=1, description="从当前角色素材目录选择真实文件名，直接发送这一张。")
+    candidate: int | None = Field(default=None, ge=1, le=STICKER_CANDIDATES,
+                                  description="本轮 react 预览候选中的编号，发送这一张。")
 
     @model_validator(mode="after")
     def one_selector(self) -> StickerChoice:
-        selectors = [value for value in (self.file, self.emotion, self.query) if value is not None]
+        selectors = [value for value in (self.file, self.emotion, self.query, self.candidate) if value is not None]
         if len(selectors) != 1:
-            raise ValueError("file、emotion 与 query 必须三选一")
-        if not selectors[0].strip():
+            raise ValueError("file、emotion、query 与 candidate 必须四选一")
+        if isinstance(selectors[0], str) and not selectors[0].strip():
             raise ValueError("表情检索内容不能为空白")
         return self
 
@@ -90,12 +95,25 @@ class SayArguments(BaseModel):
     mention: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
-        description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query 三选一，素材目录见 react。")
+        description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query、candidate 四选一，素材目录见 react。")
 
 
 class ReactArguments(StickerChoice):
     end_turn: bool = Field(default=False, description="这次表情完成本轮回应，成功后即可结束；还要继续处理时保持 false。")
     reply_to: str | None = None
+    preview: bool = Field(default=False, description=(
+        f"只看候选、不发送：按 emotion 或 query 把相关的排在前面，取至多 {STICKER_CANDIDATES} 张编号返回，"
+        "两者都不填时按用得少的排；之后用 candidate 填编号发送。"))
+
+    @model_validator(mode="after")
+    def one_selector(self) -> ReactArguments:
+        if not self.preview:
+            return StickerChoice.one_selector(self)
+        if self.file is not None or self.candidate is not None or (self.emotion is not None and self.query is not None):
+            raise ValueError("preview 只配合 emotion 或 query 之一，也可以都不填")
+        if any(value is not None and not value.strip() for value in (self.emotion, self.query)):
+            raise ValueError("表情检索内容不能为空白")
+        return self
 
 
 class WaitArguments(BaseModel):
@@ -120,8 +138,9 @@ SAY_TOOL = {"type": "function", "function": {
 REACT_TOOL = {"type": "function", "function": {
     "name": "react", "description": "在当前场景单独发一张表情包图片，不带文字，这张图就是一条完整的回复；"
         "角色素材优先，其次是启用的本群已采用表情；"
-        "file 直接选择目录中的角色素材，emotion 精确匹配情绪标签，query 按描述、标签字面检索，三选一；"
-        "结果返回实际来源与发送状态。",
+        "file 直接选择目录中的角色素材，emotion 精确匹配情绪标签，query 按描述、标签字面检索，"
+        "candidate 发送本轮预览候选中的编号，四选一；结果返回实际来源与发送状态。"
+        "描述不足以分辨哪张贴合时，可以先用 preview 看候选再选。",
     "parameters": ReactArguments.model_json_schema(),
 }}
 
@@ -427,7 +446,16 @@ class SceneTools:
                                                        expression_style=expression_style, direct=direct)
             return self.expression.context.render(expression.message), expression, None
         if call.name == "react":
-            expression = self.expression.react(ReactArguments.model_validate(call.arguments))
+            arguments = ReactArguments.model_validate(call.arguments)
+            if arguments.preview:
+                entries, sheet, matched = self.expression.preview_stickers(arguments)
+                result = {"candidates": entries, **({} if matched is None else {"matched": matched})}
+                if not self.config.models.roles.mind.image_input:
+                    return tool_result(result) + "\n按编号用 candidate 发送。", None, None
+                self.looked = [*self.looked, ("表情候选", sheet)][-LOOKED_IMAGES:]
+                return (tool_result(result) + "\n候选拼图附在本轮接下来的请求里，图中编号与 candidates 一致；"
+                        "动图只有第一帧。按编号用 candidate 发送。"), None, None
+            expression = self.expression.react(arguments)
             return self.expression.context.render(expression.message), expression, None
         if call.name == "scene_control":
             return tool_result(self.scene_control(SceneControlArguments.model_validate(call.arguments))), None, None

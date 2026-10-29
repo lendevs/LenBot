@@ -532,6 +532,7 @@ class Chat:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
                 looked_up = stepped_lookup = False
                 self.toolset.looked = []
+                self.expression.sticker_candidates = []
                 for step in range(self.config.max_steps):
                     self.trace_step = step + 1
                     self.check_limits()

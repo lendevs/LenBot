@@ -370,14 +370,14 @@ class StickerStore:
             "WHERE c.scene=? AND c.review='adopted' AND c.status='complete' "
             "AND c.media_id IS NOT NULL ORDER BY c.id", (scene,),
         )
-        needle = (emotion if emotion is not None else query).casefold()
+        needle = None if emotion is None and query is None else (emotion if emotion is not None else query).casefold()
         matched = []
         for row in rows:
             item = self._candidate(row)
             values = (item["emotions"] if emotion is not None else
                       [item["description"], *item["emotions"], *item["tags"]])
-            if ((any(value.casefold() == needle for value in values) if emotion is not None else
-                 any(needle in value.casefold() for value in values))):
+            if needle is None or (any(value.casefold() == needle for value in values) if emotion is not None else
+                                  any(needle in value.casefold() for value in values)):
                 matched.append(item)
         if matched:
             uses = dict(self.db.execute(

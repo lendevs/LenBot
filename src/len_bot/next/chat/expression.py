@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
@@ -13,7 +14,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .context import ChatContext
-from .tools import ReactArguments, SayArguments
+from .tools import STICKER_CANDIDATES, ReactArguments, SayArguments
+from ...image_assets import sticker_sheet
 from ..config import LabConfig
 from ..platform.delivery import Expression, part_length, report_parts, split_expression
 from ..models.limits import LimitReached, check_speech, record_speech
@@ -72,6 +74,9 @@ class ChatExpression:
         self.outlet = asyncio.Lock()
         # Whether the current turn may use the direct reserve of the hourly speech limit.
         self.reserve: Callable[[], bool] = lambda: False
+        # The current turn's numbered react preview: role stickers, or ids of this group's adopted ones.
+        self.sticker_candidates: list[PersonaSticker | int] = []
+        self._sheets: dict[tuple, bytes] = {}
 
     def sent(self, seq: int, part: ChatMessage, error: str | None, *, turn_id: str | None = None,
              plugin: str | None = None) -> None:
@@ -116,11 +121,65 @@ class ChatExpression:
         return Expression(self.simulated_message(segments, reply_to=platform_reply), sticker,
                           end_turn=arguments.end_turn)
 
+    def preview_stickers(self, arguments: ReactArguments) -> tuple[list[dict], bytes, bool | None]:
+        """Number up to STICKER_CANDIDATES of the role's stickers and this group's adopted ones as this
+        turn's candidates: those matching ``emotion`` or ``query`` first, then the less used. Returns
+        their entries, a numbered sheet of first frames and whether anything matched the filter."""
+        def relevant(emotions: Sequence[str], values: Sequence[str]) -> bool:
+            if arguments.emotion is not None:
+                return arguments.emotion.casefold() in {value.casefold() for value in emotions}
+            return arguments.query is not None and any(arguments.query.casefold() in value.casefold()
+                                                       for value in values)
+        usage = self.store.sticker_usage(self.config.scene, self.persona.id)
+        ranked: list[tuple[tuple, PersonaSticker | int]] = [
+            ((not relevant(sticker.emotions, (sticker.description, *sticker.emotions, *sticker.tags)),
+              usage.get(sticker.file, 0), 0, sticker.file), sticker)
+            for sticker in self.persona.stickers.values()]
+        records = StickerStore(self.store)
+        if self.config.learning is not None and self.config.learning.collect_stickers:
+            ranked += [((not relevant(item["emotions"], (item["description"], *item["emotions"], *item["tags"])),
+                         item["uses"], 1, item["id"]), item["id"])
+                       for item in records.matches(self.config.scene, emotion=None, query=None)]
+        if not ranked:
+            raise ValueError("当前角色和本群都没有可用的表情")
+        ranked.sort(key=lambda pair: pair[0])
+        chosen = ranked[:STICKER_CANDIDATES]
+        entries, images, key = [], [], []
+        for number, (_, candidate) in enumerate(chosen, start=1):
+            if isinstance(candidate, PersonaSticker):
+                entries.append({"number": number, "kind": "persona", "file": candidate.file,
+                                "description": candidate.description})
+                data = candidate.data
+                key.append(("persona", candidate.file, hashlib.blake2b(data, digest_size=8).digest()))
+            else:
+                asset = records.asset(self.config.scene, candidate)
+                entries.append({"number": number, "kind": "group", "id": candidate, "description": asset.description})
+                data = asset.data
+                key.append(("group", candidate, asset.media_id))
+            images.append(data)
+        self.sticker_candidates = [candidate for _, candidate in chosen]
+        sheet = self._sheets.get(tuple(key))
+        if sheet is None:
+            sheet = sticker_sheet(images)
+            # A few recent candidate sets; previews in a turn usually repeat the same one.
+            self._sheets = {**dict(list(self._sheets.items())[-7:]), tuple(key): sheet}
+        filtered = arguments.emotion is not None or arguments.query is not None
+        return entries, sheet, (not chosen[0][0][0]) if filtered else None
+
     def react(self, arguments: ReactArguments) -> Expression:
         self.check_send_available()
         if arguments.reply_to is not None and self.store.find_message(self.config.scene, arguments.reply_to) is None:
             raise ValueError(f"当前场景没有平台消息 {arguments.reply_to}")
-        if arguments.file is not None:
+        collected_id = None
+        if arguments.candidate is not None:
+            if arguments.candidate > len(self.sticker_candidates):
+                raise ValueError(f"本轮预览的表情候选中没有编号 {arguments.candidate}")
+            chosen = self.sticker_candidates[arguments.candidate - 1]
+            if isinstance(chosen, int):
+                collected_id, matches = chosen, []
+            else:
+                matches = [chosen]
+        elif arguments.file is not None:
             sticker = self.persona.stickers.get(arguments.file)
             if sticker is None:
                 raise ValueError(f"当前角色没有表情文件：{arguments.file}")
@@ -138,14 +197,15 @@ class ChatExpression:
             least = min(usage.get(sticker.file, 0) for sticker in matches)
             sticker = choice([sticker for sticker in matches if usage.get(sticker.file, 0) == least])
             summary = f"角色表情 {sticker.file}：{sticker.description}"
-        elif self.config.learning is not None and self.config.learning.collect_stickers:
+        elif collected_id is not None or (self.config.learning is not None and self.config.learning.collect_stickers):
             records = StickerStore(self.store)
-            collected = records.matches(self.config.scene, emotion=arguments.emotion, query=arguments.query)
-            if not collected:
-                raise ValueError(f"角色及本群已采用表情无匹配：{encode(arguments.model_dump(exclude_none=True))}")
-            least = min(item["uses"] for item in collected)
-            selected = choice([item for item in collected if item["uses"] == least])
-            sticker = records.asset(self.config.scene, selected["id"])
+            if collected_id is None:
+                collected = records.matches(self.config.scene, emotion=arguments.emotion, query=arguments.query)
+                if not collected:
+                    raise ValueError(f"角色及本群已采用表情无匹配：{encode(arguments.model_dump(exclude_none=True))}")
+                least = min(item["uses"] for item in collected)
+                collected_id = choice([item for item in collected if item["uses"] == least])["id"]
+            sticker = records.asset(self.config.scene, collected_id)
             source = self.store.read_message(self.config.scene, sticker.source_message_seq)
             summary = (f"本群表情，来源平台消息 {source.platform_message_id} 第{sticker.source_image_index}张："
                        f"{sticker.description}")

@@ -597,6 +597,9 @@ export default {
         retries: 'Retries: {n}',
         failed: 'This step failed',
         toolStatus: { pending: 'Running', complete: 'Done', error: 'Failed', interrupted: 'Interrupted' },
+        candidates: 'Sticker candidates',
+        candidateSent: 'Sent',
+        candidateSource: { persona: 'Persona sticker {file}', group: 'Group sticker #{id}' },
       },
       roles: {
         mind: 'Chat',
