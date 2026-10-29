@@ -106,7 +106,7 @@ export interface TaskReadiness {
 
 /** One step of `check_local_sandbox`, in order; ``detail`` is the original output. */
 export interface SandboxStep {
-  step: 'bwrap' | 'namespaces' | 'task_runtime' | 'sandbox' | 'pi'
+  step: 'bwrap' | 'namespaces' | 'task_runtime' | 'sandbox' | 'pi' | 'docker' | 'image'
   ok: boolean
   detail: string
 }
@@ -237,6 +237,8 @@ export const capabilitiesApi = {
     http.get<WorkerDefaults>('/api/host/settings/worker/defaults', undefined, signal),
   workerReadiness: (signal?: AbortSignal) =>
     http.get<TaskReadiness>('/api/host/settings/worker/readiness', undefined, signal),
+  checkDocker: (draft: { docker_binary: string; docker_host: string; image: string; pull: boolean }) =>
+    http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/docker-check', draft),
   checkSandbox: (draft: { bwrap_binary: string; task_runtime: string }) =>
     http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/check', draft),
 

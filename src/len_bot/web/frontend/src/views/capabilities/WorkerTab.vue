@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowUpRight, Check, ChevronDown, X } from '@lucide/vue'
+import { ArrowUpRight, ChevronDown } from '@lucide/vue'
 import {
   capabilitiesApi,
   capabilitiesOf,
@@ -20,6 +20,7 @@ import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
+import CheckSteps from './CheckSteps.vue'
 import TaskReadiness from './TaskReadiness.vue'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
@@ -296,13 +297,35 @@ const check = useMutation({
       task_runtime: form.value.task_runtime,
     }),
 })
+const dockerCheck = useMutation({
+  mutationFn: (pull: boolean) =>
+    capabilitiesApi.checkDocker({
+      docker_binary: form.value.docker_binary,
+      docker_host: form.value.docker_host,
+      image: form.value.image,
+      pull,
+    }),
+})
 /** Check results belong to the paths they ran with. */
 watch(
-  () => draft.value && [draft.value.sandbox, draft.value.bwrap_binary, draft.value.task_runtime],
-  () => check.reset(),
+  () =>
+    draft.value && [
+      draft.value.sandbox,
+      draft.value.bwrap_binary,
+      draft.value.task_runtime,
+      draft.value.docker_binary,
+      draft.value.docker_host,
+      draft.value.image,
+    ],
+  () => {
+    check.reset()
+    dockerCheck.reset()
+  },
 )
 const checkSteps = computed<SandboxStep[]>(() => check.data.value?.steps ?? [])
 const checkFailed = computed(() => checkSteps.value.some((step) => !step.ok))
+const dockerSteps = computed<SandboxStep[]>(() => dockerCheck.data.value?.steps ?? [])
+const imageMissing = computed(() => dockerSteps.value.some((step) => step.step === 'image' && !step.ok))
 function addPackageHosts() {
   if (!draft.value) return
   const hosts = draft.value.egress.allowed_hosts
@@ -407,6 +430,32 @@ function addPackageHosts() {
             <Field :label="t('capabilities.worker.gid')" required :error="errors.gid">
               <NumberInput v-model="form.gid" :min="1" :steppers="false" />
             </Field>
+            <div class="flex min-w-0 flex-col items-start gap-3 sm:col-span-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                :loading="dockerCheck.isPending.value && !dockerCheck.variables.value"
+                :disabled="Boolean(errors.docker_binary || errors.docker_host || errors.image)"
+                @click="dockerCheck.mutate(false)"
+              >
+                {{ t('capabilities.worker.checkDocker') }}
+              </Button>
+              <ErrorNote
+                v-if="dockerCheck.isError.value"
+                :title="t('capabilities.worker.checkFailed')"
+                :error="dockerCheck.error.value"
+              />
+              <CheckSteps :steps="dockerSteps" />
+              <Button
+                v-if="imageMissing || (dockerCheck.isPending.value && dockerCheck.variables.value)"
+                size="sm"
+                variant="secondary"
+                :loading="dockerCheck.isPending.value && dockerCheck.variables.value"
+                @click="dockerCheck.mutate(true)"
+              >
+                {{ t('capabilities.worker.pullImage') }}
+              </Button>
+            </div>
           </template>
           <template v-else>
             <Field :label="t('capabilities.worker.bwrapBinary')" required :error="errors.bwrap_binary">
@@ -430,18 +479,7 @@ function addPackageHosts() {
                 :title="t('capabilities.worker.checkFailed')"
                 :error="check.error.value"
               />
-              <ul v-if="checkSteps.length" class="flex w-full min-w-0 flex-col gap-2">
-                <li v-for="item in checkSteps" :key="item.step" class="flex min-w-0 flex-col gap-1">
-                  <span class="flex items-center gap-2 text-sm" :class="item.ok ? 'text-ink' : 'text-error'">
-                    <component :is="item.ok ? Check : X" :size="16" class="shrink-0" aria-hidden="true" />
-                    {{ t(`capabilities.worker.checkSteps.${item.step}`) }}
-                  </span>
-                  <pre
-                    v-if="!item.ok"
-                    class="ml-6 overflow-x-auto rounded-md bg-code px-3 py-2 text-xs whitespace-pre-wrap text-ink-2"
-                    >{{ item.detail }}</pre>
-                </li>
-              </ul>
+              <CheckSteps :steps="checkSteps" />
               <Button v-if="checkFailed" size="sm" variant="ghost" @click="form.sandbox = 'docker'">
                 {{ t('capabilities.worker.useDocker') }}
               </Button>

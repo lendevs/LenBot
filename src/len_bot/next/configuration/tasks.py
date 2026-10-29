@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from importlib.metadata import version as installed_version
 from pathlib import Path, PurePosixPath
 import shutil
 import sys
@@ -240,6 +241,7 @@ class TaskSettings(BaseModel):
 
 
 WORKER_IMAGE = "lenbot-worker:local"
+OFFICIAL_WORKER = "ghcr.io/lendevs/lenbot-worker"
 
 
 def suggested_worker(root: Path) -> dict:
@@ -247,7 +249,10 @@ def suggested_worker(root: Path) -> dict:
 
     The directories are the ones ``deploy/current/host.tasks.compose.yaml`` binds at the same path.
     """
-    suggestion: dict = {"image": WORKER_IMAGE}
+    # A release installation (deployment package or Docker) follows the same-version official image,
+    # as the updater does; a source checkout builds lenbot-worker:local.
+    managed = (root / ".runtime" / "update-control.json").exists()
+    suggestion: dict = {"image": f"{OFFICIAL_WORKER}:{installed_version('len-bot')}" if managed else WORKER_IMAGE}
     for name, folder in (("workspace_root", "task-workspaces"), ("runtime_root", "task-runtime"),
                          ("delivery_root", "deliveries")):
         suggestion[name] = str(root / folder)
@@ -261,6 +266,9 @@ def suggested_worker(root: Path) -> dict:
         suggestion["docker_host"] = DOCKER_DESKTOP_PIPE
     elif desktop.exists():
         suggestion["docker_host"] = f"unix://{desktop}"
+    elif Path("/var/run/docker.sock").exists():
+        # Docker Engine, and the socket a Docker deployment binds into the host container.
+        suggestion["docker_host"] = "unix:///var/run/docker.sock"
     if hasattr(os, "getuid") and os.getuid() > 0 and os.getgid() > 0:
         suggestion["uid"], suggestion["gid"] = os.getuid(), os.getgid()
     elif sys.platform == "win32":

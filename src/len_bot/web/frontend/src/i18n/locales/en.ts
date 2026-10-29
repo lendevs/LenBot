@@ -2224,6 +2224,8 @@ export default {
       bwrapBinary: 'bwrap path',
       taskRuntime: 'Task runtime directory',
       check: 'Check the local sandbox',
+      checkDocker: 'Check Docker',
+      pullImage: 'Pull the image',
       checkFailed: 'The check request failed',
       checkSteps: {
         bwrap: 'bwrap program',
@@ -2231,6 +2233,8 @@ export default {
         task_runtime: 'Task runtime',
         sandbox: 'Sandbox reads and writes',
         pi: 'Pi startup',
+        docker: 'Docker connection',
+        image: 'Task image',
       },
       useDocker: 'Use a Docker task container',
       image: 'Task image',

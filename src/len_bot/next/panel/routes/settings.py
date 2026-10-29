@@ -29,6 +29,8 @@ from ...configuration.learning import LearningSettings
 from ...configuration.models import Roles
 from ...configuration.tasks import suggested_worker
 from ...work.bwrap import check_local_sandbox
+from ...work.sandbox import check_docker
+from ...configuration.tasks import local_docker_endpoint
 from ..model_access import model_error_detail, ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
 from ...models.providers import PROTOCOLS, list_models
 from ...persona.profile import Persona
@@ -145,6 +147,27 @@ class LocalSandboxDraft(BaseModel):
         if not Path(value).is_absolute():
             raise ValueError("must be an explicit absolute path")
         return value
+
+
+class DockerDraft(BaseModel):
+    """The Docker fields from the task settings form, checked before they are saved."""
+    model_config = STRICT
+    docker_binary: str = Field(min_length=1)
+    docker_host: str = Field(min_length=1)
+    image: str = Field(min_length=1)
+    pull: bool = False
+
+    @field_validator("docker_binary")
+    @classmethod
+    def absolute(cls, value: str) -> str:
+        if not Path(value).is_absolute():
+            raise ValueError("must be an explicit absolute path")
+        return value
+
+    @field_validator("docker_host")
+    @classmethod
+    def local(cls, value: str) -> str:
+        return local_docker_endpoint(value)
 
 
 class SceneSpeechLimit(BaseModel):
@@ -687,6 +710,12 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     async def check_worker(request: Request, _: str = Depends(user)):
         draft: LocalSandboxDraft = await _body(request, LocalSandboxDraft)
         return {"steps": await check_local_sandbox(Path(draft.bwrap_binary), Path(draft.task_runtime))}
+
+    @app.post("/api/host/settings/worker/docker-check", response_model=responses.SandboxCheck)
+    async def check_worker_docker(request: Request, _: str = Depends(user)):
+        draft: DockerDraft = await _body(request, DockerDraft)
+        return {"steps": await check_docker(Path(draft.docker_binary), draft.docker_host, draft.image,
+                                            pull=draft.pull)}
 
     @app.put("/api/host/settings/worker", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_worker(request: Request, _: str = Depends(user)):

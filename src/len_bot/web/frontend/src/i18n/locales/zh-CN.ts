@@ -2155,6 +2155,8 @@ export default {
       bwrapBinary: 'bwrap 程序路径',
       taskRuntime: '任务运行时目录',
       check: '检查本机沙箱',
+      checkDocker: '检查 Docker',
+      pullImage: '拉取镜像',
       checkFailed: '检查请求失败',
       checkSteps: {
         bwrap: 'bwrap 程序',
@@ -2162,6 +2164,8 @@ export default {
         task_runtime: '任务运行时',
         sandbox: '沙箱读写',
         pi: 'Pi 启动',
+        docker: 'Docker 连接',
+        image: '任务镜像',
       },
       useDocker: '改用 Docker 任务容器',
       image: '任务镜像',

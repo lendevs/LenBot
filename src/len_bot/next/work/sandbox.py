@@ -297,6 +297,45 @@ def extract_regular_member(stream, output, max_bytes: int) -> int:
     return count
 
 
+async def check_docker(docker_binary: Path, docker_host: str, image: str, *, pull: bool,
+                       pull_timeout_seconds: float = 1800) -> list[dict]:
+    """Whether the Docker daemon answers and the worker image is present, pulling it when asked.
+
+    Steps stop at the first failure; ``detail`` keeps the CLI's own output.
+    """
+    steps: list[dict] = []
+
+    def record(step: str, ok: bool, detail: str) -> bool:
+        steps.append({"step": step, "ok": ok, "detail": detail.strip()})
+        return ok
+
+    async def docker(*arguments: str, timeout: float = 30) -> tuple[int, str]:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                str(docker_binary), "--host", docker_host, *arguments, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT, env=_docker_environment())
+        except OSError as error:
+            return 127, f"{docker_binary}: {error}"
+        try:
+            output, _ = await asyncio.wait_for(process.communicate(), timeout)
+        except TimeoutError:
+            process.kill()
+            await process.communicate()
+            return 124, f"docker {arguments[0]} 超过 {timeout:g} 秒未完成"
+        return process.returncode, output.decode("utf-8", errors="replace")
+
+    code, output = await docker("version", "--format", "{{.Server.Version}}")
+    if not record("docker", code == 0, f"Docker Engine {output.strip()}" if code == 0 else output):
+        return steps
+    code, output = await docker("image", "inspect", "--format", "{{.Id}}", image)
+    if code != 0 and pull:
+        code, output = await docker("pull", image, timeout=pull_timeout_seconds)
+        if code == 0:
+            code, output = await docker("image", "inspect", "--format", "{{.Id}}", image)
+    record("image", code == 0, f"{image} {output.strip()}" if code == 0 else output)
+    return steps
+
+
 class DockerSandbox:
     """Create, use and remove one network-isolated task, keeping its files."""
 
