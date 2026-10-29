@@ -382,7 +382,7 @@ class Invocation:
                        materials: Sequence[str] = ()) -> dict:
         """Queue work for this invocation's actual sender; no synthetic background requester."""
         if self.message is None or self.message.is_self:
-            raise ValueError("插件委派需要真实触发消息；后台和无发送者的工具调用不能伪造请求人")
+            raise ValueError("插件委派需要真实触发消息，请求人取这条消息的发送者")
         return await self.plugin.host.delegate(self.plugin.name, self.scene, self.message.sender.uid,
                                                goal, deliverable, context, materials)
 

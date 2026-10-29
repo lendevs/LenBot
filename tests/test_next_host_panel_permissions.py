@@ -94,7 +94,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     assert "access-control-allow-origin" not in remote.headers
 
                     assert (await client.post("/api/host/trials", json={
-                        "scene": "onebot:group:80001", "acknowledge_model_cost": True,
+                        "scene": "onebot:group:80001",
                     })).status_code == 401
 
 
@@ -182,13 +182,10 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     assert (await client.put('/api/host/permissions?scene=onebot:group:80001', json=invalid_change)).status_code == 422
 
                     assert (await client.post("/api/host/trials", json={
-                        "scene": "onebot:group:89999", "acknowledge_model_cost": True,
+                        "scene": "onebot:group:89999",
                     })).status_code == 404
-                    assert (await client.post("/api/host/trials", json={
-                        "scene": "onebot:group:80001", "acknowledge_model_cost": False,
-                    })).status_code == 422
                     trial = await client.post("/api/host/trials", json={
-                        "scene": "onebot:group:80001", "acknowledge_model_cost": True, "context_messages": 20,
+                        "scene": "onebot:group:80001", "context_messages": 20,
                     })
                     assert trial.status_code == 200
                     assert len(trial.json()['context']) == 1

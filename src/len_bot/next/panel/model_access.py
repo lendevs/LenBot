@@ -1,4 +1,4 @@
-"""Model discovery and explicit paid probes shared by both configuration pages."""
+"""Model discovery and connection probes shared by both configuration pages."""
 from __future__ import annotations
 
 from typing import Literal

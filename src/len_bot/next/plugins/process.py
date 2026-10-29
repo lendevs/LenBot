@@ -270,7 +270,7 @@ class Worker:
                 scene, token = self._scene(args[0]), args[1]
                 invocation = self.invocations.get(token) if isinstance(token, str) else None
                 if invocation is None or invocation[0] != scene:
-                    raise ValueError("插件委派需要真实触发消息；后台和无发送者的工具调用不能伪造请求人")
+                    raise ValueError("插件委派需要真实触发消息，请求人取这条消息的发送者")
                 return await host.delegate(name, scene, invocation[1].sender.uid, *args[2:])
         raise ValueError(f"插件进程请求了未知的宿主能力 {method}")
 

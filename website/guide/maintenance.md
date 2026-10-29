@@ -35,7 +35,7 @@ uv run --no-sync python -m len_bot.next.maintenance.doctor
 - **实例目录**：从源码运行时是仓库根目录中被 `.gitignore` 排除的运行文件，包括 `lenbot.config.json`、数据库、`state/`、`personas/`、`plugins/` 和 `logs/`。
 - **实例以外的目录**：配置中指向实例以外的角色目录、插件目录，以及后台任务的工作目录、运行目录和交付目录。
 
-数据库旁边的 `-wal` 和 `-shm` 文件也属于数据，需要一起备份。LenBot 运行期间复制的数据库可能前后不一致，因此必须先停止。
+数据库旁边的 `-wal` 和 `-shm` 文件也属于数据，需要一起备份。停止 LenBot 后复制，数据库和这两个文件才是同一时刻的状态。
 
 `lenbot.config.json` 中有模型服务、OneBot 和面板的密钥，备份文件需要按密钥的标准保管。
 

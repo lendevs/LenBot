@@ -5,7 +5,7 @@
 Without ``--instance`` only full text is compared. ``--instance`` reads that instance's
 ``lenbot.config.json`` and adds vectors through ``memory.local.embedding``; ``--answer`` also asks
 each question in a simulated group with the instance's ``mind`` model and records the reply, the
-wait for the first reply and the tokens used. Vectors and answers are paid requests.
+wait for the first reply and the tokens used.
 """
 
 from __future__ import annotations

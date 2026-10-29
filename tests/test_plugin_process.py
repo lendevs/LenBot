@@ -219,7 +219,7 @@ async def delegate_and_replay(plugins, peer, tasks):
         while refused is None:
             refused = await plugins.get_kv('boxed', 'refused', None)
             await asyncio.sleep(.05)
-    assert len(refused) == 3 and all('不能伪造请求人' in text for text in refused)
+    assert len(refused) == 3 and all('需要真实触发消息' in text for text in refused)
     assert len(tasks.requests) == 2
 
 

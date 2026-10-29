@@ -1,4 +1,4 @@
-"""Model tool and OneBot boundaries for persistent attention; loopback HTTP, no paid calls."""
+"""Model tool and OneBot boundaries for persistent attention over loopback HTTP."""
 
 import asyncio
 import json

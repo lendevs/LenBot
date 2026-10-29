@@ -100,7 +100,7 @@
 
 `disposition.mode=record` 记录局部状态但不抑制基线唤醒。
 
-记录模式仍会改变工具与提示，可能影响模型回复。
+记录模式下模型仍会看到意图工具和相应提示。
 
 事件使用既有运行日志：`attention_intent`、`attention_candidate`、`attention_local`、`attention_disposition`。模型请求与用量沿用原日志和 model_calls。
 

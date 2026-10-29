@@ -181,7 +181,7 @@ def prepare(root: Path, set_name: str, profile: str) -> tuple[LabConfig, Persona
         "turn_timeout_seconds": config.turn_timeout_seconds,
         "delivery": "simulated",
         "estimated_model_calls": None, "estimated_cost": None,
-        "notice": "调用数取决于实际工具、压缩与表达向量查询，费用未核定。"
+        "notice": "调用数取决于实际工具、压缩与表达向量查询。"
                   "配置embedding表示本轮可按已采用表达检索。"
                   "固定起点按真实秒数推进。",
     }
@@ -243,7 +243,7 @@ def snapshot_code(destination: Path) -> dict:
                             check=True, text=True, capture_output=True).stdout
     (destination / "working-tree.txt").write_text(status, encoding="utf-8")
     return {"revision": revision, "working_tree": status,
-            "note": "本次实际源码、提示词与依赖锁随附；运行期间不要修改源码。"}
+            "note": "本次实际源码、提示词与依赖锁随附。"}
 
 
 def observed_database(path: Path, *, scene: str, after_turn: int = 0, after_call: int = 0,
@@ -602,7 +602,7 @@ def read_report(directory: Path) -> dict:
     summary = {"run": metadata, "quality": counts, "scored": scored, "social": social,
                "pass_rate": None if scored == 0 else counts["pass"] / scored,
                "tokens": {**token_summary(token_records), "unobserved_cases": unobserved_cases}, "results": results,
-               "notice": "1 倍速开发回放；每例时间轴见结果，未标注不计通过，费用未知不计零，完整输出见各实例数据库。"}
+               "notice": "1 倍速开发回放；每例时间轴见结果，未标注的不计通过，完整输出见各实例数据库。"}
     return summary
 
 
@@ -791,7 +791,7 @@ def compare(root: Path, baseline_id: str, candidate_id: str) -> dict:
         "image_materials": image_materials,
         "source_changed_files": changed_files(left / "source", right / "source"),
         "notice": "同输入配对回放的人工判定结果。未完成脚本的人工 fail 计入；"
-                  "未评、uncertain 和未配对不计入分母。脚本总耗时含全部轮次，未知费用记为未知。",
+                  "未评、uncertain 和未配对不计入分母。脚本总耗时含全部轮次。",
     }
     write_json(right / f"comparison-{baseline_id}.json", result)
     return result

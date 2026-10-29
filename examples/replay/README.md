@@ -6,7 +6,7 @@
 
 ## 运行
 
-回放会真实调用模型，按模型服务的标准计费。在本目录中执行以下命令。
+回放调用配置中的真实模型。在本目录中执行以下命令。
 
 ```sh
 cp lenbot.config.example.json lenbot.config.json
