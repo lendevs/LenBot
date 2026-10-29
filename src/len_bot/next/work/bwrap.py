@@ -43,7 +43,8 @@ _ETC = ("ssl", "ca-certificates", "pki", "fonts", "alternatives", "localtime", "
 _SYSTEM = ("bin", "sbin", "lib", "lib32", "lib64", "libx32")
 _AGENT = 10000
 _HOST_PROGRAMS = "/opt/lenbot-host"
-_PATH = "/opt/lenbot/bin:/opt/lenbot/node/bin:/usr/local/bin:/usr/bin:/bin"
+# /opt/lenbot-host/bin holds python3 and python: the host's base interpreter, with the runtime's task libraries.
+_PATH = "/opt/lenbot/bin:/opt/lenbot/node/bin:/opt/lenbot-host/bin:/usr/local/bin:/usr/bin:/bin"
 _PROBE = """\
 import os
 import tempfile
@@ -271,6 +272,8 @@ class BwrapSandbox:
             "--tmpfs", "/opt", "--ro-bind", str(self.settings.task_runtime), "/opt/lenbot",
             *itertools.chain.from_iterable(("--ro-bind", str(_WORK / name), f"{_HOST_PROGRAMS}/{name}")
                                            for name in _PROGRAMS),
+            "--symlink", self.python, f"{_HOST_PROGRAMS}/bin/python3",
+            "--symlink", self.python, f"{_HOST_PROGRAMS}/bin/python",
             "--bind", str(workspace), "/workspace", "--bind", str(home), "/home/agent",
             "--ro-bind", str(control), "/run/lenbot",
         ]
@@ -321,7 +324,8 @@ class BwrapSandbox:
 
     def _environment(self, **extra: str) -> dict[str, str]:
         return {"PATH": _PATH, "HOME": "/home/agent", "PI_CODING_AGENT_DIR": "/home/agent/.pi/agent",
-                "LANG": "C.UTF-8", "TMPDIR": "/tmp", **extra}
+                "LANG": "C.UTF-8", "TMPDIR": "/tmp", "PYTHONPATH": "/opt/lenbot/python",
+                "MATPLOTLIBRC": "/opt/lenbot/matplotlibrc", **extra}
 
     def _launch(self, sandbox: SandboxHandle, **extra: str):
         session = self._sessions[sandbox.container_id]
@@ -485,9 +489,10 @@ async def check_local_sandbox(bwrap_binary: Path, task_runtime: Path) -> list[di
     if not record("namespaces", trial.returncode == 0, detail or "能创建用户、网络、PID 与挂载命名空间"):
         return steps
     runtime = task_runtime
-    missing = [name for name in ("node/bin/node", "node/bin/pi", "lenbot-extension.ts") if not (runtime / name).exists()]
+    missing = [name for name in ("node/bin/node", "node/bin/pi", "lenbot-extension.ts", "python")
+               if not (runtime / name).exists()]
     if not record("task_runtime", not missing,
-                  f"{runtime} 缺少 {', '.join(missing)}" if missing else f"{runtime} 含 Node、Pi 与任务扩展"):
+                  f"{runtime} 缺少 {', '.join(missing)}" if missing else f"{runtime} 含 Node、Pi、任务扩展与 Python 库"):
         return steps
     with tempfile.TemporaryDirectory(prefix="lenbot-sandbox-check-") as directory:
         root = Path(directory)

@@ -6,6 +6,8 @@ Everything else is the task service, the sandbox and Pi as deployed: a worker
 image under Docker, or a task runtime (``build_task_runtime.py``) under bwrap.
 ``--network-probe`` adds a curl step in allowlist mode with only example.com listed.
 ``--copy-through-docker`` reads the delivery with ``docker cp`` as on Windows.
+``--workloads`` adds a step that handles CSV/XLSX, draws a Chinese chart, writes DOCX and, where
+``lenbot-render`` exists, turns HTML into PDF, all without network access.
 ``--task-volume NAME:ROOT`` runs inside a host container whose instance volume NAME is mounted at ROOT;
 task containers then mount their directories as subpaths of that volume.
 """
@@ -33,13 +35,40 @@ REPORT = 'worker smoke report'
 PROBE = ("for target in https://example.com/ http://not-listed.invalid/ http://10.0.0.1/; do "
          "printf '%s=%s\\n' \"$target\" \"$(curl -s -o /dev/null -m 20 -w '%{http_code}/%{http_connect}' \"$target\")\"; done")
 EXPECTED_PROBE = ('https://example.com/=200/200', 'http://not-listed.invalid/=502/000', 'http://10.0.0.1/=502/000')
+WORKLOADS = r'''python3 - <<'PY' 2>&1
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import openpyxl
+import pandas as pd
+from docx import Document
+from PIL import Image
+pd.DataFrame({'城市': ['北京', '上海'], '销量': [3, 5]}).to_csv('out/data.csv', index=False)
+frame = pd.read_csv('out/data.csv')
+frame.to_excel('out/data.xlsx', index=False)
+assert openpyxl.load_workbook('out/data.xlsx').active['A2'].value == '北京'
+plt.bar(frame['城市'], frame['销量'])
+plt.title('各城市销量')
+plt.savefig('out/chart.png')
+document = Document()
+document.add_heading('销量报告')
+document.add_picture('out/chart.png')
+document.save('out/report.docx')
+with Image.open('out/chart.png') as chart:
+    print('workloads', int(frame['销量'].sum()), chart.size)
+PY
+if command -v lenbot-render >/dev/null; then
+  printf '<meta charset="utf-8"><h1>销量报告</h1><p>北京 3，上海 5</p>' > page.html
+  lenbot-render page.html --pdf out/page.pdf >/dev/null
+  python3 -c "from pypdf import PdfReader; print('pdf pages', len(PdfReader('out/page.pdf').pages))"
+fi'''
 
 
 def chunk(body: dict) -> bytes:
     return b'data: ' + json.dumps(body, ensure_ascii=False).encode() + b'\n\n'
 
 
-def scripted_reply(request: dict, outputs: list[str], probe: bool) -> bytes:
+def scripted_reply(request: dict, outputs: list[str], probe: bool, workloads: bool) -> bytes:
     """One streamed step chosen by how many tool results the conversation already has."""
     tools = {tool['function']['name']: tool['function'] for tool in request.get('tools', [])}
     results = [message for message in request['messages'] if message['role'] == 'tool']
@@ -48,6 +77,7 @@ def scripted_reply(request: dict, outputs: list[str], probe: bool) -> bytes:
         ('ask_requester', {'question': '报告用什么标题？'}),
         ('deliver_file', {'path': 'out/report.txt', 'name': '报告.txt', 'note': 'worker 冒烟'}),
         *([('bash', {'command': PROBE})] if probe else []),
+        *([('bash', {'command': WORKLOADS})] if workloads else []),
     ]
     usage = {'choices': [], 'usage': {'prompt_tokens': 50, 'completion_tokens': 5}}
     outputs[:] = [result['content'] if isinstance(result['content'], str)
@@ -68,7 +98,7 @@ def scripted_reply(request: dict, outputs: list[str], probe: bool) -> bytes:
     return b''.join(body) + chunk(usage) + b'data: [DONE]\n\n'
 
 
-async def serve_model(requests: list[dict], outputs: list[str], probe: bool):
+async def serve_model(requests: list[dict], outputs: list[str], probe: bool, workloads: bool):
     async def respond(reader, writer):
         header = (await reader.readuntil(b'\r\n\r\n')).decode()
         fields = {name.lower(): value for name, _, value in
@@ -76,7 +106,7 @@ async def serve_model(requests: list[dict], outputs: list[str], probe: bool):
         request = json.loads(await reader.readexactly(int(fields['content-length'])))
         requests.append(request)
         try:
-            stream, status = scripted_reply(request, outputs, probe), b'200 OK'
+            stream, status = scripted_reply(request, outputs, probe, workloads), b'200 OK'
         except Exception as error:
             stream, status = json.dumps({'error': {'message': str(error)}}).encode(), b'400 Bad Request'
         writer.write(b'HTTP/1.1 ' + status + b'\r\nContent-Type: text/event-stream\r\n'
@@ -107,12 +137,13 @@ async def until(condition, seconds: float):
     return result
 
 
-async def smoke(sandbox: dict, root: Path, network: dict | None = None, volume: dict | None = None) -> dict:
+async def smoke(sandbox: dict, root: Path, network: dict | None = None, volume: dict | None = None,
+                workloads: bool = False) -> dict:
     """``network`` turns on the allowlist probe; it holds this machine's network settings, empty when defaults fit."""
     requests: list[dict] = []
     outputs: list[str] = []
     probe = network is not None
-    server = await serve_model(requests, outputs, probe)
+    server = await serve_model(requests, outputs, probe, workloads)
     port = server.sockets[0].getsockname()[1]
     config = HostConfig.model_validate({
         'compaction': {'input_tokens': 2000}, 'mode': 'isolated-multi', 'bot_id': 'onebot:90001', 'timezone': 'UTC',
@@ -164,14 +195,20 @@ async def smoke(sandbox: dict, root: Path, network: dict | None = None, volume: 
         'question': (question['method'], question['title']) == ('input', '报告用什么标题？'),
         'answer_reached_model': len(outputs) > 1 and '冒烟标题' in outputs[1],
         'delivery': report.startswith(REPORT) and f"uid={sandbox['uid'] if docker else 10000}" in report,
-        'model_calls': done['model_calls'] == 4 + probe and len(requests) == 4 + probe,
+        'model_calls': done['model_calls'] == 4 + probe + workloads and len(requests) == 4 + probe + workloads,
         **({'network': len(outputs) > 3 and all(line in outputs[3] for line in EXPECTED_PROBE)} if probe else {}),
+        **({'workloads': len(outputs) > 3 + probe and 'workloads 8 ' in outputs[3 + probe]
+            # The local sandbox uses the system's fonts; the worker image ships Noto CJK.
+            and ('missing from' not in outputs[3 + probe] or not docker)
+            and ('pdf pages 1' in outputs[3 + probe] or not docker)} if workloads else {}),
         'sandbox_removed': after <= before and done['container'] is None,
     }
     if not all(checks.values()):
-        raise RuntimeError(f'worker smoke checks failed: {checks}; status={json.dumps(done, ensure_ascii=False)}')
+        raise RuntimeError(f'worker smoke checks failed: {checks}; tool outputs={outputs[3:]!r}; '
+                           f'status={json.dumps(done, ensure_ascii=False)}')
     result = {'host': f'{platform.system()} {platform.machine()}', 'summary': done['summary'], 'checks': checks,
-              **({'network_probe': outputs[3]} if probe else {})}
+              **({'network_probe': outputs[3]} if probe else {}),
+              **({'workloads_output': outputs[3 + probe]} if workloads else {})}
     if docker:
         cli = [str(sandbox['docker_binary']), '--host', sandbox['docker_host']]
         inspect = json.loads(subprocess.run([*cli, 'image', 'inspect', sandbox['image']],
@@ -200,6 +237,7 @@ def main() -> None:
                         help="add the allowlist curl step; optional JSON of this machine's network settings")
     parser.add_argument('--copy-through-docker', action='store_true', help='read the delivery as on Windows')
     parser.add_argument('--task-volume', metavar='NAME:ROOT', help='instance volume and its mount in this container')
+    parser.add_argument('--workloads', action='store_true', help='add the offline file-handling step')
     arguments = parser.parse_args()
     if arguments.copy_through_docker:
         DockerSandbox.copy_through_docker = True
@@ -220,7 +258,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix='lenbot-worker-smoke-', dir=volume and volume['root']) as directory:
         result = asyncio.run(smoke(sandbox, Path(directory).resolve(),
                                    None if arguments.network_probe is None else json.loads(arguments.network_probe),
-                                   volume))
+                                   volume, arguments.workloads))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

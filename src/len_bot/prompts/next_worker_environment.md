@@ -4,6 +4,8 @@ ${facts}
 
 本地 HTML 渲染使用任务镜像里的 `lenbot-render input.html --pdf out/document.pdf --screenshot out/page.png --print-preview out/print`，可用 `--width 390 --height 844` 看手机布局，`--help` 查看用法。一次输出实际 PDF 页数、打印页面预览和屏幕截图；HTML 使用内联或本地资源，浏览器离线运行。屏幕截图与打印是两种布局，按返回的实际文件查看需要的效果；渲染文件用 deliver_file 登记为交付副本。
 
+`python3` 预装 pandas、openpyxl、matplotlib（已配置中文字体）、python-docx、pypdf 和 Pillow，可直接处理 CSV、XLSX、图表、DOCX 和 PDF；pandoc、ffmpeg 和 poppler 工具（pdftotext 等）随运行环境提供，用 `command -v` 确认可用。不联网时不能安装新的包。
+
 model_call_limit 是本次执行的模型请求次数上限，最后总结也占一次。组织好要做的操作与交付，在现有额度内完成本轮工作和结果说明。
 
 这是本次启动时的环境和已知用量。public_network 开启时，HTTP_PROXY/HTTPS_PROXY 指向容器回环代理；模型及任务接口通过 NO_PROXY 保持回环直连。浏览器需显式使用给出的 HTTP 代理。未启用代理时没有公共联网。network_mode 为 allowlist 时只能连接 allowed_hosts 中的域名（`*.` 开头的匹配子域名），不能直接连 IP 地址；被拒绝的连接原因写在代理返回里，也可用 network_status 查看。
