@@ -156,6 +156,9 @@ const egressLimits: { key: EgressKey; unit?: string; decimals?: boolean }[] = [
 ]
 const paths = ['docker_binary', 'workspace_root', 'runtime_root', 'delivery_root'] as const
 const SIZE = /^[1-9][0-9]*[kmgKMG]$/
+/** POSIX absolute paths and Windows drive or UNC paths; the host checks the path on its own platform. */
+const ABSOLUTE = /^(\/|[A-Za-z]:[\\/]|\\\\)/
+const DOCKER_HOST = /^(unix:\/\/\/.|npipe:\/\/\/\/\.\/pipe\/[A-Za-z0-9_.-]+$)/
 /** Same rule as the host: a lowercase domain, or *. and a domain for its subdomains. */
 const HOST = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
 
@@ -167,11 +170,11 @@ const errors = computed(() => {
   if (!value.image.trim()) result.image = required
   for (const key of paths) {
     if (!value[key].trim()) result[key] = required
-    else if (!value[key].startsWith('/')) result[key] = t('capabilities.worker.absolute')
+    else if (!ABSOLUTE.test(value[key])) result[key] = t('capabilities.worker.absolute')
   }
-  if (value.skills_directory && !value.skills_directory.startsWith('/'))
+  if (value.skills_directory && !ABSOLUTE.test(value.skills_directory))
     result.skills_directory = t('capabilities.worker.absolute')
-  if (!/^unix:\/\/\/./.test(value.docker_host)) result.docker_host = t('capabilities.worker.dockerHostRule')
+  if (!DOCKER_HOST.test(value.docker_host)) result.docker_host = t('capabilities.worker.dockerHostRule')
   if (value.uid === null) result.uid = required
   if (value.gid === null) result.gid = required
   if (value.model_reasoning === null) result.model_reasoning = t('capabilities.worker.pickReasoning')

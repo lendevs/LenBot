@@ -95,3 +95,23 @@ def test_task_space_reports_free_disk_without_a_storage_pool(tmp_path: Path) -> 
         assert body['disk']['free_bytes'] > 0
         assert (body['disk']['reserve_bytes'], body['disk']['stop_bytes']) == (5 * 1024 ** 3, 2 * 1024 ** 3)
     asyncio.run(run())
+
+
+def test_docker_host_accepts_a_local_socket_or_named_pipe() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from len_bot.next.configuration.tasks import WorkerSettings
+
+    def worker(host: str) -> WorkerSettings:
+        root = Path('/srv/lenbot').resolve()
+        return WorkerSettings.model_validate({
+            'docker_binary': root / 'docker', 'docker_host': host, 'image': 'lenbot-worker:local',
+            'workspace_root': root / 'workspaces', 'runtime_root': root / 'runtime',
+            'delivery_root': root / 'deliveries', 'uid': 10000, 'gid': 10000, 'model_reasoning': True})
+
+    assert worker('npipe:////./pipe/docker_engine').docker_host == 'npipe:////./pipe/docker_engine'
+    assert worker('unix:///var/run/docker.sock').docker_host == 'unix:///var/run/docker.sock'
+    for host in ('tcp://127.0.0.1:2375', 'npipe:////remote/pipe/docker_engine', 'unix://relative.sock'):
+        with pytest.raises(ValidationError):
+            worker(host)

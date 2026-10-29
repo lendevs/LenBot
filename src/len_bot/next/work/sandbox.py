@@ -21,13 +21,12 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Protocol
-from urllib.parse import urlsplit
 
 from .pi_rpc import PiRpc
 from .docker_mounts import require_task_mounts
 from ..tools.skills import Skill
 from .materials import finish_file_operation
-from ..configuration.tasks import EgressSettings
+from ..configuration.tasks import EgressSettings, local_docker_endpoint
 from .worker_egress import EgressTransport
 from .worker_model import WorkerModelProxy
 from .worker_transport import WorkerTransport
@@ -72,11 +71,7 @@ class DockerSettings:
     def __post_init__(self) -> None:
         if not self.image.strip() or not self.docker_binary.is_absolute():
             raise ValueError("Docker image and absolute docker_binary are required")
-        endpoint = urlsplit(self.docker_host)
-        if (not self.docker_host.startswith("unix:///") or endpoint.scheme != "unix"
-                or endpoint.netloc or not Path(endpoint.path).is_absolute()
-                or not endpoint.path or endpoint.query or endpoint.fragment):
-            raise ValueError("docker_host must be an explicit local unix:///absolute/socket path")
+        local_docker_endpoint(self.docker_host)
         workspace = self.workspace_root.resolve()
         runtime = self.runtime_root.resolve()
         if (not self.workspace_root.is_absolute() or not self.runtime_root.is_absolute()

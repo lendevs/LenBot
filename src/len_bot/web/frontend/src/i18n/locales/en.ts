@@ -2201,7 +2201,8 @@ export default {
       image: 'Task image',
       dockerBinary: 'Docker program path',
       dockerHost: 'Docker address',
-      dockerHostRule: 'Use a local socket, such as unix:///var/run/docker.sock',
+      dockerHostRule:
+        'Use a local socket or named pipe, such as unix:///var/run/docker.sock or npipe:////./pipe/docker_engine',
       uid: 'Container user UID',
       gid: 'Container user GID',
       workspace: 'Task workspace folder',

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
+import sys
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -54,6 +55,22 @@ class EgressSettings(BaseModel):
     def enabled(self) -> bool:
         """Whether tasks get the egress proxy at all."""
         return self.mode != "off"
+
+
+_NAMED_PIPE = re.compile(r"npipe:////\./pipe/[A-Za-z0-9_.-]+\Z")
+DOCKER_DESKTOP_PIPE = "npipe:////./pipe/docker_engine"
+WORKER_IMAGE_USER = 10000
+
+
+def local_docker_endpoint(value: str) -> str:
+    """A local Docker endpoint: ``unix:///absolute/socket`` or a Windows named pipe ``npipe:////./pipe/name``."""
+    if _NAMED_PIPE.fullmatch(value):
+        return value
+    endpoint = urlsplit(value)
+    if (not value.startswith("unix:///") or endpoint.scheme != "unix" or endpoint.netloc
+            or not PurePosixPath(endpoint.path).is_absolute() or endpoint.query or endpoint.fragment):
+        raise ValueError("docker_host must be a local unix:///absolute/socket path or npipe:////./pipe/name")
+    return value
 
 
 class WorkerSettings(BaseModel):
@@ -145,13 +162,7 @@ class WorkerSettings(BaseModel):
     @field_validator("docker_host")
     @classmethod
     def local_docker_host(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        endpoint = urlsplit(value)
-        if (not value.startswith("unix:///") or endpoint.scheme != "unix" or endpoint.netloc
-                or not Path(endpoint.path).is_absolute() or endpoint.query or endpoint.fragment):
-            raise ValueError("docker_host must be an explicit local unix:///absolute/socket path")
-        return value
+        return None if value is None else local_docker_endpoint(value)
 
     @field_validator("image")
     @classmethod
@@ -244,10 +255,15 @@ def suggested_worker(root: Path) -> dict:
     if binary is not None:
         suggestion["docker_binary"] = binary
     host, desktop = os.environ.get("DOCKER_HOST", ""), Path.home() / ".docker/run/docker.sock"
-    if host.startswith("unix:///"):
+    if host.startswith(("unix:///", "npipe:")):
         suggestion["docker_host"] = host
+    elif sys.platform == "win32":
+        suggestion["docker_host"] = DOCKER_DESKTOP_PIPE
     elif desktop.exists():
         suggestion["docker_host"] = f"unix://{desktop}"
     if hasattr(os, "getuid") and os.getuid() > 0 and os.getgid() > 0:
         suggestion["uid"], suggestion["gid"] = os.getuid(), os.getgid()
+    elif sys.platform == "win32":
+        # Docker Desktop bind mounts do not map Windows owners; run as the image's agent user.
+        suggestion["uid"] = suggestion["gid"] = WORKER_IMAGE_USER
     return suggestion
