@@ -35,7 +35,7 @@ EXPRESSION_POOL = 10
 # Calls that speak, wait or close a turn; any other call means the turn looked something up.
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
 FINAL_STEP_TOOLS = frozenset({"say", "react"})
-PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info"})
+PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info", "group_files"})
 # Consecutive sends not confirmed as delivered after which the turn ends; rewriting the message again would
 # meet the same platform, and an unconfirmed send may already be in the group.
 SEND_FAILURE_LIMIT = 2

@@ -33,7 +33,8 @@ from .store import TERMINAL, Task, TaskStore
 from .worker_model import Limits
 from .materials import MaterialName, finish_file_operation, material_directory, save_shared
 from ..storage.pool import worker_pool_usage
-from .inputs import ResourceInput, copy_inputs, create_stage, publish_inputs, remove_stage
+from .inputs import (DownloadedInput, ResourceInput, copy_inputs, create_stage, publish_inputs, remove_stage,
+                     write_download)
 from .storage import disk_free, task_tree_bytes
 from ..runtime.logs import credentials, log_context, log_event, redact, redact_record
 from ..runtime.operations import diagnostic_value
@@ -308,10 +309,11 @@ class WorkTasks:
 
     async def delegate(self, scene: str, *, requester: str, goal: str,
                        deliverable: str, context: str,
-                       materials: Sequence[MaterialName] = (), resources: Sequence[ResourceInput] = ()) -> dict:
+                       materials: Sequence[MaterialName] = (), resources: Sequence[ResourceInput] = (),
+                       downloads: Sequence[DownloadedInput] = ()) -> dict:
         self._admit_delegate(scene, requester)
         await finish_file_operation(worker_pool_usage, self.settings)
-        selected = (*materials, *(item.name for item in resources))
+        selected = (*materials, *(item.name for item in resources), *(item.name for item in downloads))
         stage = create_stage(self.settings, scene) if selected else None
         item: Task | None = None
         original_error: BaseException | None = None
@@ -325,6 +327,10 @@ class WorkTasks:
                 size = await finish_file_operation(self.resources.copy_opened, opened, stage / selection.name)
                 copies.append({'name': selection.name, 'size': size, 'source_path': str(opened.path),
                                'reference': selection.reference.model_dump(), 'container_path': f'/inputs/{selection.name}'})
+            for download in downloads:
+                size = await finish_file_operation(write_download, stage, download)
+                copies.append({'name': download.name, 'size': size, **download.source,
+                               'container_path': f'/inputs/{download.name}'})
             self._admit_delegate(scene, requester)
             item = self._register_delegate(scene, requester, goal, deliverable, context, selected)
             log_event(logger, 'task_created', task_id=item.id, requester=requester, inputs=len(selected))

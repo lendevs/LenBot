@@ -616,3 +616,42 @@ async def test_expired_workspace_is_removed_and_its_delivery_kept(tmp_path, upst
             await tasks.resume(SCENE, id, requester=WHITELISTED, text='继续')
     assert done['status'] == 'done' and not workspace.exists()
     assert not (config.worker.runtime_root / scene_directory(SCENE) / str(id)).exists() and Path(file.path).is_file()
+
+
+@pytest.mark.asyncio
+async def test_a_group_file_becomes_each_tasks_own_input_snapshot(tmp_path, upstream, environment):
+    from len_bot.next.work.tools import execute_tasks
+
+    config = host_config(tmp_path, upstream[0], environment)
+    version = {'data': b'city,sales\nbeijing,3\n'}
+    fetched = []
+
+    async def fetch(item, max_bytes):
+        fetched.append((item.file_id, item.busid, max_bytes))
+        return version['data']
+
+    def arguments(goal):
+        return {'requester': WHITELISTED, 'goal': goal, 'deliverable': '无',
+                'context': '探测：{"writes": [], "reads": ["/inputs/sales.csv"], "connections": []}',
+                'group_files': [{'file_id': '/abc-123', 'busid': 102, 'name': 'sales.csv'}]}
+    async with task_host(config, config.database) as tasks:
+        with pytest.raises(ValueError, match='群文件'):
+            await execute_tasks(tasks, SCENE, 'delegate', arguments('无群文件 [探测]'))
+        first = (await execute_tasks(tasks, SCENE, 'delegate', arguments('读群文件 [探测]'), fetch))['id']
+        done = await reached(tasks, first, 'done', 'failed')
+        version['data'] = b'city,sales\nbeijing,3\nshanghai,5\n'
+        second = (await execute_tasks(tasks, SCENE, 'delegate', arguments('读新版本 [探测]'), fetch))['id']
+        await reached(tasks, second, 'done', 'failed')
+        events = [json.loads(row[0]) for row in tasks.store.db.execute(
+            "SELECT body FROM task_events WHERE scene=? AND task_id=? AND kind='material_inputs'", (SCENE, first))]
+    inputs = lambda id: config.worker.runtime_root / scene_directory(SCENE) / str(id) / 'inputs' / 'sales.csv'
+    assert done['status'] == 'done'
+    if environment == 'bwrap':
+        # The stand-in runs on the host without the /inputs mount.
+        assert '"read /inputs/sales.csv": "read"' in done['summary']
+    assert inputs(first).read_bytes() == b'city,sales\nbeijing,3\n'
+    assert inputs(second).read_bytes().endswith(b'shanghai,5\n')
+    assert fetched == [('/abc-123', 102, config.worker.max_file_bytes)] * 2
+    [event] = events
+    assert event['files'] == [{'name': 'sales.csv', 'size': 21, 'group_file': {'file_id': '/abc-123', 'busid': 102},
+                                    'container_path': '/inputs/sales.csv'}]

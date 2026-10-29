@@ -1,5 +1,6 @@
 """Create task input snapshots from selected scene files."""
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -13,6 +14,23 @@ from .resources import ResourceFileRef
 from ..configuration.tasks import WorkerSettings
 from ..platform.identity import scene_directory
 from ..storage.files import open_no_follow
+
+
+@dataclass(frozen=True)
+class DownloadedInput:
+    """A file fetched from outside the instance, such as a group file, with where it came from."""
+    name: str
+    data: bytes
+    source: dict
+
+
+def write_download(stage: Path, item: DownloadedInput) -> int:
+    descriptor = open_no_follow(stage / item.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, 'wb') as output:
+        output.write(item.data)
+        output.flush()
+        os.fsync(output.fileno())
+    return len(item.data)
 
 
 class ResourceInput(BaseModel):
