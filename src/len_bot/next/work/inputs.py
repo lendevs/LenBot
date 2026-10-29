@@ -11,6 +11,7 @@ from ..configuration.types import STRICT
 from .materials import MaterialName, list_materials, material_directory, open_regular, require_directory
 from .resources import ResourceFileRef
 from ..configuration.tasks import WorkerSettings
+from ..platform.identity import scene_directory
 
 
 class ResourceInput(BaseModel):
@@ -26,7 +27,7 @@ class ResourceInput(BaseModel):
 
 
 def create_stage(settings: WorkerSettings, scene: str) -> Path:
-    parent = settings.runtime_root / scene
+    parent = settings.runtime_root / scene_directory(scene)
     require_directory(parent)
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     require_directory(parent)
@@ -63,7 +64,7 @@ def copy_inputs(stage: Path, settings: WorkerSettings, scene: str, names: tuple[
 
 
 def publish_inputs(stage: Path, settings: WorkerSettings, scene: str, task_id: int, names: tuple[str, ...]) -> Path:
-    destination = settings.runtime_root / scene / str(task_id) / 'inputs'
+    destination = settings.runtime_root / scene_directory(scene) / str(task_id) / 'inputs'
     require_directory(destination)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     destination.mkdir(mode=0o700)

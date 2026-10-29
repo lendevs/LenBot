@@ -10,6 +10,7 @@ import stat
 from typing import Literal
 
 import yaml
+from ..platform.identity import scene_directory
 
 
 BUILTIN_DIRECTORY = Path(__file__).resolve().parents[2] / "builtin_skills"
@@ -127,7 +128,7 @@ def load_catalog(directory: Path | None, scene: str, *, public_browser: bool = F
         *_directory(BUILTIN_DIRECTORY, "builtin", "/shared/skills/builtin",
                     missing_ok=False, public_browser=public_browser),
         *_directory(directory / "shared", "shared", "/shared/skills/approved", missing_ok=True),
-        *_directory(directory / "scenes" / scene, "scene", "/group/skills", missing_ok=True),
+        *_directory(directory / "scenes" / scene_directory(scene), "scene", "/group/skills", missing_ok=True),
     )
     _unique(catalog)
     return catalog

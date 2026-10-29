@@ -18,6 +18,7 @@ from .materials import copy_stream, finish_file_operation, material_directory
 from .storage import DIRECTORY_FLAGS, output_entries
 from ..configuration.tasks import WorkerSettings
 from .store import TERMINAL, TaskStore
+from ..platform.identity import scene_directory
 
 
 ResourceScope = Literal['workspace', 'inputs', 'deliveries', 'runtime', 'shared']
@@ -114,12 +115,12 @@ class TaskResources:
             return material_directory(self.settings.workspace_root, scene)
         self.records.get(scene, location.task_id)
         if location.scope == 'workspace':
-            return self.settings.workspace_root / scene / 'tasks' / str(location.task_id)
+            return self.settings.workspace_root / scene_directory(scene) / 'tasks' / str(location.task_id)
         if location.scope == 'inputs':
-            return self.settings.runtime_root / scene / str(location.task_id) / 'inputs'
+            return self.settings.runtime_root / scene_directory(scene) / str(location.task_id) / 'inputs'
         if location.scope == 'runtime':
-            return self.settings.runtime_root / scene / str(location.task_id)
-        return self.settings.delivery_root / scene / str(location.task_id)
+            return self.settings.runtime_root / scene_directory(scene) / str(location.task_id)
+        return self.settings.delivery_root / scene_directory(scene) / str(location.task_id)
 
     async def list(self, scene: str, location: ResourceLocation, *, offset: int, limit: int) -> dict:
         root = self.root(scene, location)

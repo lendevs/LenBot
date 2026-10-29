@@ -9,6 +9,7 @@ import sys
 
 from ..configuration.tasks import WorkerSettings
 from .store import TERMINAL, Task
+from ..platform.identity import scene_directory
 
 
 DIRECTORY_FLAGS = os.O_RDONLY if sys.platform == 'win32' else os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -23,8 +24,8 @@ def continuation_state(item: Task, discarded: bool) -> str:
 
 
 def temporary_paths(settings: WorkerSettings, scene: str, task_id: int) -> list[tuple[Path, str]]:
-    workspace = settings.workspace_root / scene / 'tasks' / str(task_id)
-    runtime = settings.runtime_root / scene / str(task_id)
+    workspace = settings.workspace_root / scene_directory(scene) / 'tasks' / str(task_id)
+    runtime = settings.runtime_root / scene_directory(scene) / str(task_id)
     return [(runtime / 'control', 'directory'), (workspace / '.playwright', 'directory'),
             *((workspace / name, 'file') for name in ('pi.stderr', 'model-bridge.stderr', 'egress-bridge.stderr')),
             (runtime / 'home' / '.pi' / 'agent' / 'models.json', 'file')]
@@ -159,9 +160,9 @@ def directory_usage(root: Path) -> TreeUsage | None:
 
 def storage_usage(settings: WorkerSettings, scene: str, task_id: int) -> list[dict]:
     roots = (
-        ('workspace', settings.workspace_root / scene / 'tasks' / str(task_id)),
-        ('runtime', settings.runtime_root / scene / str(task_id)),
-        ('deliveries', settings.delivery_root / scene / str(task_id)),
+        ('workspace', settings.workspace_root / scene_directory(scene) / 'tasks' / str(task_id)),
+        ('runtime', settings.runtime_root / scene_directory(scene) / str(task_id)),
+        ('deliveries', settings.delivery_root / scene_directory(scene) / str(task_id)),
     )
     result = []
     for kind, path in roots:
@@ -177,7 +178,7 @@ def storage_usage(settings: WorkerSettings, scene: str, task_id: int) -> list[di
 def task_tree_bytes(settings: WorkerSettings, scene: str, task_id: int) -> int:
     """Disk space the task's workspace and runtime directories occupy; deliveries are counted separately."""
     total = 0
-    for root in (settings.workspace_root / scene / 'tasks' / str(task_id), settings.runtime_root / scene / str(task_id)):
+    for root in (settings.workspace_root / scene_directory(scene) / 'tasks' / str(task_id), settings.runtime_root / scene_directory(scene) / str(task_id)):
         usage = directory_usage(root)
         total += 0 if usage is None else usage.allocated_bytes
     return total

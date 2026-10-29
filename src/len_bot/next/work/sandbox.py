@@ -31,6 +31,7 @@ from ..configuration.tasks import EgressSettings
 from .worker_egress import EgressTransport
 from .worker_model import WorkerModelProxy
 from .worker_transport import WorkerTransport
+from ..platform.identity import scene_directory
 
 
 _SCENE = re.compile(r"[a-z][a-z0-9_-]*:(group|private):[^:\s/\\]+\Z")
@@ -138,12 +139,12 @@ def prepare_task_directories(workspace_root: Path, runtime_root: Path, scene: st
                              task_id: str) -> tuple[Path, Path, Path, Path]:
     """Create one task's workspace, home and control directories; return them and the runtime directory."""
     workspace_root, runtime_root = workspace_root.resolve(), runtime_root.resolve()
-    workspace = workspace_root / scene / "tasks" / task_id
-    runtime = runtime_root / scene / task_id
+    workspace = workspace_root / scene_directory(scene) / "tasks" / task_id
+    runtime = runtime_root / scene_directory(scene) / task_id
     home, control = runtime / "home", runtime / "control"
     for directory in (
-        workspace_root / scene, workspace_root / scene / "tasks", workspace,
-        workspace / "out", workspace / ".pi-sessions", runtime_root / scene, runtime,
+        workspace_root / scene_directory(scene), workspace_root / scene_directory(scene) / "tasks", workspace,
+        workspace / "out", workspace / ".pi-sessions", runtime_root / scene_directory(scene), runtime,
         home, home / ".pi", home / ".pi" / "agent", control,
     ):
         directory.mkdir(parents=True, exist_ok=True)
@@ -472,8 +473,8 @@ class DockerSandbox:
 
     async def stop_recorded(self, scene: str, task_id: str, container: str) -> None:
         """Reconcile a stored task container after host interruption."""
-        workspace = self.settings.workspace_root.resolve() / scene / 'tasks' / task_id
-        runtime = self.settings.runtime_root.resolve() / scene / task_id
+        workspace = self.settings.workspace_root.resolve() / scene_directory(scene) / 'tasks' / task_id
+        runtime = self.settings.runtime_root.resolve() / scene_directory(scene) / task_id
         control = runtime / 'control'
         found = await self._docker("ps", "-aq", "--no-trunc", "--filter", f"name=^/{container}$")
         if found:

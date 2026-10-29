@@ -47,8 +47,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --python 3.13
+      # The deployment package starts the host in UTF-8 mode (deploy/updater/native.py).
       - run: uv run --no-sync pytest -q -p no:cacheprovider -rfE
         continue-on-error: true
+        env:
+          PYTHONUTF8: '1'
 
   panel:
     name: panel (typecheck, lint, build)

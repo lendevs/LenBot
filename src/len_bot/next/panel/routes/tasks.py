@@ -25,6 +25,7 @@ from ..auth import require_panel_origin
 from .owner import panel_owner
 from .resources import ResourceDownload
 from ...work.resources import TaskResources, ResourceFileRef
+from ...platform.identity import scene_directory
 
 
 class WorkspaceDiscard(BaseModel):
@@ -171,7 +172,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         worker = runtime.config.worker
         if worker is None:
             raise HTTPException(409, "当前根配置没有 worker，无法定位原任务工作区")
-        path = worker.workspace_root.resolve() / scene / "tasks" / str(id) / "session.jsonl"
+        path = worker.workspace_root.resolve() / scene_directory(scene) / "tasks" / str(id) / "session.jsonl"
         try:
             if path.resolve(strict=True) != path:
                 raise HTTPException(409, "任务会话路径含符号链接，不是本任务的原生文件")

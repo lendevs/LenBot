@@ -11,6 +11,7 @@ import tempfile
 from typing import Annotated, BinaryIO, TYPE_CHECKING
 
 from pydantic import AfterValidator, Field, TypeAdapter
+from ..platform.identity import scene_directory
 
 if TYPE_CHECKING:
     from .store import TaskFile
@@ -55,7 +56,7 @@ async def finish_file_operation[T](operation: Callable[..., T], *args: object, *
 
 
 def material_directory(workspace_root: Path, scene: str) -> Path:
-    return workspace_root / scene / 'shared'
+    return workspace_root / scene_directory(scene) / 'shared'
 
 
 def require_directory(path: Path) -> None:
@@ -126,7 +127,7 @@ def save_shared(source: BinaryIO, directory: Path, name: str, max_bytes: int) ->
 def adopt_file(directory: Path, source: TaskFile, *, delivery_root: Path, name: str, max_bytes: int) -> dict:
     require_directory(directory)
     origin = Path(source.path)
-    expected = delivery_root / source.scene / str(source.task_id)
+    expected = delivery_root / scene_directory(source.scene) / str(source.task_id)
     if origin.parent != expected:
         raise ValueError(f'Registered delivery is not in its current task directory: {origin}; expected={expected}')
     if source.size > max_bytes:

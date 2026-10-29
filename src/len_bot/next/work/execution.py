@@ -30,6 +30,7 @@ from .store import Task, TaskStore
 from .worker_model import Limits, WorkerModelProxy
 from .worker_session import WorkerSession, worker_session
 from ..prompt_files import read_prompt
+from ..platform.identity import scene_directory
 
 if TYPE_CHECKING:
     from ..tools.external_tools import ExternalTool
@@ -126,7 +127,7 @@ class TaskExecution:
         try:
             await finish_file_operation(worker_pool_usage, self.settings)
             if item.materials:
-                await finish_file_operation(require_inputs, self.settings.runtime_root / item.scene / str(item.id) / 'inputs',
+                await finish_file_operation(require_inputs, self.settings.runtime_root / scene_directory(item.scene) / str(item.id) / 'inputs',
                                             tuple(item.materials), self.settings.max_file_bytes)
             if self.settings.mcp:
                 if self.mcp is None:
@@ -139,7 +140,7 @@ class TaskExecution:
                 self._timer = timer
                 self._skills = self.catalog[item.scene]
                 if self.settings.skills_directory is not None and self.skill_permissions[item.scene] == "all":
-                    workspace = self.settings.workspace_root / item.scene / "tasks" / str(item.id)
+                    workspace = self.settings.workspace_root / scene_directory(item.scene) / "tasks" / str(item.id)
                     authored = await asyncio.to_thread(load_task_skills, workspace)
                     self._skills = merge_task_skills(self._skills, authored)
                 async with worker_session(

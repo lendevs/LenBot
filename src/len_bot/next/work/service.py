@@ -38,6 +38,7 @@ from .storage import disk_free, task_tree_bytes
 from ..runtime.logs import credentials, log_context, log_event, redact, redact_record
 from ..runtime.operations import diagnostic_value
 from ..prompt_files import read_prompt
+from ..platform.identity import scene_directory
 
 if TYPE_CHECKING:
     from ..tools.mcp_host import MCPHost
@@ -184,7 +185,7 @@ class WorkTasks:
             raise ValueError('从任务工作区选择需要登记的成果；已有交付可直接使用')
         async with self.file_changes:
             item = self._inspect_task(scene, reference.task_id, requester)
-            destination = self.settings.delivery_root / scene / str(item.id)
+            destination = self.settings.delivery_root / scene_directory(scene) / str(item.id)
             destination.mkdir(parents=True, exist_ok=True)
             target = destination / uuid4().hex
             try:
@@ -408,8 +409,8 @@ class WorkTasks:
                                operation: Literal['temporary', 'environment']) -> dict:
         if operation == 'environment':
             result = await self.discard_workspace(scene, id, requester=requester,
-                workspace=str(self.settings.workspace_root / scene / 'tasks' / str(id)),
-                runtime=str(self.settings.runtime_root / scene / str(id)), confirmed=True)
+                workspace=str(self.settings.workspace_root / scene_directory(scene) / 'tasks' / str(id)),
+                runtime=str(self.settings.runtime_root / scene_directory(scene) / str(id)), confirmed=True)
             return result['removal']
         async with self.file_changes:
             item = self.records.get(scene, id)
@@ -547,8 +548,8 @@ class WorkTasks:
             async with self.file_changes:
                 await self.files.discard(
                     item, requester="host:retention",
-                    workspace=str(self.settings.workspace_root / item.scene / "tasks" / str(item.id)),
-                    runtime=str(self.settings.runtime_root / item.scene / str(item.id)))
+                    workspace=str(self.settings.workspace_root / scene_directory(item.scene) / "tasks" / str(item.id)),
+                    runtime=str(self.settings.runtime_root / scene_directory(item.scene) / str(item.id)))
 
     def stop(self) -> None:
         self.accepting = False
