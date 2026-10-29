@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { BookmarkPlus, Pencil } from '@lucide/vue'
 import { learningApi, type Expression, type Review } from '../../../api/learning'
 import { keys } from '../../../api/query'
+import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import Dialog from '../../../ui/Dialog.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
@@ -123,9 +124,13 @@ const addExample = useMutation({
             <p class="text-base break-words text-ink">{{ item.style }}</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <span class="mr-auto text-xs text-subtle">
+            <span class="text-xs text-subtle">
               {{ t('groups.learning.sources', { n: item.count }) }}
             </span>
+            <Badge v-if="(item.disliked ?? 0) >= 2" tone="warning">
+              {{ t('groups.learning.expression.disliked', { n: item.disliked }) }}
+            </Badge>
+            <span class="mr-auto" />
             <template v-if="edits.editing(item.id)">
               <Button size="sm" variant="ghost" @click="edits.stop(item.id)">{{ t('common.cancel') }}</Button>
               <Button

@@ -539,6 +539,7 @@ export default {
         reason: 'Reason',
         score: 'Score',
         threshold: 'Threshold',
+        effect: 'Reply effect factor',
       },
       channels: {
         direct: 'Mention or reply',
@@ -859,7 +860,7 @@ export default {
       reindexFailed: 'Index not rebuilt',
       off: 'Learning is off in this group',
       turnOn: 'Turn on learning',
-      expression: { situation: 'When', style: 'How to say it' },
+      expression: { situation: 'When', style: 'How to say it', disliked: 'Corrected or disliked {n} times' },
       example: {
         action: 'Add to persona examples',
         title: 'Add to persona examples',

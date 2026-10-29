@@ -50,6 +50,8 @@ export interface Expression {
   updated: number
   indexed: boolean
   count: number
+  /** Times its word-for-word use drew a correction or dislike in the last 30 days. */
+  disliked?: number
 }
 
 export interface JargonTerm {

@@ -7,6 +7,8 @@ export interface Verdict {
   reason: string
   score: number | null
   threshold: number | null
+  /** Below 1 when recent reactions to ambient interjections lowered the participation score. */
+  effect_factor?: number | null
 }
 
 export interface Sender {

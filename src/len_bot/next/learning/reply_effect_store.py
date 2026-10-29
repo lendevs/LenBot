@@ -238,6 +238,14 @@ class ReplyEffectStore:
                 "channel_sets": [{"channels": json.loads(key), "count": count}
                                  for key, count in sorted(channels.items(), key=lambda item: -item[1])]}
 
+    def reactions(self, scene: str, channels: Sequence[str], since: float, limit: int) -> list[tuple[float, str]]:
+        """Judged reactions to expressions of turns woken by any of ``channels``, newest first."""
+        return [(row[0], row[1]) for row in self.db.execute(
+            "SELECT first_sent_at,reaction FROM reply_effects WHERE scene=? AND reaction IS NOT NULL "
+            "AND first_sent_at>=? AND EXISTS (SELECT 1 FROM json_each(channels) "
+            "WHERE value IN (SELECT value FROM json_each(?))) ORDER BY id DESC LIMIT ?",
+            (scene, since, encode(list(channels)), limit))]
+
     def effect(self, scene: str, id: int) -> dict | None:
         row = self.db.execute(
             f"SELECT e.*,{STATE_SQL} AS state FROM reply_effects e LEFT JOIN reply_effect_calls c ON c.id=e.call_id "

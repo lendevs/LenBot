@@ -58,11 +58,12 @@ async def test_unwoken_message_records_its_own_reason(tmp_path, case, reason):
             verdict = receipt['wake_verdict']
             assert not verdict['woke'] and verdict['channel'] is None
             assert reason in verdict['reason']
-            assert set(verdict) == {'woke', 'channel', 'reason', 'score', 'threshold'}
+            assert set(verdict) == {'woke', 'channel', 'reason', 'score', 'threshold', 'effect_factor'}
             recorded = store.db.execute('SELECT wake_verdict FROM messages WHERE seq=?', (receipt['message_seq'],)).fetchone()[0]
             assert json.loads(recorded) == verdict
             if case == 'score':
                 assert verdict['score'] < verdict['threshold'] == 10
+                assert verdict['effect_factor'] == 1.0
 
 
 @pytest.mark.asyncio

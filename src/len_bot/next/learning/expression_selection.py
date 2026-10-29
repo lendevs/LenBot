@@ -118,8 +118,9 @@ class ExpressionService:
                 self.on_update()
             return batch
 
-    async def select(self, scene: str, query: str, *, turn_id: str, direct: bool, exclude_uids: tuple[str, ...] = ()) -> list[dict]:
-        """Return up to five ranked candidate facts; the chat model decides relevance and use."""
+    async def select(self, scene: str, query: str, *, turn_id: str, direct: bool, exclude_uids: tuple[str, ...] = (),
+                     limit: int = 5) -> list[dict]:
+        """Return up to ``limit`` ranked candidate facts; the chat model decides relevance and use."""
         if scene in self.rebuilding:
             return []
         async with self._lock(scene):
@@ -150,7 +151,7 @@ class ExpressionService:
                 ranked.append({"id": item["id"], "situation": item["situation"],
                                "style": item["style"], "similarity": similarity})
             ranked.sort(key=lambda item: (-item["similarity"], item["id"]))
-            return ranked[:5]
+            return ranked[:limit]
 
     async def update(self, scene: str, id: int, *, situation: str, style: str, status: str) -> dict | None:
         async with self._lock(scene):

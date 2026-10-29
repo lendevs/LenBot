@@ -528,6 +528,7 @@ export default {
         reason: '原因',
         score: '参与分',
         threshold: '门槛',
+        effect: '回复效果系数',
       },
       channels: {
         direct: "被 {'@'} 或回复",
@@ -837,7 +838,7 @@ export default {
       reindexFailed: '索引重建失败',
       off: '本群未开启学习',
       turnOn: '开启学习',
-      expression: { situation: '情境', style: '说法' },
+      expression: { situation: '情境', style: '说法', disliked: '被纠正或嫌弃 {n} 次' },
       example: {
         action: '添加到角色样例',
         title: '添加到角色样例',
