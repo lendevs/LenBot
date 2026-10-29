@@ -17,7 +17,7 @@ from ..config import HostConfig
 from .egress_usage import EgressUsage
 from ..models.slots import ModelSlots
 from ..chat.recall import RecallArguments, recall_chat
-from .sandbox import DockerSandbox
+from .sandbox import TaskSandbox
 from ..tools.skills import Skill, load_task_skills, merge_task_skills
 from ..storage.store import Store
 from ..browser.files import BrowserOutput, record_browser_output
@@ -48,7 +48,7 @@ class TaskExecution:
     """Own one run's handles; use task-service callbacks for scheduling and completion."""
 
     def __init__(self, item: Task, config: HostConfig, store: Store, *,
-                 sandbox: DockerSandbox, files: TaskFiles, egress: EgressUsage,
+                 sandbox: TaskSandbox, files: TaskFiles, egress: EgressUsage,
                  slots: ModelSlots | None, memory_call: Callable[[str, dict], Awaitable[str]] | None,
                  audio: AudioService | None,
                  mcp: MCPHost | None, skills: dict[str, tuple[Skill, ...]],

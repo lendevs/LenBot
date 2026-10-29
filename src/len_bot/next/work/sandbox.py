@@ -20,6 +20,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Protocol
 from urllib.parse import urlsplit
 
 from .pi_rpc import PiRpc
@@ -98,6 +99,77 @@ class SandboxHandle:
     workspace: Path
     home: Path
     control: Path
+
+
+class TaskSandbox(Protocol):
+    """One way to run a task: Docker task containers or the Linux local sandbox.
+
+    Every implementation gives a task the same paths (``/workspace``,
+    ``/home/agent``, ``/run/lenbot``, ``/inputs``) and starts the model bridge,
+    the egress bridge and Pi with pipes to the host only.
+    """
+
+    async def ensure(self, scene: str, task_id: str, *, skills: tuple[Skill, ...] = (),
+                     input_names: tuple[str, ...] = (),
+                     on_container: Callable[[str], None] | None = None) -> SandboxHandle: ...
+    async def browser_cli_version(self, sandbox: SandboxHandle) -> str: ...
+    async def spawn_model_bridge(self, sandbox: SandboxHandle, *, proxy: WorkerModelProxy, stderr_path: Path,
+                                 task_request: Callable[[str, bytes], Awaitable[dict]] | None = None
+                                 ) -> WorkerTransport: ...
+    async def spawn_egress_bridge(
+        self, sandbox: SandboxHandle, *, settings: EgressSettings, fake_ip_networks: tuple, bytes_per_second: int,
+        before_bytes: Callable[[int, str, int], None], on_connection: Callable[[dict], None],
+        on_bytes: Callable[[int, str, int], None], stderr_path: Path, public_dns_url: str | None = None,
+    ) -> EgressTransport: ...
+    async def spawn_pi(self, sandbox: SandboxHandle, *, provider: str, model: str, stderr_path: Path,
+                       proxy_port: int | None = None, skills: tuple[Skill, ...] = ()) -> PiRpc: ...
+    async def copy_out(self, sandbox: SandboxHandle, source: str, dest: Path, *, max_bytes: int) -> None: ...
+    async def stop(self, sandbox: SandboxHandle) -> None: ...
+    async def stop_recorded(self, scene: str, task_id: str, container: str) -> None: ...
+
+
+def task_identity(scene: str, task_id: str) -> None:
+    if _SCENE.fullmatch(scene) is None or _TASK.fullmatch(task_id) is None:
+        raise ValueError("scene or task_id is not a valid task workspace identity")
+
+
+def prepare_task_directories(workspace_root: Path, runtime_root: Path, scene: str,
+                             task_id: str) -> tuple[Path, Path, Path, Path]:
+    """Create one task's workspace, home and control directories; return them and the runtime directory."""
+    workspace_root, runtime_root = workspace_root.resolve(), runtime_root.resolve()
+    workspace = workspace_root / scene / "tasks" / task_id
+    runtime = runtime_root / scene / task_id
+    home, control = runtime / "home", runtime / "control"
+    for directory in (
+        workspace_root / scene, workspace_root / scene / "tasks", workspace,
+        workspace / "out", workspace / ".pi-sessions", runtime_root / scene, runtime,
+        home, home / ".pi", home / ".pi" / "agent", control,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+        if directory.is_symlink():
+            raise SandboxError(f"task workspace component is a symbolic link: {directory}")
+    return workspace, home, control, runtime
+
+
+async def copy_regular_out(workspace: Path, source: str, dest: Path, max_bytes: int) -> None:
+    """Copy a current task's regular out/ file without following symlinks."""
+    copying = asyncio.create_task(asyncio.to_thread(_copy_out, workspace, source, dest, max_bytes))
+    try:
+        await asyncio.shield(copying)
+    except asyncio.CancelledError as cancelled:
+        while not copying.done():
+            try:
+                await asyncio.shield(copying)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        try:
+            copying.result()
+        except BaseException as error:
+            cancelled.add_note(f"Delivery copy also failed: {type(error).__name__}: {error}")
+            raise cancelled from error
+        raise
 
 
 def _docker_environment() -> dict[str, str]:
@@ -218,21 +290,9 @@ class DockerSandbox:
                      input_names: tuple[str, ...] = (),
                      on_container: Callable[[str], None] | None = None) -> SandboxHandle:
         """Create a task container with the configured network."""
-        if _SCENE.fullmatch(scene) is None or _TASK.fullmatch(task_id) is None:
-            raise ValueError("scene or task_id is not a valid task workspace identity")
-        workspace_root = self.settings.workspace_root.resolve()
-        runtime_root = self.settings.runtime_root.resolve()
-        task_root = workspace_root / scene / "tasks" / task_id
-        runtime = runtime_root / scene / task_id
-        workspace, home, control = task_root, runtime / "home", runtime / "control"
-        for directory in (
-            workspace_root / scene, workspace_root / scene / "tasks", workspace,
-            workspace / "out", workspace / ".pi-sessions", runtime_root / scene, runtime,
-            home, home / ".pi", home / ".pi" / "agent", control,
-        ):
-            directory.mkdir(parents=True, exist_ok=True)
-            if directory.is_symlink():
-                raise SandboxError(f"task workspace component is a symbolic link: {directory}")
+        task_identity(scene, task_id)
+        workspace, home, control, runtime = prepare_task_directories(
+            self.settings.workspace_root, self.settings.runtime_root, scene, task_id)
         mounts = [*_mount(workspace, "/workspace"),
                   *_mount(home, "/home/agent"),
                   *_mount(control, "/run/lenbot", readonly=True)]
@@ -402,25 +462,7 @@ class DockerSandbox:
     async def copy_out(self, sandbox: SandboxHandle, source: str, dest: Path, *,
                        max_bytes: int) -> None:
         """Copy a current task's regular out/ file without following symlinks."""
-        copying = asyncio.create_task(asyncio.to_thread(
-            _copy_out, sandbox.workspace, source, dest, max_bytes
-        ))
-        try:
-            await asyncio.shield(copying)
-        except asyncio.CancelledError as cancelled:
-            while not copying.done():
-                try:
-                    await asyncio.shield(copying)
-                except asyncio.CancelledError:
-                    continue
-                except BaseException:
-                    break
-            try:
-                copying.result()
-            except BaseException as error:
-                cancelled.add_note(f"Delivery copy also failed: {type(error).__name__}: {error}")
-                raise cancelled from error
-            raise
+        await copy_regular_out(sandbox.workspace, source, dest, max_bytes)
 
     async def stop(self, sandbox: SandboxHandle) -> None:
         """Stop the whole container; keep workspace/home and clear current controls."""

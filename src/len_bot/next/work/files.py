@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .sandbox import DockerSandbox, SandboxHandle
+from .sandbox import SandboxHandle, TaskSandbox
 from .materials import finish_file_operation
 from .storage import clean_temporary_files, discard_task_trees, output_entries
 from ..configuration.tasks import WorkerSettings
@@ -40,7 +40,7 @@ def file_info(file: TaskFile, records: TaskStore) -> dict:
 class TaskFiles:
     """Disk operations; callers own task permissions and lifecycle serialization."""
 
-    def __init__(self, settings: WorkerSettings, records: TaskStore, sandbox: DockerSandbox,
+    def __init__(self, settings: WorkerSettings, records: TaskStore, sandbox: TaskSandbox,
                  notify: Callable[[str], None]):
         self.settings, self.records, self.sandbox, self.notify = settings, records, sandbox, notify
 

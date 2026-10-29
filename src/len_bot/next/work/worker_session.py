@@ -16,7 +16,7 @@ from typing import Any, Literal
 from ..models.client import ModelSettings
 from ..models.slots import ModelSlots
 from .pi_rpc import PiRpc
-from .sandbox import DockerSandbox, SandboxHandle
+from .sandbox import SandboxHandle, TaskSandbox
 from ..tools.skills import Skill
 from ..configuration.tasks import EgressSettings
 from .worker_egress import EgressTransport
@@ -113,7 +113,7 @@ def _configure_pi(handle: SandboxHandle, *, token: str, port: int,
     })
 
 
-async def _cleanup(sandbox: DockerSandbox, handle: SandboxHandle | None,
+async def _cleanup(sandbox: TaskSandbox, handle: SandboxHandle | None,
                    pi: PiRpc | None, bridge: WorkerTransport | None,
                    proxy: WorkerModelProxy, egress: EgressTransport | None) -> None:
     failures: list[tuple[str, BaseException]] = []
@@ -145,7 +145,7 @@ async def _cleanup(sandbox: DockerSandbox, handle: SandboxHandle | None,
 
 @asynccontextmanager
 async def worker_session(
-    sandbox: DockerSandbox,
+    sandbox: TaskSandbox,
     *,
     scene: str,
     task_id: str,

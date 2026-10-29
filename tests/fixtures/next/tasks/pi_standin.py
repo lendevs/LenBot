@@ -2,31 +2,38 @@
 
 It speaks the JSONL commands and events that ``PiRpc`` parses, reads the
 generated ``models.json`` and ``task-api.json`` like the image's extension, and
-reaches the host only through the model bridge. Markers it acts on, in order:
+reaches the host only through the model bridge. ``LENBOT_CONTROL`` names the
+host directory mounted at ``/run/lenbot`` when the stand-in runs unsandboxed. Markers it acts on, in order:
 
 - ``[进度]`` appends a ``lenbot_progress`` entry
 - ``[提问]`` asks one ``input`` question; ``[确认]`` asks one ``confirm``
 - ``[等待]`` blocks until a ``steer`` command arrives
 - ``[交付]`` writes ``out/report.txt`` and calls ``/task/deliver-file``
 - ``[失败]`` ends the assistant message with ``stopReason: error``
+- ``[探测]`` tries the writes, reads and connections listed after ``探测：`` and
+  reports each outcome
 
 Every prompt is appended to ``session.jsonl`` in the working directory, so a
 continued task can show that it reopened the same session.
 """
 
+import errno
 import json
 import os
 from pathlib import Path
 import queue
+import socket
 import sys
 import threading
 import urllib.request
 
 
 ARGUMENTS = sys.argv[1:]
-PROVIDER = ARGUMENTS[ARGUMENTS.index("--provider") + 1]
-MODEL = ARGUMENTS[ARGUMENTS.index("--model") + 1]
-CONTROL = Path(os.environ["LENBOT_CONTROL"])
+PROVIDER = MODEL = None
+if "--provider" in ARGUMENTS:
+    PROVIDER = ARGUMENTS[ARGUMENTS.index("--provider") + 1]
+    MODEL = ARGUMENTS[ARGUMENTS.index("--model") + 1]
+CONTROL = Path(os.environ.get("LENBOT_CONTROL", "/run/lenbot"))
 AGENT = Path(os.environ["PI_CODING_AGENT_DIR"])
 inbox: queue.Queue = queue.Queue()
 steering: list[str] = []
@@ -90,6 +97,25 @@ def ask_model(prompt: str) -> str:
     return "".join(text)
 
 
+def probe(targets: dict) -> dict:
+    """Each attempted boundary crossing and how it ended: the success word or the errno name."""
+    def outcome(action, success: str) -> str:
+        try:
+            action()
+            return success
+        except OSError as error:
+            return errno.errorcode.get(error.errno, type(error).__name__)
+    results = {}
+    for path in targets["writes"]:
+        results["write " + path] = outcome(lambda: Path(path).write_text("probe"), "written")
+    for path in targets["reads"]:
+        results["read " + path] = outcome(lambda: Path(path).read_bytes(), "read")
+    for host, port in targets["connections"]:
+        results[f"connect {host}:{port}"] = outcome(
+            lambda: socket.create_connection((host, port), timeout=2).close(), "connected")
+    return results
+
+
 def question(number: int, body: dict) -> dict:
     ident = f"standin-question-{number}"
     emit({"type": "extension_ui_request", "id": ident, **body})
@@ -119,6 +145,9 @@ def run(message: str) -> None:
     if "[等待]" in message:
         while not steering:
             handle(receive(lambda record: record.get("type") == "steer"))
+    if "[探测]" in message:
+        targets, _ = json.JSONDecoder().raw_decode(message.split("探测：", 1)[1])
+        lines.append("探测结果：" + json.dumps(probe(targets), ensure_ascii=False))
     lines.extend(f"追加：{text}" for text in steering)
     steering.clear()
     if "[交付]" in message:
@@ -138,6 +167,9 @@ def run(message: str) -> None:
 
 
 def main() -> None:
+    if ARGUMENTS == ["--version"]:
+        print("0.87.1")
+        return
     threading.Thread(target=read_stdin, daemon=True).start()
     while True:
         command = receive(lambda record: record.get("type") == "prompt")

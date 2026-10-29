@@ -161,6 +161,10 @@ class WorkerDefaults(PanelResponse):
     gid: int | None = None
 
 
+class SandboxCheck(PanelResponse):
+    steps: list[JsonObject]
+
+
 class LearningSettingsSnapshot(PanelResponse):
     scene: str
     running: JsonObject | None

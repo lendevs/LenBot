@@ -33,16 +33,21 @@ class EgressSettings(BaseModel):
 class WorkerSettings(BaseModel):
     model_config = STRICT
 
-    docker_binary: Path
-    docker_host: str
-    image: str
+    sandbox: Literal["docker", "bwrap"] = Field(
+        default="docker", description="任务运行方式：docker 为任务容器，bwrap 为 Linux 本机沙箱。")
+    docker_binary: Path | None = None
+    docker_host: str | None = None
+    image: str | None = None
+    bwrap_binary: Path | None = None
+    task_runtime: Path | None = Field(
+        default=None, description="本机沙箱的任务运行时目录，含 Node、Pi 和任务工具，挂载到沙箱的 /opt/lenbot。")
     workspace_root: Path
     runtime_root: Path
     delivery_root: Path
     storage_pool: StoragePool | None = None
     skills_directory: Path | None = None
-    uid: int = Field(gt=0, strict=True)
-    gid: int = Field(gt=0, strict=True)
+    uid: int | None = Field(default=None, gt=0, strict=True)
+    gid: int | None = Field(default=None, gt=0, strict=True)
     cpus: float = Field(default=2.0, gt=0, allow_inf_nan=False)
     memory: str = Field(default="2g", pattern=r"^[1-9][0-9]*[kmgKMG]$")
     tmpfs_size: str = Field(default="256m", pattern=r"^[1-9][0-9]*[kmgKMG]$")
@@ -62,6 +67,8 @@ class WorkerSettings(BaseModel):
     input_timeout_seconds: float = Field(default=1800.0, ge=0.001, le=4294967.295, allow_inf_nan=False)
     max_file_bytes: int = Field(default=25 * 1024 * 1024, gt=0, strict=True)
     max_delivery_bytes: int = Field(default=500 * 1024 * 1024, gt=0, strict=True)
+    max_workspace_bytes: int = Field(default=2 * 1024 * 1024 * 1024, gt=0, strict=True,
+                                     description="单任务写入文件的大小上限；本机沙箱用作单个文件的硬上限。")
     input_support: Literal["text", "text-image"] = "text"
     model_reasoning: bool
     egress: EgressSettings = Field(default_factory=EgressSettings)
@@ -74,10 +81,19 @@ class WorkerSettings(BaseModel):
             raise ValueError("worker.public_browser requires worker.egress.enabled")
         return self
 
-    @field_validator("docker_binary")
+    @model_validator(mode="after")
+    def sandbox_settings(self) -> WorkerSettings:
+        required = {"docker": ("docker_binary", "docker_host", "image", "uid", "gid"),
+                    "bwrap": ("bwrap_binary", "task_runtime")}[self.sandbox]
+        missing = [name for name in required if getattr(self, name) is None]
+        if missing:
+            raise ValueError(f"worker.sandbox={self.sandbox} requires {', '.join('worker.' + name for name in missing)}")
+        return self
+
+    @field_validator("docker_binary", "bwrap_binary", "task_runtime")
     @classmethod
-    def absolute_binary(cls, value: Path) -> Path:
-        if not value.is_absolute():
+    def absolute_binary(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
             raise ValueError("must be an explicit absolute path")
         return value
 
@@ -90,7 +106,9 @@ class WorkerSettings(BaseModel):
 
     @field_validator("docker_host")
     @classmethod
-    def local_docker_host(cls, value: str) -> str:
+    def local_docker_host(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         endpoint = urlsplit(value)
         if (not value.startswith("unix:///") or endpoint.scheme != "unix" or endpoint.netloc
                 or not Path(endpoint.path).is_absolute() or endpoint.query or endpoint.fragment):
@@ -99,8 +117,8 @@ class WorkerSettings(BaseModel):
 
     @field_validator("image")
     @classmethod
-    def named_image(cls, value: str) -> str:
-        if not value.strip():
+    def named_image(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
             raise ValueError("image must not be blank")
         return value
 

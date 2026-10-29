@@ -6,7 +6,7 @@ the task succeeded, persist a task, or start a sandbox on its own.
 
 from __future__ import annotations
 
-from .process_files import open_stderr
+from .process_files import Launch, open_stderr
 
 import asyncio
 import json
@@ -164,13 +164,14 @@ class PiRpc:
     @classmethod
     async def spawn(cls, argv: list[str], *, cwd: Path, env: Mapping[str, str],
                     stderr_path: Path,
-                    max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES) -> PiRpc:
-        """Start the given Pi or container command."""
+                    max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES,
+                    launch: Launch = asyncio.create_subprocess_exec) -> PiRpc:
+        """Start the given Pi or container command; ``launch`` starts it inside a local sandbox."""
         if max_frame_bytes <= 0:
             raise ValueError("max_frame_bytes must be positive")
         stderr_file = open_stderr(stderr_path)
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await launch(
                 *argv, cwd=cwd, env=dict(env), stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE, stderr=stderr_file,
             )

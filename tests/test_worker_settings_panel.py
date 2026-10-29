@@ -40,3 +40,18 @@ def test_turning_tasks_off_stops_delegation_in_every_group(tmp_path: Path) -> No
     saved = load_host_config(tmp_path)
     assert saved.worker is None
     assert saved.scenes[SCENE].tasks.enabled is False and saved.scenes[SCENE].tasks.max_running == 2
+
+
+def test_local_sandbox_check_reports_a_missing_bwrap(tmp_path: Path) -> None:
+    write_instance(tmp_path, ['onebot:70001'])
+
+    async def check(client) -> None:
+        missing = tmp_path / 'no-bwrap'
+        response = await client.post('/api/host/settings/worker/check', json={
+            'bwrap_binary': str(missing), 'task_runtime': str(tmp_path / 'task-runtime')})
+        assert response.status_code == 200, response.text
+        assert response.json()['steps'] == [{'step': 'bwrap', 'ok': False, 'detail': f'{missing} 不存在或不可执行'}]
+        relative = await client.post('/api/host/settings/worker/check', json={
+            'bwrap_binary': 'bwrap', 'task_runtime': str(tmp_path)})
+        assert relative.status_code == 422
+    exercise(tmp_path, check)

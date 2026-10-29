@@ -1,8 +1,9 @@
-"""Run one task through a real worker image: Pi, the model bridge, a question and a delivery.
+"""Run one task through a real task sandbox: Pi, the model bridge, a question and a delivery.
 
 The model is a loopback Chat Completions endpoint that answers from a fixed
 script: run a shell command, ask the requester, deliver the file, then finish.
-Everything else is the task service, Docker sandbox and Pi as deployed.
+Everything else is the task service, the sandbox and Pi as deployed: a worker
+image under Docker, or a task runtime (``build_task_runtime.py``) under bwrap.
 """
 
 import argparse
@@ -98,7 +99,7 @@ async def until(condition, seconds: float):
     return result
 
 
-async def smoke(image: str, docker: str, host: str, root: Path) -> dict:
+async def smoke(sandbox: dict, root: Path) -> dict:
     requests: list[dict] = []
     answers: list[str] = []
     server = await serve_model(requests, answers)
@@ -112,14 +113,14 @@ async def smoke(image: str, docker: str, host: str, root: Path) -> dict:
             'roles': {'mind': {'provider': 'smoke', 'model': 'scripted-worker', 'context_window_tokens': 65536}},
         },
         'worker': {
-            'docker_binary': Path(docker), 'docker_host': host, 'image': image,
-            'uid': os.getuid(), 'gid': os.getgid(), 'model_reasoning': False,
+            **sandbox, 'model_reasoning': False,
             'workspace_root': root / 'workspaces', 'runtime_root': root / 'runtime',
             'delivery_root': root / 'deliveries', 'egress': {'enabled': False},
         },
         'scenes': {SCENE: {'persona': root / 'unused-role', 'tasks': {'enabled': True}}},
     })
-    before = task_containers(docker, host)
+    docker = sandbox.get('sandbox', 'docker') == 'docker'
+    before = task_containers(str(sandbox['docker_binary']), sandbox['docker_host']) if docker else set()
     async with server:
         with Store(config.database) as store:
             tasks = WorkTasks(config, store, None, lambda scene: None, skills={SCENE: ()}, memory=None,
@@ -141,7 +142,7 @@ async def smoke(image: str, docker: str, host: str, root: Path) -> dict:
                 files = TaskStore(store).list_files(SCENE, id)
             finally:
                 await tasks.close()
-    after = task_containers(docker, host)
+    after = task_containers(str(sandbox['docker_binary']), sandbox['docker_host']) if docker else set()
     if done['status'] != 'done':
         raise RuntimeError(f'task ended {done["status"]}: {done["error"]}')
     [file] = files
@@ -149,32 +150,50 @@ async def smoke(image: str, docker: str, host: str, root: Path) -> dict:
     checks = {
         'question': (question['method'], question['title']) == ('input', '报告用什么标题？'),
         'answer_reached_model': any('冒烟标题' in answer for answer in answers),
-        'delivery': report.startswith(REPORT) and f'uid={os.getuid()}' in report,
+        'delivery': report.startswith(REPORT) and f"uid={sandbox['uid'] if docker else 10000}" in report,
         'model_calls': done['model_calls'] == 4 and len(requests) == 4,
-        'containers_removed': after <= before and done['container'] is None,
+        'sandbox_removed': after <= before and done['container'] is None,
     }
     if not all(checks.values()):
         raise RuntimeError(f'worker smoke checks failed: {checks}; status={json.dumps(done, ensure_ascii=False)}')
-    inspect = json.loads(subprocess.run([docker, '--host', host, 'image', 'inspect', image],
-                                        check=True, capture_output=True, text=True).stdout)[0]
-    version = subprocess.run([docker, '--host', host, 'run', '--rm', '--network', 'none', '--entrypoint', 'pi',
-                              image, '--version'], check=True, capture_output=True, text=True).stdout.strip()
-    return {'image': image, 'image_id': inspect['Id'], 'architecture': inspect['Architecture'],
-            'pi': version, 'host': f'{platform.system()} {platform.machine()}',
-            'summary': done['summary'], 'checks': checks}
+    result = {'host': f'{platform.system()} {platform.machine()}', 'summary': done['summary'], 'checks': checks}
+    if docker:
+        cli = [str(sandbox['docker_binary']), '--host', sandbox['docker_host']]
+        inspect = json.loads(subprocess.run([*cli, 'image', 'inspect', sandbox['image']],
+                                            check=True, capture_output=True, text=True).stdout)[0]
+        version = subprocess.run([*cli, 'run', '--rm', '--network', 'none', '--entrypoint', 'pi', sandbox['image'],
+                                  '--version'], check=True, capture_output=True, text=True).stdout.strip()
+        return {**result, 'image': sandbox['image'], 'image_id': inspect['Id'],
+                'architecture': inspect['Architecture'], 'pi': version}
+    runtime = sandbox['task_runtime'] / 'node' / 'bin'
+    version = subprocess.run([str(runtime / 'node'), str(runtime / 'pi'), '--version'], check=True,
+                             capture_output=True, text=True).stdout.strip()
+    bwrap = subprocess.run([str(sandbox['bwrap_binary']), '--version'], check=True, capture_output=True,
+                           text=True).stdout.strip()
+    return {**result, 'task_runtime': str(sandbox['task_runtime']), 'pi': version, 'bwrap': bwrap}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--sandbox', choices=['docker', 'bwrap'], default='docker')
     parser.add_argument('--image', default='lenbot-worker:local')
     parser.add_argument('--docker', default=shutil.which('docker'))
     parser.add_argument('--docker-host', default=docker_host())
+    parser.add_argument('--bwrap', default=shutil.which('bwrap'))
+    parser.add_argument('--task-runtime', type=Path, help='directory built by build_task_runtime.py')
     arguments = parser.parse_args()
-    if arguments.docker is None:
-        sys.exit('docker CLI not found; pass --docker')
+    if arguments.sandbox == 'docker':
+        if arguments.docker is None:
+            sys.exit('docker CLI not found; pass --docker')
+        sandbox = {'docker_binary': Path(arguments.docker), 'docker_host': arguments.docker_host,
+                   'image': arguments.image, 'uid': os.getuid(), 'gid': os.getgid()}
+    else:
+        if arguments.bwrap is None or arguments.task_runtime is None:
+            sys.exit('bwrap mode needs the bwrap binary and --task-runtime')
+        sandbox = {'sandbox': 'bwrap', 'bwrap_binary': Path(arguments.bwrap),
+                   'task_runtime': arguments.task_runtime.resolve()}
     with tempfile.TemporaryDirectory(prefix='lenbot-worker-smoke-') as directory:
-        result = asyncio.run(smoke(arguments.image, arguments.docker, arguments.docker_host,
-                                   Path(directory).resolve()))
+        result = asyncio.run(smoke(sandbox, Path(directory).resolve()))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

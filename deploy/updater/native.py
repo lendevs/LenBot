@@ -101,7 +101,7 @@ class Native:
     def worker_image(self, target: dict) -> tuple[dict, str | None]:
         """The task settings and the release image they follow, or None when the image is not an official one."""
         worker = read_json(self.instance / 'lenbot.config.json').get('worker')
-        if worker is None or repository(worker['image']) not in OFFICIAL_WORKERS:
+        if worker is None or worker.get('sandbox', 'docker') != 'docker' or repository(worker['image']) not in OFFICIAL_WORKERS:
             return worker, None
         return worker, repository(worker['image']) + ':' + target['version']
 
@@ -112,7 +112,7 @@ class Native:
             # Pulled before any downtime; the configuration switches only during the stopped migration.
             docker = [worker['docker_binary'], *(['--host', worker['docker_host']] if worker.get('docker_host') else [])]
             self.command([*docker, 'pull', image])
-        result['worker_image'] = None if worker is None else image or worker['image']
+        result['worker_image'] = None if worker is None else image or worker.get('image')
         result['worker_follows_release'] = image is not None
         return result
 

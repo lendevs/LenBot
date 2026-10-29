@@ -15,13 +15,15 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from ..config import HostConfig
+from ..configuration.tasks import WorkerSettings
 from ..media.audio import AudioService
 from ..runtime.identity import roles_for
 from .egress_usage import EgressUsage
 from ..models.slots import ModelSlots
 from ..memory.service import MemoryService
 from ..models.tokens import token_summary
-from .sandbox import DockerSandbox, DockerSettings
+from .bwrap import BwrapSandbox, BwrapSettings, byte_size
+from .sandbox import DockerSandbox, DockerSettings, TaskSandbox
 from ..tools.skills import Skill
 from ..storage.store import Store
 from .execution import TaskExecution
@@ -42,6 +44,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def task_sandbox(settings: WorkerSettings) -> TaskSandbox:
+    if settings.sandbox == "bwrap":
+        return BwrapSandbox(BwrapSettings(
+            bwrap_binary=settings.bwrap_binary, task_runtime=settings.task_runtime,
+            workspace_root=settings.workspace_root, runtime_root=settings.runtime_root,
+            memory_bytes=byte_size(settings.memory), pids_limit=settings.pids_limit,
+            file_bytes=settings.max_workspace_bytes, tmpfs_bytes=byte_size(settings.tmpfs_size),
+            command_timeout_seconds=settings.command_timeout_seconds,
+        ))
+    return DockerSandbox(DockerSettings(
+        docker_binary=settings.docker_binary, docker_host=settings.docker_host,
+        image=settings.image, workspace_root=settings.workspace_root,
+        runtime_root=settings.runtime_root, uid=settings.uid, gid=settings.gid,
+        cpus=settings.cpus, memory=settings.memory, pids_limit=settings.pids_limit,
+        tmpfs_size=settings.tmpfs_size,
+        command_timeout_seconds=settings.command_timeout_seconds,
+    ))
 
 
 class WorkTasks:
@@ -64,17 +83,9 @@ class WorkTasks:
         self.tool_permissions = tool_permissions
         self.mcp: MCPHost | None = None
         self.egress = EgressUsage(config, self.records, on_update)
-        settings = self.settings
-        self.sandbox = DockerSandbox(DockerSettings(
-            docker_binary=settings.docker_binary, docker_host=settings.docker_host,
-            image=settings.image, workspace_root=settings.workspace_root,
-            runtime_root=settings.runtime_root, uid=settings.uid, gid=settings.gid,
-            cpus=settings.cpus, memory=settings.memory, pids_limit=settings.pids_limit,
-            tmpfs_size=settings.tmpfs_size,
-            command_timeout_seconds=settings.command_timeout_seconds,
-        ))
-        self.files = TaskFiles(settings, self.records, self.sandbox, self._notify)
-        self.resources = TaskResources(settings, self.records)
+        self.sandbox = task_sandbox(self.settings)
+        self.files = TaskFiles(self.settings, self.records, self.sandbox, self._notify)
+        self.resources = TaskResources(self.settings, self.records)
         self.running: dict[int, TaskExecution] = {}
         self.file_changes = asyncio.Lock()
         self.live_listeners: dict[int, set[asyncio.Event]] = {}

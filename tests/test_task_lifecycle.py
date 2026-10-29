@@ -1,10 +1,15 @@
-"""Task lifecycle at the task service's public operations, with a stand-in execution environment.
+"""Task lifecycle at the task service's public operations, in each task sandbox.
 
-The stand-in creates the task directories, runs the image's model bridge as a
-host process and replaces Pi with ``fixtures/next/tasks/pi_standin.py``. Model
-calls, task API requests and deliveries take the same pipes and proxy as in a
-task container; only isolation is absent. File uploads go through ``OneBot``
-to a WebSocket peer that answers with NapCat-shaped receipts.
+Pi is replaced by ``fixtures/next/tasks/pi_standin.py`` everywhere. Model calls,
+task API requests and deliveries take the real pipes, bridge and proxy.
+
+- ``standin``: task directories as in a container, bridge and Pi as plain host
+  processes, no isolation; runs on every platform.
+- ``bwrap``: the Linux local sandbox as configured, with a task runtime whose
+  ``bin/pi`` starts the stand-in; skipped where bwrap cannot create namespaces.
+
+File uploads go through ``OneBot`` to a WebSocket peer that answers with
+NapCat-shaped receipts.
 """
 
 import asyncio
@@ -12,8 +17,10 @@ from contextlib import asynccontextmanager
 import json
 import os
 from pathlib import Path
+from functools import cache
 import shutil
 import sqlite3
+import subprocess
 import sys
 import uuid
 
@@ -28,6 +35,7 @@ from len_bot.next.platform.messages import UploadResult
 from len_bot.next.platform.onebot import OneBot
 from len_bot.next.storage.store import Store
 from len_bot.next.work import worker_bridge
+from len_bot.next.work.bwrap import check_local_sandbox
 from len_bot.next.work.pi_rpc import PiRpc
 from len_bot.next.work.sandbox import DockerSandbox, SandboxHandle
 from len_bot.next.work.service import WorkTasks
@@ -46,7 +54,7 @@ class StandinSandbox(DockerSandbox):
 
     def __init__(self, settings):
         super().__init__(settings)
-        self.live: set[str] = set()
+        self.active: set[str] = set()
         self.reconciled: list[str] = []
 
     async def ensure(self, scene, task_id, *, skills=(), input_names=(), on_container=None):
@@ -57,7 +65,7 @@ class StandinSandbox(DockerSandbox):
             directory.mkdir(parents=True, exist_ok=True)
         name = f'standin-{uuid.uuid4().hex}'
         on_container(name)
-        self.live.add(name)
+        self.active.add(name)
         return SandboxHandle(scene, task_id, name, workspace, runtime / 'home', runtime / 'control')
 
     async def spawn_model_bridge(self, sandbox, *, proxy, stderr_path, task_request=None):
@@ -78,15 +86,46 @@ class StandinSandbox(DockerSandbox):
         return rpc
 
     async def stop(self, sandbox):
-        self.live.discard(sandbox.container_id)
+        self.active.discard(sandbox.container_id)
         shutil.rmtree(sandbox.control)
 
     async def stop_recorded(self, scene, task_id, container):
-        self.live.discard(container)
+        self.active.discard(container)
         self.reconciled.append(container)
         control = self.settings.runtime_root / scene / task_id / 'control'
         if control.exists():
             shutil.rmtree(control)
+
+
+@cache
+def bwrap_usable() -> bool:
+    binary = shutil.which('bwrap')
+    return sys.platform == 'linux' and binary is not None and subprocess.run(
+        [binary, '--unshare-all', '--die-with-parent', '--ro-bind', '/', '/', '--proc', '/proc', '--dev', '/dev',
+         'true'], capture_output=True).returncode == 0
+
+
+@pytest.fixture(params=['standin', 'bwrap'])
+def environment(request, tmp_path):
+    if request.param == 'bwrap' and not bwrap_usable():
+        if os.environ.get('LENBOT_REQUIRE_BWRAP'):
+            pytest.fail('LENBOT_REQUIRE_BWRAP is set but bwrap cannot create user namespaces')
+        pytest.skip('bwrap cannot create user namespaces here')
+    return request.param
+
+
+def task_runtime(root: Path) -> Path:
+    """A task runtime laid out like ``build_task_runtime.py``'s, whose ``pi`` is the stand-in."""
+    runtime = root / 'task-runtime'
+    (runtime / 'node' / 'bin').mkdir(parents=True)
+    shutil.copy2(STANDIN, runtime / 'pi_standin.py')
+    (runtime / 'lenbot-extension.ts').touch()
+    (runtime / 'node' / 'bin' / 'node').touch(mode=0o755)
+    python = Path(sys.base_prefix).resolve() / 'bin' / f'python{sys.version_info.major}.{sys.version_info.minor}'
+    launcher = runtime / 'node' / 'bin' / 'pi'
+    launcher.write_text(f'#!/bin/sh\nexec {python} -I -u /opt/lenbot/pi_standin.py "$@"\n')
+    launcher.chmod(0o755)
+    return runtime
 
 
 @pytest_asyncio.fixture
@@ -111,9 +150,14 @@ async def upstream():
         yield server.sockets[0].getsockname()[1], received
 
 
-def host_config(root: Path, port: int, *, scene_running: int = 2, scene_containers: int = 4) -> HostConfig:
+def host_config(root: Path, port: int, environment: str, *, scene_running: int = 2,
+                scene_containers: int = 4) -> HostConfig:
     tasks = {'enabled': True, 'admins': [ADMIN], 'whitelist': [WHITELISTED],
              'max_running': scene_running, 'max_daily_tasks': 20}
+    sandbox = ({'sandbox': 'bwrap', 'bwrap_binary': Path(shutil.which('bwrap')), 'task_runtime': task_runtime(root)}
+               if environment == 'bwrap' else
+               {'docker_binary': Path('/usr/bin/docker'), 'docker_host': 'unix:///var/run/docker.sock',
+                'image': 'lenbot-worker:local', 'uid': 1000, 'gid': 1000})
     return HostConfig.model_validate({
         'compaction': {'input_tokens': 2000}, 'mode': 'isolated-multi', 'bot_id': BOT, 'timezone': 'UTC',
         'owners': [OWNER], 'database': root / 'host.sqlite3', 'delivery': 'simulated', 'onebot': None,
@@ -123,8 +167,7 @@ def host_config(root: Path, port: int, *, scene_running: int = 2, scene_containe
             'roles': {'mind': {'provider': 'fixture', 'model': 'synthetic-worker', 'context_window_tokens': 65536}},
         },
         'worker': {
-            'docker_binary': Path('/usr/bin/docker'), 'docker_host': 'unix:///var/run/docker.sock',
-            'image': 'lenbot-worker:local', 'uid': 1000, 'gid': 1000, 'model_reasoning': False,
+            **sandbox, 'model_reasoning': False,
             'workspace_root': root / 'workspaces', 'runtime_root': root / 'runtime',
             'delivery_root': root / 'deliveries', 'max_scene_containers': scene_containers,
             'command_timeout_seconds': 10.0, 'egress': {'enabled': False},
@@ -142,7 +185,8 @@ async def task_host(config: HostConfig, database: Path):
                           memory=None, data_tools={scene: [] for scene in scenes},
                           skill_permissions={scene: [] for scene in scenes},
                           tool_permissions={scene: [] for scene in scenes})
-        tasks.sandbox = tasks.files.sandbox = StandinSandbox(tasks.sandbox.settings)
+        if config.worker.sandbox == 'docker':
+            tasks.sandbox = tasks.files.sandbox = StandinSandbox(tasks.sandbox.settings)
         await tasks.recover()
         await tasks.start()
         try:
@@ -169,6 +213,12 @@ def event_kinds(tasks: WorkTasks, id: int) -> list[str]:
     return [row[0] for row in rows]
 
 
+def open_sandboxes(tasks: WorkTasks) -> set[str]:
+    """Sandboxes still open; the bwrap sandbox keeps one session per running task."""
+    sandbox = tasks.sandbox
+    return sandbox.active if isinstance(sandbox, StandinSandbox) else set(sandbox._sessions)
+
+
 def prompted(tasks: WorkTasks, id: int) -> bool:
     return 'native' in event_kinds(tasks, id)
 
@@ -180,9 +230,9 @@ async def delegate(tasks: WorkTasks, goal: str, requester: str = WHITELISTED) ->
 
 
 @pytest.mark.asyncio
-async def test_question_answer_delivery_and_platform_receipts(tmp_path, upstream):
+async def test_question_answer_delivery_and_platform_receipts(tmp_path, upstream, environment):
     port, received = upstream
-    config = host_config(tmp_path, port)
+    config = host_config(tmp_path, port, environment)
     async with task_host(config, config.database) as tasks:
         id = await delegate(tasks, '整理报告 [进度][提问][交付]')
         waiting = await reached(tasks, id, 'waiting_input')
@@ -207,7 +257,7 @@ async def test_question_answer_delivery_and_platform_receipts(tmp_path, upstream
         for kind in ('progress', 'question', 'answer', 'file', 'finished'):
             assert kind in kinds
         assert kinds[-1] == 'finished'
-        assert tasks.sandbox.live == set()
+        assert open_sandboxes(tasks) == set()
         [request] = received
         assert request['model'] == 'synthetic-worker' and '整理报告' in request['messages'][0]['content']
 
@@ -261,8 +311,8 @@ async def test_question_answer_delivery_and_platform_receipts(tmp_path, upstream
 
 
 @pytest.mark.asyncio
-async def test_append_reaches_the_running_session_and_cancel_stops_it(tmp_path, upstream):
-    config = host_config(tmp_path, upstream[0])
+async def test_append_reaches_the_running_session_and_cancel_stops_it(tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment)
     async with task_host(config, config.database) as tasks:
         steered = await delegate(tasks, '等追加 [等待]')
         await until(lambda: prompted(tasks, steered))
@@ -280,14 +330,14 @@ async def test_append_reaches_the_running_session_and_cancel_stops_it(tmp_path, 
             await tasks.cancel(SCENE, cancelled, requester=MEMBER)
         result = await tasks.cancel(SCENE, cancelled, requester=ADMIN)
         assert (result['status'], result['error'], result['container']) == ('cancelled', '任务被明确取消', None)
-        assert tasks.sandbox.live == set() and cancelled not in tasks.running
+        assert open_sandboxes(tasks) == set() and cancelled not in tasks.running
         with pytest.raises(ValueError, match='任务已是 cancelled'):
             await tasks.cancel(SCENE, cancelled, requester=ADMIN)
 
 
 @pytest.mark.asyncio
-async def test_waiting_task_frees_its_slot_and_a_failure_does_not_stall_the_queue(tmp_path, upstream):
-    config = host_config(tmp_path, upstream[0], scene_running=1)
+async def test_waiting_task_frees_its_slot_and_a_failure_does_not_stall_the_queue(tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment, scene_running=1)
     async with task_host(config, config.database) as tasks:
         asking = await delegate(tasks, '先问一句 [提问]')
         question = (await reached(tasks, asking, 'waiting_input'))['question']
@@ -313,8 +363,8 @@ async def test_waiting_task_frees_its_slot_and_a_failure_does_not_stall_the_queu
 
 
 @pytest.mark.asyncio
-async def test_identities_roles_and_scene_ownership(tmp_path, upstream):
-    config = host_config(tmp_path, upstream[0])
+async def test_identities_roles_and_scene_ownership(tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment)
     async with task_host(config, config.database) as tasks:
         with pytest.raises(PermissionError, match='Bot 账号'):
             await tasks.delegate(SCENE, requester=BOT, goal='冒充', deliverable='无', context='无')
@@ -346,8 +396,8 @@ async def test_identities_roles_and_scene_ownership(tmp_path, upstream):
 
 
 @pytest.mark.asyncio
-async def test_restart_keeps_queue_interrupts_active_work_and_continues_the_same_task(tmp_path, upstream):
-    config = host_config(tmp_path, upstream[0], scene_containers=1)
+async def test_restart_keeps_queue_interrupts_active_work_and_continues_the_same_task(tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment, scene_containers=1)
     crashed = tmp_path / 'crashed.sqlite3'
     async with task_host(config, config.database) as tasks:
         active = await delegate(tasks, '问完再交付 [提问]')
@@ -366,7 +416,8 @@ async def test_restart_keeps_queue_interrupts_active_work_and_continues_the_same
         assert TaskStore(store).get(SCENE, queued).status == 'queued'
 
     async with task_host(config, crashed) as tasks:
-        assert tasks.sandbox.reconciled == [container]
+        assert getattr(tasks.sandbox, 'reconciled', [container]) == [container]
+        assert not (config.worker.runtime_root / SCENE / str(active) / 'control').exists()
         interrupted = tasks.status(SCENE, active)
         assert interrupted['status'] == 'failed' and '须显式继续' in interrupted['error']
         assert (await reached(tasks, queued, 'done', 'failed'))['status'] == 'done'
@@ -381,3 +432,45 @@ async def test_restart_keeps_queue_interrupts_active_work_and_continues_the_same
         session = config.worker.workspace_root / SCENE / 'tasks' / str(active) / 'session.jsonl'
         prompts = [json.loads(line)['prompt'] for line in session.read_text(encoding='utf-8').splitlines()]
         assert len(prompts) == 2 and '继续并交付' in prompts[1] and '继续并交付' not in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_local_sandbox_denies_paths_and_networks_outside_the_task(tmp_path, upstream, environment):
+    if environment != 'bwrap':
+        pytest.skip('only an isolating sandbox can deny these')
+    port, received = upstream
+    config = host_config(tmp_path, port, environment)
+    neighbour = config.worker.workspace_root / OTHER_SCENE / 'tasks' / '1' / 'out' / 'secret.txt'
+    neighbour.parent.mkdir(parents=True)
+    neighbour.write_text('其他群的产物')
+    (tmp_path / 'lenbot.config.json').write_text('{"models": "synthetic-secret"}')
+    host_files = [tmp_path / 'lenbot.config.json', config.database, neighbour, Path.home() / '.bashrc']
+    targets = {'writes': ['/usr/lenbot-probe', '/etc/lenbot-probe', '/opt/lenbot/probe', '/run/lenbot/probe',
+                          '/inputs-probe', str(tmp_path / 'outside.txt')],
+               'reads': [str(path) for path in host_files],
+               'connections': [['1.1.1.1', 53], ['10.0.0.1', 80], ['127.0.0.1', port]]}
+    async with task_host(config, config.database) as tasks:
+        id = (await tasks.delegate(SCENE, requester=WHITELISTED, goal='越界探测 [探测]', deliverable='无',
+                                   context='探测：' + json.dumps(targets, ensure_ascii=False)))['id']
+        done = await reached(tasks, id, 'done', 'failed')
+    assert done['status'] == 'done', done['error']
+    results = json.loads(done['summary'].split('探测结果：', 1)[1].splitlines()[0])
+    assert len(results) == 13
+    denied = {'written', 'read', 'connected'}.isdisjoint
+    assert denied(results.values()), results
+    assert not (tmp_path / 'outside.txt').exists() and len(received) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_sandbox_check_names_each_step_and_the_first_failure(tmp_path, environment):
+    if environment != 'bwrap':
+        pytest.skip('needs a working bwrap')
+    binary = Path(shutil.which('bwrap'))
+    runtime = task_runtime(tmp_path)
+    steps = await check_local_sandbox(binary, runtime)
+    assert [(step['step'], step['ok']) for step in steps] == [
+        ('bwrap', True), ('namespaces', True), ('task_runtime', True), ('sandbox', True), ('pi', True)]
+    assert steps[-1]['detail'] == '0.87.1'
+    (runtime / 'lenbot-extension.ts').unlink()
+    steps = await check_local_sandbox(binary, runtime)
+    assert steps[-1] == {'step': 'task_runtime', 'ok': False, 'detail': f'{runtime} 缺少 lenbot-extension.ts'}

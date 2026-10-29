@@ -28,6 +28,7 @@ from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
 from ...configuration.models import Roles
 from ...configuration.tasks import suggested_worker
+from ...work.bwrap import check_local_sandbox
 from ..model_access import model_error_detail, ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
 from ...models.providers import PROTOCOLS, list_models
 from ...persona.profile import Persona
@@ -130,6 +131,20 @@ class WorkerChange(BaseModel):
     model_config = STRICT
     # The root loader resolves its paths and validates the whole candidate once.
     worker: dict | None
+
+
+class LocalSandboxDraft(BaseModel):
+    """The local sandbox fields from the task settings form, checked before they are saved."""
+    model_config = STRICT
+    bwrap_binary: str = Field(min_length=1)
+    task_runtime: str = Field(min_length=1)
+
+    @field_validator("bwrap_binary", "task_runtime")
+    @classmethod
+    def absolute(cls, value: str) -> str:
+        if not Path(value).is_absolute():
+            raise ValueError("must be an explicit absolute path")
+        return value
 
 
 class SceneSpeechLimit(BaseModel):
@@ -637,6 +652,11 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     @app.get("/api/host/settings/worker/defaults", response_model=responses.WorkerDefaults, response_model_exclude_unset=True)
     async def worker_defaults(_: str = Depends(user)):
         return suggested_worker(root)
+
+    @app.post("/api/host/settings/worker/check", response_model=responses.SandboxCheck)
+    async def check_worker(request: Request, _: str = Depends(user)):
+        draft: LocalSandboxDraft = await _body(request, LocalSandboxDraft)
+        return {"steps": await check_local_sandbox(Path(draft.bwrap_binary), Path(draft.task_runtime))}
 
     @app.put("/api/host/settings/worker", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_worker(request: Request, _: str = Depends(user)):
