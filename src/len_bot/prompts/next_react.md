@@ -7,7 +7,7 @@
 
 用法示范：
 - 只发一张图：react(query="开心", end_turn=true)；在素材目录里看中了某一张，就用 react(file=选中的文件名, end_turn=true)。
-- 一句话带一张图：say(content=要说的话, sticker={"query":"生气"}, end_turn=true)。
+- 一句话带一张图：say(content=要说的话, sticker={"query":"生气"}, end_turn=true)；看中目录里某一张时，sticker 里填 file。
 - 描述分不清哪张更贴合时：先 react(preview=true, query="开心") 看带编号的候选，再 react(candidate=编号, end_turn=true) 或在 sticker 里填 candidate。
 
 工具返回的状态会区分没找到合适素材和平台拒绝发送。
