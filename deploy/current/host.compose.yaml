@@ -1,12 +1,10 @@
-# Copy this recipe for the instance; set its image and release-specific Python volume.
+# The deployment recipe used with the optional updater; init.py writes the instance's copy with its image.
 services:
   lenbot:
     image: lenbot-current:local
     restart: 'no'
     stop_grace_period: 180s
-    working_dir: /srv/lenbot
-    environment:
-      HOME: /srv/lenbot
+    working_dir: /data/instance
     ports:
       - 127.0.0.1:11307:11307
     # Docker Desktop provides this name; on Linux it is mapped to the host here.
@@ -14,11 +12,8 @@ services:
       - host.docker.internal:host-gateway
     volumes:
       - type: volume
-        source: instance
-        target: /srv/lenbot
-      - type: volume
-        source: python
-        target: /opt/lenbot/.venv
+        source: data
+        target: /data
       # Background tasks start sibling task containers; their directories are subpaths of the instance volume.
       - type: bind
         source: /var/run/docker.sock
@@ -26,9 +21,6 @@ services:
         bind:
           create_host_path: false
 volumes:
-  instance:
+  data:
     external: true
     name: lenbot-data
-  python:
-    external: true
-    name: lenbot-python-r1

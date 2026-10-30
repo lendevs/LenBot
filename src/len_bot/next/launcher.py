@@ -117,10 +117,40 @@ def drop_container_root(socket: Path = DOCKER_SOCKET) -> None:
         os.environ['HOME'] = pwd.getpwuid(CONTAINER_USER).pw_dir
 
 
+def migrate_container_volume(root: Path) -> None:
+    """A new image on an existing data volume: snapshot beside the instance, then migrate before the first start.
+
+    The volume is mounted at the instance's parent, so snapshots in backups/ stay outside the saved paths.
+    """
+    from packaging.version import InvalidVersion, Version
+    import secrets
+    import time
+    from .maintenance.upgrade import installed_release, record_release, recorded_release, upgrade_instance
+    current = installed_release()
+    if not (root / 'lenbot.config.json').exists():
+        record_release(root)
+        return
+    previous = recorded_release(root)
+    if previous == current:
+        return
+    try:
+        newer = previous is not None and Version(previous) > Version(current)
+    except InvalidVersion:
+        newer = False
+    if newer:
+        raise SystemExit(f'LenBot：数据卷已由 {previous} 使用，当前镜像是 {current}。'
+                         f'回到旧版本需要从 {root.parent / "backups"} 中的快照恢复，或改用 {previous} 的镜像。')
+    snapshot = root.parent / 'backups' / (time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
+    print(f'LenBot：实例数据来自 {previous or "更早的版本"}，先保存快照 {snapshot}，再迁移到 {current}。', flush=True)
+    upgrade_instance(root, snapshot)
+    print('LenBot：迁移完成。', flush=True)
+
+
 def container_main(argv: list[str] | None = None) -> None:
     drop_container_root()
     parse_arguments(argv, container=True)
     announce_root(Path.cwd())
+    migrate_container_volume(Path.cwd())
     raise SystemExit(run(container=True))
 
 

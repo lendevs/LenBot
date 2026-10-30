@@ -44,15 +44,6 @@ def test_current_notes_are_still_a_draft():
     assert prepare.notes_problems(tomllib.loads((SCRIPTS.parent / 'pyproject.toml').read_text())['project']['version'])
 
 
-def test_packaged_recipe_still_has_the_values_the_docker_smoke_replaces():
-    smoke = load('smoke_install')
-    recipe = (SCRIPTS.parent / 'deploy/current/host.compose.yaml').read_text()
-    for old in ('image: lenbot-current:local', '127.0.0.1:11307:11307', 'name: lenbot-data', 'name: lenbot-python-r1'):
-        recipe = smoke.replace_once(recipe, old, 'replaced')
-    with pytest.raises(ValueError):
-        smoke.replace_once(recipe, 'name: lenbot-data', 'again')
-
-
 def test_local_candidate_from_changed_sources_is_marked_dirty(tmp_path):
     import subprocess
     metadata = load('release_metadata')

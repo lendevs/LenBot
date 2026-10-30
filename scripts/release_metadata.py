@@ -14,6 +14,14 @@ SHIPPED = ('src', 'deploy', 'docker', 'scripts', 'pyproject.toml', 'uv.lock', 'R
 VERSION = re.compile(r'\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?')
 
 
+# Deployment packages, built by build_deployment.py and selected by the native updater.
+PLATFORMS = ('windows-x64', 'linux-x64', 'linux-arm64')
+
+
+def bundle_name(version: str, platform: str) -> str:
+    return f'lenbot-{version}-{platform}' + ('.zip' if platform.startswith('windows') else '.tar.gz')
+
+
 def release_version(value: str) -> str:
     if VERSION.fullmatch(value) is None:
         raise ValueError(f'Expected X.Y.Z, X.Y.ZaN, X.Y.ZbN or X.Y.ZrcN: {value!r}')
@@ -38,8 +46,6 @@ def source_revision(project: Path) -> str:
 
 
 def write_manifest(project: Path, artifacts: Path, *, revision: str, images: dict | None = None) -> Path:
-    # Imported here: the release workflow imports this module as scripts.release_metadata for release_version only.
-    from build_deployment import PLATFORMS, bundle_name
     version = release_version(tomllib.loads((project / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version'])
     files = {}
     for path in sorted(artifacts.iterdir()):

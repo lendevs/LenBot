@@ -24,6 +24,7 @@ import zipfile
 from email.parser import BytesParser
 
 from build_task_runtime import NODE, PI, node_archive
+from release_metadata import PLATFORMS as PACKAGES, bundle_name
 
 PYTHON, PYTHON_BUILD, UV = '3.13.16', '20261013', '0.12.13'
 PLAYWRIGHT = 'playwright-core@1.62.0'
@@ -44,11 +45,8 @@ PLATFORMS = {
         'uv': ('uv-aarch64-unknown-linux-gnu.tar.gz', '2eaa5d94f5db7b3a1a092156b9420459e42ab0217d917fe74a876309cef9b5e9'),
     },
 }
+assert tuple(PLATFORMS) == PACKAGES
 SCRIPTS = {'windows': ('run.cmd', 'run.ps1', 'service.ps1'), 'linux': ('run', 'service')}
-
-
-def bundle_name(version: str, platform: str) -> str:
-    return f'lenbot-{version}-{platform}' + ('.zip' if platform.startswith('windows') else '.tar.gz')
 
 
 def fetch(url: str, destination: Path, sha256: str) -> Path:

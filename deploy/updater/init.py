@@ -51,12 +51,10 @@ def main() -> None:
         raise FileExistsError('deployment.json already exists; this command initializes only a new deployment')
     prefix = ('ghcr.io/' if args.registry == 'ghcr' else 'docker.io/') + args.namespace + '/lenbot'
     image = prefix + ':' + args.version
-    python_volume = args.project + '-python-' + args.version
     data_volume = args.project + '-data'
-    for volume in (data_volume, python_volume):
-        subprocess.run(['docker', 'volume', 'create', volume], check=True)
+    subprocess.run(['docker', 'volume', 'create', data_volume], check=True)
     source = Path(__file__).with_name('host.compose.yaml')
-    recipe = source.read_text().replace('lenbot-current:local', image).replace('lenbot-data', data_volume).replace('lenbot-python-r1', python_volume)
+    recipe = source.read_text().replace('lenbot-current:local', image).replace('lenbot-data', data_volume)
     recipe = recipe.replace('    image:', f'    container_name: {args.project}-host\n    image:', 1)
     recipe = recipe.replace('127.0.0.1:11307:11307', f'127.0.0.1:{args.panel_port}:11307')
     (root / 'host.compose.yaml').write_text(recipe)
@@ -80,7 +78,7 @@ def main() -> None:
         'public_url': f'http://127.0.0.1:{args.update_port}', 'panel_url': 'http://lenbot:11307',
     })
     write_json(root / 'current.json', {'version': args.version, 'container': args.project + '-host',
-        'host_image': image, 'worker_image': prefix + '-worker:' + args.version, 'python_volume': python_volume})
+        'host_image': image, 'worker_image': prefix + '-worker:' + args.version})
     (root / 'backups').mkdir(mode=0o700)
     owned_like_parent(root / 'backups')
     print('已创建配方和新卷。启动：')

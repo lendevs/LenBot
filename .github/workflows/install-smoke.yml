@@ -57,7 +57,7 @@ jobs:
         run: |
           docker build --build-arg PACKAGE_SOURCE=wheel --build-context release=packages \
             -f deploy/current/Dockerfile -t lenbot-current:smoke .
-      - name: Initialize new volumes with the packaged recipe and log in to the panel
+      - name: Initialize a new data volume, start the documented docker run and log in to the panel
         run: python3 scripts/smoke_install.py docker packages "$RUNNER_TEMP/smoke" --image lenbot-current:smoke
       - name: Build the independent updater, the synthetic baseline and a release that fails during startup
         run: |

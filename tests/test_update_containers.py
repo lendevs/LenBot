@@ -15,10 +15,10 @@ IMAGES = {'registry/lenbot:0.1.0': {'Config': {'Env': ['PATH=/usr/bin'], 'Labels
           'registry/lenbot:0.2.0': {'Config': {'Env': ['PATH=/usr/bin'], 'Labels': {}}}}
 
 
-def container(identifier: str, name: str, image: str, volume: str, running: bool) -> dict:
+def container(identifier: str, name: str, image: str, running: bool) -> dict:
     return {'Id': identifier, 'Name': '/' + name, 'Image': image, 'State': {'Running': running},
             'Config': {'Image': image, 'Env': ['PATH=/usr/bin'], 'Labels': {'com.docker.compose.service': 'lenbot'}},
-            'HostConfig': {'Binds': [volume + ':/opt/lenbot/.venv:rw', 'lenbot-data:/srv/lenbot:rw'], 'GroupAdd': None},
+            'HostConfig': {'Binds': ['lenbot-data:/data:rw'], 'GroupAdd': None},
             'NetworkSettings': {'Networks': {'lenbot_default': {
                 'IPAMConfig': None, 'Links': None, 'Aliases': ['lenbot'], 'DriverOpts': None}}}}
 
@@ -47,8 +47,7 @@ class Engine(Containers):
             return IMAGES.get(parts[1], IMAGES['registry/lenbot:0.2.0'])
         if parts == ['containers', 'create']:
             identifier = f'created-{len(self.containers)}'
-            volume = payload['HostConfig']['Binds'][0].split(':')[0]
-            self.containers[identifier] = {**container(identifier, query['name'], payload['Image'], volume, False),
+            self.containers[identifier] = {**container(identifier, query['name'], payload['Image'], False),
                                            'Config': payload, 'HostConfig': payload['HostConfig']}
             return {'Id': identifier}
         item = self.find(parts[1])
@@ -78,25 +77,24 @@ def deployment(tmp_path: Path) -> Path:
 
 def test_a_recreated_host_is_found_by_its_fixed_name(deployment: Path) -> None:
     write_json(deployment / 'current.json', {'version': '0.2.0', 'container': 'removed-by-compose',
-                                             'host_image': 'registry/lenbot:0.2.0', 'python_volume': 'lenbot-python-0.2.0'})
-    engine = Engine(deployment, [container('recreated', 'lenbot-host', 'registry/lenbot:0.2.0', 'lenbot-python-0.2.0', True)])
+                                             'host_image': 'registry/lenbot:0.2.0'})
+    engine = Engine(deployment, [container('recreated', 'lenbot-host', 'registry/lenbot:0.2.0', True)])
     assert engine.metadata()['container'] == 'recreated'
     engine.stop()
     assert not engine.containers['recreated']['State']['Running']
 
 
 def test_restore_rebuilds_a_previous_host_that_compose_removed(deployment: Path, tmp_path: Path) -> None:
-    old = {'version': '0.1.0', 'container': 'previous-removed', 'host_image': 'registry/lenbot:0.1.0',
-           'python_volume': 'lenbot-python-0.1.0'}
+    old = {'version': '0.1.0', 'container': 'previous-removed', 'host_image': 'registry/lenbot:0.1.0'}
     write_json(deployment / 'previous.json', old)
     write_json(deployment / 'current.json', {'version': '0.2.0', 'container': 'replaced-by-compose',
-                                             'host_image': 'registry/lenbot:0.2.0', 'python_volume': 'lenbot-python-0.2.0'})
-    engine = Engine(deployment, [container('recreated', 'lenbot-host', 'registry/lenbot:0.2.0', 'lenbot-python-0.2.0', True)])
+                                             'host_image': 'registry/lenbot:0.2.0'})
+    engine = Engine(deployment, [container('recreated', 'lenbot-host', 'registry/lenbot:0.2.0', True)])
     engine.restore(old, tmp_path / 'backups/snapshot')
 
     host, = engine.containers.values()
     assert host['Name'] == '/lenbot-host' and host['Image'] == 'registry/lenbot:0.1.0'
-    assert host['HostConfig']['Binds'] == ['lenbot-python-0.1.0:/opt/lenbot/.venv:rw', 'lenbot-data:/srv/lenbot:rw']
+    assert host['HostConfig']['Binds'] == ['lenbot-data:/data:rw']
     restore, = engine.commands
     assert restore[restore.index('--volumes-from') + 1] == host['Id'] and 'registry/lenbot:0.1.0' in restore
     assert read_json(deployment / 'current.json') == {**old, 'container': host['Id']}
@@ -105,8 +103,8 @@ def test_restore_rebuilds_a_previous_host_that_compose_removed(deployment: Path,
 
 def test_applying_a_candidate_that_compose_removed_asks_to_prepare_again(deployment: Path) -> None:
     write_json(deployment / 'current.json', {'version': '0.1.0', 'container': 'lenbot-host',
-                                             'host_image': 'registry/lenbot:0.1.0', 'python_volume': 'lenbot-python-0.1.0'})
-    engine = Engine(deployment, [container('running', 'lenbot-host', 'registry/lenbot:0.1.0', 'lenbot-python-0.1.0', True)])
+                                             'host_image': 'registry/lenbot:0.1.0'})
+    engine = Engine(deployment, [container('running', 'lenbot-host', 'registry/lenbot:0.1.0', True)])
     with pytest.raises(ValueError, match='重新准备更新'):
         engine.inspect({'version': '0.2.0', 'container': 'candidate-removed', 'host_image': 'registry/lenbot:0.2.0'})
     assert engine.commands == [] and engine.containers['running']['State']['Running']

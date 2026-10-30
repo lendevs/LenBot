@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 import tomllib
+from importlib.metadata import PackageNotFoundError, version
 
 from ..config import HostConfig, load_instance_config
 from ..instance_lock import instance_lock
@@ -68,6 +69,28 @@ def data_paths(root: Path) -> list[str]:
     return [str(root), *(str(path) for path in sorted(outside) if not any(parent in outside for parent in path.parents))]
 
 
+RELEASE_RECORD = Path('.runtime/release.json')
+
+
+def installed_release() -> str:
+    try:
+        return version('len-bot')
+    except PackageNotFoundError:
+        return 'source'
+
+
+def recorded_release(root: Path) -> str | None:
+    """The LenBot version this instance was last migrated to, or None before the first record."""
+    path = root / RELEASE_RECORD
+    return json.loads(path.read_text(encoding='utf-8'))['version'] if path.exists() else None
+
+
+def record_release(root: Path) -> None:
+    path = root / RELEASE_RECORD
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps({'version': installed_release()}) + '\n', encoding='utf-8')
+
+
 def _trial_roots(root: Path) -> list[Path]:
     return [path.parent for path in sorted((root / '.runtime/chat-tests').glob('*/lenbot.config.json'))]
 
@@ -80,6 +103,7 @@ def _apply_locked(root: Path, trials: list[Path]) -> None:
         if failed:
             raise ValueError('升级后的实例检查未通过：\n'
                              + '\n'.join(f"{item['check']}: {item['detail']}" for item in failed))
+    record_release(root)
 
 
 def apply_instance(root: Path) -> None:
