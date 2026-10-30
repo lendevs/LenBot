@@ -15,7 +15,7 @@ from .materials import failure
 from .owner import panel_owner
 from ...runtime.network import NetworkRuntime
 from ...work.materials import finish_file_operation
-from ...work.storage import continuation_state, storage_usage, temporary_usage
+from ...work.storage import continuation_state, disk_free, storage_usage, temporary_usage
 from ...storage.pool import worker_pool_usage
 from ...configuration.tasks import WorkerSettings
 from ...work.store import TERMINAL, Task, TaskStore
@@ -51,13 +51,17 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
     @app.get('/api/host/task-storage/pool', response_model=responses.TaskPool, response_model_exclude_unset=True)
     async def pool(_: str = Depends(user)):
         worker = runtime.config.worker
-        if worker is None or worker.storage_pool is None:
-            return {'configured': False, 'usage': None}
+        if worker is None:
+            return {'configured': False, 'usage': None, 'disk': None}
         try:
+            disk = {'free_bytes': await finish_file_operation(disk_free, worker),
+                    'reserve_bytes': worker.disk_reserve_bytes, 'stop_bytes': worker.disk_stop_bytes}
+            if worker.storage_pool is None:
+                return {'configured': False, 'usage': None, 'disk': disk}
             usage = await finish_file_operation(worker_pool_usage, worker)
         except (ValueError, OSError, RuntimeError) as error:
             raise HTTPException(409, ''.join(traceback.format_exception_only(error)).strip()) from error
-        return {'configured': True, 'usage': usage}
+        return {'configured': True, 'usage': usage, 'disk': disk}
 
     @app.get('/api/host/task-storage', response_model=responses.TaskStoragePage, response_model_exclude_unset=True)
     async def listing(scene: str, status: Literal['all', 'active', 'terminal', 'done', 'failed', 'cancelled'] = 'all',

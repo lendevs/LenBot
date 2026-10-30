@@ -225,6 +225,24 @@ async function toTask(id: number, done = false) {
         />
       </div>
     </div>
+    <div
+      v-else-if="pool.data.value?.disk"
+      class="flex flex-wrap items-baseline gap-x-3 rounded-lg border border-line px-4 py-3 text-sm"
+    >
+      <span class="font-medium text-ink">{{ t('groups.tasks.space.disk') }}</span>
+      <span class="tabular text-ink-2">
+        {{ t('groups.tasks.space.diskFree', { free: formatBytes(pool.data.value.disk.free_bytes) }) }}
+      </span>
+      <span v-if="pool.data.value.disk.free_bytes < pool.data.value.disk.stop_bytes" class="text-error">
+        {{ t('groups.tasks.space.diskStopped') }}
+      </span>
+      <span
+        v-else-if="pool.data.value.disk.free_bytes < pool.data.value.disk.reserve_bytes"
+        class="text-warning"
+      >
+        {{ t('groups.tasks.space.diskPaused') }}
+      </span>
+    </div>
 
     <div class="grid min-w-0 items-start gap-5" :class="wide && 'grid-cols-[340px_minmax(0,1fr)]'">
       <section

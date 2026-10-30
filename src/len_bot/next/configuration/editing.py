@@ -126,9 +126,9 @@ def save_config(root: Path, running: HostConfig, edit: Callable[[dict, HostConfi
     try:
         if running.worker is not None and candidate.worker is not None:
             if any(getattr(running.worker, key) != getattr(candidate.worker, key)
-                   for key in ("docker_host", "workspace_root", "runtime_root", "storage_pool")):
+                   for key in ("sandbox", "docker_host", "workspace_root", "runtime_root", "storage_pool", "task_volume")):
                 raise ValueError(
-                    "运行中不能保存任务 Docker 地址、工作区、运行目录或存储池的迁移；"
+                    "运行中不能保存任务运行方式、Docker 地址、工作区、运行目录或存储池的迁移；"
                     "请先停机清理任务容器，再迁移原文件并修改根配置。根配置未保存"
                 )
         temporary.replace(path)

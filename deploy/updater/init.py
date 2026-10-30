@@ -85,7 +85,7 @@ def main() -> None:
     owned_like_parent(root / 'backups')
     print('已创建配方和新卷。启动：')
     print(f'docker compose -p {args.project} -f host.compose.yaml -f host.version.compose.yaml -f host.updater.compose.yaml up -d')
-    print('后台任务另按任务挂载配方与根配置启用；更新器从根配置判断是否需要同步任务镜像。')
+    print('后台任务在面板能力 → 后台任务中启用；任务目录放在数据卷内，任务容器按子目录挂载。')
 
 
 if __name__ == '__main__':

@@ -3,7 +3,14 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowUpRight, ChevronDown } from '@lucide/vue'
-import { capabilitiesApi, capabilitiesOf, type Egress, type Worker } from '../../api/capabilities'
+import {
+  capabilitiesApi,
+  capabilitiesOf,
+  PACKAGE_HOSTS,
+  type Egress,
+  type SandboxStep,
+  type Worker,
+} from '../../api/capabilities'
 import { keys } from '../../api/query'
 import { groupsTarget } from '../groups/route'
 import { settingsApi } from '../../api/settings'
@@ -13,6 +20,8 @@ import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
+import CheckSteps from './CheckSteps.vue'
+import TaskReadiness from './TaskReadiness.vue'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
@@ -20,6 +29,7 @@ import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
+import TagInput from '../../ui/TagInput.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
@@ -40,10 +50,43 @@ const hasModel = computed(() => {
   return Boolean(models?.roles?.worker)
 })
 
-const fresh = (): Worker => ({
+/** The draft edits Docker and local sandbox paths as text; empty text is saved as null. */
+type WorkerForm = Omit<
+  Worker,
+  'sandbox' | 'docker_binary' | 'docker_host' | 'image' | 'bwrap_binary' | 'task_runtime'
+> & {
+  sandbox: 'docker' | 'bwrap'
+  docker_binary: string
+  docker_host: string
+  image: string
+  bwrap_binary: string
+  task_runtime: string
+}
+const editable = (value: Worker): WorkerForm => ({
+  ...(JSON.parse(JSON.stringify(value)) as Worker),
+  sandbox: value.sandbox ?? 'docker',
+  docker_binary: value.docker_binary ?? '',
+  docker_host: value.docker_host ?? '',
+  image: value.image ?? '',
+  bwrap_binary: value.bwrap_binary ?? '',
+  task_runtime: value.task_runtime ?? '',
+})
+const stored = (value: WorkerForm): Worker => ({
+  ...value,
+  docker_binary: value.docker_binary.trim() || null,
+  docker_host: value.docker_host.trim() || null,
+  image: value.image.trim() || null,
+  bwrap_binary: value.bwrap_binary.trim() || null,
+  task_runtime: value.task_runtime.trim() || null,
+})
+
+const fresh = (): WorkerForm => ({
+  sandbox: 'docker',
   docker_binary: '',
   docker_host: 'unix:///var/run/docker.sock',
   image: '',
+  bwrap_binary: '',
+  task_runtime: '',
   workspace_root: '',
   runtime_root: '',
   delivery_root: '',
@@ -69,10 +112,17 @@ const fresh = (): Worker => ({
   input_timeout_seconds: 1800,
   max_file_bytes: 25 * 1024 * 1024,
   max_delivery_bytes: 500 * 1024 * 1024,
+  max_workspace_bytes: 2 * 1024 ** 3,
+  disk_reserve_bytes: 5 * 1024 ** 3,
+  disk_stop_bytes: 2 * 1024 ** 3,
+  workspace_retention_days: 14,
+  storage_check_seconds: 30,
   input_support: 'text',
   model_reasoning: null,
   egress: {
-    enabled: true,
+    mode: 'off',
+    allowed_hosts: [],
+    max_task_upload_bytes: 20 * 1024 * 1024,
     max_task_bytes: 524288000,
     max_scene_daily_bytes: 2147483648,
     max_connections: 16,
@@ -80,36 +130,38 @@ const fresh = (): Worker => ({
     connect_timeout_seconds: 30,
     header_timeout_seconds: 30,
   },
-  public_browser: false,
   mcp: false,
 })
-const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
-const draft = ref<Worker | null>(null)
+/** The saved settings as the form edits them; null while tasks are off. */
+const savedForm = computed(() => (saved.value ? editable(saved.value) : saved.value))
+const draft = ref<WorkerForm | null>(null)
 /** The settings kept while the switch is off, so turning it back on restores them. */
-const parked = ref<Worker | null>(null)
+const parked = ref<WorkerForm | null>(null)
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 watch(
-  saved,
+  savedForm,
   (next, previous) => {
     if (next === undefined) return
-    if (previous === undefined || same(draft.value, previous)) draft.value = next && copy(next)
+    if (previous === undefined || same(draft.value, previous)) draft.value = next
   },
   { immediate: true },
 )
 /** The draft while the switch is on; the form block only renders then. */
 const form = computed(() => draft.value!)
-const dirty = computed(() => saved.value !== undefined && !same(draft.value, saved.value))
+const dirty = computed(() => savedForm.value !== undefined && !same(draft.value, savedForm.value))
 useUnsavedChanges(dirty, { keep: ['tab'] })
 function toggle(on: boolean) {
   if (on)
-    draft.value = parked.value ?? (saved.value ? copy(saved.value) : { ...fresh(), ...defaults.data.value })
+    draft.value = parked.value ?? savedForm.value ?? editable({ ...stored(fresh()), ...defaults.data.value })
   else {
     parked.value = draft.value
     draft.value = null
   }
 }
 
-type NumberKey = { [K in keyof Worker]: Worker[K] extends number | null ? K : never }[keyof Worker]
+type NumberKey = {
+  [K in keyof WorkerForm]-?: WorkerForm[K] extends number | null ? K : never
+}[keyof WorkerForm]
 type EgressKey = { [K in keyof Egress]: Egress[K] extends number | null ? K : never }[keyof Egress]
 const limits: { key: NumberKey; unit?: string; decimals?: boolean }[] = [
   { key: 'cpus', decimals: true },
@@ -125,10 +177,15 @@ const limits: { key: NumberKey; unit?: string; decimals?: boolean }[] = [
   { key: 'input_timeout_seconds', unit: 's', decimals: true },
   { key: 'max_file_bytes', unit: 'B' },
   { key: 'max_delivery_bytes', unit: 'B' },
+  { key: 'max_workspace_bytes', unit: 'B' },
+  { key: 'disk_reserve_bytes', unit: 'B' },
+  { key: 'disk_stop_bytes', unit: 'B' },
+  { key: 'workspace_retention_days', decimals: true },
   { key: 'compaction_reserve_tokens', unit: 'tokens' },
   { key: 'compaction_keep_recent_tokens', unit: 'tokens' },
 ]
 const egressLimits: { key: EgressKey; unit?: string; decimals?: boolean }[] = [
+  { key: 'max_task_upload_bytes', unit: 'B' },
   { key: 'max_task_bytes', unit: 'B' },
   { key: 'max_scene_daily_bytes', unit: 'B' },
   { key: 'max_connections' },
@@ -136,31 +193,48 @@ const egressLimits: { key: EgressKey; unit?: string; decimals?: boolean }[] = [
   { key: 'connect_timeout_seconds', unit: 's', decimals: true },
   { key: 'header_timeout_seconds', unit: 's', decimals: true },
 ]
-const paths = ['docker_binary', 'workspace_root', 'runtime_root', 'delivery_root'] as const
+const paths = ['workspace_root', 'runtime_root', 'delivery_root'] as const
 const SIZE = /^[1-9][0-9]*[kmgKMG]$/
+/** POSIX absolute paths and Windows drive or UNC paths; the host checks the path on its own platform. */
+const ABSOLUTE = /^(\/|[A-Za-z]:[\\/]|\\\\)/
+const DOCKER_HOST = /^(unix:\/\/\/.|npipe:\/\/\/\/\.\/pipe\/[A-Za-z0-9_.-]+$)/
+/** Same rule as the host: a lowercase domain, or *. and a domain for its subdomains. */
+const HOST = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
 
 const errors = computed(() => {
   const value = draft.value
   const result: Record<string, string> = {}
   if (!value) return result
   const required = t('capabilities.required')
-  if (!value.image.trim()) result.image = required
-  for (const key of paths) {
+  const sandboxPaths =
+    value.sandbox === 'docker' ? (['docker_binary'] as const) : (['bwrap_binary', 'task_runtime'] as const)
+  for (const key of [...paths, ...sandboxPaths]) {
     if (!value[key].trim()) result[key] = required
-    else if (!value[key].startsWith('/')) result[key] = t('capabilities.worker.absolute')
+    else if (!ABSOLUTE.test(value[key])) result[key] = t('capabilities.worker.absolute')
   }
-  if (value.skills_directory && !value.skills_directory.startsWith('/'))
+  if (value.skills_directory && !ABSOLUTE.test(value.skills_directory))
     result.skills_directory = t('capabilities.worker.absolute')
-  if (!/^unix:\/\/\/./.test(value.docker_host)) result.docker_host = t('capabilities.worker.dockerHostRule')
-  if (value.uid === null) result.uid = required
-  if (value.gid === null) result.gid = required
+  if (value.sandbox === 'docker') {
+    if (!value.image.trim()) result.image = required
+    if (!DOCKER_HOST.test(value.docker_host)) result.docker_host = t('capabilities.worker.dockerHostRule')
+    if (value.uid === null) result.uid = required
+    if (value.gid === null) result.gid = required
+  }
   if (value.model_reasoning === null) result.model_reasoning = t('capabilities.worker.pickReasoning')
   if (!SIZE.test(value.memory)) result.memory = t('capabilities.worker.size')
   if (!SIZE.test(value.tmpfs_size)) result.tmpfs_size = t('capabilities.worker.size')
   for (const { key } of limits) if (value[key] === null) result[key] = required
   for (const { key } of egressLimits) if (value.egress[key] === null) result[`egress.${key}`] = required
-  if (value.public_browser && !value.egress.enabled)
-    result.public_browser = t('capabilities.worker.browserNeedsNetwork')
+  if (value.egress.mode === 'allowlist' && value.egress.allowed_hosts.length === 0)
+    result.allowed_hosts = t('capabilities.worker.hostsRequired')
+  const badHost = value.egress.allowed_hosts.find((host) => !HOST.test(host))
+  if (badHost) result.allowed_hosts = t('capabilities.worker.hostRule', { host: badHost })
+  if (
+    value.disk_stop_bytes !== null &&
+    value.disk_reserve_bytes !== null &&
+    value.disk_stop_bytes >= value.disk_reserve_bytes
+  )
+    result.disk_stop_bytes = t('capabilities.worker.diskOrder')
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)
@@ -176,11 +250,12 @@ watch(invalid, () => {
 })
 
 const save = useMutation({
-  mutationFn: () => capabilitiesApi.saveWorker(draft.value),
+  mutationFn: () => capabilitiesApi.saveWorker(draft.value && stored(draft.value)),
   onSuccess: (snapshot) => {
     client.setQueryData(keys.host.settings(), snapshot)
+    void client.invalidateQueries({ queryKey: keys.host.workerReadiness() })
     const next = capabilitiesOf(snapshot).worker
-    draft.value = next && copy(next)
+    draft.value = next && editable(next)
     void readPendingRestart()
     toast.success(t('capabilities.savedRestart'))
   },
@@ -203,11 +278,59 @@ const inputs = computed(() => [
   { value: 'text' as const, label: t('capabilities.worker.textOnly') },
   { value: 'text-image' as const, label: t('capabilities.worker.withImages') },
 ])
-const pool = computed(() => {
-  const value = draft.value?.storage_pool
-  if (!value) return t('capabilities.worker.noPool')
-  return t(`capabilities.worker.pool.${value.kind}`, { mount: value.mount })
+const networkModes = computed(() =>
+  (['off', 'allowlist', 'public'] as const).map((value) => ({
+    value,
+    label: t(`capabilities.worker.networkModes.${value}`),
+  })),
+)
+const sandboxes = computed(() =>
+  (['docker', 'bwrap'] as const).map((value) => ({
+    value,
+    label: t(`capabilities.worker.sandboxes.${value}`),
+  })),
+)
+const check = useMutation({
+  mutationFn: () =>
+    capabilitiesApi.checkSandbox({
+      bwrap_binary: form.value.bwrap_binary,
+      task_runtime: form.value.task_runtime,
+    }),
 })
+const dockerCheck = useMutation({
+  mutationFn: (pull: boolean) =>
+    capabilitiesApi.checkDocker({
+      docker_binary: form.value.docker_binary,
+      docker_host: form.value.docker_host,
+      image: form.value.image,
+      pull,
+    }),
+})
+/** Check results belong to the paths they ran with. */
+watch(
+  () =>
+    draft.value && [
+      draft.value.sandbox,
+      draft.value.bwrap_binary,
+      draft.value.task_runtime,
+      draft.value.docker_binary,
+      draft.value.docker_host,
+      draft.value.image,
+    ],
+  () => {
+    check.reset()
+    dockerCheck.reset()
+  },
+)
+const checkSteps = computed<SandboxStep[]>(() => check.data.value?.steps ?? [])
+const checkFailed = computed(() => checkSteps.value.some((step) => !step.ok))
+const dockerSteps = computed<SandboxStep[]>(() => dockerCheck.data.value?.steps ?? [])
+const imageMissing = computed(() => dockerSteps.value.some((step) => step.step === 'image' && !step.ok))
+function addPackageHosts() {
+  if (!draft.value) return
+  const hosts = draft.value.egress.allowed_hosts
+  draft.value.egress.allowed_hosts = [...hosts, ...PACKAGE_HOSTS.filter((host) => !hosts.includes(host))]
+}
 </script>
 
 <template>
@@ -224,20 +347,7 @@ const pool = computed(() => {
         <Switch :model-value="draft !== null" @update:model-value="toggle" />
       </Field>
       <template v-if="draft">
-        <p
-          v-if="!hasModel"
-          class="flex flex-wrap items-center gap-2 rounded-md bg-info-bg px-3 py-2 text-sm text-info"
-        >
-          {{ t('capabilities.worker.followsChat') }}
-          <Button
-            size="sm"
-            variant="ghost"
-            :icon-right="ArrowUpRight"
-            :to="{ name: 'host-models', query: { tab: 'roles' } }"
-          >
-            {{ t('capabilities.worker.toModels') }}
-          </Button>
-        </p>
+        <TaskReadiness :has-model="hasModel" />
         <FormSection :title="t('capabilities.worker.model')">
           <Field :label="t('capabilities.worker.reasoning')" required :error="errors.model_reasoning">
             <Select
@@ -266,32 +376,120 @@ const pool = computed(() => {
           </Field>
         </FormSection>
         <FormSection :title="t('capabilities.worker.abilities')">
-          <Field :label="t('capabilities.worker.network')" inline>
-            <Switch v-model="form.egress.enabled" />
+          <Field :label="t('capabilities.worker.network')" wide>
+            <div>
+              <SegmentedControl
+                v-model="form.egress.mode"
+                :options="networkModes"
+                :label="t('capabilities.worker.network')"
+              />
+            </div>
           </Field>
-          <Field :label="t('capabilities.worker.browser')" inline :error="errors.public_browser">
-            <Switch v-model="form.public_browser" />
-          </Field>
-          <Field :label="t('capabilities.worker.mcp')" inline>
-            <Switch v-model="form.mcp" />
+          <Field
+            v-if="form.egress.mode === 'allowlist'"
+            :label="t('capabilities.worker.allowedHosts')"
+            required
+            :error="errors.allowed_hosts"
+            wide
+          >
+            <div class="flex min-w-0 flex-col items-start gap-2">
+              <TagInput
+                v-model="form.egress.allowed_hosts"
+                placeholder="example.com、*.example.org"
+                class="w-full"
+              />
+              <Button size="sm" variant="ghost" @click="addPackageHosts">
+                {{ t('capabilities.worker.packageHosts') }}
+              </Button>
+            </div>
           </Field>
         </FormSection>
         <FormSection :title="t('capabilities.worker.runtime')">
-          <Field :label="t('capabilities.worker.image')" required :error="errors.image">
-            <Input v-model="form.image" mono />
+          <Field :label="t('capabilities.worker.sandbox')" wide>
+            <div>
+              <SegmentedControl
+                v-model="form.sandbox"
+                :options="sandboxes"
+                :label="t('capabilities.worker.sandbox')"
+              />
+            </div>
           </Field>
-          <Field :label="t('capabilities.worker.dockerBinary')" required :error="errors.docker_binary">
-            <Input v-model="form.docker_binary" mono placeholder="/usr/local/bin/docker" />
-          </Field>
-          <Field :label="t('capabilities.worker.dockerHost')" required :error="errors.docker_host" wide>
-            <Input v-model="form.docker_host" mono placeholder="unix:///var/run/docker.sock" />
-          </Field>
-          <Field :label="t('capabilities.worker.uid')" required :error="errors.uid">
-            <NumberInput v-model="form.uid" :min="1" :steppers="false" />
-          </Field>
-          <Field :label="t('capabilities.worker.gid')" required :error="errors.gid">
-            <NumberInput v-model="form.gid" :min="1" :steppers="false" />
-          </Field>
+          <template v-if="form.sandbox === 'docker'">
+            <Field :label="t('capabilities.worker.image')" required :error="errors.image">
+              <Input v-model="form.image" mono />
+            </Field>
+            <Field :label="t('capabilities.worker.dockerBinary')" required :error="errors.docker_binary">
+              <Input v-model="form.docker_binary" mono placeholder="/usr/local/bin/docker" />
+            </Field>
+            <Field :label="t('capabilities.worker.dockerHost')" required :error="errors.docker_host" wide>
+              <Input v-model="form.docker_host" mono placeholder="unix:///var/run/docker.sock" />
+            </Field>
+            <Field :label="t('capabilities.worker.uid')" required :error="errors.uid">
+              <NumberInput v-model="form.uid" :min="1" :steppers="false" />
+            </Field>
+            <Field :label="t('capabilities.worker.gid')" required :error="errors.gid">
+              <NumberInput v-model="form.gid" :min="1" :steppers="false" />
+            </Field>
+            <Field v-if="form.task_volume" :label="t('capabilities.worker.taskVolume')" wide>
+              <p class="font-mono text-sm text-ink-2">
+                {{ form.task_volume.name }} → {{ form.task_volume.root }}
+              </p>
+            </Field>
+            <div class="flex min-w-0 flex-col items-start gap-3 sm:col-span-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                :loading="dockerCheck.isPending.value && !dockerCheck.variables.value"
+                :disabled="Boolean(errors.docker_binary || errors.docker_host || errors.image)"
+                @click="dockerCheck.mutate(false)"
+              >
+                {{ t('capabilities.worker.checkDocker') }}
+              </Button>
+              <ErrorNote
+                v-if="dockerCheck.isError.value"
+                :title="t('capabilities.worker.checkFailed')"
+                :error="dockerCheck.error.value"
+              />
+              <CheckSteps :steps="dockerSteps" />
+              <Button
+                v-if="imageMissing || (dockerCheck.isPending.value && dockerCheck.variables.value)"
+                size="sm"
+                variant="secondary"
+                :loading="dockerCheck.isPending.value && dockerCheck.variables.value"
+                @click="dockerCheck.mutate(true)"
+              >
+                {{ t('capabilities.worker.pullImage') }}
+              </Button>
+            </div>
+          </template>
+          <template v-else>
+            <Field :label="t('capabilities.worker.bwrapBinary')" required :error="errors.bwrap_binary">
+              <Input v-model="form.bwrap_binary" mono placeholder="/usr/bin/bwrap" />
+            </Field>
+            <Field :label="t('capabilities.worker.taskRuntime')" required :error="errors.task_runtime">
+              <Input v-model="form.task_runtime" mono />
+            </Field>
+            <div class="flex min-w-0 flex-col items-start gap-3 sm:col-span-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                :loading="check.isPending.value"
+                :disabled="Boolean(errors.bwrap_binary || errors.task_runtime)"
+                @click="check.mutate()"
+              >
+                {{ t('capabilities.worker.check') }}
+              </Button>
+              <ErrorNote
+                v-if="check.isError.value"
+                :title="t('capabilities.worker.checkFailed')"
+                :error="check.error.value"
+              />
+              <CheckSteps :steps="checkSteps" />
+              <Button v-if="checkFailed" size="sm" variant="ghost" @click="form.sandbox = 'docker'">
+                {{ t('capabilities.worker.useDocker') }}
+              </Button>
+            </div>
+          </template>
           <Field :label="t('capabilities.worker.workspace')" required :error="errors.workspace_root" wide>
             <Input v-model="form.workspace_root" mono />
           </Field>
@@ -318,7 +516,6 @@ const pool = computed(() => {
         </FormSection>
         <FormSection :title="t('capabilities.worker.storage')" :columns="1">
           <p class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
-            {{ pool }}
             <Button
               size="sm"
               variant="ghost"
@@ -383,7 +580,7 @@ const pool = computed(() => {
       :error="saveError"
       :invalid="invalid"
       @save="save.mutate()"
-      @discard="draft = saved && copy(saved)"
+      @discard="draft = savedForm ?? null"
     />
   </div>
 </template>

@@ -86,6 +86,8 @@ export interface TaskService {
   scenes: { scene: string; timezone: string | null; enabled: boolean; [field: string]: unknown }[]
   public_network: boolean
   file_upload: boolean
+  /** Whether OneBot is configured, so group chats can pick group files as task inputs. */
+  group_files: boolean
 }
 
 /** What the live socket sends; `preview` is the text the task is writing now. */
@@ -101,6 +103,7 @@ export interface DelegateInput {
   context: string
   materials: string[]
   resources?: { reference: Record<string, unknown>; name: string }[]
+  group_files?: { file_id: string; busid: number; name: string }[]
 }
 
 export type TaskAction =

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Callable
 from zoneinfo import ZoneInfo
 
-from .egress_policy import EgressBlocked
+from .egress_policy import EgressBlocked, host_refusal
 
 from ..config import HostConfig
 from .store import TaskStore
@@ -79,8 +79,16 @@ class EgressUsage:
         key = (scene, task_id, wire_id)
         phase = facts["phase"]
         if phase == "start":
-            if not self.config.worker.egress.enabled:
-                raise EgressBlocked("当前宿主未开启公共出网")
+            settings = self.config.worker.egress
+            refusal = host_refusal(facts["host"], settings.mode, settings.allowed_hosts)
+            if refusal is not None:
+                # A refused host is still one recorded attempt, so the task's events show the reason.
+                self.records.start_egress_connection(scene, task_id, {
+                    "host": facts["host"], "port": facts["port"], "ip": None, "method": facts["method"],
+                    "started": facts["started"], "ended": facts["started"], "status": "refused",
+                    "error": refusal, "up": 0, "down": 0, "days": {}, "saved_at": self.records.now()})
+                self.on_update(scene)
+                raise EgressBlocked(refusal)
             task_limit, daily_limit = self._limits(scene)
             task = self._task(scene, task_id)
             date = self._date(scene)
@@ -133,6 +141,9 @@ class EgressUsage:
         day = self._day(scene, date)
         if sum(task) + amount > task_limit:
             raise EgressBlocked(f"任务 #{task_id} 出网字节将超过限额 {task_limit}；本块未转发")
+        upload_limit = self.config.worker.egress.max_task_upload_bytes
+        if side == "up" and task[0] + amount > upload_limit:
+            raise EgressBlocked(f"任务 #{task_id} 上传字节将超过上限 {upload_limit}；本块未转发")
         if sum(day) + amount > daily_limit:
             raise EgressBlocked(f"场景 {scene} 在 {date} 出网字节将超过限额 {daily_limit}；本块未转发")
         connection.day_for_write = date
@@ -184,4 +195,6 @@ class EgressUsage:
             "incomplete_connections": self.records.egress_incomplete_count(scene, task_id),
             "last_error": self.records.egress_last_error(scene, task_id),
             "enabled": self.config.worker.egress.enabled,
+            "mode": self.config.worker.egress.mode,
+            "upload_limit": self.config.worker.egress.max_task_upload_bytes,
         }

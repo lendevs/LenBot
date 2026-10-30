@@ -33,7 +33,7 @@ def _relocate(value, source: Path, destination: Path):
         return {name: _relocate(item, source, destination) for name, item in value.items()}
     if isinstance(value, list):
         return [_relocate(item, source, destination) for item in value]
-    if isinstance(value, str) and value.startswith('/') and Path(value).is_relative_to(source):
+    if isinstance(value, str) and Path(value).is_absolute() and Path(value).is_relative_to(source):
         return str(destination / Path(value).relative_to(source))
     return value
 

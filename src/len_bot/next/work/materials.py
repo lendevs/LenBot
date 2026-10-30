@@ -11,6 +11,8 @@ import tempfile
 from typing import Annotated, BinaryIO, TYPE_CHECKING
 
 from pydantic import AfterValidator, Field, TypeAdapter
+from ..platform.identity import scene_directory
+from ..storage.files import NONBLOCK, Directory, is_link, open_no_follow
 
 if TYPE_CHECKING:
     from .store import TaskFile
@@ -55,7 +57,7 @@ async def finish_file_operation[T](operation: Callable[..., T], *args: object, *
 
 
 def material_directory(workspace_root: Path, scene: str) -> Path:
-    return workspace_root / scene / 'shared'
+    return workspace_root / scene_directory(scene) / 'shared'
 
 
 def require_directory(path: Path) -> None:
@@ -66,27 +68,24 @@ def require_directory(path: Path) -> None:
 def list_materials(directory: Path) -> dict:
     require_directory(directory)
     try:
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        opened = Directory.open(directory)
     except FileNotFoundError:
         return {'directory': str(directory), 'exists': False, 'files': []}
-    try:
+    with opened:
         files = []
-        with os.scandir(descriptor) as entries:
-            for entry in entries:
-                info = os.stat(entry.name, dir_fd=descriptor, follow_symlinks=False)
-                if not stat.S_ISREG(info.st_mode):
-                    raise ValueError(f'Shared material must be a regular file: {directory / entry.name}; '
-                                     f'mode={oct(info.st_mode)}')
-                files.append({'name': entry.name, 'size': info.st_size})
+        for name in opened.names():
+            info = opened.stat(name)
+            if not stat.S_ISREG(info.st_mode) or is_link(info):
+                raise ValueError(f'Shared material must be a regular file: {directory / name}; '
+                                 f'mode={oct(info.st_mode)}')
+            files.append({'name': name, 'size': info.st_size})
         return {'directory': str(directory), 'exists': True, 'files': sorted(files, key=lambda file: file['name'])}
-    finally:
-        os.close(descriptor)
 
 
 def open_regular(path: Path) -> tuple[BinaryIO, int]:
     if path.resolve(strict=True) != path:
         raise ValueError(f'Material source must not traverse a symbolic link: {path}')
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_no_follow(path, os.O_RDONLY | NONBLOCK)
     source = os.fdopen(descriptor, 'rb')
     try:
         info = os.fstat(source.fileno())
@@ -99,7 +98,7 @@ def open_regular(path: Path) -> tuple[BinaryIO, int]:
 
 
 def copy_stream(source: BinaryIO, target: Path, max_bytes: int) -> int:
-    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    descriptor = open_no_follow(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, 'wb') as output:
         total = 0
         while chunk := source.read(1024 * 1024):
@@ -126,7 +125,7 @@ def save_shared(source: BinaryIO, directory: Path, name: str, max_bytes: int) ->
 def adopt_file(directory: Path, source: TaskFile, *, delivery_root: Path, name: str, max_bytes: int) -> dict:
     require_directory(directory)
     origin = Path(source.path)
-    expected = delivery_root / source.scene / str(source.task_id)
+    expected = delivery_root / scene_directory(source.scene) / str(source.task_id)
     if origin.parent != expected:
         raise ValueError(f'Registered delivery is not in its current task directory: {origin}; expected={expected}')
     if source.size > max_bytes:

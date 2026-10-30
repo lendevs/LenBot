@@ -34,6 +34,7 @@ from .sections import SECTION_STATEMENTS, put_sections, query_bigrams, query_ter
 from ..storage.schema import FORMAT_RESET
 from ..storage.sqlite import connect
 from ..runtime.logs import log_event
+from ..platform.identity import scene_directory
 
 
 _SCENE = re.compile(r"[a-z][a-z0-9_-]*:(group|private):[^:\s/\\]+\Z")
@@ -202,7 +203,7 @@ def _scene_scope(scene: str) -> str:
 
 
 def scope_directory(scene: str) -> str:
-    return quote(scene, safe='') if sys.platform == 'win32' else scene
+    return scene_directory(scene)
 
 
 def _eligible(bot_persona: str | None) -> str:

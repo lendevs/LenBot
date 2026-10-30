@@ -12,6 +12,8 @@
 !docker/next-worker/lenbot-browser.cjs
 !docker/next-worker/browser-files.cjs
 !docker/next-worker/lenbot-render.cjs
+!docker/next-worker/task-python.txt
+!docker/next-worker/matplotlibrc
 !scripts/
 !scripts/collect_python_licenses.py
 !scripts/collect_frontend_licenses.cjs
