@@ -24,9 +24,10 @@ from ..platform.messages import UploadResult
 from ..models.client import ChatModel, ToolCall
 from ..models.request import ChatRequest
 from ..persona.profile import Persona
-from ..platform.platform_tools import (MEMBER_INFO_TOOL, OPEN_FORWARD_TOOL, MemberInfoArguments,
-                             MESSAGE_REACTION_TOOL, MessageReactionArguments, message_reaction,
-                             OpenForwardArguments, PlatformCall, member_info, open_forward)
+from ..platform.platform_tools import (GROUP_FILES_TOOL, MEMBER_INFO_TOOL, OPEN_FORWARD_TOOL, GroupFilesArguments,
+                             MemberInfoArguments, MESSAGE_REACTION_TOOL, MessageReactionArguments,
+                             OpenForwardArguments, PlatformCall, group_file_fetch, list_group_files,
+                             member_info, message_reaction, open_forward)
 from .recall import RECALL_TOOL, RecallArguments, recall_chat
 from ..reference.library import ReferenceLibrary
 from ..reference.sources import has_files, scene_directory
@@ -161,7 +162,7 @@ def tool_catalog(*, platform: bool) -> list[dict]:
     }}
     catalog = [say, REACT_TOOL, WAIT_TOOL, RECALL_TOOL, WEB_SEARCH_TOOL, WEB_READ_TOOL, LOOK_TOOL,
             *SCHEDULE_TOOLS, KNOWLEDGE_TOOL, MEMORY_TOOL, DELEGATE_TOOL, TASK_TOOL,
-            SEND_FILE_TOOL, OPEN_FORWARD_TOOL, MEMBER_INFO_TOOL, MESSAGE_REACTION_TOOL, TRANSCRIBE_TOOL, SCENE_CONTROL_TOOL, HOST_MANAGE_TOOL, TOOL_SEARCH,
+            SEND_FILE_TOOL, OPEN_FORWARD_TOOL, MEMBER_INFO_TOOL, GROUP_FILES_TOOL, MESSAGE_REACTION_TOOL, TRANSCRIBE_TOOL, SCENE_CONTROL_TOOL, HOST_MANAGE_TOOL, TOOL_SEARCH,
             ATTENTION_TOOL]
     return [{**tool, "function": {**tool["function"],
              "parameters": model_schema(tool["function"]["parameters"])}} for tool in catalog]
@@ -209,10 +210,13 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
     if (name == "knowledge" and not persona.knowledge
             and not has_files(scene_directory(config._instance_root, config.scene))):
         reasons.append("角色没有设定资料，本聊天也没有资料文件")
-    if name in {"open_forward", "member_info", "transcribe", "message_reaction"} and config.delivery != "onebot":
+    if (name in {"open_forward", "member_info", "group_files", "transcribe", "message_reaction"}
+            and config.delivery != "onebot"):
         reasons.append("模拟发送时用不了")
-    if name in {"member_info", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
+    if name in {"member_info", "group_files", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
         reasons.append("只能在群里用")
+    if name == "group_files" and config.worker is None:
+        reasons.append("还没有启用独立任务")
     return reasons
 
 
@@ -349,7 +353,7 @@ class SceneTools:
         self.allowed_tool_names = {tool["function"]["name"] for tool in allowed} | set(self.external)
         if "send_file" in self.allowed_tool_names and upload_file is None:
             raise ValueError("send_file 配置已启用但未接入实际文件上传出口")
-        if self.allowed_tool_names & {"open_forward", "member_info", "message_reaction"} and platform_call is None:
+        if self.allowed_tool_names & {"open_forward", "member_info", "group_files", "message_reaction"} and platform_call is None:
             raise ValueError("平台查询工具已启用但未接入实际 OneBot 调用")
         if "transcribe" in self.allowed_tool_names and self.audio is None:
             raise ValueError("语音工具已启用但未接入实际语音处理服务")
@@ -415,6 +419,13 @@ class SceneTools:
                 self.turn_disposition = disposition
             log_event(logger, 'tool_call', result_chars=len(result[0]))
             return result
+
+    def _group_file_fetch(self):
+        """Downloads a group file of this scene for delegate; None when the scene has no live group files."""
+        kind, group_id = self.config.scene.split(":", 2)[1:]
+        if self.platform_call is None or self.config.delivery != "onebot" or kind != "group":
+            return None
+        return group_file_fetch(self.platform_call, group_id)
 
     def _connection(self, settings):
         """The provider a web search or read setting names, if it uses one."""
@@ -505,7 +516,11 @@ class SceneTools:
         if call.name == "memory":
             return await self.run_memory(call.arguments), None, None
         if call.name in {"delegate", "task"}:
-            return tool_result(await execute_tasks(self.tasks, self.config.scene, call.name, call.arguments)), None, None
+            return tool_result(await execute_tasks(self.tasks, self.config.scene, call.name, call.arguments,
+                                                   fetch_group_file=self._group_file_fetch())), None, None
+        if call.name == "group_files":
+            return await list_group_files(self.config.scene, self.config.timezone,
+                                          GroupFilesArguments.model_validate(call.arguments), self.platform_call), None, None
         if call.name == "send_file":
             return await execute_send_file(
                 TaskStore(self.store), self.config.scene, SendFileArguments.model_validate(call.arguments),
