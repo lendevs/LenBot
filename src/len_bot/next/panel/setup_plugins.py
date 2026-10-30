@@ -37,7 +37,7 @@ async def install_official(root: Path, entry: CatalogEntry) -> dict:
             manifest, record, _ = await installer.prepare_git(entry.repository, [installer.directory], ref=entry.ref,
                                                               expected_name=entry.name,
                                                               expected_permissions=entry.permissions)
-            await install_dependencies(manifest.dependencies)
+            await install_dependencies(root, manifest.dependencies)
             # Installation does not activate a plugin. Required service credentials
             # are filled in the normal panel before enabling it for a scene.
             await asyncio.to_thread(installer.apply_files, entry.name)

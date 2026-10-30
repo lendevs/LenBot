@@ -27,6 +27,7 @@ from .learning.expression_selection import open_expression_service
 from .runtime.network import NetworkRuntime
 from .persona.profile import load_persona
 from .plugins.host import PluginHost
+from .plugins.install import use_packages
 from .tools.mcp_host import MCPHost
 from .storage.store import Store
 from .work.service import WorkTasks
@@ -188,6 +189,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
 
 def main(*, restartable: bool = False, container: bool = False) -> None:
     lifecycle = HostLifecycle(restartable=restartable)
+    use_packages(Path.cwd())
     with instance_lock(Path.cwd()):
         asyncio.run(run(lifecycle, container=container))
     if lifecycle.intent == 'restart':
