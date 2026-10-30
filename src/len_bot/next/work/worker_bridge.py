@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 import queue
+import socketserver
 import struct
 import sys
 import threading
@@ -56,6 +57,12 @@ class BridgeServer(HTTPServer):
         self.stopped = threading.Event()
         self.timeout = 0.25
         self.reader = threading.Thread(target=self._read, args=(source,), daemon=True)
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind resolves the bound address with getfqdn; the
+        # reverse lookup can block before the ready frame where no resolver answers.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def _read(self, source: BinaryIO) -> None:
         try:
