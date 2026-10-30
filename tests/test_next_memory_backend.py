@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
+from len_bot.next.platform.identity import scene_directory
 from len_bot.next.memory.jobs import MemoryJobs
 from len_bot.next.memory.embeddings import EmbeddingBinding, EmbeddingClient, EmbeddingSettings
 from len_bot.next.memory.service import LocalMemoryConfig, MemoryService
@@ -200,7 +201,7 @@ def test_offline_reindex_clears_derived_summaries_and_preserves_history(tmp_path
         for scope in ('scene', 'public'):
             await backend.write_summary(scene, 'events', '周五活动', '活动在周五。', scope=scope)
             await backend.write_summary(scene, '', '周五活动', '活动在周五。', scope=scope)
-        source = backend.root / 'scenes/onebot:group:80001/events/meeting.md'
+        source = backend.root / 'scenes' / scene_directory(scene) / 'events/meeting.md'
         if remove_source:
             source.unlink()
         else:

@@ -30,7 +30,7 @@ def _package(root: Path, name: str, *, tools: str | list[str], documents: dict[s
     for filename, content in documents.items():
         path = package / "knowledge" / filename
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        path.write_text(content, encoding="utf-8", newline="\n")
     return package
 
 

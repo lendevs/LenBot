@@ -60,5 +60,6 @@ COPY --from=distribution /build/licenses /usr/share/lenbot/licenses
 # lenbot.config.json here; its whole parent directory is mounted read/write.
 WORKDIR /srv/lenbot
 # The entry point starts as root, joins the group of a mounted /var/run/docker.sock and then runs as 10000:10000.
+# -B keeps the root phase from writing bytecode into the Python volume; the host processes it starts write their own.
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/opt/lenbot/.venv/bin/lenbot-container"]
+ENTRYPOINT ["/opt/lenbot/.venv/bin/python", "-B", "/opt/lenbot/.venv/bin/lenbot-container"]

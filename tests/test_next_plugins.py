@@ -114,7 +114,7 @@ default = []
     manifest = read_manifest(directory)
     assert [choice.label for choice in manifest.config["card_mode"].choices()] == ["自动", "图片"]
     model = manifest.values_model(["onebot:group:80001"])
-    values = {"font": "/srv/fonts/a.ttf", "feed": "https://example.com/rss",
+    values = {"font": str(Path("/srv/fonts/a.ttf").absolute()), "feed": "https://example.com/rss",
               "rooms": [{"room_id": 123, "scenes": ["onebot:group:80001"]}]}
     assert model.model_validate(values).model_dump()["card_mode"] == "auto"
     assert model.model_validate({**values, "backup_font": ""}).model_dump()["backup_font"] == ""

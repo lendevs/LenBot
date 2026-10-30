@@ -16,6 +16,9 @@ import pytest
 
 from test_release_scripts import load, SCRIPTS
 
+# The publisher runs in the Linux release job; its GitHub CLI peer here is a script started through its shebang.
+pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='the fake gh peer is a POSIX executable script')
+
 
 @pytest.fixture
 def release_peer(tmp_path):

@@ -13,6 +13,7 @@ from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
 from len_bot.next.memory.jobs import MemoryJobs
 from len_bot.next.memory.sections import evidence, query_terms
 from len_bot.next.memory.service import LocalMemoryConfig, MemoryService, recall_cues
+from len_bot.next.platform.identity import scene_directory
 from len_bot.next.platform.onebot_messages import parse_message
 from len_bot.next.storage.store import Store
 from test_host_stream import panel, login
@@ -255,7 +256,7 @@ async def test_external_casefold_equivalent_edit_requires_reindex_before_using_o
     memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
     path = 'events/strasse.md'
     await memory.write(SCENE, path, '# Straße\n\n## 地址\nStraße 在东门。\n', '合成样本')
-    target = memory.root / 'scenes' / SCENE / path
+    target = memory.root / 'scenes' / scene_directory(SCENE) / path
     target.write_text('# STRASSE\n\n## 地址\nSTRASSE 在东门。\n')
     with pytest.raises(ValueError, match='Markdown/index mismatch'):
         await memory.search(SCENE, 'STRASSE')
