@@ -119,7 +119,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     register_host_trials(app, trials, user)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_capabilities(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
-    releases = register_host_updates(app, root=root, user=user, check_enabled=config.panel.update_check)
+    releases = register_host_updates(app, root=root, user=user, check_enabled=config.panel.update_check,
+                                     container=container)
     register_host_prompts(app, root=root, user=user)
     def speech_limits_changed() -> None:
         for runner in runtime.runners.values():

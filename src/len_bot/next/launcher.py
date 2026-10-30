@@ -1,5 +1,6 @@
 """Hold one host child; only an explicit, clean restart launches another."""
 
+import json
 import os
 from pathlib import Path
 import signal
@@ -141,9 +142,31 @@ def migrate_container_volume(root: Path) -> None:
         raise SystemExit(f'LenBot：数据卷已由 {previous} 使用，当前镜像是 {current}。'
                          f'回到旧版本需要从 {root.parent / "backups"} 中的快照恢复，或改用 {previous} 的镜像。')
     snapshot = root.parent / 'backups' / (time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
-    print(f'LenBot：实例数据来自 {previous or "更早的版本"}，先保存快照 {snapshot}，再迁移到 {current}。', flush=True)
+    print(f'LenBot：实例数据来自{f" {previous}" if previous else "更早的版本"}，先保存快照 {snapshot}，再迁移到 {current}。', flush=True)
     upgrade_instance(root, snapshot)
+    follow_release_worker(root, current)
     print('LenBot：迁移完成。', flush=True)
+
+
+OFFICIAL_WORKERS = ('ghcr.io/lendevs/lenbot-worker', 'docker.io/lendevs/lenbot-worker', 'lendevs/lenbot-worker')
+
+
+def follow_release_worker(root: Path, release: str) -> None:
+    """An official task image follows the host's version, as the updater switches it; other images stay."""
+    path = root / 'lenbot.config.json'
+    source = json.loads(path.read_text(encoding='utf-8'))
+    worker = source.get('worker')
+    if worker is None or worker.get('sandbox', 'docker') != 'docker':
+        return
+    name = worker['image'].split('@', 1)[0]
+    head, slash, last = name.rpartition('/')
+    repository = head + slash + last.split(':', 1)[0]
+    if repository not in OFFICIAL_WORKERS or worker['image'] == f'{repository}:{release}':
+        return
+    worker['image'] = f'{repository}:{release}'
+    from .storage.files import atomic_text
+    atomic_text(path, json.dumps(source, ensure_ascii=False, indent=2) + '\n')
+    print(f'LenBot：任务镜像改为 {worker["image"]}。', flush=True)
 
 
 def container_main(argv: list[str] | None = None) -> None:

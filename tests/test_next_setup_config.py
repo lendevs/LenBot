@@ -406,6 +406,8 @@ def test_setup_search_connection_and_minimal_custom_persona(tmp_path, mode):
     config = load_host_config(tmp_path)
     assert config.max_steps == 16 and config.web_read is not None
     assert load_persona(config.scenes[source['scene']].persona).voice == ''
+    from len_bot.next.maintenance.upgrade import installed_release, recorded_release
+    assert recorded_release(tmp_path) == installed_release()
     if mode in {'shared', 'separate'}:
         alias = config.web_search.connection
         assert alias == ('primary' if mode == 'shared' else 'search')

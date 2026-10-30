@@ -144,6 +144,8 @@ export interface UpdateState {
   version: string
   /** Installed with the update controller; a source checkout cannot switch versions from the panel. */
   managed: boolean
+  /** A host container started without the updater; a new image migrates the volume when it starts. */
+  container: boolean
   status: { error?: string | null; [field: string]: unknown } | null
   check: ReleaseCheck
   notice: string[] | null

@@ -75,6 +75,7 @@ def test_update_status_reports_version_and_check_without_network(tmp_path):
         body = client.get('/api/host/updates').json()
     assert check.enabled is False
     assert body['version'] == current_version() and body['managed'] is False and body['status'] is None
+    assert body['container'] is False
     assert body['notice'] is None and body['rollback_loses_data'] is False
     assert body['check'] == {'enabled': False, 'current': current_version(), 'checked_at': None, 'error': None,
                              'latest': None, 'update_available': None, 'latest_prerelease': None}
