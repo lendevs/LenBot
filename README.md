@@ -18,7 +18,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop（模型交替思考与调用工具的循环）决定。接入 QQ（OneBot v11），需要一个聊天模型和它的 API Key。
+**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。接入 QQ（OneBot v11），需要一个聊天模型和它的 API Key。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.dark.svg">

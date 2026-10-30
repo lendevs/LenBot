@@ -1,6 +1,6 @@
 # 认识 LenBot
 
-LenBot 是面向 QQ 群聊的自主决策 Agent 框架。何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop（模型交替思考与调用工具的循环）决定。
+LenBot 是面向 QQ 群聊的自主决策 Agent 框架。何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。
 
 LenBot 通过已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用）收发消息。模型服务由部署者自行配置，只需准备一个聊天模型及其 API Key（例如 DeepSeek）。
 

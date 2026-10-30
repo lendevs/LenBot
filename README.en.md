@@ -18,7 +18,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by a ReAct loop, where the model alternates between reasoning and calling tools. It connects to QQ (OneBot v11) and needs a chat model and its API key.
+**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by a ReAct loop. It connects to QQ (OneBot v11) and needs a chat model and its API key.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.en.dark.svg">
