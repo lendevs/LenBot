@@ -153,6 +153,8 @@ class SettingsSnapshot(PanelResponse):
 
 
 class WorkerDefaults(PanelResponse):
+    sandbox: Literal['docker', 'bwrap']
+    bwrap_binary: str | None = None
     docker_binary: str | None = None
     docker_host: str | None = None
     image: str | None = None
@@ -161,6 +163,27 @@ class WorkerDefaults(PanelResponse):
     delivery_root: str | None = None
     uid: int | None = None
     gid: int | None = None
+    task_volume: JsonObject | None = None
+
+
+class TaskSceneReadiness(PanelResponse):
+    scene: str
+    enabled: bool
+    delegate_roles: list[str]
+    persona: str | None
+    missing_tools: list[str]
+
+
+class TaskReadiness(PanelResponse):
+    worker: bool
+    running: bool
+    sandbox: Literal['docker', 'bwrap'] | None
+    delivery: str
+    scenes: list[TaskSceneReadiness]
+
+
+class SandboxCheck(PanelResponse):
+    steps: list[JsonObject]
 
 
 class LearningSettingsSnapshot(PanelResponse):
@@ -503,11 +526,19 @@ class TaskState(PanelResponse):
     scenes: list[JsonObject]
     public_network: bool
     file_upload: bool
+    group_files: bool
+
+
+class TaskDisk(PanelResponse):
+    free_bytes: int
+    reserve_bytes: int
+    stop_bytes: int
 
 
 class TaskPool(PanelResponse):
     configured: bool
     usage: JsonObject | None
+    disk: TaskDisk | None
 
 
 class TaskStoragePage(RecordPage):

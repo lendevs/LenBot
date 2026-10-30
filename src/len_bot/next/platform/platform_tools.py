@@ -8,6 +8,7 @@ from datetime import datetime
 from string import Template
 from zoneinfo import ZoneInfo
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .messages import Segment, render_body
@@ -83,6 +84,21 @@ MEMBER_INFO_TOOL = {"type": "function", "function": {
     "name": "member_info", "description": "查询本群一名成员的平台当前资料（昵称、群名片、身份、头衔、入群与最后发言时间）；"
     "user 是实际平台账号，例如 onebot:70001。",
     "parameters": MemberInfoArguments.model_json_schema(),
+}}
+
+
+class GroupFilesArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    folder: str | None = Field(default=None, min_length=1, description="文件夹 ID；不填列出根目录。")
+    name: str = Field(default="", max_length=100, description="只列文件名包含这段文字的文件，不区分大小写；空字符串列出全部。")
+
+
+GROUP_FILES_TOOL = {"type": "function", "function": {
+    "name": "group_files", "description": "列出本群群文件里的真实文件和文件夹：文件名、大小、上传者、上传时间、file_id 与 busid。"
+    "委托任务处理群文件时，把选中文件的 file_id、busid 和输入文件名填进 delegate 的 group_files；"
+    "同名或对应哪一份不清楚时先问请求人。",
+    "parameters": GroupFilesArguments.model_json_schema(),
 }}
 
 
@@ -342,3 +358,35 @@ async def member_info(scene: str, timezone: str, args: MemberInfoArguments, call
         member[field] = datetime.fromtimestamp(member[field], zone).isoformat(sep=" ", timespec="seconds")
     return Template(read_prompt("next_member_info.md")).substitute(
         scene=scene, result=encode(member)).strip()
+
+
+async def list_group_files(scene: str, timezone: str, args: GroupFilesArguments, call: PlatformCall) -> str:
+    """One folder of this group's files, filtered by name, with upload times in the host's time zone."""
+    found = await group_files(call, scene.split(":", 2)[2], args.folder)
+    wanted = args.name.casefold()
+    zone = ZoneInfo(timezone)
+    files = [{**item, "uploaded": datetime.fromtimestamp(item["uploaded"], zone).isoformat(timespec="minutes")}
+             for item in found["files"] if wanted in item["name"].casefold()]
+    return encode({"folder": args.folder, "files": files, "folders": found["folders"]})
+
+
+async def download_group_file(call: PlatformCall, group_id: str, file_id: str, busid: int, max_bytes: int,
+                              transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+    """A group file's current content from the address OneBot gives, refused once it passes ``max_bytes``."""
+    url = await group_file_url(call, group_id, file_id, busid)
+    async with httpx.AsyncClient(timeout=60, trust_env=False, follow_redirects=True, transport=transport) as client:
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            data = bytearray()
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > max_bytes:
+                    raise ValueError(f"群文件超过 worker.max_file_bytes：{len(data)} > {max_bytes}")
+    return bytes(data)
+
+
+def group_file_fetch(call: PlatformCall, group_id: str):
+    """The delegate fetcher for one group's files: download by file_id and busid."""
+    async def fetch(item, max_bytes: int) -> bytes:
+        return await download_group_file(call, group_id, item.file_id, item.busid, max_bytes)
+    return fetch

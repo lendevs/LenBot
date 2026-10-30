@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .process_files import open_stderr
+from .process_files import Launch, open_stderr
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -37,10 +37,11 @@ class WorkerTransport:
     async def spawn(cls, argv: list[str], *, cwd: Path, env: Mapping[str, str],
                     stderr_path: Path, proxy: WorkerModelProxy,
                     startup_timeout_seconds: float,
-                    task_request: Callable[[str, bytes], Awaitable[dict]] | None = None) -> WorkerTransport:
+                    task_request: Callable[[str, bytes], Awaitable[dict]] | None = None,
+                    launch: Launch = asyncio.create_subprocess_exec) -> WorkerTransport:
         stderr_file = open_stderr(stderr_path)
         try:
-            process = await asyncio.create_subprocess_exec(
+            process = await launch(
                 *argv, cwd=cwd, env=dict(env), stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE, stderr=stderr_file,
             )

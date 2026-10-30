@@ -24,6 +24,7 @@ from ...storage.store import Store
 from ...chat.usage import wake_usage
 from ...models.limits import BUDGET_CACHE_SECONDS, LimitReached, check_speech, clear_speech, speech_quota
 from ...models.client import ModelConnectionError, ModelHTTPError, ModelProtocolError
+from ...storage.files import NONBLOCK, open_no_follow
 
 
 class ChatSwitch(BaseModel):
@@ -38,7 +39,7 @@ class QuietChange(BaseModel):
 
 
 def stderr_tail(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_no_follow(path, os.O_RDONLY | NONBLOCK)
     with os.fdopen(descriptor, 'rb') as source:
         if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
             raise ValueError(f'Task stderr is not a regular file: {path}')

@@ -106,7 +106,8 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
         config, core_tools={tool["function"]["name"] for tool in tool_catalog(platform=True)}))
     skills = {settings.scene: (
         select_skills((*load_catalog(config.worker.skills_directory, settings.scene,
-                                     public_browser=config.worker.public_browser),
+                                     public_browser=config.worker.public_browser,
+                                     missing=config.worker.missing_programs()),
                        *(() if plugins is None else plugins.skills_for(settings.scene))), persona.skills)
         if config.worker is not None else ()
     ) for settings, persona in scenes}

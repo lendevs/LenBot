@@ -20,6 +20,7 @@ export const keys = {
     focus: (scene: string) => ['host', 'focus', scene] as const,
     settings: () => ['host', 'settings'] as const,
     workerDefaults: () => ['host', 'worker-defaults'] as const,
+    workerReadiness: () => ['host', 'worker-readiness'] as const,
     limits: () => ['host', 'limits'] as const,
     eventLoop: () => ['host', 'event-loop'] as const,
     modelProtocols: () => ['host', 'model-protocols'] as const,
