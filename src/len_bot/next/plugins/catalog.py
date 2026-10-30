@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ..configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings, catalog_url
 from ...plugin import INTERFACE
 from .install import repository_url, revision_ref
-from .manifest import PluginPermission
+from .manifest import PluginPermission, host_satisfies
 
 CATALOG = Path(__file__).with_name('plugin_catalog.json')
 
@@ -161,7 +161,7 @@ def market_entry(entry: CatalogEntry, installed: bool, installed_version: str | 
     reason = None
     if entry.interface != INTERFACE:
         reason = f'插件接口版本 {entry.interface}，本机宿主是 {INTERFACE}'
-    elif entry.requires_lenbot is not None and Version(host) not in SpecifierSet(entry.requires_lenbot):
+    elif entry.requires_lenbot is not None and not host_satisfies(host, entry.requires_lenbot):
         reason = f'需要宿主 {entry.requires_lenbot}，本机是 {host}'
     return MarketEntry(**entry.model_dump(), installed=installed, installed_version=installed_version,
                        update_available=(installed_version is not None
