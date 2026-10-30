@@ -49,7 +49,8 @@ def write_manifest(project: Path, artifacts: Path, *, revision: str, images: dic
     version = release_version(tomllib.loads((project / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version'])
     files = {}
     for path in sorted(artifacts.iterdir()):
-        if path.is_file() and path.name != 'release-manifest.json':
+        # uv build leaves a .gitignore in its output directory; hidden files are not release assets.
+        if path.is_file() and path.name != 'release-manifest.json' and not path.name.startswith('.'):
             files[path.name] = {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'bytes': path.stat().st_size}
     manifest = {
         'manifest_version': 1, 'version': version, 'tag': 'v' + version, 'revision': revision,

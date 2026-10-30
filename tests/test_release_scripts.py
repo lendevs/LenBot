@@ -1,7 +1,9 @@
 """Release preparation edits only the version and refuses draft notes; the smoke recipe edits fail loudly."""
 
 import importlib.util
+import json
 from pathlib import Path
+import shutil
 import tomllib
 
 import pytest
@@ -144,3 +146,14 @@ def test_catalog_sync_pins_pushed_commits_and_replaces_entries_by_name(tmp_path)
     catalog = {'version': 1, 'entries': [{'name': 'other'}, {'name': 'sample', 'ref': 'old'}]}
     merged = sync.merge(catalog, [{'name': 'sample', 'ref': 'new'}, {'name': 'added'}])
     assert merged['entries'] == [{'name': 'other'}, {'name': 'sample', 'ref': 'new'}, {'name': 'added'}]
+
+
+def test_manifest_leaves_out_hidden_files(tmp_path):
+    metadata = load('release_metadata')
+    (tmp_path / 'artifacts').mkdir()
+    (tmp_path / 'artifacts/.gitignore').write_text('*')
+    (tmp_path / 'artifacts/requirements.txt').write_text('x\n')
+    shutil.copytree(SCRIPTS.parent / 'src', tmp_path / 'src')
+    shutil.copy2(SCRIPTS.parent / 'pyproject.toml', tmp_path / 'pyproject.toml')
+    manifest = json.loads(metadata.write_manifest(tmp_path, tmp_path / 'artifacts', revision='r').read_text())
+    assert list(manifest['files']) == ['requirements.txt']
