@@ -105,7 +105,8 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
             backend_details=read_prompt(f"next_memory_{config.memory.backend}.md"),
         )
     elif config.memory is not None and config.memory.auto_recall:
-        system += "\n" + read_prompt("next_memory_recall.md")
+        system += "\n" + Template(read_prompt("next_memory_recall.md")).substitute(
+            read=read_prompt("next_memory_recall_read.md").strip() if "memory" in allowed_names else "")
     if "task" in names:
         system += "\n" + Template(read_prompt("next_tasks.md")).substitute(
             network=encode({"enabled": config.worker.egress.enabled, "mode": config.worker.egress.mode,
