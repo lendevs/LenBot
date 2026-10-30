@@ -71,7 +71,7 @@
 <summary><b>Docker</b></summary>
 
 ```sh
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0rc1
 docker logs lenbot
 ```
 
@@ -80,14 +80,14 @@ docker logs lenbot
 <details>
 <summary><b>部署包</b></summary>
 
-从 [Releases](https://github.com/lendevs/LenBot/releases/latest) 下载对应平台的部署包，解压后启动：
+从 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.0rc1) 下载对应平台的部署包，解压后启动：
 
 ```sh
-tar -xzf lenbot-0.2.0-linux-x64.tar.gz
-lenbot-0.2.0-linux-x64/run
+tar -xzf lenbot-0.2.0rc1-linux-x64.tar.gz
+lenbot-0.2.0rc1-linux-x64/run
 ```
 
-Windows 解压 `lenbot-0.2.0-windows-x64.zip` 后双击 `run.cmd`。
+Windows 解压 `lenbot-0.2.0rc1-windows-x64.zip` 后双击 `run.cmd`。
 
 </details>
 

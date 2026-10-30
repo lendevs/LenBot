@@ -2,7 +2,7 @@
 
 宿主镜像 `ghcr.io/lendevs/lenbot` 运行 Bot 和面板，支持 amd64 和 arm64。实例数据保存在一个命名数据卷里，更换版本就是用同一个卷启动新镜像。
 
-下文以 `0.2.0` 为例，部署时换成 [Releases](https://github.com/lendevs/LenBot/releases/latest) 中的最新版本号。
+下文以 `0.2.0rc1` 为例，该版本见 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.0rc1)，部署其他版本时换成对应的版本号。
 
 ## 准备
 
@@ -14,7 +14,7 @@
 下文的命令在 PowerShell、macOS 和 Linux 终端中写法相同。
 
 ```sh
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0rc1
 docker logs lenbot
 ```
 
@@ -43,16 +43,16 @@ ssh -L 11307:127.0.0.1:11307 你的服务器
 
 ## 更换版本
 
-拉取新版本镜像，删除当前容器，再用同一个数据卷和原来的参数启动新镜像：
+拉取新版本镜像，删除当前容器，再用同一个数据卷和原来的参数启动新镜像，命令中的 `<新版本>` 换成要使用的版本号：
 
 ```sh
-docker pull ghcr.io/lendevs/lenbot:0.2.1
+docker pull ghcr.io/lendevs/lenbot:<新版本>
 docker stop lenbot
 docker rm lenbot
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.1
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:<新版本>
 ```
 
-新镜像第一次启动时，先把实例保存为 `/data/backups/<时间>-<编号>` 快照，再迁移数据格式和插件依赖，日志中会列出快照名。任务镜像是官方 `lenbot-worker` 时，配置随之改为同版本，启用了后台任务时同时执行 `docker pull ghcr.io/lendevs/lenbot-worker:0.2.1`。数据卷由更新的版本用过时，旧镜像拒绝启动并在日志中说明。
+新镜像第一次启动时，先把实例保存为 `/data/backups/<时间>-<编号>` 快照，再迁移数据格式和插件依赖，日志中会列出快照名。任务镜像是官方 `lenbot-worker` 时，配置随之改为同版本，启用了后台任务时同时执行 `docker pull ghcr.io/lendevs/lenbot-worker:<新版本>`。数据卷由更新的版本用过时，旧镜像拒绝启动并在日志中说明。
 
 ### 从快照恢复
 
@@ -61,18 +61,18 @@ docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbo
 ```sh
 docker stop lenbot
 docker rm lenbot
-docker run --rm -v lenbot-data:/data --entrypoint ls ghcr.io/lendevs/lenbot:0.2.0 /data/backups
-docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0 -m len_bot.next.maintenance.upgrade restore --snapshot /data/backups/20261030-140217-cba39904
+docker run --rm -v lenbot-data:/data --entrypoint ls ghcr.io/lendevs/lenbot:0.2.0rc1 /data/backups
+docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0rc1 -m len_bot.next.maintenance.upgrade restore --snapshot /data/backups/20261030-140217-cba39904
 ```
 
-最后一条命令里的快照名换成 `ls` 列出的、更换版本前的那一个。恢复后实例回到快照时的状态，之后写入的消息、记忆和设置修改不保留。然后按第 1 步用 `0.2.0` 镜像启动。
+最后一条命令里的快照名换成 `ls` 列出的、更换版本前的那一个。恢复后实例回到快照时的状态，之后写入的消息、记忆和设置修改不保留。然后按第 1 步用 `0.2.0rc1` 镜像启动。
 
 ## 后台任务
 
 后台任务在同版本的 `ghcr.io/lendevs/lenbot-worker` 任务容器中运行，由宿主容器通过 Docker socket 创建。启用任务时，创建容器时多挂载一项：
 
 ```sh
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data -v /var/run/docker.sock:/var/run/docker.sock --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data -v /var/run/docker.sock:/var/run/docker.sock --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0rc1
 ```
 
 宿主启动时加入 socket 的所属组，之后以 `10000:10000` 运行。任务目录放在 `lenbot-data` 数据卷内，任务容器按子目录挂载（`volume-subpath`），需要 Docker Engine 26 或更高版本。然后在面板**能力 → 后台任务**中启用，步骤见[后台任务](../use/tasks)。
@@ -82,13 +82,13 @@ docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbo
 不使用浏览器时，可用 JSON 初始化。把 [`first-setup.example.json`](https://github.com/lendevs/LenBot/blob/master/deploy/current/first-setup.example.json) 复制为 `setup.json` 并填写，保持 `panel_host` 为 `0.0.0.0`、`panel_port` 为 `11307`，在第 1 步之前执行：
 
 ```sh
-docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0 -m len_bot.next.maintenance.initialize < setup.json
+docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0rc1 -m len_bot.next.maintenance.initialize < setup.json
 ```
 
 PowerShell 不支持 `<` 输入重定向，改用管道：
 
 ```powershell
-Get-Content -Raw setup.json | docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0 -m len_bot.next.maintenance.initialize
+Get-Content -Raw setup.json | docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0rc1 -m len_bot.next.maintenance.initialize
 ```
 
 初始化后删除 `setup.json`，其中包含初始密码和模型密钥。
@@ -101,7 +101,7 @@ Get-Content -Raw setup.json | docker run --rm -i --user 10000:10000 -v lenbot-da
 mkdir lenbot && cd lenbot
 docker run --rm --entrypoint python \
   -v "$PWD:/deployment" -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/lendevs/lenbot-updater:0.2.0 /opt/lenbot-updater/init.py --version 0.2.0
+  ghcr.io/lendevs/lenbot-updater:0.2.0rc1 /opt/lenbot-updater/init.py --version 0.2.0rc1
 docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
   -f host.updater.compose.yaml up -d
 ```
