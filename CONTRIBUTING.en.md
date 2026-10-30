@@ -128,7 +128,7 @@ uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 
 The release build script compiles the frontend panel in an isolated staging tree and produces the source archive, wheel, Linux/macOS/Windows deployment bundles and release manifest.
 
-Continuous integration ([ci.yml](.github/workflows/ci.yml) and [check.yml](.github/workflows/check.yml)) runs compilation, linting and unit tests on Python 3.13 (the minimum in `pyproject.toml`) and Python 3.14, checks workflow files with `actionlint`, and verifies the panel build and release packaging. Unit tests run on Linux; Windows and macOS are covered by the installation smoke workflow ([install-smoke.yml](.github/workflows/install-smoke.yml)).
+Continuous integration ([ci.yml](.github/workflows/ci.yml) and [check.yml](.github/workflows/check.yml)) runs compilation, linting and unit tests on Python 3.13 (the minimum in `pyproject.toml`) and Python 3.14, checks workflow files with `actionlint`, and verifies the panel build and release packaging. Unit tests run on Linux and Windows; macOS and the deployment bundles on each platform are covered by the installation smoke workflow ([install-smoke.yml](.github/workflows/install-smoke.yml)).
 
 ## Submitting changes
 
