@@ -25,11 +25,28 @@ from ...image_assets import OriginalImage
 from ..models.usage import UNBUDGETED, record_usage, totals as usage_totals
 from ..chat.schedule_time import CronTimeError, next_cron, parse_cron
 from .codec import decode_message, encode
-from .schema import FORMAT_RESET, create_database, expected_tables
+from .schema import FORMAT_RESET, business_script, create_database, expected_tables, require_columns, stored_state
 from ..chat.schedule_store import ScheduleStore
 
 
 FORMAT_VERSION = 1
+
+
+def _require_current_format(path: Path, application_id: int, version: int, tables: frozenset[str]) -> None:
+    """Refuse a file that is not a business database of the current format, naming the way forward."""
+    if not tables:
+        return
+    if application_id == 0:
+        raise ValueError(f"{path} 带有数据表但没有 LenBot 的格式标识（application_id=0），不是当前格式的业务数据库。{FORMAT_RESET}")
+    if application_id != 0x4C424E31:
+        raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
+    if version != FORMAT_VERSION:
+        raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
+    missing = expected_tables() - tables
+    if missing:
+        names = sorted(missing)
+        listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
+        raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -65,6 +82,10 @@ class ImageAsset:
 class Store:
     def __init__(self, path: Path, *, now: Callable[[], float] = time.time, readonly: bool = False):
         self.now = now
+        # Opening read-write switches the file to WAL, so a file of another format is refused before that.
+        state = stored_state(path)
+        if state is not None:
+            _require_current_format(path, *state)
         if not readonly:
             path.parent.mkdir(parents=True, exist_ok=True)
         # Read connections let a read skip the wait while the other thread holds the write connection.
@@ -75,19 +96,8 @@ class Store:
         # The database thread: chat-path writes fsync there instead of on the event loop.
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
         try:
-            tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            if tables:
-                application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
-                version = self.db.execute("PRAGMA user_version").fetchone()[0]
-                if application_id != 0x4C424E31:
-                    raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
-                if version != FORMAT_VERSION:
-                    raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
-                missing = expected_tables() - {row[0] for row in tables}
-                if missing:
-                    names = sorted(missing)
-                    listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
-                    raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
+            if state is not None and state[2]:
+                require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION)
             else:
                 if readonly:
                     raise ValueError(f'Existing business database is not initialized: {path}')
