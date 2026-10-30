@@ -106,7 +106,8 @@ async def test_the_scene_plugin_writes_the_recap_through_the_shared_commit(tmp_p
 @pytest.mark.asyncio
 @pytest.mark.parametrize('reply,error', [('fail', 'RuntimeError: 摘要服务不可用'),
                                          ('长' * 20000, 'ValueError: 回想估算 20000 token，超过预算 4096'),
-                                         ('   ', 'TypeError: @compact 必须返回非空文字')])
+                                         ('   ', 'TypeError: @compact 必须返回非空文字')],
+                         ids=['fails', 'too-long', 'blank'])
 async def test_a_failed_plugin_recap_preserves_the_session_and_records_the_error(tmp_path, reply, error):
     async with chat_with_notes(tmp_path) as (chat, notes, store, captured):
         notes.instance.reply = reply

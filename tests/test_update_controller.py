@@ -486,7 +486,7 @@ def test_files_the_root_updater_writes_keep_the_deployment_owner(tmp_path, monke
     import common
     import init
     owners = {}
-    monkeypatch.setattr(common.os, 'geteuid', lambda: 0)
+    monkeypatch.setattr(common.os, 'geteuid', lambda: 0, raising=False)
     monkeypatch.setattr(common.os, 'chown', lambda path, uid, gid: owners.__setitem__(Path(path).name, (uid, gid)))
     write_json(tmp_path / 'deployment.json', {'mode': 'docker', 'project': 'lenbot'})
     write_json(tmp_path / 'current.json', {'version': '0.2.0', 'host_image': 'ghcr.io/lendevs/lenbot:0.2.0'})
@@ -512,7 +512,7 @@ def _snapshot(backups: Path, name: str, data: bytes, *, complete: bool = True) -
     (path / '0').mkdir(parents=True)
     (path / '0/lenbot.db').write_bytes(data)
     if complete:
-        (path / 'snapshot.json').write_text('[]\n', encoding='utf-8')
+        (path / 'snapshot.json').write_bytes(b'[]\n')
     return path
 
 

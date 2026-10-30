@@ -1,6 +1,7 @@
 """Stopped-instance copy permissions and configuration boundaries."""
 
 import json
+import os
 from pathlib import Path
 import stat
 import subprocess
@@ -57,8 +58,9 @@ def test_copy_preserves_files_permissions_and_other_configuration(tmp_path):
                 'panel': {**original['panel'], 'port': 8089}}
     assert copied == expected
     assert json.loads((source / 'lenbot.config.json').read_text()) == original
-    assert stat.S_IMODE((target / 'lenbot.config.json').stat().st_mode) == 0o600
-    assert stat.S_IMODE((target / 'state.db').stat().st_mode) == 0o640
+    if os.name == 'posix':
+        assert stat.S_IMODE((target / 'lenbot.config.json').stat().st_mode) == 0o600
+        assert stat.S_IMODE((target / 'state.db').stat().st_mode) == 0o640
     assert (target / 'state.db').read_bytes() == (source / 'state.db').read_bytes()
     assert (target / 'state.db-wal').read_bytes() == b'fixture wal bytes'
     assert (target / 'plugin-data' / 'message-link').readlink() == Path('../state.db')

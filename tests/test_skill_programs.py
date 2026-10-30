@@ -7,7 +7,7 @@ from len_bot.next.tools.skills import load_catalog
 
 
 def names(missing: frozenset[str], *, public_browser: bool = True) -> set[str]:
-    return {skill.name for skill in load_catalog(Path('/nonexistent-skills'), 'onebot:group:1',
+    return {skill.name for skill in load_catalog(Path(__file__).parent / 'nonexistent-skills', 'onebot:group:1',
                                                  public_browser=public_browser, missing=missing)}
 
 
