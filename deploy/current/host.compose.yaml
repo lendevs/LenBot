@@ -19,6 +19,12 @@ services:
       - type: volume
         source: python
         target: /opt/lenbot/.venv
+      # Background tasks start sibling task containers; their directories are subpaths of the instance volume.
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
 volumes:
   instance:
     external: true

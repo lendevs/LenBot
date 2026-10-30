@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { MessageCirclePlus, Square } from '@lucide/vue'
+import { ArrowUpRight, MessageCirclePlus, Square } from '@lucide/vue'
+import { activityLevel } from '../../api/participation'
 import { keys } from '../../api/query'
 import { trialSource, trialsApi, type TrialInfo } from '../../api/trials'
 import { developerDetails } from '../../composables/useDeveloperMode'
@@ -21,6 +22,7 @@ import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import RawRecord from '../groups/tasks/RawRecord.vue'
+import { groupsTarget } from '../groups/route'
 import StartForm from './StartForm.vue'
 import ChatPanel from './chat/ChatPanel.vue'
 
@@ -56,6 +58,14 @@ const showForm = computed(
   () => !active.value && (starting.value || !selected.value || Boolean(text('scene') || text('persona'))),
 )
 
+function participationLabel(trial: TrialInfo) {
+  const { only_direct, activity } = trial.attention
+  if (only_direct) return t('participation.short.direct')
+  const level = activityLevel(activity)
+  return t('participation.short.join', {
+    level: level ? t(`participation.levels.${level}`) : t('participation.custom', { value: activity }),
+  })
+}
 async function started(trial: TrialInfo) {
   starting.value = false
   await client.invalidateQueries({ queryKey: keys.trials() })
@@ -116,7 +126,18 @@ async function end() {
           <Badge v-if="selected.memory_plugin">
             {{ t('playground.nativeMemory', { name: selected.memory_plugin }) }}
           </Badge>
+          <Badge v-if="selected.scene.split(':')[1] === 'group'">{{ participationLabel(selected) }}</Badge>
           <Badge v-if="!selected.active">{{ t('playground.ended') }}</Badge>
+          <Button
+            v-if="selected.scene.split(':')[1] === 'group'"
+            class="ml-auto"
+            size="sm"
+            variant="ghost"
+            :icon-right="ArrowUpRight"
+            :to="groupsTarget(selected.scene, 'settings')"
+          >
+            {{ t('playground.participationSettings') }}
+          </Button>
         </div>
         <details v-if="selected.context.length" class="text-sm">
           <summary class="cursor-pointer text-muted hover:text-ink">

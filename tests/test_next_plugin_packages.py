@@ -24,6 +24,10 @@ def package(*, prefix='', changed_manifest=None, member=None):
                 data = changed_manifest.encode()
             archive.writestr(prefix + name, data)
         if member is not None:
+            if isinstance(member, str):
+                # ZipInfo turns backslashes into slashes on Windows; keep the name as given.
+                member, name = zipfile.ZipInfo(member), member
+                member.filename = name
             archive.writestr(member, b'outside')
     return buffer.getvalue()
 

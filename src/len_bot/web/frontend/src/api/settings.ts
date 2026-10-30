@@ -31,7 +31,26 @@ export interface Attention {
   explore_probability: number
   max_extensions: number
   quiet_hours: QuietHours | null
+  declarations: Declarations | null
+  disposition: Disposition | null
   [field: string]: unknown
+}
+
+/** `configuration/chat.py` AttentionDeclarations: persistent intents. */
+export interface Declarations {
+  mode: 'enforce' | 'record' | 'context'
+  max_minutes: number
+  max_intents: number
+  max_conditions: number
+  max_people: number
+  max_keywords: number
+}
+
+/** `configuration/chat.py` TurnDisposition: the wrap-up a turn leaves behind. */
+export interface Disposition {
+  mode: 'enforce' | 'record'
+  max_minutes: number
+  max_people: number
 }
 
 export interface Proactive {

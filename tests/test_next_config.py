@@ -1998,6 +1998,20 @@ def test_large_output_keeps_a_separate_soft_input_budget(tmp_path):
         load_config(root)
 
 
+
+def test_compaction_threshold_leaves_room_for_the_recap(tmp_path):
+    source = _config('personas/example')
+    source['models']['roles']['mind'].update(context_window_tokens=1048576, max_output_tokens=32768)
+    source['compaction'] = {'input_tokens': 7000, 'keep_recent_tokens': 1500}
+    root = tmp_path / 'tight'
+    _write_config(root, source)
+    with pytest.raises(ValueError, match='压缩阈值需要大于回想正文额度'):
+        load_config(root)
+    source['compaction']['input_tokens'] = 40000
+    (root / 'lenbot.config.json').write_text(json.dumps(source))
+    assert load_config(root).compaction.input_tokens == 40000
+
+
 @pytest.mark.parametrize('policy', ['unknown', True])
 def test_history_projection_policy_is_explicit_not_provider_inference(tmp_path, policy):
     source = _config('personas/example')

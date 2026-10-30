@@ -141,10 +141,15 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
             code, text = request(opener, controller + '/api/' + name, headers=headers, body=payload)
             assert code == 202, text
         def marker():
-            return docker('exec', current_host, '/opt/lenbot/.venv/bin/python', '-c',
+            return docker('exec', '--user', '10000:10000', current_host, '/opt/lenbot/.venv/bin/python', '-c',
                           'from pathlib import Path; print(Path("upgrade-fixture.txt").read_text())',
                           capture_output=True, text=True).stdout.strip()
-        docker('exec', current_host, '/opt/lenbot/.venv/bin/python', '-c',
+        def owned_by_lenbot():
+            # Maintenance containers replace the entry point; all but snapshot copies must run as the lenbot user.
+            foreign = docker('exec', current_host, 'find', '/srv/lenbot', '/opt/lenbot/.venv', '!', '-uid', '10000',
+                             capture_output=True, text=True).stdout.split()
+            assert not foreign, foreign[:20]
+        docker('exec', '--user', '10000:10000', current_host, '/opt/lenbot/.venv/bin/python', '-c',
                'from pathlib import Path; Path("upgrade-fixture.txt").write_text("before")')
         # Compose removes the prepared candidate; applying it fails before anything is stopped.
         action('prepare', {'tag': manifest['tag']})
@@ -161,7 +166,8 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         # Compose now recreates the host under the same name and removes the stopped previous host.
         subprocess.run([*compose, 'up', '-d'], check=True)
         check_panel(panel_port, 'smoke', 'smoke-password', lambda: True)
-        docker('exec', current_host, '/opt/lenbot/.venv/bin/python', '-c',
+        owned_by_lenbot()
+        docker('exec', '--user', '10000:10000', current_host, '/opt/lenbot/.venv/bin/python', '-c',
                'from pathlib import Path; Path("upgrade-fixture.txt").write_text("after")')
         action('restore', {})
         assert finish('restored')['current_version'] == '0.0.0'
@@ -169,6 +175,7 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         finish('complete')
         assert marker() == 'before'
         check_panel(panel_port, 'smoke', 'smoke-password', lambda: True)
+        owned_by_lenbot()
         # A release whose host fails during startup: the updater restores the snapshot and starts 0.0.0 by itself.
         action('prepare', {'tag': broken['tag']})
         finish('prepared')
@@ -178,6 +185,7 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
         assert 'exited' in rolled['error'] and rolled['rolled_back_from'] == broken_version, rolled
         assert marker() == 'before'
         check_panel(panel_port, 'smoke', 'smoke-password', lambda: True)
+        owned_by_lenbot()
         return {'baseline': '0.0.0', 'target': version, 'upgrade': 'ready',
                 'restore': 'program, volume selection and data restored',
                 'compose_up': 'removed candidate refused before stopping; recreated host and removed previous host restored',

@@ -128,7 +128,7 @@ uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 
 打包脚本在独立临时目录中构建前端面板，产出源码包、wheel、Linux／macOS／Windows 部署包及发行清单。
 
-持续集成工作流（[ci.yml](.github/workflows/ci.yml) 与 [check.yml](.github/workflows/check.yml)）在 Python 3.13（`pyproject.toml` 最低要求版本）与 Python 3.14 上运行编译、静态检查与测试，使用 `actionlint` 校验全部工作流文件，并验证前端构建与发行打包。单元测试在 Linux 上执行，Windows 与 macOS 由安装冒烟测试（[install-smoke.yml](.github/workflows/install-smoke.yml)）覆盖。
+持续集成工作流（[ci.yml](.github/workflows/ci.yml) 与 [check.yml](.github/workflows/check.yml)）在 Python 3.13（`pyproject.toml` 最低要求版本）与 Python 3.14 上运行编译、静态检查与测试，使用 `actionlint` 校验全部工作流文件，并验证前端构建与发行打包。单元测试在 Linux 与 Windows 上执行，macOS 与各平台部署包由安装冒烟测试（[install-smoke.yml](.github/workflows/install-smoke.yml)）覆盖。
 
 ## 提交规范
 

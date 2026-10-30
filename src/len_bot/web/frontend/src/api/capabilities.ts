@@ -55,8 +55,13 @@ export interface Network {
   public_dns_url: string
 }
 
+export type EgressMode = 'off' | 'allowlist' | 'public'
+/** The package-registry preset the task settings offer for allowlist mode. */
+export const PACKAGE_HOSTS = ['pypi.org', 'files.pythonhosted.org', 'registry.npmjs.org']
 export interface Egress {
-  enabled: boolean
+  mode: EgressMode
+  allowed_hosts: string[]
+  max_task_upload_bytes: number | null
   max_task_bytes: number | null
   max_scene_daily_bytes: number | null
   max_connections: number | null
@@ -70,6 +75,8 @@ export type StoragePool = { kind: 'ext4'; mount: string; image?: string } | { ki
 export type WorkerDefaults = Partial<
   Pick<
     Worker,
+    | 'sandbox'
+    | 'bwrap_binary'
     | 'docker_binary'
     | 'docker_host'
     | 'image'
@@ -78,17 +85,46 @@ export type WorkerDefaults = Partial<
     | 'delivery_root'
     | 'uid'
     | 'gid'
+    | 'task_volume'
   >
 >
 
+/** What delegation still needs: saved task settings, each group's switch, roles and tools, and the file exit. */
+export interface TaskReadiness {
+  worker: boolean
+  running: boolean
+  sandbox: 'docker' | 'bwrap' | null
+  delivery: 'simulated' | 'onebot'
+  scenes: {
+    scene: string
+    enabled: boolean
+    delegate_roles: string[]
+    persona: string | null
+    missing_tools: string[]
+  }[]
+}
+
+/** One step of `check_local_sandbox`, in order; ``detail`` is the original output. */
+export interface SandboxStep {
+  step: 'bwrap' | 'namespaces' | 'task_runtime' | 'sandbox' | 'pi' | 'docker' | 'image'
+  ok: boolean
+  detail: string
+}
+
 /** `configuration/tasks.py` WorkerSettings; number fields are null while their input is empty. */
 export interface Worker {
-  docker_binary: string
-  docker_host: string
-  image: string
+  sandbox?: 'docker' | 'bwrap'
+  /** Docker fields are null in the local sandbox. */
+  docker_binary: string | null
+  docker_host: string | null
+  image: string | null
+  bwrap_binary?: string | null
+  task_runtime?: string | null
   workspace_root: string
   runtime_root: string
   delivery_root: string
+  /** Docker deployments: the volume holding the task directories, mounted into task containers by subpath. */
+  task_volume?: { name: string; root: string } | null
   storage_pool: StoragePool | null
   skills_directory: string | null
   uid: number | null
@@ -111,10 +147,14 @@ export interface Worker {
   input_timeout_seconds: number | null
   max_file_bytes: number | null
   max_delivery_bytes: number | null
+  max_workspace_bytes: number | null
+  disk_reserve_bytes: number | null
+  disk_stop_bytes: number | null
+  workspace_retention_days: number | null
+  storage_check_seconds: number | null
   input_support: 'text' | 'text-image'
   model_reasoning: boolean | null
   egress: Egress
-  public_browser: boolean
   mcp: boolean
 }
 
@@ -197,6 +237,12 @@ export const capabilitiesApi = {
     http.put<SettingsSnapshot>('/api/host/settings/worker', { worker: value }),
   workerDefaults: (signal?: AbortSignal) =>
     http.get<WorkerDefaults>('/api/host/settings/worker/defaults', undefined, signal),
+  workerReadiness: (signal?: AbortSignal) =>
+    http.get<TaskReadiness>('/api/host/settings/worker/readiness', undefined, signal),
+  checkDocker: (draft: { docker_binary: string; docker_host: string; image: string; pull: boolean }) =>
+    http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/docker-check', draft),
+  checkSandbox: (draft: { bwrap_binary: string; task_runtime: string }) =>
+    http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/check', draft),
 
   skills: (scene: string, signal?: AbortSignal) =>
     http.get<SkillsState>('/api/host/skills', { scene }, signal),

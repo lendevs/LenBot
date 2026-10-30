@@ -1,17 +1,22 @@
-"""Send only registered task deliverables through an explicitly mapped OneBot path."""
+"""Send only registered task deliverables, carrying their content in the OneBot upload request."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
-import stat
 from collections.abc import Awaitable, Callable
-from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .messages import UploadResult
+from ..configuration.tasks import WorkerSettings
+from ..work.resources import ResourceFileRef, TaskResources
 from ..work.store import TaskStore
+
+# NapCat caps one WebSocket message at 50 MiB; base64 adds a third, the request JSON a little more.
+MAX_UPLOAD_BYTES = 36 * 1024 * 1024
 
 
 class SendFileArguments(BaseModel):
@@ -23,10 +28,25 @@ class SendFileArguments(BaseModel):
 
 SEND_FILE_TOOL = {"type": "function", "function": {
     "name": "send_file",
-    "description": "把当前场景任务已登记的交付文件上传到本场景 QQ 群或私聊。"
+    "description": "把当前场景任务已登记的交付文件上传到本场景 QQ 群或私聊，单个文件最大 36MiB。"
     "只接受 task_id 和 file_id；上传成功时返回平台 file_id，结果未知时用 task status 查看已保存的回执。",
     "parameters": SendFileArguments.model_json_schema(),
 }}
+
+
+def read_delivery(settings: WorkerSettings, records: TaskStore, scene: str, args: SendFileArguments) -> bytes:
+    """Read the registered delivery copy whole; its size must still match the registration."""
+    file = records.get_file(scene, args.task_id, args.file_id)
+    if file.size > MAX_UPLOAD_BYTES:
+        raise ValueError(f"交付文件 {file.name} 有 {file.size} 字节，超过单次上传上限 {MAX_UPLOAD_BYTES} 字节")
+    opened = TaskResources(settings, records).open(scene, ResourceFileRef(
+        scope='deliveries', task_id=args.task_id, file_id=args.file_id))
+    with opened.stream as source:
+        data = source.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) != file.size:
+        raise ValueError(f"Registered task file size changed: {file.path}; "
+                         f"registered={file.size}, actual={len(data)}")
+    return data
 
 
 async def execute_send_file(
@@ -34,29 +54,18 @@ async def execute_send_file(
     scene: str,
     args: SendFileArguments,
     *,
-    local_root: Path,
-    visible_root: str,
+    settings: WorkerSettings,
     upload: Callable[[str, str, str], Awaitable[UploadResult]],
     on_update: Callable[[], None],
 ) -> str:
     """Record the full receipt; return only actionable file and delivery facts to the model."""
     file = records.get_file(scene, args.task_id, args.file_id)
-    path = Path(file.path)
-    root = local_root.resolve(strict=True)
-    resolved = path.resolve(strict=True)
-    relative = resolved.relative_to(root)
-    source = path.lstat()
-    if not stat.S_ISREG(source.st_mode):
-        raise ValueError(f"Registered task file is not a regular file: {file.path}")
-    if source.st_size != file.size:
-        raise ValueError(f"Registered task file size changed: {file.path}; "
-                         f"registered={file.size}, actual={source.st_size}")
-    platform_path = str(PurePosixPath(visible_root).joinpath(*relative.parts))
+    data = await asyncio.to_thread(read_delivery, settings, records, scene, args)
 
-    event_id = records.start_file_upload(file, platform_path)
+    event_id = records.start_file_upload(file, hashlib.sha256(data).hexdigest())
     on_update()
     try:
-        result = await upload(scene, platform_path, file.name)
+        result = await upload(scene, "base64://" + base64.b64encode(data).decode("ascii"), file.name)
     except asyncio.CancelledError as error:
         records.finish_file_upload(scene, file.task_id, event_id, UploadResult(
             "unconfirmed", None, f"{type(error).__name__}: {error}", None,

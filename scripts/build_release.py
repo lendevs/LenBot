@@ -28,7 +28,7 @@ REQUIRED_SOURCE = (
     'scripts/collect_python_licenses.py',
     'scripts/collect_frontend_licenses.cjs', 'deploy/current/README.md',
     'deploy/current/lenbot.service', 'deploy/current/Dockerfile',
-    'deploy/current/host.compose.yaml', 'deploy/current/host.tasks.compose.yaml',
+    'deploy/current/host.compose.yaml',
     'deploy/current/first-setup.example.json',
     'deploy/current/services.compose.yaml',
     'deploy/current/start-asr.sh', 'deploy/current/asr.md',
@@ -37,6 +37,7 @@ REQUIRED_SOURCE = (
     'docker/next-worker/Dockerfile', 'docker/next-worker/lenbot-extension.ts',
     'docker/next-worker/lenbot-browser.cjs', 'docker/next-worker/Dockerfile.dockerignore',
     'docker/next-worker/lenbot-render.cjs', 'docker/next-worker/browser-files.cjs',
+    'docker/next-worker/task-python.txt', 'docker/next-worker/matplotlibrc',
 )
 FORBIDDEN_SOURCE = ('docs/', 'runtime/', '.runtime/', '.backups/', '.venv/', 'state/', 'personas/', 'file_assets/')
 
