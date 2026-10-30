@@ -40,3 +40,58 @@ def test_turning_tasks_off_stops_delegation_in_every_group(tmp_path: Path) -> No
     saved = load_host_config(tmp_path)
     assert saved.worker is None
     assert saved.scenes[SCENE].tasks.enabled is False and saved.scenes[SCENE].tasks.max_running == 2
+
+
+def test_local_sandbox_check_reports_a_missing_bwrap(tmp_path: Path) -> None:
+    write_instance(tmp_path, ['onebot:70001'])
+
+    async def check(client) -> None:
+        missing = tmp_path / 'no-bwrap'
+        response = await client.post('/api/host/settings/worker/check', json={
+            'bwrap_binary': str(missing), 'task_runtime': str(tmp_path / 'task-runtime')})
+        assert response.status_code == 200, response.text
+        assert response.json()['steps'] == [{'step': 'bwrap', 'ok': False, 'detail': f'{missing} 不存在或不可执行'}]
+        relative = await client.post('/api/host/settings/worker/check', json={
+            'bwrap_binary': 'bwrap', 'task_runtime': str(tmp_path)})
+        assert relative.status_code == 422
+    exercise(tmp_path, check)
+
+
+
+def test_task_space_reports_free_disk_without_a_storage_pool(tmp_path: Path) -> None:
+    import asyncio
+
+    import httpx
+
+    from len_bot.next.configuration.tasks import WorkerSettings
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.panel.app import create_app
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.runtime.network import NetworkRuntime
+    from len_bot.next.storage.store import Store
+
+    write_instance(tmp_path, ['onebot:70001'])
+    config = load_host_config(tmp_path)
+    worker = WorkerSettings.model_validate({
+        'docker_binary': Path('/usr/bin/docker'), 'docker_host': 'unix:///var/run/docker.sock',
+        'image': 'lenbot-worker:local', 'workspace_root': tmp_path / 'tasks/workspaces',
+        'runtime_root': tmp_path / 'tasks/runtime', 'delivery_root': tmp_path / 'tasks/deliveries',
+        'uid': 1000, 'gid': 1000, 'model_reasoning': True})
+
+    async def run() -> None:
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind:
+                runtime = NetworkRuntime(config, [(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona))],
+                                         store, mind)
+                # 只读接口在请求时读取 worker 配置，不需要启动任务服务。
+                runtime.config = config.model_copy(update={'worker': worker})
+                app = create_app(config, runtime, root=tmp_path)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+                    await client.post('/api/auth/login', json={'username': 'host-operator', 'password': 'synthetic-password'})
+                    response = await client.get('/api/host/task-storage/pool')
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body['configured'], body['usage']) == (False, None)
+        assert body['disk']['free_bytes'] > 0
+        assert (body['disk']['reserve_bytes'], body['disk']['stop_bytes']) == (5 * 1024 ** 3, 2 * 1024 ** 3)
+    asyncio.run(run())

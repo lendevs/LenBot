@@ -174,6 +174,24 @@ def storage_usage(settings: WorkerSettings, scene: str, task_id: int) -> list[di
     return result
 
 
+def task_tree_bytes(settings: WorkerSettings, scene: str, task_id: int) -> int:
+    """Disk space the task's workspace and runtime directories occupy; deliveries are counted separately."""
+    total = 0
+    for root in (settings.workspace_root / scene / 'tasks' / str(task_id), settings.runtime_root / scene / str(task_id)):
+        usage = directory_usage(root)
+        total += 0 if usage is None else usage.allocated_bytes
+    return total
+
+
+def disk_free(settings: WorkerSettings) -> int:
+    """Free bytes on the emptier of the workspace and runtime file systems, before either directory exists too."""
+    def existing(path: Path) -> Path:
+        while not path.exists():
+            path = path.parent
+        return path
+    return min(shutil.disk_usage(existing(root)).free for root in (settings.workspace_root, settings.runtime_root))
+
+
 def discard_task_trees(workspace: Path, runtime: Path, progress: dict) -> None:
     if not shutil.rmtree.avoids_symlink_attacks:
         raise RuntimeError('Current platform does not support descriptor-based task-tree removal')

@@ -161,6 +161,10 @@ class WorkerDefaults(PanelResponse):
     gid: int | None = None
 
 
+class SandboxCheck(PanelResponse):
+    steps: list[JsonObject]
+
+
 class LearningSettingsSnapshot(PanelResponse):
     scene: str
     running: JsonObject | None
@@ -503,9 +507,16 @@ class TaskState(PanelResponse):
     file_upload: bool
 
 
+class TaskDisk(PanelResponse):
+    free_bytes: int
+    reserve_bytes: int
+    stop_bytes: int
+
+
 class TaskPool(PanelResponse):
     configured: bool
     usage: JsonObject | None
+    disk: TaskDisk | None
 
 
 class TaskStoragePage(RecordPage):

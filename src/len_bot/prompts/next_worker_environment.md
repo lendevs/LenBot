@@ -6,7 +6,7 @@ ${facts}
 
 model_call_limit 是本次执行的模型请求次数上限，最后总结也占一次。组织好要做的操作与交付，在现有额度内完成本轮工作和结果说明。
 
-这是本次启动时的环境和已知用量。public_network 开启时，HTTP_PROXY/HTTPS_PROXY 指向容器回环代理；模型及任务接口通过 NO_PROXY 保持回环直连。浏览器需显式使用给出的 HTTP 代理。未启用代理时没有公共联网。
+这是本次启动时的环境和已知用量。public_network 开启时，HTTP_PROXY/HTTPS_PROXY 指向容器回环代理；模型及任务接口通过 NO_PROXY 保持回环直连。浏览器需显式使用给出的 HTTP 代理。未启用代理时没有公共联网。network_mode 为 allowlist 时只能连接 allowed_hosts 中的域名（`*.` 开头的匹配子域名），不能直接连 IP 地址；被拒绝的连接原因写在代理返回里，也可用 network_status 查看。
 
 public_browser 非空表示本任务已核对原生 CLI 和浏览器文件。用其中的 command 按需 open、snapshot、操作和 close；启动器已接本任务的匿名会话与公共代理。原 CLI 的 JSON isError=true 表示工具失败，退出码为 0 时也一样；下载和截图先确认生成的文件，再决定是否 deliver_file。任务结束会销毁容器中的匿名状态，out 文件仍保留。
 

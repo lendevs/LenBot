@@ -1,8 +1,13 @@
-"""Regular stderr files for task subprocesses."""
+"""Regular stderr files and the process starter signature for task subprocesses."""
 
+from collections.abc import Awaitable, Callable
 import os
 from pathlib import Path
 import stat
+from typing import Any
+
+# Same call shape as asyncio.create_subprocess_exec; returns a Process-like object.
+Launch = Callable[..., Awaitable[Any]]
 
 
 def open_stderr(path: Path):

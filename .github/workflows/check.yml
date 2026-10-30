@@ -24,7 +24,14 @@ jobs:
       - run: uv sync --locked --python ${{ matrix.python }}
       - run: uv run --no-sync python -m compileall -q src/len_bot scripts deploy/updater deploy/package
       - run: uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package tests
+      # The local task sandbox tests need bwrap; Ubuntu 24.04 keeps unprivileged user namespaces behind AppArmor.
+      - run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: uv run --no-sync pytest -q
+        env:
+          LENBOT_REQUIRE_BWRAP: '1'
 
   panel:
     name: panel (typecheck, lint, build)

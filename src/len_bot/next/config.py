@@ -456,11 +456,14 @@ def _resolve_worker_paths(root: Path, source: dict) -> None:
     worker = source.get("worker")
     if not isinstance(worker, dict):
         return
-    binary = worker.get("docker_binary")
-    if not isinstance(binary, str) or not Path(binary).is_absolute():
-        raise ValueError("worker.docker_binary must be an explicit absolute path string")
-    # Kept as written: a package manager's link such as /opt/homebrew/bin/docker survives upgrades.
-    worker["docker_binary"] = Path(binary)
+    for name in ("docker_binary", "bwrap_binary", "task_runtime"):
+        value = worker.get(name)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            raise ValueError(f"worker.{name} must be an explicit absolute path string")
+        # Kept as written: a package manager's link such as /opt/homebrew/bin/docker survives upgrades.
+        worker[name] = Path(value)
     pool = worker.get('storage_pool')
     if isinstance(pool, dict):
         pool['mount'] = _resolved_path(root, pool.get('mount'), within_root=False, field='worker.storage_pool.mount')

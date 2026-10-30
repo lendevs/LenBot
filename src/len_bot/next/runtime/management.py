@@ -71,7 +71,8 @@ MODEL = _fields(Binding, ('context_window_tokens', 'temperature', 'max_output_to
                          'timeout_seconds', 'reasoning_effort', 'quick_reasoning_effort'))
 ASR = _fields(ASRBinding, ('timeout_seconds', 'language'))
 WORKER = _fields(WorkerSettings, tuple(name for name in WorkerSettings.model_fields if name not in {
-    'docker_binary', 'docker_host', 'image', 'workspace_root', 'runtime_root', 'delivery_root',
+    'sandbox', 'docker_binary', 'docker_host', 'image', 'bwrap_binary', 'task_runtime',
+    'workspace_root', 'runtime_root', 'delivery_root',
     'storage_pool', 'skills_directory', 'uid', 'gid',
 }))
 SCENE_PLUGINS = _fields(SceneSettings, ('plugins',))
