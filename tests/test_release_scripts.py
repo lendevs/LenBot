@@ -39,9 +39,9 @@ def test_draft_notes_are_reported(tmp_path, monkeypatch, notes, problems):
     assert len(prepare.notes_problems('0.2.0')) == problems
 
 
-def test_current_notes_are_still_a_draft():
+def test_current_version_has_publishable_notes():
     prepare = load('prepare_release')
-    assert prepare.notes_problems(tomllib.loads((SCRIPTS.parent / 'pyproject.toml').read_text())['project']['version'])
+    assert prepare.notes_problems(tomllib.loads((SCRIPTS.parent / 'pyproject.toml').read_text())['project']['version']) == []
 
 
 def test_local_candidate_from_changed_sources_is_marked_dirty(tmp_path):
