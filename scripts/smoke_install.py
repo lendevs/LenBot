@@ -218,7 +218,7 @@ def smoke_docker(artifacts: Path, work: Path, image: str) -> dict:
     for volume in volumes.values():
         subprocess.run(['docker', 'volume', 'create', volume], check=True, stdout=subprocess.DEVNULL)
     try:
-        subprocess.run([*compose, 'run', '--rm', '--no-deps', '-T', '--entrypoint', '/opt/lenbot/.venv/bin/python',
+        subprocess.run([*compose, 'run', '--rm', '--no-deps', '-T', '--user', '10000:10000', '--entrypoint', '/opt/lenbot/.venv/bin/python',
                         'lenbot', '-m', 'len_bot.next.maintenance.initialize'],
                        input=json.dumps(setup, ensure_ascii=False), text=True, check=True)
         result['setup'] = 'initialized'
@@ -229,6 +229,11 @@ def smoke_docker(artifacts: Path, work: Path, image: str) -> dict:
             logs()
             raise
         result['panel'] = 'logged in'
+        # Initialization and the host both run as the image's lenbot user; a root-owned file blocks later writes.
+        foreign = subprocess.run([*compose, 'exec', '-T', 'lenbot', 'find', '/srv/lenbot', '/opt/lenbot/.venv', '!', '-uid', '10000'],
+                                 capture_output=True, text=True, check=True).stdout.split()
+        if foreign:
+            raise RuntimeError(f'files not owned by the lenbot user: {foreign[:20]}')
         subprocess.run([*compose, 'stop', '--timeout', str(STOP_SECONDS)], check=True)
         container = subprocess.run([*compose, 'ps', '-a', '-q'], capture_output=True, text=True, check=True).stdout.split()
         code = subprocess.run(['docker', 'inspect', '-f', '{{.State.ExitCode}}', *container],

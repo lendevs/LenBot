@@ -70,7 +70,7 @@ ssh -L 11307:127.0.0.1:11307 你的服务器
 
 ```sh
 docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
-  run --rm --no-deps -T --entrypoint /opt/lenbot/.venv/bin/python \
+  run --rm --no-deps -T --user 10000:10000 --entrypoint /opt/lenbot/.venv/bin/python \
   lenbot -m len_bot.next.maintenance.initialize < setup.json
 ```
 
