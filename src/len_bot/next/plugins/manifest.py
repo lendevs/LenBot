@@ -318,7 +318,8 @@ def scene_skill_catalog(config: HostConfig, scene: str) -> tuple[Skill, ...]:
     if config.worker is None:
         return ()
     skills = list(load_catalog(config.worker.skills_directory, scene,
-                               public_browser=config.worker.public_browser))
+                               public_browser=config.worker.public_browser,
+                               missing=config.worker.missing_programs()))
     if config.plugins is not None:
         found, _ = discover(config.plugins.paths)
         for name in config.scenes[scene].plugins:

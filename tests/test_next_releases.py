@@ -98,7 +98,7 @@ def test_managed_update_status_warns_that_rolling_back_loses_later_data(tmp_path
     control.state = updater.read_json(control.state_file)
     for name in ('20261001-080000-0000000a', '20261020-093000-0000000b'):
         (tmp_path / 'backups' / name).mkdir(parents=True)
-        (tmp_path / 'backups' / name / 'snapshot.json').write_text('[]\n', encoding='utf-8')
+        (tmp_path / 'backups' / name / 'snapshot.json').write_bytes(b'[]\n')
     http = updater.server(control)
     thread = threading.Thread(target=http.serve_forever)
     thread.start()

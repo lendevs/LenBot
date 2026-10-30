@@ -10,6 +10,8 @@ import stat
 from typing import Literal
 
 import yaml
+from ..platform.identity import scene_directory
+from ..storage.files import NONBLOCK, open_no_follow
 
 
 BUILTIN_DIRECTORY = Path(__file__).resolve().parents[2] / "builtin_skills"
@@ -45,7 +47,7 @@ class Skill:
 def load_skill(path: Path, source: Literal["builtin", "shared", "scene", "task", "plugin"],
                container_path: str) -> Skill:
     file = path / "SKILL.md"
-    descriptor = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_no_follow(file, os.O_RDONLY | NONBLOCK)
     with os.fdopen(descriptor, 'rb') as source_file:
         if not stat.S_ISREG(os.fstat(source_file.fileno()).st_mode):
             raise ValueError(f"{file}: SKILL.md must be a regular file, not a symbolic link")
@@ -87,9 +89,14 @@ def load_skill(path: Path, source: Literal["builtin", "shared", "scene", "task",
     return Skill(name, description, source, path, container_path, disabled)
 
 
+# Built-in skills that need a program the task environment may lack.
+BUILTIN_PROGRAMS = {"html-document": "lenbot-render", "media-processing": "ffmpeg",
+                    "public-browser": "lenbot-browser"}
+
+
 def _directory(root: Path, source: Literal["builtin", "shared", "scene", "task", "plugin"],
                container_root: str, *, missing_ok: bool,
-               public_browser: bool = False) -> tuple[Skill, ...]:
+               public_browser: bool = False, missing: frozenset[str] = frozenset()) -> tuple[Skill, ...]:
     if source == 'plugin':
         root = root.resolve()
     elif root.resolve(strict=False) != root:
@@ -102,7 +109,8 @@ def _directory(root: Path, source: Literal["builtin", "shared", "scene", "task",
         raise
     skills = []
     for child in children:
-        if source == "builtin" and child.name == "public-browser" and not public_browser:
+        if source == "builtin" and (child.name == "public-browser" and not public_browser
+                                    or BUILTIN_PROGRAMS.get(child.name) in missing):
             continue
         if child.is_symlink():
             raise ValueError(f"{child}: skill directory must not be a symbolic link")
@@ -120,14 +128,16 @@ def _unique(skills: tuple[Skill, ...]) -> None:
         names[skill.name] = skill.host_path
 
 
-def load_catalog(directory: Path | None, scene: str, *, public_browser: bool = False) -> tuple[Skill, ...]:
+def load_catalog(directory: Path | None, scene: str, *, public_browser: bool = False,
+                 missing: frozenset[str] = frozenset()) -> tuple[Skill, ...]:
+    """``missing`` names programs the task environment lacks; built-in skills that need them are left out."""
     if directory is None:
         return ()
     catalog = (
         *_directory(BUILTIN_DIRECTORY, "builtin", "/shared/skills/builtin",
-                    missing_ok=False, public_browser=public_browser),
+                    missing_ok=False, public_browser=public_browser, missing=missing),
         *_directory(directory / "shared", "shared", "/shared/skills/approved", missing_ok=True),
-        *_directory(directory / "scenes" / scene, "scene", "/group/skills", missing_ok=True),
+        *_directory(directory / "scenes" / scene_directory(scene), "scene", "/group/skills", missing_ok=True),
     )
     _unique(catalog)
     return catalog

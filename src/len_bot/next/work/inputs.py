@@ -1,5 +1,6 @@
 """Create task input snapshots from selected scene files."""
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -11,6 +12,25 @@ from ..configuration.types import STRICT
 from .materials import MaterialName, list_materials, material_directory, open_regular, require_directory
 from .resources import ResourceFileRef
 from ..configuration.tasks import WorkerSettings
+from ..platform.identity import scene_directory
+from ..storage.files import open_no_follow
+
+
+@dataclass(frozen=True)
+class DownloadedInput:
+    """A file fetched from outside the instance, such as a group file, with where it came from."""
+    name: str
+    data: bytes
+    source: dict
+
+
+def write_download(stage: Path, item: DownloadedInput) -> int:
+    descriptor = open_no_follow(stage / item.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, 'wb') as output:
+        output.write(item.data)
+        output.flush()
+        os.fsync(output.fileno())
+    return len(item.data)
 
 
 class ResourceInput(BaseModel):
@@ -26,7 +46,7 @@ class ResourceInput(BaseModel):
 
 
 def create_stage(settings: WorkerSettings, scene: str) -> Path:
-    parent = settings.runtime_root / scene
+    parent = settings.runtime_root / scene_directory(scene)
     require_directory(parent)
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     require_directory(parent)
@@ -44,7 +64,7 @@ def copy_inputs(stage: Path, settings: WorkerSettings, scene: str, names: tuple[
         with source:
             if size > settings.max_file_bytes:
                 raise ValueError(f'Task input exceeds worker.max_file_bytes: {name!r}; {size} > {settings.max_file_bytes}')
-            descriptor = os.open(stage / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            descriptor = open_no_follow(stage / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, 'wb') as output:
                 remaining = size
                 while remaining:
@@ -63,7 +83,7 @@ def copy_inputs(stage: Path, settings: WorkerSettings, scene: str, names: tuple[
 
 
 def publish_inputs(stage: Path, settings: WorkerSettings, scene: str, task_id: int, names: tuple[str, ...]) -> Path:
-    destination = settings.runtime_root / scene / str(task_id) / 'inputs'
+    destination = settings.runtime_root / scene_directory(scene) / str(task_id) / 'inputs'
     require_directory(destination)
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     destination.mkdir(mode=0o700)

@@ -108,6 +108,8 @@ class PanelSession:
         return None
 
     def snapshot(self) -> dict:
+        records = self.store.recent_records(self.config.scene)
+        verdicts = self.store.wake_verdicts(self.config.scene, [seq for seq, _ in records])
         return {
             "scene": self.config.scene, "timezone": self.config.timezone, "bot_id": self.config.bot_id,
             "persona": {"id": self.chat.persona.id, "name": self.chat.persona.name},
@@ -115,8 +117,9 @@ class PanelSession:
             "models": {"mind": self.config.models.roles.mind.model},
             "delivery": "simulated", "running": not self.closing and not self.task.done(), "error": self.error(),
             "messages": [{"seq": seq, "rendered": self.chat.context.render(message), "text": self.chat.context.render_text(message),
-                          **asdict(message), "images": self.store.message_media(self.config.scene, seq)}
-                         for seq, message in self.store.recent_records(self.config.scene)],
+                          **asdict(message), "images": self.store.message_media(self.config.scene, seq),
+                          "verdict": verdicts.get(seq)}
+                         for seq, message in records],
             "turns": self.store.recent_turns(self.config.scene),
         }
 

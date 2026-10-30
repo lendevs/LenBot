@@ -118,6 +118,10 @@ def _rewrite_identity(path: Path, *, id: str, name: str | None = None) -> None:
     metadata = yaml.safe_load(files["persona.yaml"])
     metadata["id"] = id
     if name is not None:
+        # A copy under a new name answers to the new name where the source answered to its own.
+        previous = metadata.get("name")
+        metadata["aliases"] = list(dict.fromkeys(
+            name if alias == previous else alias for alias in metadata.get("aliases") or []))
         metadata["name"] = name
     save_persona_files(path, {**files, "persona.yaml": yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False)})
 
@@ -288,7 +292,8 @@ class PersonaService:
             skills = ()
             if runtime.tasks is not None:
                 worker = runtime.config.worker
-                catalog = load_catalog(worker.skills_directory, scene, public_browser=worker.public_browser) + (
+                catalog = load_catalog(worker.skills_directory, scene, public_browser=worker.public_browser,
+                                       missing=worker.missing_programs()) + (
                     () if runtime.plugins is None else runtime.plugins.skills_for(scene))
                 skills = select_skills(catalog, persona.skills)
             external = (([] if runtime.plugins is None else

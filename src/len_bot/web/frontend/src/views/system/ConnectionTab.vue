@@ -86,7 +86,6 @@ const mode = computed({
           ping_interval_seconds: base.ping_interval_seconds,
           ping_timeout_seconds: base.ping_timeout_seconds,
           max_frame_bytes: base.max_frame_bytes,
-          upload_visible_root: base.upload_visible_root,
         }
       : {
           action_transport: 'websocket',
@@ -95,7 +94,6 @@ const mode = computed({
           ping_interval_seconds: 20,
           ping_timeout_seconds: 20,
           max_frame_bytes: 1048576,
-          upload_visible_root: null,
         }
     current.onebot =
       next === 'forward_ws'
@@ -323,15 +321,6 @@ watch(invalid, () => {
                 :steppers="false"
                 :unit="key === 'max_frame_bytes' ? 'B' : t('system.seconds')"
                 @update:model-value="(number: number | null) => (link![key] = number)"
-              />
-            </Field>
-            <Field :label="t('system.connection.fields.upload_visible_root')">
-              <Input
-                :model-value="link!.upload_visible_root ?? ''"
-                mono
-                @update:model-value="
-                  (text: string) => (link!.upload_visible_root = text.trim() ? text : null)
-                "
               />
             </Field>
           </div>

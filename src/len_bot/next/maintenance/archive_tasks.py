@@ -18,6 +18,7 @@ from ..storage.store import FORMAT_VERSION, encode
 from ..work.materials import open_regular, require_directory
 from ..work.store import TERMINAL, TaskFile, _task
 from ..runtime.logs import run_maintenance
+from ..platform.identity import scene_directory
 
 
 def _reject_constant(value: str) -> None:
@@ -122,7 +123,7 @@ def archive_tasks(config: HostConfig | LabConfig) -> dict:
     for raw in metadata['task_files']:
         file = TaskFile(**raw)
         path = Path(file.path)
-        expected = worker.delivery_root / file.scene / str(file.task_id)
+        expected = worker.delivery_root / scene_directory(file.scene) / str(file.task_id)
         if path.parent != expected:
             raise ValueError(f'Registered delivery is not in the current declared task directory: {path}; expected={expected}')
         source, size = open_regular(path)
@@ -144,9 +145,9 @@ def archive_tasks(config: HostConfig | LabConfig) -> dict:
             with tarfile.open(fileobj=output, mode='w', format=tarfile.PAX_FORMAT, dereference=False) as archive:
                 for task in metadata['tasks']:
                     scene, id = task['scene'], str(task['id'])
-                    roots = ((worker.workspace_root / scene / 'tasks' / id, f'workspaces/{scene}/tasks/{id}'),
-                             (worker.runtime_root / scene / id, f'runtime/{scene}/{id}'),
-                             (worker.delivery_root / scene / id, f'deliveries/{scene}/{id}'))
+                    roots = ((worker.workspace_root / scene_directory(scene) / 'tasks' / id, f'workspaces/{scene}/tasks/{id}'),
+                             (worker.runtime_root / scene_directory(scene) / id, f'runtime/{scene}/{id}'),
+                             (worker.delivery_root / scene_directory(scene) / id, f'deliveries/{scene}/{id}'))
                     for path, member in roots:
                         require_directory(path)
                         try:

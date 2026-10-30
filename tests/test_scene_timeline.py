@@ -26,7 +26,8 @@ def seed(root, count, *, same_time=False):
             rows.append((SCENE, str(number + 1), json.dumps(asdict(parsed)), json.dumps(raw),
                          START if same_time else START + number, json.dumps({
                              'woke': False, 'channel': None, 'reason': '合成判定', 'score': 0.2, 'threshold': 1.0,
-                             'effect_factor': 0.75})))
+                             'effect_factor': 0.75, 'parts': {'messages': 2, 'base': 0.4, 'question': 1.0, 'self_share': -0.5,
+                                                             'raw': 0.9, 'activity': 0.3}})))
         with store.db:
             store.db.executemany('INSERT INTO messages(scene,platform_id,body,raw,received_at,wake_verdict) VALUES(?,?,?,?,?,?)', rows)
         for number in range(3):
@@ -71,6 +72,8 @@ def test_timeline_cursor_orders_ties_without_gaps_and_validates_requests(tmp_pat
         assert pictured['images'][0]['url'] == 'https://example.invalid/image.png'
         assert pictured['reply']['platform_message_id'] == '1'
         assert (pictured['verdict']['reason'], pictured['verdict']['effect_factor']) == ('合成判定', 0.75)
+        assert pictured['verdict']['parts'] == {'messages': 2, 'base': 0.4, 'question': 1.0, 'self_share': -0.5,
+                                                'raw': 0.9, 'activity': 0.3}
         turn = found[-1]
         assert turn['steps'] == 1 and turn['tokens']['input'] == 100 and turn['expressions'] == 0
         detail = (await client.get(f'/api/host/scenes/{SCENE}/turns/{turn["turn_id"]}')).json()

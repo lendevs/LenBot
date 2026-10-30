@@ -24,6 +24,7 @@ from ...storage.store import Store
 from ...chat.usage import wake_usage
 from ...models.limits import BUDGET_CACHE_SECONDS, LimitReached, check_speech, clear_speech, speech_quota
 from ...models.client import ModelConnectionError, ModelHTTPError, ModelProtocolError
+from ...storage.files import NONBLOCK, open_no_follow
 
 
 class ChatSwitch(BaseModel):
@@ -38,7 +39,7 @@ class QuietChange(BaseModel):
 
 
 def stderr_tail(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_no_follow(path, os.O_RDONLY | NONBLOCK)
     with os.fdopen(descriptor, 'rb') as source:
         if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
             raise ValueError(f'Task stderr is not a regular file: {path}')
@@ -91,6 +92,25 @@ def register_host_operations(app, *, runtime, user):
     async def scene_control(scene: str, _: str = Depends(user)):
         scene_exists(scene)
         return runtime.runners[scene].control_state()
+
+    @app.get('/api/host/scenes/{scene}/focus', response_model=responses.SceneFocus, response_model_exclude_unset=True)
+    async def scene_focus(scene: str, _: str = Depends(user)):
+        scene_exists(scene)
+        return runtime.runners[scene].focus_state()
+
+    @app.delete('/api/host/scenes/{scene}/focus/intents/{intent}', response_model=responses.SceneFocus,
+                response_model_exclude_unset=True)
+    async def drop_intent(scene: str, intent: str, _: str = Depends(user)):
+        scene_exists(scene)
+        runner = runtime.runners[scene]
+        # Waits for a running turn so the state it saves cannot bring the intent back.
+        async with runner.execution:
+            try:
+                result = runner.drop_intent(intent)
+            except ValueError as error:
+                raise HTTPException(404, str(error)) from error
+            runtime.events.publish("host.state", scene=scene)
+            return result
 
     @app.post('/api/host/scenes/{scene}/control/quiet', response_model=responses.SceneControl, response_model_exclude_unset=True)
     async def scene_quiet(scene: str, change: QuietChange, _: str = Depends(user)):

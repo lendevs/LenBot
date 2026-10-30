@@ -10,7 +10,6 @@ export interface OneBotCommon {
   ping_interval_seconds: number | null
   ping_timeout_seconds: number | null
   max_frame_bytes: number | null
-  upload_visible_root: string | null
 }
 export type OneBot =
   | (OneBotCommon & { mode: 'forward_ws'; ws_url: string })

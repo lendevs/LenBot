@@ -17,7 +17,7 @@ from ..config import HostConfig
 from .egress_usage import EgressUsage
 from ..models.slots import ModelSlots
 from ..chat.recall import RecallArguments, recall_chat
-from .sandbox import DockerSandbox
+from .sandbox import TaskSandbox
 from ..tools.skills import Skill, load_task_skills, merge_task_skills
 from ..storage.store import Store
 from ..browser.files import BrowserOutput, record_browser_output
@@ -30,6 +30,7 @@ from .store import Task, TaskStore
 from .worker_model import Limits, WorkerModelProxy
 from .worker_session import WorkerSession, worker_session
 from ..prompt_files import read_prompt
+from ..platform.identity import scene_directory
 
 if TYPE_CHECKING:
     from ..tools.external_tools import ExternalTool
@@ -48,7 +49,7 @@ class TaskExecution:
     """Own one run's handles; use task-service callbacks for scheduling and completion."""
 
     def __init__(self, item: Task, config: HostConfig, store: Store, *,
-                 sandbox: DockerSandbox, files: TaskFiles, egress: EgressUsage,
+                 sandbox: TaskSandbox, files: TaskFiles, egress: EgressUsage,
                  slots: ModelSlots | None, memory_call: Callable[[str, dict], Awaitable[str]] | None,
                  audio: AudioService | None,
                  mcp: MCPHost | None, skills: dict[str, tuple[Skill, ...]],
@@ -77,6 +78,7 @@ class TaskExecution:
         self.active_limit = 0.0
         self.input_ready = False
         self.cancelled = False
+        self.stop_reason: str | None = None
         self._last_progress: str | None = None
         self._next_progress = 300.0
         self._live_text = TaskLiveText()
@@ -86,6 +88,11 @@ class TaskExecution:
     def start(self) -> asyncio.Task:
         self.job = asyncio.create_task(self._run())
         return self.job
+
+    def stop(self, reason: str) -> None:
+        """End this run as failed with the host's reason, such as a storage limit."""
+        self.stop_reason = reason
+        self.interrupt()
 
     def interrupt(self, *, explicit: bool = False) -> None:
         if explicit:
@@ -120,7 +127,7 @@ class TaskExecution:
         try:
             await finish_file_operation(worker_pool_usage, self.settings)
             if item.materials:
-                await finish_file_operation(require_inputs, self.settings.runtime_root / item.scene / str(item.id) / 'inputs',
+                await finish_file_operation(require_inputs, self.settings.runtime_root / scene_directory(item.scene) / str(item.id) / 'inputs',
                                             tuple(item.materials), self.settings.max_file_bytes)
             if self.settings.mcp:
                 if self.mcp is None:
@@ -133,7 +140,7 @@ class TaskExecution:
                 self._timer = timer
                 self._skills = self.catalog[item.scene]
                 if self.settings.skills_directory is not None and self.skill_permissions[item.scene] == "all":
-                    workspace = self.settings.workspace_root / item.scene / "tasks" / str(item.id)
+                    workspace = self.settings.workspace_root / scene_directory(item.scene) / "tasks" / str(item.id)
                     authored = await asyncio.to_thread(load_task_skills, workspace)
                     self._skills = merge_task_skills(self._skills, authored)
                 async with worker_session(
@@ -188,7 +195,8 @@ class TaskExecution:
                 status = "done"
         except asyncio.CancelledError:
             status = "cancelled" if self.cancelled else "failed"
-            error_text = "任务被明确取消" if self.cancelled else "宿主停止，中断活动任务"
+            error_text = ("任务被明确取消" if self.cancelled
+                          else self.stop_reason or "宿主停止，中断活动任务")
         except Exception as error:
             error_text = "".join(traceback.format_exception_only(error)).strip()
         finally:
@@ -230,6 +238,8 @@ class TaskExecution:
         environment = Template(read_prompt("next_worker_environment.md")).substitute(
             facts=json.dumps({
                 "public_network": session.egress is not None,
+                "network_mode": self.settings.egress.mode,
+                "allowed_hosts": self.settings.egress.allowed_hosts if self.settings.egress.mode == "allowlist" else None,
                 "proxy": None if session.egress is None else f"http://127.0.0.1:{session.egress.port}",
                 "task_traffic": self.egress.status(item.scene, item.id),
                 "scene_today_traffic": self.egress.status(item.scene),

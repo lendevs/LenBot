@@ -217,6 +217,8 @@ async def test_group_manager_sees_and_uses_scene_commands(tmp_path):
         listed = await ask(peer, '/help')
         assert all(f'/{name}' in listed for name in ('status', 'quiet', 'resume'))
         assert '/chat' not in listed and '/reset' not in listed
+        # The peer sees the frame before the send result returns and the speech row is written.
+        await until(lambda: speech(store) == 1)
         status = await ask(peer, '/status')
     # The /help before it counts as speech; /status itself does not.
     assert status.splitlines() == [f'场景：{SCENE}', '聊天：开启',

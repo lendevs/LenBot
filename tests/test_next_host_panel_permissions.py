@@ -190,8 +190,10 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     (shelf / 'notes' / '秋游.md').write_text('秋游周日八点南门集合。', encoding='utf-8')
                     trial = await client.post("/api/host/trials", json={
                         "scene": "onebot:group:80001", "context_messages": 20,
+                        "attention": {"only_direct": False, "activity": 0.5},
                     })
                     assert trial.status_code == 200
+                    assert trial.json()['attention'] == {'only_direct': False, 'activity': 0.5}
                     library = app.state.trials.records[trial.json()['id']].session.chat.toolset.reference
                     assert [item.path for item in await library.scene_files('onebot:group:80001')] == ['notes/秋游.md']
                     assert library.directory('onebot:group:80001') != shelf
@@ -212,6 +214,12 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                             "uid": 'onebot:70001', "nickname": "虚拟", "text": "合成消息",
                             "reply_to": "10001",
                         })).status_code == 422
+                        laugh = await client.post(f"{prefix}/messages", json={
+                            "uid": 'onebot:70001', "nickname": "虚拟", "text": "哈哈",
+                        })
+                        assert laugh.json()['status'] == 'stored'
+                        [stored] = (await client.get(f"{prefix}/state")).json()['messages']
+                        assert (stored['verdict']['woke'], stored['verdict']['reason']) == (False, '参与分未达门槛')
                         assert (await client.post("/api/auth/logout")).status_code == 200
                         for method, path in (("GET", prefix + "/state"), ("GET", prefix + "/turns/x/steps"),
                                              ("POST", prefix + "/stop"),
