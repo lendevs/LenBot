@@ -7,11 +7,14 @@ from pathlib import Path
 import os
 import re
 import stat
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 from ..platform.identity import scene_directory
 from ..storage.files import NONBLOCK, open_no_follow
+
+if TYPE_CHECKING:
+    from ..configuration.tasks import WorkerSettings
 
 
 BUILTIN_DIRECTORY = Path(__file__).resolve().parents[2] / "builtin_skills"
@@ -89,14 +92,22 @@ def load_skill(path: Path, source: Literal["builtin", "shared", "scene", "task",
     return Skill(name, description, source, path, container_path, disabled)
 
 
-# Built-in skills that need a program the task environment may lack.
-BUILTIN_PROGRAMS = {"html-document": "lenbot-render", "media-processing": "ffmpeg",
-                    "public-browser": "lenbot-browser"}
+# What a built-in skill needs from the task environment: programs, and whether tasks may reach the network.
+BUILTIN_NEEDS: dict[str, tuple[frozenset[str], bool]] = {
+    "html-document": (frozenset({"lenbot-render"}), False),
+    "media-processing": (frozenset({"ffmpeg"}), False),
+    "media-analysis": (frozenset({"ffmpeg"}), False),
+    "public-browser": (frozenset({"lenbot-browser"}), True),
+    "web-research": (frozenset(), True),
+    "spreadsheet": (frozenset({"python:openpyxl", "python:pandas"}), False),
+    "data-analysis": (frozenset({"python:pandas", "python:matplotlib"}), False),
+    "word-document": (frozenset({"python:python-docx"}), False),
+}
 
 
 def _directory(root: Path, source: Literal["builtin", "shared", "scene", "task", "plugin"],
                container_root: str, *, missing_ok: bool,
-               public_browser: bool = False, missing: frozenset[str] = frozenset()) -> tuple[Skill, ...]:
+               programs: frozenset[str] = frozenset(), network: bool = False) -> tuple[Skill, ...]:
     if source == 'plugin':
         root = root.resolve()
     elif root.resolve(strict=False) != root:
@@ -109,9 +120,10 @@ def _directory(root: Path, source: Literal["builtin", "shared", "scene", "task",
         raise
     skills = []
     for child in children:
-        if source == "builtin" and (child.name == "public-browser" and not public_browser
-                                    or BUILTIN_PROGRAMS.get(child.name) in missing):
-            continue
+        if source == "builtin":
+            needs, online = BUILTIN_NEEDS.get(child.name, (frozenset(), False))
+            if not needs <= programs or online and not network:
+                continue
         if child.is_symlink():
             raise ValueError(f"{child}: skill directory must not be a symbolic link")
         if child.is_dir():
@@ -128,19 +140,32 @@ def _unique(skills: tuple[Skill, ...]) -> None:
         names[skill.name] = skill.host_path
 
 
-def load_catalog(directory: Path | None, scene: str, *, public_browser: bool = False,
-                 missing: frozenset[str] = frozenset()) -> tuple[Skill, ...]:
-    """``missing`` names programs the task environment lacks; built-in skills that need them are left out."""
-    if directory is None:
-        return ()
+def load_catalog(directory: Path | None, scene: str, *, programs: frozenset[str],
+                 network: bool) -> tuple[Skill, ...]:
+    """Built-in skills the environment supports, plus the shared and scene skills under ``directory``.
+
+    ``programs`` is what the task environment offers; ``network`` whether tasks may reach the network.
+    """
     catalog = (
         *_directory(BUILTIN_DIRECTORY, "builtin", "/shared/skills/builtin",
-                    missing_ok=False, public_browser=public_browser, missing=missing),
-        *_directory(directory / "shared", "shared", "/shared/skills/approved", missing_ok=True),
-        *_directory(directory / "scenes" / scene_directory(scene), "scene", "/group/skills", missing_ok=True),
+                    missing_ok=False, programs=programs, network=network),
+        *(() if directory is None else (
+            *_directory(directory / "shared", "shared", "/shared/skills/approved", missing_ok=True),
+            *_directory(directory / "scenes" / scene_directory(scene), "scene", "/group/skills", missing_ok=True),
+        )),
     )
     _unique(catalog)
     return catalog
+
+
+def worker_catalog(worker: WorkerSettings, scene: str) -> tuple[Skill, ...]:
+    """The skills one scene's tasks get from ``worker``, before the role's permission.
+
+    Every place that builds a scene's skill list (startup, a scene attached while running, a role switch,
+    the panel) calls this, so they agree on the environment's programs and network mode.
+    """
+    return load_catalog(worker.skills_directory, scene, programs=worker.available_programs(),
+                        network=worker.egress.enabled)
 
 
 def select_skills(catalog: tuple[Skill, ...], allowed: Literal["all"] | list[str]) -> tuple[Skill, ...]:

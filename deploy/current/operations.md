@@ -77,7 +77,7 @@
 
 - `worker.max_calls` 按单次执行或单次续接统计；`max_tokens` 按整个任务跨续接累计的输入加输出 token 统计。HTTP `4xx` 拒绝且无 `usage` 的请求可在修复后继续续接；已被接受后中断或 `5xx` 导致用量未知时，若配置了任务 token 上限则暂停续接。
 - `max_daily_tasks` 仅统计新建任务数，续接原任务不重复扣减。
-- 单个交付文件默认上限 25 MiB，单任务累计登记交付默认上限 500 MiB（`worker.max_delivery_bytes`，续接继续累计）。任务镜像内置 `lenbot-render`，可将 HTML 渲染为 PDF 或 PNG 截图。
+- 单个交付文件默认上限 25 MiB，单任务累计登记交付默认上限 500 MiB（`worker.max_delivery_bytes`，续接继续累计）。Docker 任务容器内置 `lenbot-render`，可将 HTML 渲染为 PDF 或 PNG 截图。
 - 运行日志统一写入 `logs/lenbot.jsonl`（按天轮转，默认保留 14 天），自动遮盖配置与插件密钥；通过面板导出日志文件或诊断包时，5 位及以上的连续数字一并遮盖。
 
 ## 无 QQ 连接运行

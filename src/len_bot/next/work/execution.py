@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from ..media.audio import AudioService, TranscribeArguments
 from ..config import HostConfig
 from .egress_usage import EgressUsage
+from .environment import environment_prompt
 from ..models.slots import ModelSlots
 from ..chat.recall import RecallArguments, recall_chat
 from .sandbox import TaskSandbox
@@ -235,28 +236,28 @@ class TaskExecution:
     async def _consume(self) -> str:
         item, session = self.item, self._session
         # PiRpc's reader already drains stdout while prompt is being accepted.
-        environment = Template(read_prompt("next_worker_environment.md")).substitute(
-            facts=json.dumps({
-                "public_network": session.egress is not None,
-                "network_mode": self.settings.egress.mode,
-                "allowed_hosts": self.settings.egress.allowed_hosts if self.settings.egress.mode == "allowlist" else None,
-                "proxy": None if session.egress is None else f"http://127.0.0.1:{session.egress.port}",
-                "task_traffic": self.egress.status(item.scene, item.id),
-                "scene_today_traffic": self.egress.status(item.scene),
-                "active_timeout_seconds": self.active_limit,
-                "model_call_limit": self.settings.max_calls,
-                "data_tools": [tool["name"] for tool in self.data_tools[item.scene]] + list(self._mcp_tools),
-                "public_browser": None if session.browser_cli_version is None else {
-                    "command": "lenbot-browser", "cli_version": session.browser_cli_version,
-                    "session": "public", "profile": "in-memory",
-                    "output_directory": "/workspace/out/browser",
-                    "startup_check": "CLI and executable only; browser opens on demand",
-                },
-                "skills": [{"name": skill.name, "source": skill.source,
-                            "path": skill.container_path + "/SKILL.md"}
-                           for skill in self._skills if not skill.disable_model_invocation],
-            }, ensure_ascii=False, allow_nan=False),
-        )
+        programs = await asyncio.to_thread(self.settings.available_programs)
+        environment = environment_prompt({
+            "public_network": session.egress is not None,
+            "network_mode": self.settings.egress.mode,
+            "allowed_hosts": self.settings.egress.allowed_hosts if self.settings.egress.mode == "allowlist" else None,
+            "proxy": None if session.egress is None else f"http://127.0.0.1:{session.egress.port}",
+            "task_traffic": self.egress.status(item.scene, item.id),
+            "scene_today_traffic": self.egress.status(item.scene),
+            "active_timeout_seconds": self.active_limit,
+            "model_call_limit": self.settings.max_calls,
+            "data_tools": [tool["name"] for tool in self.data_tools[item.scene]] + list(self._mcp_tools),
+            "programs": sorted(programs),
+            "public_browser": None if session.browser_cli_version is None else {
+                "command": "lenbot-browser", "cli_version": session.browser_cli_version,
+                "session": "public", "profile": "in-memory",
+                "output_directory": "/workspace/out/browser",
+                "startup_check": "CLI and executable only; browser opens on demand",
+            },
+            "skills": [{"name": skill.name, "source": skill.source,
+                        "path": skill.container_path + "/SKILL.md"}
+                       for skill in self._skills if not skill.disable_model_invocation],
+        }, programs)
         request = item.input + "\n\n" + environment
         continuation = self.records.continuation(item)
         if continuation is not None:

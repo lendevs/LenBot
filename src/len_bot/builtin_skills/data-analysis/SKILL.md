@@ -1,13 +1,13 @@
 ---
 name: data-analysis
-description: Analyze supplied datasets and produce reproducible calculations, tables, and concise findings tied to the data.
+description: 分析提供的数据集，给出可复现的计算、表格和与数据对应的简明结论。
 ---
 
-# Data analysis
+# 数据分析
 
-Use this when the task asks for conclusions from data. Save reusable analysis output and the requested report under `/workspace/out`.
+任务要从数据得出结论时使用。可复用的分析输出和要求的报告保存在 `/workspace/out`。
 
-- Inspect the actual schema, units, date range, missingness, and duplicate keys. Record which rows and columns enter each calculation, and keep missing observations as missing.
-- Prefer Python standard-library `csv`, `json`, `sqlite3`, and `statistics` for modest data. Install `pandas` or plotting packages with `uv run --no-project --with ...` when their capabilities are needed.
-- Check calculations with independent totals, counts, or a small hand-worked sample. Separate measured values from assumptions and explain filters, denominators, and uncertainty in the report.
-- Include the requested table/chart and enough method detail to reproduce the result. Deliver final artifacts from `/workspace/out` through `deliver_file(path, name, note)`.
+- 查看实际的结构、单位、日期范围、缺失情况和重复键。记录每项计算用到的行和列，缺失的观测保持为缺失。
+- 数据表用 `pandas`，图表用 `matplotlib`（中文使用系统中文字体），小数据也可以用标准库 `csv`、`json`、`sqlite3` 和 `statistics`。这些库随执行环境提供，直接 `import`。
+- 用独立的合计、计数或少量手算样本核对计算。区分测得的数值与假设，在报告里说明筛选条件、分母和不确定性。
+- 报告包含要求的表格和图表，以及足够复现结果的方法说明。用 `deliver_file(path, name, note)` 登记 `/workspace/out` 里的最终文件。

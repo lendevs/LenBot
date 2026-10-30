@@ -1,13 +1,13 @@
 ---
 name: web-research
-description: Research public web sources reachable from a task, distinguishing retrieved evidence from unavailable or dynamic pages.
+description: 从任务能访问的公开网页取得资料，区分已取得的证据与无法读取的动态页面，整理带来源的结论。
 ---
 
-# Web research
+# 网络调研
 
-Use this for claims that need current public sources. The image has `curl` and `jq`; public HTTP(S) access goes through this task's configured proxy and limits.
+用于需要当前公开来源的论断。出网为 `public` 时可访问公网，`allowlist` 时只能访问 `allowed_hosts` 里的域名；请求经任务代理，受任务的用量上限约束。`curl` 和 `jq` 随执行环境提供。
 
-- Begin with the user's URLs or identifiable primary sources. Fetch the actual page or document with `curl`, check the final URL, status, and retrieval date, and follow relevant source links deliberately. Base each claim on page content you fetched.
-- Compare publication date with event date for time-sensitive claims. Keep a compact source list: URL, publisher, date, and which claim the page supports. Prefer primary records for precise figures, rules, and technical details.
-- If a page requires JavaScript, use the public-browser skill when this task has it; otherwise report the limitation or use another retrieved source that answers the same question.
-- Write the requested answer or report under `/workspace/out` with links beside supported claims. To deliver a file, use `deliver_file(path, name, note)`.
+- 从用户给的网址或可辨认的原始来源开始。用 `curl -sSL` 取实际页面或文件，核对最终网址、状态码和取得日期，有针对性地跟进相关来源链接。每条结论基于取得的页面内容。
+- 时效性论断对比发布日期与事件日期。保留简明的来源清单：网址、发布者、日期和该页支持的论断。精确数字、规则和技术细节优先用原始记录。
+- 页面依赖 JavaScript 时，任务有 public-browser 技能就用它；没有时换一个取得的、能回答同一问题的来源，并在结果里写明该页未读取。
+- 把要求的答案或报告写到 `/workspace/out`，论断旁附链接。用 `deliver_file(path, name, note)` 登记文件。

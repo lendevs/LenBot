@@ -26,12 +26,25 @@
 
 ## 任务环境
 
-任务里的 `python3` 预装 pandas、openpyxl、matplotlib、python-docx、pypdf 和 Pillow，不联网也能处理 CSV、XLSX、图表、DOCX 和 PDF；matplotlib 已配置中文字体。
+任务里的 `python3` 预装 pandas、openpyxl、matplotlib、python-docx、pypdf 和 Pillow，不联网也能处理 CSV、XLSX、图表、DOCX 和 PDF；matplotlib 已配置中文字体。Node 的 `fetch()` 在开启联网时同样经任务代理访问。
 
 | 运行方式 | pandoc、ffmpeg、poppler 与中文字体 | 网页渲染 `lenbot-render` 与浏览器 |
 |---|---|---|
 | Docker 任务容器 | 镜像内置 | 镜像内置 |
 | Linux 本机沙箱 | 使用系统已安装的版本 | 不提供，需要时改用 Docker 任务容器 |
+
+每个任务启动时，环境说明列出这个环境实际有的程序和库（`programs`），内置技能按同一份清单加载：
+
+| 内置技能 | 加载条件 |
+|---|---|
+| `pdf`、`presentation`、`skill-writing`、`group-summary` | 始终 |
+| `html-document` | 有 `lenbot-render` |
+| `media-processing`、`media-analysis` | 有 `ffmpeg` |
+| `spreadsheet`、`data-analysis`、`word-document` | 有对应的 Python 库 |
+| `web-research` | 联网方式不是**不联网** |
+| `public-browser` | 联网方式不是**不联网**，且有 `lenbot-browser` |
+
+**能力 → 后台任务**里的**自定义技能目录**存放自定义技能：群共享技能放在 `shared/` 下，本群技能放在 `scenes/<群目录>/` 下，保存后与内置技能一起提供给任务。
 
 ## 联网方式
 
@@ -58,7 +71,7 @@
 
 - **资料输入**：在**任务空间与文件**视图中可上传**本群共享资料**，也可从历史任务的工作区或交付副本中挑选文件（单个新建任务最多挂载 16 份只读输入快照）。
 - **实时预览、提问与续接**：任务执行期间可在面板查看实时输出流与每一步操作事件。任务需要发起人确认方案或补充信息时会进入**等待回答**状态（等待期间不占用并发运行槽位）；任务完成后，只要工作区尚未释放，群友或运营者均可追加要求按原会话和原目录**继续任务**。
-- **网页渲染**：任务镜像内置无头渲染工具 `lenbot-render`，可将生成的 HTML 页面直接导出为排版好的 PDF 或高清长截图。
+- **网页渲染**：Docker 任务容器内置无头渲染工具 `lenbot-render`，可将生成的 HTML 页面直接导出为排版好的 PDF 或高清长截图。
 - **任务编写的技能**：任务在执行过程中编写的可复用技能可在任务详情的**更多 → 任务编写的技能**中审阅，并一键采纳移入**本群**或**共享**技能库（之后可在**能力 → 技能**中管理）。
 - **分级清理空间**：在**任务空间与文件**中可按时间筛选任务并计算磁盘用量。**清理临时文件**仅移除控制管道、运行日志和浏览器临时目录，保留工作区与会话供后续续接；**释放环境**彻底删除工作区和运行目录（不可再续接），已登记的交付副本、本群共享资料和数据库任务记录仍然保留。
 

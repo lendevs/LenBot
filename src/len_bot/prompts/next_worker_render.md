@@ -1,0 +1,1 @@
+本地 HTML 渲染使用执行环境里的 `lenbot-render input.html --pdf out/document.pdf --screenshot out/page.png --print-preview out/print`，可用 `--width 390 --height 844` 看手机布局，`--help` 查看用法。一次输出实际 PDF 页数、打印页面预览和屏幕截图；HTML 使用内联或本地资源，浏览器离线运行。屏幕截图与打印是两种布局，按返回的实际文件查看需要的效果；渲染文件用 deliver_file 登记为交付副本。

@@ -2179,7 +2179,7 @@ export default {
       editRole: 'Edit the persona’s skills',
       readFailed: 'Could not read skills',
       empty: 'This group has no skills yet',
-      needsWorker: 'Skills run in tasks; enable tasks and set a skills folder first',
+      needsWorker: 'Skills run in tasks; enable tasks first',
       setUpWorker: 'Set up tasks',
       sources: {
         scene: 'This group',
@@ -2310,8 +2310,7 @@ export default {
       workspace: 'Task workspace folder',
       runtimeRoot: 'Task runtime folder',
       delivery: 'Task delivery folder',
-      skills: 'Skills folder',
-      skillsOff: 'Empty turns skills off',
+      skills: 'Custom skills folder',
       memory: 'Memory limit',
       tmpfs: 'Temporary file space',
       size: 'A number followed by k, m or g, such as 2g',
