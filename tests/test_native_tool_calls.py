@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from len_bot.next.chat.host_manage import HOST_MANAGE_TOOL
 from len_bot.next.chat.scene_control import SCENE_CONTROL_TOOL
@@ -41,11 +40,11 @@ def _instance(root: Path):
     return load_config(root), load_persona(role)
 
 
-def _receive(store: Store, user: int, message_id: int, text: str = '合成请求') -> None:
+def _receive(store: Store, user: int, message_id: int, text: str = '合成请求', at: int = 1790000000) -> None:
     raw = {'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
-           'user_id': user, 'message_id': message_id, 'time': 1790000000,
+           'user_id': user, 'message_id': message_id, 'time': at,
            'sender': {'nickname': '合成成员', 'role': 'member'}, 'message': [{'type': 'text', 'data': {'text': text}}]}
-    store.enqueue(parse_message(raw, own_message_ids=set()), raw, 1790000000)
+    store.enqueue(parse_message(raw, own_message_ids=set()), raw, at)
 
 
 async def _unused_wait(_: float) -> str:
@@ -207,62 +206,198 @@ def test_model_facing_schemas_ask_for_a_message_not_an_account(tool):
     assert 'requester' not in properties and 'source_message_id' in properties
 
 
-@pytest.mark.asyncio
-async def test_schedule_requester_is_the_chosen_message_sender(tmp_path):
+def _tool_reply(*calls: tuple[str, dict]) -> tuple[int, str, bytes]:
+    message = {'role': 'assistant', 'content': None, 'tool_calls': [
+        {'id': f'fixture-{index}-{name}', 'type': 'function',
+         'function': {'name': name, 'arguments': json.dumps(arguments, ensure_ascii=False)}}
+        for index, (name, arguments) in enumerate(calls)]}
+    return 200, 'application/json', json.dumps({'choices': [{'message': message, 'finish_reason': 'tool_calls'}],
+                                                 'usage': {'prompt_tokens': 100, 'completion_tokens': 7}}).encode()
+
+
+def _final_reply() -> tuple[int, str, bytes]:
+    return 200, 'application/json', json.dumps({
+        'choices': [{'message': {'role': 'assistant', 'content': '合成结束'}, 'finish_reason': 'stop'}],
+        'usage': {'prompt_tokens': 100, 'completion_tokens': 4}}).encode()
+
+
+class _Management:
+    """Stands in for the host management service and records what was actually executed."""
+
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, str]] = []
+
+    async def execute(self, scene, arguments):
+        self.executed.append((arguments.action, arguments.requester))
+        return {'action': arguments.action}
+
+
+def _tool_results(requests: list) -> list[str]:
+    """Tool outputs the model saw in its last request, in call order."""
+    return [message['content'] for message in requests[-1][2]['messages'] if message.get('role') == 'tool']
+
+
+async def _drive(tmp_path, replies, turns, *, append=None):
+    """Run scripted turns through ``Chat.run_turn``; ``turns`` are (prepare, run_arguments) pairs."""
+    from test_next_native_models import peer_server
+
     config, persona = _instance(tmp_path)
-    with Store(config.database) as store:
+    config.compaction.input_tokens = 20000
+    config.models.roles.mind.context_window_tokens = 64000
+    requests: list = []
+    management = _Management()
+    server = await peer_server(list(replies), requests)
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind:
+                chat = Chat(config, persona, store, mind)
+                chat.toolset.host_management = management
+                chat.set_external_tools([])
+                _discover(chat, 'host_manage', 'schedule', 'scene_control')
+                for prepare, arguments in turns:
+                    batch = prepare(store)
+                    async def append_new(called, turn_id, batch=batch):
+                        return await append(store, turn_id) if append is not None else False
+                    result = await chat.run_turn(
+                        batch=None if batch is None else (batch[0], ['合成批次']), append_new=append_new,
+                        wait_for_messages=_unused_wait, attention_state={}, **arguments)
+                    assert result['status'] == 'settled' and result['error'] is None, result['error']
+    return management, requests
+
+
+@pytest.mark.asyncio
+async def test_a_request_may_cite_a_message_from_the_running_turns_batch(tmp_path):
+    create = {'when': '2099-01-01T00:00:00+00:00', 'note': '合成提醒', 'for': 'self'}
+    replies = [_tool_reply(
+        ('host_manage', {'action': 'status', 'source_message_id': '50001'}),
+        ('schedule', {**create, 'source_message_id': '50001'}),
+        ('schedule', {**create, 'source_message_id': '50005'}),
+        ('schedule', {**create, 'source_message_id': '59999'}),
+        ('schedule', {**create, 'source_message_id': None}),
+        ('schedule', {**create, 'requester': 'onebot:70001', 'source_message_id': '50001'})), _final_reply()]
+
+    def prepare(store):
         _receive(store, 70001, 50001)
         _receive(store, 70005, 50005)
-        async with ChatModel(config.model_settings('mind')) as mind:
-            chat = Chat(config, persona, store, mind)
-            _discover(chat, 'schedule', 'schedule_list')
-            create = {'when': '2099-01-01T00:00:00+00:00', 'note': '合成提醒', 'for': 'self'}
-            result, _, _ = await chat.toolset.execute(
-                'turn', ToolCall('c1', 'schedule', {**create, 'source_message_id': '50001'}), _unused_wait)
-            assert '账号 onebot:70001' in result
+        _receive(store, 70002, 50006)
+        return store.pending_messages(SCENE)[-1]
 
-            with pytest.raises(ValueError, match='requester'):
-                await chat.toolset.execute(
-                    'turn', ToolCall('c2', 'schedule', {**create, 'requester': 'onebot:70001'}), _unused_wait)
-            with pytest.raises(ValueError, match='source_message_id'):
-                await chat.toolset.execute(
-                    'turn', ToolCall('c3', 'schedule', {**create, 'source_message_id': '59999'}), _unused_wait)
-            with pytest.raises(PermissionError, match='黑名单'):
-                await chat.toolset.execute(
-                    'turn', ToolCall('c4', 'schedule', {**create, 'source_message_id': '50005'}), _unused_wait)
+    management, requests = await _drive(tmp_path, replies, [(prepare, {'direct': True})])
+    assert management.executed == [('status', 'onebot:70001')]
+    results = _tool_results(requests)
+    assert '账号 onebot:70001' in results[1]
+    assert '黑名单' in results[2]
+    assert '本轮收到' in results[3]
+    assert 'Bot 自主' in results[4]
+    assert 'requester' in results[5]
 
-            autonomous, _, _ = await chat.toolset.execute(
-                'turn', ToolCall('c5', 'schedule', {**create, 'source_message_id': None}), _unused_wait)
-            assert 'Bot 自主' in autonomous
+
+@pytest.mark.asyncio
+async def test_an_earlier_turns_owner_message_cannot_authorise_a_later_turn(tmp_path):
+    """A long-past owner message stays in history; a member's new message cannot borrow it."""
+    replies = [_final_reply(), _tool_reply(
+        ('host_manage', {'action': 'restart', 'source_message_id': '50001'}),
+        ('schedule', {'when': '2099-01-01T00:00:00+00:00', 'note': '合成提醒', 'for': 'self',
+                      'source_message_id': '50001'}),
+        ('host_manage', {'action': 'status', 'source_message_id': '50002'})), _final_reply()]
+
+    def first(store):
+        _receive(store, 70001, 50001, '三年前主人说过的话', at=1690000000)
+        return store.pending_messages(SCENE)[-1]
+
+    def second(store):
+        _receive(store, 70002, 50002, '成员现在说的话')
+        return store.pending_messages(SCENE)[-1]
+
+    management, requests = await _drive(tmp_path, replies, [(first, {'direct': True}), (second, {'direct': True})])
+    assert management.executed == [('status', 'onebot:70002')]
+    results = _tool_results(requests)
+    assert all('本轮收到' in result for result in results[:2])
+    assert '本轮收到' not in results[2]
+
+
+@pytest.mark.asyncio
+async def test_a_stored_message_counts_once_the_session_takes_it_in_during_the_turn(tmp_path):
+    replies = [_tool_reply(('host_manage', {'action': 'status', 'source_message_id': '50001'})),
+               _tool_reply(('host_manage', {'action': 'status', 'source_message_id': '50001'})), _final_reply()]
+    joined = []
+
+    def prepare(store):
+        _receive(store, 70002, 50002, '成员先说话')
+        batch = store.pending_messages(SCENE)[-1]
+        _receive(store, 70001, 50001, '主人随后说话，还在队列里')
+        joined.append(store.pending_messages(SCENE)[-1][0])
+        return batch
+
+    async def append(store, turn_id):
+        if len(joined) == 1:
+            joined.append(None)
+            store.append_batch(SCENE, joined[0], ['[这一轮进行中收到] 主人随后说话'], turn_id=turn_id)
+            return True
+        return False
+
+    management, requests = await _drive(tmp_path, replies, [(prepare, {'direct': True})], append=append)
+    assert management.executed == [('status', 'onebot:70001')]
+    results = _tool_results(requests)
+    assert '本轮收到' in results[0] and '本轮收到' not in results[1]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_without_new_messages_only_accepts_an_autonomous_schedule(tmp_path):
+    replies = [_tool_reply(
+        ('host_manage', {'action': 'restart', 'source_message_id': '50001'}),
+        ('schedule', {'when': '2099-01-01T00:00:00+00:00', 'note': '合成提醒', 'for': 'self',
+                      'source_message_id': '50001'}),
+        ('schedule', {'when': '2099-01-01T00:00:00+00:00', 'note': '合成提醒', 'for': 'self',
+                      'source_message_id': None})), _final_reply()]
+
+    def earlier(store):
+        _receive(store, 70001, 50001, '很早之前主人说的话')
+        return store.pending_messages(SCENE)[-1]
+
+    # The earlier turn consumed the owner's message; the later one has no new batch at all.
+    management, requests = await _drive(tmp_path, [_final_reply(), *replies],
+                                        [(earlier, {'direct': True}), (lambda store: None, {})])
+    assert management.executed == []
+    results = _tool_results(requests)
+    assert '本轮收到' in results[0] and '本轮收到' in results[1] and 'Bot 自主' in results[2]
 
 
 @pytest.mark.asyncio
 async def test_control_and_management_receive_the_host_read_requester(tmp_path):
-    config, persona = _instance(tmp_path)
-    with Store(config.database) as store:
+    seen = []
+    replies = [_tool_reply(
+        ('scene_control', {'action': 'quiet', 'seconds': 60, 'source_message_id': '50002'}),
+        ('host_manage', {'action': 'status', 'source_message_id': '50002'}),
+        ('host_manage', {'action': 'status'}),
+        ('scene_control', {'action': 'resume'})), _final_reply()]
+
+    def prepare(store):
         _receive(store, 70002, 50002)
-        async with ChatModel(config.model_settings('mind')) as mind:
-            chat = Chat(config, persona, store, mind)
-            seen = []
+        return store.pending_messages(SCENE)[-1]
 
-            class Management:
-                async def execute(self, scene, arguments):
-                    seen.append(('host_manage', arguments.requester))
-                    return {'action': arguments.action}
-
-            chat.toolset.scene_control = lambda arguments: seen.append(('scene_control', arguments.requester)) or {}
-            chat.toolset.host_management = Management()
-            chat.set_external_tools([])
-            _discover(chat, 'scene_control', 'host_manage')
-
-            await chat.toolset.execute('turn', ToolCall(
-                'c1', 'scene_control', {'action': 'quiet', 'seconds': 60, 'source_message_id': '50002'}), _unused_wait)
-            await chat.toolset.execute('turn', ToolCall(
-                'c2', 'host_manage', {'action': 'status', 'source_message_id': '50002'}), _unused_wait)
-            assert seen == [('scene_control', 'onebot:70002'), ('host_manage', 'onebot:70002')]
-
-            # Without a chosen message there is no requester; the error names the missing field.
-            with pytest.raises(ValueError, match='requester'):
-                await chat.toolset.execute('turn', ToolCall('c3', 'host_manage', {'action': 'status'}), _unused_wait)
-            with pytest.raises(ValidationError, match='source_message_id'):
-                await chat.toolset.execute('turn', ToolCall('c4', 'scene_control', {'action': 'resume'}), _unused_wait)
+    from test_next_native_models import peer_server
+    config, persona = _instance(tmp_path)
+    config.compaction.input_tokens = 20000
+    config.models.roles.mind.context_window_tokens = 64000
+    requests = []
+    server = await peer_server(replies, requests)
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind:
+                chat = Chat(config, persona, store, mind)
+                chat.toolset.scene_control = lambda arguments: seen.append(('scene_control', arguments.requester)) or {}
+                chat.toolset.host_management = management = _Management()
+                chat.set_external_tools([])
+                _discover(chat, 'scene_control', 'host_manage')
+                batch = prepare(store)
+                result = await chat.run_turn(batch=(batch[0], ['合成批次']), append_new=lambda *args: _no_new_messages(),
+                                             wait_for_messages=_unused_wait, attention_state={}, direct=True)
+                assert result['status'] == 'settled' and result['error'] is None, result['error']
+    assert seen == [('scene_control', 'onebot:70002')]
+    assert management.executed == [('status', 'onebot:70002')]
+    # Without a chosen message there is no requester; the error names the missing field.
+    results = _tool_results(requests)
+    assert 'requester' in results[2] and 'source_message_id' in results[3]
