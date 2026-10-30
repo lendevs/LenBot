@@ -257,7 +257,7 @@ async def test_external_casefold_equivalent_edit_requires_reindex_before_using_o
     path = 'events/strasse.md'
     await memory.write(SCENE, path, '# Straße\n\n## 地址\nStraße 在东门。\n', '合成样本')
     target = memory.root / 'scenes' / scene_directory(SCENE) / path
-    target.write_text('# STRASSE\n\n## 地址\nSTRASSE 在东门。\n')
+    target.write_text('# STRASSE\n\n## 地址\nSTRASSE 在东门。\n', newline='\n')
     with pytest.raises(ValueError, match='Markdown/index mismatch'):
         await memory.search(SCENE, 'STRASSE')
     assert await memory.reindex_text() == 1
