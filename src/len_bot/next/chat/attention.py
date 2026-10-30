@@ -1058,7 +1058,7 @@ class SceneRunner:
         state = self.consumed_state()
         parts, note = None, None
         expressions = []
-        prefix = ("[宿主安静时段固定表达；模拟，未发送到平台]\n" if self.chat.expression.send_message is None
+        prefix = ("[宿主安静时段固定表达；模拟表达]\n" if self.chat.expression.send_message is None
                   else "[宿主安静时段固定表达]\n")
         if state.quiet_notice_until != until:
             expression = self.chat.expression.simulated_message([
