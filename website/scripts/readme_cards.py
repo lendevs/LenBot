@@ -915,7 +915,7 @@ ZH = {
     },
     'hero': {
         'label': 'LenBot：自主决策的群聊 Agent', 'tagline': ['自主决策的群聊 Agent'], 'tagline_size': 36,
-        'words': ['何时开口', '回复谁', '先查什么', '何时跟进'], 'decides': '由同一个聊天模型决定',
+        'words': ['何时开口', '回复谁', '先查什么', '何时跟进'], 'decides': '由 ReAct Loop 决定',
         'bubbles_x': 860, 'asker': '小满', 'mention': '@小然', 'q': '@小然 周六带什么零食好', 'tool': '查询聊天记录',
         'query': '零食 辣', 'a': '我带薯片和果干吧', 'summary': '3 步 · 2 条发言',
     },
@@ -993,7 +993,7 @@ EN = {
     'hero': {
         'label': 'LenBot: a group chat agent that decides for itself', 'tagline': ['A group chat agent', 'that decides for itself'],
         'tagline_size': 34, 'words': ['when to speak', 'whom to answer', 'what to check', 'when to follow up'],
-        'decides': 'one chat model decides', 'bubbles_x': 900, 'asker': 'Mia', 'mention': '@Xiaoran',
+        'decides': 'a ReAct loop decides', 'bubbles_x': 900, 'asker': 'Mia', 'mention': '@Xiaoran',
         'q': '@Xiaoran snacks for Saturday?', 'tool': 'Search chat', 'query': 'snacks spicy', 'a': "I'll bring chips",
         'summary': '3 steps · 2 sent',
     },

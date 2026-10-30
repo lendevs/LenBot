@@ -4,7 +4,7 @@
 
 ## 准备
 
-- 已登录 QQ 并开启 WebSocket 的 OneBot v11 实现，例如 [NapCat](https://github.com/NapNeko/NapCatQQ)。首次配置向导会连接它读取 Bot 账号，连接方式见[接入 QQ](../connect/onebot)。
+- 已登录 QQ 并开启 WebSocket 的 OneBot v11 实现，例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（推荐使用）。首次配置向导会连接它读取 Bot 账号，连接方式见[接入 QQ](../connect/onebot)。
 - 聊天模型服务的 API Key。使用 DeepSeek 官方接口时只需 Key，其他服务商还需要接口地址和模型名，见[模型与用量](../connect/models)。
 
 ## 四步上线

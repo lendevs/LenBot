@@ -18,7 +18,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by one chat model in a multi-step tool loop. It connects to QQ (OneBot v11) and needs a chat model and its API key.
+**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by a ReAct loop. It connects to QQ (OneBot v11) and needs a chat model and its API key.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.en.dark.svg">
@@ -59,7 +59,7 @@ The panel's playground simulates a group in an isolated instance: add members, p
   <img src="website/public/readme/setup.en.svg" alt="Four steps: choose a deployment, first-time setup, simulate a group, go live in your groups" width="100%">
 </picture>
 
-Prepare a OneBot v11 implementation logged in to QQ (for example [NapCat](https://github.com/NapNeko/NapCatQQ)) and an API key for a chat model service, then pick a deployment:
+Prepare a OneBot v11 implementation logged in to QQ (for example [SnowLuma](https://github.com/SnowLuma/SnowLuma), recommended) and an API key for a chat model service, then pick a deployment:
 
 | Deployment | Requirements | Guide |
 |---|---|---|

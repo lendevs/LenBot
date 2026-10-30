@@ -1,8 +1,8 @@
 # 认识 LenBot
 
-LenBot 是面向 QQ 群聊的自主决策 Agent 框架。何时开口、回复谁、先查什么、何时跟进，由同一个聊天模型在多步工具循环中决定。
+LenBot 是面向 QQ 群聊的自主决策 Agent 框架。何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。
 
-LenBot 通过已登录 QQ 的 OneBot v11 实现收发消息。模型服务由部署者自行配置，只需准备一个聊天模型及其 API Key（例如 DeepSeek）。
+LenBot 通过已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用）收发消息。模型服务由部署者自行配置，只需准备一个聊天模型及其 API Key（例如 DeepSeek）。
 
 日常对话无需输入命令前缀。群友 @ Bot、回复 Bot 或提到角色名字时，Bot 读取近期上下文并决定如何回应；开启**同时参与群内讨论**后，Bot 也会在群聊讨论活跃时自主判断是否接话。
 
@@ -22,7 +22,7 @@ LenBot 通过已登录 QQ 的 OneBot v11 实现收发消息。模型服务由部
 ## 运行条件
 
 - **运行主机**：支持 Linux、macOS 和 Windows。
-- **OneBot v11 客户端**：例如 [NapCat](https://github.com/NapNeko/NapCatQQ)，已登录 Bot 的 QQ 号并启用 WebSocket。
+- **OneBot v11 客户端**：例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（推荐使用），已登录 Bot 的 QQ 号并启用 WebSocket。
 - **聊天模型服务**：支持 OpenAI 兼容聊天（`openai-chat`）、OpenAI Responses（`openai-responses`）、Anthropic Messages（`anthropic`）和 Gemini GenerateContent（`gemini`）四种协议。
 
 向量检索服务、语音转写服务、外部搜索服务与 Docker 均为按需选配项。

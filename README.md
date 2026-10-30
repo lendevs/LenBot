@@ -18,7 +18,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
 </p>
 
-**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由同一个聊天模型在多步工具循环中决定。接入 QQ（OneBot v11），需要一个聊天模型和它的 API Key。
+**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。接入 QQ（OneBot v11），需要一个聊天模型和它的 API Key。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.dark.svg">
@@ -36,12 +36,12 @@
   <a href="https://lendevs.github.io/LenBot/use/plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/plugin.dark.svg"><img src="website/public/readme/plugin.svg" alt="Python 插件" width="49%"></picture></a>
 </p>
 
-- **一个决策回合**：唤醒后，判断、查询和回复在同一个工具循环中完成，保持沉默、继续旁听也是模型的选择。
-- **先查证再回答**：按需搜索网页、读取正文、查询聊天记录与长期记忆、检索角色和本群资料、识别图片、读取合并转发，也可接入 MCP（Model Context Protocol，模型上下文协议）服务。
+- **决策回合**：唤醒后，判断、查询和回复在同一个Agent循环中完成。
+- **查证回答**：按需搜索网页、读取正文、查询聊天记录与长期记忆、检索角色和本群资料、识别图片、读取合并转发。
 - **主动跟进**：模型可以为群友创建提醒、登记持续关注的事项，或把耗时工作交给隔离容器中的后台任务。
-- **记忆与学习**：记忆以 Markdown 文件按群保存在本地。群内空闲时，聊天模型沿用同一会话前缀整理记忆，学习群内的说法、黑话和回复效果。
-- **角色包**：名字和人物设定即可组成一个角色，也可附带说话方式、轮换风格、样例、资料与表情库。各群独立绑定角色，切换无需重启。
-- **插件**：用 Python 添加命令、定时播报、模型工具或长期记忆实现，按群启用，可在同进程或独立进程中运行。
+- **记忆学习**：记忆以 Markdown 文件按群保存在本地。学习群内的说法、黑话和回复效果。
+- **角色包**：名字和人物设定即可组成一个角色，附带说话方式、轮换风格、样例、资料与表情库。
+- **插件**：用 Python 添加命令、定时播报、模型工具或长期记忆实现，按群启用。
 
 ## 对话测试
 
@@ -50,7 +50,7 @@
   <img src="website/public/readme/playground.svg" alt="对话测试页：依次以老周、橘子、小满的身份发言，小然在左侧回复，右侧列出每个回合" width="100%">
 </picture>
 
-面板的对话测试在隔离实例中模拟一个群：添加群友、选择发言身份、复制群内最近的消息作为初始上下文。回合与真实群聊相同，回复只显示在面板中。[对话测试 →](https://lendevs.github.io/LenBot/start/playground)
+来使用面板的对话测试模拟群聊吧：添加群友、选择发言身份、复制群内最近的消息作为初始上下文。[对话测试 →](https://lendevs.github.io/LenBot/start/playground)
 
 ## 快速开始
 
@@ -59,7 +59,7 @@
   <img src="website/public/readme/setup.svg" alt="四步：选择部署方式、首次配置、模拟群聊、接入群聊" width="100%">
 </picture>
 
-准备一个已登录 QQ 的 OneBot v11 实现（例如 [NapCat](https://github.com/NapNeko/NapCatQQ)）和聊天模型服务的 API Key，再选一种部署方式：
+准备一个已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用）和聊天模型服务的 API Key，再选一种部署方式：
 
 | 部署方式 | 运行环境 | 文档 |
 |---|---|---|
@@ -111,8 +111,6 @@ uv run --no-sync len-bot
 ```
 
 </details>
-
-首次启动时，终端或容器日志输出一次性配置链接。打开后按五步向导设置面板账号、连接 QQ、填写主人账号、选择聊天模型和角色，进入面板后在对话测试中试聊，再到总览把发送方式切换为发送到 QQ。
 
 <img src="website/public/screenshots/home.png" alt="面板总览" width="100%">
 
