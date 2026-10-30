@@ -1,4 +1,17 @@
 {
-  "source": "输入全为虚构文字；输出图片使用角色包已有的表情素材。",
-  "images": []
+  "source": "输入全为虚构文字；images/ 下的截图用虚构数据生成；输出图片使用角色包已有的表情素材。",
+  "images": [
+    {
+      "message": "image-followup-usage-0",
+      "image": 1,
+      "file": "images/usage-panel.png",
+      "fetched_at": 1791201600.0
+    },
+    {
+      "message": "image-followup-bill-0",
+      "image": 1,
+      "file": "images/power-bill.png",
+      "fetched_at": 1791201600.0
+    }
+  ]
 }

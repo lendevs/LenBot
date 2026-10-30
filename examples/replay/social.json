@@ -572,6 +572,271 @@
       "image_materials": "social-images.json"
     },
     {
+      "id": "fact-correction-attribution",
+      "set": "social",
+      "expect": [
+        "说出是谁更正了地点和时间。"
+      ],
+      "social": {
+        "category": "accuracy",
+        "speak": true,
+        "answer_patterns": [
+          "小满"
+        ],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70001,
+            "message_id": "fact-correction-attribution-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "阿青",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "这次读书会在东门，周六两点"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "fact-correction-attribution-1",
+            "time": 1791201601,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "更正：这次读书会改在西门，周六三点"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70003,
+            "message_id": "fact-correction-attribution-2",
+            "time": 1791201602,
+            "sender": {
+              "nickname": "老周",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "text",
+                "data": {
+                  "text": "刚才是谁说读书会改地方的？"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "image-followup-usage",
+      "set": "social",
+      "expect": [
+        "@ 后先发图、再补问题，读图回答图里的输出 token 数。"
+      ],
+      "social": {
+        "category": "accuracy",
+        "speak": true,
+        "answer_patterns": [
+          "536"
+        ],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "image-followup-usage-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "image",
+                "data": {
+                  "file": "usage-panel.png",
+                  "url": "https://example.invalid/usage-panel.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "observe",
+          "seconds": 2
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "image-followup-usage-1",
+            "time": 1791201602,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "帮我看看图里今天输出 token 是多少"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
+      "id": "image-followup-bill",
+      "set": "social",
+      "expect": [
+        "@ 后先发图、再补问题，读图回答本月用电量。"
+      ],
+      "social": {
+        "category": "accuracy",
+        "speak": true,
+        "answer_patterns": [
+          "236"
+        ],
+        "absent_patterns": [],
+        "sticker_files": []
+      },
+      "steps": [
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "image-followup-bill-0",
+            "time": 1791201600,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "at",
+                "data": {
+                  "qq": "90002"
+                }
+              },
+              {
+                "type": "image",
+                "data": {
+                  "file": "power-bill.png",
+                  "url": "https://example.invalid/power-bill.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "observe",
+          "seconds": 2
+        },
+        {
+          "type": "message",
+          "event": {
+            "post_type": "message",
+            "message_type": "group",
+            "self_id": 90002,
+            "group_id": 80001,
+            "user_id": 70002,
+            "message_id": "image-followup-bill-1",
+            "time": 1791201602,
+            "sender": {
+              "nickname": "小满",
+              "role": "member"
+            },
+            "message": [
+              {
+                "type": "text",
+                "data": {
+                  "text": "帮我看看图里这个月用了多少度电"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "await_turn",
+          "count": 1
+        }
+      ],
+      "image_materials": "social-images.json"
+    },
+    {
       "id": "specific-misfortune",
       "set": "social",
       "expect": [
