@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -96,6 +97,7 @@ def test_initial_database_requires_a_nonblank_json_path_string(tmp_path, value):
     assert "raw=" in str(failure.value)
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='Windows resolves a path containing NUL without raising')
 def test_unresolvable_initial_database_reports_case_and_raw_path(tmp_path):
     source = _source()
     source["cases"][0]["initial_database"] = "bad\x00path.sqlite3"

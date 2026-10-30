@@ -1,0 +1,4 @@
+# Chinese labels render with the image's Noto CJK fonts.
+font.family: sans-serif
+font.sans-serif: Noto Sans CJK SC, Noto Sans CJK JP, DejaVu Sans
+axes.unicode_minus: False

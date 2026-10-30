@@ -146,6 +146,14 @@ jobs:
           labels: |
             org.opencontainers.image.version=${{ needs.packages.outputs.version }}
             io.lenbot.release.revision=${{ github.sha }}
+      - uses: astral-sh/setup-uv@v5
+        if: matrix.component == 'worker'
+        with:
+          version: '0.12.13'
+          python-version: '3.13'
+      - name: Install the host for the worker smoke
+        if: matrix.component == 'worker'
+        run: uv sync --locked --python 3.13
       - name: Check the built component before uploading
         env:
           COMPONENT: ${{ matrix.component }}
@@ -153,7 +161,8 @@ jobs:
         run: |
           case "$COMPONENT" in
             host) python3 scripts/smoke_install.py docker packages "$RUNNER_TEMP/image-smoke" --image "$TAG" ;;
-            worker) docker run --rm --network none --entrypoint pi "$TAG" --version ;;
+            # One task with real Pi: a question, a delivery and offline CSV/XLSX, chart, DOCX and HTML-to-PDF work.
+            worker) uv run --no-sync python scripts/smoke_worker.py --image "$TAG" --workloads ;;
             updater) docker run --rm --network none --entrypoint python "$TAG" /opt/lenbot-updater/controller.py --help ;;
           esac
           docker save -o "$RUNNER_TEMP/image.tar" "$TAG"

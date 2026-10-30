@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FocusBar from './FocusBar.vue'
 import { computed, nextTick, ref, toRef, watch } from 'vue'
 import { useEventListener, useResizeObserver } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -103,6 +104,7 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
       </Button>
     </div>
 
+    <FocusBar :scene="scene" :time-zone="timeZone" />
     <Skeleton v-if="query.isPending.value" :lines="8" />
     <ErrorNote
       v-else-if="query.isError.value"
