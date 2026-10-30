@@ -1,0 +1,149 @@
+"""Stand-in for Pi 0.87.1 in RPC mode, driven by markers in the prompt text.
+
+It speaks the JSONL commands and events that ``PiRpc`` parses, reads the
+generated ``models.json`` and ``task-api.json`` like the image's extension, and
+reaches the host only through the model bridge. Markers it acts on, in order:
+
+- ``[进度]`` appends a ``lenbot_progress`` entry
+- ``[提问]`` asks one ``input`` question; ``[确认]`` asks one ``confirm``
+- ``[等待]`` blocks until a ``steer`` command arrives
+- ``[交付]`` writes ``out/report.txt`` and calls ``/task/deliver-file``
+- ``[失败]`` ends the assistant message with ``stopReason: error``
+
+Every prompt is appended to ``session.jsonl`` in the working directory, so a
+continued task can show that it reopened the same session.
+"""
+
+import json
+import os
+from pathlib import Path
+import queue
+import sys
+import threading
+import urllib.request
+
+
+ARGUMENTS = sys.argv[1:]
+PROVIDER = ARGUMENTS[ARGUMENTS.index("--provider") + 1]
+MODEL = ARGUMENTS[ARGUMENTS.index("--model") + 1]
+CONTROL = Path(os.environ["LENBOT_CONTROL"])
+AGENT = Path(os.environ["PI_CODING_AGENT_DIR"])
+inbox: queue.Queue = queue.Queue()
+steering: list[str] = []
+
+
+def read_stdin() -> None:
+    for line in sys.stdin.buffer:
+        inbox.put(json.loads(line))
+    inbox.put(None)
+
+
+def emit(body: dict) -> None:
+    sys.stdout.buffer.write(json.dumps(body, ensure_ascii=False).encode() + b"\n")
+    sys.stdout.buffer.flush()
+
+
+def handle(command: dict) -> None:
+    kind = command["type"]
+    if kind == "get_state":
+        emit({"id": command["id"], "type": "response", "command": kind, "success": True,
+              "data": {"model": {"provider": PROVIDER, "id": MODEL}}})
+    elif kind == "steer":
+        steering.append(command["message"])
+        emit({"id": command["id"], "type": "response", "command": kind, "success": True})
+    else:
+        emit({"id": command["id"], "type": "response", "command": kind, "success": False,
+              "error": f"stand-in does not implement {kind}"})
+
+
+def receive(wanted) -> dict:
+    """Handle commands until one record matches, the way Pi keeps serving RPC while a tool waits."""
+    while True:
+        record = inbox.get()
+        if record is None:
+            raise SystemExit(0)
+        if wanted(record):
+            return record
+        handle(record)
+
+
+def post(port: int, path: str, token: str, body: dict) -> bytes:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}", data=json.dumps(body, ensure_ascii=False).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="POST")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=30) as response:
+        return response.read()
+
+
+def ask_model(prompt: str) -> str:
+    provider = json.loads((AGENT / "models.json").read_text())["providers"][PROVIDER]
+    port = int(provider["baseUrl"].rsplit(":", 1)[1].split("/", 1)[0])
+    raw = post(port, "/v1/chat/completions", provider["apiKey"], {
+        "model": MODEL, "stream": True, "stream_options": {"include_usage": True},
+        "messages": [{"role": "user", "content": prompt}]})
+    text = []
+    for line in raw.decode().splitlines():
+        if line.startswith("data: ") and line != "data: [DONE]":
+            for choice in json.loads(line[6:]).get("choices", []):
+                text.append(choice.get("delta", {}).get("content") or "")
+    return "".join(text)
+
+
+def question(number: int, body: dict) -> dict:
+    ident = f"standin-question-{number}"
+    emit({"type": "extension_ui_request", "id": ident, **body})
+    return receive(lambda record: record.get("type") == "extension_ui_response" and record.get("id") == ident)
+
+
+def run(message: str) -> None:
+    session = Path("session.jsonl")
+    with session.open("a", encoding="utf-8") as output:
+        output.write(json.dumps({"prompt": message}, ensure_ascii=False) + "\n")
+    executions = len(session.read_text(encoding="utf-8").splitlines())
+    emit({"type": "agent_start"})
+    emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
+    reply = ask_model(message)
+    emit({"type": "message_update", "usage": {"input": 1, "output": 1},
+          "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": reply}})
+    lines = [f"第{executions}次执行", f"模型：{reply}"]
+    if "[进度]" in message:
+        emit({"type": "entry_appended", "entry": {"type": "custom", "customType": "lenbot_progress",
+                                                  "data": {"text": "已读完要求"}}})
+    if "[提问]" in message:
+        answer = question(1, {"method": "input", "title": "要哪种格式？"})
+        lines.append("回答：" + ("未回答" if answer.get("cancelled") else answer["value"]))
+    if "[确认]" in message:
+        answer = question(2, {"method": "confirm", "title": "确认执行？", "message": "覆盖 out/report.txt"})
+        lines.append(f"确认：{answer.get('confirmed')}")
+    if "[等待]" in message:
+        while not steering:
+            handle(receive(lambda record: record.get("type") == "steer"))
+    lines.extend(f"追加：{text}" for text in steering)
+    steering.clear()
+    if "[交付]" in message:
+        Path("out").mkdir(exist_ok=True)
+        Path("out/report.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        api = json.loads((CONTROL / "task-api.json").read_text())
+        provider = json.loads((AGENT / "models.json").read_text())["providers"][PROVIDER]
+        port = int(provider["baseUrl"].rsplit(":", 1)[1].split("/", 1)[0])
+        result = json.loads(post(port, "/task/deliver-file", api["token"],
+                                 {"path": "out/report.txt", "name": "报告.txt", "note": "测试交付"}))
+        lines.append(f"交付编号：{result['id']}")
+    text = "\n".join(lines)
+    emit({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": text}],
+                                             "stopReason": "error" if "[失败]" in message else "stop"}})
+    emit({"type": "agent_end", "messages": [], "willRetry": False})
+    emit({"type": "agent_settled"})
+
+
+def main() -> None:
+    threading.Thread(target=read_stdin, daemon=True).start()
+    while True:
+        command = receive(lambda record: record.get("type") == "prompt")
+        emit({"id": command["id"], "type": "response", "command": "prompt", "success": True})
+        run(command["message"])
+
+
+if __name__ == "__main__":
+    main()
