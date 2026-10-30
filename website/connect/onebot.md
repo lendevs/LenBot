@@ -1,6 +1,6 @@
 # 接入 QQ（OneBot）
 
-LenBot 本身不直接实现 QQ 客户端协议，通过标准 OneBot v11 WebSocket 接口连接已登录 QQ 的协议端（例如 [NapCat](https://github.com/NapNeko/NapCatQQ)）收发消息。协议端自身的安装与扫码登录步骤见对应项目的文档。
+LenBot 本身不直接实现 QQ 客户端协议，通过标准 OneBot v11 WebSocket 接口连接已登录 QQ 的协议端（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用）收发消息。协议端自身的安装与扫码登录步骤见对应项目的文档。
 
 ## 选择连接方式
 
