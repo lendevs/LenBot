@@ -2132,7 +2132,8 @@ export default {
       image: '任务镜像',
       dockerBinary: 'Docker 程序路径',
       dockerHost: 'Docker 地址',
-      dockerHostRule: '填写本机 socket，例如 unix:///var/run/docker.sock',
+      dockerHostRule:
+        '填写本机 socket 或命名管道，例如 unix:///var/run/docker.sock、npipe:////./pipe/docker_engine',
       uid: '容器用户 UID',
       gid: '容器用户 GID',
       workspace: '任务工作目录',

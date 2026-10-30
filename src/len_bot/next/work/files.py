@@ -15,6 +15,7 @@ from .materials import finish_file_operation
 from .storage import clean_temporary_files, discard_task_trees, output_entries
 from ..configuration.tasks import WorkerSettings
 from .store import Task, TaskFile, TaskStore
+from ..platform.identity import scene_directory
 
 
 class DeliverFile(BaseModel):
@@ -45,7 +46,7 @@ class TaskFiles:
         self.settings, self.records, self.sandbox, self.notify = settings, records, sandbox, notify
 
     async def outputs(self, item: Task, *, path: str, offset: int, limit: int) -> dict:
-        root = self.settings.workspace_root / item.scene / 'tasks' / str(item.id) / 'out'
+        root = self.settings.workspace_root / scene_directory(item.scene) / 'tasks' / str(item.id) / 'out'
         entries = await asyncio.to_thread(output_entries, root, path, offset, limit)
         return {'task_id': item.id, 'root': 'out', 'path': path, **entries,
                 'registered_files': [file_info(file, self.records) for file in self.records.list_files(item.scene, item.id)],
@@ -53,7 +54,7 @@ class TaskFiles:
 
     async def deliver(self, item: Task, sandbox: SandboxHandle, raw: bytes) -> dict:
         arguments = DeliverFile.model_validate_json(raw)
-        destination = self.settings.delivery_root / item.scene / str(item.id)
+        destination = self.settings.delivery_root / scene_directory(item.scene) / str(item.id)
         destination.mkdir(parents=True, exist_ok=True)
         target = destination / uuid4().hex
         remaining = self.settings.max_delivery_bytes - sum(file.size for file in self.records.list_files(item.scene, item.id))
@@ -76,8 +77,8 @@ class TaskFiles:
 
     async def discard(self, item: Task, *, requester: str, workspace: str, runtime: str) -> dict:
         scene, id = item.scene, item.id
-        expected_workspace = self.settings.workspace_root / scene / 'tasks' / str(id)
-        expected_runtime = self.settings.runtime_root / scene / str(id)
+        expected_workspace = self.settings.workspace_root / scene_directory(scene) / 'tasks' / str(id)
+        expected_runtime = self.settings.runtime_root / scene_directory(scene) / str(id)
         if workspace != str(expected_workspace) or runtime != str(expected_runtime):
             raise ValueError(f'Task removal roots differ from the current worker; expected='
                              f'{(str(expected_workspace), str(expected_runtime))!r}; received={(workspace, runtime)!r}')

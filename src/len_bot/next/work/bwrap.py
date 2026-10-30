@@ -34,6 +34,7 @@ from ..configuration.tasks import EgressSettings, WorkerSettings
 from .worker_egress import EgressTransport
 from .worker_model import WorkerModelProxy
 from .worker_transport import WorkerTransport
+from ..platform.identity import scene_directory
 
 _WORK = Path(__file__).parent
 _PROGRAMS = ("sandbox_exec.py", "worker_bridge.py", "egress_wire.py", "worker_egress_bridge.py")
@@ -448,7 +449,7 @@ class BwrapSandbox:
         session = self._sessions.pop(container, None)
         if session is not None:
             await session.close(self.settings.command_timeout_seconds)
-        control = self.settings.runtime_root.resolve() / scene / task_id / "control"
+        control = self.settings.runtime_root.resolve() / scene_directory(scene) / task_id / "control"
         if control.exists():
             shutil.rmtree(control)
 
