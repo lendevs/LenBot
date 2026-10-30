@@ -59,6 +59,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A test still running after this many seconds dumps every thread's stack to the log.
+faulthandler_timeout = 240
 
 [tool.ruff]
 target-version = "py313"
