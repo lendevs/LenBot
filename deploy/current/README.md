@@ -54,8 +54,7 @@ docker exec lenbot-embeddings ollama pull bge-m3:567m
    docker build -t lenbot-worker:local -f docker/next-worker/Dockerfile .
    ```
 2. 在面板**能力 → 后台任务**中启用任务并核对镜像名、Docker socket、运行 `uid/gid` 以及独立的 `task-workspaces`、`task-runtime`、`deliveries` 三个目录（Docker 主机可访问且该 `uid/gid` 可读写）。源码更新涉及任务桥接或容器内工具后，重新构建镜像并在停机后更新 `worker.image`。
-3. 需要把任务交付文件直接上传到 QQ 时，将 `deliveries` 目录以只读方式挂载进 OneBot 所在容器，并把 `onebot.upload_visible_root` 设为 OneBot 容器内看到的挂载路径。
-4. 需要为任务工作区和运行目录设置硬性文件系统配额时，见 [task-storage.md](task-storage.md)。
-5. 任务需要操作动态公开网页时，在**能力 → 后台任务**把联网方式设为**按域名放行**或**公网**。容器内匿名 Chromium 跟随联网方式，通过 `lenbot-browser` 将截图、PDF 和下载文件输出到任务的 `out/browser/`。
+3. 需要为任务工作区和运行目录设置硬性文件系统配额时，见 [task-storage.md](task-storage.md)。
+4. 任务需要操作动态公开网页时，在**能力 → 后台任务**把联网方式设为**按域名放行**或**公网**。容器内匿名 Chromium 跟随联网方式，通过 `lenbot-browser` 将截图、PDF 和下载文件输出到任务的 `out/browser/`。
 
 日常启停配套服务时，先启动向量、语音转写等外部服务，再启动 LenBot；停机顺序相反。

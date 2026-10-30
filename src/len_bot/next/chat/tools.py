@@ -203,8 +203,6 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
     if name == "send_file":
         if config.worker is None:
             reasons.append("还没有启用独立任务")
-        if config.onebot is None or config.onebot.upload_visible_root is None:
-            reasons.append("还没有设置 NapCat 能看到的文件目录")
         if config.delivery != "onebot":
             reasons.append("模拟发送时不能发文件")
     if (name == "knowledge" and not persona.knowledge
@@ -524,8 +522,7 @@ class SceneTools:
         if call.name == "send_file":
             return await execute_send_file(
                 TaskStore(self.store), self.config.scene, SendFileArguments.model_validate(call.arguments),
-                local_root=self.config.worker.delivery_root,
-                visible_root=self.config.onebot.upload_visible_root,
+                settings=self.config.worker,
                 upload=self.upload_file, on_update=self.notify,
             ), None, None
         if call.name in {"schedule", "schedule_list", "schedule_cancel"}:

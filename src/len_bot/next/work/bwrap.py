@@ -515,4 +515,3 @@ async def check_local_sandbox(bwrap_binary: Path, task_runtime: Path) -> list[di
         finally:
             await sandbox.stop(handle)
     return steps
-

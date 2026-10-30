@@ -95,7 +95,6 @@ export interface TaskReadiness {
   running: boolean
   sandbox: 'docker' | 'bwrap' | null
   delivery: 'simulated' | 'onebot'
-  upload_visible_root: string | null
   scenes: {
     scene: string
     enabled: boolean

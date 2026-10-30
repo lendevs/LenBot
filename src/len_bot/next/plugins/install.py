@@ -283,7 +283,7 @@ class PluginInstaller:
             for item in entries:
                 relative = PurePosixPath(item.filename)
                 if (relative.is_absolute() or PureWindowsPath(item.filename).drive or '..' in relative.parts
-                        or any(':' in part for part in relative.parts) or '\\' in item.filename
+                        or any(':' in part for part in relative.parts) or '\\' in item.orig_filename
                         or item.filename in seen or stat.S_ISLNK(item.external_attr >> 16)):
                     raise ValueError(f'Invalid plugin ZIP member: {item.filename!r}')
                 if any(part.casefold() == '__pycache__' for part in relative.parts) or relative.suffix.lower() == '.pyc':

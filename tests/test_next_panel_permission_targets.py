@@ -59,7 +59,7 @@ def test_permission_write_uses_selected_persona(tmp_path: Path, field: str) -> N
                         assert selected['persona']['name'] == 'first'
                         assert selected['restart_required'] is False
                         library = (await client.get('/api/host/personas')).json()['roles']
-                        second = next(role['key'] for role in library if role['path'].endswith('/second'))
+                        second = next(role['key'] for role in library if Path(role['path']).name == 'second')
                         switched = await client.post(f'/api/host/personas/{second}/scenes',
                                                      json={'scenes': ['onebot:group:80001']})
                         assert switched.json()['results'][0]['status'] == 'switched', switched.text

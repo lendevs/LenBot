@@ -13,7 +13,9 @@ NapCat-shaped receipts.
 """
 
 import asyncio
+import base64
 from contextlib import asynccontextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -30,7 +32,7 @@ from websockets.asyncio.server import serve
 
 from len_bot.next.config import HostConfig
 from len_bot.next.configuration.onebot import OneBotForward
-from len_bot.next.platform.file_delivery import SendFileArguments, execute_send_file
+from len_bot.next.platform.file_delivery import MAX_UPLOAD_BYTES, SendFileArguments, execute_send_file
 from len_bot.next.platform.messages import UploadResult
 from len_bot.next.platform.onebot import OneBot
 from len_bot.next.storage.store import Store
@@ -47,7 +49,6 @@ from len_bot.next.work.worker_transport import WorkerTransport
 SCENE, OTHER_SCENE = 'onebot:group:80001', 'onebot:group:80002'
 BOT, OWNER, ADMIN, WHITELISTED, MEMBER = (f'onebot:{number}' for number in (90001, 70001, 70002, 70003, 70004))
 STANDIN = Path(__file__).parent / 'fixtures' / 'next' / 'tasks' / 'pi_standin.py'
-VISIBLE_ROOT = '/srv/lenbot/deliveries'
 LOGIN = {'status': 'ok', 'retcode': 0, 'data': {'user_id': 90001, 'nickname': '脱敏 Bot'}}
 
 
@@ -290,8 +291,8 @@ async def test_question_answer_delivery_and_platform_receipts(tmp_path, upstream
         arguments = SendFileArguments(task_id=id, file_id=file['id'])
 
         async def send(upload):
-            return json.loads(await execute_send_file(records, SCENE, arguments, local_root=config.worker.delivery_root,
-                                                      visible_root=VISIBLE_ROOT, upload=upload, on_update=lambda: None))
+            return json.loads(await execute_send_file(records, SCENE, arguments, settings=config.worker,
+                                                      upload=upload, on_update=lambda: None))
 
         async def simulated(scene, path, name):
             return UploadResult('simulated', None, None, None)
@@ -325,11 +326,23 @@ async def test_question_answer_delivery_and_platform_receipts(tmp_path, upstream
                 unknown = await send(bot.upload_file)
                 assert unknown['status'] == 'unconfirmed' and unknown['platform_file_id'] is None
         assert [upload['action'] for upload in uploads] == ['upload_group_file'] * 3
-        platform_path = uploads[0]['params']['file']
-        assert platform_path == f'{VISIBLE_ROOT}/{scene_directory(SCENE)}/{id}/{Path(registered.path).name}'
-        assert uploads[0]['params'] == {'group_id': 80001, 'file': platform_path, 'name': '报告.txt'}
+        content = Path(registered.path).read_bytes()
+        assert uploads[0]['params'] == {'group_id': 80001, 'name': '报告.txt',
+                                        'file': 'base64://' + base64.b64encode(content).decode()}
         latest = tasks.status(SCENE, id)['files'][0]['upload']
         assert latest['status'] == 'unconfirmed' and latest['ended'] is not None
+        assert 'base64://' not in json.dumps(latest, ensure_ascii=False)
+        digests = [json.loads(body)['sha256'] for (body,) in records.db.execute(
+            "SELECT body FROM task_events WHERE scene=? AND task_id=? AND kind='file_upload'", (SCENE, id))]
+        assert digests == [hashlib.sha256(content).hexdigest()] * 4
+
+        Path(registered.path).write_bytes(content + b'!')
+        with pytest.raises(ValueError, match='size changed'):
+            await send(simulated)
+        with records.db:
+            records.db.execute('UPDATE task_files SET size=? WHERE id=?', (MAX_UPLOAD_BYTES + 1, file['id']))
+        with pytest.raises(ValueError, match='超过单次上传上限'):
+            await send(simulated)
         assert event_kinds(tasks, id).count('file_upload') == 4
 
 

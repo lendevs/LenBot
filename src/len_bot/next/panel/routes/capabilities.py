@@ -143,8 +143,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
                          "public_browser": (chat.tasks is not None
                                             and chat.tasks.settings.public_browser),
                          "public_network": chat.tasks is not None and chat.tasks.settings.egress.enabled,
-                         "file_upload": (chat.config.delivery == "onebot" and chat.tasks is not None
-                                         and chat.config.onebot.upload_visible_root is not None),
+                         "file_upload": chat.config.delivery == "onebot" and chat.tasks is not None,
                          "schedules": chat.config.schedules.enabled},
             "not_implemented": [],
         }
