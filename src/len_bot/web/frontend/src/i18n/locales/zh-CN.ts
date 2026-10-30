@@ -1219,6 +1219,7 @@ export default {
           question: '提问',
           answer: '收到回答',
           browser_file: '浏览器文件已保存',
+          data_tool: '数据工具调用',
           workspace_discard: '放弃任务环境',
           workspace_discard_result: '清理任务环境',
           material_inputs: '已放入资料',

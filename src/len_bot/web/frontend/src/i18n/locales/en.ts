@@ -1262,6 +1262,7 @@ export default {
           question: 'Question',
           answer: 'Got an answer',
           browser_file: 'Saved a browser file',
+          data_tool: 'Data tool call',
           workspace_discard: 'Discarded the environment',
           workspace_discard_result: 'Cleaned the environment',
           material_inputs: 'Added materials',

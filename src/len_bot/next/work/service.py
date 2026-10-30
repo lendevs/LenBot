@@ -82,6 +82,8 @@ class WorkTasks:
         self.memory = memory
         # The scene memory tool for task workers; the network runtime routes it like the chat's.
         self.memory_call: Callable[[str, dict], Awaitable[str]] | None = None if memory is None else memory.execute
+        # ``knowledge``, ``web_read`` and ``web_search`` for task workers; the network runtime routes them like the chat's.
+        self.data_call: Callable[[str, str, dict], Awaitable[str]] | None = None
         self.audio: AudioService | None = None
         self.data_tools = data_tools
         self.tool_permissions = tool_permissions
@@ -663,7 +665,7 @@ class WorkTasks:
                         current = TaskExecution(
                             self.records.start(item.scene, item.id), self.config, self.store,
                             sandbox=self.sandbox, files=self.files, egress=self.egress,
-                            slots=self.slots, memory_call=self.memory_call, audio=self.audio, mcp=self.mcp,
+                            slots=self.slots, memory_call=self.memory_call, data_call=self.data_call, audio=self.audio, mcp=self.mcp,
                             skills=self.skills, skill_permissions=self.skill_permissions,
                             tool_permissions=self.tool_permissions, data_tools=self.data_tools,
                             active_timeout=self.active_timeout, limits=self._limits,

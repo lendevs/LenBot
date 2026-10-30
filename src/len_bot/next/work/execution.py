@@ -15,10 +15,12 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from ..media.audio import AudioService, TranscribeArguments
 from ..config import HostConfig
 from .egress_usage import EgressUsage
+from .host_traffic import TaskHostTraffic
 from .environment import environment_prompt
 from ..models.slots import ModelSlots
 from ..chat.recall import RecallArguments, recall_chat
 from .sandbox import TaskSandbox
+from ..tools.host_traffic import metering
 from ..tools.skills import Skill, load_task_skills, merge_task_skills
 from ..storage.store import Store
 from ..browser.files import BrowserOutput, record_browser_output
@@ -28,6 +30,7 @@ from .live import TaskLiveText
 from .materials import finish_file_operation
 from ..storage.pool import worker_pool_usage
 from .store import Task, TaskStore
+from .task_routes import DATA_ROUTES
 from .worker_model import Limits, WorkerModelProxy
 from .worker_session import WorkerSession, worker_session
 from ..prompt_files import read_prompt
@@ -38,6 +41,9 @@ if TYPE_CHECKING:
     from ..tools.mcp_host import MCPHost
 
 
+
+
+_DATA_PATHS = {path: name for name, path in DATA_ROUTES.items()}
 
 
 class TaskMCPCall(BaseModel):
@@ -52,6 +58,7 @@ class TaskExecution:
     def __init__(self, item: Task, config: HostConfig, store: Store, *,
                  sandbox: TaskSandbox, files: TaskFiles, egress: EgressUsage,
                  slots: ModelSlots | None, memory_call: Callable[[str, dict], Awaitable[str]] | None,
+                 data_call: Callable[[str, str, dict], Awaitable[str]] | None,
                  audio: AudioService | None,
                  mcp: MCPHost | None, skills: dict[str, tuple[Skill, ...]],
                  skill_permissions: dict[str, Literal["all"] | list[str]],
@@ -65,6 +72,7 @@ class TaskExecution:
         self.settings, self.records = config.worker, TaskStore(store)
         self.sandbox, self.files, self.egress = sandbox, files, egress
         self.slots, self.memory_call, self.audio, self.mcp = slots, memory_call, audio, mcp
+        self.data_call = data_call
         self.catalog, self.skill_permissions, self.tool_permissions = skills, skill_permissions, tool_permissions
         self.data_tools = data_tools
         self._active_timeout, self._limits, self._wait_for_slot = active_timeout, limits, wait_for_slot
@@ -374,6 +382,27 @@ class TaskExecution:
         await self._session.pi.respond_ui(body["id"], **response)
         self._notify(item.scene)
 
+    async def _host_tool(self, name: str, arguments: dict) -> str:
+        """``knowledge``, ``web_read`` or ``web_search`` on the host, with one task event per call.
+
+        The web tools' destinations and bytes are metered against the task's egress mode and limits.
+        """
+        if self.data_call is None:
+            raise RuntimeError("任务数据服务尚未接入")
+        scene = self.item.scene
+        shown = {key: str(value)[:200] for key, value in arguments.items()}
+        headline = f"{name} {next(iter(shown.values()), '')}".strip()
+        try:
+            with metering(TaskHostTraffic(self.egress, scene, self.item.id)):
+                content = await self.data_call(scene, name, arguments)
+        except Exception as error:
+            self.records.add_event(scene, self.item.id, "data_tool", {
+                "summary": headline, "name": name, "arguments": shown, "ok": False, "error": f"{type(error).__name__}: {error}"[:500]})
+            raise
+        self.records.add_event(scene, self.item.id, "data_tool", {
+            "summary": headline, "name": name, "arguments": shown, "ok": True, "chars": len(content)})
+        return content
+
     async def _request(self, path: str, raw: bytes) -> dict:
         if path == '/task/browser-file':
             if not self.settings.public_browser:
@@ -395,8 +424,8 @@ class TaskExecution:
                 raise RuntimeError(f'MCP 工具 {call.name} 当前不可用或定义已变化，请重新读取工具列表')
             content = await tools[call.name].call(self.item.scene, call.arguments)
             return {'content': content}
-        if path in {"/task/recall-chat", "/task/memory", "/task/transcribe"}:
-            name = {"/task/recall-chat": "recall_chat", "/task/memory": "memory", "/task/transcribe": "transcribe"}[path]
+        if path in _DATA_PATHS:
+            name = _DATA_PATHS[path]
             scene = self.item.scene
             if name not in {tool["name"] for tool in self.data_tools[scene]}:
                 raise PermissionError(f"当前场景的任务未开放 {name}")
@@ -410,15 +439,20 @@ class TaskExecution:
                     arguments = RecallArguments.model_validate_json(raw)
                 except ValidationError as error:
                     raise ValueError(f"Invalid task recall_chat request: {raw[:500]!r}; {error}") from error
-                content = recall_chat(self.store, scene, self.config.scene_timezone(scene), arguments)
+                # A history search may scan many rows; like the chat's, it reads off the event loop.
+                content = await self.store.read(recall_chat, self.store, scene, self.config.scene_timezone(scene),
+                                                arguments)
             else:
                 try:
                     arguments = json.loads(raw)
                 except (json.JSONDecodeError, UnicodeDecodeError) as error:
-                    raise ValueError(f"Invalid task memory JSON: {raw[:500]!r}; {error}") from error
-                if self.memory_call is None:
-                    raise RuntimeError("任务记忆服务尚未接入")
-                content = await self.memory_call(scene, arguments)
+                    raise ValueError(f"Invalid task {name} JSON: {raw[:500]!r}; {error}") from error
+                if name == "memory":
+                    if self.memory_call is None:
+                        raise RuntimeError("任务记忆服务尚未接入")
+                    content = await self.memory_call(scene, arguments)
+                else:
+                    content = await self._host_tool(name, arguments)
             return {"content": content}
         if path == "/task/network":
             try:
