@@ -14,6 +14,7 @@ from len_bot.next.platform.onebot_messages import parse_message
 from len_bot.next.models.client import ChatModel
 from len_bot.next.runtime.network import NetworkRuntime
 from len_bot.next.persona.profile import load_persona
+from len_bot.next.reference.sources import scene_directory
 from len_bot.next.storage.store import Store
 from len_bot.web.auth import hash_password
 
@@ -184,12 +185,18 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                     assert (await client.post("/api/host/trials", json={
                         "scene": "onebot:group:89999",
                     })).status_code == 404
+                    shelf = scene_directory(root, 'onebot:group:80001')
+                    (shelf / 'notes').mkdir(parents=True)
+                    (shelf / 'notes' / '秋游.md').write_text('秋游周日八点南门集合。', encoding='utf-8')
                     trial = await client.post("/api/host/trials", json={
                         "scene": "onebot:group:80001", "context_messages": 20,
                         "attention": {"only_direct": False, "activity": 0.5},
                     })
                     assert trial.status_code == 200
                     assert trial.json()['attention'] == {'only_direct': False, 'activity': 0.5}
+                    library = app.state.trials.records[trial.json()['id']].session.chat.toolset.reference
+                    assert [item.path for item in await library.scene_files('onebot:group:80001')] == ['notes/秋游.md']
+                    assert library.directory('onebot:group:80001') != shelf
                     assert len(trial.json()['context']) == 1
                     assert trial.json()['persona_source'] == 'running' and trial.json()['draft_source'] is None
                     # Offline migrations reload every kept trial as its own instance.
