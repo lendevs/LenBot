@@ -235,6 +235,14 @@ class Attention(BaseModel):
         return self
 
 
+class Participation(BaseModel):
+    """The two attention fields chosen when a chat is added or tried: answer calls only, or also join in."""
+    model_config = STRICT
+
+    only_direct: bool = True
+    activity: float = Field(default=0.3, ge=0, le=1, allow_inf_nan=False)
+
+
 class ScenePersona(BaseModel):
     model_config = STRICT
 

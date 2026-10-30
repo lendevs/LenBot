@@ -421,6 +421,17 @@ export default {
       },
     },
   },
+  participation: {
+    mode: 'When to speak',
+    modes: {
+      direct: "Only when {'@'}-mentioned, replied to or messaged",
+      join: 'Also join group conversations',
+    },
+    frequency: 'How often',
+    levels: { low: 'Less', medium: 'Moderate', high: 'More' },
+    custom: 'Custom {value}',
+    short: { direct: 'Answers calls only', join: 'Joins discussions · {level}' },
+  },
   groups: {
     list: 'Groups',
     search: 'Search groups',
@@ -707,11 +718,6 @@ export default {
       },
       participation: {
         section: 'Participation',
-        mode: 'When to speak',
-        modes: {
-          direct: "Only when {'@'}-mentioned, replied to or messaged",
-          join: 'Also join group conversations',
-        },
         activity: 'Activity',
         keywords: 'Keywords',
         otherBots: 'Other bots in the group',
@@ -2663,6 +2669,30 @@ export default {
     notWoken: 'This message did not wake the bot',
     duplicate: 'This message was already sent',
     handleFailed: 'Handling this message failed',
+    participationSettings: 'Participation settings',
+    scenarios: {
+      menu: 'Group situations',
+      call: { title: 'Someone calls the bot', call1: 'Craving something warm tonight. Any ideas?' },
+      open: {
+        title: 'An open question',
+        open1: 'Does anyone know how to copy all my phone photos to a computer?',
+        open2: 'I tried a cable but the computer never sees the phone',
+      },
+      others: {
+        title: 'Others talking to each other',
+        others1: 'Did you go to the match at the weekend?',
+        others2: 'Yes, they only won in extra time. What a game',
+        others3: 'I watched the stream at home and nearly fell asleep',
+      },
+      followUp: {
+        title: 'Following up on the bot',
+        followUp1: 'Recommend a film for the weekend',
+        followUp2: 'Anything more light-hearted?',
+      },
+      playing: 'Sending the situation',
+      noReply: 'The bot did not reply within 90 seconds; the situation stopped',
+      failed: 'Could not send the situation',
+    },
     start: {
       title: 'Start a session',
       from: 'Settings from',

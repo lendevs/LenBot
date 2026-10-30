@@ -181,7 +181,9 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                  "persona_switch": switching(scene),
                  "voice_mode": settings.voice_mode, "timezone": config.scene_timezone(scene),
                  "chat_enabled": not runtime.runners[scene].state.paused,
-                 "chat_status": runtime.runners[scene].chat_status()}
+                 "chat_status": runtime.runners[scene].chat_status(),
+                 "attention": {key: getattr(runtime.chats[scene].config.attention, key)
+                               for key in ('only_direct', 'activity')}}
                 for scene, settings in config.scenes.items()
             ],
             "send_hold": runtime.send_hold.enabled,

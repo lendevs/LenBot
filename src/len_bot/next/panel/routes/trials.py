@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .. import responses
 from ...chat.tools import tool_catalog, tool_unavailable_reasons
 from ...config import HostConfig, LabConfig, load_host_config
+from ...configuration.chat import Participation
 from .persona import finish_role_write
 from .timeline import TurnDetail, read_turn
 from ...instance_lock import InstanceBusyError, instance_lock
@@ -50,6 +51,8 @@ class TrialStart(BaseModel):
     scene: str
     context_messages: int = Field(default=0, ge=0, le=100)
     persona_draft: PersonaDraft | None = None
+    # Replaces the group's two participation fields for this trial only; None uses the group's.
+    attention: Participation | None = None
 
 
 @dataclass
@@ -80,7 +83,8 @@ class Trial:
                 'persona_source': self.persona_source,
                 'draft_path': str(self.root / 'persona-draft') if self.persona_source == 'draft' else None,
                 'draft_source': self.draft_source,
-                'models': {'mind': self.config.models.roles.mind.model}}
+                'models': {'mind': self.config.models.roles.mind.model},
+                'attention': {key: getattr(self.config.attention, key) for key in ('only_direct', 'activity')}}
 
     def snapshot(self) -> dict:
         return self.session.snapshot() if self.final_state is None else self.final_state
@@ -173,7 +177,7 @@ class HostTrials:
         return self.records[trial_id]
 
     async def start(self, scene: str, context_messages: int = 0,
-                    persona_draft: PersonaDraft | None = None) -> Trial:
+                    persona_draft: PersonaDraft | None = None, attention: Participation | None = None) -> Trial:
         async with self.lock:
             if self.closing:
                 raise HTTPException(503, '宿主正在停止，不再新建试聊')
@@ -208,7 +212,9 @@ class HostTrials:
                     'database':root / 'state.db', 'persona':root / 'persona-snapshot', 'owners':[],
                     'permissions': IdentitySettings(), 'panel':None, 'plugins':[], 'memory_plugin':None, 'recap_plugin':None, 'worker':None, 'tasks':source.tasks.model_copy(update={'enabled':False}),
                     'learning':None, 'proactive':None, 'transcribe_audio':False, 'memory':memory,
-                    'web_read':None, 'web_search':None})
+                    'web_read':None, 'web_search':None,
+                    'attention': source.attention if attention is None else source.attention.model_copy(
+                        update=attention.model_dump())})
                 config = LabConfig.model_validate_json(candidate.model_dump_json())
                 if persona_draft is None:
                     original = self.runtime.chats[scene].toolset.allowed_tool_names
@@ -261,7 +267,7 @@ def register_host_trials(app: FastAPI, trials: HostTrials, user):
     @app.post('/api/host/trials', response_model=responses.TrialInfo, response_model_exclude_unset=True)
     async def start(item: TrialStart, _: str = Depends(user)):
         try:
-            return (await trials.start(item.scene, item.context_messages, item.persona_draft)).info()
+            return (await trials.start(item.scene, item.context_messages, item.persona_draft, item.attention)).info()
         except InstanceBusyError as error:
             raise HTTPException(409, str(error)) from error
         except (ValueError, OSError) as error:

@@ -410,6 +410,14 @@ export default {
       },
     },
   },
+  participation: {
+    mode: '发言时机',
+    modes: { direct: "只在被 {'@'}、回复或私聊时", join: '同时参与群内讨论' },
+    frequency: '参与频率',
+    levels: { low: '少', medium: '适中', high: '多' },
+    custom: '自定义 {value}',
+    short: { direct: '只回应呼叫', join: '参与讨论 · {level}' },
+  },
   groups: {
     list: '群聊列表',
     search: '搜索群聊',
@@ -690,8 +698,6 @@ export default {
       },
       participation: {
         section: '参与方式',
-        mode: '发言时机',
-        modes: { direct: "只在被 {'@'}、回复或私聊时", join: '同时参与群内讨论' },
         activity: '活跃度',
         keywords: '关键词',
         otherBots: '群内其他 Bot 的账号',
@@ -2589,6 +2595,30 @@ export default {
     notWoken: '此消息未唤醒 Bot',
     duplicate: '消息重复',
     handleFailed: '消息处理出错',
+    participationSettings: '参与方式设置',
+    scenarios: {
+      menu: '多人情境',
+      call: { title: '有人呼叫 Bot', call1: '今晚想吃点热乎的，有什么推荐吗？' },
+      open: {
+        title: '群里的开放问题',
+        open1: '有人知道怎么把手机照片批量传到电脑上吗？',
+        open2: '我试过数据线，电脑一直识别不了',
+      },
+      others: {
+        title: '别人之间在聊',
+        others1: '你周末那场球赛去看了吗？',
+        others2: '去了，加时才赢，太刺激了',
+        others3: '我在家看直播差点睡着',
+      },
+      followUp: {
+        title: 'Bot 发言后的续接',
+        followUp1: '推荐一部周末看的电影',
+        followUp2: '有没有轻松一点的？',
+      },
+      playing: '正在发送情境消息',
+      noReply: 'Bot 在 90 秒内没有回复，情境已停止',
+      failed: '情境发送失败',
+    },
     start: {
       title: '开始测试',
       from: '设置来源',

@@ -1,6 +1,7 @@
+import type { Participation } from './participation'
 import { http } from './client'
 import type { PersonaExample, PersonaFiles, PersonaProfile } from './personas'
-import type { TurnDetail } from './timeline'
+import type { TurnDetail, Verdict } from './timeline'
 
 /** Types of panel/routes/trials.py (host trials) and trials/panel.py (the isolated chat test). */
 
@@ -20,6 +21,8 @@ export interface ChatMessage {
   send_status: string
   recalled?: boolean
   images: { image_index: number; description?: string | null }[]
+  /** The attention verdict recorded when the message arrived. */
+  verdict?: Verdict | null
 }
 export interface ChatTurn {
   id: string
@@ -100,15 +103,23 @@ export interface TrialInfo {
   /** The role library directory of a draft trial. */
   draft_source: string | null
   models: Record<string, string>
+  /** The participation fields this trial runs with. */
+  attention: Participation
 }
 
 export const trialsApi = {
   list: (signal?: AbortSignal) => http.get<{ items: TrialInfo[] }>('/api/host/trials', undefined, signal),
   /** Platform sending is always simulated. */
-  start: (scene: string, context: number, draft?: { directory: string; files: PersonaFiles }) =>
+  start: (
+    scene: string,
+    context: number,
+    attention: Participation,
+    draft?: { directory: string; files: PersonaFiles },
+  ) =>
     http.post<TrialInfo>('/api/host/trials', {
       scene,
       context_messages: context,
+      attention,
       ...(draft ? { persona_draft: draft } : {}),
     }),
   stop: (id: string) => http.post<TrialInfo>(`/api/host/trials/${encodeURIComponent(id)}/stop`),

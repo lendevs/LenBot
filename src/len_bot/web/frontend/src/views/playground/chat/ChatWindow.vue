@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
-import { AtSign, ListTree, Pencil, Plus, Reply, SendHorizontal, X } from '@lucide/vue'
+import { AtSign, ListTree, Pencil, Plus, Reply, SendHorizontal, Users, X } from '@lucide/vue'
 import { chatApi, type ChatMessage, type ChatSource, type MessageReceipt } from '../../../api/trials'
 import { formatDateTime } from '../../../i18n/format'
 import { groupLabel } from '../../../layouts/shell/scenes'
@@ -13,8 +13,10 @@ import DropdownMenu, { type MenuEntry } from '../../../ui/DropdownMenu.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import IconButton from '../../../ui/IconButton.vue'
 import Textarea from '../../../ui/Textarea.vue'
+import VerdictMark from '../../groups/live/VerdictMark.vue'
 import MemberDialog from './MemberDialog.vue'
 import { useMembers, type Member } from './members'
+import { SCENARIOS, useScenarios, type ScenarioKey } from './scenarios'
 import type { Chat } from './useChat'
 
 const props = defineProps<{ source: ChatSource; chat: Chat; turnsOpen: boolean }>()
@@ -25,6 +27,14 @@ const view = computed(() => props.chat.data.value!)
 const scene = computed(() => props.chat.data.value?.scene)
 const { members, current, speaker, nextUid, save, remove } = useMembers(scene, props.chat.isPrivate)
 const roleTone = { owner: 'warning', admin: 'success' } as const
+const scenarios = useScenarios(props.source, props.chat, members)
+const scenarioItems = computed<MenuEntry[]>(() =>
+  (Object.keys(SCENARIOS) as ScenarioKey[]).map((key) => ({
+    label: t(`playground.scenarios.${key}.title`),
+    disabled: Boolean(scenarios.playing.value),
+    select: () => void scenarios.play(key),
+  })),
+)
 
 function nameOf(uid: string) {
   if (uid === 'all') return t('playground.everyone')
@@ -224,6 +234,13 @@ const liveTone = computed(() =>
       >
         <Badge :tone="liveTone" dot>{{ t(`playground.live.${chat.live.value}`) }}</Badge>
       </button>
+      <DropdownMenu v-if="view.running && scenarios.available.value" :items="scenarioItems" align="end">
+        <IconButton
+          :icon="Users"
+          :label="t('playground.scenarios.menu')"
+          :disabled="Boolean(scenarios.playing.value)"
+        />
+      </DropdownMenu>
       <IconButton
         :icon="ListTree"
         :label="t('playground.turns')"
@@ -266,6 +283,7 @@ const liveTone = computed(() =>
             <span class="opacity-70 tabular">
               {{ formatDateTime(message.time, { timeZone: view.timezone }) }}
             </span>
+            <VerdictMark v-if="message.verdict && !message.is_self" :verdict="message.verdict" />
             <Badge
               v-if="message.is_self && ['failed', 'unconfirmed'].includes(message.send_status)"
               tone="error"
@@ -422,6 +440,14 @@ const liveTone = computed(() =>
         </Button>
       </div>
       <ErrorNote v-if="send.isError.value" :title="t('playground.sendFailed')" :error="send.error.value" />
+      <p v-if="scenarios.playing.value" class="text-xs text-muted">
+        {{ t('playground.scenarios.playing') }}
+      </p>
+      <ErrorNote
+        v-if="scenarios.error.value"
+        :title="t('playground.scenarios.failed')"
+        :error="scenarios.error.value"
+      />
       <p v-if="receiptNote" class="text-xs text-muted">{{ receiptNote }}</p>
       <ErrorNote v-if="receipt?.error" :title="t('playground.handleFailed')" :error="receipt.error" />
     </form>
