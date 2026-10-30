@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 import shutil
+import sys
 
 import pytest
 
@@ -79,6 +80,8 @@ async def data_host(root: Path, upstream_port: int, environment: str, mode: str,
                     tools=('knowledge', 'web_read', 'web_search'), web_read: dict | None = None,
                     max_task_bytes: int | None = None):
     """A host runtime with the scene's tasks wired as in ``host.run``; yields the task service and the peer's requests."""
+    if mode != 'off' and sys.platform == 'win32':
+        pytest.skip('the egress bridge runs inside the Linux task container; the stand-in cannot host it on Windows')
     received: list = []
     server = await peer_server(list(replies), received)
     async with server:

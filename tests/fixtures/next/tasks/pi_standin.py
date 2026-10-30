@@ -143,8 +143,8 @@ def fetch(requests: list[dict]) -> list[str]:
 
 def data_calls(calls: list[dict]) -> list[dict]:
     """Each call's answer as the extension would see it: the ``content`` text, or the refusal's status and text."""
-    api = json.loads((CONTROL / "task-api.json").read_text())
-    provider = json.loads((AGENT / "models.json").read_text())["providers"][PROVIDER]
+    api = json.loads((CONTROL / "task-api.json").read_text(encoding="utf-8"))
+    provider = json.loads((AGENT / "models.json").read_text(encoding="utf-8"))["providers"][PROVIDER]
     port = int(provider["baseUrl"].rsplit(":", 1)[1].split("/", 1)[0])
     results = []
     for call in calls:
@@ -199,7 +199,7 @@ def run(message: str) -> None:
         names = ("HTTP_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY")
         lines.append("环境：" + json.dumps({name: os.environ.get(name) for name in names}, ensure_ascii=False))
     if "[数据]" in message:
-        tools = json.loads((CONTROL / "task-api.json").read_text())["tools"]
+        tools = json.loads((CONTROL / "task-api.json").read_text(encoding="utf-8"))["tools"]
         lines.append("数据工具：" + json.dumps(sorted(tool["name"] for tool in tools)))
         calls, _ = json.JSONDecoder().raw_decode(message.split("数据：", 1)[1])
         lines.append("数据结果：" + json.dumps(data_calls(calls), ensure_ascii=False))
