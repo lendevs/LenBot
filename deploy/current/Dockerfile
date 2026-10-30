@@ -59,6 +59,6 @@ COPY --from=distribution /build/licenses /usr/share/lenbot/licenses
 # This is the deployed instance root. The panel reads and atomically saves
 # lenbot.config.json here; its whole parent directory is mounted read/write.
 WORKDIR /srv/lenbot
-USER 10000:10000
+# The entry point starts as root, joins the group of a mounted /var/run/docker.sock and then runs as 10000:10000.
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/opt/lenbot/.venv/bin/lenbot-container"]

@@ -53,10 +53,10 @@ OneBot 客户端的消息上报格式需设为 **array（消息段数组）**，
 - **OneBot 在容器中、LenBot 在宿主机上**：正向连接需将 OneBot 容器的 WebSocket 端口映射到宿主机（建议绑定 `127.0.0.1:<端口>`），LenBot 填 `ws://127.0.0.1:<端口>`；反向连接时容器内的 `127.0.0.1` 指向容器自身，需将 LenBot 监听地址设为 Docker 网桥可达地址并配置访问令牌，再在容器内连接宿主机地址。
 - **LenBot 在容器中、OneBot 在宿主机上**：正向连接在 LenBot 中填写 `ws://host.docker.internal:<端口>`；反向连接在 LenBot 容器内监听 `0.0.0.0:<端口>`、设置访问令牌并将端口发布到宿主机。
 
-## 语音大小与文件上传路径
+## 语音大小与文件上传
 
 - **大体积语音消息**：开启语音转写且调大了单条语音字节上限时，OneBot WebSocket 帧包含 Base64 编码的音频数据，需在**系统 → 设置 → 连接 → 更多设置**中同步调大**单条数据上限**（`onebot.max_frame_bytes`），计算公式见 [ASR 部署说明](https://github.com/lendevs/LenBot/blob/master/deploy/current/asr.md)。
-- **发送任务交付文件**：后台任务产出的文件发送到群聊时，OneBot 进程必须能按路径读取 LenBot 的交付目录。若两者运行在不同容器中，先将交付目录只读挂载给 OneBot 容器，再在**系统 → 设置 → 连接 → 更多设置**中将 **OneBot 可见的文件目录**（`onebot.upload_visible_root`）设为 OneBot 容器内的挂载绝对路径，详见[后台任务](../use/tasks#发送到-qq)。
+- **发送任务交付文件**：交付文件以 `base64://` 随上传请求发送，单个文件最大 36MiB。通过 HTTP 发送动作时，SnowLuma 的 HTTP 接口只接受 2MB 以内的请求体，较大的文件需要改用 WebSocket 发送动作，详见[后台任务](../use/tasks#发送到-qq)。
 
 ## 分享卡片解析
 

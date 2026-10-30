@@ -15,9 +15,11 @@ from typing import BinaryIO, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .materials import copy_stream, finish_file_operation, material_directory
-from .storage import DIRECTORY_FLAGS, output_entries
+from .storage import output_entries
 from ..configuration.tasks import WorkerSettings
 from .store import TERMINAL, TaskStore
+from ..platform.identity import scene_directory
+from ..storage.files import NONBLOCK, Directory, is_link
 
 
 ResourceScope = Literal['workspace', 'inputs', 'deliveries', 'runtime', 'shared']
@@ -93,16 +95,16 @@ class OpenedResource:
 def resource_parent(root: Path, relative: str):
     if root.resolve(strict=False) != root:
         raise ValueError(f'Resource root must not traverse a symbolic link: {root}')
-    directory = os.open(root, DIRECTORY_FLAGS)
+    directory = Directory.open(root)
     try:
         parts = relative.split('/')
         for part in parts[:-1]:
-            nested = os.open(part, DIRECTORY_FLAGS, dir_fd=directory)
-            os.close(directory)
+            nested = directory.child(part)
+            directory.close()
             directory = nested
         yield directory, parts[-1]
     finally:
-        os.close(directory)
+        directory.close()
 
 
 class TaskResources:
@@ -114,12 +116,12 @@ class TaskResources:
             return material_directory(self.settings.workspace_root, scene)
         self.records.get(scene, location.task_id)
         if location.scope == 'workspace':
-            return self.settings.workspace_root / scene / 'tasks' / str(location.task_id)
+            return self.settings.workspace_root / scene_directory(scene) / 'tasks' / str(location.task_id)
         if location.scope == 'inputs':
-            return self.settings.runtime_root / scene / str(location.task_id) / 'inputs'
+            return self.settings.runtime_root / scene_directory(scene) / str(location.task_id) / 'inputs'
         if location.scope == 'runtime':
-            return self.settings.runtime_root / scene / str(location.task_id)
-        return self.settings.delivery_root / scene / str(location.task_id)
+            return self.settings.runtime_root / scene_directory(scene) / str(location.task_id)
+        return self.settings.delivery_root / scene_directory(scene) / str(location.task_id)
 
     async def list(self, scene: str, location: ResourceLocation, *, offset: int, limit: int) -> dict:
         root = self.root(scene, location)
@@ -175,7 +177,7 @@ class TaskResources:
     def open(self, scene: str, reference: ResourceFileRef) -> OpenedResource:
         root, relative, name = self.locate_file(scene, reference)
         with resource_parent(root, relative) as (directory, filename):
-            descriptor = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            descriptor = directory.open_file(filename, os.O_RDONLY | NONBLOCK)
         stream = os.fdopen(descriptor, 'rb')
         try:
             info = os.fstat(stream.fileno())
@@ -219,8 +221,8 @@ class TaskResources:
     @staticmethod
     def _unlink(root: Path, relative: str) -> int:
         with resource_parent(root, relative) as (directory, name):
-            info = os.stat(name, dir_fd=directory, follow_symlinks=False)
-            if not stat.S_ISREG(info.st_mode):
+            info = directory.stat(name)
+            if not stat.S_ISREG(info.st_mode) or is_link(info):
                 raise ValueError(f'Only a regular resource file can be deleted: {relative}')
-            os.unlink(name, dir_fd=directory)
+            directory.unlink(name)
             return info.st_size

@@ -15,8 +15,9 @@ import Skeleton from '../../../ui/Skeleton.vue'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
 
-const props = defineProps<{ scene: string; existing: string[] }>()
-const emit = defineEmits<{ imported: [listing: ReferenceListing] }>()
+/** With `pick`, any file can be chosen and is emitted as `picked` instead of being added to the reference. */
+const props = defineProps<{ scene: string; existing: string[]; pick?: boolean }>()
+const emit = defineEmits<{ imported: [listing: ReferenceListing]; picked: [file: GroupFile] }>()
 const open = defineModel<boolean>('open', { default: false })
 
 const { t } = useI18n()
@@ -112,20 +113,23 @@ function details(file: GroupFile) {
         v-for="file in listing.data.value?.files"
         :key="file.file_id"
         class="flex min-w-0 items-center gap-3 px-3 py-2.5"
-        :class="{ 'opacity-60': !file.supported }"
+        :class="{ 'opacity-60': !pick && !file.supported }"
       >
         <FileText :size="16" class="shrink-0 text-muted" aria-hidden="true" />
         <div class="min-w-0 flex-1">
           <div class="flex min-w-0 items-center gap-2">
             <span class="truncate text-sm font-medium text-ink">{{ file.name }}</span>
             <Badge v-if="existing.includes(file.name)" tone="success">
-              {{ t('groups.reference.groupFiles.added') }}
+              {{ t(pick ? 'groups.reference.groupFiles.picked' : 'groups.reference.groupFiles.added') }}
             </Badge>
           </div>
           <p class="truncate text-xs text-muted">{{ details(file) }}</p>
         </div>
+        <Button v-if="pick" size="sm" :disabled="existing.includes(file.name)" @click="emit('picked', file)">
+          {{ t('groups.reference.groupFiles.pick') }}
+        </Button>
         <Button
-          v-if="file.supported"
+          v-else-if="file.supported"
           size="sm"
           :loading="pending === file.file_id"
           :disabled="importing.isPending.value && pending !== file.file_id"

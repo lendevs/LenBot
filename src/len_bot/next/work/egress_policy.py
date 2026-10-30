@@ -1,7 +1,7 @@
-"""Numeric public destination classification used by the current host and its egress pipe.
+"""Destination rules for task egress: the network mode's host names and public numeric addresses.
 
-Extracted without changing the former gateway classification rules. This module
-owns no gateway control, model routing, domain permissions or budget storage.
+Host names are checked before any lookup; every resolved address must then be
+public. This module owns no gateway control, model routing or budget storage.
 """
 from __future__ import annotations
 
@@ -30,6 +30,25 @@ class EgressBlocked(ValueError):
     same text in both layers: the proxy's refusal body and the in-container
     exception carry the reason the policy actually recorded.
     """
+
+
+def host_refusal(host: str, mode: str, allowed_hosts: Iterable[str]) -> str | None:
+    """Why the network mode does not allow this requested host name, or ``None``."""
+    if mode == "off":
+        return "当前任务未开放联网"
+    if mode == "public":
+        return None
+    name = host.lower().removesuffix(".")
+    try:
+        ipaddress.ip_address(name.strip("[]").split("%", 1)[0])
+    except ValueError:
+        pass
+    else:
+        return f"按域名放行时不能直接连接 IP 地址 {host}"
+    for pattern in allowed_hosts:
+        if name == pattern or pattern.startswith("*.") and name.endswith(pattern[1:]):
+            return None
+    return f"{host} 不在出网域名名单中"
 
 
 def _ipv4_from_nat64(address: ipaddress.IPv6Address) -> ipaddress.IPv4Address:
