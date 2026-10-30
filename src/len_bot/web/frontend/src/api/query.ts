@@ -17,6 +17,7 @@ export const keys = {
     sceneTitles: () => ['host', 'scene-titles'] as const,
     pendingRestart: () => ['host', 'pending-restart'] as const,
     availableScenes: () => ['host', 'available-scenes'] as const,
+    focus: (scene: string) => ['host', 'focus', scene] as const,
     settings: () => ['host', 'settings'] as const,
     workerDefaults: () => ['host', 'worker-defaults'] as const,
     workerReadiness: () => ['host', 'worker-readiness'] as const,

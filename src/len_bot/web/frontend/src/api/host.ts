@@ -29,6 +29,34 @@ export interface HostScene {
   attention: Participation
 }
 
+/** One condition of a persistent intent, as `chat/declarations.py` stores it. */
+export type IntentCondition =
+  | { type: 'person'; people: string[] }
+  | { type: 'thread'; message_id: string }
+  | { type: 'open_question'; message_id: string; keywords?: string[] }
+  | { type: 'topic'; keywords: string[] }
+  | { type: 'at'; minutes: number; [field: string]: unknown }
+
+/** GET /api/host/scenes/{scene}/focus */
+export interface SceneFocus {
+  scene: string
+  /** Configured modes; null when the feature is off for this group. */
+  declarations: 'enforce' | 'record' | 'context' | null
+  disposition: 'enforce' | 'record' | null
+  /** Whether the running role allows the attention tool that persistent intents need. */
+  persona_allows: boolean
+  persona: string
+  intents: {
+    id: string
+    reason: string
+    match: 'any' | 'all'
+    created: number
+    until: number
+    when: IntentCondition[]
+  }[]
+  wrap_up: { state: 'open' | 'closed'; people: string[]; until: number } | null
+}
+
 export interface HostState {
   bot_id: string | null
   timezone: string
@@ -119,6 +147,10 @@ export const hostApi = {
     http.get<{ items: AvailableScene[] }>('/api/host/settings/scenes/available', undefined, signal),
   addScene: (scene: string, persona: string, attention: Participation) =>
     http.post<unknown>('/api/host/settings/scenes', { scene, persona, attention }),
+  focus: (scene: string, signal?: AbortSignal) =>
+    http.get<SceneFocus>(`${scenePath(scene)}/focus`, undefined, signal),
+  dropIntent: (scene: string, id: string) =>
+    http.delete<SceneFocus>(`${scenePath(scene)}/focus/intents/${encodeURIComponent(id)}`),
   personas: (signal?: AbortSignal) =>
     http.get<{ roles: PersonaSummary[] }>('/api/host/personas', undefined, signal),
 }

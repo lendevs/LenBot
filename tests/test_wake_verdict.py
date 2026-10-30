@@ -7,7 +7,7 @@ import pytest
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
-from len_bot.next.chat.attention import SceneRunner
+from len_bot.next.chat.attention import PART_NAMES, SceneRunner
 from len_bot.next.chat.disposition import Disposition
 from len_bot.next.chat.session import Chat
 from len_bot.next.configuration.chat import TurnDisposition
@@ -58,12 +58,18 @@ async def test_unwoken_message_records_its_own_reason(tmp_path, case, reason):
             verdict = receipt['wake_verdict']
             assert not verdict['woke'] and verdict['channel'] is None
             assert reason in verdict['reason']
-            assert set(verdict) == {'woke', 'channel', 'reason', 'score', 'threshold', 'effect_factor'}
+            assert set(verdict) == {'woke', 'channel', 'reason', 'score', 'threshold', 'effect_factor', 'parts'}
             recorded = store.db.execute('SELECT wake_verdict FROM messages WHERE seq=?', (receipt['message_seq'],)).fetchone()[0]
             assert json.loads(recorded) == verdict
             if case == 'score':
                 assert verdict['score'] < verdict['threshold'] == 10
                 assert verdict['effect_factor'] == 1.0
+                parts = verdict['parts']
+                # One open question from one member, no earlier messages: base 0.3, question 1.0, help word 1.0.
+                assert (parts['messages'], parts['base'], parts['question'], parts['help']) == (1, pytest.approx(0.3), 1.0, 1.0)
+                assert parts['raw'] == sum(parts[name] for name in PART_NAMES)
+                assert verdict['score'] == max(0.0, parts['raw']) * parts['activity'] * verdict['effect_factor']
+            assert (verdict['parts'] is None) == (verdict['score'] is None)
 
 
 @pytest.mark.asyncio

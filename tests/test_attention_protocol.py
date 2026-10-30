@@ -416,3 +416,87 @@ async def test_onebot_bursts_wait_for_image_caption_extend_same_speaker_and_keep
     assert rows['bystander-image']['first_batch_seconds'] == idle
     assert not any(row['cut'] for row in rows.values())
     assert all(row['within_cap'] and row['model_requests'] == 0 for row in rows.values())
+
+
+@pytest.mark.asyncio
+async def test_panel_lists_intents_and_wrap_up_and_cancels_one(tmp_path):
+    config, persona = config_for(tmp_path)
+    closed = {'state': 'closed', 'minutes': 5}
+    replies = [
+        response('attention', {'action': 'intend', 'when': [{'type': 'person', 'people': ['onebot:70001']}],
+                              'minutes': 60, 'reason': '等待报错日志', 'end_turn': True, 'disposition': closed}, 'c1'),
+        response('attention', {'action': 'intend', 'when': [{'type': 'topic', 'keywords': ['日志']}],
+                              'minutes': 30, 'reason': '日志话题', 'end_turn': True}, 'c2'),
+    ]
+    requests, now = [], [START]
+    server = await peer_server(replies, requests)
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database, now=lambda: now[0]) as store:
+            async with ChatModel(config.model_settings('mind')) as model:
+                def runner():
+                    value = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), lambda _: None)
+                    value.closing = True
+                    return value
+                live = runner()
+                live.receive(message(70001, 1, '安装失败', direct=True))
+                await asyncio.wait_for(live.run(), 5)
+                live.receive(message(70002, 2, '我也遇到了', direct=True))
+                await asyncio.wait_for(live.run(), 5)
+                live = runner()
+                focus = live.focus_state()
+                assert (focus['declarations'], focus['disposition'], focus['persona_allows']) == ('enforce', 'enforce', True)
+                assert [(item['id'], item['reason'], item['until'] - item['created']) for item in focus['intents']] == [
+                    ('i1', '等待报错日志', 3600), ('i2', '日志话题', 1800)]
+                assert focus['intents'][0]['when'] == [{'type': 'person', 'people': ['onebot:70001']}]
+                assert focus['wrap_up'] is None  # the second turn ended without a disposition
+                after = live.drop_intent('i1')
+                assert [item['id'] for item in after['intents']] == ['i2']
+                with pytest.raises(ValueError, match='i1'):
+                    live.drop_intent('i1')
+                now[0] += config.attention.focus_seconds + 1  # past the baseline focus window
+                receipt = live.receive(message(70001, 3, '先去吃饭'))
+                assert not receipt['wake_verdict']['woke']
+                now[0] += 1800
+                assert live.focus_state()['intents'] == []
+    assert len(requests) == 2
+
+
+def test_panel_routes_read_and_cancel_intents(tmp_path):
+    import httpx
+
+    from len_bot.next.chat.declarations import Declared, Intent
+    from len_bot.next.config import load_host_config
+    from len_bot.next.panel.app import create_app
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.runtime.network import NetworkRuntime
+    from test_next_panel_acts_as_owner import SCENE as PANEL_SCENE, write_instance
+
+    write_instance(tmp_path, ['onebot:70001'])
+    path = tmp_path / 'lenbot.config.json'
+    source = json.loads(path.read_text())
+    source['scenes'][PANEL_SCENE]['attention'] = {'only_direct': False, 'declarations': {'mode': 'enforce'}}
+    path.write_text(json.dumps(source))
+    config = load_host_config(tmp_path)
+
+    async def run():
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind:
+                runtime = NetworkRuntime(config, [(config.scene_config(PANEL_SCENE),
+                                                   load_persona(config.scenes[PANEL_SCENE].persona))], store, mind)
+                runner = runtime.runners[PANEL_SCENE]
+                now = store.now()
+                runner.state.declared = Declared(intents=[Intent('i1', [{'type': 'topic', 'keywords': ['日志']}], 'any',
+                                                                 '等待日志', now, now + 600, None, None)], next_id=2)
+                app = create_app(config, runtime, root=tmp_path)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+                    await client.post('/api/auth/login', json={'username': 'host-operator', 'password': 'synthetic-password'})
+                    base = f'/api/host/scenes/{PANEL_SCENE}/focus'
+                    focus = (await client.get(base)).json()
+                    assert focus['declarations'] == 'enforce' and focus['disposition'] is None
+                    assert [(item['id'], item['reason']) for item in focus['intents']] == [('i1', '等待日志')]
+                    dropped = await client.delete(base + '/intents/i1')
+                    assert dropped.status_code == 200 and dropped.json()['intents'] == []
+                    assert (await client.delete(base + '/intents/i1')).status_code == 404
+                assert store.load_attention(PANEL_SCENE)['declared']['intents'] == []
+    asyncio.run(run())

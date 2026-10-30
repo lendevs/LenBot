@@ -22,6 +22,8 @@ class Verdict(BaseModel):
     score: float | None
     threshold: float | None
     effect_factor: float | None = None
+    # Terms of the participation score, as chat/attention.py participation_parts returns them.
+    parts: dict[str, float] | None = None
 
 
 class Image(BaseModel):
