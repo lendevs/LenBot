@@ -167,6 +167,8 @@ class SharedConfig(BaseModel):
         if self.recap_reasoning_reserve >= self.recap_output_tokens:
             raise ValueError("回想最大长度需要大于思考额度")
         trigger_tokens = self.compaction.input_tokens
+        if trigger_tokens <= self.recap_output_tokens - self.recap_reasoning_reserve:
+            raise ValueError("压缩阈值需要大于回想正文额度（回想最大长度减去思考额度）")
         if trigger_tokens + mind.max_output_tokens > mind.context_window_tokens:
             raise ValueError(
                 "compaction.input_tokens + models.roles.mind.max_output_tokens must fit "
