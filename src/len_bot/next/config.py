@@ -167,6 +167,8 @@ class SharedConfig(BaseModel):
         if self.recap_reasoning_reserve >= self.recap_output_tokens:
             raise ValueError("回想最大长度需要大于思考额度")
         trigger_tokens = self.compaction.input_tokens
+        if trigger_tokens <= self.recap_output_tokens - self.recap_reasoning_reserve:
+            raise ValueError("压缩阈值需要大于回想正文额度（回想最大长度减去思考额度）")
         if trigger_tokens + mind.max_output_tokens > mind.context_window_tokens:
             raise ValueError(
                 "compaction.input_tokens + models.roles.mind.max_output_tokens must fit "
@@ -456,11 +458,14 @@ def _resolve_worker_paths(root: Path, source: dict) -> None:
     worker = source.get("worker")
     if not isinstance(worker, dict):
         return
-    binary = worker.get("docker_binary")
-    if not isinstance(binary, str) or not Path(binary).is_absolute():
-        raise ValueError("worker.docker_binary must be an explicit absolute path string")
-    # Kept as written: a package manager's link such as /opt/homebrew/bin/docker survives upgrades.
-    worker["docker_binary"] = Path(binary)
+    for name in ("docker_binary", "bwrap_binary", "task_runtime"):
+        value = worker.get(name)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            raise ValueError(f"worker.{name} must be an explicit absolute path string")
+        # Kept as written: a package manager's link such as /opt/homebrew/bin/docker survives upgrades.
+        worker[name] = Path(value)
     pool = worker.get('storage_pool')
     if isinstance(pool, dict):
         pool['mount'] = _resolved_path(root, pool.get('mount'), within_root=False, field='worker.storage_pool.mount')

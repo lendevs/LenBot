@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Moon, Zap } from '@lucide/vue'
-import type { Verdict } from '../../../api/timeline'
+import { PART_NAMES, type Verdict } from '../../../api/timeline'
 import { formatNumber } from '../../../i18n/format'
 import Popover from '../../../ui/Popover.vue'
 import { useLiveLabels } from './labels'
@@ -17,6 +17,13 @@ const title = computed(() =>
     : t('groups.live.verdict.slept'),
 )
 const number = (value: number) => formatNumber(value, { maximumFractionDigits: 2 })
+const signed = (value: number) => (value > 0 ? '+' : '') + number(value)
+const parts = computed(() => {
+  const value = props.verdict.parts
+  return value
+    ? PART_NAMES.filter((name) => value[name] !== 0).map((name) => [name, value[name]] as const)
+    : []
+})
 </script>
 
 <template>
@@ -51,6 +58,22 @@ const number = (value: number) => formatNumber(value, { maximumFractionDigits: 2
           <dd class="tabular">{{ number(verdict.effect_factor) }}</dd>
         </template>
       </dl>
+      <template v-if="verdict.parts">
+        <strong class="border-t border-line pt-2 text-xs font-semibold text-ink-2">
+          {{ t('groups.live.verdict.parts.title') }} ·
+          {{ t('groups.live.verdict.parts.messages', { n: verdict.parts.messages }) }}
+        </strong>
+        <dl class="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 text-xs">
+          <template v-for="[name, value] in parts" :key="name">
+            <dt class="text-muted">{{ t(`groups.live.verdict.parts.${name}`) }}</dt>
+            <dd class="text-right tabular">{{ signed(value) }}</dd>
+          </template>
+          <dt class="text-muted">{{ t('groups.live.verdict.parts.raw') }}</dt>
+          <dd class="text-right font-medium tabular">{{ number(verdict.parts.raw) }}</dd>
+          <dt class="text-muted">{{ t('groups.live.verdict.parts.activity') }}</dt>
+          <dd class="text-right tabular">× {{ number(verdict.parts.activity) }}</dd>
+        </dl>
+      </template>
     </div>
   </Popover>
 </template>

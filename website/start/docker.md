@@ -62,7 +62,7 @@ ssh -L 11307:127.0.0.1:11307 你的服务器
 
 ## 后台任务
 
-后台任务使用同版本的 `ghcr.io/lendevs/lenbot-worker` 镜像，启用步骤见[后台任务](../use/tasks)，任务目录的挂载方式见[任务存储](https://github.com/lendevs/LenBot/blob/master/deploy/current/task-storage.md)。
+后台任务使用同版本的 `ghcr.io/lendevs/lenbot-worker` 镜像，在面板**能力 → 后台任务**中启用，步骤见[后台任务](../use/tasks)。部署配方把 Docker socket 挂进宿主容器，宿主启动时加入 socket 的所属组后以 `10000:10000` 运行。任务目录放在 `lenbot-data` 数据卷内，任务容器按子目录挂载（`volume-subpath`），需要 Docker Engine 26 或更高版本。
 
 ## 无交互初始化
 
@@ -70,7 +70,7 @@ ssh -L 11307:127.0.0.1:11307 你的服务器
 
 ```sh
 docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
-  run --rm --no-deps -T --entrypoint /opt/lenbot/.venv/bin/python \
+  run --rm --no-deps -T --user 10000:10000 --entrypoint /opt/lenbot/.venv/bin/python \
   lenbot -m len_bot.next.maintenance.initialize < setup.json
 ```
 

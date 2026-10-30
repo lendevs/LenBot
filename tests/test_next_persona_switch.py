@@ -1,6 +1,7 @@
 """Switching a scene's role while the host runs: library, scene settings, memory, handover and the owner command."""
 import asyncio
 import json
+from pathlib import Path
 import time
 import yaml
 
@@ -117,7 +118,7 @@ def test_library_switch_parks_and_restores_scene_settings(tmp_path):
 
         removed = await client.delete('/api/host/personas/third')
         assert removed.status_code == 200 and not (tmp_path / 'personas/third').exists()
-        assert '.runtime/deleted-personas/third-' in removed.json()['moved_to']
+        assert '.runtime/deleted-personas/third-' in Path(removed.json()['moved_to']).as_posix()
         assert (await client.get('/api/host/personas/third/profile')).status_code == 404
 
     run_host(tmp_path, exercise)

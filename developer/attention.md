@@ -14,6 +14,26 @@
 
 `uv run --no-sync python scripts/first_reply_latency.py batches` 用固定 OneBot 到达序列核对图片后补文字、同一人续发、换人、隔着别人续发、旁人发图和上限；`report <数据库>` 读取实际回合的首句等待与合批、模型、工具、发送耗时。
 
+## 唤醒判定记录
+
+每条收到的消息在 `messages.wake_verdict` 里保存一次判定：`woke`、`channel`、`reason`、`score`、`threshold`、`effect_factor` 和 `parts`。算过参与分时 `parts` 记录各项分量，没算时为 `null`：
+
+| 字段 | 含义 |
+|---|---|
+| `messages` | 参与计算的待处理群友消息条数 |
+| `base` | `0.2 + min(条数 / 10, 2)` |
+| `question` | 有未指定对象、至少 3 个字的问句时为 `1` |
+| `help` | 有未指定对象的求助词时为 `1` |
+| `filler` | 全部为水话时为 `-0.8` |
+| `no_text` | 全部没有文字时为 `-0.7` |
+| `other_bots` | `@` 其他 Bot 的消息占比的相反数 |
+| `self_share` | 最近消息中 Bot 自身发言占比乘 `-1.5` |
+| `gap` | 最新一条与上一条的间隔大于此前平均间隔时为 `0.5` |
+| `raw` | 以上八项之和 |
+| `activity` | 当时的 `attention.activity` |
+
+`score = max(0, raw) × activity × effect_factor`。现场时间线的唤醒详情列出非零分量。
+
 ## 配置
 
 在群的 `attention` 中配置，或在隔离实例根配置的 `attention` 中配置：
@@ -25,7 +45,14 @@
 }
 ```
 
-不配置即关闭。配置在场景重新装配时生效。面板的群设置会保留这些字段，目前没有专用编辑控件。
+不配置即关闭。配置在场景重新装配时生效。面板群设置的持续关注与对话收尾一节提供两个开关，运行模式和上限在高级设置中。
+
+面板读取与取消：
+
+- `GET /api/host/scenes/{scene}/focus`：配置的两种模式、角色是否允许 `attention`、生效中的意图（条件、创建与到期时间）和当前局部状态。
+- `DELETE /api/host/scenes/{scene}/focus/intents/{id}`：等当前回合结束后移除该意图及其待处理候选，效果与模型调用 `drop` 相同，日志 `attention_intent` 带 `source=panel`。
+
+工具可用时系统提示词附加 `next_attention.md`，说明留意窗口的时长限制和何时登记意图。
 
 `declarations` 默认限制：最多 5 个意图、每个 4 个条件，每个条件最多 5 个账号或关键词，有效期最长 240 分钟。参数名为 `max_intents`、`max_conditions`、`max_people`、`max_keywords`、`max_minutes`。
 

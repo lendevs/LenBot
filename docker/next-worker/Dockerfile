@@ -12,6 +12,13 @@ RUN python3 -m venv /opt/uv \
     && /opt/uv/bin/pip install --no-cache-dir uv==0.12.13 \
     && npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
 
+# Python libraries tasks use without network access; scripts/build_task_runtime.py pins the same set.
+COPY docker/next-worker/task-python.txt /opt/lenbot/task-python.txt
+COPY docker/next-worker/matplotlibrc /opt/lenbot/matplotlibrc
+RUN /opt/uv/bin/uv venv --python /usr/bin/python3 /opt/lenbot/python \
+    && /opt/uv/bin/uv pip install --no-cache --python /opt/lenbot/python/bin/python \
+       --requirement /opt/lenbot/task-python.txt
+
 RUN npm install --prefix /opt/lenbot/browser --ignore-scripts --save-exact playwright-core@1.62.0 \
     && PLAYWRIGHT_BROWSERS_PATH=/opt/lenbot/browser-binaries \
        node /opt/lenbot/browser/node_modules/playwright-core/cli.js install --with-deps --no-shell chromium \
@@ -38,10 +45,11 @@ COPY scripts/collect_python_licenses.py /opt/lenbot/collect_python_licenses.py
 COPY scripts/collect_frontend_licenses.cjs /opt/lenbot/collect_node_licenses.cjs
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/lenbot/licenses/project/
 RUN /opt/uv/bin/python /opt/lenbot/collect_python_licenses.py /usr/share/lenbot/licenses/python \
+    && /opt/lenbot/python/bin/python /opt/lenbot/collect_python_licenses.py /usr/share/lenbot/licenses/task-python \
     && node /opt/lenbot/collect_node_licenses.cjs "$(npm root --global)" /usr/share/lenbot/licenses/node-global \
     && node /opt/lenbot/collect_node_licenses.cjs /opt/lenbot/browser/node_modules /usr/share/lenbot/licenses/browser
 
-ENV PATH="/opt/uv/bin:${PATH}" HOME=/home/agent
+ENV PATH="/opt/lenbot/python/bin:/opt/uv/bin:${PATH}" HOME=/home/agent MATPLOTLIBRC=/opt/lenbot/matplotlibrc
 WORKDIR /workspace
 USER 10000:10000
 CMD ["sleep", "infinity"]

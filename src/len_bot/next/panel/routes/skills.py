@@ -21,6 +21,7 @@ from ...tools.skill_files import delete_skill, list_files, move_skill, read_file
 from ...tools.skills import BUILTIN_DIRECTORY, load_skill, load_task_skills, select_skills
 from ...plugins.manifest import scene_skill_catalog
 from ...work.store import TERMINAL, Task, TaskStore
+from ...platform.identity import scene_directory
 
 
 Source = Literal['builtin', 'shared', 'scene', 'task', 'plugin']
@@ -72,7 +73,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         worker = runtime.config.worker
         if worker is None:
             raise HTTPException(409, '当前运行配置没有 worker，无法定位原任务工作区')
-        return worker.workspace_root / scene / 'tasks' / str(task_id)
+        return worker.workspace_root / scene_directory(scene) / 'tasks' / str(task_id)
 
     def skill_directory(config: HostConfig) -> Path:
         if config.worker is None or config.worker.skills_directory is None:
@@ -98,7 +99,7 @@ def register_host_skills(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
         directory = skill_directory(config)
         if source == 'shared':
             return directory / 'shared' / name, f'/shared/skills/approved/{name}', None
-        return directory / 'scenes' / scene / name, f'/group/skills/{name}', None
+        return directory / 'scenes' / scene_directory(scene) / name, f'/group/skills/{name}', None
 
     def unchanged_task(previous: Task | None) -> None:
         if previous is not None:

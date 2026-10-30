@@ -292,7 +292,8 @@ class PersonaService:
             skills = ()
             if runtime.tasks is not None:
                 worker = runtime.config.worker
-                catalog = load_catalog(worker.skills_directory, scene, public_browser=worker.public_browser) + (
+                catalog = load_catalog(worker.skills_directory, scene, public_browser=worker.public_browser,
+                                       missing=worker.missing_programs()) + (
                     () if runtime.plugins is None else runtime.plugins.skills_for(scene))
                 skills = select_skills(catalog, persona.skills)
             external = (([] if runtime.plugins is None else

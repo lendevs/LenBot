@@ -230,6 +230,7 @@ def test_memory_stays_loaded_while_upkeep_writes_with_it(tmp_path, ingest):
     names, system = asyncio.run(tools())
     assert ('memory' in names) is ingest
     assert ('长期记忆用 memory 工具读写' in system) is ingest
+    assert ('用 tool_search 加载 memory 后按 path read' in system) is not ingest
 
 
 @pytest.mark.asyncio

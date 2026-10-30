@@ -1,6 +1,7 @@
 """Scene configuration writes through authenticated public HTTP boundaries."""
 import asyncio
 import json
+from pathlib import Path
 import shutil
 
 import httpx
@@ -82,10 +83,10 @@ def test_scene_bindings_validate_before_save_and_keep_running_snapshot(tmp_path)
                     rebound = await client.post('/api/host/personas/other/scenes', json={'scenes': ['onebot:group:80001']})
                     assert rebound.status_code == 200 and rebound.json()['results'][0]['status'] == 'switched', rebound.text
                     assert runtime.chats['onebot:group:80001'].persona.id == 'other'
-                    assert str(runtime.config.scenes['onebot:group:80001'].persona).endswith('/other')
+                    assert runtime.config.scenes['onebot:group:80001'].persona.name == 'other'
                     settings = (await client.get('/api/host/settings')).json()
-                    assert settings['saved']['scenes']['onebot:group:80001']['persona'].endswith('/other')
-                    assert settings['running']['scenes']['onebot:group:80001']['persona'].endswith('/other')
+                    assert Path(settings['saved']['scenes']['onebot:group:80001']['persona']).name == 'other'
+                    assert Path(settings['running']['scenes']['onebot:group:80001']['persona']).name == 'other'
                     assert (await client.delete(endpoint+'/onebot:group:80001')).status_code == 200
                     assert (await client.get('/api/host/settings/scenes/onebot:group:80001/learning')).status_code == 404
                     assert (await client.delete(endpoint+'/onebot:group:80002')).status_code == 200

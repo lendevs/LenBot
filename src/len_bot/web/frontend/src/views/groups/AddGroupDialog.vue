@@ -19,6 +19,8 @@ import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { toast } from '../../ui/toast'
+import ParticipationChoice from './participation/ParticipationChoice.vue'
+import { ACTIVITY_LEVELS, type Participation } from '../../api/participation'
 
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ added: [scene: string] }>()
@@ -29,6 +31,7 @@ const picked = ref<string | null>(null)
 const kind = ref<'group' | 'private'>('group')
 const number = ref('')
 const persona = ref<string>()
+const participation = ref<Participation>({ only_direct: true, activity: ACTIVITY_LEVELS.medium })
 
 const available = useQuery({
   queryKey: keys.host.availableScenes(),
@@ -61,7 +64,7 @@ function pick(scene: string) {
 }
 
 const add = useMutation({
-  mutationFn: () => hostApi.addScene(target.value, persona.value ?? ''),
+  mutationFn: () => hostApi.addScene(target.value, persona.value ?? '', participation.value),
   onSuccess: async () => {
     const scene = target.value
     const item = available.data.value?.items.find((entry) => entry.scene === scene)
@@ -79,6 +82,7 @@ watch(open, (value) => {
   add.reset()
   picked.value = null
   number.value = ''
+  participation.value = { only_direct: true, activity: ACTIVITY_LEVELS.medium }
 })
 </script>
 
@@ -148,6 +152,7 @@ watch(open, (value) => {
       <Field :label="t('groups.join.persona')" required>
         <Select v-model="persona" :options="personaOptions" :disabled="personas.isPending.value" />
       </Field>
+      <ParticipationChoice v-if="target.split(':')[1] !== 'private'" v-model="participation" />
       <ErrorNote v-if="personas.isError.value" :error="personas.error.value" :retry="personas.refetch" />
       <ErrorNote v-if="add.isError.value" :title="t('groups.join.failed')" :error="add.error.value" />
     </div>

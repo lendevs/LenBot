@@ -14,6 +14,11 @@ import urllib.request
 from common import host_status, owned_like_parent, read_json, write_json
 
 
+# The host image starts as root only so its entry point can join the Docker socket's group;
+# commands that replace the entry point run as its lenbot user, or the instance gets root-owned files.
+HOST_USER = '10000:10000'
+
+
 class NotFound(RuntimeError):
     """The engine has no such container or image."""
 
@@ -69,16 +74,17 @@ class Containers:
     def maintenance(self, action: str, *, target: dict | None = None, snapshot: Path | None = None, capture: bool = False) -> str:
         value = self.metadata() if target is None else target
         args = ['run', '--rm', '--volumes-from', value['container'] + (':ro' if action == 'inspect' else ''),
-                '--entrypoint', '/opt/lenbot/.venv/bin/python', '--workdir', '/srv/lenbot']
-        if action in ('backup', 'restore'):
-            args += ['--user', '0:0']
+                '--entrypoint', '/opt/lenbot/.venv/bin/python', '--workdir', '/srv/lenbot',
+                # Snapshots copy and restore every owner, which needs root.
+                '--user', '0:0' if action in ('backup', 'restore') else HOST_USER]
         host = self.info(value['container'])
         for group in host['HostConfig']['GroupAdd'] or []:
             args += ['--group-add', group]
         if snapshot is not None:
             backups = Path(self.deployment['host_directory']) / 'backups'
             args += ['--mount', f'type=bind,source={backups},target=/lenbot-backups']
-        args += [value['host_image'], '-m', 'len_bot.next.maintenance.upgrade', action]
+        # -B: snapshot copies run as root and must not leave root-owned bytecode in the Python volume.
+        args += [value['host_image'], '-B', '-m', 'len_bot.next.maintenance.upgrade', action]
         if action == 'inspect':
             args += ['--version', value['version']]
         if snapshot is not None:
@@ -159,7 +165,7 @@ class Containers:
         self.maintenance('apply', target=target)
         if target['work_enabled']:
             text = 'import json; from pathlib import Path; p=Path("lenbot.config.json"); v=json.loads(p.read_text()); v["worker"]["image"]=IMAGE; p.write_text(json.dumps(v,ensure_ascii=False,indent=2)+"\\n")'
-            self.command(['run', '--rm', '--volumes-from', target['container'], '--workdir', '/srv/lenbot',
+            self.command(['run', '--rm', '--volumes-from', target['container'], '--workdir', '/srv/lenbot', '--user', HOST_USER,
                           '--entrypoint', '/opt/lenbot/.venv/bin/python', target['host_image'], '-c',
                           text.replace('IMAGE', repr(target['worker_image']))])
 
@@ -219,7 +225,7 @@ class Containers:
     def publish_reference(self, reference: dict) -> None:
         code = 'import json; from pathlib import Path; p=Path(".runtime/update-control.json"); p.parent.mkdir(exist_ok=True); p.write_text(DATA); p.chmod(0o600)'
         current = self.metadata()
-        self.command(['run', '--rm', '--volumes-from', current['container'], '--workdir', '/srv/lenbot',
+        self.command(['run', '--rm', '--volumes-from', current['container'], '--workdir', '/srv/lenbot', '--user', HOST_USER,
                       '--entrypoint', '/opt/lenbot/.venv/bin/python', current['host_image'], '-c',
                       code.replace('DATA', repr(json.dumps(reference)))])
 

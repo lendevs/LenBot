@@ -95,6 +95,8 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
         system += "\n" + read_prompt("next_react.md")
     if "schedule" in names:
         system += "\n" + read_prompt("next_schedule.md")
+    if "attention" in names:
+        system += "\n" + read_prompt("next_attention.md")
     if config.memory_plugin is not None:
         system += "\n" + Template(read_prompt("next_memory_plugin.md")).substitute(plugin=config.memory_plugin)
     elif "memory" in names:
@@ -103,10 +105,13 @@ def build_system(config: LabConfig, persona: Persona, allowed: list[dict], *, pl
             backend_details=read_prompt(f"next_memory_{config.memory.backend}.md"),
         )
     elif config.memory is not None and config.memory.auto_recall:
-        system += "\n" + read_prompt("next_memory_recall.md")
+        system += "\n" + Template(read_prompt("next_memory_recall.md")).substitute(
+            read=read_prompt("next_memory_recall_read.md").strip() if "memory" in allowed_names else "")
     if "task" in names:
         system += "\n" + Template(read_prompt("next_tasks.md")).substitute(
-            network=encode({"enabled": config.worker.egress.enabled,
+            network=encode({"enabled": config.worker.egress.enabled, "mode": config.worker.egress.mode,
+                           "allowed_hosts": (config.worker.egress.allowed_hosts
+                                             if config.worker.egress.mode == "allowlist" else None),
                            "max_task_bytes": (config.worker.egress.max_task_bytes
                                if config.tasks.egress_max_task_bytes is None else config.tasks.egress_max_task_bytes),
                            "max_daily_bytes": (config.worker.egress.max_scene_daily_bytes
