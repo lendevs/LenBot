@@ -5,6 +5,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import time
 from typing import Literal
 import yaml
@@ -31,6 +32,8 @@ from ...persona.profile import PERSONA_FILES, Persona, PersonaTarget, parse_pers
 from ...storage.store import Store
 from len_bot.web.auth import session_user
 from ...prompt_files import read_prompt
+from ...reference.library import open_library
+from ...reference.sources import scan, scene_directory
 
 
 class PersonaDraft(PersonaTarget):
@@ -231,8 +234,15 @@ class HostTrials:
                           await stack.enter_async_context(ChatModel(config.model_settings('vision'))))
                 local_memory = await stack.enter_async_context(open_memory(config, store,
                     active_personas={scene: persona.id}, slots=self.runtime.chats[scene].slots))
+                # The trial reads a copy of the group's reference files, as it uses a copy of the persona.
+                for path, found in scan(scene_directory(self.root, scene)).items():
+                    target = scene_directory(root, scene) / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(found.file, target)
+                slots = self.runtime.chats[scene].slots
                 session = PanelSession(config, store, mind, vision=vision, memory=local_memory,
-                                       persona=persona, slots=self.runtime.chats[scene].slots)
+                                       persona=persona, slots=slots,
+                                       reference=open_library(root, local_memory, store, slots))
                 trial = Trial(root.name, scene, root, time.time(), config, session, stack, excluded, context,
                               persona_source='running' if persona_draft is None else 'draft',
                               draft_source=None if persona_draft is None else persona_draft.directory,
