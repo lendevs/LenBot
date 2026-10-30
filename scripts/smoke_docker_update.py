@@ -145,8 +145,8 @@ p=Path('/deployment/current.json'); v=json.loads(p.read_text()); v['host_image']
                           'from pathlib import Path; print(Path("upgrade-fixture.txt").read_text())',
                           capture_output=True, text=True).stdout.strip()
         def owned_by_lenbot():
-            # Maintenance containers replace the entry point; all but snapshot copies must run as the lenbot user.
-            foreign = docker('exec', current_host, 'find', '/srv/lenbot', '/opt/lenbot/.venv', '!', '-uid', '10000',
+            # Maintenance containers replace the entry point and must run as the lenbot user; the program stays root-owned.
+            foreign = docker('exec', current_host, 'find', '/data', '!', '-uid', '10000',
                              capture_output=True, text=True).stdout.split()
             assert not foreign, foreign[:20]
         docker('exec', '--user', '10000:10000', current_host, '/opt/lenbot/.venv/bin/python', '-c',

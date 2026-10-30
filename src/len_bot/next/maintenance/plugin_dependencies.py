@@ -1,4 +1,4 @@
-"""Install declared plugin packages into a new host environment without changing plugin source."""
+"""Install declared plugin packages for this release into the instance without changing plugin source."""
 
 import asyncio
 from pathlib import Path
@@ -13,7 +13,7 @@ from ..runtime.logs import run_maintenance
 async def install(root: Path) -> None:
     config = load_host_config(root)
     if config.plugins is None:
-        print('没有已配置的插件，Python 环境保持不变。')
+        print('没有已配置的插件，不安装插件依赖。')
         return
     found, errors = discover(config.plugins.paths)
     if errors:
@@ -35,9 +35,9 @@ async def install(root: Path) -> None:
     requirements = list(dict.fromkeys(item for manifest in manifests for item in manifest.dependencies))
     print('已配置插件：' + ', '.join(item.name for item in manifests))
     if requirements:
-        print(await install_dependencies(requirements))
+        print(await install_dependencies(root, requirements))
     else:
-        print('未声明额外依赖，Python 环境保持不变。')
+        print('插件未声明额外依赖。')
 
 
 def main() -> None:

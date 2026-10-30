@@ -393,7 +393,7 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 
 ## 发行
 
-`scripts/build_release.py` 从同一次提交构建 wheel、源码包和 Linux／macOS 部署包，Docker 宿主镜像安装同一个 wheel。部署包中，`releases/<版本>` 存放程序和依赖环境，`instance/` 存放数据。升级时按以下顺序执行。
+`scripts/build_release.py` 从同一次提交构建 wheel、源码包和 Linux、Windows 部署包，Docker 宿主镜像安装同一个 wheel。部署包中，`releases/<版本>` 存放 Python、程序和更新器，`instance/` 存放数据，插件依赖装在 `instance/.runtime/plugin-packages/<版本>`。更新器升级时按以下顺序执行。
 
 1. 安装新版本。
 2. 停机并做完整快照。

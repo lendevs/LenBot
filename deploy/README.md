@@ -23,13 +23,13 @@
 
 | 文件或目录 | 内容 |
 |---|---|
-| [current/installation.md](current/installation.md) | Linux、macOS、Windows 部署包与 Docker Compose 安装、无交互初始化 |
+| [current/installation.md](current/installation.md) | Linux、Windows 部署包与 Docker 安装、无交互初始化 |
 | [current/README.md](current/README.md) | 系统服务模板、配套容器（Ollama 向量、任务镜像）与服务启动顺序 |
 | [current/operations.md](current/operations.md) | 命令行维护、反向代理、本机代理 `fake-ip`、快照升级与用量记账 |
 | [current/asr.md](current/asr.md)、[current/start-asr.sh](current/start-asr.sh) | macOS 本地语音转写（`whisper.cpp`）编译与接入 |
 | [current/task-storage.md](current/task-storage.md) | 后台任务独立文件系统存储池（Linux `ext4` / macOS `APFS`） |
 | [current/lenbot.service](current/lenbot.service)、[current/start.command](current/start.command) | Linux `systemd` 单元模板与 macOS 双击启动脚本 |
-| [current/Dockerfile](current/Dockerfile)、`current/host*.compose.yaml`、[current/services.compose.yaml](current/services.compose.yaml) | 宿主容器镜像、Compose 编排与本地向量服务配置 |
+| [current/Dockerfile](current/Dockerfile)、`current/host*.compose.yaml`、[current/services.compose.yaml](current/services.compose.yaml) | 宿主容器镜像、更新器使用的 Compose 配方与本地向量服务配置 |
 | [current/first-setup.example.json](current/first-setup.example.json) | 首次配置无交互初始化的 JSON 模板 |
 | `package/`、`updater/` | 跨平台部署包安装脚本与本机更新控制器源码 |
 

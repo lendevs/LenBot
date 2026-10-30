@@ -63,22 +63,16 @@
 
 | 部署方式 | 运行环境 | 文档 |
 |---|---|---|
-| Docker | Docker Engine 或 Docker Desktop，Compose v2 | [Docker 部署](https://lendevs.github.io/LenBot/start/docker) |
-| 部署包 | Linux、macOS、Windows，需要 [uv](https://docs.astral.sh/uv/) | [部署包](https://lendevs.github.io/LenBot/start/package) |
+| Docker | Docker Engine 或 Docker Desktop | [Docker 部署](https://lendevs.github.io/LenBot/start/docker) |
+| 部署包 | Linux（x64、arm64）、Windows（x64），解压即可启动 | [部署包](https://lendevs.github.io/LenBot/start/package) |
 | 源码 | uv 与 Node.js 22，跟随 `master` 开发 | [源码运行](https://lendevs.github.io/LenBot/start/source) |
 
 <details>
 <summary><b>Docker</b></summary>
 
 ```sh
-mkdir lenbot && cd lenbot
-docker run --rm --entrypoint python \
-  -v "$PWD:/deployment" -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/lendevs/lenbot-updater:0.2.0 /opt/lenbot-updater/init.py --version 0.2.0
-docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
-  -f host.updater.compose.yaml up -d
-docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
-  -f host.updater.compose.yaml logs lenbot
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0
+docker logs lenbot
 ```
 
 </details>
@@ -86,17 +80,14 @@ docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
 <details>
 <summary><b>部署包</b></summary>
 
-从 [Releases](https://github.com/lendevs/LenBot/releases/latest) 下载对应平台的部署包，解压后在包目录中执行：
+从 [Releases](https://github.com/lendevs/LenBot/releases/latest) 下载对应平台的部署包，解压后启动：
 
 ```sh
-./install.sh install "$HOME/lenbot"
-"$HOME/lenbot/run"
+tar -xzf lenbot-0.2.0-linux-x64.tar.gz
+lenbot-0.2.0-linux-x64/run
 ```
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 install "$env:USERPROFILE\lenbot"
-& "$env:USERPROFILE\lenbot\run.cmd"
-```
+Windows 解压 `lenbot-0.2.0-windows-x64.zip` 后双击 `run.cmd`。
 
 </details>
 

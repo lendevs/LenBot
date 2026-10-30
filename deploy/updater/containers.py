@@ -38,7 +38,7 @@ class Containers:
     def __init__(self, root: Path, log):
         self.root, self.log = root, log
         self.deployment = read_json(root / 'deployment.json')
-        self.instance = Path('/srv/lenbot')
+        self.instance = Path('/data/instance')
 
     def api(self, method: str, endpoint: str, payload=None):
         connection = Engine(self.deployment['docker_socket'])
@@ -74,7 +74,7 @@ class Containers:
     def maintenance(self, action: str, *, target: dict | None = None, snapshot: Path | None = None, capture: bool = False) -> str:
         value = self.metadata() if target is None else target
         args = ['run', '--rm', '--volumes-from', value['container'] + (':ro' if action == 'inspect' else ''),
-                '--entrypoint', '/opt/lenbot/.venv/bin/python', '--workdir', '/srv/lenbot',
+                '--entrypoint', '/opt/lenbot/.venv/bin/python', '--workdir', str(self.instance),
                 # Snapshots copy and restore every owner, which needs root.
                 '--user', '0:0' if action in ('backup', 'restore') else HOST_USER]
         host = self.info(value['container'])
@@ -83,7 +83,7 @@ class Containers:
         if snapshot is not None:
             backups = Path(self.deployment['host_directory']) / 'backups'
             args += ['--mount', f'type=bind,source={backups},target=/lenbot-backups']
-        # -B: snapshot copies run as root and must not leave root-owned bytecode in the Python volume.
+        # -B: snapshot copies run as root; nothing they import needs new bytecode.
         args += [value['host_image'], '-B', '-m', 'len_bot.next.maintenance.upgrade', action]
         if action == 'inspect':
             args += ['--version', value['version']]
@@ -95,13 +95,12 @@ class Containers:
         images = manifest['images'][self.deployment['registry']]
         host_image, worker_image = images['host'], images['worker']
         self.command(['pull', host_image])
-        volume = self.deployment['project'] + '-python-' + manifest['version']
         candidate = self.deployment['project'] + '-candidate-' + work.name.removeprefix('candidate-')
         return {'version': manifest['version'], 'host_image': host_image, 'worker_image': worker_image,
-                'python_volume': volume, 'container': self.create(host_image, volume, candidate)}
+                'container': self.create(host_image, candidate)}
 
-    def create(self, host_image: str, volume: str, name: str) -> str:
-        """A stopped copy of the current host on another image and Python volume; returns its ID."""
+    def create(self, host_image: str, name: str) -> str:
+        """A stopped copy of the current host on another image, with the same mounts; returns its ID."""
         original = self.info(self.metadata()['container'])
         image_config = self.api('GET', '/images/' + quote(host_image, safe='') + '/json')['Config']
         old_image = self.api('GET', '/images/' + quote(original['Image'], safe='') + '/json')['Config']
@@ -121,15 +120,7 @@ class Containers:
         configuration['NetworkingConfig'] = {'EndpointsConfig': {
             name: {key: settings[key] for key in ('IPAMConfig', 'Links', 'Aliases', 'DriverOpts')}
             for name, settings in original['NetworkSettings']['Networks'].items()}}
-        host_config = copy.deepcopy(original['HostConfig'])
-        # Engines report compose volumes under Mounts or only under Binds; both lists may be absent.
-        for mount in host_config.get('Mounts') or []:
-            if mount['Target'] == '/opt/lenbot/.venv':
-                mount['Source'] = volume
-        for index, bind in enumerate(host_config['Binds'] or []):
-            if ':/opt/lenbot/.venv:' in bind or bind.endswith(':/opt/lenbot/.venv'):
-                host_config['Binds'][index] = volume + bind[bind.index(':'):]
-        configuration['HostConfig'] = host_config
+        configuration['HostConfig'] = copy.deepcopy(original['HostConfig'])
         return self.api('POST', '/containers/create?name=' + quote(name), configuration)['Id']
 
     def inspect(self, target: dict) -> dict:
@@ -165,7 +156,7 @@ class Containers:
         self.maintenance('apply', target=target)
         if target['work_enabled']:
             text = 'import json; from pathlib import Path; p=Path("lenbot.config.json"); v=json.loads(p.read_text()); v["worker"]["image"]=IMAGE; p.write_text(json.dumps(v,ensure_ascii=False,indent=2)+"\\n")'
-            self.command(['run', '--rm', '--volumes-from', target['container'], '--workdir', '/srv/lenbot', '--user', HOST_USER,
+            self.command(['run', '--rm', '--volumes-from', target['container'], '--workdir', str(self.instance), '--user', HOST_USER,
                           '--entrypoint', '/opt/lenbot/.venv/bin/python', target['host_image'], '-c',
                           text.replace('IMAGE', repr(target['worker_image']))])
 
@@ -189,8 +180,7 @@ class Containers:
 
     def write_version(self, selected: dict) -> None:
         path = self.root / 'host.version.compose.yaml'
-        path.write_text(f'services:\n  lenbot:\n    image: {selected["host_image"]}\nvolumes:\n  python:\n'
-                        f'    name: {selected["python_volume"]}\n', encoding='utf-8')
+        path.write_text(f'services:\n  lenbot:\n    image: {selected["host_image"]}\n', encoding='utf-8')
         owned_like_parent(path)
 
     def start(self) -> None:
@@ -206,13 +196,13 @@ class Containers:
         try:
             previous = {**previous, 'container': self.info(previous['container'])['Id']}
         except NotFound:
-            # `docker compose up` removes the stopped previous host; its image and Python volume remain.
+            # `docker compose up` removes the stopped previous host; its image remains.
             try:
                 self.api('GET', '/images/' + quote(previous['host_image'], safe='') + '/json')
             except NotFound:
                 self.command(['pull', previous['host_image']])
             name = self.deployment['project'] + '-previous-' + previous['version']
-            previous = {**previous, 'container': self.create(previous['host_image'], previous['python_volume'], name)}
+            previous = {**previous, 'container': self.create(previous['host_image'], name)}
         self.maintenance('restore', target=previous, snapshot=snapshot)
         current = self.metadata()['container']
         write_json(self.root / 'current.json', previous)
@@ -225,7 +215,7 @@ class Containers:
     def publish_reference(self, reference: dict) -> None:
         code = 'import json; from pathlib import Path; p=Path(".runtime/update-control.json"); p.parent.mkdir(exist_ok=True); p.write_text(DATA); p.chmod(0o600)'
         current = self.metadata()
-        self.command(['run', '--rm', '--volumes-from', current['container'], '--workdir', '/srv/lenbot', '--user', HOST_USER,
+        self.command(['run', '--rm', '--volumes-from', current['container'], '--workdir', str(self.instance), '--user', HOST_USER,
                       '--entrypoint', '/opt/lenbot/.venv/bin/python', current['host_image'], '-c',
                       code.replace('DATA', repr(json.dumps(reference)))])
 

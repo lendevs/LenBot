@@ -52,6 +52,11 @@ def _configured_scene(scenes: Collection[str]):
     return check
 
 
+def host_satisfies(host: str, requirement: str) -> bool:
+    """A pre-release host counts as its release: 0.2.0rc1 meets >=0.2, which plain PEP 440 ordering rejects."""
+    return Version(Version(host).base_version) in SpecifierSet(requirement)
+
+
 class Option(BaseModel):
     """A choice shown as ``label`` and saved as ``value``."""
     model_config = STRICT
@@ -230,7 +235,7 @@ class Manifest(BaseModel):
     def require_compatible(self, host: str | None = None, python: str | None = None) -> None:
         host = version('len-bot') if host is None else host
         python = '.'.join(map(str, sys.version_info[:3])) if python is None else python
-        if Version(host) not in SpecifierSet(self.requires_lenbot):
+        if not host_satisfies(host, self.requires_lenbot):
             raise ValueError(f'{self.name} requires host {self.requires_lenbot}; actual={host}')
         if Version(python) not in SpecifierSet(self.requires_python):
             raise ValueError(f'{self.name} requires Python {self.requires_python}; actual={python}')

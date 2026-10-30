@@ -1,4 +1,4 @@
-"""A stable parent process selects versioned Python environments."""
+"""A stable parent process selects unpacked releases, each with its own Python runtime."""
 
 import http.client
 
@@ -44,8 +44,28 @@ def instance_busy(root: Path) -> bool:
     return False
 
 
-def python_path(environment: Path) -> Path:
-    return environment / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
+RELEASE_API = 'https://api.github.com/repos/lendevs/LenBot/releases?per_page=100'
+
+
+def python_path(release: Path) -> Path:
+    return release / ('python/python.exe' if sys.platform == 'win32' else 'python/bin/python3')
+
+
+def bootstrap(root: Path) -> bool:
+    """First start of an unpacked deployment package: the release this controller belongs to becomes current.
+
+    True when this start created the deployment record.
+    """
+    if (root / 'deployment.json').exists():
+        return False
+    release = Path(__file__).resolve().parents[1]
+    metadata = read_json(release / 'release.json')
+    if release.parent != root / 'releases' or release.name != metadata['version']:
+        raise ValueError(f'The controller must run from {root / "releases"}/<version>; actual={release}')
+    (root / 'instance').mkdir(mode=0o700, exist_ok=True)
+    write_json(root / 'current.json', metadata)
+    write_json(root / 'deployment.json', {'mode': 'native', 'platform': metadata['platform'], 'release_api': RELEASE_API})
+    return True
 
 
 class Native:
@@ -61,13 +81,21 @@ class Native:
     def metadata(self) -> dict:
         return read_json(self.root / 'current.json')
 
-    def python(self, metadata: dict | None = None) -> str:
-        value = self.metadata() if metadata is None else metadata
-        return str(python_path(self.root / 'releases' / value['version'] / '.venv'))
+    def release(self, metadata: dict | None = None) -> Path:
+        return self.root / 'releases' / (self.metadata() if metadata is None else metadata)['version']
 
-    def command(self, arguments: list[str], *, cwd: Path | None = None, capture: bool = False) -> str:
+    def python(self, metadata: dict | None = None) -> str:
+        return str(python_path(self.release(metadata)))
+
+    def environment(self, metadata: dict | None = None) -> dict:
+        """The release's bin/ (uv, for plugin dependencies) comes first; UTF-8 mode reaches the processes the host starts."""
+        return {**os.environ, 'PYTHONUTF8': '1',
+                'PATH': str(self.release(metadata) / 'bin') + os.pathsep + os.environ.get('PATH', '')}
+
+    def command(self, arguments: list[str], *, cwd: Path | None = None, capture: bool = False,
+                env: dict | None = None) -> str:
         result = subprocess.run(arguments, cwd=cwd, stdout=subprocess.PIPE if capture else self.log,
-                                stderr=self.log, text=True, check=True)
+                                stderr=self.log, text=True, check=True, env=env)
         return result.stdout if capture else ''
 
     def maintenance(self, action: str, *, target: dict | None = None, snapshot: Path | None = None, capture: bool = False) -> str:
@@ -76,9 +104,10 @@ class Native:
             arguments += ['--version', target['version']]
         if snapshot is not None:
             arguments += ['--snapshot', str(snapshot)]
-        return self.command(arguments, cwd=self.instance, capture=capture)
+        return self.command(arguments, cwd=self.instance, capture=capture, env=self.environment(target))
 
     def prepare(self, manifest: dict, archive: Path, work: Path) -> dict:
+        """Unpack the new release beside the current one; nothing is installed or downloaded besides the package."""
         unpacked = work / 'package'
         unpacked.mkdir()
         if archive.suffix == '.zip':
@@ -91,11 +120,16 @@ class Native:
             with tarfile.open(archive) as bundle:
                 bundle.extractall(unpacked, filter='data')
         package, = unpacked.iterdir()
-        metadata = read_json(package / 'release.json')
+        source = package / 'releases' / manifest['version']
+        metadata = read_json(source / 'release.json')
         if metadata['version'] != manifest['version'] or metadata['platform'] != self.deployment['platform']:
             raise ValueError('Downloaded package version or platform differs from the selected release')
-        self.command([self.deployment['uv'], 'run', '--no-project', '--python', '3.13',
-                      str(package / 'install.py'), 'prepare', str(self.root)])
+        target = self.root / 'releases' / metadata['version']
+        if metadata['version'] == self.metadata()['version']:
+            raise ValueError('Cannot replace the files of the running release')
+        # A version prepared before, or restored away from, is replaced by the fresh download.
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.move(source, target)
         return metadata
 
     def worker_image(self, target: dict) -> tuple[dict, str | None]:
@@ -149,7 +183,7 @@ class Native:
         # UTF-8 mode through the environment so the host the launcher starts gets it too; on Windows a
         # redirected stream would otherwise use the ANSI code page and fail on the first Chinese line.
         self.child = subprocess.Popen([self.python(), '-m', 'len_bot.next.launcher'], cwd=self.instance, stderr=self.log,
-            env={**os.environ, 'PYTHONUTF8': '1'},
+            env=self.environment(),
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0,
             start_new_session=sys.platform != 'win32')
         self.pid_file.parent.mkdir(exist_ok=True)
@@ -182,9 +216,17 @@ class Native:
     def migrate(self, target: dict) -> None:
         self.maintenance('apply', target=target)
         worker, image = self.worker_image(target)
+        config = read_json(self.instance / 'lenbot.config.json')
+        changed = False
         if image is not None:
-            config = read_json(self.instance / 'lenbot.config.json')
             config['worker']['image'] = image
+            changed = True
+        # The local sandbox's runtime ships inside each Linux release; follow it unless the owner chose another.
+        runtime = None if worker is None else worker.get('task_runtime')
+        if runtime is not None and Path(runtime) == self.release() / 'task-runtime':
+            config['worker']['task_runtime'] = str(self.release(target) / 'task-runtime')
+            changed = True
+        if changed:
             write_json(self.instance / 'lenbot.config.json', config)
 
     def select(self, target: dict) -> None:

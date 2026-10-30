@@ -14,6 +14,14 @@ SHIPPED = ('src', 'deploy', 'docker', 'scripts', 'pyproject.toml', 'uv.lock', 'R
 VERSION = re.compile(r'\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?')
 
 
+# Deployment packages, built by build_deployment.py and selected by the native updater.
+PLATFORMS = ('windows-x64', 'linux-x64', 'linux-arm64')
+
+
+def bundle_name(version: str, platform: str) -> str:
+    return f'lenbot-{version}-{platform}' + ('.zip' if platform.startswith('windows') else '.tar.gz')
+
+
 def release_version(value: str) -> str:
     if VERSION.fullmatch(value) is None:
         raise ValueError(f'Expected X.Y.Z, X.Y.ZaN, X.Y.ZbN or X.Y.ZrcN: {value!r}')
@@ -52,8 +60,7 @@ def write_manifest(project: Path, artifacts: Path, *, revision: str, images: dic
                     'business': constant(project, 'next/storage/store.py', 'FORMAT_VERSION'),
                     'memory_jobs': constant(project, 'next/memory/jobs.py', 'FORMAT_VERSION'),
                     'local_memory': constant(project, 'next/memory/local.py', 'FORMAT_VERSION')},
-        'bundles': {platform: f'lenbot-{version}-{platform}' + ('.zip' if platform == 'windows' else '.tar.gz')
-                    for platform in ('linux', 'macos', 'windows')},
+        'bundles': {platform: bundle_name(version, platform) for platform in PLATFORMS},
         'files': files, 'images': {} if images is None else images,
     }
     target = artifacts / 'release-manifest.json'

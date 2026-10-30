@@ -60,10 +60,10 @@ else:
     artifacts = tmp_path / 'artifacts'
     artifacts.mkdir()
     version = '0.2.0'
-    bundle = artifacts / f'lenbot-{version}-linux.tar.gz'
+    bundle = artifacts / f'lenbot-{version}-linux-x64.tar.gz'
     with tarfile.open(bundle, 'w:gz') as archive:
-        data = json.dumps({'version': version, 'platform': 'linux'}).encode()
-        info = tarfile.TarInfo(f'lenbot-{version}-linux/release.json')
+        data = json.dumps({'version': version, 'platform': 'linux-x64'}).encode()
+        info = tarfile.TarInfo(f'lenbot-{version}-linux-x64/release.json')
         info.size = len(data)
         archive.addfile(info, io.BytesIO(data))
     (artifacts / 'release-notes.md').write_text('# LenBot 0.2.0\n\n本版说明。\n')
@@ -115,13 +115,13 @@ def test_interrupted_upload_resumes_without_replacing_assets_and_finishes_instal
     failed = publish()
     assert failed.returncode != 0 and 'connection lost' in failed.stderr
     assert sorted(path.name for path in (remote / 'uploads').iterdir()) == [
-        'lenbot-0.2.0-linux.tar.gz', 'release-notes.md']
+        'lenbot-0.2.0-linux-x64.tar.gz', 'release-notes.md']
     resumed = publish()
     assert resumed.returncode == 0, resumed.stderr
-    assert 'Retaining matching Release asset: lenbot-0.2.0-linux.tar.gz' in resumed.stdout
+    assert 'Retaining matching Release asset: lenbot-0.2.0-linux-x64.tar.gz' in resumed.stdout
     commands = [json.loads(line) for line in (remote / 'commands.jsonl').read_text().splitlines()]
     uploads = [Path(command[3]).name for command in commands if command[:2] == ['release', 'upload']]
-    assert uploads == ['lenbot-0.2.0-linux.tar.gz', 'release-notes.md', 'source-revision.txt', 'release-manifest.json']
+    assert uploads == ['lenbot-0.2.0-linux-x64.tar.gz', 'release-notes.md', 'source-revision.txt', 'release-manifest.json']
     assert len([command for command in commands if command[:2] == ['release', 'create']]) == 1
     assert publish().returncode == 0
     assert all((remote / 'uploads' / path.name).read_bytes() == path.read_bytes() for path in artifacts.iterdir())
@@ -134,11 +134,11 @@ def test_interrupted_upload_resumes_without_replacing_assets_and_finishes_instal
         manifest = release_manifest(fetch_json(base + '/release-manifest.json'))
         for name, expected in manifest['files'].items():
             download(base + '/' + name, destination / name, expected)
-    bundle = destination / manifest['bundles']['linux']
+    bundle = destination / manifest['bundles']['linux-x64']
     with tarfile.open(bundle) as archive:
         archive.extractall(destination / 'unpacked', filter='data')
-    assert json.loads((destination / 'unpacked/lenbot-0.2.0-linux/release.json').read_text()) == {
-        'version': manifest['version'], 'platform': 'linux'}
+    assert json.loads((destination / 'unpacked/lenbot-0.2.0-linux-x64/release.json').read_text()) == {
+        'version': manifest['version'], 'platform': 'linux-x64'}
 
 
 @pytest.mark.parametrize('conflict', ['content', 'channel', 'draft', 'extra'])
@@ -151,9 +151,9 @@ def test_existing_release_conflicts_are_rejected_before_any_missing_upload(relea
         manifest()
         state = remote / 'release.json'
         release = json.loads(state.read_text())
-        release['assets'] = [asset for asset in release['assets'] if asset['name'] != 'lenbot-0.2.0-linux.tar.gz']
+        release['assets'] = [asset for asset in release['assets'] if asset['name'] != 'lenbot-0.2.0-linux-x64.tar.gz']
         state.write_text(json.dumps(release))
-        (remote / 'uploads/lenbot-0.2.0-linux.tar.gz').unlink()
+        (remote / 'uploads/lenbot-0.2.0-linux-x64.tar.gz').unlink()
     else:
         state = remote / 'release.json'
         release = json.loads(state.read_text())

@@ -628,6 +628,7 @@ class TrialList(PanelResponse):
 class UpdateState(PanelResponse):
     version: str
     managed: bool
+    container: bool
     status: JsonValue
     check: JsonObject
     notice: list[str] | None

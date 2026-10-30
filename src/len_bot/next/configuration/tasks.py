@@ -7,7 +7,7 @@ import os
 import re
 import socket
 import subprocess
-from importlib.metadata import version as installed_version
+from importlib.metadata import PackageNotFoundError, distribution, version as installed_version
 from pathlib import Path, PurePosixPath
 import shutil
 import sys
@@ -291,8 +291,17 @@ WORKER_IMAGE = "lenbot-worker:local"
 OFFICIAL_WORKER = "ghcr.io/lendevs/lenbot-worker"
 
 
-def _instance_volume(root: Path, suggestion: dict) -> str | None:
-    """The named volume mounted at the instance root when this host runs in a container, read from Docker."""
+def release_installation() -> bool:
+    """Installed from a release wheel (deployment package or image); a source checkout is an editable install."""
+    try:
+        direct = distribution("len-bot").read_text("direct_url.json")
+    except PackageNotFoundError:
+        return False
+    return not (direct and json.loads(direct).get("dir_info", {}).get("editable"))
+
+
+def _instance_volume(root: Path, suggestion: dict) -> tuple[str, str] | None:
+    """The named volume holding the instance root when this host runs in a container, and its mount point."""
     if not Path("/.dockerenv").exists() or "docker_binary" not in suggestion or "docker_host" not in suggestion:
         return None
     try:
@@ -302,8 +311,9 @@ def _instance_volume(root: Path, suggestion: dict) -> str | None:
         mounts = json.loads(result.stdout) if result.returncode == 0 else []
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
-    return next((mount.get("Name") for mount in mounts
-                 if mount.get("Type") == "volume" and mount.get("Destination") == str(root)), None)
+    return next(((mount["Name"], mount["Destination"]) for mount in mounts
+                 if mount.get("Type") == "volume" and mount.get("Name") and mount.get("Destination")
+                 and root.is_relative_to(mount["Destination"])), None)
 
 
 def suggested_worker(root: Path) -> dict:
@@ -313,7 +323,7 @@ def suggested_worker(root: Path) -> dict:
     """
     # A release installation (deployment package or Docker) follows the same-version official image,
     # as the updater does; a source checkout builds lenbot-worker:local.
-    managed = (root / ".runtime" / "update-control.json").exists()
+    managed = (root / ".runtime" / "update-control.json").exists() or release_installation()
     suggestion: dict = {"image": f"{OFFICIAL_WORKER}:{installed_version('len-bot')}" if managed else WORKER_IMAGE}
     for name, folder in (("workspace_root", "task-workspaces"), ("runtime_root", "task-runtime"),
                          ("delivery_root", "deliveries")):
@@ -337,7 +347,7 @@ def suggested_worker(root: Path) -> dict:
         # Docker Desktop bind mounts do not map Windows owners; run as the image's agent user.
         suggestion["uid"] = suggestion["gid"] = WORKER_IMAGE_USER
     if (volume := _instance_volume(root, suggestion)) is not None:
-        suggestion["task_volume"] = {"name": volume, "root": str(root)}
+        suggestion["task_volume"] = {"name": volume[0], "root": volume[1]}
     # Linux hosts with bwrap run tasks in the local sandbox; a Docker deployment's host container has none.
     bwrap = shutil.which("bwrap") if sys.platform == "linux" else None
     suggestion["sandbox"] = "docker" if bwrap is None else "bwrap"

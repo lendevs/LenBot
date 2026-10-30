@@ -2439,6 +2439,8 @@ export default {
       howTitle: '更新与恢复',
       open: '打开更新与恢复页',
       openFailed: '更新页打开失败',
+      container:
+        '更换版本时，拉取新版本镜像，停止并删除当前容器，再用同一个数据卷和原来的参数启动新镜像。新镜像启动时先把实例保存为 /data/backups 下的快照，再迁移数据。',
       source:
         '源码运行时面板不能切换版本。请停止 LenBot，在仓库目录执行 git pull 和 ./scripts/install.sh，按文档从源码运行一节执行迁移命令和 doctor 检查后启动。升级前请备份数据。',
       releases: '发行版本',

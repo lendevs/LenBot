@@ -202,6 +202,9 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     # Plugins are installed into, or dropped by hand into, the instance's plugins/.
     (root / 'plugins').mkdir(exist_ok=True)
     SendHold(root).set(item.delivery == 'simulated', at=time.time())
+    # A new instance already matches this program; the container start compares against this record.
+    from ..maintenance.upgrade import record_release
+    record_release(root)
     fd, filename = tempfile.mkstemp(prefix='.lenbot-setup-', suffix='.json', dir=root)
     temporary = Path(filename)
     try:

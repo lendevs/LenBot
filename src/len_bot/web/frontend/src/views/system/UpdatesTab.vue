@@ -117,7 +117,9 @@ const open = useMutation({
           :error="open.error.value"
         />
       </template>
-      <p v-else class="text-sm text-ink-2">{{ t('system.updates.source') }}</p>
+      <p v-else class="text-sm text-ink-2">
+        {{ t(data.container ? 'system.updates.container' : 'system.updates.source') }}
+      </p>
     </section>
 
     <SnapshotsSection v-if="data.managed" />

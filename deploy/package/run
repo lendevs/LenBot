@@ -1,0 +1,10 @@
+#!/bin/sh
+# Starts LenBot from this unpacked deployment package; current.json names the selected release.
+set -eu
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+VERSION=@VERSION@
+if [ -f "$ROOT/current.json" ]; then
+  VERSION=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ROOT/current.json" | head -n 1)
+fi
+RELEASE="$ROOT/releases/$VERSION"
+exec "$RELEASE/python/bin/python3" -X utf8 "$RELEASE/updater/controller.py" "$ROOT"

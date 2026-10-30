@@ -41,7 +41,7 @@ async def apply(root: Path) -> None:
             manifest = read_manifest(directories[0])
         requirements.update(manifest.dependencies)
     try:
-        output = await install_dependencies(sorted(requirements))
+        output = await install_dependencies(root, sorted(requirements))
     except Exception as error:
         for record in records:
             installer.failed(record.name, error)

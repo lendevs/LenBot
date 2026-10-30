@@ -1,6 +1,6 @@
 # 更新与备份
 
-本页说明源码与部署包实例的版本更新、完整备份、数据清理、隔离测试副本以及系统后台服务托管。
+本页说明源码、部署包与 Docker 实例的版本更新、完整备份、数据清理、隔离测试副本以及系统后台服务托管。
 
 ## 更新代码
 
@@ -31,10 +31,12 @@ uv run --no-sync python -m len_bot.next.maintenance.plugin_dependencies
 
 ### 部署包与 Docker 实例
 
-通过发行部署包或官方 `host.compose.yaml` 部署的实例由内置更新控制器（`deploy/updater/`）托管：
+部署包和使用更新器的 Docker 部署由更新控制器（`deploy/updater/`）托管：
 
 - 在面板**系统 → 设置 → 版本与更新**中可查看每日自动检查到的发行版本，或点击**打开更新与恢复页**在线切换版本、从 `backups/` 快照一键回滚。
 - 更新控制器的端口、环境变量与目录约定见仓库中的[部署包与容器安装](https://github.com/lendevs/LenBot/blob/master/deploy/current/installation.md)与[运维参考](https://github.com/lendevs/LenBot/blob/master/deploy/current/operations.md)。
+
+直接用 `docker run` 启动的容器没有更新控制器。更换版本时用同一个数据卷启动新镜像，新镜像首次启动先把实例快照到 `/data/backups/`，再迁移数据，见 [Docker 部署](../start/docker#更换版本)。
 
 宿主进程与所有 `maintenance` 维护命令共用单实例文件锁 `.lenbot-instance.lock`，同一时刻只有一个进程读写数据库。
 
@@ -70,7 +72,7 @@ cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 
 ## 作为系统后台服务运行
 
-`len-bot` 作为前台启动器运行，收到 `SIGINT`（`Ctrl+C`）或 `SIGTERM` 时优雅等待当前回合收尾后退出；面板内的**重启 LenBot** 由启动器进程自行拉起新子进程完成，因此外部服务管理器无需配置崩溃无限重启。
+`len-bot` 作为前台启动器运行，收到 `SIGINT`（`Ctrl+C`）或 `SIGTERM` 时优雅等待当前回合收尾后退出；面板内的**重启 LenBot** 由启动器进程自行拉起新子进程完成，因此外部服务管理器无需配置崩溃无限重启。部署包用目录中的 `service` 或 `service.ps1` 注册，见[部署包](../start/package#后台服务)；下面是从源码运行时的做法。
 
 - **Linux（`systemd`）**：仓库提供 [`deploy/current/lenbot.service`](https://github.com/lendevs/LenBot/blob/master/deploy/current/lenbot.service) 单元模板（默认 `Restart=no` 并启用文件系统沙箱保护）。按机器实际路径修改 `User`、`Group`、`WorkingDirectory`、`ExecStart` 及 `ReadWritePaths`（必须覆盖实例目录及位于实例外的任务目录）后安装：
   ```sh

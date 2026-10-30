@@ -24,7 +24,6 @@ import time
 import urllib.error
 import urllib.request
 
-PLATFORM = {'linux': 'linux', 'darwin': 'macos', 'win32': 'windows'}
 STEP_SECONDS = 90
 STOP_SECONDS = 30
 
@@ -99,14 +98,15 @@ def check_panel(port: int, username: str, password: str, alive) -> None:
 
 
 def unpack(artifacts: Path, work: Path, platform: str | None = None) -> Path:
-    platform = platform or PLATFORM.get(sys.platform)
+    from build_deployment import current_platform
+    platform = platform or current_platform()
     if platform is None:
         raise ValueError(f'No deployment package for platform {sys.platform}')
-    extension = '.zip' if platform == 'windows' else '.tar.gz'
+    extension = '.zip' if platform.startswith('windows') else '.tar.gz'
     bundles = sorted(artifacts.glob(f'lenbot-*-{platform}{extension}'))
     if len(bundles) != 1:
         raise ValueError(f'Expected one {platform} package in {artifacts}, found {[path.name for path in bundles]}')
-    if platform == 'windows':
+    if platform.startswith('windows'):
         with zipfile.ZipFile(bundles[0]) as archive:
             archive.extractall(work / 'package')
     else:
@@ -119,10 +119,9 @@ def unpack(artifacts: Path, work: Path, platform: str | None = None) -> Path:
 def smoke_package(artifacts: Path, work: Path) -> dict:
     work.mkdir(parents=True, exist_ok=False)
     bundle = unpack(artifacts, work)
-    # A space and a single quote in the path exercise the quoting of every generated entry point.
+    # Unpacked and started where it is; a space and a single quote in the path exercise the start scripts' quoting.
     root = work / "Len Bot's"
-    install = ['uv', 'run', '--no-project', '--python', '3.13', str(bundle / 'install.py')] if sys.platform == 'win32' else [str(bundle / 'install.sh')]
-    subprocess.run([*install, 'install', str(root)], check=True)
+    bundle.rename(root)
 
     panel_port = free_port()
     launch = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(root / 'run.ps1')] if sys.platform == 'win32' else [str(root / 'run')]
@@ -182,47 +181,33 @@ def smoke_package(artifacts: Path, work: Path) -> dict:
     return result
 
 
-def replace_once(text: str, old: str, new: str) -> str:
-    if text.count(old) != 1:
-        raise ValueError(f'Packaged recipe no longer contains exactly one {old!r}')
-    return text.replace(old, new)
-
-
 def smoke_docker(artifacts: Path, work: Path, image: str) -> dict:
+    """The documented single docker run with one named volume; first setup is fed to the non-interactive initializer."""
     work.mkdir(parents=True, exist_ok=False)
-    bundle = unpack(artifacts, work, 'linux')
-    project = f'lenbot-smoke-{time.time_ns()}'
-    metadata = json.loads((bundle / 'release.json').read_text(encoding='utf-8'))
-    volumes = {'lenbot-data': project + '-data', 'lenbot-python-' + metadata['version']: project + '-python'}
+    name = f'lenbot-smoke-{time.time_ns()}'
+    volume = name + '-data'
     port = free_port()
-    recipe = (bundle / 'deploy/current/host.compose.yaml').read_text(encoding='utf-8')
-    recipe = replace_once(recipe, f'image: ghcr.io/lendevs/lenbot:{metadata["version"]}', f'image: {image}')
-    recipe = replace_once(recipe, '127.0.0.1:11307:11307', f'127.0.0.1:{port}:11307')
-    for old, new in volumes.items():
-        recipe = replace_once(recipe, f'name: {old}', f'name: {new}')
-    compose_file = work / 'host.compose.yaml'
-    compose_file.write_text(recipe, encoding='utf-8')
-    setup = json.loads((bundle / 'deploy/current/first-setup.example.json').read_text(encoding='utf-8'))
+    setup = json.loads((Path(__file__).resolve().parents[1] / 'deploy/current/first-setup.example.json').read_text(encoding='utf-8'))
     setup['password'] = 'smoke-password'
     setup['provider']['api_key'] = 'smoke'
-    compose = ['docker', 'compose', '-f', str(compose_file), '-p', project]
-    result = {'package': bundle.name, 'image': image}
+    result = {'image': image, 'volume': volume}
 
     def alive() -> bool:
-        state = subprocess.run([*compose, 'ps', '--status', 'running', '-q'], capture_output=True, text=True)
-        return bool(state.stdout.strip())
+        state = subprocess.run(['docker', 'inspect', '-f', '{{.State.Running}}', name], capture_output=True, text=True)
+        return state.stdout.strip() == 'true'
 
     def logs() -> None:
-        subprocess.run([*compose, 'logs', '--tail', '80'])
+        subprocess.run(['docker', 'logs', '--tail', '80', name])
 
-    for volume in volumes.values():
-        subprocess.run(['docker', 'volume', 'create', volume], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(['docker', 'volume', 'create', volume], check=True, stdout=subprocess.DEVNULL)
     try:
-        subprocess.run([*compose, 'run', '--rm', '--no-deps', '-T', '--user', '10000:10000', '--entrypoint', '/opt/lenbot/.venv/bin/python',
-                        'lenbot', '-m', 'len_bot.next.maintenance.initialize'],
+        # Commands that replace the entry point run as the image's lenbot user, as the documentation writes them.
+        subprocess.run(['docker', 'run', '--rm', '-i', '--user', '10000:10000', '-v', f'{volume}:/data',
+                        '--entrypoint', '/opt/lenbot/.venv/bin/python', image, '-m', 'len_bot.next.maintenance.initialize'],
                        input=json.dumps(setup, ensure_ascii=False), text=True, check=True)
         result['setup'] = 'initialized'
-        subprocess.run([*compose, 'up', '-d'], check=True)
+        subprocess.run(['docker', 'run', '-d', '--name', name, '-p', f'127.0.0.1:{port}:11307', '-v', f'{volume}:/data',
+                        image], check=True, stdout=subprocess.DEVNULL)
         try:
             check_panel(port, setup['username'], 'smoke-password', alive)
         except BaseException:
@@ -230,21 +215,20 @@ def smoke_docker(artifacts: Path, work: Path, image: str) -> dict:
             raise
         result['panel'] = 'logged in'
         # Initialization and the host both run as the image's lenbot user; a root-owned file blocks later writes.
-        foreign = subprocess.run([*compose, 'exec', '-T', 'lenbot', 'find', '/srv/lenbot', '/opt/lenbot/.venv', '!', '-uid', '10000'],
+        foreign = subprocess.run(['docker', 'exec', name, 'find', '/data', '!', '-uid', '10000'],
                                  capture_output=True, text=True, check=True).stdout.split()
         if foreign:
             raise RuntimeError(f'files not owned by the lenbot user: {foreign[:20]}')
-        subprocess.run([*compose, 'stop', '--timeout', str(STOP_SECONDS)], check=True)
-        container = subprocess.run([*compose, 'ps', '-a', '-q'], capture_output=True, text=True, check=True).stdout.split()
-        code = subprocess.run(['docker', 'inspect', '-f', '{{.State.ExitCode}}', *container],
-                              capture_output=True, text=True, check=True).stdout.split()
-        result['exit'] = [int(item) for item in code]
-        if result['exit'] != [0]:
+        subprocess.run(['docker', 'stop', '--timeout', str(STOP_SECONDS), name], check=True, stdout=subprocess.DEVNULL)
+        code = subprocess.run(['docker', 'inspect', '-f', '{{.State.ExitCode}}', name],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        result['exit'] = int(code)
+        if result['exit'] != 0:
             logs()
             raise RuntimeError(f'container exited with {result["exit"]} after stop')
     finally:
-        subprocess.run([*compose, 'down'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['docker', 'volume', 'rm', *volumes.values()], stdout=subprocess.DEVNULL)
+        subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['docker', 'volume', 'rm', volume], stdout=subprocess.DEVNULL)
     return result
 
 
@@ -255,7 +239,7 @@ def main() -> None:
         sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=('package', 'docker'))
-    parser.add_argument('artifacts', type=Path, help='artifacts/ from build_release.py, containing the deployment packages')
+    parser.add_argument('artifacts', type=Path, help='artifacts/ from build_release.py; package mode unpacks this platform\'s package')
     parser.add_argument('work', type=Path, help='New directory for the unpacked package and the installation')
     parser.add_argument('--image', help='docker: host image built from the same artifacts')
     args = parser.parse_args()

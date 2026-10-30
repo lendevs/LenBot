@@ -2511,6 +2511,8 @@ export default {
       howTitle: 'Updates and recovery',
       open: 'Open updates and recovery',
       openFailed: 'Could not open the update page',
+      container:
+        'To change versions, pull the new image, stop and remove this container, then start the new image with the same data volume and options. On its first start the new image saves the instance as a snapshot under /data/backups, then migrates the data.',
       source:
         'A source checkout cannot change versions from the panel. Stop LenBot, run git pull and ./scripts/install.sh in the repository, run the migration commands and doctor in the order the Run from source guide lists, then start it. Back up your data first.',
       releases: 'Releases',

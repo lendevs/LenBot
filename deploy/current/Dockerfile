@@ -49,17 +49,20 @@ FROM python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata util-linux git openssh-client docker-cli fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10000 lenbot \
-    && useradd --uid 10000 --gid 10000 --home-dir /srv/lenbot --no-create-home --shell /usr/sbin/nologin lenbot \
-    && install -d -o 10000 -g 10000 /srv/lenbot /var/lib/lenbot
-# A release-specific named volume at this path retains plugin packages when
-# the container is recreated. Docker populates a new volume from this image.
-COPY --from=distribution --chown=10000:10000 /opt/lenbot/.venv /opt/lenbot/.venv
+    && useradd --uid 10000 --gid 10000 --home-dir /data/instance --no-create-home --shell /usr/sbin/nologin lenbot \
+    && install -d -o 10000 -g 10000 /data /data/instance /data/backups /var/lib/lenbot
+# The program stays read-only; plugin packages go to the instance (.runtime/plugin-packages/<version>).
+COPY --from=distribution /opt/lenbot/.venv /opt/lenbot/.venv
+# Compiled once here: the host user cannot write bytecode into the root-owned environment.
+RUN /opt/lenbot/.venv/bin/python -m compileall -q -j 0 /opt/lenbot/.venv/lib > /dev/null
 COPY --from=distribution /usr/local/bin/uv /usr/local/bin/uv
 COPY --from=distribution /build/licenses /usr/share/lenbot/licenses
-# This is the deployed instance root. The panel reads and atomically saves
-# lenbot.config.json here; its whole parent directory is mounted read/write.
-WORKDIR /srv/lenbot
+# One named volume at /data holds the instance and the snapshots taken before a newer image migrates it;
+# Docker fills a new volume with these empty, lenbot-owned directories.
+VOLUME /data
+WORKDIR /data/instance
+EXPOSE 11307
 # The entry point starts as root, joins the group of a mounted /var/run/docker.sock and then runs as 10000:10000.
-# -B keeps the root phase from writing bytecode into the Python volume; the host processes it starts write their own.
+# -B keeps the root phase from writing bytecode into the program directory.
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/opt/lenbot/.venv/bin/python", "-B", "/opt/lenbot/.venv/bin/lenbot-container"]

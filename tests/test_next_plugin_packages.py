@@ -97,3 +97,12 @@ async def test_zip_compatibility_rejects_before_installation(tmp_path, original,
     with pytest.raises(ValueError, match=reason):
         await installer.prepare_zip(package(changed_manifest=manifest), 'sample.zip', [])
     assert not (installer.records / 'sample.json').exists()
+
+
+@pytest.mark.parametrize('host,requirement,expected', [
+    ('0.2.0rc1', '>=0.2,<1', True), ('0.2.0', '>=0.2,<1', True), ('0.1.9', '>=0.2,<1', False),
+    ('1.0.0rc1', '>=0.2,<1', False), ('0.3.0.dev2', '>=0.3', True),
+])
+def test_a_prerelease_host_meets_the_range_of_its_release(host, requirement, expected):
+    from len_bot.next.plugins.manifest import host_satisfies
+    assert host_satisfies(host, requirement) is expected

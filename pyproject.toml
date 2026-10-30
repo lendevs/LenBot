@@ -1,6 +1,6 @@
 [project]
 name = "len-bot"
-version = "0.2.0"
+version = "0.2.0rc1"
 description = "A group chat agent for QQ that decides for itself, with a web panel and Python plugins"
 readme = "README.md"
 license = "AGPL-3.0-only"

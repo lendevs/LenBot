@@ -14,7 +14,7 @@ def test_worker_defaults_name_this_instance(tmp_path: Path) -> None:
 
     async def check(client) -> None:
         defaults = (await client.get('/api/host/settings/worker/defaults')).json()
-        assert defaults['image'] == 'lenbot-worker:local'
+        assert defaults['image'] == 'lenbot-worker:local'  # this checkout is an editable install
         local = sys.platform == 'linux' and shutil.which('bwrap') is not None
         assert defaults['sandbox'] == ('bwrap' if local else 'docker')
         assert defaults['workspace_root'] == str(tmp_path / 'task-workspaces')

@@ -20,6 +20,7 @@ import sys
 import threading
 
 from ...plugin import MARK, CompactRequest, Invocation, Plugin, PluginContext
+from .install import use_packages
 from .codec import (blocks_value, error_value, message_from, notice_from, part_value, raise_error, recall_from,
                     sent_from)
 
@@ -256,6 +257,8 @@ async def serve(channel: Channel, init: dict) -> None:
 
 
 def main() -> None:
+    # Started by the host with the instance root as its working directory.
+    use_packages(Path.cwd())
     if sys.argv[1] == "describe":
         try:
             print(json.dumps({"entries": describe(plugin_class(Path(sys.argv[2]), sys.argv[3]))}, ensure_ascii=False))

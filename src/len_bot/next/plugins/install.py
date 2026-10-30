@@ -1,9 +1,10 @@
-"""Explicit Git install/update and declared dependencies in the host environment."""
+"""Explicit Git install/update and declared dependencies in the instance."""
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Collection, Sequence
-from importlib.metadata import distributions
+import importlib
+from importlib.metadata import PackageNotFoundError, distributions, version
 import hashlib
 import os
 import stat
@@ -59,16 +60,41 @@ def revision_ref(value: str) -> str:
     return value
 
 
-async def install_dependencies(requirements: Sequence[str]) -> str:
+def package_directory(root: Path) -> Path:
+    """Declared plugin packages of this instance, one directory per LenBot and Python version.
+
+    The host's own environment stays read-only, so a deployment package or image can replace it whole;
+    a new release resolves its own directory against its own pinned packages.
+    """
+    try:
+        release = version('len-bot')
+    except PackageNotFoundError:
+        release = 'source'
+    return root / '.runtime' / 'plugin-packages' / f'{release}-py{sys.version_info[0]}{sys.version_info[1]}'
+
+
+def use_packages(root: Path) -> None:
+    """Make installed plugin packages importable after the host's own packages."""
+    directory = str(package_directory(root))
+    if Path(directory).is_dir() and directory not in sys.path:
+        sys.path.append(directory)
+    importlib.invalidate_caches()
+
+
+async def install_dependencies(root: Path, requirements: Sequence[str]) -> str:
     if not requirements:
         return ''
-    # Keep the host environment fixed while resolving the explicitly requested plugin packages.
+    target = package_directory(root)
+    target.mkdir(parents=True, exist_ok=True)
+    # Pin every package already importable here, so plugin requirements resolve around the host's versions.
     with tempfile.TemporaryDirectory(prefix='lenbot-plugin-deps-') as temporary:
         constraints = Path(temporary) / 'installed.txt'
         constraints.write_text('\n'.join(sorted(
             f"{item.metadata['Name']}=={item.version}" for item in distributions())) + '\n')
-        return await run_command('uv', 'pip', 'install', '--python', sys.executable,
-                                 '--constraints', str(constraints), '--', *requirements)
+        output = await run_command('uv', 'pip', 'install', '--python', sys.executable, '--target', str(target),
+                                   '--constraints', str(constraints), '--', *requirements)
+    use_packages(root)
+    return output
 
 
 class Source(BaseModel):

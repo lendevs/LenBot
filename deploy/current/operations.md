@@ -2,7 +2,7 @@
 
 面板的各页面操作、角色管理、插件安装、长期记忆与日志查看说明统一见文档站[管理面板](https://lendevs.github.io/LenBot/use/panel)。本文记录宿主的进程锁与启动器机制、网络代理配置、停机维护命令以及数据格式和记账规则。
 
-所有维护命令均在实例根目录执行：源码安装使用 `uv run --no-sync python -m ...`，部署包使用对应版本环境的解释器（下文简写为 `python -m ...`）。除标明只读的命令外，执行维护命令或手动修改 `lenbot.config.json` 前均需先停止 LenBot。
+所有维护命令均在实例根目录执行：源码安装使用 `uv run --no-sync python -m ...`，部署包使用 `releases/<版本>/python` 中的解释器（Linux 为 `bin/python3`，Windows 为 `python.exe`），Docker 镜像使用 `/opt/lenbot/.venv/bin/python`（下文统一简写为 `python -m ...`）。除标明只读的命令外，执行维护命令或手动修改 `lenbot.config.json` 前均需先停止 LenBot。
 
 ## 进程、重启与实例锁
 
@@ -63,6 +63,7 @@
 
 - 源码安装按上表 `upgrade run --snapshot <新目录>` 升级，快照路径须位于实例目录与外部任务目录之外。
 - 部署包与 Docker 更新器在升级前将快照写入部署目录的 `backups/`（以 UTC 时间命名），面板**系统 → 版本与更新**可查看或清理旧快照。上次更新失败且尚未恢复时，对应恢复快照锁定不可删除；快照失败会清理半成品并重新拉起旧版本。
+- 不经更新器、直接 `docker run` 的宿主容器比较 `.runtime/release.json` 记录的版本与镜像版本：镜像较新时先把实例快照到数据卷的 `/data/backups/`，再执行与 `upgrade run` 相同的迁移；数据卷由更新的版本用过时拒绝启动。
 
 ## 数据格式版本
 

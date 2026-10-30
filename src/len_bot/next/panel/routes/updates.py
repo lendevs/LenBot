@@ -25,7 +25,7 @@ SNAPSHOT = r'^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$'
 
 
 def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request], str],
-                          check_enabled: bool = True) -> ReleaseCheck:
+                          check_enabled: bool = True, container: bool = False) -> ReleaseCheck:
     """Register the update routes; the returned check is started by the panel's lifespan when enabled."""
     def control() -> dict | None:
         file = root / '.runtime/update-control.json'
@@ -68,7 +68,7 @@ def register_host_updates(app: FastAPI, *, root: Path, user: Callable[[Request],
     async def current(_: str = Depends(user)):
         try:
             reference = control()
-            return {'version': releases.current, 'managed': reference is not None,
+            return {'version': releases.current, 'managed': reference is not None, 'container': container,
                     'status': None if reference is None else await request_control('status'),
                     'check': releases.state(),
                     # The panel shows these before an update; rolling back loses data written after it.
