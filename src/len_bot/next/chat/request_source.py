@@ -17,9 +17,11 @@ def source_message(store: Store, config: LabConfig, platform_id: str, floor: int
 
     ``floor`` is the scene session's last message seq when the turn began, ``None`` outside a turn.
     """
-    message = None if floor is None else store.find_session_message(config.scene, platform_id, floor)
+    message = store.find_message(config.scene, platform_id)
     if (message is None or message.is_self or message.recalled or message.send_status != 'received'
             or message.sender.uid in config.attention.other_bot_ids):
+        raise ValueError(f'source_message_id 不是当前场景的真实请求消息：{platform_id!r}')
+    if floor is None or store.find_session_message(config.scene, platform_id, floor) is None:
         raise ValueError(f'source_message_id 只接受本轮收到的消息 ID：{platform_id!r}')
     if message.sender.uid in config.permissions.blacklist:
         raise PermissionError(f'账号 {message.sender.uid} 在当前场景黑名单中')

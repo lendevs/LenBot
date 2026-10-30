@@ -288,7 +288,7 @@ async def test_a_request_may_cite_a_message_from_the_running_turns_batch(tmp_pat
     results = _tool_results(requests)
     assert '账号 onebot:70001' in results[1]
     assert '黑名单' in results[2]
-    assert '本轮收到' in results[3]
+    assert '真实请求消息' in results[3]
     assert 'Bot 自主' in results[4]
     assert 'requester' in results[5]
 

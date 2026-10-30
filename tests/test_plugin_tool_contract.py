@@ -106,7 +106,7 @@ async def test_source_is_a_real_message_in_current_scene_not_supplied_requester(
         with pytest.raises(PermissionError, match='主人'):
             await bot.tool('owner_source', {'source_message_id': stranger.platform_message_id})
         for source in (other.platform_message_id, own.platform_message_id, OWNER, '不存在'):
-            with pytest.raises(ValueError, match='本轮收到'):
+            with pytest.raises(ValueError, match='真实请求消息'):
                 await bot.tool('owner_source', {'source_message_id': source})
         for args in ({}, {'requester': OWNER}, {'source_message_id': owner.platform_message_id, 'requester': OWNER}):
             with pytest.raises(ValueError):
@@ -117,6 +117,7 @@ async def test_source_is_a_real_message_in_current_scene_not_supplied_requester(
 async def test_source_must_be_received_in_the_running_turn(package):
     async with PluginTest(package, scenes=[SCENE], owners=[OWNER], now=lambda: 1234567890) as bot:
         earlier = bot.add_message('上一轮主人的请求', sender=OWNER)
+        earlier_own = bot.add_message('上一轮机器人自己', sender=bot.host.bot_id)
         bot.new_turn(SCENE)
         member = bot.add_message('这一轮成员的话', sender='onebot:70002')
         pending = bot.add_message('还没进入会话', sender=OWNER, received=False)
@@ -124,6 +125,8 @@ async def test_source_must_be_received_in_the_running_turn(package):
             await bot.tool('owner_source', {'source_message_id': earlier.platform_message_id})
         with pytest.raises(ValueError, match='本轮收到'):
             await bot.tool('owner_source', {'source_message_id': pending.platform_message_id})
+        with pytest.raises(ValueError, match='真实请求消息'):
+            await bot.tool('owner_source', {'source_message_id': earlier_own.platform_message_id})
         with pytest.raises(PermissionError, match='主人'):
             await bot.tool('owner_source', {'source_message_id': member.platform_message_id})
         later = bot.add_message('本轮中途收到主人的请求', sender=OWNER)
