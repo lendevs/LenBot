@@ -251,6 +251,18 @@ async def test_native_worker_http_bridge_uses_task_tokens_and_exact_model_path(t
     assert finished[0]['error'] is None
 
 
+def test_worker_bridge_binds_without_resolving_its_address(monkeypatch):
+    import io
+    import socket
+    from len_bot.next.work.worker_bridge import BridgeServer
+    monkeypatch.setattr(socket, 'getfqdn', lambda *_: pytest.fail('bridge resolved its bind address'))
+    server = BridgeServer(0, 1000, io.BytesIO(), io.BytesIO())
+    try:
+        assert server.server_name == '127.0.0.1' and server.server_port > 0
+    finally:
+        server.server_close()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('api', 'tool'), [
     ('openai-responses', {'type': 'web_search_preview'}),
