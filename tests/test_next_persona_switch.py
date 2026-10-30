@@ -81,9 +81,14 @@ def test_library_switch_parks_and_restores_scene_settings(tmp_path):
         assert created.json()['id'] == 'second' and created.json()['scenes'] == []
         assert (await client.post('/api/host/personas', json={'folder': 'second', 'name': '重复'})).status_code == 409
         assert (await client.post('/api/host/personas', json={'folder': 'Bad_Name', 'name': '坏名'})).status_code == 422
+        source = tmp_path / 'personas/fixture/persona.yaml'
+        metadata = yaml.safe_load(source.read_text())
+        source.write_text(yaml.safe_dump({**metadata, 'aliases': ['合成角色', '小合']}, allow_unicode=True))
         copied = await client.post('/api/host/personas/fixture/copy', json={'folder': 'third', 'name': '第三角色'})
         assert copied.status_code == 200 and copied.json()['id'] == 'third'
-        assert load_persona(tmp_path / 'personas/third').voice == load_persona(tmp_path / 'personas/fixture').voice
+        third = load_persona(tmp_path / 'personas/third')
+        assert third.voice == load_persona(tmp_path / 'personas/fixture').voice
+        assert third.aliases == ['第三角色', '小合']
 
         switched = (await client.post('/api/host/personas/second/scenes', json={'scenes': [SCENE]})).json()['results'][0]
         assert switched['status'] == 'switched' and switched['handover'] == 'skipped'
