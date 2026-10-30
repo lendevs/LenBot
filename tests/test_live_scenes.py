@@ -78,8 +78,11 @@ async def test_live_scene_add_remove_drains_current_turn_without_stopping_other_
                     endpoint = '/api/host/settings/scenes'
                     available = await client.get(endpoint + '/available')
                     assert available.json()['items'][0]['scene'] == NEW
-                    added = await client.post(endpoint, json={'scene': NEW, 'persona': 'persona'})
+                    added = await client.post(endpoint, json={'scene': NEW, 'persona': 'persona',
+                                                              'attention': {'only_direct': False, 'activity': 0.5}})
                     assert added.status_code == 200, added.text
+                    attention = runtime.chats[NEW].config.attention
+                    assert (attention.only_direct, attention.activity) == (False, 0.5)
                     assert not added.json()['restart_required']['scenes'][NEW]
                     assert NEW in runtime.ingestor.scenes
                     incoming = message(70001, 1, '新群请求', direct=True)

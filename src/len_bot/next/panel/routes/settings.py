@@ -18,6 +18,7 @@ from ...configuration.chat import (
     Compaction,
     ImageSettings,
     Attention,
+    Participation,
     Proactive,
     ScenePersona,
     TextDelivery,
@@ -122,6 +123,7 @@ class SceneCreate(BaseModel):
     model_config = STRICT
     persona: str = Field(min_length=1)
     scene: str
+    attention: Participation = Field(default_factory=Participation)
 
 
 class MemoryChange(BaseModel):
@@ -620,7 +622,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         def edit(source: dict, saved: HostConfig) -> None:
             if change.scene in saved.scenes:
                 raise ValueError(f"场景已存在：{change.scene}")
-            source["scenes"][change.scene] = {"persona": change.persona, "attention": {"only_direct": True}}
+            source["scenes"][change.scene] = {"persona": change.persona, "attention": change.attention.model_dump()}
         return await save(edit, scenes=True)
 
     @app.get('/api/host/settings/scenes/available', response_model=responses.Records, response_model_exclude_unset=True)

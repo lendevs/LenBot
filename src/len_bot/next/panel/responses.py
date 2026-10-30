@@ -64,6 +64,8 @@ class HostScene(ScenePersona):
     timezone: str
     chat_enabled: bool
     chat_status: JsonObject
+    # The running chat's only_direct and activity.
+    attention: JsonObject
 
 
 class ServiceAlert(PanelResponse):
@@ -616,6 +618,7 @@ class TrialInfo(PanelResponse):
     draft_path: str | None
     draft_source: str | None
     models: dict[str, str]
+    attention: JsonObject
 
 
 class TrialList(PanelResponse):
@@ -741,6 +744,17 @@ class SceneControl(PanelResponse):
     quiet_until: Number | None
     direct: str
     scope: str
+
+
+class SceneFocus(PanelResponse):
+    scene: str
+    # Configured modes; None means the feature is off for this group.
+    declarations: str | None
+    disposition: str | None
+    persona_allows: bool
+    persona: str
+    intents: list[JsonObject]
+    wrap_up: JsonObject | None
 
 
 class AllChatControl(Enabled):

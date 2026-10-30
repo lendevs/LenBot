@@ -24,7 +24,7 @@ from . import responses
 from ..configuration.models import Binding, Provider
 from ..memory.embeddings import EmbeddingBinding
 from ..tools.web_search import WebSearchSettings
-from ..configuration.chat import Compaction, WebReadSettings
+from ..configuration.chat import Compaction, Participation, WebReadSettings
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
 from ..platform.onebot import OneBot, OneBotCallError
@@ -66,6 +66,7 @@ class FirstSetup(BaseModel):
     voice_mode: Literal['direct'] = 'direct'
     compaction: Compaction = Field(default_factory=Compaction)
     scene: str
+    attention: Participation = Field(default_factory=Participation)
     persona_id: str = Field(default='companion', pattern=r'^[a-z0-9]+(?:-[a-z0-9]+)*$', max_length=64)
     persona_name: str | None = Field(default=None, min_length=1)
     brief: str | None = Field(default=None, min_length=1)
@@ -159,7 +160,7 @@ def setup_source(item: FirstSetup) -> dict:
         'panel': {'host': item.panel_host, 'port': item.panel_port, 'username': item.username,
                   'password_hash': hash_password(item.password)},
         'scenes': {item.scene: {'persona': f'personas/{item.persona_id}', 'voice_mode': item.voice_mode,
-                                'attention': {'only_direct': True}}},
+                                'attention': item.attention.model_dump()}},
     }
 
 

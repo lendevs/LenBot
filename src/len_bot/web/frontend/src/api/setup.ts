@@ -1,3 +1,4 @@
+import type { Participation } from './participation'
 import { request } from './client'
 import type { WebRead, WebSearch } from './capabilities'
 import type { ListedModel, Protocol } from './models'
@@ -112,6 +113,7 @@ export interface FirstSetup {
   voice_mode: 'direct'
   compaction: { input_tokens: number }
   scene: string
+  attention: Participation
   persona_id: string
   persona_name?: string
   brief?: string

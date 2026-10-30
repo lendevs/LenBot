@@ -6,9 +6,10 @@ import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
 import Input from '../../../ui/Input.vue'
 import NumberInput from '../../../ui/NumberInput.vue'
-import RadioGroup from '../../../ui/RadioGroup.vue'
 import Switch from '../../../ui/Switch.vue'
 import TagInput from '../../../ui/TagInput.vue'
+import ParticipationChoice from '../participation/ParticipationChoice.vue'
+import type { Participation } from '../../../api/participation'
 import { useForm, withPlatform } from './form'
 
 type NumberKey =
@@ -30,16 +31,13 @@ const { t } = useI18n()
 const form = useForm()
 const details = ref(false)
 
-const mode = computed({
-  get: () => (form.draft.scene.attention.only_direct ? 'direct' : 'join'),
-  set: (value: 'direct' | 'join') => (form.draft.scene.attention.only_direct = value === 'direct'),
+const participation = computed({
+  get: () => ({
+    only_direct: form.draft.scene.attention.only_direct,
+    activity: form.draft.scene.attention.activity,
+  }),
+  set: (value: Participation) => Object.assign(form.draft.scene.attention, value),
 })
-const modes = computed(() =>
-  (['direct', 'join'] as const).map((value) => ({
-    value,
-    label: t(`groups.settings.participation.modes.${value}`),
-  })),
-)
 const otherBots = computed({
   get: () => form.draft.scene.attention.other_bot_ids,
   set: (values: string[]) =>
@@ -70,17 +68,14 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
 
 <template>
   <FormSection :title="t('groups.settings.participation.section')">
-    <Field :label="t('groups.settings.participation.mode')" wide>
-      <RadioGroup v-model="mode" :options="modes" />
+    <ParticipationChoice v-model="participation" />
+    <Field
+      v-if="!form.draft.scene.attention.only_direct"
+      :label="t('groups.settings.participation.keywords')"
+      wide
+    >
+      <TagInput v-model="form.draft.scene.attention.keywords" />
     </Field>
-    <template v-if="!form.draft.scene.attention.only_direct">
-      <Field :label="t('groups.settings.participation.activity')" :error="form.errors['attention.activity']">
-        <NumberInput v-model="form.draft.scene.attention.activity" :min="0" :max="1" :step="0.05" />
-      </Field>
-      <Field :label="t('groups.settings.participation.keywords')" wide>
-        <TagInput v-model="form.draft.scene.attention.keywords" />
-      </Field>
-    </template>
     <Field :label="t('groups.settings.participation.otherBots')" :error="form.errors.otherBots" wide>
       <TagInput v-model="otherBots" placeholder="onebot:10001" />
     </Field>
@@ -108,6 +103,9 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
       </button>
     </div>
     <template v-if="details">
+      <Field :label="t('groups.settings.participation.activity')" :error="form.errors['attention.activity']">
+        <NumberInput v-model="form.draft.scene.attention.activity" :min="0" :max="1" :step="0.05" />
+      </Field>
       <Field :label="t('groups.settings.participation.closeFocus')" inline wide>
         <Switch v-model="form.draft.scene.attention.close_focus_on_silence" />
       </Field>

@@ -93,6 +93,25 @@ def register_host_operations(app, *, runtime, user):
         scene_exists(scene)
         return runtime.runners[scene].control_state()
 
+    @app.get('/api/host/scenes/{scene}/focus', response_model=responses.SceneFocus, response_model_exclude_unset=True)
+    async def scene_focus(scene: str, _: str = Depends(user)):
+        scene_exists(scene)
+        return runtime.runners[scene].focus_state()
+
+    @app.delete('/api/host/scenes/{scene}/focus/intents/{intent}', response_model=responses.SceneFocus,
+                response_model_exclude_unset=True)
+    async def drop_intent(scene: str, intent: str, _: str = Depends(user)):
+        scene_exists(scene)
+        runner = runtime.runners[scene]
+        # Waits for a running turn so the state it saves cannot bring the intent back.
+        async with runner.execution:
+            try:
+                result = runner.drop_intent(intent)
+            except ValueError as error:
+                raise HTTPException(404, str(error)) from error
+            runtime.events.publish("host.state", scene=scene)
+            return result
+
     @app.post('/api/host/scenes/{scene}/control/quiet', response_model=responses.SceneControl, response_model_exclude_unset=True)
     async def scene_quiet(scene: str, change: QuietChange, _: str = Depends(user)):
         scene_exists(scene)

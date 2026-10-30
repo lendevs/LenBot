@@ -9,6 +9,22 @@ export interface Verdict {
   threshold: number | null
   /** Below 1 when recent reactions to ambient interjections lowered the participation score. */
   effect_factor?: number | null
+  /** Terms of the participation score (`chat/attention.py` participation_parts); score = max(0, raw) × activity × effect. */
+  parts?: VerdictParts | null
+}
+
+export const PART_NAMES = [
+  'base',
+  'question',
+  'help',
+  'filler',
+  'no_text',
+  'other_bots',
+  'self_share',
+  'gap',
+] as const
+export type VerdictParts = Record<(typeof PART_NAMES)[number] | 'raw' | 'activity', number> & {
+  messages: number
 }
 
 export interface Sender {
