@@ -170,6 +170,9 @@ async def upstream():
     server = await asyncio.start_server(respond, '127.0.0.1', 0)
     async with server:
         yield server.sockets[0].getsockname()[1], received
+        # A cancelled task can drop a model connection before sending its request; that socket only
+        # closes when collected, and wait_closed() on leaving the block waits for every client.
+        server.close_clients()
 
 
 def host_config(root: Path, port: int, environment: str, *, scene_running: int = 2,
