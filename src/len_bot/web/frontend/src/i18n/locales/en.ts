@@ -2857,6 +2857,10 @@ export default {
       failed: 'Connection failed',
       simulated: 'Simulated',
       real: 'Send to QQ',
+      connect: 'Connection',
+      now: 'Connect OneBot',
+      later: 'Not now',
+      botAccount: 'Bot QQ',
     },
     owner: {
       owner: 'Owner QQ',
@@ -2910,6 +2914,9 @@ export default {
       private: 'Private',
       groupId: 'Group number',
       privateId: 'Their QQ',
+      groupSource: 'Group source',
+      fromList: 'Pick from joined groups',
+      manual: 'Enter manually',
     },
     plugins: {
       disabled:

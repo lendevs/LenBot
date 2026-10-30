@@ -101,7 +101,7 @@ export interface FirstSetup {
   owners: string[]
   timezone: string
   delivery: 'simulated' | 'onebot'
-  onebot: OneBotLink
+  onebot: OneBotLink | null
   provider: SetupProvider
   mind: SetupBinding
   embedding: { provider: SetupProvider | null; model: string; dimensions: number | null } | null
@@ -124,6 +124,11 @@ export interface FirstSetup {
   password: string
   password_confirmation: string
   install_plugins: string[]
+}
+
+export interface SetupGroup {
+  id: string
+  name: string
 }
 
 export interface SetupSaved {
@@ -155,7 +160,8 @@ function call<T>(path: string, body?: unknown): Promise<T> {
 export const setupApi = {
   protocols: () =>
     call<{ protocols: Protocol[]; container: boolean; panel_port: number | null }>('/api/setup/protocols'),
-  platform: (onebot: OneBotLink) => call<{ bot_id: string }>('/api/setup/platform', { onebot }),
+  platform: (onebot: OneBotLink) =>
+    call<{ bot_id: string; groups: SetupGroup[] }>('/api/setup/platform', { onebot }),
   models: (provider: SetupProvider) => call<{ models: SetupModel[] }>('/api/setup/models', { provider }),
   model: (provider: SetupProvider, mind: SetupBinding, kind: 'text' | 'tools') =>
     call<ProbeAnswer>('/api/setup/model', { provider, mind, kind }),
