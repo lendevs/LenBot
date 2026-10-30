@@ -101,7 +101,7 @@ DOCKER_SOCKET = Path('/var/run/docker.sock')
 
 def drop_container_root(socket: Path = DOCKER_SOCKET) -> None:
     """Join the group of a mounted Docker socket, then run as the image's lenbot user."""
-    if os.getuid() != 0:
+    if os.name != 'posix' or os.getuid() != 0:
         return
     groups = {CONTAINER_USER}
     try:
