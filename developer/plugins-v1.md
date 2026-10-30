@@ -24,12 +24,12 @@ description = "每群独立计数"
 
 - `version` 按 Python packaging 的版本规范解析和规范化，推荐使用 X.Y.Z 格式。
 - 两个 requires 字段是明确的版本范围，分别与实际的宿主版本和解释器版本比较。
-- `platforms` 使用 Python 的 `sys.platform` 名称。宿主有三种部署包，分别是 Linux（`linux`）、macOS（`darwin`）和 Windows（`win32`）。
+- `platforms` 使用 Python 的 `sys.platform` 名称：Linux（`linux`）、macOS（`darwin`）和 Windows（`win32`）。部署包覆盖 Linux 和 Windows，Docker 镜像是 Linux，从源码运行时三者都可能出现。
 - `reload` 为 `plugin` 时允许单独更换这个插件的版本，为 `host` 时需要重启宿主。
 - 可选的 `repository` 和 `homepage` 是 HTTP(S) 地址。
 - 可选的 `data_version`（正整数，默认为 1）是插件数据目录和 KV 的格式编号。改变数据的结构时，需要提高这个编号并实现 `migrate_data`，见下文的[数据版本](#数据版本)。
 
-`dependencies = ["包名>=版本"]` 声明 Python 依赖，由 uv 解析。当前环境中已有的版本会作为约束，冲突时原样报告。对系统软件、外部服务和凭据的要求，请写在插件的 README 中。
+`dependencies = ["包名>=版本"]` 声明 Python 依赖，由 uv 解析，安装到实例的 `.runtime/plugin-packages/<宿主版本>-py313` 目录，宿主更换版本后重新安装。当前环境中已有的版本会作为约束，冲突时原样报告。对系统软件、外部服务和凭据的要求，请写在插件的 README 中。
 
 ### 权限声明
 

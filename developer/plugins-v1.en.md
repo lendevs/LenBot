@@ -26,12 +26,12 @@ description = "Per-scene counter"
 
 - `version` is parsed and normalized with Python packaging rules (`X.Y.Z` recommended).
 - `requires_lenbot` and `requires_python` are explicit version specifiers checked against the running host and Python interpreter.
-- `platforms` uses Python `sys.platform` values. Host deployment packages target Linux (`linux`), macOS (`darwin`), and Windows (`win32`).
+- `platforms` uses Python `sys.platform` values: Linux (`linux`), macOS (`darwin`), and Windows (`win32`). Deployment packages cover Linux and Windows, the Docker image is Linux, and a source checkout may run on any of the three.
 - `reload` is `plugin` (hot-reloadable without stopping other plugins) or `host` (applied on host restart).
 - Optional `repository` and `homepage` are HTTP(S) URLs.
 - Optional `data_version` (positive integer, default `1`) numbers the format of the plugin's data directory and KV store; see [Data versions](#data-versions).
 
-`dependencies = ["pkg>=version"]` declares Python package requirements resolved by `uv`. Packages already installed in the host environment act as constraints, and conflicts report the underlying resolver output. Document external binaries, services, and credentials in the plugin's README.
+`dependencies = ["pkg>=version"]` declares Python package requirements resolved by `uv` and installed into the instance's `.runtime/plugin-packages/<host version>-py313`, reinstalled when the host changes versions. Packages already installed in the host environment act as constraints, and conflicts report the underlying resolver output. Document external binaries, services, and credentials in the plugin's README.
 
 ### Permissions
 

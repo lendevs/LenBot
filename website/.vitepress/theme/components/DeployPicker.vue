@@ -12,32 +12,24 @@ type Method = { key: string; icon: string; title: string; page: string; needs: s
 
 const methods = computed<Method[]>(() => [
   {
-    key: 'docker', icon: 'container', title: 'Docker', page: 'Docker 部署', needs: 'Docker Engine 或 Desktop，Compose v2', link: '/start/docker',
-    variants: [{ label: 'Linux / macOS', lang: 'sh', lines: [
-      { text: 'mkdir lenbot && cd lenbot' },
-      { text: 'docker run --rm --entrypoint python \\' },
-      { text: '  -v "$PWD:/deployment" -v /var/run/docker.sock:/var/run/docker.sock \\' },
-      { text: `  ghcr.io/lendevs/lenbot-updater:${version.value} /opt/lenbot-updater/init.py --version ${version.value}` },
-      { text: 'docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \\' },
-      { text: '  -f host.updater.compose.yaml up -d' },
-      { text: 'docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \\' },
-      { text: '  -f host.updater.compose.yaml logs lenbot' },
+    key: 'docker', icon: 'container', title: 'Docker', page: 'Docker 部署', needs: 'Docker Engine 或 Docker Desktop', link: '/start/docker',
+    variants: [{ label: 'PowerShell / macOS / Linux', lang: 'sh', lines: [
+      { text: `docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:${version.value}` },
+      { text: 'docker logs lenbot' },
     ] }],
   },
   {
-    key: 'package', icon: 'package', title: '部署包', page: '部署包', needs: 'Linux、macOS、Windows，uv', link: '/start/package',
+    key: 'package', icon: 'package', title: '部署包', page: '部署包', needs: 'Linux（x64、arm64）、Windows（x64）', link: '/start/package',
     variants: [
-      { label: 'Linux / macOS', lang: 'sh', lines: [
-        { text: `# 从 Releases 下载 lenbot-${version.value}-macos.tar.gz 或 -linux.tar.gz`, note: true },
-        { text: `tar -xzf lenbot-${version.value}-macos.tar.gz` },
-        { text: `cd lenbot-${version.value}-macos` },
-        { text: './install.sh install "$HOME/lenbot"' },
-        { text: '"$HOME/lenbot/run"' },
+      { label: 'Linux', lang: 'sh', lines: [
+        { text: `# 从 Releases 下载 lenbot-${version.value}-linux-x64.tar.gz 或 -linux-arm64.tar.gz`, note: true },
+        { text: `tar -xzf lenbot-${version.value}-linux-x64.tar.gz` },
+        { text: `cd lenbot-${version.value}-linux-x64` },
+        { text: './run' },
       ] },
       { label: 'Windows', lang: 'powershell', lines: [
-        { text: `# 解压 lenbot-${version.value}-windows.zip，在解压目录中执行`, note: true },
-        { text: 'powershell -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1 install "$env:USERPROFILE\\lenbot"' },
-        { text: '& "$env:USERPROFILE\\lenbot\\run.cmd"' },
+        { text: `# 解压 lenbot-${version.value}-windows-x64.zip，双击其中的 run.cmd，或在解压目录中执行`, note: true },
+        { text: '.\\run.cmd' },
       ] },
     ],
   },

@@ -126,9 +126,9 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 uv run --no-sync python scripts/build_release.py /tmp/lenbot-release
 ```
 
-打包脚本在独立临时目录中构建前端面板，产出源码包、wheel、Linux／macOS／Windows 部署包及发行清单。
+打包脚本在独立临时目录中构建前端面板，产出源码包、wheel、Linux（x64、arm64）与 Windows（x64）部署包及发行清单。部署包内置 python-build-standalone 的 CPython，依赖按目标平台下载二进制 wheel 交叉安装，因此三个包都可以在一台机器上打出。
 
-持续集成工作流（[ci.yml](.github/workflows/ci.yml) 与 [check.yml](.github/workflows/check.yml)）在 Python 3.13（`pyproject.toml` 最低要求版本）与 Python 3.14 上运行编译、静态检查与测试，使用 `actionlint` 校验全部工作流文件，并验证前端构建与发行打包。单元测试在 Linux 与 Windows 上执行，macOS 与各平台部署包由安装冒烟测试（[install-smoke.yml](.github/workflows/install-smoke.yml)）覆盖。
+持续集成工作流（[ci.yml](.github/workflows/ci.yml) 与 [check.yml](.github/workflows/check.yml)）在 Python 3.13（`pyproject.toml` 最低要求版本）与 Python 3.14 上运行编译、静态检查与测试，使用 `actionlint` 校验全部工作流文件，并验证前端构建与发行打包。单元测试在 Linux 与 Windows 上执行，各平台部署包与 Docker 镜像由安装冒烟测试（[install-smoke.yml](.github/workflows/install-smoke.yml)）覆盖。
 
 ## 提交规范
 
