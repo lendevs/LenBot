@@ -3,6 +3,9 @@
 The directory is mounted read-only at ``/opt/lenbot`` in each bwrap task
 sandbox (``worker.task_runtime``). Node and Pi versions match the worker image;
 the Node archive is checked against the release's published SHA-256 list.
+The task Python libraries (``docker/next-worker/task-python.txt``) go to
+``python/`` for the interpreter that runs the host, which the sandbox exposes
+as ``python3``; ``--python`` names that interpreter when it is not this one.
 """
 
 import argparse
@@ -11,6 +14,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import urllib.request
@@ -39,7 +43,7 @@ def node_archive(architecture: str, directory: Path) -> Path:
     return archive
 
 
-def build(output: Path, architecture: str) -> None:
+def build(output: Path, architecture: str, python: Path) -> None:
     if output.exists():
         raise FileExistsError(f'{output} already exists; choose a new directory')
     with tempfile.TemporaryDirectory() as directory:
@@ -53,6 +57,12 @@ def build(output: Path, architecture: str) -> None:
                         '--ignore-scripts', '--no-fund', '--no-audit', PI],
                        check=True, env={'PATH': f'{node}:/usr/bin:/bin', 'HOME': directory})
         shutil.copy2(ROOT / 'docker' / 'next-worker' / 'lenbot-extension.ts', staging / 'lenbot-extension.ts')
+        uv = shutil.which('uv')
+        if uv is None:
+            raise FileNotFoundError('uv is required to install the task Python libraries')
+        subprocess.run([uv, 'pip', 'install', '--no-cache', '--python', str(python), '--target', str(staging / 'python'),
+                        '--requirement', str(ROOT / 'docker' / 'next-worker' / 'task-python.txt')], check=True)
+        shutil.copy2(ROOT / 'docker' / 'next-worker' / 'matplotlibrc', staging / 'matplotlibrc')
         (staging / 'bin').mkdir()
         shutil.copytree(staging, output, symlinks=True)
 
@@ -62,8 +72,10 @@ def main() -> None:
     parser.add_argument('output', type=Path)
     parser.add_argument('--architecture', choices=sorted(set(ARCHITECTURES.values())),
                         default=ARCHITECTURES.get(platform.machine().lower()))
+    parser.add_argument('--python', type=Path, default=Path(sys.executable),
+                        help='interpreter that runs the LenBot host (default: this one)')
     arguments = parser.parse_args()
-    build(arguments.output.resolve(), arguments.architecture)
+    build(arguments.output.resolve(), arguments.architecture, arguments.python)
     print(arguments.output.resolve())
 
 

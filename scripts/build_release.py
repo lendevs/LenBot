@@ -37,6 +37,7 @@ REQUIRED_SOURCE = (
     'docker/next-worker/Dockerfile', 'docker/next-worker/lenbot-extension.ts',
     'docker/next-worker/lenbot-browser.cjs', 'docker/next-worker/Dockerfile.dockerignore',
     'docker/next-worker/lenbot-render.cjs', 'docker/next-worker/browser-files.cjs',
+    'docker/next-worker/task-python.txt', 'docker/next-worker/matplotlibrc',
 )
 FORBIDDEN_SOURCE = ('docs/', 'runtime/', '.runtime/', '.backups/', '.venv/', 'state/', 'personas/', 'file_assets/')
 

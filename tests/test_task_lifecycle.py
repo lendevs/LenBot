@@ -140,6 +140,7 @@ def task_runtime(root: Path) -> Path:
     (runtime / 'node' / 'bin').mkdir(parents=True)
     shutil.copy2(STANDIN, runtime / 'pi_standin.py')
     (runtime / 'lenbot-extension.ts').touch()
+    (runtime / 'python').mkdir()
     (runtime / 'node' / 'bin' / 'node').touch(mode=0o755)
     python = Path(sys.base_prefix).resolve() / 'bin' / f'python{sys.version_info.major}.{sys.version_info.minor}'
     launcher = runtime / 'node' / 'bin' / 'pi'

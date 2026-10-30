@@ -24,6 +24,15 @@
 
 任务环境不能直接联网，模型请求、按联网方式放行的访问、浏览器操作与本群只读数据工具（记忆、资料、历史聊天查询）都经由宿主进程代理，并计入流量与额度上限；API Key 始终留在宿主进程内。
 
+## 任务环境
+
+任务里的 `python3` 预装 pandas、openpyxl、matplotlib、python-docx、pypdf 和 Pillow，不联网也能处理 CSV、XLSX、图表、DOCX 和 PDF；matplotlib 已配置中文字体。
+
+| 运行方式 | pandoc、ffmpeg、poppler 与中文字体 | 网页渲染 `lenbot-render` 与浏览器 |
+|---|---|---|
+| Docker 任务容器 | 镜像内置 | 镜像内置 |
+| Linux 本机沙箱 | 使用系统已安装的版本 | 随部署包提供 |
+
 ## 联网方式
 
 在**能力 → 后台任务 → 任务能力**中选择任务的**联网方式**：
