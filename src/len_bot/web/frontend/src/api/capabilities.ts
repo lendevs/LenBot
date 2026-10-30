@@ -75,6 +75,8 @@ export type StoragePool = { kind: 'ext4'; mount: string; image?: string } | { ki
 export type WorkerDefaults = Partial<
   Pick<
     Worker,
+    | 'sandbox'
+    | 'bwrap_binary'
     | 'docker_binary'
     | 'docker_host'
     | 'image'
@@ -83,20 +85,47 @@ export type WorkerDefaults = Partial<
     | 'delivery_root'
     | 'uid'
     | 'gid'
+    | 'task_volume'
   >
 >
+
+/** What delegation still needs: saved task settings, each group's switch, roles and tools, and the file exit. */
+export interface TaskReadiness {
+  worker: boolean
+  running: boolean
+  sandbox: 'docker' | 'bwrap' | null
+  delivery: 'simulated' | 'onebot'
+  upload_visible_root: string | null
+  scenes: {
+    scene: string
+    enabled: boolean
+    delegate_roles: string[]
+    persona: string | null
+    missing_tools: string[]
+  }[]
+}
+
+/** One step of `check_local_sandbox`, in order; ``detail`` is the original output. */
+export interface SandboxStep {
+  step: 'bwrap' | 'namespaces' | 'task_runtime' | 'sandbox' | 'pi' | 'docker' | 'image'
+  ok: boolean
+  detail: string
+}
 
 /** `configuration/tasks.py` WorkerSettings; number fields are null while their input is empty. */
 export interface Worker {
   sandbox?: 'docker' | 'bwrap'
-  docker_binary: string
-  docker_host: string
-  image: string
+  /** Docker fields are null in the local sandbox. */
+  docker_binary: string | null
+  docker_host: string | null
+  image: string | null
   bwrap_binary?: string | null
   task_runtime?: string | null
   workspace_root: string
   runtime_root: string
   delivery_root: string
+  /** Docker deployments: the volume holding the task directories, mounted into task containers by subpath. */
+  task_volume?: { name: string; root: string } | null
   storage_pool: StoragePool | null
   skills_directory: string | null
   uid: number | null
@@ -209,6 +238,12 @@ export const capabilitiesApi = {
     http.put<SettingsSnapshot>('/api/host/settings/worker', { worker: value }),
   workerDefaults: (signal?: AbortSignal) =>
     http.get<WorkerDefaults>('/api/host/settings/worker/defaults', undefined, signal),
+  workerReadiness: (signal?: AbortSignal) =>
+    http.get<TaskReadiness>('/api/host/settings/worker/readiness', undefined, signal),
+  checkDocker: (draft: { docker_binary: string; docker_host: string; image: string; pull: boolean }) =>
+    http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/docker-check', draft),
+  checkSandbox: (draft: { bwrap_binary: string; task_runtime: string }) =>
+    http.post<{ steps: SandboxStep[] }>('/api/host/settings/worker/check', draft),
 
   skills: (scene: string, signal?: AbortSignal) =>
     http.get<SkillsState>('/api/host/skills', { scene }, signal),

@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+import shutil
+import sys
 
 from len_bot.next.config import load_host_config
 from test_next_panel_acts_as_owner import SCENE, exercise, write_instance
@@ -13,6 +15,8 @@ def test_worker_defaults_name_this_instance(tmp_path: Path) -> None:
     async def check(client) -> None:
         defaults = (await client.get('/api/host/settings/worker/defaults')).json()
         assert defaults['image'] == 'lenbot-worker:local'
+        local = sys.platform == 'linux' and shutil.which('bwrap') is not None
+        assert defaults['sandbox'] == ('bwrap' if local else 'docker')
         assert defaults['workspace_root'] == str(tmp_path / 'task-workspaces')
         assert {defaults['runtime_root'], defaults['delivery_root']} == {
             str(tmp_path / 'task-runtime'), str(tmp_path / 'deliveries')}
@@ -115,3 +119,45 @@ def test_docker_host_accepts_a_local_socket_or_named_pipe() -> None:
     for host in ('tcp://127.0.0.1:2375', 'npipe:////remote/pipe/docker_engine', 'unix://relative.sock'):
         with pytest.raises(ValidationError):
             worker(host)
+
+
+def test_readiness_names_what_delegation_still_needs(tmp_path: Path) -> None:
+    write_instance(tmp_path, ['onebot:70001'])
+
+    async def check(client) -> None:
+        response = await client.get('/api/host/settings/worker/readiness')
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body['worker'], body['running'], body['sandbox'], body['delivery']) == (False, False, None, 'simulated')
+        assert body['scenes'] == [{'scene': SCENE, 'enabled': False, 'delegate_roles': ['owner', 'admin', 'whitelist'],
+                                   'persona': 'synthetic-owner', 'missing_tools': ['delegate', 'task', 'send_file']}]
+    exercise(tmp_path, check)
+
+
+def test_a_release_installation_defaults_to_the_same_version_official_worker(tmp_path: Path) -> None:
+    from importlib.metadata import version
+
+    write_instance(tmp_path, ['onebot:70001'])
+    (tmp_path / '.runtime').mkdir()
+    (tmp_path / '.runtime' / 'update-control.json').write_text('{}', encoding='utf-8')
+
+    async def check(client) -> None:
+        defaults = (await client.get('/api/host/settings/worker/defaults')).json()
+        assert defaults['image'] == f"ghcr.io/lendevs/lenbot-worker:{version('len-bot')}"
+    exercise(tmp_path, check)
+
+
+def test_docker_check_reports_a_missing_cli_and_rejects_a_remote_daemon(tmp_path: Path) -> None:
+    write_instance(tmp_path, ['onebot:70001'])
+
+    async def check(client) -> None:
+        missing = tmp_path / 'no-docker'
+        response = await client.post('/api/host/settings/worker/docker-check', json={
+            'docker_binary': str(missing), 'docker_host': 'unix:///var/run/docker.sock', 'image': 'lenbot-worker:local'})
+        assert response.status_code == 200, response.text
+        [step] = response.json()['steps']
+        assert (step['step'], step['ok']) == ('docker', False) and str(missing) in step['detail']
+        remote = await client.post('/api/host/settings/worker/docker-check', json={
+            'docker_binary': str(missing), 'docker_host': 'tcp://192.0.2.1:2375', 'image': 'lenbot-worker:local'})
+        assert remote.status_code == 422
+    exercise(tmp_path, check)

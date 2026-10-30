@@ -29,6 +29,8 @@ from ...configuration.learning import LearningSettings
 from ...configuration.models import Roles
 from ...configuration.tasks import suggested_worker
 from ...work.bwrap import check_local_sandbox
+from ...work.sandbox import check_docker
+from ...configuration.tasks import local_docker_endpoint
 from ..model_access import model_error_detail, ProviderDraft, ProviderCandidate, ModelCandidate, probe_model
 from ...models.providers import PROTOCOLS, list_models
 from ...persona.profile import Persona
@@ -145,6 +147,27 @@ class LocalSandboxDraft(BaseModel):
         if not Path(value).is_absolute():
             raise ValueError("must be an explicit absolute path")
         return value
+
+
+class DockerDraft(BaseModel):
+    """The Docker fields from the task settings form, checked before they are saved."""
+    model_config = STRICT
+    docker_binary: str = Field(min_length=1)
+    docker_host: str = Field(min_length=1)
+    image: str = Field(min_length=1)
+    pull: bool = False
+
+    @field_validator("docker_binary")
+    @classmethod
+    def absolute(cls, value: str) -> str:
+        if not Path(value).is_absolute():
+            raise ValueError("must be an explicit absolute path")
+        return value
+
+    @field_validator("docker_host")
+    @classmethod
+    def local(cls, value: str) -> str:
+        return local_docker_endpoint(value)
 
 
 class SceneSpeechLimit(BaseModel):
@@ -400,6 +423,10 @@ async def _body(request: Request, kind: type[BaseModel]) -> BaseModel:
         raise HTTPException(422, _validation_detail(error)) from error
 
 
+# Tools a group's role must allow before members can delegate and receive task files.
+TASK_TOOLS = ("delegate", "task", "send_file", "tool_search")
+
+
 def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                            runtime,
                            personas: Callable[[], dict[str, Persona]],
@@ -653,10 +680,42 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
     async def worker_defaults(_: str = Depends(user)):
         return suggested_worker(root)
 
+    @app.get("/api/host/settings/worker/readiness", response_model=responses.TaskReadiness)
+    async def worker_readiness(_: str = Depends(user)):
+        """What delegation still needs, from the saved settings and each group's current role."""
+        async with write_lock:
+            try:
+                saved = await asyncio.to_thread(_read_saved, root)
+            except (ValueError, OSError) as error:
+                raise HTTPException(422 if isinstance(error, ValueError) else 500,
+                                    f"{type(error).__name__}: {error}") from error
+        roles = personas()
+        scenes = []
+        for scene, settings in saved.scenes.items():
+            role = roles.get(scene)
+            scenes.append({
+                "scene": scene, "enabled": settings.tasks.enabled,
+                "delegate_roles": list(settings.tasks.delegate_roles),
+                "persona": None if role is None else role.id,
+                "missing_tools": [] if role is None or role.tools == "all"
+                                 else [name for name in TASK_TOOLS if name not in role.tools],
+            })
+        return {"worker": saved.worker is not None, "running": running.worker is not None,
+                "sandbox": None if saved.worker is None else saved.worker.sandbox,
+                "delivery": saved.delivery,
+                "upload_visible_root": None if saved.onebot is None else saved.onebot.upload_visible_root,
+                "scenes": scenes}
+
     @app.post("/api/host/settings/worker/check", response_model=responses.SandboxCheck)
     async def check_worker(request: Request, _: str = Depends(user)):
         draft: LocalSandboxDraft = await _body(request, LocalSandboxDraft)
         return {"steps": await check_local_sandbox(Path(draft.bwrap_binary), Path(draft.task_runtime))}
+
+    @app.post("/api/host/settings/worker/docker-check", response_model=responses.SandboxCheck)
+    async def check_worker_docker(request: Request, _: str = Depends(user)):
+        draft: DockerDraft = await _body(request, DockerDraft)
+        return {"steps": await check_docker(Path(draft.docker_binary), draft.docker_host, draft.image,
+                                            pull=draft.pull)}
 
     @app.put("/api/host/settings/worker", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_worker(request: Request, _: str = Depends(user)):

@@ -62,6 +62,7 @@ def task_sandbox(settings: WorkerSettings) -> TaskSandbox:
         cpus=settings.cpus, memory=settings.memory, pids_limit=settings.pids_limit,
         tmpfs_size=settings.tmpfs_size,
         command_timeout_seconds=settings.command_timeout_seconds,
+        volume=None if settings.task_volume is None else (settings.task_volume.name, settings.task_volume.root),
     ))
 
 

@@ -73,7 +73,7 @@ ASR = _fields(ASRBinding, ('timeout_seconds', 'language'))
 WORKER = _fields(WorkerSettings, tuple(name for name in WorkerSettings.model_fields if name not in {
     'sandbox', 'docker_binary', 'docker_host', 'image', 'bwrap_binary', 'task_runtime',
     'workspace_root', 'runtime_root', 'delivery_root',
-    'storage_pool', 'skills_directory', 'uid', 'gid',
+    'storage_pool', 'skills_directory', 'uid', 'gid', 'task_volume',
 }))
 SCENE_PLUGINS = _fields(SceneSettings, ('plugins',))
 SECTION_MODELS = {'chat': CHAT, 'scene': SCENE, 'learning': LEARNING, 'schedules': SCHEDULES,

@@ -151,6 +151,8 @@ class SettingsSnapshot(PanelResponse):
 
 
 class WorkerDefaults(PanelResponse):
+    sandbox: Literal['docker', 'bwrap']
+    bwrap_binary: str | None = None
     docker_binary: str | None = None
     docker_host: str | None = None
     image: str | None = None
@@ -159,6 +161,24 @@ class WorkerDefaults(PanelResponse):
     delivery_root: str | None = None
     uid: int | None = None
     gid: int | None = None
+    task_volume: JsonObject | None = None
+
+
+class TaskSceneReadiness(PanelResponse):
+    scene: str
+    enabled: bool
+    delegate_roles: list[str]
+    persona: str | None
+    missing_tools: list[str]
+
+
+class TaskReadiness(PanelResponse):
+    worker: bool
+    running: bool
+    sandbox: Literal['docker', 'bwrap'] | None
+    delivery: str
+    upload_visible_root: str | None
+    scenes: list[TaskSceneReadiness]
 
 
 class SandboxCheck(PanelResponse):

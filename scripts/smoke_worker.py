@@ -6,6 +6,8 @@ Everything else is the task service, the sandbox and Pi as deployed: a worker
 image under Docker, or a task runtime (``build_task_runtime.py``) under bwrap.
 ``--network-probe`` adds a curl step in allowlist mode with only example.com listed.
 ``--copy-through-docker`` reads the delivery with ``docker cp`` as on Windows.
+``--task-volume NAME:ROOT`` runs inside a host container whose instance volume NAME is mounted at ROOT;
+task containers then mount their directories as subpaths of that volume.
 """
 
 import argparse
@@ -105,7 +107,7 @@ async def until(condition, seconds: float):
     return result
 
 
-async def smoke(sandbox: dict, root: Path, network: dict | None = None) -> dict:
+async def smoke(sandbox: dict, root: Path, network: dict | None = None, volume: dict | None = None) -> dict:
     """``network`` turns on the allowlist probe; it holds this machine's network settings, empty when defaults fit."""
     requests: list[dict] = []
     outputs: list[str] = []
@@ -126,6 +128,7 @@ async def smoke(sandbox: dict, root: Path, network: dict | None = None) -> dict:
             'workspace_root': root / 'workspaces', 'runtime_root': root / 'runtime',
             'delivery_root': root / 'deliveries',
             'egress': {'mode': 'allowlist', 'allowed_hosts': ['example.com']} if probe else {'mode': 'off'},
+            **({'task_volume': volume} if volume else {}),
         },
         'scenes': {SCENE: {'persona': root / 'unused-role', 'tasks': {'enabled': True}}},
     })
@@ -196,6 +199,7 @@ def main() -> None:
     parser.add_argument('--network-probe', nargs='?', const='{}', metavar='NETWORK_JSON',
                         help="add the allowlist curl step; optional JSON of this machine's network settings")
     parser.add_argument('--copy-through-docker', action='store_true', help='read the delivery as on Windows')
+    parser.add_argument('--task-volume', metavar='NAME:ROOT', help='instance volume and its mount in this container')
     arguments = parser.parse_args()
     if arguments.copy_through_docker:
         DockerSandbox.copy_through_docker = True
@@ -209,9 +213,14 @@ def main() -> None:
             sys.exit('bwrap mode needs the bwrap binary and --task-runtime')
         sandbox = {'sandbox': 'bwrap', 'bwrap_binary': Path(arguments.bwrap),
                    'task_runtime': arguments.task_runtime.resolve()}
-    with tempfile.TemporaryDirectory(prefix='lenbot-worker-smoke-') as directory:
+    volume = None
+    if arguments.task_volume:
+        name, _, mount = arguments.task_volume.partition(':')
+        volume = {'name': name, 'root': Path(mount).resolve()}
+    with tempfile.TemporaryDirectory(prefix='lenbot-worker-smoke-', dir=volume and volume['root']) as directory:
         result = asyncio.run(smoke(sandbox, Path(directory).resolve(),
-                                   None if arguments.network_probe is None else json.loads(arguments.network_probe)))
+                                   None if arguments.network_probe is None else json.loads(arguments.network_probe),
+                                   volume))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

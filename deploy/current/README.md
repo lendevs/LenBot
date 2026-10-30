@@ -8,7 +8,6 @@
 |---|---|
 | `Dockerfile` | 宿主容器镜像构建文件 |
 | `host.compose.yaml` | 宿主容器基础 Compose 配置 |
-| `host.tasks.compose.yaml` | 宿主容器启用后台任务时的附加挂载配置 |
 | `services.compose.yaml` | 本地 Ollama 向量服务 Compose 配置 |
 | `lenbot.service` | Linux `systemd` 服务单元模板 |
 | `start.command` | macOS 双击启动脚本（在仓库根目录执行 `.venv/bin/len-bot`） |
