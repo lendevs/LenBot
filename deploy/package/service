@@ -1,0 +1,35 @@
+#!/bin/sh
+# Runs LenBot as a systemd user service from this directory.
+set -eu
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+UNIT="$HOME/.config/systemd/user/lenbot.service"
+case "${1:-}" in
+  install)
+    mkdir -p "$(dirname "$UNIT")"
+    # KillMode=mixed: only the controller gets SIGTERM, so it can let a running update step finish and stop the host itself.
+    cat > "$UNIT" <<UNIT
+[Unit]
+Description=LenBot
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart="$ROOT/run"
+WorkingDirectory=$ROOT
+Restart=no
+KillMode=mixed
+TimeoutStopSec=240
+UMask=0077
+
+[Install]
+WantedBy=default.target
+UNIT
+    systemctl --user daemon-reload
+    systemctl --user enable lenbot.service ;;
+  uninstall)
+    systemctl --user disable --now lenbot.service || true
+    rm -f "$UNIT"
+    systemctl --user daemon-reload ;;
+  start|stop|restart|status) systemctl --user "$1" lenbot.service ;;
+  *) printf '%s\n' '用法：service install|uninstall|start|stop|restart|status'; exit 2 ;;
+esac

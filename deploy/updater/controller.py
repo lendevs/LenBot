@@ -29,11 +29,11 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from common import PROTOCOL, download, fetch_json, owned_like_parent, read_json, release_manifest, repository, version_key, write_json
-from native import Native
+from native import Native, bootstrap
 
 LABELS = {'prepare': '准备更新', 'apply': '停机升级', 'restore': '恢复快照', 'start': '启动程序'}
 LOG_LIMIT = 5 * 1024 * 1024
-# backups/<UTC time>-<8 hex>, as written by the update and by install.py upgrade.
+# backups/<UTC time>-<8 hex>, as written by the update.
 SNAPSHOT_NAME = re.compile(r'[0-9]{8}-[0-9]{6}-[0-9a-f]{8}')
 # A snapshot being deleted is moved to this prefix first; a removal that stopped halfway stays listed as incomplete.
 REMOVING = '.removing-'
@@ -262,9 +262,9 @@ class Controller:
     def updater_steps(self, tag: str) -> str:
         """Commands that switch to a newer updater."""
         if self.deployment['mode'] == 'native':
-            return (f'{tag} 需要新版更新器，请停止 LenBot，下载 {tag} 的部署包并解压，'
-                    f'运行其中的 install.sh upgrade {self.root}（Windows 使用 install.ps1 upgrade {self.root}），'
-                    '该命令同时更新程序和更新器，完成后启动 LenBot。')
+            return (f'{tag} 需要新版更新器。在快照页先建立快照，停止 LenBot，下载 {tag} 的部署包并解压到新目录，'
+                    f'把 {self.root / "instance"} 和 {self.root / "backups"} 移到新目录，再运行新目录中的 run'
+                    '（Windows 为 run.cmd）。首次启动时会先安装插件依赖并迁移实例数据。')
         version = tag.removeprefix('v')
         image = repository(self.backend.metadata()['host_image']) + '-updater:' + version
         return (f'{tag} 需要新版更新器，请在部署目录 {self.deployment["host_directory"]} 依次运行：\n'
@@ -532,7 +532,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', type=Path)
     args = parser.parse_args()
+    created = bootstrap(args.root.resolve())
     controller = Controller(args.root)
+    if created and (controller.root / 'instance/lenbot.config.json').exists():
+        # An instance moved in from an older package: install its plugin packages and migrate before the first start.
+        controller.backend.maintenance('apply')
     http = server(controller)
     print(f'更新与恢复：{controller.reference["public_url"]}/#session={controller.recovery_token}', flush=True)
     def stop(signum, frame):

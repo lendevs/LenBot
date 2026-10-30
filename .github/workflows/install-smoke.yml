@@ -13,7 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-2022]
+        # One runner per published package: Linux x64, Linux arm64 and Windows x64.
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, windows-2022]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
@@ -21,11 +22,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: '0.12.13'
+      # The update smoke packages its baseline versions; Linux packages install Pi with npm.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: actions/download-artifact@v4
         with:
           name: release-packages
           path: packages
-      - name: Install the deployment package and walk first setup to the panel
+      - name: Unpack the deployment package, start it and walk first setup to the panel
         shell: bash
         run: uv run --no-project --python 3.13 python scripts/smoke_install.py package packages "$RUNNER_TEMP/smoke"
       - name: Upgrade and restore two real packaged versions

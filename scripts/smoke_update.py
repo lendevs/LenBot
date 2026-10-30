@@ -16,7 +16,7 @@ import tomllib
 import urllib.request
 import zipfile
 
-from build_deployment import build_deployments
+from build_deployment import build_deployments, current_platform
 from release_metadata import write_manifest
 from smoke_install import check_panel, request, smoke_package
 
@@ -50,7 +50,7 @@ def baseline(artifacts: Path, work: Path, *, version: str = '0.0.0', broken: boo
     old_wheel, = output.glob('*.whl')
     requirements = output / 'requirements.txt'
     shutil.copy2(artifacts / 'requirements.txt', requirements)
-    build_deployments(old_wheel, ROOT, output, requirements)
+    build_deployments(old_wheel, ROOT, output, requirements, platforms=(current_platform(),))
     write_manifest(project, output, revision='synthetic-upgrade-fixture')
     return output
 
@@ -99,8 +99,9 @@ def run(artifacts: Path, work: Path) -> dict:
     panel_port = config['panel']['port']
     marker = root / 'instance/upgrade-fixture.txt'
     marker.write_text('before upgrade', encoding='utf-8')
-    command = [str(root / 'control/.venv' / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')),
-               '-X', 'utf8', str(root / 'control/code/controller.py'), str(root)]
+    release = root / 'releases' / json.loads((root / 'current.json').read_text(encoding='utf-8'))['version']
+    command = [str(release / ('python/python.exe' if sys.platform == 'win32' else 'python/bin/python3')),
+               '-X', 'utf8', str(release / 'updater/controller.py'), str(root)]
     with (work / 'controller.log').open('w', encoding='utf-8') as log:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
             start_new_session=sys.platform != 'win32',

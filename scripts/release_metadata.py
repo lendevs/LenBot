@@ -38,6 +38,8 @@ def source_revision(project: Path) -> str:
 
 
 def write_manifest(project: Path, artifacts: Path, *, revision: str, images: dict | None = None) -> Path:
+    # Imported here: the release workflow imports this module as scripts.release_metadata for release_version only.
+    from build_deployment import PLATFORMS, bundle_name
     version = release_version(tomllib.loads((project / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version'])
     files = {}
     for path in sorted(artifacts.iterdir()):
@@ -52,8 +54,7 @@ def write_manifest(project: Path, artifacts: Path, *, revision: str, images: dic
                     'business': constant(project, 'next/storage/store.py', 'FORMAT_VERSION'),
                     'memory_jobs': constant(project, 'next/memory/jobs.py', 'FORMAT_VERSION'),
                     'local_memory': constant(project, 'next/memory/local.py', 'FORMAT_VERSION')},
-        'bundles': {platform: f'lenbot-{version}-{platform}' + ('.zip' if platform == 'windows' else '.tar.gz')
-                    for platform in ('linux', 'macos', 'windows')},
+        'bundles': {platform: bundle_name(version, platform) for platform in PLATFORMS},
         'files': files, 'images': {} if images is None else images,
     }
     target = artifacts / 'release-manifest.json'

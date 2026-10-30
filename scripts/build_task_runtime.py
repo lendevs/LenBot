@@ -34,9 +34,12 @@ def node_archive(architecture: str, directory: Path) -> Path:
     name = f'node-v{NODE}-linux-{architecture}.tar.xz'
     base = f'https://nodejs.org/dist/v{NODE}/'
     sums, archive = directory / 'SHASUMS256.txt', directory / name
-    download(base + 'SHASUMS256.txt', sums)
+    if not sums.exists():
+        download(base + 'SHASUMS256.txt', sums)
     expected = next(line.split()[0] for line in sums.read_text().splitlines() if line.endswith('  ' + name))
-    download(base + name, archive)
+    # A directory shared between builds keeps an archive that already matches.
+    if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
+        download(base + name, archive)
     actual = hashlib.sha256(archive.read_bytes()).hexdigest()
     if actual != expected:
         raise ValueError(f'{name} SHA-256 {actual} differs from the published {expected}')

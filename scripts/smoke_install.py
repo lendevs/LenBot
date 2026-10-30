@@ -24,7 +24,8 @@ import time
 import urllib.error
 import urllib.request
 
-PLATFORM = {'linux': 'linux', 'darwin': 'macos', 'win32': 'windows'}
+from build_deployment import current_platform
+
 STEP_SECONDS = 90
 STOP_SECONDS = 30
 
@@ -99,14 +100,14 @@ def check_panel(port: int, username: str, password: str, alive) -> None:
 
 
 def unpack(artifacts: Path, work: Path, platform: str | None = None) -> Path:
-    platform = platform or PLATFORM.get(sys.platform)
+    platform = platform or current_platform()
     if platform is None:
         raise ValueError(f'No deployment package for platform {sys.platform}')
-    extension = '.zip' if platform == 'windows' else '.tar.gz'
+    extension = '.zip' if platform.startswith('windows') else '.tar.gz'
     bundles = sorted(artifacts.glob(f'lenbot-*-{platform}{extension}'))
     if len(bundles) != 1:
         raise ValueError(f'Expected one {platform} package in {artifacts}, found {[path.name for path in bundles]}')
-    if platform == 'windows':
+    if platform.startswith('windows'):
         with zipfile.ZipFile(bundles[0]) as archive:
             archive.extractall(work / 'package')
     else:
@@ -119,10 +120,9 @@ def unpack(artifacts: Path, work: Path, platform: str | None = None) -> Path:
 def smoke_package(artifacts: Path, work: Path) -> dict:
     work.mkdir(parents=True, exist_ok=False)
     bundle = unpack(artifacts, work)
-    # A space and a single quote in the path exercise the quoting of every generated entry point.
+    # Unpacked and started where it is; a space and a single quote in the path exercise the start scripts' quoting.
     root = work / "Len Bot's"
-    install = ['uv', 'run', '--no-project', '--python', '3.13', str(bundle / 'install.py')] if sys.platform == 'win32' else [str(bundle / 'install.sh')]
-    subprocess.run([*install, 'install', str(root)], check=True)
+    bundle.rename(root)
 
     panel_port = free_port()
     launch = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(root / 'run.ps1')] if sys.platform == 'win32' else [str(root / 'run')]
