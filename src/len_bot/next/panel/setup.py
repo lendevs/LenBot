@@ -31,6 +31,7 @@ from ..platform.onebot import OneBot, OneBotCallError
 from .model_access import model_error_detail, probe_model as run_model_probe
 from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
+from ..platform.platform_tools import joined_groups
 from ..persona.profile import Persona, load_persona
 from ..runtime.send_hold import SendHold
 from len_bot.web.auth import hash_password
@@ -54,7 +55,7 @@ class FirstSetup(BaseModel):
     owners: list[str]
     timezone: str
     delivery: Literal['simulated', 'onebot']
-    onebot: OneBotSettings
+    onebot: OneBotSettings | None
     provider: Provider
     mind: Binding
     embedding: SetupEmbedding | None = None
@@ -88,6 +89,8 @@ class FirstSetup(BaseModel):
 
     @model_validator(mode='after')
     def matching_password(self):
+        if self.onebot is None and self.delivery != 'simulated':
+            raise ValueError('暂不接入 OneBot 时只能使用模拟发送')
         if not self.default_persona and any(value is None for value in (self.persona_name, self.brief)):
             raise ValueError('自定义角色需要填写名字和人物设定')
         if not self.password.strip():
@@ -131,6 +134,16 @@ class EmbeddingProbe(BaseModel):
     binding: EmbeddingBinding
 
 
+async def listed_groups(platform: OneBot) -> list[dict]:
+    """The groups the account has joined, for the group step; a protocol end without the list gives none."""
+    try:
+        async with asyncio.timeout(10):
+            groups = await joined_groups(platform.call)
+    except (OneBotCallError, ValueError, TimeoutError):
+        return []
+    return [{'id': group['scene'].rpartition(':')[2], 'name': group['name']} for group in groups]
+
+
 def setup_source(item: FirstSetup) -> dict:
     providers = {'primary': item.provider.model_dump(mode='json')}
     if item.search_provider is not None:
@@ -146,8 +159,9 @@ def setup_source(item: FirstSetup) -> dict:
         vector = {'provider': alias, 'model': item.embedding.model, 'dimensions': item.embedding.dimensions}
     return {
         'config_version': CONFIG_VERSION, 'mode': 'isolated-multi', 'bot_id': item.bot_id, 'owners': item.owners,
-        'timezone': item.timezone, 'delivery': 'onebot', 'database': 'state/lenbot.sqlite3',
-        'onebot': item.onebot.model_dump(mode='json'),
+        'timezone': item.timezone, 'delivery': 'onebot' if item.onebot else 'simulated',
+        'database': 'state/lenbot.sqlite3',
+        'onebot': None if item.onebot is None else item.onebot.model_dump(mode='json'),
         'compaction': item.compaction.model_dump(mode='json'),
         'max_steps': item.max_steps,
         'web_search': None if item.web_search is None else item.web_search.model_dump(mode='json'),
@@ -167,8 +181,9 @@ def setup_source(item: FirstSetup) -> dict:
 def initialize(root: Path, item: FirstSetup) -> dict:
     """Validate first, create only new files, publish the root config last.
 
-    The wizard's delivery choice becomes the send hold, written before the config exists: a host that
-    starts from the published config never sends before the hold is in place.
+    With OneBot, the wizard's delivery choice becomes the send hold, written before the config exists: a host
+    that starts from the published config never sends before the hold is in place. Without OneBot the config
+    itself is simulated and there is nothing to hold.
     """
     config_path = root / 'lenbot.config.json'
     role_path = root / 'personas' / item.persona_id
@@ -201,7 +216,8 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     load_persona(role_path)
     # Plugins are installed into, or dropped by hand into, the instance's plugins/.
     (root / 'plugins').mkdir(exist_ok=True)
-    SendHold(root).set(item.delivery == 'simulated', at=time.time())
+    if item.onebot is not None:
+        SendHold(root).set(item.delivery == 'simulated', at=time.time())
     # A new instance already matches this program; the container start compares against this record.
     from ..maintenance.upgrade import record_release
     record_release(root)
@@ -250,7 +266,8 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
             raise ValueError(error)
         try:
             async with OneBot(item.onebot, bot_id=None, on_event=lambda event: None, on_error=failed) as platform:
-                return {'bot_id': await platform.identify()}
+                bot_id = await platform.identify()
+                return {'bot_id': bot_id, 'groups': await listed_groups(platform)}
         except OneBotCallError as error:
             # The message already names the step and the underlying error.
             raise HTTPException(422, str(error)) from error

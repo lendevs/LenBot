@@ -651,8 +651,14 @@ class SetupProtocols(Protocols):
     panel_port: int | None
 
 
+class SetupGroup(PanelResponse):
+    id: str
+    name: str
+
+
 class SetupPlatform(PanelResponse):
     bot_id: str
+    groups: list[SetupGroup]
 
 
 class SetupPlugins(PanelResponse):
