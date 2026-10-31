@@ -516,6 +516,8 @@ class DockerSandbox:
                 proxy_environment.extend(("--env", f"{name}={proxy}"))
             for name in ("NO_PROXY", "no_proxy"):
                 proxy_environment.extend(("--env", f"{name}=127.0.0.1,localhost"))
+            # Node's fetch() reads the proxy variables only with this set (Node 24).
+            proxy_environment.extend(("--env", "NODE_USE_ENV_PROXY=1"))
         command = [
             str(self.settings.docker_binary), "--host", self.settings.docker_host,
             "exec", "-i", "--workdir", "/workspace", *proxy_environment,

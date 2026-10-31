@@ -1,6 +1,7 @@
 """Panel reads must leave the message loop available while another connection writes."""
 
 import asyncio
+import gc
 import sqlite3
 import time
 
@@ -23,10 +24,17 @@ def test_panel_database_reads_do_not_block_the_loop(tmp_path, path, status):
         with sqlite3.connect(tmp_path / 'host.sqlite3') as blocker:
             # WAL: an open write transaction elsewhere no longer holds panel reads back at all.
             blocker.execute('BEGIN IMMEDIATE')
-            request = asyncio.create_task(client.get(path))
-            started = time.perf_counter()
-            await asyncio.sleep(0.03)
-            delay = time.perf_counter() - started
+            # Late in the suite a full garbage collection pauses the loop longer than the bound on a slow
+            # runner; it is kept out of the measured window.
+            gc.collect()
+            gc.disable()
+            try:
+                request = asyncio.create_task(client.get(path))
+                started = time.perf_counter()
+                await asyncio.sleep(0.03)
+                delay = time.perf_counter() - started
+            finally:
+                gc.enable()
             response = await asyncio.wait_for(request, 2)
             blocker.rollback()
         assert delay < 0.1

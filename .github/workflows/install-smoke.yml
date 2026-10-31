@@ -30,9 +30,32 @@ jobs:
         with:
           name: release-packages
           path: packages
+      # Linux packages run tasks in the local sandbox; Ubuntu 24.04 keeps unprivileged user namespaces behind AppArmor
+      # (the same setup as check.yml). The update smoke below also switches the sandbox on in its old version.
+      - name: Install bubblewrap and allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Unpack the deployment package, start it and walk first setup to the panel
         shell: bash
         run: uv run --no-project --python 3.13 python scripts/smoke_install.py package packages "$RUNNER_TEMP/smoke"
+      # The unpacked package's own Python and task runtime run one task in the sandbox: Pi, the model bridge, a question,
+      # a delivery, the network allowlist and the offline file workloads. Only the Pi and architecture lines are the record.
+      - name: Run a task with the package's own Python and task runtime
+        if: runner.os == 'Linux'
+        run: |
+          set -- "$RUNNER_TEMP/smoke/Len Bot's/releases"/*
+          release="$1"
+          "$release/python/bin/python3" scripts/smoke_worker.py --sandbox bwrap --task-runtime "$release/task-runtime" \
+            --workloads --network-probe | tee "$RUNNER_TEMP/smoke-worker.json"
+          "$release/python/bin/python3" - "$RUNNER_TEMP/smoke-worker.json" "$(uname -m)" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          result = json.load(open(sys.argv[1], encoding='utf-8'))
+          print(f"In-package task smoke on {sys.argv[2]}: Pi {result['pi']}, host {result['host']}, "
+                f"{'passed' if all(result['checks'].values()) else 'failed'} ({len(result['checks'])} checks)")
+          PY
       - name: Upgrade and restore two real packaged versions
         shell: bash
         run: uv run --no-project --python 3.13 python scripts/smoke_update.py packages "$RUNNER_TEMP/update-smoke"

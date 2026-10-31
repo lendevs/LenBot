@@ -7,11 +7,15 @@ The purpose is the request role (``mind``, ``recap``, ``vision``, ``upkeep``, ``
 from collections import defaultdict
 from contextlib import closing
 from datetime import datetime
+import logging
 from pathlib import Path
+import sqlite3
 from zoneinfo import ZoneInfo
 
+from ..runtime.logs import log_event
 from ..storage.sqlite import connect
 
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE usage (
@@ -43,12 +47,22 @@ def usage_rows(db, scenes: list[str] | None, since: float, until: float) -> list
 
 def instance_usage(db, scenes: list[str] | None, since: float, until: float, *,
                    trials_root: Path | None = None) -> list[dict]:
-    """The instance's rows plus those of retained chat tests, which share its daily limit."""
+    """The instance's rows plus those of retained chat tests, which share its daily limit.
+
+    A chat test database that cannot be read (empty, missing the usage table, damaged) is
+    logged and left out; the other databases still count.
+    """
     rows = usage_rows(db, scenes, since, until)
     if trials_root is not None:
         for path in sorted(trials_root.glob("*/state.db")):
-            with closing(connect(path, readonly=True)) as trial:
-                rows.extend(usage_rows(trial, scenes, since, until))
+            try:
+                with closing(connect(path, readonly=True)) as trial:
+                    trial_rows = usage_rows(trial, scenes, since, until)
+            except sqlite3.Error as error:
+                log_event(logger, "trial_usage_skipped", "试聊库的用量读取失败，已跳过", level=logging.WARNING,
+                          path=str(path), error=f"{type(error).__name__}: {error}")
+                continue
+            rows.extend(trial_rows)
     return rows
 
 

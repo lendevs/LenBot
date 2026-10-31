@@ -62,11 +62,36 @@ def next_patch(artifacts: Path) -> str:
     return f'{major}.{minor}.{patch + 1}'
 
 
+def enable_local_sandbox(root: Path, version: str) -> bool:
+    """Switch the installed package's tasks on in the local sandbox, with its own release's task runtime.
+
+    Only Linux packages have one, and it needs bwrap on the machine; returns whether it was set.
+    """
+    bwrap = shutil.which('bwrap') if sys.platform == 'linux' else None
+    if bwrap is None:
+        return False
+    path = root / 'instance/lenbot.config.json'
+    config = json.loads(path.read_text(encoding='utf-8'))
+    config['worker'] = {'sandbox': 'bwrap', 'bwrap_binary': bwrap, 'model_reasoning': False,
+                        'compaction_reserve_tokens': 1024, 'compaction_keep_recent_tokens': 2048,
+                        'task_runtime': str(root / 'releases' / version / 'task-runtime'),
+                        'workspace_root': str(root / 'instance/task-workspaces'),
+                        'runtime_root': str(root / 'instance/task-runtime'),
+                        'delivery_root': str(root / 'instance/deliveries')}
+    path.write_text(json.dumps(config, indent=2), encoding='utf-8')
+    return True
+
+
+def task_runtime(root: Path) -> str:
+    return json.loads((root / 'instance/lenbot.config.json').read_text(encoding='utf-8'))['worker']['task_runtime']
+
+
 def run(artifacts: Path, work: Path) -> dict:
     work.mkdir(parents=True, exist_ok=False)
     old = baseline(artifacts, work)
     installed = smoke_package(old, work / 'installed')
     root = Path(installed['root'])
+    local_sandbox = enable_local_sandbox(root, '0.0.0')
     fixture = work / 'release-server'
     shutil.copytree(artifacts, fixture)
     manifest = json.loads((fixture / 'release-manifest.json').read_text(encoding='utf-8'))
@@ -138,10 +163,15 @@ def run(artifacts: Path, work: Path) -> dict:
             action('apply', {})
             updated = finish('complete')
             assert updated['current_version'] == manifest['version']
+            if local_sandbox:
+                # The task runtime ships inside each release; the configuration follows the version in use.
+                assert task_runtime(root) == str(root / 'releases' / manifest['version'] / 'task-runtime'), task_runtime(root)
             marker.write_text('after upgrade', encoding='utf-8')
             action('restore', {})
             restored = finish('restored')
             assert restored['current_version'] == '0.0.0'
+            if local_sandbox:
+                assert task_runtime(root) == str(root / 'releases/0.0.0/task-runtime'), task_runtime(root)
             assert marker.read_text(encoding='utf-8') == 'before upgrade'
             action('start', {})
             finish('complete')
@@ -153,6 +183,8 @@ def run(artifacts: Path, work: Path) -> dict:
             rolled = finish('rolled_back')
             assert rolled['current_version'] == '0.0.0' and not rolled['stopped'] and rolled['actions'] == ['prepare']
             assert 'exited' in rolled['error'] and rolled['rolled_back_from'] == broken_manifest['version']
+            if local_sandbox:
+                assert task_runtime(root) == str(root / 'releases/0.0.0/task-runtime'), task_runtime(root)
             assert marker.read_text(encoding='utf-8') == 'before upgrade'
             check_panel(panel_port, 'smoke', 'smoke-password', lambda: process.poll() is None)
             # Both updates left a snapshot; the panel lists them through the controller and deletes the older one.
@@ -172,7 +204,9 @@ def run(artifacts: Path, work: Path) -> dict:
             return {'baseline': '0.0.0', 'target': manifest['version'], 'installed': True,
                     'upgrade': 'ready', 'restore': 'data and old program restored', 'restart': 'ready',
                     'startup_failure': 'rolled back to the previous program automatically', 'failed_update_rollback': 'ready',
-                    'snapshots': 'listed and the older one deleted from the panel'}
+                    'snapshots': 'listed and the older one deleted from the panel',
+                    'task_runtime': 'followed the release on upgrade and back on restore' if local_sandbox
+                    else 'not checked: no local sandbox on this machine'}
         finally:
             process.send_signal(signal.CTRL_BREAK_EVENT if sys.platform == 'win32' else signal.SIGTERM)
             process.wait(timeout=190)

@@ -155,12 +155,14 @@ class SettingsSnapshot(PanelResponse):
 class WorkerDefaults(PanelResponse):
     sandbox: Literal['docker', 'bwrap']
     bwrap_binary: str | None = None
+    task_runtime: str | None = None
     docker_binary: str | None = None
     docker_host: str | None = None
     image: str | None = None
     workspace_root: str | None = None
     runtime_root: str | None = None
     delivery_root: str | None = None
+    skills_directory: str | None = None
     uid: int | None = None
     gid: int | None = None
     task_volume: JsonObject | None = None

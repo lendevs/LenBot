@@ -1,13 +1,13 @@
 ---
 name: media-processing
-description: Convert, trim, combine, or inspect audio, video, and image media using the task image's actual FFmpeg capabilities.
+description: 用 FFmpeg 转换、裁剪、合并或检查音频、视频和图片媒体，按执行环境里实际的编码器和滤镜组织命令。
 ---
 
-# Media processing
+# 媒体处理
 
-Use `ffmpeg` for concrete media transformations. Check the source streams and installed encoders and filters first (`ffmpeg -i`, and `ffprobe` if present), and build the command from what is installed.
+用 `ffmpeg` 完成具体的媒体变换。先用 `ffprobe`（`command -v ffprobe` 确认存在）或 `ffmpeg -i` 读取源文件的流信息，用 `ffmpeg -encoders`、`ffmpeg -filters` 查看实际的编码器与滤镜，再据此组织命令。
 
-- Decide which source streams to keep, their time range, target format, dimensions, frame rate, and audio treatment from the request. Keep the source file and write to a distinct output path under `/workspace/out`.
-- Run the chosen command with explicit maps and codec settings. Check its exit status and output, then inspect duration, dimensions, audio channels, and representative frames or short playback segments to confirm the result contains the requested cut.
-- For subtitles or text overlays, the image includes Noto CJK fonts; verify actual font selection and readable placement on sample frames. If a required encoder or filter is missing, report which one.
-- Register the checked output via `deliver_file(path, name, note)`.
+- 按请求确定保留的源流、时间范围、目标格式、尺寸、帧率和音频处理。源文件保持原样，输出写到 `/workspace/out` 下的新路径。
+- 命令里写明 `-map` 和编码参数；运行后检查退出状态与输出，再读取时长、尺寸、声道，并查看有代表性的画面或短片段，确认结果包含请求的剪辑。
+- 字幕和文字叠加使用系统中文字体（`fc-list :lang=zh` 查看字体名）；在样例帧上核对字体和位置。需要的编码器或滤镜不存在时，在结果里写明名称，并改用现有的等价方案。
+- 用 `deliver_file(path, name, note)` 登记核对过的输出。

@@ -560,6 +560,40 @@ async def test_network_mode_refuses_hosts_before_dialing_and_records_why(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_the_first_request_describes_the_programs_of_its_environment(tmp_path, upstream, environment):
+    port, received = upstream
+    config = host_config(tmp_path, port, environment)
+    async with task_host(config, config.database) as tasks:
+        id = await delegate(tasks, '看环境')
+        assert (await reached(tasks, id, 'done', 'failed'))['status'] == 'done'
+    [request] = received
+    prompt = request['messages'][0]['content']
+    facts = json.loads(next(line for line in prompt.splitlines() if line.startswith('{"public_network"')))
+    # The worker image holds every program; the local sandbox holds what its task runtime and the system provide.
+    assert ('lenbot-render' in facts['programs']) == (environment == 'standin')
+    assert ('lenbot-render' in prompt.split('"public_browser"', 1)[1]) == (environment == 'standin')
+    assert ('python:pandas' in facts['programs']) == (environment == 'standin')
+    assert ('预装 pandas' in prompt) == (environment == 'standin')
+    assert facts['public_browser'] is None and 'public_browser 非空' not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['off', 'public'])
+async def test_node_fetch_follows_the_task_proxy_in_the_local_sandbox(tmp_path, upstream, environment, mode):
+    if environment != 'bwrap':
+        pytest.skip('the container sandbox is configured through docker exec')
+    port, _ = upstream
+    config = host_config(tmp_path, port, environment, egress={'mode': mode})
+    async with task_host(config, config.database) as tasks:
+        id = (await tasks.delegate(SCENE, requester=WHITELISTED, goal='看代理 [环境]', deliverable='无',
+                                   context='无'))['id']
+        done = await reached(tasks, id, 'done', 'failed')
+    assert done['status'] == 'done', done['error']
+    seen = json.loads(done['summary'].split('环境：', 1)[1].splitlines()[0])
+    assert (seen['NODE_USE_ENV_PROXY'], seen['HTTP_PROXY'] is not None) == (('1', True) if mode == 'public' else (None, False))
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(not os.environ.get('LENBOT_NETWORK_TESTS'), reason='reaches example.com; set LENBOT_NETWORK_TESTS')
 @pytest.mark.skipif(sys.platform == 'win32', reason='the egress bridge runs inside the Linux task container')
 async def test_allowed_host_connects_and_the_upload_limit_stops_a_large_body(tmp_path, upstream, environment):
@@ -632,6 +666,62 @@ async def test_expired_workspace_is_removed_and_its_delivery_kept(tmp_path, upst
             await tasks.resume(SCENE, id, requester=WHITELISTED, text='继续')
     assert done['status'] == 'done' and not workspace.exists()
     assert not (config.worker.runtime_root / scene_directory(SCENE) / str(id)).exists() and Path(file.path).is_file()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == 'win32', reason='removal is blocked through directory permissions')
+async def test_a_workspace_that_cannot_be_removed_does_not_hold_back_the_next_expired_one(
+        tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment,
+                         worker={'workspace_retention_days': 1.5 / 86400, 'storage_check_seconds': .1})
+    stuck = None
+    async with task_host(config, config.database) as tasks:
+        try:
+            first = await delegate(tasks, '交付后到期 [交付]')
+            await reached(tasks, first, 'done', 'failed')
+            # A read-only directory with content keeps the first workspace from being deleted.
+            stuck = config.worker.workspace_root / scene_directory(SCENE) / 'tasks' / str(first) / 'out' / 'kept'
+            stuck.mkdir()
+            (stuck / 'note').write_text('kept', encoding='utf-8')
+            stuck.chmod(0o500)
+            second = await delegate(tasks, '交付后到期 [交付]')
+            await reached(tasks, second, 'done', 'failed')
+            await until(lambda: 'workspace_discard_result' in event_kinds(tasks, second), 15)
+            assert (stuck / 'note').exists()
+            assert not (config.worker.workspace_root / scene_directory(SCENE) / 'tasks' / str(second)).exists()
+        finally:
+            if stuck is not None:
+                stuck.chmod(0o700)
+
+
+@pytest.mark.asyncio
+async def test_a_process_start_cancelled_in_flight_leaves_the_other_processes_running(tmp_path, upstream, environment):
+    if environment != 'bwrap':
+        pytest.skip('needs a working bwrap')
+    config = host_config(tmp_path, upstream[0], environment)
+    async with task_host(config, config.database) as tasks:
+        sandbox = tasks.sandbox
+        handle = await sandbox.ensure(SCENE, 'cancelled-start', on_container=lambda name: None)
+        try:
+            # Each attempt is cancelled at a different moment between sending the request and the answer.
+            for delay in [index * 0.0004 for index in range(60)]:
+                try:
+                    await asyncio.wait_for(sandbox._run(handle, 'sleep', '300'), delay or 1e-6)
+                except TimeoutError:
+                    pass
+            survivor = await sandbox._run(handle, 'echo', 'alive')
+            assert (survivor.returncode, survivor.stdout.strip()) == (0, 'alive')
+
+            async def sleepers() -> int:
+                listing = await sandbox._run(handle, 'sh', '-c', 'for d in /proc/[0-9]*; do tr "\\0" " " < $d/cmdline 2>/dev/null; echo; done')
+                return sum(1 for line in listing.stdout.splitlines() if line.strip() == 'sleep 300')
+            for _ in range(100):
+                if await sleepers() == 0:
+                    break
+                await asyncio.sleep(.1)
+            assert await sleepers() == 0
+        finally:
+            await sandbox.stop(handle)
 
 
 @pytest.mark.asyncio

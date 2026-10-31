@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import itertools
 import json
+import logging
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -35,7 +36,9 @@ from .worker_egress import EgressTransport
 from .worker_model import WorkerModelProxy
 from .worker_transport import WorkerTransport
 from ..platform.identity import scene_directory
+from ..runtime.logs import log_event
 
+logger = logging.getLogger(__name__)
 _WORK = Path(__file__).parent
 _PROGRAMS = ("sandbox_exec.py", "worker_bridge.py", "egress_wire.py", "worker_egress_bridge.py")
 _ETC = ("ssl", "ca-certificates", "pki", "fonts", "alternatives", "localtime", "ld.so.cache",
@@ -161,11 +164,29 @@ class _Session:
                 if "ready" in message:
                     self.ready.set_result(None)
                 elif "started" in message:
-                    self.starting.pop(message["started"]).set_result(message["pid"])
+                    starting = self.starting.pop(message["started"], None)
+                    if starting is None or starting.done():
+                        # The launch was cancelled before the starter answered: stop the process it left behind.
+                        self.processes.pop(message["started"], None)
+                        log_event(logger, "sandbox_orphan_process", level=logging.WARNING,
+                                  ident=message["started"], pid=message["pid"])
+                        self.send({"signal": message["started"], "number": signal.SIGKILL})
+                    else:
+                        starting.set_result(message["pid"])
                 elif "failed" in message:
-                    self.starting.pop(message["failed"]).set_exception(SandboxError(message["error"]))
+                    starting = self.starting.pop(message["failed"], None)
+                    if starting is None or starting.done():
+                        log_event(logger, "sandbox_unknown_failure", level=logging.WARNING,
+                                  ident=message["failed"], error=message["error"])
+                    else:
+                        starting.set_exception(SandboxError(message["error"]))
                 elif "exited" in message:
-                    self.processes.pop(message["exited"])._exit(message["status"])
+                    child = self.processes.pop(message["exited"], None)
+                    if child is None:
+                        log_event(logger, "sandbox_unknown_exit", level=logging.INFO,
+                                  ident=message["exited"], status=message["status"])
+                    else:
+                        child._exit(message["status"])
                 else:
                     raise SandboxError(f"unknown sandbox control message: {data[:500]!r}")
             status = await self.process.wait()
@@ -181,11 +202,12 @@ class _Session:
         host_stdout, child_stdout = os.pipe()
         ident = next(self._ids)
         reader = asyncio.StreamReader(limit=2 ** 26)
+        # Each host end is owned by exactly one file object from here on, so a cancelled start closes it once.
+        stdout_file, stdin_file = os.fdopen(host_stdout, "rb", 0), os.fdopen(host_stdin, "wb", 0)
         read_transport = write_transport = None
         try:
-            read_transport, _ = await loop.connect_read_pipe(
-                lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(host_stdout, "rb", 0))
-            write_transport, protocol = await loop.connect_write_pipe(_WriteProtocol, os.fdopen(host_stdin, "wb", 0))
+            read_transport, _ = await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), stdout_file)
+            write_transport, protocol = await loop.connect_write_pipe(_WriteProtocol, stdin_file)
             child = SandboxProcess(self, ident, asyncio.StreamWriter(write_transport, protocol, None, loop), reader)
             # Registered before the request: a quick exit can be reported right after its start.
             started = self.starting[ident] = loop.create_future()
@@ -197,9 +219,9 @@ class _Session:
         except BaseException:
             self.starting.pop(ident, None)
             self.processes.pop(ident, None)
-            for transport, descriptor in ((read_transport, host_stdout), (write_transport, host_stdin)):
+            for transport, file in ((read_transport, stdout_file), (write_transport, stdin_file)):
                 if transport is None:
-                    os.close(descriptor)
+                    file.close()
                 else:
                     transport.close()
             raise
@@ -416,7 +438,9 @@ class BwrapSandbox:
         if proxy_port is not None:
             address = f"http://127.0.0.1:{proxy_port}"
             proxy = {name: address for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")}
-            proxy |= {"NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
+            proxy |= {"NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+                      # Node's fetch() reads the proxy variables only with this set (Node 24).
+                      "NODE_USE_ENV_PROXY": "1"}
         rpc: PiRpc | None = None
         try:
             rpc = await PiRpc.spawn(self.pi_command(provider, model, skills), cwd=sandbox.workspace, env={},
