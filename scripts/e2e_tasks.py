@@ -213,7 +213,7 @@ def write_instance(root: Path, models: dict, web: dict, network: dict | None, sa
     (persona / 'boundaries.md').write_text('仅限隔离验收。', encoding='utf-8')
     (persona / 'examples.yaml').write_text('[]\n', encoding='utf-8')
     source = {
-        'compaction': {'input_tokens': 2000}, 'mode': 'isolated-multi', 'bot_id': BOT, 'timezone': 'UTC', 'owners': [OWNER],
+        'mode': 'isolated-multi', 'bot_id': BOT, 'timezone': 'UTC', 'owners': [OWNER],
         'onebot': None, 'database': 'host.sqlite3', 'delivery': 'simulated', 'logging': {'directory': 'logs'},
         'panel': {'host': '127.0.0.1', 'port': 0, 'username': 'e2e',
                   'password_hash': hash_password('e2e-password', salt='e2e-salt')},
@@ -428,7 +428,7 @@ async def run(arguments, root: Path, sandbox: dict) -> dict:
         models = {'providers': {'scripted': {'api': 'openai-chat', 'base_url': f'http://127.0.0.1:{port}/v1',
                                              'api_key': 'synthetic-unused'},
                                 'web': {'api': 'tavily', 'base_url': f'http://127.0.0.1:{web_port}', 'api_key': 'synthetic-unused'}},
-                  'roles': {'mind': {'provider': 'scripted', 'model': 'scripted-worker', 'context_window_tokens': 65536}}}
+                  'roles': {'mind': {'provider': 'scripted', 'model': 'scripted-worker', 'context_window_tokens': 131072}}}
         web_config = {'web_search': {'provider': 'tavily', 'connection': 'web'},
                       'web_read': {'provider': 'tavily', 'connection': 'web'}}
         network, label = None, 'scripted'
