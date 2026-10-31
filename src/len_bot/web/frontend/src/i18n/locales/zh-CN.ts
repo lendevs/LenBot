@@ -2783,6 +2783,10 @@ export default {
       failed: '连接失败',
       simulated: '模拟发送',
       real: '真实发送到 QQ',
+      connect: '接入方式',
+      now: '接入 OneBot',
+      later: '暂不接入',
+      botAccount: 'Bot QQ',
     },
     owner: {
       owner: '主人 QQ',
@@ -2835,6 +2839,9 @@ export default {
       private: '私聊',
       groupId: '群号',
       privateId: '对方 QQ',
+      groupSource: '群号来源',
+      fromList: '从群列表选择',
+      manual: '手动输入',
     },
     plugins: {
       disabled: '勾选的插件在保存时下载安装，安装后默认关闭，在插件页启用后生效。',

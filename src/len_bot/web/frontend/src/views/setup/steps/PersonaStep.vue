@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Combobox from '../../../ui/Combobox.vue'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
 import RadioGroup from '../../../ui/RadioGroup.vue'
@@ -11,7 +12,8 @@ import MoreFields from '../MoreFields.vue'
 import { personaFolder, useStepErrors, useWizard } from '../wizard'
 
 const { t } = useI18n()
-const { draft } = useWizard()
+const wizard = useWizard()
+const { draft } = wizard
 const error = useStepErrors('persona')
 
 const templates = computed(() => [
@@ -22,6 +24,21 @@ const kinds = computed(() => [
   { value: 'group' as const, label: t('setup.persona.group') },
   { value: 'private' as const, label: t('setup.persona.private') },
 ])
+const groups = computed(() =>
+  draft.sceneKind === 'group'
+    ? wizard.joinedGroups.value.map((group) => ({ value: group.id, label: group.name, meta: group.id }))
+    : [],
+)
+const sources = computed(() => [
+  { value: 'list' as const, label: t('setup.persona.fromList') },
+  { value: 'manual' as const, label: t('setup.persona.manual') },
+])
+/** The group list only when the connection gave one; with no connection the number is typed. */
+const listed = computed(() => groups.value.length > 0 && draft.groupSource === 'list')
+const chosen = computed({
+  get: () => draft.sceneId || undefined,
+  set: (value: string | string[] | undefined) => (draft.sceneId = typeof value === 'string' ? value : ''),
+})
 const more = ref(false)
 watch(
   () => error('personaId'),
@@ -59,12 +76,22 @@ watch(
           <SegmentedControl v-model="draft.sceneKind" :options="kinds" :label="t('setup.persona.where')" />
         </div>
       </Field>
+      <Field v-if="groups.length" :label="t('setup.persona.groupSource')">
+        <div>
+          <SegmentedControl
+            v-model="draft.groupSource"
+            :options="sources"
+            :label="t('setup.persona.groupSource')"
+          />
+        </div>
+      </Field>
       <Field
         :label="draft.sceneKind === 'group' ? t('setup.persona.groupId') : t('setup.persona.privateId')"
         :error="error('sceneId')"
         required
       >
-        <Input v-model="draft.sceneId" mono inputmode="numeric" />
+        <Combobox v-if="listed" v-model="chosen" :options="groups" />
+        <Input v-else v-model="draft.sceneId" mono inputmode="numeric" />
       </Field>
       <ParticipationChoice v-if="draft.sceneKind === 'group'" v-model="draft.participation" />
     </div>

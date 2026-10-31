@@ -142,12 +142,12 @@ async def test_setup_reads_account_from_onebot_before_configuration(tmp_path):
     requests = []
 
     async def peer(websocket):
-        packet = json.loads(await websocket.recv())
-        requests.append(packet)
-        await websocket.send(json.dumps({'status': 'ok', 'retcode': 0,
-                                         'data': {'user_id': 90001, 'nickname': '脱敏 Bot'},
-                                         'echo': packet['echo']}))
-        await websocket.wait_closed()
+        async for frame in websocket:
+            packet = json.loads(frame)
+            requests.append(packet)
+            data = ({'user_id': 90001, 'nickname': '脱敏 Bot'} if packet['action'] == 'get_login_info' else
+                    [{'group_id': 80001, 'group_name': '合成群', 'member_count': 3}])
+            await websocket.send(json.dumps({'status': 'ok', 'retcode': 0, 'data': data, 'echo': packet['echo']}))
 
     async with serve(peer, '127.0.0.1', 0) as server:
         port = server.sockets[0].getsockname()[1]
@@ -158,9 +158,32 @@ async def test_setup_reads_account_from_onebot_before_configuration(tmp_path):
             client.headers['X-Setup-Token'] = 'fixture-token'
             result = await client.post('/api/setup/platform', json=body)
             assert result.status_code == 200, result.text
-            assert result.json() == {'bot_id': 'onebot:90001'}
-    assert len(requests) == 1 and requests[0]['action'] == 'get_login_info'
+            assert result.json() == {'bot_id': 'onebot:90001', 'groups': [{'id': '80001', 'name': '合成群'}]}
+    assert [packet['action'] for packet in requests] == ['get_login_info', 'get_group_list']
     assert not (tmp_path / 'lenbot.config.json').exists()
+
+
+@pytest.mark.asyncio
+async def test_setup_platform_probe_still_connects_when_the_group_list_is_missing(tmp_path):
+    from websockets.asyncio.server import serve
+
+    async def peer(websocket):
+        async for frame in websocket:
+            packet = json.loads(frame)
+            login = packet['action'] == 'get_login_info'
+            await websocket.send(json.dumps({
+                'status': 'ok' if login else 'failed', 'retcode': 0 if login else 1404,
+                'data': {'user_id': 90001} if login else None, 'echo': packet['echo']}))
+
+    async with serve(peer, '127.0.0.1', 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        app = create_setup_app(tmp_path, 'fixture-token', asyncio.Event())
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://127.0.0.1',
+                                     headers={'X-Setup-Token': 'fixture-token'}) as client:
+            result = await client.post('/api/setup/platform',
+                                       json={'onebot': {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{port}'}})
+    assert result.status_code == 200, result.text
+    assert result.json() == {'bot_id': 'onebot:90001', 'groups': []}
 
 
 @pytest.mark.asyncio
@@ -377,6 +400,40 @@ def test_docker_smoke_goes_through_the_wizard_port():
     assert 'submitted = 8088' in smoke and "saved['panel']['port'] == published" in smoke
     # Review 2 A6: the static HTML always says 8088, so the smoke reads the port from the setup API only.
     assert 'id="port"' not in smoke and "wizard_port = json.loads(text)['panel_port']" in smoke
+
+
+def without_connection(**changes) -> dict:
+    return {
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': 'simulated',
+        'onebot': None,
+        'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-secret'},
+        'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
+        'compaction': {'input_tokens': 6000},
+        'scene': 'onebot:group:80001', 'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
+        **changes,
+    }
+
+
+@pytest.mark.asyncio
+async def test_setup_without_onebot_writes_a_simulated_config_and_no_send_hold(tmp_path: Path):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(create_setup_app(tmp_path, 'fixture-token', asyncio.Event())),
+                                 base_url='http://127.0.0.1', headers={'X-Setup-Token': 'fixture-token'}) as client:
+        refused = await client.post('/api/setup', json=without_connection(delivery='onebot'))
+        assert refused.status_code == 422 and not (tmp_path / 'lenbot.config.json').exists()
+        response = await client.post('/api/setup', json=without_connection())
+    assert response.status_code == 200, response.text
+    config = load_host_config(tmp_path)
+    assert config.onebot is None and config.delivery == 'simulated' and config.bot_id == 'onebot:90001'
+    assert 'onebot:group:80001' in config.scenes
+    saved = json.loads((tmp_path / 'lenbot.config.json').read_text(encoding='utf-8'))
+    assert saved['onebot'] is None and saved['delivery'] == 'simulated'
+    assert not (tmp_path / 'state' / 'send-hold.json').exists() and not list(tmp_path.rglob('send-hold.json'))
+
+
+def test_setup_with_onebot_keeps_the_send_hold_as_the_simulated_choice(tmp_path: Path):
+    item = FirstSetup.model_validate(without_connection(onebot={'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'}))
+    initialize(tmp_path, item)
+    assert load_host_config(tmp_path).delivery == 'onebot' and SendHold(tmp_path).enabled is True
 
 
 @pytest.mark.parametrize('mode', ['shared', 'separate', 'yahoo', 'off', 'tavily', 'jina'])
