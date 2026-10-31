@@ -116,6 +116,10 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 
 上述四个 SQLite 数据库通过 `PRAGMA application_id` 标识文件类型，通过 `PRAGMA user_version` 记录格式编号；宿主只打开这两个值与当前代码一致的数据库文件。资料检索索引库（`reference/library.py`）仅保存可由源文档重建的派生数据，表结构变化时自动重建。
 
+结构指纹测试（`tests/test_format_fingerprint.py`）为上述四个数据库的 `CREATE TABLE` 与 `CREATE INDEX` 语句以及根配置模型的字段结构各记录一个指纹，并按格式编号保存。结构变了而编号没有变时测试失败：自首个 RC 起，须递增对应编号，在 `maintenance/upgrade.py` 补上迁移，并在测试中为新编号记录新指纹，已发布编号的指纹保持不变；RC 之前编号固定为 `1`，随结构改动一并更新 `1` 对应的指纹。
+
+业务数据库、记忆处理库、本地记忆索引与插件键值存储在打开时还会按集合逐表比较列（名称、类型、`NOT NULL`、默认值，不比较顺序），与当前建表语句不一致即拒绝打开，并列出有差异的表与列。因此新增列只需改建表语句，不要依赖列的位置。
+
 写入数据库的 JSON 字段按对应 dataclass 严格解码（`ChatMessage`、`Sender`、`Segment`、`Task`、`TaskFile`、`Schedule` 以及模型调用和记忆整理记录），字段结构同样属于持久化格式契约。
 
 自首个 RC 起，任何持久化格式变更都递增对应编号，并在 `maintenance/upgrade.py` 的 `apply` 阶段补齐从上一版本的迁移实现；更新控制器在执行迁移前自动建立完整实例快照。

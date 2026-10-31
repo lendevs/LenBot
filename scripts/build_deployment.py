@@ -23,7 +23,7 @@ import urllib.request
 import zipfile
 from email.parser import BytesParser
 
-from build_task_runtime import NODE, PI, node_archive
+from build_task_runtime import NODE, PI, check_runtime, node_archive, npm_platform, prune_node_modules
 from release_metadata import PLATFORMS as PACKAGES, bundle_name
 
 PYTHON, PYTHON_BUILD, UV = '3.13.16', '20261013', '0.12.13'
@@ -90,13 +90,11 @@ def task_runtime(project: Path, platform: str, downloads: Path, destination: Pat
     with tempfile.TemporaryDirectory() as directory:
         unpack(node, Path(directory))
         shutil.move(Path(directory) / f'node-v{NODE}-linux-{architecture}', destination / 'node')
-    # Node packages are JavaScript only; this machine's npm installs them for any architecture.
+    # npm resolves optional dependencies for the platform it is told, so a build machine of another
+    # architecture still gets the target's binaries; the checks below fail the build when it did not.
     subprocess.run(['npm', 'install', '--global', '--prefix', str(destination / 'node'), '--ignore-scripts',
-                    '--no-fund', '--no-audit', PI], check=True)
-    # npm installs esbuild's binaries for every platform; only this package's one can run.
-    for binary in list((destination / 'node/lib/node_modules').rglob('@esbuild/*')):
-        if binary.is_dir() and binary.parent.name == '@esbuild' and binary.name != f'linux-{architecture}':
-            shutil.rmtree(binary)
+                    '--no-fund', '--no-audit', *npm_platform(architecture), PI], check=True)
+    prune_node_modules(destination / 'node', architecture)
     subprocess.run(['npm', 'install', '--prefix', str(destination / 'browser'), '--ignore-scripts', '--no-fund',
                     '--no-audit', '--save-exact', PLAYWRIGHT], check=True)
     worker = project / 'docker/next-worker'
@@ -106,6 +104,7 @@ def task_runtime(project: Path, platform: str, downloads: Path, destination: Pat
     (destination / 'bin').mkdir()
     shutil.copy2(worker / 'lenbot-render.cjs', destination / 'lenbot-render.cjs')
     install(platform, destination / 'python', '--requirement', str(worker / 'task-python.txt'))
+    check_runtime(destination, architecture)
 
 
 def release_directory(wheel: Path, requirements: Path, project: Path, platform: str, version: str,
@@ -129,6 +128,8 @@ def release_directory(wheel: Path, requirements: Path, project: Path, platform: 
     if platform.startswith('linux'):
         (release / 'task-runtime').mkdir()
         task_runtime(project, platform, downloads, release / 'task-runtime')
+        # The interpreter and the host's dependencies are binary wheels resolved for the target as well.
+        check_runtime(release / 'python', PLATFORMS[platform]['node'])
     for resource in ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(project / resource, release / resource)
     (release / 'release.json').write_text(json.dumps({

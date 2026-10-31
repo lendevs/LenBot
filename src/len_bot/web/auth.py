@@ -43,7 +43,16 @@ def clear_login_failures(key: str) -> None:
     _FAILED_LOGINS.pop(key, None)
 
 
-PASSWORD_HASH_PATTERN = r"pbkdf2_sha256\$[1-9][0-9]*\$[^$]+\$[0-9a-f]{64}"
+MAX_PASSWORD_ITERATIONS = 10_000_000
+# The digit count is bounded first; the value is converted and range-checked afterwards.
+PASSWORD_HASH_PATTERN = r"pbkdf2_sha256\$[1-9][0-9]{0,7}\$[^$]+\$[0-9a-f]{64}"
+
+
+def password_hash_valid(stored_hash: str) -> bool:
+    """A pbkdf2_sha256$iterations$salt$hash record with 1 to 10,000,000 iterations."""
+    if re.fullmatch(PASSWORD_HASH_PATTERN, stored_hash) is None:
+        return False
+    return int(stored_hash.split("$")[1]) <= MAX_PASSWORD_ITERATIONS
 
 
 def hash_password(password: str, salt: Optional[str] = None) -> str:
@@ -55,7 +64,7 @@ def hash_password(password: str, salt: Optional[str] = None) -> str:
 
 def verify_password(password: str, stored_hash: str) -> bool:
     """Verify a pbkdf2_sha256$iterations$salt$hash record."""
-    if re.fullmatch(PASSWORD_HASH_PATTERN, stored_hash) is None:
+    if not password_hash_valid(stored_hash):
         return False
     _, iterations, salt, expected_hex = stored_hash.split("$")
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations))

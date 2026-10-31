@@ -669,6 +669,62 @@ async def test_expired_workspace_is_removed_and_its_delivery_kept(tmp_path, upst
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == 'win32', reason='removal is blocked through directory permissions')
+async def test_a_workspace_that_cannot_be_removed_does_not_hold_back_the_next_expired_one(
+        tmp_path, upstream, environment):
+    config = host_config(tmp_path, upstream[0], environment,
+                         worker={'workspace_retention_days': 1.5 / 86400, 'storage_check_seconds': .1})
+    stuck = None
+    async with task_host(config, config.database) as tasks:
+        try:
+            first = await delegate(tasks, '交付后到期 [交付]')
+            await reached(tasks, first, 'done', 'failed')
+            # A read-only directory with content keeps the first workspace from being deleted.
+            stuck = config.worker.workspace_root / scene_directory(SCENE) / 'tasks' / str(first) / 'out' / 'kept'
+            stuck.mkdir()
+            (stuck / 'note').write_text('kept', encoding='utf-8')
+            stuck.chmod(0o500)
+            second = await delegate(tasks, '交付后到期 [交付]')
+            await reached(tasks, second, 'done', 'failed')
+            await until(lambda: 'workspace_discard_result' in event_kinds(tasks, second), 15)
+            assert (stuck / 'note').exists()
+            assert not (config.worker.workspace_root / scene_directory(SCENE) / 'tasks' / str(second)).exists()
+        finally:
+            if stuck is not None:
+                stuck.chmod(0o700)
+
+
+@pytest.mark.asyncio
+async def test_a_process_start_cancelled_in_flight_leaves_the_other_processes_running(tmp_path, upstream, environment):
+    if environment != 'bwrap':
+        pytest.skip('needs a working bwrap')
+    config = host_config(tmp_path, upstream[0], environment)
+    async with task_host(config, config.database) as tasks:
+        sandbox = tasks.sandbox
+        handle = await sandbox.ensure(SCENE, 'cancelled-start', on_container=lambda name: None)
+        try:
+            # Each attempt is cancelled at a different moment between sending the request and the answer.
+            for delay in [index * 0.0004 for index in range(60)]:
+                try:
+                    await asyncio.wait_for(sandbox._run(handle, 'sleep', '300'), delay or 1e-6)
+                except TimeoutError:
+                    pass
+            survivor = await sandbox._run(handle, 'echo', 'alive')
+            assert (survivor.returncode, survivor.stdout.strip()) == (0, 'alive')
+
+            async def sleepers() -> int:
+                listing = await sandbox._run(handle, 'sh', '-c', 'for d in /proc/[0-9]*; do tr "\\0" " " < $d/cmdline 2>/dev/null; echo; done')
+                return sum(1 for line in listing.stdout.splitlines() if line.strip() == 'sleep 300')
+            for _ in range(100):
+                if await sleepers() == 0:
+                    break
+                await asyncio.sleep(.1)
+            assert await sleepers() == 0
+        finally:
+            await sandbox.stop(handle)
+
+
+@pytest.mark.asyncio
 async def test_a_group_file_becomes_each_tasks_own_input_snapshot(tmp_path, upstream, environment):
     from len_bot.next.work.tools import execute_tasks
 

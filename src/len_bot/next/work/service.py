@@ -554,11 +554,16 @@ class WorkTasks:
         for item in self.records.expired_workspaces(cutoff):
             if item.id in self.running:
                 continue
-            async with self.file_changes:
-                await self.files.discard(
-                    item, requester="host:retention",
-                    workspace=str(self.settings.workspace_root / scene_directory(item.scene) / "tasks" / str(item.id)),
-                    runtime=str(self.settings.runtime_root / scene_directory(item.scene) / str(item.id)))
+            try:
+                async with self.file_changes:
+                    await self.files.discard(
+                        item, requester="host:retention",
+                        workspace=str(self.settings.workspace_root / scene_directory(item.scene) / "tasks" / str(item.id)),
+                        runtime=str(self.settings.runtime_root / scene_directory(item.scene) / str(item.id)))
+            except Exception as error:
+                # One workspace that cannot be removed must not hold back the ones behind it.
+                log_event(logger, "task_workspace_expire_failed", level=logging.WARNING, error=error,
+                          task_id=item.id, scene=item.scene)
 
     def stop(self) -> None:
         self.accepting = False
