@@ -434,7 +434,9 @@ async def run(arguments, root: Path, sandbox: dict) -> dict:
         network, label = None, 'scripted'
     else:
         source = json.loads(arguments.config.read_text(encoding='utf-8'))
-        models = source['models']
+        # Tasks use the mind and worker bindings; other roles (vision, memory, ASR) need clients this script does not run.
+        models = {**source['models'], 'roles': {role: binding for role, binding in source['models']['roles'].items()
+                                                if role in ('mind', 'worker')}}
         web_config = {key: source[key] for key in ('web_search', 'web_read') if key in source}
         network = source.get('network')
         label = models['roles']['mind']['model']
