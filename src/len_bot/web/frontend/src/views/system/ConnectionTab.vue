@@ -111,7 +111,7 @@ const mode = computed({
   },
 })
 const deliveries = computed(() => [
-  { value: 'onebot', label: t('system.connection.real') },
+  { value: 'live', label: t('system.connection.real') },
   { value: 'simulated', label: t('system.connection.simulated') },
 ])
 const transports = [

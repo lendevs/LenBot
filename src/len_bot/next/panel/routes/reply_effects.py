@@ -48,7 +48,7 @@ def register_host_reply_effects(app: FastAPI, *, runtime: NetworkRuntime,
         chat = chat_for(scene)
         since = runtime.store.now() - days * 86400
         return {"scene": scene, "enabled": active(scene), "days": days,
-                "delivery": "simulated" if chat.expression.send_message is None else "onebot",
+                "delivery": "simulated" if chat.expression.send_message is None else "live",
                 "settings": None if chat.config.learning is None else {
                     "reply_effects": chat.config.learning.reply_effects,
                     "max_age_seconds": chat.config.learning.max_age_seconds},

@@ -21,6 +21,7 @@ from ..platform.file_delivery import SEND_FILE_TOOL, SendFileArguments, execute_
 from ..media.images import LOOK_TOOL, LookArguments, execute_look, load_look_image, shown_image
 from ..memory.service import MEMORY_TOOL, MemoryService
 from ..platform.messages import UploadResult
+from ..platform.identity import ACCOUNT_EXAMPLES, ACCOUNTS, account_pattern
 from ..models.client import ChatModel, ToolCall
 from ..models.request import ChatRequest
 from ..persona.profile import Persona
@@ -93,7 +94,7 @@ class SayArguments(BaseModel):
     reply_to: str | None = Field(default=None, description="默认不填，直接接话。群里同时有几个话头、不引用会让人认错你在回哪句时，才填该平台消息 ID。")
     # Individual accounts of the platforms with an adapter; express() also requires the scene's platform,
     # and build_tools narrows the schema the model sees to it.
-    mention: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$",
+    mention: str | None = Field(default=None, pattern="^(?:" + "|".join(account_pattern(name) for name in ACCOUNTS) + ")$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
         description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query、candidate 四选一，素材目录见 react。")
@@ -154,6 +155,8 @@ WAIT_TOOL = {"type": "function", "function": {
 
 
 LOOKED_IMAGES = 4
+# Tools built on OneBot actions (get_record, group files, forward records, member info, reactions).
+ONEBOT_TOOLS = frozenset({"open_forward", "member_info", "group_files", "message_reaction", "transcribe"})
 
 
 def tool_catalog(*, platform: bool) -> list[dict]:
@@ -203,14 +206,16 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
     if name == "send_file":
         if config.worker is None:
             reasons.append("还没有启用独立任务")
-        if config.delivery != "onebot":
+        if config.delivery != "live":
             reasons.append("模拟发送时不能发文件")
     if (name == "knowledge" and not persona.knowledge
             and not has_files(scene_directory(config._instance_root, config.scene))):
         reasons.append("角色没有设定资料，本聊天也没有资料文件")
     if (name in {"open_forward", "member_info", "group_files", "transcribe", "message_reaction"}
-            and config.delivery != "onebot"):
+            and config.delivery != "live"):
         reasons.append("模拟发送时用不了")
+    if name in ONEBOT_TOOLS and config.scene.partition(":")[0] != "onebot":
+        reasons.append("只支持 OneBot 平台")
     if name in {"member_info", "group_files", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
         reasons.append("只能在群里用")
     if name == "group_files" and config.worker is None:
@@ -266,10 +271,10 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
             parameters["properties"]["content"]["description"] = read_prompt(mode).strip()
             scene_platform = config.scene.partition(":")[0]
             mention = parameters["properties"]["mention"]["anyOf"][0]
-            mention["pattern"] = f"^{scene_platform}:[1-9][0-9]*$"
+            mention["pattern"] = f"^{account_pattern(scene_platform)}$"
             parameters["properties"]["mention"]["description"] = (
                 "默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，"
-                f"例如 {scene_platform}:70001。")
+                f"例如 {scene_platform}:{ACCOUNT_EXAMPLES.get(scene_platform, '70001')}。")
             description = function['description']
             if 'react' in names:
                 description += ' 一句话带一张表情包图片时设置 sticker；只发图、不说话时用 react。'
@@ -453,8 +458,8 @@ class SceneTools:
 
     def _group_file_fetch(self):
         """Downloads a group file of this scene for delegate; None when the scene has no live group files."""
-        kind, group_id = self.config.scene.split(":", 2)[1:]
-        if self.platform_call is None or self.config.delivery != "onebot" or kind != "group":
+        platform, kind, group_id = self.config.scene.split(":", 2)
+        if self.platform_call is None or self.config.delivery != "live" or kind != "group" or platform != "onebot":
             return None
         return group_file_fetch(self.platform_call, group_id)
 

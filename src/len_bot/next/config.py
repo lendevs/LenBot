@@ -16,7 +16,6 @@ from .work.egress_policy import NetworkSettings
 from .configuration.commands import CommandSettings
 from .models.asr import AudioSettings
 from .storage.files import sync_directory
-from .storage.schema import FORMAT_RESET
 from .runtime.identity import IdentitySettings, combine_identities
 from .models.limits import ResourceLimits
 from .configuration.mcp import MCPService, SERVICE_NAME
@@ -29,6 +28,8 @@ from .configuration.tasks import WorkerSettings
 from .tools.web_search import WebSearchSettings
 from .configuration.types import STRICT, _valid_timezone, _valid_scene
 from .configuration.onebot import OneBotSettings
+from .configuration.platforms import FeishuSettings, TelegramSettings
+from .configuration.migrations import migrate_source
 from .configuration.models import Binding, Models
 from .configuration.chat import (
     Compaction,
@@ -47,12 +48,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[1] = 1
+    config_version: Literal[2] = 2
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -68,9 +69,10 @@ class SharedConfig(BaseModel):
     timezone: str
     database: Path
     onebot: OneBotSettings | None = None
-    # A second platform adapter; one host connects to one platform.
-    # "onebot" sends through OneBot and enables its platform tools.
-    delivery: Literal["simulated", "onebot"] = "simulated"
+    telegram: TelegramSettings | None = None
+    feishu: FeishuSettings | None = None
+    # "live" sends through the configured platforms and enables their platform tools.
+    delivery: Literal["simulated", "live"] = "simulated"
     max_steps: int = Field(default=16, gt=0)
     turn_timeout_seconds: float = Field(default=90.0, gt=0, allow_inf_nan=False)
     compaction: Compaction = Field(default_factory=Compaction)
@@ -133,9 +135,31 @@ class SharedConfig(BaseModel):
 
     @model_validator(mode="after")
     def owner_is_not_bot(self) -> SharedConfig:
-        if self.bot_id in self.owners:
-            raise ValueError("owners must not include bot_id")
+        bots = set(self.platform_bot_ids.values()) | {self.bot_id}
+        if bots & set(self.owners):
+            raise ValueError("owners must not include a bot account")
+        prefix = self.bot_id.split(":", 1)[0]
+        if prefix in self.platform_bot_ids and self.platform_bot_ids[prefix] != self.bot_id:
+            raise ValueError(f"bot_id {self.bot_id!r} differs from {prefix}.bot_id {self.platform_bot_ids[prefix]!r}")
         return self
+
+    @property
+    def platform_bot_ids(self) -> dict[str, str]:
+        """The bot account of each configured platform; OneBot's is the root bot_id."""
+        accounts = {"onebot": self.bot_id} if self.onebot is not None else {}
+        for name in ("telegram", "feishu"):
+            settings = getattr(self, name)
+            if settings is not None:
+                accounts[name] = settings.bot_id
+        return accounts
+
+    @property
+    def platform_names(self) -> tuple[str, ...]:
+        return tuple(name for name in ("onebot", "telegram", "feishu") if getattr(self, name) is not None)
+
+    def bot_for(self, scene: str) -> str:
+        """The bot account that speaks in a scene: its platform's account, else the root bot_id."""
+        return self.platform_bot_ids.get(scene.split(":", 1)[0], self.bot_id)
 
     @field_validator("timezone")
     @classmethod
@@ -178,13 +202,13 @@ class SharedConfig(BaseModel):
 
     @model_validator(mode="after")
     def valid_delivery(self) -> SharedConfig:
-        if self.delivery == "onebot" and self.onebot is None:
-            raise ValueError("delivery=onebot requires onebot transport")
+        if self.delivery == "live" and not self.platform_names:
+            raise ValueError("delivery=live requires at least one platform (onebot, telegram or feishu)")
         return self
 
     @model_validator(mode="after")
     def asr_websocket_capacity(self) -> SharedConfig:
-        if (self.delivery != "onebot" or self.models.roles.asr is None
+        if (self.delivery != "live" or self.models.roles.asr is None
                 or self.onebot is None or self.onebot.action_transport != "websocket"):
             return self
         # get_record returns the complete WAV as base64 plus its JSON envelope.
@@ -234,7 +258,7 @@ class LabConfig(SharedConfig, SceneSettings):
     @model_validator(mode="after")
     def bot_is_not_schedule_requester(self) -> LabConfig:
         if (self.replay_web is not None or self.replay_images is not None) and (
-                self.onebot is not None or self.panel is not None or self.delivery != 'simulated'):
+                self.platform_names or self.panel is not None or self.delivery != 'simulated'):
             raise ValueError('replay materials require isolated stdin, simulated delivery and no panel')
         _check_schedule_identity(self.bot_id, self.schedules)
         if (self.tasks.owner == self.bot_id or self.bot_id in self.tasks.admins
@@ -267,9 +291,8 @@ class LabConfig(SharedConfig, SceneSettings):
         if self.task_archive is not None and self.task_archive.scenes != [self.scene]:
             raise ValueError('task_archive.scenes must contain only the configured scene')
         if self.replay_clock is not None:
-            incompatible = [
+            incompatible = [*self.platform_names] + [
                 field for field, enabled in (
-                    ("onebot", self.onebot is not None),
                     ("panel", self.panel is not None),
                     ("web_read", self.web_read is not None and self.replay_web is None),
                     ("web_search", self.web_search is not None and self.replay_web is None),
@@ -306,14 +329,12 @@ class HostConfig(SharedConfig):
     def stdin_host_is_explicitly_simulated(self):
         recorded = [scene for scene, settings in self.scenes.items()
                     if settings.replay_web is not None or settings.replay_images is not None]
-        if recorded and self.onebot is not None:
+        if recorded and self.platform_names:
             raise ValueError(f'Per-scene replay materials require the explicit stdin host, not platform input: {recorded!r}')
-        if self.onebot is None:
-            incompatible = [name for name, enabled in (
-                ('delivery', self.delivery != 'simulated'),
-            ) if enabled]
-            if incompatible:
-                raise ValueError(f'host without OneBot requires simulated delivery: {incompatible!r}')
+        if self.delivery == 'live':
+            unreachable = sorted(scene for scene in self.scenes if scene.split(':', 1)[0] not in self.platform_names)
+            if unreachable:
+                raise ValueError(f'delivery=live needs the platform of every scene; not configured for: {unreachable!r}')
         return self
 
     @field_validator("mcp")
@@ -337,13 +358,16 @@ class HostConfig(SharedConfig):
                 _check_schedule_identity(self.bot_id, settings.schedules)
             except ValueError as error:
                 raise ValueError(f"scenes.{scene}: {error}") from error
-            if (settings.tasks.owner == self.bot_id or self.bot_id in settings.tasks.admins
-                    or self.bot_id in settings.tasks.whitelist):
+            bot = self.bot_for(scene)
+            if (settings.tasks.owner == bot or bot in settings.tasks.admins
+                    or bot in settings.tasks.whitelist):
                 raise ValueError(f"scenes.{scene}.tasks owner, admins and whitelist must not include bot_id")
             if settings.tasks.enabled and self.worker is None:
                 raise ValueError(f"scenes.{scene}.tasks.enabled requires global worker settings")
             if settings.transcribe_audio and self.models.roles.asr is None:
                 raise ValueError(f"scenes.{scene}.transcribe_audio requires explicit models.roles.asr")
+            if settings.transcribe_audio and not scene.startswith("onebot:"):
+                raise ValueError(f"scenes.{scene}.transcribe_audio fetches voice through OneBot and needs a onebot scene")
             if settings.proactive is not None and scene.split(":", 2)[1] != "group":
                 raise ValueError(f"scenes.{scene}.proactive is only supported for group scenes")
             if settings.proactive is not None and (settings.learning is None or not settings.learning.reply_effects):
@@ -382,6 +406,7 @@ class HostConfig(SharedConfig):
         shared['task_archive'] = None
         local = {name: getattr(self.scenes[scene], name) for name in SceneSettings.model_fields}
         shared["timezone"] = self.scene_timezone(scene)
+        shared["bot_id"] = self.bot_for(scene)
         del local["timezone"]
         shared["permissions"] = combine_identities(self.permissions, local.pop("permissions"))
         config = LabConfig.model_construct(**shared, **local, mode="isolated", scene=scene)
@@ -423,9 +448,11 @@ def _read_root(root: Path) -> tuple[Path, dict]:
     if not isinstance(source, dict):
         raise ValueError(f"{path}: configuration must be a JSON object")
     # A file without the field was written before the field existed, which is format 1.
-    version = source.get("config_version", 1)
-    if version != CONFIG_VERSION:
-        raise ValueError(f"{path}: 配置格式是 {version!r}，当前版本使用格式 {CONFIG_VERSION}。{FORMAT_RESET}")
+    # Earlier formats are read through their migration; upgrade apply writes the result back.
+    try:
+        source = migrate_source(source, CONFIG_VERSION)
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
     return path, source
 
 
@@ -566,7 +593,7 @@ def _load_host_source(path: Path, source: dict) -> HostConfig:
     try:
         config = HostConfig.model_validate(source)
         object.__setattr__(config, '_source_root', root)
-        if config.onebot is None and config.worker is not None:
+        if not config.platform_names and config.worker is not None:
             for name in ('workspace_root', 'runtime_root', 'delivery_root'):
                 location = getattr(config.worker, name)
                 if location == root.resolve():

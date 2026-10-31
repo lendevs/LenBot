@@ -57,7 +57,7 @@ async def test_reaction_receipt_finishes_turn_without_sending_a_new_message(tmp_
     async with model_server, serve(peer, '127.0.0.1', 0) as server:
         source = instance(tmp_path)
         source.pop('memory')
-        source['delivery'] = 'onebot'
+        source['delivery'] = 'live'
         source['compaction']['input_tokens'] = 6000
         source['models']['providers']['fixture']['base_url'] = f'http://127.0.0.1:{model_server.sockets[0].getsockname()[1]}/v1'
         source['onebot']['ws_url'] = f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}'
@@ -98,7 +98,7 @@ async def test_reaction_receipt_finishes_turn_without_sending_a_new_message(tmp_
 @pytest.mark.asyncio
 async def test_reaction_target_and_role_are_scene_scoped(tmp_path):
     source = instance(tmp_path)
-    source['delivery'] = 'onebot'
+    source['delivery'] = 'live'
     (tmp_path / 'lenbot.config.json').write_text(json.dumps(source))
     config = load_host_config(tmp_path).scene_config(SCENE)
     persona = load_persona(config.persona)

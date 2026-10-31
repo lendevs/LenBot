@@ -49,7 +49,7 @@ async def test_settings_apply_to_wake_learning_permissions_and_preserve_cold_bin
             path = root / 'lenbot.config.json'
             source = json.loads(path.read_text())
             source['onebot'] = {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{platform.sockets[0].getsockname()[1]}'}
-            source['delivery'] = 'onebot'
+            source['delivery'] = 'live'
             source['models']['providers']['local']['base_url'] = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
             source['models']['roles']['mind']['context_window_tokens'] = 64000
             source['compaction']['input_tokens'] = 30000

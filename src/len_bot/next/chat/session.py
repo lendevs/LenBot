@@ -680,6 +680,6 @@ class Chat:
         self.trace('turn.ended', turn_id, status=status, error=error_text,
                    expressions=len(expressions), steps=self.trace_step or 0)
         return {"turn_id": turn_id, "status": status, "error": error_text,
-                "delivery": "simulated" if self.expression.send_message is None else "onebot",
+                "delivery": "simulated" if self.expression.send_message is None else "live",
                 "expressions": expressions, "extensions": extensions,
                 "failed_tools": failed_tools, "limit_until": limit_until, "limit_kind": limit_kind}

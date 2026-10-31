@@ -1091,7 +1091,7 @@ class SceneRunner:
             if own_at is not None:
                 state.contact(own_at, self.settings.focus_seconds)
             self.save_state(state)
-        delivery = "none" if parts is None else "simulated" if self.chat.expression.send_message is None else "onebot"
+        delivery = "none" if parts is None else "simulated" if self.chat.expression.send_message is None else "live"
         self.emit({"type": "notice", "status": status, "error": error_text,
                    "delivery": delivery, "expressions": expressions,
                    "quiet_until": datetime.fromtimestamp(until, ZoneInfo(self.config.timezone)).isoformat()})

@@ -101,7 +101,7 @@ def test_automatic_transcription_requires_explicit_runtime_binding(tmp_path):
         load()
     source['models']['roles']['asr']={'provider':'fixture','model':'exact-audio'}
     assert load().scene_config('onebot:group:80001').transcribe_audio is True
-    source['delivery']='onebot'
+    source['delivery']='live'
     assert load().scene_config('onebot:group:80001').transcribe_audio is True
     source['scenes']['onebot:group:80001']['transcribe_audio']=False
     source['models']['roles'].pop('asr')

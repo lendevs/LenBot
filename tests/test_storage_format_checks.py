@@ -196,16 +196,15 @@ def test_the_local_index_overview_read_names_the_way_forward(tmp_path):
         scene_overview(tmp_path, SCENE)
 
 
-def test_a_configuration_without_a_format_number_is_format_one(tmp_path, monkeypatch):
+def test_a_configuration_without_a_format_number_is_format_one(tmp_path):
     from test_next_config import _host_config, _write_config
     source = _host_config()
     source.pop('config_version', None)
+    source['delivery'] = 'onebot'
     root = tmp_path / 'lab'
     _write_config(root, source)
-    assert root_config.load_host_config(root).config_version == 1
-    monkeypatch.setattr(root_config, 'CONFIG_VERSION', 2)
-    with pytest.raises(ValueError, match=rf'配置格式是 1，当前版本使用格式 2。{FORMAT_RESET}'):
-        root_config.load_host_config(root)
+    config = root_config.load_host_config(root)
+    assert config.config_version == 2 and config.delivery == 'live'
 
 
 @pytest.fixture

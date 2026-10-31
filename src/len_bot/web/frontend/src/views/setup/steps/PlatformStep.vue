@@ -31,7 +31,7 @@ const connects = computed(() => [
 ])
 const deliveries = computed(() => [
   { value: 'simulated' as const, label: t('setup.platform.simulated') },
-  { value: 'onebot' as const, label: t('setup.platform.real') },
+  { value: 'live' as const, label: t('setup.platform.real') },
 ])
 const more = ref(Boolean(error('onebotTimeout')))
 watch(

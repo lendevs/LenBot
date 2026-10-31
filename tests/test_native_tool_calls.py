@@ -164,7 +164,7 @@ async def test_model_expression_sends_text_and_sticker_in_one_onebot_message(tmp
         config.compaction.input_tokens = 20000
         config.models.roles.mind.context_window_tokens = 64000
         config.onebot = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{wire_server.sockets[0].getsockname()[1]}')
-        config.delivery = 'onebot'
+        config.delivery = 'live'
         with Store(config.database) as store:
             _receive(store, 70001, 50001, '外卖被别人拿错了')
             async with ChatModel(config.model_settings('mind')) as mind, OneBot(config.onebot,

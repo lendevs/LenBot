@@ -103,12 +103,12 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 
 ## 数据格式
 
-在首个候选发布版（RC）之前，以下六个格式与接口编号固定为 `1`。在此期间调整表结构或配置字段时直接修改建表语句与配置模型，不编写迁移步骤，本机开发实例按需手动调整或重建。
+在首个候选发布版（RC）之前，以下六个格式与接口编号固定为 `1`。在此期间调整表结构或配置字段时直接修改建表语句与配置模型，不编写迁移步骤，本机开发实例按需手动调整或重建。根配置格式 `2` 在 0.2.0rc1 之后加入 Telegram 与飞书，并把 `delivery` 的 `onebot` 改为 `live`；读取格式 `1` 的配置时在内存中迁移，`upgrade` 的 `apply` 阶段写回文件（`configuration/migrations.py`）。
 
 | 编号项 | 当前值 | 定义位置 |
 |---|---|---|
 | 插件接口版本 | `1` | `src/len_bot/plugin.py` 的 `INTERFACE` |
-| 根配置格式 | `1` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
+| 根配置格式 | `2` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
 | 业务数据库 | `1` | `src/len_bot/next/storage/store.py` 的 `FORMAT_VERSION` |
 | 记忆处理库 | `1` | `src/len_bot/next/memory/jobs.py` 的 `FORMAT_VERSION` |
 | 本地记忆索引 | `1` | `src/len_bot/next/memory/local.py` 的 `FORMAT_VERSION` |

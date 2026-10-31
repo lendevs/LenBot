@@ -242,7 +242,7 @@ class ConnectionChange(BaseModel):
     access_token: str | None = Field(default=None, repr=False)
     owners: list[str]
     timezone: str
-    delivery: Literal["simulated", "onebot"]
+    delivery: Literal["simulated", "live"]
     max_steps: int
     turn_timeout_seconds: float
     max_model_requests: int

@@ -60,7 +60,7 @@ state/services/asr/build-tools/bin/cmake --build state/services/asr/build \
 
 ### OneBot 语音响应容量
 
-使用真实发送（`delivery` 为 `onebot`）并启用 ASR 后，WebSocket actions 的 `get_record` 会收到包含完整 WAV 的 base64 JSON。`onebot.max_frame_bytes` 限制的是整条入站消息解压后的大小，因此不能只按 WAV 的字节数设置。
+使用真实发送（`delivery` 为 `live`）并启用 ASR 后，WebSocket actions 的 `get_record` 会收到包含完整 WAV 的 base64 JSON。`onebot.max_frame_bytes` 限制的是整条入站消息解压后的大小，因此不能只按 WAV 的字节数设置。
 
 所需的最小值为 `4 * ceil(audio.max_bytes / 3) + 65536`，额外的 64 KiB 留给 JSON 元数据。默认的音频上限 16 MiB 对应 **22,435,160 bytes**。
 

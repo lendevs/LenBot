@@ -11,6 +11,7 @@ from ..chat.tools import task_data_tools
 from ..config import HostConfig
 from ..persona.profile import load_persona
 from ..tools.skills import select_skills, worker_catalog
+from ..platform.adapter import adapter_for
 from ..platform.platform_tools import joined_groups
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ class SceneService:
         self.retiring: set[str] = set()
 
     async def ready(self, scene: str, wait: bool) -> bool:
-        return scene not in self.retiring and await self.runtime._ready(wait)
+        return scene not in self.retiring and await self.runtime._ready(wait, scene)
 
     def start_scene(self, scene: str) -> None:
         async def run():
@@ -55,11 +56,13 @@ class SceneService:
 
     async def available(self) -> list[dict]:
         runtime = self.runtime
-        if runtime.config.onebot is None:
+        # Only OneBot lists the groups an account has joined.
+        onebot = adapter_for(runtime.platform, 'onebot')
+        if onebot is None:
             return []
-        if not runtime.platform.connected:
+        if not onebot.connected:
             raise ValueError('平台尚未连接，无法读取已加入的群')
-        groups = await joined_groups(runtime.platform.call)
+        groups = await joined_groups(onebot.call)
         return [item for item in groups if item['scene'] not in runtime.chats]
 
     async def apply(self, saved: HostConfig) -> None:
@@ -122,7 +125,7 @@ class SceneService:
                     ingestor.jobs.release(scene, f"记忆改由插件 {current.memory_plugin} 处理")
             if runtime.tasks is not None:
                 runtime.tasks.data_tools[scene] = task_data_tools(
-                    chat.config, chat.persona, platform=runtime.config.delivery == 'onebot', memory=runtime.memory,
+                    chat.config, chat.persona, platform=runtime.config.delivery == 'live', memory=runtime.memory,
                     plugins=runtime.plugins)
         runtime.events.publish('host.state', scene=scene)
         runtime.notify()
@@ -151,7 +154,7 @@ class SceneService:
             runtime.tasks.skills[scene] = select_skills(catalog, persona.skills)
             runtime.tasks.skill_permissions[scene] = persona.skills
             runtime.tasks.tool_permissions[scene] = persona.tools
-            runtime.tasks.data_tools[scene] = task_data_tools(config, persona, platform=runtime.config.delivery == 'onebot',
+            runtime.tasks.data_tools[scene] = task_data_tools(config, persona, platform=runtime.config.delivery == 'live',
                                                               memory=runtime.memory, plugins=runtime.plugins)
         try:
             chat = runtime.create_chat(config, persona)

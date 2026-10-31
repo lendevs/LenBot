@@ -77,7 +77,7 @@ async def test_direct_reserve_tracks_delivery_since_the_latest_direct_input(tmp_
     async with model_server, serve(onebot_peer, '127.0.0.1', 0) as wire_server:
         config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{model_server.sockets[0].getsockname()[1]}/v1'
         config.onebot = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{wire_server.sockets[0].getsockname()[1]}')
-        config.delivery = 'onebot'
+        config.delivery = 'live'
         with Store(config.database, now=lambda: START) as store:
             record_speech(store, config.scene)  # Normal allowance is exhausted; direct reserve remains.
             async with ChatModel(config.model_settings('mind')) as model, OneBot(

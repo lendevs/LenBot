@@ -140,7 +140,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                     runner.changed.set()
                 runtime.notify()
 
-            data_tools = {settings.scene: task_data_tools(settings, persona, platform=config.delivery == "onebot",
+            data_tools = {settings.scene: task_data_tools(settings, persona, platform=config.delivery == "live",
                                                           memory=memory, plugins=plugins)
                           for settings, persona in scenes}
             tasks = (WorkTasks(config, store, slots, task_update, skills=skills,

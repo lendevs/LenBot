@@ -17,7 +17,7 @@ def source_instance(root: Path) -> dict:
     root.mkdir()
     source = {
         'mode': 'isolated-multi', 'bot_id': 'onebot:90001', 'owners': ['onebot:70001'],
-        'timezone': 'UTC', 'database': 'state.db', 'delivery': 'onebot',
+        'timezone': 'UTC', 'database': 'state.db', 'delivery': 'live',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9', 'access_token': 'fixture'},
         'panel': {'host': '127.0.0.1', 'port': 8088, 'username': 'fixture',
                   'password_hash': 'pbkdf2_sha256$600000$fixture$' + '0' * 64},

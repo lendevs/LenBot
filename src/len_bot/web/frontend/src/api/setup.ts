@@ -100,7 +100,7 @@ export interface FirstSetup {
   bot_id: string
   owners: string[]
   timezone: string
-  delivery: 'simulated' | 'onebot'
+  delivery: 'simulated' | 'live'
   onebot: OneBotLink | null
   provider: SetupProvider
   mind: SetupBinding

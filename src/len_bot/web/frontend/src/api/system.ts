@@ -22,7 +22,7 @@ export interface TextDelivery {
   max_interval_seconds: number | null
   chars_per_second: number | null
 }
-export type Delivery = 'simulated' | 'onebot'
+export type Delivery = 'simulated' | 'live'
 
 /** `saved.connection`; number fields are null while their input is empty. */
 export interface Connection {

@@ -54,7 +54,7 @@ class FirstSetup(BaseModel):
     bot_id: str
     owners: list[str]
     timezone: str
-    delivery: Literal['simulated', 'onebot']
+    delivery: Literal['simulated', 'live']
     onebot: OneBotSettings | None
     provider: Provider
     mind: Binding
@@ -159,7 +159,7 @@ def setup_source(item: FirstSetup) -> dict:
         vector = {'provider': alias, 'model': item.embedding.model, 'dimensions': item.embedding.dimensions}
     return {
         'config_version': CONFIG_VERSION, 'mode': 'isolated-multi', 'bot_id': item.bot_id, 'owners': item.owners,
-        'timezone': item.timezone, 'delivery': 'onebot' if item.onebot else 'simulated',
+        'timezone': item.timezone, 'delivery': 'live' if item.onebot else 'simulated',
         'database': 'state/lenbot.sqlite3',
         'onebot': None if item.onebot is None else item.onebot.model_dump(mode='json'),
         'compaction': item.compaction.model_dump(mode='json'),

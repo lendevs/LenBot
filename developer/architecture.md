@@ -24,9 +24,10 @@ OneBot ────────────> 平台适配器 ──> 消息入�
 
 ## 平台
 
-`platform/` 把平台的原生事件转换为统一的消息和通知。运行时只认 `platform/adapter.py` 中的 `PlatformAdapter` 协议（连接、等待、解析、身份核对、发消息、上传文件、读取场景名称和原生调用），由 `open_platform` 按配置打开 OneBot 适配器，没有配置平台时返回空。平台调用失败统一抛出 `PlatformCallError`，`submitted` 说明请求是否可能已经送达。QQ 的消息段和接口只出现在 `platform/onebot*.py` 中。
+`platform/` 把平台的原生事件转换为统一的消息和通知。运行时只认 `platform/adapter.py` 中的 `PlatformAdapter` 协议（连接、等待、解析、身份核对、发消息、上传文件、读取场景名称和原生调用）。`open_platform` 按配置打开适配器：OneBot（`platform/onebot.py`）、Telegram（`platform/telegram.py`，Bot API 长轮询）、飞书（`platform/feishu.py`，长连接收事件、开放接口发消息）。只配置一个平台时返回该平台的适配器；配置多个时返回 `PlatformGroup`，按场景前缀把发送、上传和场景名称查询交给对应平台，并在各平台投递事件时用对应适配器解析。各平台独立连接和重连，某个平台断开时，其他平台的场景照常运行；启动时任一平台连接失败，整组都不启动。没有配置平台时返回空。平台调用失败统一抛出 `PlatformCallError`，`submitted` 说明请求是否可能已经送达。各平台的消息段和接口只出现在各自的适配器文件中。
 
-- 只有 `delivery` 为 `onebot` 时才真正发送，OneBot 的平台工具也只在这时开放。
+- 只有 `delivery` 为 `live` 时才真正发送，平台工具也只在这时开放。`group_files`、`member_info`、`open_forward`、`message_reaction` 和语音转写基于 OneBot 接口，只在 OneBot 场景开放。
+- 每个场景由所属平台的 Bot 账号发言：OneBot 场景用根配置的 `bot_id`，Telegram、飞书场景用各自设置里的 `bot_id`。
 
 - 账号写成 `平台:账号`，例如 `onebot:70001`。
 - 场景写成 `平台:group:群号` 或 `平台:private:账号`。

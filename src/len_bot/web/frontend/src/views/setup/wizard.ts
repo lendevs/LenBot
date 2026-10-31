@@ -39,7 +39,7 @@ export interface Draft {
   /** `later` skips the OneBot connection; the host then runs simulated, with no connection to wait for. */
   connect: 'now' | 'later'
   botAccount: string
-  delivery: 'simulated' | 'onebot'
+  delivery: 'simulated' | 'live'
   groupSource: 'list' | 'manual'
   owner: string
   timezone: string

@@ -55,7 +55,7 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
             assert response.status_code == 200, response.text
             assert complete.is_set() and 'synthetic-secret' not in response.text
             cfg = load_host_config(tmp_path)
-            assert cfg.delivery == 'onebot' and cfg.models.roles.mind.model == 'fixture'
+            assert cfg.delivery == 'live' and cfg.models.roles.mind.model == 'fixture'
             assert SendHold(tmp_path).enabled is True
             assert cfg.memory is not None
             if embedding_mode == 'skip':
@@ -85,7 +85,7 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize('delivery', ['simulated', 'onebot'])
+@pytest.mark.parametrize('delivery', ['simulated', 'live'])
 def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path, monkeypatch, delivery: str):
     item = FirstSetup.model_validate({
         'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': delivery,
@@ -106,7 +106,7 @@ def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path,
     monkeypatch.setattr(first_run.os, 'link', observed)
     initialize(tmp_path, item)
     assert published == [delivery == 'simulated']
-    assert load_host_config(tmp_path).delivery == 'onebot'
+    assert load_host_config(tmp_path).delivery == 'live'
     assert SendHold(tmp_path).enabled is (delivery == 'simulated')
     attention = load_host_config(tmp_path).scene_config('onebot:group:80001').attention
     assert (attention.only_direct, attention.activity) == (False, 0.2)
@@ -418,7 +418,7 @@ def without_connection(**changes) -> dict:
 async def test_setup_without_onebot_writes_a_simulated_config_and_no_send_hold(tmp_path: Path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(create_setup_app(tmp_path, 'fixture-token', asyncio.Event())),
                                  base_url='http://127.0.0.1', headers={'X-Setup-Token': 'fixture-token'}) as client:
-        refused = await client.post('/api/setup', json=without_connection(delivery='onebot'))
+        refused = await client.post('/api/setup', json=without_connection(delivery='live'))
         assert refused.status_code == 422 and not (tmp_path / 'lenbot.config.json').exists()
         response = await client.post('/api/setup', json=without_connection())
     assert response.status_code == 200, response.text
@@ -433,7 +433,7 @@ async def test_setup_without_onebot_writes_a_simulated_config_and_no_send_hold(t
 def test_setup_with_onebot_keeps_the_send_hold_as_the_simulated_choice(tmp_path: Path):
     item = FirstSetup.model_validate(without_connection(onebot={'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'}))
     initialize(tmp_path, item)
-    assert load_host_config(tmp_path).delivery == 'onebot' and SendHold(tmp_path).enabled is True
+    assert load_host_config(tmp_path).delivery == 'live' and SendHold(tmp_path).enabled is True
 
 
 @pytest.mark.parametrize('mode', ['shared', 'separate', 'yahoo', 'off', 'tavily', 'jina'])

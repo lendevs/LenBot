@@ -201,10 +201,10 @@ def test_onebot_transport_token_is_preserved_but_not_rendered_in_errors_or_repr(
         ({"mode": "forward_ws", "ws_url": "wss://example.test:6700/events"},
          "simulated", OneBotForward),
         ({"mode": "forward_ws", "ws_url": "ws://127.0.0.1:6700/events"},
-         "onebot", OneBotForward),
+         "live", OneBotForward),
         ({"mode": "reverse_ws", "listen_host": "127.0.0.1", "listen_port": 0,
           "action_transport": "http", "http_url": "http://127.0.0.1:6701/actions",
-          "access_token": "synthetic-onebot-token"}, "onebot", OneBotReverse),
+          "access_token": "synthetic-onebot-token"}, "live", OneBotReverse),
     ],
 )
 def test_lab_root_selects_typed_onebot_transport_and_delivery(tmp_path, onebot, delivery, expected_type):
@@ -226,20 +226,20 @@ def test_lab_root_selects_typed_onebot_transport_and_delivery(tmp_path, onebot, 
 @pytest.mark.parametrize(
     ("onebot", "delivery", "field"),
     [
-        (None, "onebot", "delivery=onebot requires onebot"),
+        (None, "live", "delivery=live requires at least one platform"),
         (None, "network", "delivery"),
         ({"mode": "forward_ws"}, "simulated", "onebot.forward_ws.ws_url"),
         ({"mode": "forward_ws", "ws_url": "http://example.test/events"},
-         "onebot", "onebot.forward_ws.ws_url"),
+         "live", "onebot.forward_ws.ws_url"),
         ({"mode": "forward_ws", "ws_url": "ws://example.test", "listen_port": 6700},
-         "onebot", "onebot.forward_ws.listen_port"),
+         "live", "onebot.forward_ws.listen_port"),
         ({"mode": "reverse_ws", "listen_host": "127.0.0.1", "listen_port": 6700,
-          "ws_url": "ws://example.test"}, "onebot", "onebot.reverse_ws.ws_url"),
+          "ws_url": "ws://example.test"}, "live", "onebot.reverse_ws.ws_url"),
         ({"mode": "reverse_ws", "listen_host": "127.0.0.1", "listen_port": 6700,
-          "action_transport": "http"}, "onebot", "http_url"),
-        ({"mode": "unknown", "ws_url": "ws://example.test"}, "onebot", "onebot"),
+          "action_transport": "http"}, "live", "http_url"),
+        ({"mode": "unknown", "ws_url": "ws://example.test"}, "live", "onebot"),
         ({"mode": "forward_ws", "ws_url": "ws://example.test",
-          "access_token": "synthetic-onebot-token\r\nInjected: yes"}, "onebot", "access_token"),
+          "access_token": "synthetic-onebot-token\r\nInjected: yes"}, "live", "access_token"),
     ],
 )
 def test_lab_root_rejects_invalid_onebot_and_delivery_without_token_echo(tmp_path, onebot, delivery, field):
@@ -728,6 +728,7 @@ def test_scene_persona_write_contract_reuses_scene_validation(field, value):
 def test_scene_persona_public_save_preserves_unedited_root_values_and_relative_paths(tmp_path):
     root = tmp_path / "isolated"
     source = _config("personas/relative-package")
+    source["config_version"] = 2
     source["persona_aliases"] = ["原称呼"]
     source["relationships"] = {'onebot:80002': "原说明"}
     source["behavior_addendum"] = "原行为补充"
@@ -948,7 +949,7 @@ def test_replay_clock_rejects_invalid_values(tmp_path, clock, field):
 @pytest.mark.parametrize("change,field", [
     (lambda source: source.update(onebot={"mode": "forward_ws", "ws_url": "ws://127.0.0.1:9"}), "onebot"),
     (lambda source: source.update(onebot={"mode": "forward_ws", "ws_url": "ws://127.0.0.1:9"},
-                                  delivery="onebot"), "delivery"),
+                                  delivery="live"), "delivery"),
     (lambda source: source.update(panel={"host": "127.0.0.1", "port": 0,
                                   "username": "synthetic-operator",
                                   "password_hash": hash_password("synthetic-password", salt="synthetic-salt")}), "panel"),
@@ -1026,7 +1027,7 @@ def test_scene_persona_save_rejects_malformed_root_without_writing(tmp_path):
     ("change", "field"),
     [
         (lambda source: source.pop("onebot"), "onebot"),
-        (lambda source: source.update(onebot=None, delivery="onebot"), "onebot"),
+        (lambda source: source.update(onebot=None, delivery="live"), "onebot"),
         (lambda source: source["scenes"].update({"onebot:group:0": {"persona": "personas/invalid"}}), "platform:group:id"),
         (lambda source: source.update(scene="onebot:group:80001"), "scene"),
         (lambda source: source.update(persona="personas/group"), "persona"),
@@ -2022,13 +2023,14 @@ def test_history_projection_policy_is_explicit_not_provider_inference(tmp_path, 
         load_config(root)
 
 
-@pytest.mark.parametrize("version", [2, "1"])
-def test_configuration_format_other_than_the_current_one_is_refused(tmp_path, version):
+@pytest.mark.parametrize("version,message", [(3, "由更新版本的 LenBot 写入；当前版本使用格式 2"),
+                                             ("1", "配置格式 '1' 无效")])
+def test_configuration_format_newer_than_the_current_one_or_invalid_is_refused(tmp_path, version, message):
     root = tmp_path / "lab"
     source = _host_config()
     source["config_version"] = version
     _write_config(root, source)
-    with pytest.raises(ValueError, match="配置格式是 .*当前版本使用格式 1。发布前的格式变更不提供升级步骤"):
+    with pytest.raises(ValueError, match=message):
         load_host_config(root)
 
 
@@ -2052,3 +2054,43 @@ def test_worker_docker_binary_keeps_the_link_it_names(tmp_path):
 
     assert worker.docker_binary == link
     assert worker.workspace_root == (root / "tasks/workspaces").resolve()
+
+
+def test_format_1_config_reads_as_format_2_and_upgrade_writes_it_back(tmp_path):
+    from len_bot.next.config import load_host_config
+    from len_bot.next.maintenance.upgrade import migrate_config_file
+    root = tmp_path / "host"
+    source = _host_config()
+    source.update(config_version=1, delivery="onebot")
+    _write_config(root, source)
+    config = load_host_config(root)
+    assert config.config_version == 2 and config.delivery == "live"
+    assert migrate_config_file(root) and not migrate_config_file(root)
+    written = json.loads((root / "lenbot.config.json").read_text(encoding="utf-8"))
+    assert written["config_version"] == 2 and written["delivery"] == "live"
+    assert written["scenes"] == source["scenes"]
+
+
+def test_scene_speaks_with_the_bot_account_of_its_platform(tmp_path):
+    from len_bot.next.config import load_host_config
+    root = tmp_path / "host"
+    source = _host_config()
+    source["telegram"] = {"bot_id": "telegram:7000000001", "bot_token": "7000000001:" + "a" * 35}
+    source["feishu"] = {"bot_id": "feishu:ou_bot", "app_id": "cli_app", "app_secret": "secret"}
+    group = source["scenes"]["onebot:group:80001"]
+    source["scenes"].update({"telegram:group:-1001234": group, "feishu:group:oc_room": group})
+    source["delivery"] = "live"
+    _write_config(root, source)
+    config = load_host_config(root)
+    assert config.platform_names == ("onebot", "telegram", "feishu")
+    assert config.scene_config("onebot:group:80001").bot_id == config.bot_id
+    assert config.scene_config("telegram:group:-1001234").bot_id == "telegram:7000000001"
+    assert config.scene_config("feishu:group:oc_room").bot_id == "feishu:ou_bot"
+    del source["feishu"]
+    (root / "lenbot.config.json").write_text(json.dumps(source), encoding="utf-8")
+    with pytest.raises(ValueError, match="feishu:group:oc_room"):
+        load_host_config(root)
+    source["telegram"]["bot_id"] = "telegram:7000000002"
+    (root / "lenbot.config.json").write_text(json.dumps(source), encoding="utf-8")
+    with pytest.raises(ValueError, match="bot_token"):
+        load_host_config(root)
