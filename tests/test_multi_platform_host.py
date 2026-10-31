@@ -1,6 +1,8 @@
 """One host serving a OneBot group and a Telegram group at the same time."""
 
 import asyncio
+import time
+from io import BytesIO
 
 import httpx
 import pytest
@@ -8,11 +10,14 @@ from websockets.asyncio.server import serve
 
 from len_bot.next.chat.tools import build_tools, tool_unavailable_reasons
 from len_bot.next.config import load_host_config
+from len_bot.next.configuration.chat import ImageSettings
+from len_bot.next.media.images import LookArguments, load_look_image
 from len_bot.next.models.client import ChatModel
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.platform import telegram
 from len_bot.next.platform.adapter import PlatformGroup, adapter_for, open_platform
 from len_bot.next.platform.identity import validate_scene
+from len_bot.next.platform.telegram import parse_update
 from len_bot.next.platform.onebot import OneBot
 from len_bot.next.platform.telegram import Telegram
 from len_bot.next.runtime.network import NetworkRuntime
@@ -103,3 +108,28 @@ def test_scene_identifiers_follow_each_platform(scene, valid):
     else:
         with pytest.raises(ValueError, match='scene must match'):
             validate_scene(scene)
+
+
+@pytest.mark.asyncio
+async def test_look_downloads_an_image_a_platform_names_by_reference(tmp_path):
+    from PIL import Image
+    picture = BytesIO()
+    Image.new('RGB', (40, 30), 'red').save(picture, format='PNG')
+    update = {'update_id': 1, 'message': _message(message_id=8, photo=[
+        {'file_id': 'AgAC-photo', 'file_unique_id': 'p', 'width': 40, 'height': 30}])}
+    requested = []
+
+    async def fetch_media(data: dict, max_bytes: int) -> bytes:
+        requested.append((data['file_id'], max_bytes))
+        return picture.getvalue()
+
+    with Store(tmp_path / 'chat.sqlite3') as store:
+        store.enqueue(parse_update(update, bot=BOT, username='len_bot'), update, time.time())
+        asset, reused, source = await load_look_image(
+            store, TELEGRAM_SCENE, LookArguments(message='8'), ImageSettings(), fake_ip_networks=(),
+            fetch_media=fetch_media)
+        assert (asset.width, asset.height, reused, source) == (40, 30, False, 'platform_download')
+        assert requested == [('AgAC-photo', ImageSettings().max_bytes)]
+        again = await load_look_image(store, TELEGRAM_SCENE, LookArguments(message='8'), ImageSettings(),
+                                      fake_ip_networks=(), fetch_media=fetch_media)
+        assert again[1:] == (True, 'cache') and len(requested) == 1

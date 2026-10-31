@@ -345,6 +345,9 @@ class OneBot:
         from .platform_tools import scene_title
         return await scene_title(scene, self.call)
 
+    async def download(self, data: dict, max_bytes: int) -> bytes:
+        raise ValueError("OneBot media is read from the url in its segment")
+
     async def call(self, action: str, params: dict) -> dict:
         if not self._running:
             raise OneBotCallError("OneBot transport has not been started", submitted=False)

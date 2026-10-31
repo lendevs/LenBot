@@ -18,7 +18,7 @@ from ..tools.discovery import DISCOVERY_REQUIRED_NAMES, TOOL_SEARCH, deferred_na
 from ..platform.delivery import Expression
 from ..tools.external_tools import ExternalTool
 from ..platform.file_delivery import SEND_FILE_TOOL, SendFileArguments, execute_send_file
-from ..media.images import LOOK_TOOL, LookArguments, execute_look, load_look_image, shown_image
+from ..media.images import LOOK_TOOL, LookArguments, MediaFetch, execute_look, load_look_image, shown_image
 from ..memory.service import MEMORY_TOOL, MemoryService
 from ..platform.messages import UploadResult
 from ..platform.identity import ACCOUNT_EXAMPLES, ACCOUNTS, account_pattern
@@ -314,7 +314,8 @@ class SceneTools:
                  memory: MemoryService | None, tasks: WorkTasks | None, audio: AudioService | None,
                  upload_file: Callable[[str, str, str], Awaitable[UploadResult]] | None,
                  platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float],
-                 plugins: MemoryPlugins | None = None, reference: ReferenceLibrary | None = None):
+                 plugins: MemoryPlugins | None = None, reference: ReferenceLibrary | None = None,
+                 fetch_media: MediaFetch | None = None):
         self.config, self.persona, self.store = config, persona, store
         self.plugins = plugins
         self.reference = ReferenceLibrary(config._instance_root) if reference is None else reference
@@ -323,6 +324,7 @@ class SceneTools:
         self.looked: list[tuple[str, bytes]] = []
         self.memory, self.tasks, self.audio = memory, tasks, audio
         self.upload_file, self.platform_call = upload_file, platform_call
+        self.fetch_media = fetch_media
         self.notify, self.now = notify, now
         self.scene_control: Callable[[SceneControlArguments], dict] | None = None
         self.attention: Callable[[AttentionArguments, str, str], dict] | None = None
@@ -561,7 +563,8 @@ class SceneTools:
             arguments = LookArguments.model_validate(call.arguments)
             asset, reused, source = await load_look_image(
                 self.store, self.config.scene, arguments, self.config.images, recording=self.replay_images,
-                fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url)
+                fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
+                fetch_media=self.fetch_media)
             self.looked = [*self.looked, (f"消息 {arguments.message} 的第 {arguments.image} 张图片", asset.jpeg)][-LOOKED_IMAGES:]
             return shown_image(self.config.scene, arguments, asset, pixels_reused=reused, pixels_source=source), None, None
         if call.name == "look":
@@ -569,6 +572,7 @@ class SceneTools:
                 self.store, self.config.scene, LookArguments.model_validate(call.arguments), self.config.images,
                 model_name=self.vision.settings.model, describe=lambda asset: self.describe_image(turn_id, asset),
                 recording=self.replay_images, fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
+                fetch_media=self.fetch_media,
             ), None, None
         if call.name == "transcribe":
             return await self.audio.transcribe(

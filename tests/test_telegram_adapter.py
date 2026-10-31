@@ -45,6 +45,9 @@ class BotAPI:
         self.updates.put_nowait({"update_id": self.update_id, "message": message})
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith(f"/file/bot{TOKEN}/"):
+            self.calls.append(("file", {"path": request.url.path.removeprefix(f"/file/bot{TOKEN}/")}))
+            return httpx.Response(200, content=b"photo-bytes" * 10)
         prefix, _, method = request.url.path.rpartition("/")
         assert prefix == f"/bot{TOKEN}"
         if request.headers.get("content-type", "").startswith("multipart/"):
@@ -72,6 +75,9 @@ class BotAPI:
             return self._ok({"id": params["chat_id"], "type": "supergroup", "title": "测试群"})
         if method == "getChatMemberCount":
             return self._ok(42)
+        if method == "getFile":
+            return self._ok({"file_id": params["file_id"], "file_unique_id": "u", "file_size": 110,
+                             "file_path": f"photos/{params['file_id']}.jpg"})
         return httpx.Response(404, json={"ok": False, "error_code": 404, "description": "Not Found"})
 
     @staticmethod
@@ -192,6 +198,10 @@ async def test_receives_updates_and_sends_mentions_replies_photos_and_files(api)
         assert upload.status == "uploaded" and upload.file_id == "BQAC-document"
         assert "报告.txt".encode() in api.calls[-1][1]["multipart"]
         assert (await adapter.scene_title(scene)) == ("测试群", 42)
+        assert await adapter.download({"file_id": "large"}, 1000) == b"photo-bytes" * 10
+        assert api.calls[-1] == ("file", {"path": "photos/large.jpg"})
+        with pytest.raises(ValueError, match="above 100"):
+            await adapter.download({"file_id": "large"}, 100)
         refused = await adapter.send_message(outgoing(Segment("text", {"text": "x" * 4097})))
         assert refused.status == "failed" and "4096" in refused.error
     finally:

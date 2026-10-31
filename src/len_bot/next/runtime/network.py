@@ -83,6 +83,7 @@ class NetworkRuntime:
         self.sticker_collection = sticker_collection
         if sticker_collection is not None:
             sticker_collection.on_update = self.notify
+            sticker_collection.fetch_media = self.fetch_media
         self.reply_effects = reply_effects
         # Host time when the current platform connection began; None while disconnected.
         self.connected_since: float | None = None
@@ -168,6 +169,7 @@ class NetworkRuntime:
             upload_file=self.upload_file if self.config.delivery != "simulated" else None,
             platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
                            if self.config.delivery == "live" else None),
+            fetch_media=lambda data, max_bytes, scene=scene: self.fetch_media(scene, data, max_bytes),
             external_tools=(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=True))
                             + ([] if self.mcp is None else self.mcp.tools_for(scene))),
             audio_service=self.audio,
@@ -200,6 +202,13 @@ class NetworkRuntime:
         if adapter is None:
             raise PlatformCallError(f"no platform adapter serves {scene!r}", submitted=False)
         return await adapter.call(action, params)
+
+    async def fetch_media(self, scene: str, data: dict, max_bytes: int) -> bytes:
+        """An inbound file named by a platform reference, through the adapter of the scene's platform."""
+        adapter = adapter_for(self.platform, scene)
+        if adapter is None:
+            raise ValueError(f"no platform adapter serves {scene!r}; the file cannot be downloaded")
+        return await adapter.download(data, max_bytes)
 
     def bind_management(self, root: Path, lifecycle: HostLifecycle) -> None:
         from .management import HostManagement

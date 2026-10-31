@@ -48,6 +48,7 @@ from ..models.request import request_estimate, request_model
 from ..models.slots import ModelSlots
 from ..persona.profile import Persona, select_style
 from ..platform.platform_tools import PlatformCall
+from ..media.images import MediaFetch
 from ..storage.store import Store, encode
 from ..work.service import WorkTasks
 from ..work.store import TaskStore
@@ -104,6 +105,7 @@ class Chat:
                  send_message: MessageSender | None = None,
                  upload_file: Callable[[str, str, str], Awaitable[UploadResult]] | None = None,
                  platform_call: PlatformCall | None = None,
+                 fetch_media: MediaFetch | None = None,
                  external_tools: list[ExternalTool] = (),
                  audio_service: AudioService | None = None,
                  plugins: MemoryPlugins | None = None,
@@ -160,7 +162,8 @@ class Chat:
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
-            platform_call=platform_call, notify=self.notify, now=now, plugins=plugins, reference=reference)
+            platform_call=platform_call, notify=self.notify, now=now, plugins=plugins, reference=reference,
+            fetch_media=fetch_media)
         self.set_external_tools(external_tools)
 
     def set_external_tools(self, external_tools: list[ExternalTool]) -> None:

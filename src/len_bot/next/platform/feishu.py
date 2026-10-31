@@ -19,7 +19,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from ..configuration.platforms import FeishuSettings
 from ..runtime.logs import REDACTED
-from .adapter import PlatformCallError
+from .adapter import PlatformCallError, read_capped
 from .messages import ChatMessage, Notice, Segment, Sender, SendResult, UploadResult
 
 
@@ -704,6 +704,28 @@ class Feishu:
         count = data.get("user_count")
         count = int(count) if isinstance(count, int | str) and str(count).isdecimal() else None
         return data.get("name") or target[1], count
+
+    async def download(self, data: dict, max_bytes: int) -> bytes:
+        """An inbound image or file through the message resource API."""
+        message_id, key = data.get("message_id"), data.get("image_key") or data.get("file_key")
+        if not isinstance(message_id, str) or not isinstance(key, str):
+            raise ValueError(f"segment names no Feishu message resource: {repr(data)[:200]}")
+        if self._client is None:
+            raise FeishuCallError("Feishu transport has not been started", submitted=False)
+        token = await self._tenant_token()
+        try:
+            async with self._client.stream(
+                    "GET", f"/open-apis/im/v1/messages/{message_id}/resources/{key}",
+                    params={"type": "image" if "image_key" in data else "file"},
+                    headers={"Authorization": f"Bearer {token}"}) as response:
+                if response.status_code != 200 or response.headers.get("content-type", "").startswith("application/json"):
+                    detail = (await response.aread())[:300].decode(errors="replace")
+                    raise FeishuCallError(self._safe(f"Feishu resource {key} HTTP {response.status_code}: {detail}"),
+                                          submitted=False)
+                return await read_capped(response.aiter_bytes(), max_bytes)
+        except httpx.HTTPError as error:
+            raise FeishuCallError(self._safe(f"Feishu resource {key}: {type(error).__name__}: {error}"),
+                                  submitted=False) from None
 
     async def call(self, action: str, params: dict) -> dict:
         """One Open API call: ``action`` is "<METHOD> <path>", ``params`` the query or JSON body."""

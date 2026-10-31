@@ -15,7 +15,7 @@ import httpx
 
 from ..configuration.platforms import TelegramSettings
 from ..runtime.logs import REDACTED
-from .adapter import PlatformCallError
+from .adapter import PlatformCallError, read_capped
 from .messages import ChatMessage, Notice, Segment, Sender, SendResult, UploadResult
 
 
@@ -523,3 +523,23 @@ class Telegram:
     async def call(self, action: str, params: dict) -> dict:
         """One Bot API method with Telegram's answer as sent, ok=false included."""
         return await self._post(action, params)
+
+    async def download(self, data: dict, max_bytes: int) -> bytes:
+        """An inbound file by its file_id; the Bot API serves files up to 20 MB."""
+        file_id = data.get("file_id")
+        if not isinstance(file_id, str) or not file_id:
+            raise ValueError(f"segment has no Telegram file_id: {repr(data)[:200]}")
+        info = await self._request("getFile", {"file_id": file_id})
+        path = info.get("file_path") if isinstance(info, dict) else None
+        if not isinstance(path, str) or not path:
+            raise TelegramCallError(f"getFile returned no file_path: {repr(info)[:300]}", submitted=False)
+        if type(info.get("file_size")) is int and info["file_size"] > max_bytes:
+            raise ValueError(f"Telegram file is {info['file_size']} bytes, above {max_bytes}")
+        try:
+            async with self._client.stream("GET", f"{self.settings.api_url}/file/bot{self.settings.bot_token}/{path}") as response:
+                if response.status_code != 200:
+                    raise TelegramCallError(f"Telegram file download HTTP {response.status_code}", submitted=False)
+                return await read_capped(response.aiter_bytes(), max_bytes)
+        except httpx.HTTPError as error:
+            raise TelegramCallError(self._safe(f"Telegram file download: {type(error).__name__}: {error}"),
+                                    submitted=False) from None

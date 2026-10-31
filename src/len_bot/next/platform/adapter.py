@@ -62,6 +62,19 @@ class PlatformAdapter(Protocol):
     async def call(self, action: str, params: dict) -> dict:
         """A platform-specific action (a OneBot action) with its raw answer."""
 
+    async def download(self, data: dict, max_bytes: int) -> bytes:
+        """The bytes of an inbound image, voice or file segment that names a platform file instead of a URL."""
+
+
+async def read_capped(chunks, max_bytes: int) -> bytes:
+    """Collect an async byte stream, refusing it once it passes ``max_bytes``."""
+    body = bytearray()
+    async for chunk in chunks:
+        body += chunk
+        if len(body) > max_bytes:
+            raise ValueError(f"download exceeds {max_bytes} bytes")
+    return bytes(body)
+
 
 class PlatformGroup:
     """Several adapters behind one interface; each scene goes to the adapter named by its prefix.
@@ -163,6 +176,9 @@ class PlatformGroup:
 
     async def call(self, action: str, params: dict) -> dict:
         raise PlatformCallError(f'platform action {action!r} needs the adapter of one platform', submitted=False)
+
+    async def download(self, data: dict, max_bytes: int) -> bytes:
+        raise PlatformCallError('a download needs the adapter of the platform that sent the file', submitted=False)
 
 
 def adapter_for(platform: PlatformAdapter | None, scene_or_name: str) -> PlatformAdapter | None:

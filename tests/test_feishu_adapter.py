@@ -67,6 +67,9 @@ class OpenAPI:
                 {"member_id": "ou_ann", "name": "Ann"}, {"member_id": "ou_bob", "name": "Bob"}], "has_more": False}})
         if path == f"/open-apis/im/v1/chats/{GROUP}":
             return httpx.Response(200, json={"code": 0, "data": {"name": "测试群", "user_count": "12"}})
+        if path == "/open-apis/im/v1/messages/om_1/resources/img_v2_in":
+            assert request.url.params["type"] == "image"
+            return httpx.Response(200, content=b"feishu-image", headers={"content-type": "image/png"})
         if path == "/open-apis/im/v1/images":
             return httpx.Response(200, json={"code": 0, "data": {"image_key": "img_v2_sent"}})
         if path == "/open-apis/im/v1/files":
@@ -227,6 +230,10 @@ async def test_receives_answers_and_sends_through_the_open_api(platform):
         assert upload.status == "uploaded" and upload.file_id == "file_v2_sent"
         assert json.loads(api.calls[-1][2]["content"]) == {"file_key": "file_v2_sent"}
         assert (await adapter.scene_title(scene)) == ("测试群", 12)
+        assert await adapter.download({"image_key": "img_v2_in", "message_id": "om_1"}, 100) == b"feishu-image"
+        # The resource API answers errors as JSON; they are never taken for file bytes.
+        with pytest.raises(PlatformCallError, match="Feishu resource file_gone"):
+            await adapter.download({"file_key": "file_gone", "message_id": "om_1"}, 100)
         private = await adapter.send_message(ChatMessage(
             id="out", platform="feishu", bot_id="feishu:ou_bot", scene="feishu:private:ou_ann",
             platform_message_id=None, sender=Sender("feishu:ou_bot", None, None, None), time=time.time(),
