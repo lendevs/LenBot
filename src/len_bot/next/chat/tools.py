@@ -222,10 +222,15 @@ def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
                     memory: MemoryService | None, plugins: MemoryPlugins | None = None) -> list[dict]:
     """Chat-data tools a task worker may call for the scene, as far as the role allows.
 
+    The web tools follow the task's network mode: ``off`` has neither, ``allowlist`` only ``web_read`` (which
+    reads the listed hosts), ``public`` both. ``knowledge`` follows the role and whether the role or the scene has materials.
     In a scene whose memory is a plugin, ``memory`` is that plugin's tool, or absent while it has none.
     """
+    mode = "off" if config.worker is None else config.worker.egress.mode
+    web = {"public": {"web_read", "web_search"}, "allowlist": {"web_read"}, "off": set()}[mode]
+    wanted = {"recall_chat", "memory", "transcribe", "knowledge"} | web
     selected = [deepcopy(tool["function"]) for tool in build_tools(config, persona, platform=platform)
-                if tool["function"]["name"] in {"recall_chat", "memory", "transcribe"}]
+                if tool["function"]["name"] in wanted]
     if config.memory_plugin is not None:
         definition = None if plugins is None else plugins.memory_definition(config.memory_plugin)
         return [deepcopy(definition["function"]) if tool["name"] == "memory" else tool
@@ -376,6 +381,32 @@ class SceneTools:
             return await self.plugins.run_memory_tool(self.config.memory_plugin, self.config.scene, arguments)
         return await self.memory.execute(self.config.scene, arguments)
 
+    async def run_data_tool(self, name: str, arguments: dict) -> str:
+        """``knowledge``, ``web_read`` or ``web_search`` for the scene: the chat's own tools, and a task worker's."""
+        if name == "knowledge":
+            return await knowledge(self.reference, self.config.scene, self.persona, self.persona.name,
+                                   KnowledgeArguments.model_validate(arguments))
+        if name == "web_read":
+            return await execute_web_read(self.store, self.config.scene, self.config.web_read,
+                                          WebReadArguments.model_validate(arguments), recording=self.replay_web,
+                                          fake_ip_networks=self.config.network.networks(),
+                                          public_dns_url=self.config.network.public_dns_url,
+                                          connection=self._connection(self.config.web_read))
+        if name != "web_search":
+            raise ValueError(f"不是宿主端数据工具：{name}")
+        read_top = None
+        if self.replay_web is None and self.config.web_read is not None and "web_read" in self.allowed_tool_names:
+            async def read_top(url: str):
+                return await read_web_page(self.store, self.config.scene, self.config.web_read, url,
+                                           fake_ip_networks=self.config.network.networks(),
+                                           public_dns_url=self.config.network.public_dns_url,
+                                           connection=self._connection(self.config.web_read))
+        return await execute_web_search(self.config.web_search, WebSearchArguments.model_validate(arguments),
+                                        recording=self.replay_web, read_top=read_top,
+                                        save_page=(lambda page: self.store.save_web_page(self.config.scene, page))
+                                            if read_top is not None else None,
+                                        connection=self._connection(self.config.web_search))
+
     @property
     def tools(self) -> list[dict]:
         return self.core_tools + [tool for tool in self.deferred_tools
@@ -492,27 +523,8 @@ class SceneTools:
             # A history search may scan many rows; it reads on the database thread without the write lock.
             return await self.store.read(recall_chat, self.store, self.config.scene, self.config.timezone,
                                          RecallArguments.model_validate(call.arguments)), None, None
-        if call.name == "knowledge":
-            return await knowledge(self.reference, self.config.scene, self.persona, self.persona.name,
-                                   KnowledgeArguments.model_validate(call.arguments)), None, None
-        if call.name == "web_read":
-            return await execute_web_read(self.store, self.config.scene, self.config.web_read,
-                                          WebReadArguments.model_validate(call.arguments), recording=self.replay_web,
-                                          fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
-                                          connection=self._connection(self.config.web_read)), None, None
-        if call.name == "web_search":
-            read_top = None
-            if self.replay_web is None and self.config.web_read is not None and "web_read" in self.allowed_tool_names:
-                async def read_top(url: str):
-                    return await read_web_page(self.store, self.config.scene, self.config.web_read, url,
-                                               fake_ip_networks=self.config.network.networks(),
-                                               public_dns_url=self.config.network.public_dns_url,
-                                               connection=self._connection(self.config.web_read))
-            return await execute_web_search(self.config.web_search, WebSearchArguments.model_validate(call.arguments),
-                                            recording=self.replay_web, read_top=read_top,
-                                            save_page=(lambda page: self.store.save_web_page(self.config.scene, page))
-                                                if read_top is not None else None,
-                                            connection=self._connection(self.config.web_search)), None, None
+        if call.name in {"knowledge", "web_read", "web_search"}:
+            return await self.run_data_tool(call.name, call.arguments), None, None
         if call.name == "memory":
             return await self.run_memory(call.arguments), None, None
         if call.name in {"delegate", "task"}:

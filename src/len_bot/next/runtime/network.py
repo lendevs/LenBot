@@ -131,6 +131,7 @@ class NetworkRuntime:
         if tasks is not None:
             tasks.audio = self.audio
             tasks.memory_call = lambda scene, arguments: self.chats[scene].toolset.run_memory(arguments)
+            tasks.data_call = lambda scene, name, arguments: self.chats[scene].toolset.run_data_tool(name, arguments)
         self.chats: dict[str, Chat] = {}
         for scene_config, persona in scene_configs:
             scene = scene_config.scene
