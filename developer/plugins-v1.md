@@ -405,7 +405,7 @@ async def query(self, ctx: Invocation,
 
 ## 工具的真实请求来源
 
-委派工作和账号操作类的工具可以声明 `needs_source=True`。宿主只为这些工具增加一个必填的 `source_message_id`，插件作者不要在函数参数中声明它。模型从群聊记录中选择实际发出请求的消息，宿主按当前场景的真实平台消息 ID 读取发送者，放入 `Invocation.message`。
+委派工作和账号操作类的工具可以声明 `needs_source=True`。宿主只为这些工具增加一个必填的 `source_message_id`，插件作者不要在函数参数中声明它。模型从本轮收到的消息中选择实际发出请求的消息，宿主按当前场景的真实平台消息 ID 读取发送者，放入 `Invocation.message`。
 
 ```python
 @tool("owner_action", "按主人真实请求执行操作。",
@@ -595,7 +595,7 @@ async def check():
 测试数据迁移时，传入旧的数据目录，例如 `PluginTest(package, data=Path('tests/data-v1'), data_version=1)`。进入上下文时，会像真实升级一样先运行 `migrate_data`，再调用 `start()`。
 
 - 固定时钟使用 `PluginTest(..., now=lambda: 1791298800)`。
-- `add_message(text, sender=..., scene=..., message_id=..., timestamp=...)` 保存一条测试消息并返回 ChatMessage，可以用它的 platform_message_id 调用需要来源的工具。
+- `add_message(text, sender=..., scene=..., message_id=..., timestamp=...)` 保存一条测试消息并返回 ChatMessage，可以用它的 platform_message_id 调用需要来源的工具。消息默认属于当前模拟轮次；`received=False` 保存一条尚未进入会话的消息，`new_turn(scene)` 开始下一轮，此前的消息不再是有效来源。
 - `preview_tools(scene)` 返回发现简介、完整说明、共享指南、参数、needs_source、允许的群和配置原因。
 - `tool()` 经过真实的调用边界，结果是模型实际收到的字符串。
 - `wait_tasks(name_prefix)` 等待插件通过 `start_task` 登记且名称匹配前缀的一次性后台任务完成。
