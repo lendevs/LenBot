@@ -428,8 +428,14 @@ class PluginHost:
         await asyncio.to_thread(inspect_image, data)
         return data
 
+    def source_floor(self, scene: str) -> int | None:
+        """The scene session's last message seq when its running turn began; None when no turn runs."""
+        chat = None if self.runtime is None else self.runtime.chats.get(scene)
+        return None if chat is None else chat.toolset.source_floor
+
     def source_message(self, scene: str, platform_id: str) -> ChatMessage:
-        return source_message(self.runtime.store, self.config.scene_config(scene), platform_id)
+        return source_message(self.runtime.store, self.config.scene_config(scene), platform_id,
+                              self.source_floor(scene))
 
     async def send_text(self, plugin: str, scene: str, text: str, reply_to: str | None) -> Sent:
         return await self.send_parts(plugin, scene, [Text(text)], reply_to)
