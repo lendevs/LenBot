@@ -53,8 +53,8 @@ uv run --no-sync python scripts/compare_social.py --instance . --label baseline
 ```
 
 命令读取实例的聊天模型连接，在 `state/experiments/social-日期/baseline/` 下建立独立模拟实例，
-每例默认运行三次。`social-stickers.yaml` 沿用示例角色的图片，为微笑和赞同提供共同的开心标签、中性描述和编号文件名，
-检查同一情绪下的语气选择；实际采用的图片目录随每次回放归档。
+每例默认运行三次。`social-stickers.yaml` 沿用示例角色的图片，为微笑和赞同提供共同的开心标签和编号文件名，
+描述只写画面，检查同一情绪下按画面选择语气；实际采用的图片目录随每次回放归档。
 `social-images.json` 为看图用例提供 `images/` 下的虚构截图，按消息 ID 和图片序号读取，回放不访问网络。
 
 每例 `result.json` 的 `social` 保存是否开口、误插话、漏接、事实匹配、人机味短语计数、

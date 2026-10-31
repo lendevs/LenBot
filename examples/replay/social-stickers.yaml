@@ -1,5 +1,5 @@
 - file: 01.png
-  description: 微笑、开心。
+  description: 微笑脸，眯眼咧嘴笑。
   emotions:
   - 开心
   tags:
@@ -21,7 +21,7 @@
   - 问号
   - 疑惑
 - file: 02.png
-  description: 微笑、开心。
+  description: 微笑脸，右下角一个绿色对勾。
   emotions:
   - 开心
   tags:

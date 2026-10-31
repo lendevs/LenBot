@@ -20,6 +20,27 @@ wheels/
 .installed.cfg
 *.egg
 
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+.env
+
+# Tests, lint and coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Frontend and site
+node_modules/
+.vite/
+*.tsbuildinfo
+website/.vitepress/dist/
+website/.vitepress/cache/
+
 # The built control plane stays out of Git.  Vite content-hashes every asset,
 # so committing it turned each frontend change into a delete+add churn of ~40
 # files that buried the real diff.  It is produced by `npm run build` for local
@@ -27,76 +48,45 @@ wheels/
 # `dist/` rule above already covers it, and this anchored rule records intent.
 /src/len_bot/web/static/dist/
 
-# Virtual Environment
-.venv/
-env/
-venv/
-ENV/
+# Frontend source helpers are not Python installation output.
+!/src/len_bot/web/frontend/src/lib/
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# IDE, OS and local tool state
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.zcode/
 
-# Databases
+# Development instance run from the repository root
+/lenbot.config.json
+/.lenbot-config-*.json
+/.lenbot-setup-*.json
+/.lenbot-instance.lock
+/len_bot.next.db*
+/state/
+/plugins/
+/personas/
+/file_assets/
+/.runtime/
+/.backups/
+/data/eval/runs/
+
+# Databases created anywhere else
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-/media/
-
-# IDE / OS
-.DS_Store
-.vscode/
-.idea/
-
-# Node / frontend tooling
-node_modules/
-.vite/
-
-# Frontend source helpers are not Python installation output.
-!/src/len_bot/web/frontend/src/lib/
-
-# ZCode session artifacts
-.zcode/
-
-# Local trial state and recovery copies
-.lenbot-instance.lock
-/.backups/
-/.runtime/
-/lenbot.config.json
-/.lenbot-config-*.json
-/.lenbot-setup-*.json
-/gateway.config.json
-
-# 设计文档与工作记录只留在本机
-/docs/
-/research/
-
-# Local business state, personal role packages and evaluation runs
-/state/
-/plugins/
-/personas/
-/data/eval/runs/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
 *.sqlite3-journal
-*.sqlite3.v*.bak
 
-# Local task deliveries shared read-only with OneBot
-/file_assets/
-
-# Public replay example: local configuration and results
+# Replay example: local configuration and results
 /examples/replay/lenbot.config.json
 /examples/replay/chat.sqlite3*
 /examples/replay/runs/
 
-# Site dependencies and build output
-website/node_modules/
-website/.vitepress/dist/
-website/.vitepress/cache/
-
-# Instances written by older data formats are test inputs, not local data.
-!tests/fixtures/history/**/*.db
-!tests/fixtures/history/**/*.sqlite3
+# 设计文档与工作记录只留在本机
+/docs/
+/research/

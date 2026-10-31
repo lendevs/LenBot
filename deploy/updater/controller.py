@@ -266,9 +266,9 @@ class Controller:
     def updater_steps(self, tag: str) -> str:
         """Commands that switch to a newer updater."""
         if self.deployment['mode'] == 'native':
-            return (f'{tag} 需要新版更新器。在快照页先建立快照，停止 LenBot，下载 {tag} 的部署包并解压到新目录，'
-                    f'把 {self.root / "instance"} 和 {self.root / "backups"} 移到新目录，再运行新目录中的 run'
-                    '（Windows 为 run.cmd）。首次启动时会先安装插件依赖并迁移实例数据。')
+            return (f'{tag} 需要新版更新器。停止 LenBot，下载 {tag} 的部署包并解压到新目录，'
+                    f'把 {self.root / "instance"} 复制到新目录，再运行新目录中的 run（Windows 为 run.cmd）。'
+                    '首次启动时会先安装插件依赖并迁移复制过去的实例数据；当前目录保持原样，运行其中的 run 即回到当前版本。')
         version = tag.removeprefix('v')
         image = repository(self.backend.metadata()['host_image']) + '-updater:' + version
         return (f'{tag} 需要新版更新器，请在部署目录 {self.deployment["host_directory"]} 依次运行：\n'
