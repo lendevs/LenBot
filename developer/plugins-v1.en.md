@@ -282,7 +282,7 @@ async def query(self, ctx: Invocation,
 
 ## Verified request source
 
-Tools that delegate worker tasks or perform account-level actions set `needs_source=True`. The host automatically adds a required `source_message_id` parameter to the model schema (do not declare `source_message_id` in the Python signature), verifies the referenced message in the current scene, and populates `Invocation.message`:
+Tools that delegate worker tasks or perform account-level actions set `needs_source=True`. The host automatically adds a required `source_message_id` parameter to the model schema (do not declare `source_message_id` in the Python signature), verifies that the referenced message is one the model received in the running turn of the current scene, and populates `Invocation.message`:
 
 ```python
 @tool("owner_action", "Run an owner-requested action.",
@@ -361,7 +361,7 @@ async def check():
 ```
 
 - Pass `scenes`, `owners`, `now=lambda: 1791298800`, or `data=Path("tests/data-v1"), data_version=1` (runs `migrate_data` before `start()`) in the constructor.
-- `message(text, scene=..., sender=..., parts=...)` and `add_message(...)` support `Segment` lists to test mention and media matching boundaries; `add_message` returns a `ChatMessage` whose `platform_message_id` can be passed as `source_message_id`.
+- `message(text, scene=..., sender=..., parts=...)` and `add_message(...)` support `Segment` lists to test mention and media matching boundaries; `add_message` returns a `ChatMessage` whose `platform_message_id` can be passed as `source_message_id`. A message belongs to the current simulated turn by default; `received=False` stores one the session has not taken in yet, and `new_turn(scene)` starts the next turn so earlier messages stop being valid sources.
 - `recall(...)`, `memory(...)`, and `compact(...)` exercise `@recall`, `@memory_tool`, and `@compact` under host checks.
 - `preview_tools(scene)` returns discovery summaries, full descriptions, shared guides, schemas, `needs_source`, allowed scenes, and unavailability reasons.
 - `wait_tasks(name_prefix)` awaits one-shot background tasks registered via `start_task` matching `name_prefix`.

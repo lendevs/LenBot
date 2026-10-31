@@ -15,67 +15,66 @@ import time
 from typing import Iterator
 
 from ..storage.store import encode
-from ..storage.schema import FORMAT_RESET
+from ..storage.schema import FORMAT_RESET, require_columns, stored_state
 from ..storage.sqlite import connect
 from .embeddings import _reject_constant
 
 
 FORMAT_VERSION = 1
+SCHEMA = """
+CREATE TABLE memory_cursors (
+    scene TEXT PRIMARY KEY, after_seq INTEGER NOT NULL,
+    enabled_at REAL NOT NULL
+);
+CREATE TABLE memory_personas (
+    scene TEXT NOT NULL, persona_id TEXT NOT NULL,
+    PRIMARY KEY(scene,persona_id)
+);
+CREATE TABLE memory_jobs (
+    id INTEGER PRIMARY KEY, scene TEXT NOT NULL, backend TEXT NOT NULL,
+    first_seq INTEGER NOT NULL, through_seq INTEGER NOT NULL,
+    status TEXT NOT NULL, started REAL NOT NULL, ended REAL,
+    details TEXT NOT NULL, error TEXT
+);
+CREATE INDEX memory_jobs_scene ON memory_jobs(scene,id);
+CREATE TABLE memory_exclusions (
+    scene TEXT NOT NULL, message_seq INTEGER NOT NULL,
+    PRIMARY KEY(scene,message_seq)
+);
+CREATE TABLE memory_summary_runs (
+    id INTEGER PRIMARY KEY, scene TEXT NOT NULL, scope TEXT NOT NULL, path TEXT NOT NULL,
+    started REAL NOT NULL, ended REAL,
+    status TEXT NOT NULL CHECK(status IN ('running','complete','failed','interrupted')),
+    request TEXT NOT NULL, response TEXT, usage TEXT, tokens TEXT, error TEXT, model_started REAL
+);
+CREATE INDEX memory_summary_runs_path ON memory_summary_runs(scope,path,id);
+CREATE TABLE memory_embedding_calls (
+    id INTEGER PRIMARY KEY, scene TEXT NOT NULL, purpose TEXT NOT NULL,
+    started REAL NOT NULL, ended REAL, request TEXT NOT NULL,
+    response TEXT, usage TEXT, tokens TEXT, error TEXT
+);
+CREATE INDEX memory_embedding_usage ON memory_embedding_calls(started,scene);
+"""
 
 
 class MemoryJobs:
     def __init__(self, path: Path, *, readonly: bool = False):
+        # Opening read-write switches the file to WAL, so a file of another format is refused before that.
+        state = stored_state(path)
+        if state is not None and state[2] and state[:2] != (0x4C424D4A, FORMAT_VERSION):
+            raise ValueError(f"{path} 不是当前版本使用的记忆处理库格式 {FORMAT_VERSION}"
+                             f"（application_id={state[0]}, user_version={state[1]}）。{FORMAT_RESET}")
         self.db = connect(path, readonly=readonly)
         self.db.row_factory = sqlite3.Row
         try:
             tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             if tables:
-                application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
-                version = self.db.execute("PRAGMA user_version").fetchone()[0]
-                if application_id != 0x4C424D4A or version != FORMAT_VERSION:
-                    raise ValueError(f"{path} 不是当前版本使用的记忆处理库格式 {FORMAT_VERSION}"
-                                     f"（application_id={application_id}, user_version={version}）。{FORMAT_RESET}")
+                require_columns(self.db, SCHEMA, path=path, label='记忆处理库', version=FORMAT_VERSION)
             else:
                 if readonly:
                     raise ValueError(f'Existing memory processing database is not initialized: {path}')
-                self.db.executescript("""
-                    BEGIN;
-                    PRAGMA application_id=1279413578;
-                    PRAGMA user_version=1;
-                    CREATE TABLE memory_cursors (
-                        scene TEXT PRIMARY KEY, after_seq INTEGER NOT NULL,
-                        enabled_at REAL NOT NULL
-                    );
-                    CREATE TABLE memory_personas (
-                        scene TEXT NOT NULL, persona_id TEXT NOT NULL,
-                        PRIMARY KEY(scene,persona_id)
-                    );
-                    CREATE TABLE memory_jobs (
-                        id INTEGER PRIMARY KEY, scene TEXT NOT NULL, backend TEXT NOT NULL,
-                        first_seq INTEGER NOT NULL, through_seq INTEGER NOT NULL,
-                        status TEXT NOT NULL, started REAL NOT NULL, ended REAL,
-                        details TEXT NOT NULL, error TEXT
-                    );
-                    CREATE INDEX memory_jobs_scene ON memory_jobs(scene,id);
-                    CREATE TABLE memory_exclusions (
-                        scene TEXT NOT NULL, message_seq INTEGER NOT NULL,
-                        PRIMARY KEY(scene,message_seq)
-                    );
-                    CREATE TABLE memory_summary_runs (
-                        id INTEGER PRIMARY KEY, scene TEXT NOT NULL, scope TEXT NOT NULL, path TEXT NOT NULL,
-                        started REAL NOT NULL, ended REAL,
-                        status TEXT NOT NULL CHECK(status IN ('running','complete','failed','interrupted')),
-                        request TEXT NOT NULL, response TEXT, usage TEXT, tokens TEXT, error TEXT, model_started REAL
-                    );
-                    CREATE INDEX memory_summary_runs_path ON memory_summary_runs(scope,path,id);
-                    CREATE TABLE memory_embedding_calls (
-                        id INTEGER PRIMARY KEY, scene TEXT NOT NULL, purpose TEXT NOT NULL,
-                        started REAL NOT NULL, ended REAL, request TEXT NOT NULL,
-                        response TEXT, usage TEXT, tokens TEXT, error TEXT
-                    );
-                    CREATE INDEX memory_embedding_usage ON memory_embedding_calls(started,scene);
-                    COMMIT;
-                """)
+                self.db.executescript(f"BEGIN; PRAGMA application_id=1279413578; PRAGMA user_version={FORMAT_VERSION};\n"
+                                      f"{SCHEMA}\nCOMMIT;")
         except BaseException:
             self.db.close()
             raise

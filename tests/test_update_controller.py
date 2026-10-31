@@ -678,3 +678,43 @@ def test_read_only_files_are_removed_with_their_snapshot(make, monkeypatch):
         unlink(path, dir_fd=dir_fd)
     monkeypatch.setattr(os, 'unlink', windows_unlink)
     assert controller.delete_snapshot(snapshot.name) == [] and not snapshot.exists()
+
+
+def test_requests_with_a_bad_length_or_body_are_answered_4xx(make, tmp_path):
+    import socket
+    import threading
+    (tmp_path / 'instance').mkdir()
+    controller = make(Backend())
+    controller.backend.instance = tmp_path / 'instance'
+    http = updater.server(controller)
+    thread = threading.Thread(target=http.serve_forever)
+    thread.start()
+    reference = json.loads((tmp_path / 'instance/.runtime/update-control.json').read_text())
+
+    def post(length: str | None, body: bytes = b'') -> int:
+        lines = ['POST /api/prepare HTTP/1.1', 'Host: 127.0.0.1', 'Authorization: Bearer ' + reference['token'],
+                 'Connection: close']
+        if length is not None:
+            lines.append('Content-Length: ' + length)
+        with socket.create_connection(('127.0.0.1', http.server_port), timeout=5) as connection:
+            connection.sendall('\r\n'.join(lines).encode() + b'\r\n\r\n' + body)
+            reply = b''
+            while block := connection.recv(4096):
+                reply += block
+        return int(reply.split(b' ', 2)[1])
+    try:
+        assert post('-1') == 400
+        assert post('abc') == 400
+        assert post('1.5') == 400
+        assert post('99999999999999999999') == 400
+        assert post('5000', b'{}') == 400
+        assert post('4', b'nope') == 400
+        assert post('2', b'[]') == 400
+        assert post('4', b'null') == 400
+        assert post('2', b'42') == 400
+        assert controller.status()['status'] == 'idle'
+        assert post('2', b'{}') == 409
+    finally:
+        http.shutdown()
+        thread.join(5)
+        http.server_close()

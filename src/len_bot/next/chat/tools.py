@@ -317,6 +317,8 @@ class SceneTools:
         self.scene_control: Callable[[SceneControlArguments], dict] | None = None
         self.attention: Callable[[AttentionArguments, str, str], dict] | None = None
         self.turn_disposition: Disposition | None = None
+        # The session's last message seq when the running turn began; None while no turn runs.
+        self.source_floor: int | None = None
         self.host_management: HostManagement | None = None
         # Only an accepted restart in this live turn waits for its final store write.
         self.restart_after_turn = False
@@ -446,7 +448,7 @@ class SceneTools:
             return await tool.call(self.config.scene, call.arguments), None, None
         if call.name in SOURCED_TOOLS:
             # Permission comes from the chosen message's actual sender, never from a model-typed account.
-            call = ToolCall(call.id, call.name, with_requester(self.store, self.config, call.arguments))
+            call = ToolCall(call.id, call.name, with_requester(self.store, self.config, call.arguments, self.source_floor))
         if call.name == "say":
             arguments = SayArguments.model_validate(call.arguments)
             if arguments.sticker is not None and 'react' not in self.allowed_tool_names:

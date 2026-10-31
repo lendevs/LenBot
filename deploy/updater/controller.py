@@ -39,6 +39,10 @@ SNAPSHOT_NAME = re.compile(r'[0-9]{8}-[0-9]{6}-[0-9a-f]{8}')
 REMOVING = '.removing-'
 
 
+class BadRequest(Exception):
+    """A request whose framing or body is not what the endpoint accepts."""
+
+
 def rotate(path: Path) -> None:
     """Keep one previous file once a log grows past the limit; checked when the updater starts."""
     if path.exists() and path.stat().st_size > LOG_LIMIT:
@@ -496,10 +500,22 @@ def server(controller: Controller) -> ThreadingHTTPServer:
                 self.send(404, {'detail': 'Unknown endpoint'})
                 return
             try:
-                length = int(self.headers.get('Content-Length', '0'))
+                header = self.headers.get('Content-Length', '0')
+                if re.fullmatch(r'[0-9]{1,9}', header) is None:
+                    raise BadRequest('Content-Length 必须是非负整数')
+                length = int(header)
                 if length > 4096:
-                    raise ValueError('更新请求过大')
-                payload = json.loads(self.rfile.read(length) or b'{}')
+                    raise BadRequest('更新请求过大')
+                try:
+                    payload = json.loads(self.rfile.read(length) or b'{}')
+                except ValueError as error:
+                    raise BadRequest(f'请求体不是 JSON：{error}') from None
+                if not isinstance(payload, dict):
+                    raise BadRequest('请求体必须是 JSON 对象')
+            except BadRequest as error:
+                self.send(400, {'detail': str(error)})
+                return
+            try:
                 self.send(202, controller.submit(path.removeprefix('/api/'), payload))
             except (ValueError, KeyError) as error:
                 self.send(409, {'detail': str(error)})
