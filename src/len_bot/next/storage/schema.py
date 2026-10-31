@@ -1,7 +1,9 @@
 """Create the current database from domain-owned schemas in one transaction."""
 
+from collections.abc import Iterable
 from contextlib import closing
 from functools import cache
+from pathlib import Path
 import sqlite3
 
 # Until the first release candidate a format change comes without an upgrade step.
@@ -102,7 +104,8 @@ CREATE INDEX turns_expiry ON turns(ended,id);
 """
 
 
-def create_database(db: sqlite3.Connection, version: int) -> None:
+def business_script() -> str:
+    """Every statement that creates the business database, without its format markers."""
     from ..media.audio_store import SCHEMA as AUDIO
     from ..learning.jargon_store import SCHEMA as JARGON
     from ..learning.store import SCHEMA as LEARNING
@@ -116,13 +119,82 @@ def create_database(db: sqlite3.Connection, version: int) -> None:
 
     domains = (SCHEMA, SCHEDULES, TASKS, AUDIO, LEARNING, JARGON, STICKERS,
                REPLY_EFFECTS, PROACTIVE, PLUGINS, USAGE)
+    return "\n".join(domains)
+
+
+def create_database(db: sqlite3.Connection, version: int) -> None:
     db.executescript(f"BEGIN; PRAGMA application_id = 1279413809; PRAGMA user_version = {version};\n"
-                     + "\n".join(domains) + "\nCOMMIT;")
+                     + business_script() + "\nCOMMIT;")
 
 
 @cache
 def expected_tables() -> frozenset[str]:
     """Names of the tables a database of the current format holds."""
+    return frozenset(script_columns(business_script()))
+
+
+Column = tuple[str, str, int, str | None]
+
+
+def stored_state(path: Path) -> tuple[int, int, frozenset[str]] | None:
+    """``application_id``, ``user_version`` and table names of an existing non-empty file.
+
+    The file is opened read-only, so a file about to be refused stays exactly as it was; a missing
+    or empty file has no state.
+    """
+    if not path.is_file() or path.stat().st_size == 0:
+        return None
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        tables = frozenset(row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+        return db.execute('PRAGMA application_id').fetchone()[0], db.execute('PRAGMA user_version').fetchone()[0], tables
+
+
+def table_columns(db: sqlite3.Connection, tables: Iterable[str]) -> dict[str, frozenset[Column]]:
+    """Per table the set of (name, type, not null, default); the order of columns is not part of it."""
+    return {table: frozenset((row[1], row[2], row[3], row[4]) for row in db.execute(f'PRAGMA table_info("{table}")'))
+            for table in tables}
+
+
+@cache
+def script_columns(script: str) -> dict[str, frozenset[Column]]:
+    """The columns of every table a schema script creates."""
     with closing(sqlite3.connect(':memory:')) as db:
-        create_database(db, 0)
-        return frozenset(row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+        db.executescript(script)
+        return table_columns(db, [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")])
+
+
+def _describe(column: Column) -> str:
+    name, kind, not_null, default = column
+    return ' '.join(part for part in (name, kind, 'NOT NULL' if not_null else '',
+                                      '' if default is None else f'DEFAULT {default}') if part)
+
+
+def column_differences(db: sqlite3.Connection, script: str) -> list[str]:
+    """Tables of the current schema that are missing or whose column sets differ, with the columns."""
+    expected = script_columns(script)
+    actual = table_columns(db, [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                                if row[0] in expected])
+    problems = []
+    for table in sorted(expected):
+        if table not in actual:
+            problems.append(f'{table}（缺少这张表）')
+            continue
+        if actual[table] == expected[table]:
+            continue
+        want = {column[0]: column for column in expected[table]}
+        have = {column[0]: column for column in actual[table]}
+        details = []
+        if missing := sorted(want.keys() - have.keys()):
+            details.append('缺少列 ' + '、'.join(missing))
+        if extra := sorted(have.keys() - want.keys()):
+            details.append('多出列 ' + '、'.join(extra))
+        details.extend(f'列 {name} 为 {_describe(have[name])}，应为 {_describe(want[name])}'
+                       for name in sorted(want.keys() & have.keys()) if want[name] != have[name])
+        problems.append(f'{table}（{"；".join(details)}）')
+    return problems
+
+
+def require_columns(db: sqlite3.Connection, script: str, *, path: Path, label: str, version: int) -> None:
+    """Refuse a database whose tables differ from the current schema in their column sets."""
+    if problems := column_differences(db, script):
+        raise ValueError(f'{path} 的{label}表结构与格式 {version} 不一致：{"；".join(problems)}。{FORMAT_RESET}')

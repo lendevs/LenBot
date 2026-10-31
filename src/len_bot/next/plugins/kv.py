@@ -6,12 +6,14 @@ from pathlib import Path
 
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 
+from ..storage.schema import FORMAT_RESET, require_columns, stored_state
 from ..storage.sqlite import connect
 
 
 JSON = TypeAdapter(JsonValue, config=ConfigDict(strict=True, allow_inf_nan=False))
 APPLICATION_ID = 0x4C424B56  # "LBKV"
 FORMAT_VERSION = 1
+SCHEMA = "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
 
 
 class PluginKV:
@@ -22,15 +24,19 @@ class PluginKV:
     def connection(self, key: str):
         if not key.strip():
             raise ValueError("插件 KV key 不能为空")
+        # Opening read-write switches the file to WAL, so a file of another format is refused before that.
+        state = stored_state(self.path)
+        identity = (0, 0) if state is None else state[:2]
+        if identity not in {(0, 0), (APPLICATION_ID, FORMAT_VERSION)}:
+            raise ValueError(f"{self.path} 不是当前格式的插件 KV：application_id={identity[0]}, format={identity[1]}。{FORMAT_RESET}")
         with closing(connect(self.path)) as db, db:
-            identity = (db.execute("PRAGMA application_id").fetchone()[0], db.execute("PRAGMA user_version").fetchone()[0])
             if identity == (0, 0):
                 # A new file, or one written before the format was marked; the table shape is the same.
-                db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                db.execute(SCHEMA)
+            require_columns(db, SCHEMA, path=self.path, label='插件 KV', version=FORMAT_VERSION)
+            if identity == (0, 0):
                 db.execute(f"PRAGMA application_id={APPLICATION_ID}")
                 db.execute(f"PRAGMA user_version={FORMAT_VERSION}")
-            elif identity != (APPLICATION_ID, FORMAT_VERSION):
-                raise ValueError(f"{self.path} 不是当前格式的插件 KV：application_id={identity[0]}, format={identity[1]}")
             yield db
 
     def get(self, key: str, default: JsonValue) -> JsonValue:
