@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .pdf_read import read_pdf
 
 from ..configuration.chat import WebReadSettings
+from .host_traffic import admit
 from .http_read import fetch_public
 from ..storage.store import Store, WebPage
 from ..trials.replay_web import RecordedWeb
@@ -166,10 +167,12 @@ async def execute_web_read(store: Store, scene: str, settings: WebReadSettings,
     deadline = asyncio.timeout(settings.timeout_seconds)
     try:
         async with deadline:
+            admit(arguments.url)
             item, body = recording.document(arguments.url)
             if not 200 <= item.status_code < 300:
                 raise ValueError(f'HTTP read status {item.status_code}: {body[:2048].decode("utf-8", errors="replace")}')
             final_url, content_type, fetched_at = item.final_url, item.content_type, item.fetched_at
+            admit(final_url)
             media_type = content_type.split(';', 1)[0].strip().lower()
             if len(body) > _web_limit(media_type, body[:8]):
                 raise ValueError(f'Frozen web_read response exceeds the normal {media_type} byte limit')
@@ -223,7 +226,11 @@ async def read_web_page(store: Store, scene: str, settings: WebReadSettings, url
             if settings.provider != "local":
                 if connection is None:
                     raise ValueError(f"{settings.provider} 读取连接未提供")
+                # The service fetches the page itself: the target and the address it reports back both need the
+                # task's egress mode, and a refused page is dropped before it is saved.
+                admit(url)
                 final_url, content = await KEYED_READ[settings.provider](connection, url, settings.timeout_seconds)
+                admit(final_url)
                 if not content.strip():
                     raise ValueError(f"web_read {KEYED_NAMES[settings.provider]} returned no text for {url}")
                 page = WebPage(url=url, final_url=final_url, fetched_at=time.time(), media_type="text/markdown",

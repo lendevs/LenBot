@@ -21,6 +21,11 @@ from typing import BinaryIO
 HEADER = struct.Struct("!cI")
 MAX_METADATA_BYTES = 16384
 CHUNK_BYTES = 65536
+# Host routes the worker may call besides the model APIs; the tool routes match ``task_routes.DATA_ROUTES``.
+TASK_ROUTES = frozenset({
+    "/task/deliver-file", "/task/browser-file", "/task/network", "/task/mcp",
+    "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/knowledge", "/task/web-read", "/task/web-search",
+})
 
 
 def read_frame(stream: BinaryIO, limit: int) -> tuple[bytes, bytes]:
@@ -111,8 +116,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self.close_connection = True
         path = "/v1/messages" if self.path == "/v1/messages?beta=true" else self.path
-        if (path not in {"/v1/chat/completions", "/v1/responses", "/v1/messages", "/task/deliver-file", "/task/browser-file", "/task/network",
-                             "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/mcp"}
+        if (path not in {"/v1/chat/completions", "/v1/responses", "/v1/messages", *TASK_ROUTES}
                 and not (path.startswith("/v1beta/models/") and path.endswith(":streamGenerateContent?alt=sse"))):
             self._error(404, f"unsupported worker route: {self.path}")
             return

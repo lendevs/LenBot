@@ -1262,6 +1262,7 @@ export default {
           question: 'Question',
           answer: 'Got an answer',
           browser_file: 'Saved a browser file',
+          data_tool: 'Data tool call',
           workspace_discard: 'Discarded the environment',
           workspace_discard_result: 'Cleaned the environment',
           material_inputs: 'Added materials',
@@ -2179,7 +2180,7 @@ export default {
       editRole: 'Edit the persona’s skills',
       readFailed: 'Could not read skills',
       empty: 'This group has no skills yet',
-      needsWorker: 'Skills run in tasks; enable tasks and set a skills folder first',
+      needsWorker: 'Skills run in tasks; enable tasks first',
       setUpWorker: 'Set up tasks',
       sources: {
         scene: 'This group',
@@ -2310,8 +2311,7 @@ export default {
       workspace: 'Task workspace folder',
       runtimeRoot: 'Task runtime folder',
       delivery: 'Task delivery folder',
-      skills: 'Skills folder',
-      skillsOff: 'Empty turns skills off',
+      skills: 'Custom skills folder',
       memory: 'Memory limit',
       tmpfs: 'Temporary file space',
       size: 'A number followed by k, m or g, such as 2g',
@@ -2857,6 +2857,10 @@ export default {
       failed: 'Connection failed',
       simulated: 'Simulated',
       real: 'Send to QQ',
+      connect: 'Connection',
+      now: 'Connect OneBot',
+      later: 'Not now',
+      botAccount: 'Bot QQ',
     },
     owner: {
       owner: 'Owner QQ',
@@ -2910,6 +2914,9 @@ export default {
       private: 'Private',
       groupId: 'Group number',
       privateId: 'Their QQ',
+      groupSource: 'Group source',
+      fromList: 'Pick from joined groups',
+      manual: 'Enter manually',
     },
     plugins: {
       disabled:

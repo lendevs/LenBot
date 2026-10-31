@@ -560,6 +560,40 @@ async def test_network_mode_refuses_hosts_before_dialing_and_records_why(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_the_first_request_describes_the_programs_of_its_environment(tmp_path, upstream, environment):
+    port, received = upstream
+    config = host_config(tmp_path, port, environment)
+    async with task_host(config, config.database) as tasks:
+        id = await delegate(tasks, '看环境')
+        assert (await reached(tasks, id, 'done', 'failed'))['status'] == 'done'
+    [request] = received
+    prompt = request['messages'][0]['content']
+    facts = json.loads(next(line for line in prompt.splitlines() if line.startswith('{"public_network"')))
+    # The worker image holds every program; the local sandbox holds what its task runtime and the system provide.
+    assert ('lenbot-render' in facts['programs']) == (environment == 'standin')
+    assert ('lenbot-render' in prompt.split('"public_browser"', 1)[1]) == (environment == 'standin')
+    assert ('python:pandas' in facts['programs']) == (environment == 'standin')
+    assert ('预装 pandas' in prompt) == (environment == 'standin')
+    assert facts['public_browser'] is None and 'public_browser 非空' not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['off', 'public'])
+async def test_node_fetch_follows_the_task_proxy_in_the_local_sandbox(tmp_path, upstream, environment, mode):
+    if environment != 'bwrap':
+        pytest.skip('the container sandbox is configured through docker exec')
+    port, _ = upstream
+    config = host_config(tmp_path, port, environment, egress={'mode': mode})
+    async with task_host(config, config.database) as tasks:
+        id = (await tasks.delegate(SCENE, requester=WHITELISTED, goal='看代理 [环境]', deliverable='无',
+                                   context='无'))['id']
+        done = await reached(tasks, id, 'done', 'failed')
+    assert done['status'] == 'done', done['error']
+    seen = json.loads(done['summary'].split('环境：', 1)[1].splitlines()[0])
+    assert (seen['NODE_USE_ENV_PROXY'], seen['HTTP_PROXY'] is not None) == (('1', True) if mode == 'public' else (None, False))
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(not os.environ.get('LENBOT_NETWORK_TESTS'), reason='reaches example.com; set LENBOT_NETWORK_TESTS')
 @pytest.mark.skipif(sys.platform == 'win32', reason='the egress bridge runs inside the Linux task container')
 async def test_allowed_host_connects_and_the_upload_limit_stops_a_large_body(tmp_path, upstream, environment):

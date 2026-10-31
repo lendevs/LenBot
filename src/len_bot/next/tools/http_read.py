@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import httpx
 
 from ..work.egress_policy import blocked_address_reason, public_addresses
+from .host_traffic import MeteredTransport, admit
 
 
 MAX_REDIRECTS = 5
@@ -71,6 +72,8 @@ async def fetch_public(url: str, timeout_seconds: float,
     current = url
     for redirect in range(MAX_REDIRECTS + 1):
         current, host, port, host_header, scheme = _target(current)
+        # Every hop, redirects included, is checked against a task's egress mode before any lookup.
+        admit(current)
         address = await _numeric_address(host, port, fake_ip_networks, public_dns_url, timeout_seconds)
         numeric_host = f"[{address}]" if ":" in address else address
         authority = numeric_host if port == (443 if scheme == "https" else 80) else f"{numeric_host}:{port}"
@@ -79,7 +82,7 @@ async def fetch_public(url: str, timeout_seconds: float,
         # A client belongs to exactly one hop, preventing cross-origin connection reuse.
         async with httpx.AsyncClient(
             timeout=timeout_seconds, trust_env=False, follow_redirects=False,
-            transport=httpx.AsyncHTTPTransport(retries=0, trust_env=False),
+            transport=MeteredTransport(httpx.AsyncHTTPTransport(retries=0, trust_env=False), host=host, ip=address),
         ) as client:
             async with client.stream(
                 "GET", numeric_url, headers={"Host": host_header, "Accept-Encoding": "identity"},

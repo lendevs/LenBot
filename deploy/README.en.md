@@ -25,7 +25,7 @@ Modify settings through the web panel while LenBot is running; stop LenBot befor
 |---|---|
 | [current/installation.md](current/installation.md) (zh) | Linux and Windows deployment packages, Docker setup, unattended JSON initialization |
 | [current/README.md](current/README.md) (zh) | System service templates, companion containers (Ollama embeddings, worker image), startup order |
-| [current/operations.md](current/operations.md) (zh) | Maintenance CLI commands, reverse proxies, local proxy `fake-ip`, snapshot upgrades, usage accounting |
+| [current/operations.md](current/operations.md) (zh) | Maintenance CLI commands, reverse proxies, local proxy `fake-ip`, snapshot upgrades, usage accounting, release checklist |
 | [current/asr.md](current/asr.md) (zh), [current/start-asr.sh](current/start-asr.sh) | Local macOS speech recognition (`whisper.cpp`) build and configuration |
 | [current/task-storage.md](current/task-storage.md) (zh) | Dedicated filesystem storage pools for background tasks (Linux `ext4` / macOS `APFS`) |
 | [current/lenbot.service](current/lenbot.service), [current/start.command](current/start.command) | Linux `systemd` service template and macOS double-click launcher |

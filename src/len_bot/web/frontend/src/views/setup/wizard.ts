@@ -7,6 +7,7 @@ import type {
   OneBotLink,
   SetupBinding,
   SetupEmbedding,
+  SetupGroup,
   SetupModel,
   SetupProvider,
 } from '../../api/setup'
@@ -35,7 +36,11 @@ export interface Draft {
   listenPort: number | null
   accessToken: string
   onebotTimeout: number | null
+  /** `later` skips the OneBot connection; the host then runs simulated, with no connection to wait for. */
+  connect: 'now' | 'later'
+  botAccount: string
   delivery: 'simulated' | 'onebot'
+  groupSource: 'list' | 'manual'
   owner: string
   timezone: string
   preset: 'deepseek' | 'compatible' | 'anthropic'
@@ -114,7 +119,10 @@ function initial(): Draft {
     listenPort: 8080,
     accessToken: '',
     onebotTimeout: 30,
+    connect: 'now',
+    botAccount: '',
     delivery: 'simulated',
+    groupSource: 'list',
     owner: '',
     timezone: 'Asia/Shanghai',
     preset: 'deepseek',
@@ -224,7 +232,7 @@ export function createWizard() {
   const vectorCatalog = ref<SetupModel[]>([])
 
   /** What a connection or model test passed with; a later edit makes it stale. */
-  const platform = ref<{ signature: string; botId: string } | null>(null)
+  const platform = ref<{ signature: string; botId: string; groups: SetupGroup[] } | null>(null)
   const modelPassed = ref<string | null>(null)
   let keep = true
 
@@ -319,8 +327,13 @@ export function createWizard() {
   }
 
   const platformSignature = computed(() => JSON.stringify(onebot()))
+  const connectLater = computed(() => draft.connect === 'later')
   const modelSignature = computed(() => JSON.stringify([provider(), binding(), draft.probeKind]))
-  const platformReady = computed(() => platform.value?.signature === platformSignature.value)
+  const platformReady = computed(
+    () => !connectLater.value && platform.value?.signature === platformSignature.value,
+  )
+  /** Groups the connected account has joined; empty when there is no passed connection or no list. */
+  const joinedGroups = computed(() => (platformReady.value ? platform.value!.groups : []))
   const modelReady = computed(() => modelPassed.value === modelSignature.value)
 
   function choosePreset(preset: Draft['preset']) {
@@ -430,7 +443,9 @@ export function createWizard() {
       need('passwordAgain', draft.password === draft.passwordAgain, 'passwordMismatch')
       need('port', draft.port !== null && draft.port >= 1 && draft.port <= 65535, 'port')
     }
-    if (step === 'platform') {
+    if (step === 'platform' && connectLater.value) {
+      need('botAccount', ACCOUNT.test(draft.botAccount.trim()), 'account')
+    } else if (step === 'platform') {
       if (draft.transport === 'forward_ws') need('wsUrl', wsUrl(draft.wsUrl.trim()), 'wsUrl')
       else {
         need('listenHost', Boolean(draft.listenHost.trim()))
@@ -512,11 +527,11 @@ export function createWizard() {
             boundaries: draft.boundaries.trim(),
           }
     return {
-      bot_id: platform.value?.botId ?? '',
+      bot_id: connectLater.value ? `onebot:${draft.botAccount.trim()}` : (platform.value?.botId ?? ''),
       owners: [`onebot:${draft.owner.trim()}`],
       timezone: draft.timezone.trim(),
-      delivery: draft.delivery,
-      onebot: onebot(),
+      delivery: connectLater.value ? 'simulated' : draft.delivery,
+      onebot: connectLater.value ? null : onebot(),
       provider: provider(),
       mind: binding(),
       embedding:
@@ -593,6 +608,8 @@ export function createWizard() {
     platform,
     modelPassed,
     platformReady,
+    connectLater,
+    joinedGroups,
     modelReady,
     platformSignature,
     modelSignature,

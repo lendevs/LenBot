@@ -162,6 +162,7 @@ class WorkerDefaults(PanelResponse):
     workspace_root: str | None = None
     runtime_root: str | None = None
     delivery_root: str | None = None
+    skills_directory: str | None = None
     uid: int | None = None
     gid: int | None = None
     task_volume: JsonObject | None = None
@@ -650,8 +651,14 @@ class SetupProtocols(Protocols):
     panel_port: int | None
 
 
+class SetupGroup(PanelResponse):
+    id: str
+    name: str
+
+
 class SetupPlatform(PanelResponse):
     bot_id: str
+    groups: list[SetupGroup]
 
 
 class SetupPlugins(PanelResponse):

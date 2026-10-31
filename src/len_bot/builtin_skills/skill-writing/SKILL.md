@@ -1,13 +1,14 @@
 ---
 name: skill-writing
-description: Write a focused, reusable task skill with valid metadata and instructions grounded in the task's available tools.
+description: 编写聚焦、可复用的任务技能，元数据有效，说明建立在任务环境实际提供的工具上。
 ---
 
-# Skill writing
+# 技能编写
 
-Use this when the requested deliverable is a reusable skill. A task-created skill goes in `/workspace/skills/<name>/SKILL.md`.
+要求的交付物是可复用技能时使用。任务编写的技能放在 `/workspace/skills/<name>/SKILL.md`。
 
-- Choose one narrow capability and a lowercase hyphenated directory name. Put the same `name` and a discriminating `description` in YAML frontmatter, then give the reader the workflow, inputs, outputs, and checks that the task alone would leave unclear.
-- Describe the tools and services available in the intended environment. If a workflow needs a package, say how to install it in that task workspace. Leave out empty section templates, copied manuals, author credits, and unrequested invocation metadata.
-- Re-read the file to check frontmatter, links, commands, and example paths. A new skill takes effect once a session loads it.
-- For handoff, put the skill file or a Python-standard-library archive of its folder in `/workspace/out` and call `deliver_file(path, name, note)`. The operator adopts it into group or shared skills.
+- 选一个窄的能力和小写连字符的目录名。在 YAML 前置元数据里写相同的 `name` 和有区分度的 `description`，正文给出工作流程、输入、输出和检查项，补足任务本身没有说清的部分。
+- 以执行环境实际的工具和服务为准：查看环境事实里的 `programs`、`data_tools` 和 `network_mode`，只写这些能做到的步骤；可选程序的步骤用 `command -v <程序>` 判断后再走。
+- 不放空白的章节模板、抄来的手册、作者署名和未要求的调用元数据。
+- 重新读一遍文件，核对前置元数据、链接、命令和示例路径。新技能在会话加载它之后生效。
+- 交接时把技能文件，或用 Python 标准库打包的技能目录压缩包放到 `/workspace/out`，调用 `deliver_file(path, name, note)`。运维人员把它收入群技能或共享技能。

@@ -503,7 +503,6 @@ function addPackageHosts() {
             <Input
               :model-value="form.skills_directory ?? ''"
               mono
-              :placeholder="t('capabilities.worker.skillsOff')"
               @update:model-value="(value: string) => (form.skills_directory = value.trim() ? value : null)"
             />
           </Field>

@@ -4,13 +4,23 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const TASK_API_FILE = "/run/lenbot/task-api.json";
 const TASK_API_BASE = "http://127.0.0.1:18181";
-type BuiltinDataToolName = "recall_chat" | "memory" | "transcribe";
+type BuiltinDataToolName = "recall_chat" | "memory" | "transcribe" | "knowledge" | "web_read" | "web_search";
 type MCPToolName = `mcp__${string}`;
 type DataToolName = BuiltinDataToolName | MCPToolName;
 type DataTool = { name: DataToolName; description: string; parameters: Record<string, unknown> };
 type TaskApiSettings = { token: string; timeoutMs: number; tools: DataTool[] };
-const DATA_ROUTES = {recall_chat: "/task/recall-chat", memory: "/task/memory", transcribe: "/task/transcribe"} as const;
-const DATA_LABELS = {recall_chat: "Recall chat", memory: "Memory", transcribe: "Transcribe scene audio"} as const;
+const DATA_ROUTES = {
+  recall_chat: "/task/recall-chat", memory: "/task/memory", transcribe: "/task/transcribe",
+  knowledge: "/task/knowledge", web_read: "/task/web-read", web_search: "/task/web-search",
+} as const;
+const DATA_LABELS = {
+  recall_chat: "Recall chat", memory: "Memory", transcribe: "Transcribe scene audio",
+  knowledge: "Knowledge", web_read: "Read web page", web_search: "Search the web",
+} as const;
+
+function isBuiltinName(value: string): value is BuiltinDataToolName {
+  return Object.hasOwn(DATA_ROUTES, value);
+}
 
 function isMCPName(value: string): value is MCPToolName {
   return /^mcp__[a-zA-Z0-9_-]{1,59}$/.test(value);
@@ -41,8 +51,7 @@ async function taskApi(): Promise<TaskApiSettings> {
     }
     const tool = value as Record<string, unknown>;
     const name = tool.name;
-    if (name !== "recall_chat" && name !== "memory" && name !== "transcribe"
-      && !(typeof name === "string" && isMCPName(name))) {
+    if (typeof name !== "string" || !(isBuiltinName(name) || isMCPName(name))) {
       throw new Error(`${TASK_API_FILE}: invalid tools[${index}].name: ${JSON.stringify(name)}`);
     }
     if (names.has(name)) throw new Error(`${TASK_API_FILE}: duplicate tool name ${name}`);
@@ -62,7 +71,7 @@ async function taskApi(): Promise<TaskApiSettings> {
 
 async function taskPost(
   settings: TaskApiSettings,
-  route: "/task/deliver-file" | "/task/network" | "/task/recall-chat" | "/task/memory" | "/task/transcribe" | "/task/mcp",
+  route: "/task/deliver-file" | "/task/network" | "/task/mcp" | (typeof DATA_ROUTES)[BuiltinDataToolName],
   operation: "deliver_file" | "network_status" | DataToolName,
   body: Record<string, unknown>,
   signal?: AbortSignal,
@@ -154,15 +163,15 @@ export default async function lenbotExtension(pi: ExtensionAPI) {
   });
 
   for (const tool of settings.tools) {
-    const route = isMCPName(tool.name) ? "/task/mcp" : DATA_ROUTES[tool.name];
+    const route = isBuiltinName(tool.name) ? DATA_ROUTES[tool.name] : "/task/mcp";
     pi.registerTool({
       name: tool.name,
       executionMode: "sequential",
-      label: isMCPName(tool.name) ? tool.name : DATA_LABELS[tool.name],
+      label: isBuiltinName(tool.name) ? DATA_LABELS[tool.name] : tool.name,
       description: tool.description,
       parameters: Type.Unsafe<Record<string, unknown>>(tool.parameters),
       async execute(_id, args, signal) {
-        const body = isMCPName(tool.name) ? {name: tool.name, arguments: args} : args;
+        const body = isBuiltinName(tool.name) ? args : {name: tool.name, arguments: args};
         const { raw, payload } = await taskPost(settings, route, tool.name, body, signal);
         if (typeof payload.content !== "string") {
           throw new Error(`${tool.name} expected a string content; raw=${raw}`);

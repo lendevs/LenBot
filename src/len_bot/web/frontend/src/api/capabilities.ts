@@ -84,6 +84,7 @@ export type WorkerDefaults = Partial<
     | 'workspace_root'
     | 'runtime_root'
     | 'delivery_root'
+    | 'skills_directory'
     | 'uid'
     | 'gid'
     | 'task_volume'

@@ -77,7 +77,7 @@
 
 - `worker.max_calls` 按单次执行或单次续接统计；`max_tokens` 按整个任务跨续接累计的输入加输出 token 统计。HTTP `4xx` 拒绝且无 `usage` 的请求可在修复后继续续接；已被接受后中断或 `5xx` 导致用量未知时，若配置了任务 token 上限则暂停续接。
 - `max_daily_tasks` 仅统计新建任务数，续接原任务不重复扣减。
-- 单个交付文件默认上限 25 MiB，单任务累计登记交付默认上限 500 MiB（`worker.max_delivery_bytes`，续接继续累计）。任务镜像内置 `lenbot-render`，可将 HTML 渲染为 PDF 或 PNG 截图。
+- 单个交付文件默认上限 25 MiB，单任务累计登记交付默认上限 500 MiB（`worker.max_delivery_bytes`，续接继续累计）。Docker 任务容器内置 `lenbot-render`，可将 HTML 渲染为 PDF 或 PNG 截图。
 - 运行日志统一写入 `logs/lenbot.jsonl`（按天轮转，默认保留 14 天），自动遮盖配置与插件密钥；通过面板导出日志文件或诊断包时，5 位及以上的连续数字一并遮盖。
 
 ## 无 QQ 连接运行
@@ -86,3 +86,11 @@
 
 - 保留 `panel` 配置时，面板、插件、模型与后台任务照常运行，可在面板内做隔离试聊。
 - 同时设置 `panel: null` 时，`len-bot` 从标准输入逐行读取 OneBot 原始事件 JSON，读至输入末尾并处理完已入库消息后自动退出。公开回放套件见 [examples/replay/](../../examples/replay/README.md)。
+
+## 发布核对清单
+
+推送 `v<版本>` 标签、Release 工作流完成后，在 Release 页逐项核对：
+
+- `release-manifest.json` 的 `images` 含 ghcr 和 Docker Hub 两个 registry 的 host、worker、updater 镜像。
+- 文档中的版本示例与标签一致：`uv run --no-sync python scripts/prepare_release.py <版本>` 在设置版本时同步 `README.md`、`README.en.md`、`deploy/current/installation.md` 和 `website/start/*.md`，`tests/test_release_scripts.py` 检查示例版本与 `pyproject.toml` 一致。
+- 预发布版本（版本号带 `a`、`b` 或 `rc`）在 Release 页标为预发布，没有被标为 latest；文档里的下载链接指向该版本的 Release 页面 `https://github.com/lendevs/LenBot/releases/tag/v<版本>`。
