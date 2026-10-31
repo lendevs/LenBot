@@ -116,6 +116,10 @@ Until the first release candidate (RC), all six format and interface numbers sta
 
 The four SQLite databases above record their file type in `PRAGMA application_id` and their format version in `PRAGMA user_version`; the host opens only files matching both expected values. The reference retrieval index (`reference/library.py`) stores derived data only and rebuilds its tables automatically from source documents whenever its schema changes.
 
+The structure fingerprint test (`tests/test_format_fingerprint.py`) records one fingerprint per format number for the `CREATE TABLE` and `CREATE INDEX` statements of the four databases above and for the field structure of the root configuration model. It fails when the structure changed but the number did not. From the first RC on, bump the matching number, add the migration in `maintenance/upgrade.py` and record the new fingerprint for the new number in the test; the fingerprint of a released number never changes. Before the RC the numbers stay at `1`, and the fingerprint recorded for `1` is replaced together with the structure change.
+
+When opening, the business database, memory job database, local memory index and plugin key-value store also compare their columns table by table as sets (name, type, `NOT NULL`, default; order is ignored) against the current `CREATE` statements. A mismatch refuses the file and lists the differing tables and columns, so a new column only needs the `CREATE` statement changed and nothing may depend on column position.
+
 JSON payloads stored inside database columns decode strictly into dataclasses (`ChatMessage`, `Sender`, `Segment`, `Task`, `TaskFile`, `Schedule`, plus model call and memory job records) and are part of the persistent format contract.
 
 Starting from the first RC, every persistent format change increments its version constant and adds a migration from the previous version in the `apply` step of `maintenance/upgrade.py`. The updater controller captures a full instance snapshot before running `apply`.

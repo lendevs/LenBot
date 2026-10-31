@@ -92,7 +92,10 @@ class Containers:
         return self.command(args, capture=capture)
 
     def prepare(self, manifest: dict, archive: Path | None, work: Path) -> dict:
-        images = manifest['images'][self.deployment['registry']]
+        registry = self.deployment['registry']
+        images = manifest['images'].get(registry)
+        if images is None:
+            raise ValueError(f"版本 {manifest['version']} 没有发布 {registry} 的镜像")
         host_image, worker_image = images['host'], images['worker']
         self.command(['pull', host_image])
         candidate = self.deployment['project'] + '-candidate-' + work.name.removeprefix('candidate-')

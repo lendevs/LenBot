@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from len_bot.web.auth import PASSWORD_HASH_PATTERN
+from len_bot.web.auth import password_hash_valid
 
 from .types import STRICT, EpochSeconds, _FiniteSeconds, _valid_scene
 
@@ -37,8 +37,8 @@ class PanelSettings(BaseModel):
     @field_validator("password_hash")
     @classmethod
     def valid_password_hash(cls, value: str) -> str:
-        if re.fullmatch(PASSWORD_HASH_PATTERN, value) is None:
-            raise ValueError("请填写 pbkdf2_sha256$迭代次数$盐$哈希")
+        if not password_hash_valid(value):
+            raise ValueError("请填写 pbkdf2_sha256$迭代次数（1 至 10000000）$盐$哈希")
         return value
 
 
