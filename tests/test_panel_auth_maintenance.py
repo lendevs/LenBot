@@ -22,6 +22,24 @@ def test_password_hash_records_its_iterations():
     assert not verify_password(password, legacy)
 
 
+def test_iterations_are_limited_to_1_through_10_million(monkeypatch):
+    digest = '0' * 64
+    calls = []
+    monkeypatch.setattr(hashlib, 'pbkdf2_hmac', lambda *arguments: calls.append(arguments[3]) or bytes(32))
+    for iterations in ('1', '10000000'):
+        record = f'pbkdf2_sha256${iterations}$fixture${digest}'
+        PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=record)
+        assert verify_password('password', record)
+    assert calls == [1, 10_000_000]
+    calls.clear()
+    for iterations in ('0', '10000001', '99999999', '123456789', '9' * 5000):
+        record = f'pbkdf2_sha256${iterations}$fixture${digest}'
+        assert not verify_password('password', record)
+        with pytest.raises(ValueError, match='password_hash'):
+            PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=record)
+    assert calls == []
+
+
 def panel():
     app = FastAPI()
     settings = PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=hash_password('password'))

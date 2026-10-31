@@ -930,6 +930,20 @@ class Store:
         ).fetchone()
         return None if row is None else decode_message(row[0])
 
+    def find_session_message(self, scene: str, platform_id: str, after: int) -> ChatMessage | None:
+        """A message that entered the scene's session after seq ``after``: the turn's batch and its appends."""
+        row = self.db.execute(
+            "SELECT body FROM messages WHERE scene=? AND platform_id=? AND seq>? "
+            "AND seq<=COALESCE((SELECT last_message_seq FROM mind_sessions WHERE scene=?),0)",
+            (scene, platform_id, after, scene),
+        ).fetchone()
+        return None if row is None else decode_message(row[0])
+
+    def session_through(self, scene: str) -> int:
+        """Highest message seq the scene's session has taken in; 0 before the first batch."""
+        row = self.db.execute("SELECT last_message_seq FROM mind_sessions WHERE scene=?", (scene,)).fetchone()
+        return 0 if row is None or row[0] is None else row[0]
+
     def messages_after(self, scene: str, platform_id: str) -> int:
         """Count actual visible messages after a known reply target in this scene."""
         return self.db.execute(
