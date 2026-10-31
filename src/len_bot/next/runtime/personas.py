@@ -25,7 +25,7 @@ from ..configuration.editing import _read_saved, save_config
 from ..persona.packages import import_package
 from ..persona.profile import Persona, load_persona, read_persona_files, save_persona_files
 from ..storage.files import sync_directory
-from ..tools.skills import load_catalog, select_skills
+from ..tools.skills import select_skills, worker_catalog
 from .logs import error_text, log_event
 
 if TYPE_CHECKING:
@@ -292,8 +292,7 @@ class PersonaService:
             skills = ()
             if runtime.tasks is not None:
                 worker = runtime.config.worker
-                catalog = load_catalog(worker.skills_directory, scene, public_browser=worker.public_browser,
-                                       missing=worker.missing_programs()) + (
+                catalog = worker_catalog(worker, scene) + (
                     () if runtime.plugins is None else runtime.plugins.skills_for(scene))
                 skills = select_skills(catalog, persona.skills)
             external = (([] if runtime.plugins is None else

@@ -10,7 +10,7 @@ from ..chat.attention import SceneRunner
 from ..chat.tools import task_data_tools
 from ..config import HostConfig
 from ..persona.profile import load_persona
-from ..tools.skills import load_catalog, select_skills
+from ..tools.skills import select_skills, worker_catalog
 from ..platform.platform_tools import joined_groups
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ class SceneService:
         persona = await asyncio.to_thread(load_persona, config.persona)
         if runtime.tasks is not None:
             worker = runtime.config.worker
-            catalog = await asyncio.to_thread(load_catalog, worker.skills_directory, scene, public_browser=worker.public_browser)
+            catalog = await asyncio.to_thread(worker_catalog, worker, scene)
             catalog += () if runtime.plugins is None else runtime.plugins.skills_for(scene)
             runtime.tasks.skills[scene] = select_skills(catalog, persona.skills)
             runtime.tasks.skill_permissions[scene] = persona.skills

@@ -162,6 +162,7 @@ class WorkerDefaults(PanelResponse):
     workspace_root: str | None = None
     runtime_root: str | None = None
     delivery_root: str | None = None
+    skills_directory: str | None = None
     uid: int | None = None
     gid: int | None = None
     task_volume: JsonObject | None = None

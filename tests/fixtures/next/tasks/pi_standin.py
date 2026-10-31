@@ -13,6 +13,7 @@ host directory mounted at ``/run/lenbot`` when the stand-in runs unsandboxed. Ma
 - ``[探测]`` tries the writes, reads and connections listed after ``探测：`` and
   reports each outcome
 - ``[联网]`` sends the requests listed after ``联网：`` through ``HTTP_PROXY``
+- ``[环境]`` reports the proxy variables of its own process
 - ``[写入]`` writes one file per size listed after ``写入：`` into ``out/``
 
 Every prompt is appended to ``session.jsonl`` in the working directory, so a
@@ -179,6 +180,9 @@ def run(message: str) -> None:
     if "[联网]" in message:
         requests, _ = json.JSONDecoder().raw_decode(message.split("联网：", 1)[1])
         lines.append("联网结果：" + json.dumps(fetch(requests), ensure_ascii=False))
+    if "[环境]" in message:
+        names = ("HTTP_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY")
+        lines.append("环境：" + json.dumps({name: os.environ.get(name) for name in names}, ensure_ascii=False))
     lines.extend(f"追加：{text}" for text in steering)
     steering.clear()
     if "[交付]" in message:

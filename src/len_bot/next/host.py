@@ -32,7 +32,7 @@ from .tools.mcp_host import MCPHost
 from .storage.store import Store
 from .work.service import WorkTasks
 from .work.store import TaskStore
-from .tools.skills import load_catalog, select_skills
+from .tools.skills import select_skills, worker_catalog
 from .plugins.store import PluginStore
 from .prompt_files import activate as activate_prompts
 
@@ -106,9 +106,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
     plugins = (None if config.plugins is None else PluginHost(
         config, core_tools={tool["function"]["name"] for tool in tool_catalog(platform=True)}))
     skills = {settings.scene: (
-        select_skills((*load_catalog(config.worker.skills_directory, settings.scene,
-                                     public_browser=config.worker.public_browser,
-                                     missing=config.worker.missing_programs()),
+        select_skills((*worker_catalog(config.worker, settings.scene),
                        *(() if plugins is None else plugins.skills_for(settings.scene))), persona.skills)
         if config.worker is not None else ()
     ) for settings, persona in scenes}

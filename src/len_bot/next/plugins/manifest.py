@@ -19,7 +19,7 @@ from ..configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED
 from ..config import HostConfig
 from ...plugin import INTERFACE
 from ..platform.identity import validate_scene
-from ..tools.skills import Skill, load_catalog, load_plugin_skills
+from ..tools.skills import Skill, load_plugin_skills, worker_catalog
 from ..storage.store import encode
 from ..runtime.logs import REDACTED
 
@@ -322,9 +322,7 @@ def scene_skill_catalog(config: HostConfig, scene: str) -> tuple[Skill, ...]:
     """Read a saved scene's skill sources without importing plugin executable code."""
     if config.worker is None:
         return ()
-    skills = list(load_catalog(config.worker.skills_directory, scene,
-                               public_browser=config.worker.public_browser,
-                               missing=config.worker.missing_programs()))
+    skills = list(worker_catalog(config.worker, scene))
     if config.plugins is not None:
         found, _ = discover(config.plugins.paths)
         for name in config.scenes[scene].plugins:

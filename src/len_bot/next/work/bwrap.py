@@ -438,7 +438,9 @@ class BwrapSandbox:
         if proxy_port is not None:
             address = f"http://127.0.0.1:{proxy_port}"
             proxy = {name: address for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")}
-            proxy |= {"NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
+            proxy |= {"NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+                      # Node's fetch() reads the proxy variables only with this set (Node 24).
+                      "NODE_USE_ENV_PROXY": "1"}
         rpc: PiRpc | None = None
         try:
             rpc = await PiRpc.spawn(self.pi_command(provider, model, skills), cwd=sandbox.workspace, env={},

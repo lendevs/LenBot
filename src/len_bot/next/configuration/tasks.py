@@ -7,6 +7,7 @@ import os
 import re
 import socket
 import subprocess
+from functools import cache
 from importlib.metadata import PackageNotFoundError, distribution, version as installed_version
 from pathlib import Path, PurePosixPath
 import shutil
@@ -27,6 +28,26 @@ EgressMode = Literal["off", "allowlist", "public"]
 # Offered as one preset in the task settings; package installs also need the redirect hosts below.
 PACKAGE_HOSTS = ("pypi.org", "files.pythonhosted.org", "registry.npmjs.org")
 _HOST_PATTERN = re.compile(r"(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?")
+
+
+# Programs and libraries of the worker image; the task runtime of the local sandbox carries the same set.
+RUNTIME_PROGRAMS = ("lenbot-render", "lenbot-browser")
+SYSTEM_PROGRAMS = ("ffmpeg", "ffprobe", "pandoc", "pdftotext", "pdftoppm")
+PYTHON_LIBRARIES = {"pandas": "pandas", "openpyxl": "openpyxl", "matplotlib": "matplotlib",
+                    "python-docx": "docx", "pypdf": "pypdf", "pillow": "PIL"}
+
+
+@cache
+def _chinese_font() -> bool:
+    """Whether the system lists a Chinese font, which the sandbox sees under /usr/share/fonts and /etc/fonts."""
+    lister = shutil.which("fc-list", path="/usr/local/bin:/usr/bin:/bin")
+    if lister is None:
+        return False
+    try:
+        result = subprocess.run([lister, ":lang=zh"], capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 class EgressSettings(BaseModel):
@@ -146,22 +167,26 @@ class WorkerSettings(BaseModel):
     egress: EgressSettings = Field(default_factory=EgressSettings)
     mcp: bool = False
 
-    def missing_programs(self) -> frozenset[str]:
-        """Programs built-in skills need that this task environment lacks.
+    def available_programs(self) -> frozenset[str]:
+        """The programs and resources tasks find in this environment.
 
-        The worker image has them all. The local sandbox sees the system's /usr and the task runtime's bin/.
+        Names are programs (``lenbot-render``, ``ffmpeg``, ``pdftotext``), ``font:zh`` for a Chinese font
+        and ``python:<library>`` for each preinstalled Python library. The worker image has them all.
+        The local sandbox sees the system's ``/usr/local/bin:/usr/bin:/bin`` and the task runtime's ``bin/``.
         """
         if self.sandbox == "docker":
-            return frozenset()
-        missing = set()
-        for name in ("ffmpeg",):
-            found = shutil.which(name, path="/usr/local/bin:/usr/bin:/bin")
-            if found is None:
-                missing.add(name)
-        for name in ("lenbot-render", "lenbot-browser"):
-            if self.task_runtime is None or not (self.task_runtime / "bin" / name).exists():
-                missing.add(name)
-        return frozenset(missing)
+            return frozenset((*RUNTIME_PROGRAMS, *SYSTEM_PROGRAMS, "font:zh",
+                              *(f"python:{name}" for name in PYTHON_LIBRARIES)))
+        found = {name for name in SYSTEM_PROGRAMS
+                 if shutil.which(name, path="/usr/local/bin:/usr/bin:/bin") is not None}
+        runtime = self.task_runtime
+        if runtime is not None:
+            found.update(name for name in RUNTIME_PROGRAMS if (runtime / "bin" / name).exists())
+            found.update(f"python:{name}" for name, module in PYTHON_LIBRARIES.items()
+                         if (runtime / "python" / module).exists())
+        if _chinese_font():
+            found.add("font:zh")
+        return frozenset(found)
 
     @property
     def public_browser(self) -> bool:
@@ -338,7 +363,7 @@ def suggested_worker(root: Path) -> dict:
     managed = (root / ".runtime" / "update-control.json").exists() or release_installation()
     suggestion: dict = {"image": f"{OFFICIAL_WORKER}:{installed_version('len-bot')}" if managed else WORKER_IMAGE}
     for name, folder in (("workspace_root", "task-workspaces"), ("runtime_root", "task-runtime"),
-                         ("delivery_root", "deliveries")):
+                         ("delivery_root", "deliveries"), ("skills_directory", "skills")):
         suggestion[name] = str(root / folder)
     binary = shutil.which("docker")
     if binary is not None:

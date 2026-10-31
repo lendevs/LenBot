@@ -1,6 +1,6 @@
 ---
 name: public-browser
-description: Interact with dynamic public web pages in this task's anonymous browser using the configured Playwright CLI.
+description: 在任务的匿名浏览器里操作动态公开网页，使用已配置的 Playwright CLI。
 ---
 
 # Public browser
