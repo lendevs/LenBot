@@ -28,6 +28,37 @@ def test_version_is_set_only_in_project_table(tmp_path, monkeypatch):
     assert data['project']['version'] == '0.2.0rc1' and data['tool']['other']['version'] == '9.9.9'
 
 
+def test_doc_examples_match_project_version():
+    prepare = load('prepare_release')
+    version = tomllib.loads((prepare.ROOT / 'pyproject.toml').read_text())['project']['version']
+    assert prepare.doc_paths(), 'the docs that carry version examples are not found'
+    assert prepare.doc_problems(version) == []
+
+
+def test_setting_the_version_syncs_doc_examples_and_links(tmp_path, monkeypatch):
+    prepare = load('prepare_release')
+    monkeypatch.setattr(prepare, 'ROOT', tmp_path)
+    (tmp_path / 'website/start').mkdir(parents=True)
+    releases = 'https://github.com/lendevs/LenBot/releases'
+    (tmp_path / 'README.md').write_text(
+        f'<a href="{releases}/latest"><img alt="Release"></a>\n'
+        f'从 [Releases]({releases}/latest) 下载 `lenbot-0.2.0-linux-x64.tar.gz`\n'
+        'docker run ghcr.io/lendevs/lenbot:0.2.0\n')
+    (tmp_path / 'website/start/docker.md').write_text(
+        f'以 `0.2.0` 为例，见 [Releases]({releases}/tag/v0.2.0)\n'
+        'ghcr.io/lendevs/lenbot-updater:0.2.0 init.py --version 0.2.0\n'
+        'ghcr.io/lendevs/lenbot-worker:<新版本>\n')
+    assert prepare.doc_problems('0.2.0rc1')
+    assert sorted(prepare.sync_docs('0.2.0rc1')) == ['README.md', 'website/start/docker.md']
+    assert prepare.doc_problems('0.2.0rc1') == []
+    assert prepare.sync_docs('0.2.0rc1') == []
+    readme = (tmp_path / 'README.md').read_text()
+    assert f'[Releases]({releases}/tag/v0.2.0rc1)' in readme and 'lenbot-0.2.0rc1-linux-x64' in readme
+    assert f'<a href="{releases}/latest">' in readme
+    docker = (tmp_path / 'website/start/docker.md').read_text()
+    assert 'lenbot-updater:0.2.0rc1' in docker and '--version 0.2.0rc1' in docker and 'lenbot-worker:<新版本>' in docker
+
+
 @pytest.mark.parametrize(('notes', 'problems'), [
     ('# LenBot 0.2.0\n\n正文\n', 0),
     ('# 版本说明（草稿）\n\n正文\n', 1),

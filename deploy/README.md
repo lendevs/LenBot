@@ -25,7 +25,7 @@
 |---|---|
 | [current/installation.md](current/installation.md) | Linux、Windows 部署包与 Docker 安装、无交互初始化 |
 | [current/README.md](current/README.md) | 系统服务模板、配套容器（Ollama 向量、任务镜像）与服务启动顺序 |
-| [current/operations.md](current/operations.md) | 命令行维护、反向代理、本机代理 `fake-ip`、快照升级与用量记账 |
+| [current/operations.md](current/operations.md) | 命令行维护、反向代理、本机代理 `fake-ip`、快照升级、用量记账与发布核对清单 |
 | [current/asr.md](current/asr.md)、[current/start-asr.sh](current/start-asr.sh) | macOS 本地语音转写（`whisper.cpp`）编译与接入 |
 | [current/task-storage.md](current/task-storage.md) | 后台任务独立文件系统存储池（Linux `ext4` / macOS `APFS`） |
 | [current/lenbot.service](current/lenbot.service)、[current/start.command](current/start.command) | Linux `systemd` 单元模板与 macOS 双击启动脚本 |

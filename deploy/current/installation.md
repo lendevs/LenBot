@@ -2,21 +2,21 @@
 
 部署包由 CI 的 `release-packages` 产物提供。候选镜像来自 Release 工作流的 `publish=false` 构建：每个架构分别提供 `image-host-*`、`image-worker-*` 和 `image-updater-*`。选择与运行机器一致的架构，将同一次构建的包和镜像放在一起使用。
 
-以下以 `0.2.0` 为例。公开版本发布后，从对应 Release 下载部署包、按同一版本号拉取镜像，步骤见文档站的[部署包](https://lendevs.github.io/LenBot/start/package)和 [Docker 部署](https://lendevs.github.io/LenBot/start/docker)。
+以下以 `0.2.0rc1` 为例。公开版本发布后，从对应 Release 下载部署包、按同一版本号拉取镜像，步骤见文档站的[部署包](https://lendevs.github.io/LenBot/start/package)和 [Docker 部署](https://lendevs.github.io/LenBot/start/docker)。
 
 ## 部署包
 
 | 文件 | 平台 |
 |---|---|
-| `lenbot-0.2.0-linux-x64.tar.gz` | Linux x64，glibc 2.28 及以上 |
-| `lenbot-0.2.0-linux-arm64.tar.gz` | Linux arm64，glibc 2.28 及以上 |
-| `lenbot-0.2.0-windows-x64.zip` | Windows x64 |
+| `lenbot-0.2.0rc1-linux-x64.tar.gz` | Linux x64，glibc 2.28 及以上 |
+| `lenbot-0.2.0rc1-linux-arm64.tar.gz` | Linux arm64，glibc 2.28 及以上 |
+| `lenbot-0.2.0rc1-windows-x64.zip` | Windows x64 |
 
 部署包内含 Python 3.13、锁定的依赖、uv（安装插件依赖）、更新器和网页面板，解压即可启动。解压出的目录就是部署目录：
 
 ```sh
-tar -xzf lenbot-0.2.0-linux-x64.tar.gz
-mv lenbot-0.2.0-linux-x64 ~/lenbot
+tar -xzf lenbot-0.2.0rc1-linux-x64.tar.gz
+mv lenbot-0.2.0rc1-linux-x64 ~/lenbot
 ~/lenbot/run
 ```
 
@@ -42,7 +42,7 @@ Windows 解压 zip 后双击 `run.cmd`。首次启动建立 `instance/`、`curre
 
 ```sh
 docker load -i image-host-arm64/image.tar
-docker tag ghcr.io/lendevs/lenbot:0.2.0-arm64 ghcr.io/lendevs/lenbot:0.2.0
+docker tag ghcr.io/lendevs/lenbot:0.2.0rc1-arm64 ghcr.io/lendevs/lenbot:0.2.0rc1
 ```
 
 amd64 机器把 `arm64` 换成 `amd64`。启用后台任务时同样载入 worker 镜像，使用更新器时载入 updater 镜像。
@@ -50,7 +50,7 @@ amd64 机器把 `arm64` 换成 `amd64`。启用后台任务时同样载入 worke
 ### 启动
 
 ```sh
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0rc1
 docker logs lenbot
 ```
 
@@ -63,7 +63,7 @@ docker logs lenbot
 把 [first-setup.example.json](first-setup.example.json) 复制为 `setup.json` 并填写，保持 `panel_host` 为 `0.0.0.0`、`panel_port` 为 `11307`，在启动容器之前执行：
 
 ```sh
-docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0 -m len_bot.next.maintenance.initialize < setup.json
+docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.0rc1 -m len_bot.next.maintenance.initialize < setup.json
 ```
 
 PowerShell 中改用 `Get-Content -Raw setup.json | docker run ...`。
@@ -77,7 +77,7 @@ PowerShell 中改用 `Get-Content -Raw setup.json | docker run ...`。
 ```sh
 docker run --rm --entrypoint python \
   -v "$PWD:/deployment" -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/lendevs/lenbot-updater:0.2.0 /opt/lenbot-updater/init.py --version 0.2.0
+  ghcr.io/lendevs/lenbot-updater:0.2.0rc1 /opt/lenbot-updater/init.py --version 0.2.0rc1
 docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
   -f host.updater.compose.yaml up -d
 ```

@@ -19,7 +19,7 @@
 | | Docker | 部署包 | 源码 |
 |---|---|---|---|
 | 运行环境 | Docker Engine 或 Docker Desktop | Linux（x64、arm64）、Windows（x64） | uv、Node.js 22 |
-| 版本来源 | 镜像 `ghcr.io/lendevs/lenbot` | [Releases](https://github.com/lendevs/LenBot/releases/latest) 中的部署包 | `master` 分支 |
+| 版本来源 | 镜像 `ghcr.io/lendevs/lenbot` | [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.0rc1) 中的部署包 | `master` 分支 |
 | 数据位置 | `lenbot-data` 数据卷 | 部署目录下的 `instance/` | 仓库根目录 |
 | 更新方式 | 用同一个数据卷启动新镜像，或使用更新器 | 面板的**系统 → 版本与更新** | `git pull` 后重新启动 |
 | 面板端口 | `11307` | `8088` | `8088` |

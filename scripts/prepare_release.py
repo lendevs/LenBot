@@ -1,4 +1,4 @@
-"""Set one release version and check its notes in a clean checkout.
+"""Set one release version, sync the version examples in the docs, and check its notes in a clean checkout.
 
 Publishing starts when the matching v<version> tag is pushed, which stays an explicit step for the maintainer.
 """
@@ -15,6 +15,54 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.compile(r'\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?')
 NOTES = ROOT / 'changelogs'
 PLACEHOLDER = '（发布时填写'
+RELEASES_URL = 'https://github.com/lendevs/LenBot/releases'
+# Docs that show the release version in file names, image tags and download links.
+DOC_FILES = ('README.md', 'README.en.md', 'deploy/current/installation.md', 'website/start/*.md')
+_VER = r'\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?'
+# Each pattern holds the version in group 2; the text before and after it stays as written.
+DOC_EXAMPLES = (
+    re.compile(rf'(lenbot-)({_VER})(?=-(?:linux|windows))'),
+    re.compile(rf'(ghcr\.io/lendevs/lenbot(?:-worker|-updater)?:)({_VER})'),
+    re.compile(rf'(--version )({_VER})'),
+    re.compile(rf'(`)({_VER})(?=`)'),
+    re.compile(rf'(\]\({re.escape(RELEASES_URL)}/tag/v)({_VER})(?=\))'),
+)
+DOC_LINK = re.compile(rf'(\]\({re.escape(RELEASES_URL)}/)(?:latest|tag/v{_VER})(?=\))')
+
+
+def doc_paths() -> list[Path]:
+    return sorted(path for pattern in DOC_FILES for path in ROOT.glob(pattern))
+
+
+def doc_problems(version: str) -> list[str]:
+    """Where a doc shows another version than ``version``, or a download link that is not this version's Release page."""
+    problems = []
+    for path in doc_paths():
+        text = path.read_text(encoding='utf-8')
+        name = path.relative_to(ROOT).as_posix()
+        for pattern in DOC_EXAMPLES:
+            for found in pattern.finditer(text):
+                if found.group(2) != version:
+                    problems.append(f'{name}: 版本示例 {found.group(2)} 与 {version} 不一致')
+        for found in DOC_LINK.finditer(text):
+            if found.group(0) != f']({RELEASES_URL}/tag/v{version}':
+                problems.append(f'{name}: 下载链接应指向 {RELEASES_URL}/tag/v{version}')
+    return problems
+
+
+def sync_docs(version: str) -> list[str]:
+    """Rewrite the version examples and download links in the docs; returns the files that changed."""
+    changed = []
+    for path in doc_paths():
+        text = path.read_text(encoding='utf-8')
+        updated = text
+        for pattern in DOC_EXAMPLES:
+            updated = pattern.sub(lambda found: found.group(1) + version, updated)
+        updated = DOC_LINK.sub(lambda found: f'{found.group(1)}tag/v{version}', updated)
+        if updated != text:
+            path.write_text(updated, encoding='utf-8')
+            changed.append(path.relative_to(ROOT).as_posix())
+    return changed
 
 
 def notes_problems(version: str) -> list[str]:
@@ -59,7 +107,10 @@ def main() -> None:
 
     previous = set_version(args.version)
     subprocess.run(['uv', 'lock'], cwd=ROOT, check=True)
+    changed = sync_docs(args.version)
     print(f'版本 {previous} → {args.version}，已更新 pyproject.toml 和 uv.lock。')
+    if changed:
+        print('已同步文档中的版本示例和下载链接：' + '、'.join(changed))
     problems = notes_problems(args.version)
     if problems:
         print(f'changelogs/v{args.version}.md 缺少以下内容：')

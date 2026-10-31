@@ -2,21 +2,21 @@
 
 部署包内含 Python 3.13、锁定的依赖和预构建的网页面板，解压后直接启动，本机不需要另外安装 Python 或 uv。Linux 部署包还带有后台任务的本机沙箱运行时。macOS 使用 [Docker 部署](./docker)。
 
-从 [Releases](https://github.com/lendevs/LenBot/releases/latest) 下载与系统对应的文件，下文以 `0.2.0` 为例：
+从 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.0rc1) 下载与系统对应的文件，下文以 `0.2.0rc1` 为例：
 
 | 系统 | 文件 |
 |---|---|
-| Linux x64 | `lenbot-0.2.0-linux-x64.tar.gz` |
-| Linux arm64 | `lenbot-0.2.0-linux-arm64.tar.gz` |
-| Windows x64 | `lenbot-0.2.0-windows-x64.zip` |
+| Linux x64 | `lenbot-0.2.0rc1-linux-x64.tar.gz` |
+| Linux arm64 | `lenbot-0.2.0rc1-linux-arm64.tar.gz` |
+| Windows x64 | `lenbot-0.2.0rc1-windows-x64.zip` |
 
 解压出的目录就是部署目录，配置和数据都写在里面，可以先改名或移到常用位置再启动。
 
 ## Linux
 
 ```sh
-tar -xzf lenbot-0.2.0-linux-x64.tar.gz
-mv lenbot-0.2.0-linux-x64 ~/lenbot
+tar -xzf lenbot-0.2.0rc1-linux-x64.tar.gz
+mv lenbot-0.2.0rc1-linux-x64 ~/lenbot
 ~/lenbot/run
 ```
 
@@ -24,7 +24,7 @@ arm64 换成对应的文件名。部署包适用于 glibc 2.28 及以上的发�
 
 ## Windows
 
-解压 `lenbot-0.2.0-windows-x64.zip`，双击目录中的 `run.cmd`，或在 PowerShell 中执行：
+解压 `lenbot-0.2.0rc1-windows-x64.zip`，双击目录中的 `run.cmd`，或在 PowerShell 中执行：
 
 ```powershell
 .\run.cmd

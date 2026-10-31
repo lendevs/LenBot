@@ -86,3 +86,11 @@
 
 - 保留 `panel` 配置时，面板、插件、模型与后台任务照常运行，可在面板内做隔离试聊。
 - 同时设置 `panel: null` 时，`len-bot` 从标准输入逐行读取 OneBot 原始事件 JSON，读至输入末尾并处理完已入库消息后自动退出。公开回放套件见 [examples/replay/](../../examples/replay/README.md)。
+
+## 发布核对清单
+
+推送 `v<版本>` 标签、Release 工作流完成后，在 Release 页逐项核对：
+
+- `release-manifest.json` 的 `images` 含 ghcr 和 Docker Hub 两个 registry 的 host、worker、updater 镜像。
+- 文档中的版本示例与标签一致：`uv run --no-sync python scripts/prepare_release.py <版本>` 在设置版本时同步 `README.md`、`README.en.md`、`deploy/current/installation.md` 和 `website/start/*.md`，`tests/test_release_scripts.py` 检查示例版本与 `pyproject.toml` 一致。
+- 预发布版本（版本号带 `a`、`b` 或 `rc`）在 Release 页标为预发布，没有被标为 latest；文档里的下载链接指向该版本的 Release 页面 `https://github.com/lendevs/LenBot/releases/tag/v<版本>`。
