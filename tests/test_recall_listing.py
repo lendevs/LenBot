@@ -19,11 +19,11 @@ def test_search_lists_messages_like_chat_input(tmp_path):
         for number in range(12):
             _receive(store, 100 + number, f'合成话题第{number}条', at=1790000000 + number)
         _receive(store, 200, '长' * 300, at=1790086400)
-        first = recall_chat(store, SCENE, 'UTC', RecallArguments(query='合成话题'))
+        first = recall_chat(store, SCENE, 'UTC', RecallArguments(query='合成话题', order='oldest'))
         assert first.count('2026-') == 1 and SCENE + '｜' not in first
         assert '"合成成员"(onebot:70001) [id="100"，record=1]' in first and '  合成话题第0条' in first
         assert 'snapshot=13、offset=10' in first and 'previews' not in first and 'total_chars' not in first
-        second = recall_chat(store, SCENE, 'UTC', RecallArguments(query='合成话题', snapshot=13, offset=10))
+        second = recall_chat(store, SCENE, 'UTC', RecallArguments(query='合成话题', order='oldest', snapshot=13, offset=10))
         assert '第 2 页，共 2 条' in second and '没有下一页了' in second
 
         recent = recall_chat(store, SCENE, 'UTC', RecallArguments(action='recent'))

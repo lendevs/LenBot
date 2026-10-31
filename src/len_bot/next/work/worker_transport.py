@@ -11,7 +11,7 @@ import traceback
 from pathlib import Path
 from typing import Mapping
 
-from .worker_bridge import CHUNK_BYTES, HEADER, MAX_METADATA_BYTES
+from .worker_bridge import CHUNK_BYTES, HEADER, MAX_METADATA_BYTES, TASK_ROUTES
 from .worker_model import WorkerModelProxy
 
 
@@ -115,8 +115,7 @@ class WorkerTransport:
                         or set(request) not in ({"token", "path", "body_bytes"}, {"token", "path", "body_bytes", "headers"})
                         or not isinstance(request["token"], str)
                         or not isinstance(request["path"], str)
-                        or request["path"] not in {self.proxy.path, "/task/deliver-file", "/task/browser-file", "/task/network",
-                                                   "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/mcp"}
+                        or request["path"] not in {self.proxy.path, *TASK_ROUTES}
                         or type(request["body_bytes"]) is not int
                         or not 0 < request["body_bytes"] <= self.proxy.limits.max_request_bytes):
                     raise WorkerTransportError(f"invalid worker request frame {kind!r}: {data[:500]!r}")
@@ -124,8 +123,7 @@ class WorkerTransport:
                 if kind != b"B" or len(body) != request["body_bytes"]:
                     raise WorkerTransportError(f"invalid worker body frame {kind!r}: {body[:500]!r}")
                 try:
-                    if request["path"] in {"/task/deliver-file", "/task/browser-file", "/task/network",
-                                          "/task/recall-chat", "/task/memory", "/task/transcribe", "/task/mcp"}:
+                    if request["path"] in TASK_ROUTES:
                         self.proxy.authorize(request["token"])
                         if self.task_request is None:
                             raise WorkerTransportError("Task API is not configured")

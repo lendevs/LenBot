@@ -138,8 +138,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
                                     or chat.config.binding("vision").image_input),
                          "worker": chat.tasks is not None,
                          "worker_mcp": chat.tasks is not None and chat.tasks.settings.mcp,
-                         "skills": (chat.tasks is not None
-                                    and chat.tasks.settings.skills_directory is not None),
+                         "skills": chat.tasks is not None,
                          "public_browser": (chat.tasks is not None
                                             and chat.tasks.settings.public_browser),
                          "public_network": chat.tasks is not None and chat.tasks.settings.egress.enabled,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -65,10 +66,12 @@ def auth_headers(api: ProviderAPI, key: str) -> dict[str, str]:
 
 
 def http_client(*, base_url: str, api_key: str, api: ProviderAPI,
-                timeout_seconds: float, proxy: str | None = None) -> httpx.AsyncClient:
+                timeout_seconds: float, proxy: str | None = None,
+                wrap: Callable[[httpx.AsyncBaseTransport], httpx.AsyncBaseTransport] | None = None) -> httpx.AsyncClient:
+    transport = httpx.AsyncHTTPTransport(retries=0, trust_env=False, proxy=proxy)
     return httpx.AsyncClient(base_url=base_url.rstrip('/') + '/', timeout=timeout_seconds,
         trust_env=False, follow_redirects=False,
-        transport=httpx.AsyncHTTPTransport(retries=0, trust_env=False, proxy=proxy),
+        transport=transport if wrap is None else wrap(transport),
         headers=auth_headers(api, api_key))
 
 

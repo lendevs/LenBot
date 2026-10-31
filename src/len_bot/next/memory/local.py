@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict
 from .embeddings import EmbeddingBinding, EmbeddingClient
 from .types import MemoryDocument, MemoryNode, MemoryPage
 from .sections import SECTION_STATEMENTS, put_sections, query_bigrams, query_terms, split_sections
-from ..storage.schema import FORMAT_RESET
+from ..storage.schema import FORMAT_RESET, require_columns, stored_state
 from ..storage.sqlite import connect
 from ..runtime.logs import log_event
 from ..platform.identity import scene_directory
@@ -58,6 +58,36 @@ CREATE TABLE memory_summaries (
     generated_at REAL NOT NULL,
     PRIMARY KEY(scope, path)
 );
+"""
+_SECTIONS = "".join(statement + ";" for statement in SECTION_STATEMENTS)
+INDEX_SCHEMA = f"""
+CREATE TABLE memory_files (
+    id INTEGER PRIMARY KEY,
+    scope TEXT NOT NULL,
+    path TEXT NOT NULL,
+    content TEXT NOT NULL,
+    UNIQUE(scope, path)
+);
+{_SECTIONS}
+CREATE TABLE memory_changes (
+    id INTEGER PRIMARY KEY,
+    scope TEXT NOT NULL,
+    path TEXT NOT NULL,
+    changed_at REAL NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('write', 'delete')),
+    reason TEXT NOT NULL,
+    before TEXT,
+    after TEXT
+);
+CREATE INDEX memory_changes_path ON memory_changes(scope, path, id);
+CREATE TABLE memory_vector_binding (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    provider TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    model TEXT NOT NULL,
+    dimensions INTEGER NOT NULL CHECK(dimensions > 0)
+);
+{SUMMARY_SCHEMA}
 """
 _Result = TypeVar("_Result")
 _FILE_LOCK = threading.RLock()
@@ -293,7 +323,7 @@ def _scene_overview(root: Path, scene: str) -> str | None:
     with closing(connect(index, readonly=True)) as db:
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version != FORMAT_VERSION:
-            raise ValueError(f"local memory index format {version}, expected {FORMAT_VERSION}: {index}")
+            raise ValueError(f"local memory index format {version}, expected {FORMAT_VERSION}: {index}。{FORMAT_RESET}")
         generated_at, changed_after = _summary_times(db, scene, "")
     if generated_at is None:
         raise ValueError(f"memory summary has no generation time: {base}")
@@ -379,48 +409,19 @@ class LocalMemory:
             db.close()
 
     def _initialize(self) -> None:
+        # Opening read-write switches the file to WAL, so a file of another format is refused before that.
+        state = stored_state(self.index)
+        if state is not None and state[:2] != (_APPLICATION_ID, FORMAT_VERSION) and (state[:2] != (0, 0) or state[2]):
+            raise ValueError(f"{self.index} 不是当前版本使用的本地记忆索引格式 {FORMAT_VERSION}"
+                             f"（application_id={state[0]}, user_version={state[1]}）。{FORMAT_RESET}")
         with self._db() as db:
-            identity = (db.execute("PRAGMA application_id").fetchone()[0],
-                        db.execute("PRAGMA user_version").fetchone()[0])
-            if identity == (_APPLICATION_ID, FORMAT_VERSION):
+            if state is not None and state[:2] == (_APPLICATION_ID, FORMAT_VERSION):
+                # Vector tables exist only while an embedding is bound; only the tables below are compared.
+                require_columns(db, INDEX_SCHEMA, path=self.index, label='本地记忆索引', version=FORMAT_VERSION)
                 return
-            if identity != (0, 0) or db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is not None:
-                raise ValueError(f"{self.index} 不是当前版本使用的本地记忆索引格式 {FORMAT_VERSION}"
-                                 f"（application_id={identity[0]}, user_version={identity[1]}）。{FORMAT_RESET}")
             # One transaction: an interrupted first start leaves an empty file, not half a schema.
-            db.executescript(f"""
-                    BEGIN IMMEDIATE;
-                    CREATE TABLE memory_files (
-                        id INTEGER PRIMARY KEY,
-                        scope TEXT NOT NULL,
-                        path TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        UNIQUE(scope, path)
-                    );
-                    {''.join(statement + ';' for statement in SECTION_STATEMENTS)}
-                    CREATE TABLE memory_changes (
-                        id INTEGER PRIMARY KEY,
-                        scope TEXT NOT NULL,
-                        path TEXT NOT NULL,
-                        changed_at REAL NOT NULL,
-                        action TEXT NOT NULL CHECK(action IN ('write', 'delete')),
-                        reason TEXT NOT NULL,
-                        before TEXT,
-                        after TEXT
-                    );
-                    CREATE INDEX memory_changes_path ON memory_changes(scope, path, id);
-                    CREATE TABLE memory_vector_binding (
-                        id INTEGER PRIMARY KEY CHECK(id=1),
-                        provider TEXT NOT NULL,
-                        base_url TEXT NOT NULL,
-                        model TEXT NOT NULL,
-                        dimensions INTEGER NOT NULL CHECK(dimensions > 0)
-                    );
-                    {SUMMARY_SCHEMA}
-                    PRAGMA application_id={_APPLICATION_ID};
-                    PRAGMA user_version={FORMAT_VERSION};
-                    COMMIT;
-                """)
+            db.executescript(f"BEGIN IMMEDIATE;\n{INDEX_SCHEMA}\n"
+                             f"PRAGMA application_id={_APPLICATION_ID};\nPRAGMA user_version={FORMAT_VERSION};\nCOMMIT;")
 
     def _base(self, scope: str) -> Path:
         if scope == "public":

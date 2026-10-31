@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlsplit
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ..models.providers import SEARCH_APIS, http_client
+from .host_traffic import MeteredTransport
 from ..storage.store import WebPage
 
 if TYPE_CHECKING:
@@ -163,7 +164,7 @@ def _parse_yahoo(raw: bytes, fetched: datetime) -> list[dict[str, str | None]]:
 
 
 def _transport() -> httpx.AsyncBaseTransport:
-    return httpx.AsyncHTTPTransport(retries=0, trust_env=False)
+    return MeteredTransport(httpx.AsyncHTTPTransport(retries=0, trust_env=False))
 
 
 async def _fetch(client: httpx.AsyncClient, url: str, params: dict[str, str] | None,
@@ -274,7 +275,7 @@ async def _search_deepseek(connection: Provider, query: str, count: int, timeout
     base = connection.base_url.rstrip('/')
     path = 'tools/search' if urlsplit(base).path.rstrip('/').endswith('/v1') else 'v1/tools/search'
     async with http_client(base_url=base, api_key=connection.api_key, api='openai-chat',
-                           proxy=connection.proxy, timeout_seconds=timeout) as client:
+                           proxy=connection.proxy, timeout_seconds=timeout, wrap=MeteredTransport) as client:
         response = await client.post(path, json={'query': query, 'count': count, 'need_content': True})
     raw = response.text.replace(connection.api_key, '[hidden]')
     if not response.is_success:
@@ -292,7 +293,7 @@ async def keyed_request(connection: Provider, method: str, path: str, timeout: f
                  json_body: dict | None = None, params: dict | None = None) -> object:
     """One request to a keyed web service; the key never appears in errors."""
     async with http_client(base_url=connection.base_url, api_key=connection.api_key, api=connection.api,
-                           proxy=connection.proxy, timeout_seconds=timeout) as client:
+                           proxy=connection.proxy, timeout_seconds=timeout, wrap=MeteredTransport) as client:
         response = await client.request(method, path, json=json_body, params=params,
                                         headers={"Accept": "application/json"})
     raw = response.text.replace(connection.api_key, '[hidden]')

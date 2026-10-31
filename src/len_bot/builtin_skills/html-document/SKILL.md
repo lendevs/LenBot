@@ -1,6 +1,6 @@
 ---
 name: html-document
-description: 制作可在手机浏览或打印的本地 HTML 活动单、报告和表格，用任务镜像的离线渲染工具生成实际 PDF 与截图。
+description: 制作可在手机浏览或打印的本地 HTML 活动单、报告和表格，用执行环境的离线渲染工具生成实际 PDF 与截图。
 ---
 
 # HTML 文档

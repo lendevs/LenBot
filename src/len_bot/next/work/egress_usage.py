@@ -74,21 +74,25 @@ class EgressUsage:
             else local.egress_max_daily_bytes,
         )
 
-    def on_connection(self, scene: str, task_id: int, facts: dict) -> None:
+    def refuse(self, scene: str, task_id: int, host: str, port: int, method: str, reason: str) -> None:
+        """Record one refused destination as an attempt, so the task's events show the reason, and raise."""
+        now = self.records.now()
+        self.records.start_egress_connection(scene, task_id, {
+            "host": host, "port": port, "ip": None, "method": method, "started": now, "ended": now,
+            "status": "refused", "error": reason, "up": 0, "down": 0, "days": {}, "saved_at": now})
+        self.on_update(scene)
+        raise EgressBlocked(reason)
+
+    def on_connection(self, scene: str, task_id: int, facts: dict, *, check_host: bool = True) -> None:
+        """``check_host`` is off for the host's own configured service endpoints, which are no task destination."""
         wire_id = facts["connection_id"]
         key = (scene, task_id, wire_id)
         phase = facts["phase"]
         if phase == "start":
             settings = self.config.worker.egress
-            refusal = host_refusal(facts["host"], settings.mode, settings.allowed_hosts)
+            refusal = host_refusal(facts["host"], settings.mode, settings.allowed_hosts) if check_host else None
             if refusal is not None:
-                # A refused host is still one recorded attempt, so the task's events show the reason.
-                self.records.start_egress_connection(scene, task_id, {
-                    "host": facts["host"], "port": facts["port"], "ip": None, "method": facts["method"],
-                    "started": facts["started"], "ended": facts["started"], "status": "refused",
-                    "error": refusal, "up": 0, "down": 0, "days": {}, "saved_at": self.records.now()})
-                self.on_update(scene)
-                raise EgressBlocked(refusal)
+                self.refuse(scene, task_id, facts["host"], facts["port"], facts["method"], refusal)
             task_limit, daily_limit = self._limits(scene)
             task = self._task(scene, task_id)
             date = self._date(scene)

@@ -5,6 +5,8 @@ from pathlib import Path
 import shutil
 import sys
 
+import pytest
+
 from len_bot.next.config import load_host_config
 from test_next_panel_acts_as_owner import SCENE, exercise, write_instance
 
@@ -20,6 +22,30 @@ def test_worker_defaults_name_this_instance(tmp_path: Path) -> None:
         assert defaults['workspace_root'] == str(tmp_path / 'task-workspaces')
         assert {defaults['runtime_root'], defaults['delivery_root']} == {
             str(tmp_path / 'task-runtime'), str(tmp_path / 'deliveries')}
+    exercise(tmp_path, check)
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='the local sandbox is Linux only')
+@pytest.mark.parametrize('packaged', [True, False])
+def test_worker_defaults_fill_the_task_runtime_of_the_running_package(tmp_path: Path, monkeypatch, packaged: bool) -> None:
+    write_instance(tmp_path, ['onebot:70001'])
+    release = tmp_path / 'lenbot-0.2.0-linux' / 'releases' / '0.2.0'
+    runtime = release / 'task-runtime'
+    for name in ('node/bin/node', 'node/bin/pi'):
+        (runtime / name).parent.mkdir(parents=True, exist_ok=True)
+        (runtime / name).touch(mode=0o755)
+    (release / 'python').mkdir()
+    (release / 'release.json').write_text('{"version": "0.2.0"}')
+    bwrap = tmp_path / 'tools' / 'bwrap'
+    bwrap.parent.mkdir()
+    bwrap.touch(mode=0o755)
+    monkeypatch.setenv('PATH', str(bwrap.parent))
+    monkeypatch.setattr(sys, 'prefix', str(release / 'python' if packaged else tmp_path / 'venv'))
+
+    async def check(client) -> None:
+        defaults = (await client.get('/api/host/settings/worker/defaults')).json()
+        assert defaults['sandbox'] == 'bwrap' and defaults['bwrap_binary'] == str(bwrap)
+        assert defaults.get('task_runtime') == (str(runtime) if packaged else None)
     exercise(tmp_path, check)
 
 

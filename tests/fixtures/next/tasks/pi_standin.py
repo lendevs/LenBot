@@ -13,6 +13,8 @@ host directory mounted at ``/run/lenbot`` when the stand-in runs unsandboxed. Ma
 - ``[探测]`` tries the writes, reads and connections listed after ``探测：`` and
   reports each outcome
 - ``[联网]`` sends the requests listed after ``联网：`` through ``HTTP_PROXY``
+- ``[环境]`` reports the proxy variables of its own process
+- ``[数据]`` lists the data tools of ``task-api.json`` and posts each ``数据：`` call to its task route
 - ``[写入]`` writes one file per size listed after ``写入：`` into ``out/``
 
 Every prompt is appended to ``session.jsonl`` in the working directory, so a
@@ -139,6 +141,20 @@ def fetch(requests: list[dict]) -> list[str]:
     return results
 
 
+def data_calls(calls: list[dict]) -> list[dict]:
+    """Each call's answer as the extension would see it: the ``content`` text, or the refusal's status and text."""
+    api = json.loads((CONTROL / "task-api.json").read_text(encoding="utf-8"))
+    provider = json.loads((AGENT / "models.json").read_text(encoding="utf-8"))["providers"][PROVIDER]
+    port = int(provider["baseUrl"].rsplit(":", 1)[1].split("/", 1)[0])
+    results = []
+    for call in calls:
+        try:
+            results.append({"content": json.loads(post(port, call["route"], api["token"], call["body"]))["content"]})
+        except urllib.error.HTTPError as error:
+            results.append({"status": error.code, "error": error.read().decode(errors="replace")})
+    return results
+
+
 def question(number: int, body: dict) -> dict:
     ident = f"standin-question-{number}"
     emit({"type": "extension_ui_request", "id": ident, **body})
@@ -179,6 +195,14 @@ def run(message: str) -> None:
     if "[联网]" in message:
         requests, _ = json.JSONDecoder().raw_decode(message.split("联网：", 1)[1])
         lines.append("联网结果：" + json.dumps(fetch(requests), ensure_ascii=False))
+    if "[环境]" in message:
+        names = ("HTTP_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY")
+        lines.append("环境：" + json.dumps({name: os.environ.get(name) for name in names}, ensure_ascii=False))
+    if "[数据]" in message:
+        tools = json.loads((CONTROL / "task-api.json").read_text(encoding="utf-8"))["tools"]
+        lines.append("数据工具：" + json.dumps(sorted(tool["name"] for tool in tools)))
+        calls, _ = json.JSONDecoder().raw_decode(message.split("数据：", 1)[1])
+        lines.append("数据结果：" + json.dumps(data_calls(calls), ensure_ascii=False))
     lines.extend(f"追加：{text}" for text in steering)
     steering.clear()
     if "[交付]" in message:

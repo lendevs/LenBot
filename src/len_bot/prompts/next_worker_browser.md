@@ -1,0 +1,1 @@
+public_browser 非空表示本任务已核对原生 CLI 和浏览器文件。用其中的 command 按需 open、snapshot、操作和 close；启动器已接本任务的匿名会话与公共代理；其他浏览器进程显式使用给出的 HTTP 代理。原 CLI 的 JSON isError=true 表示工具失败，退出码为 0 时也一样；下载和截图先确认生成的文件，再决定是否 deliver_file。任务结束会销毁容器中的匿名状态，out 文件仍保留。
