@@ -463,6 +463,22 @@ def test_native_task_image_follows_only_official_release_images(tmp_path, image,
     assert json.loads((tmp_path / 'instance/lenbot.config.json').read_text())['worker']['image'] == (follows or image)
 
 
+def test_native_upgrade_moves_a_package_task_runtime_to_the_new_release(tmp_path):
+    (tmp_path / 'instance').mkdir()
+    write_json(tmp_path / 'deployment.json', {'mode': 'native', 'platform': 'linux', 'uv': 'uv'})
+    write_json(tmp_path / 'current.json', {'version': '0.2.0rc1'})
+    old = tmp_path / 'releases/0.2.0rc1/task-runtime'
+    worker = {'sandbox': 'bwrap', 'bwrap_binary': '/usr/bin/bwrap', 'task_runtime': str(old)}
+    write_json(tmp_path / 'instance/lenbot.config.json', {'worker': worker})
+    with (tmp_path / 'log').open('w') as log:
+        native = Native(tmp_path, log)
+        native.maintenance = lambda action, **kwargs: '{"blocked_plugins": [], "work_enabled": true}'
+        native.command = lambda arguments, **kwargs: None
+        native.migrate({'version': '0.2.0'})
+    saved = json.loads((tmp_path / 'instance/lenbot.config.json').read_text())['worker']
+    assert saved['task_runtime'] == str(tmp_path / 'releases/0.2.0/task-runtime')
+
+
 def test_shutdown_endpoint_stops_the_controller_server(make, tmp_path):
     import threading
     import urllib.request
