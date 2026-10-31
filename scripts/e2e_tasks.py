@@ -53,7 +53,7 @@ BOT = 'onebot:90001'
 ANSWER = '请按你的最佳判断继续，不再提问。'
 DEFAULT_QUESTION = 'Python 当前最新的稳定版本是哪个，相比上一个主要版本新增了哪些主要特性？'
 DEFAULT_BROWSER_URL = 'https://quotes.toscrape.com/js/'
-FOLLOW_UP = '换一个维度重算：改为按产品统计销量总和与平均值，图表改成横向条形图，文件名带上“按产品”，重新交付。'
+FOLLOW_UP = '换一个维度重算：改为按产品统计销量总和与平均值，图表改成横向条形图，文件名里写明按产品，重新交付。'
 SOURCES = ('https://docs.example.org/whatsnew', 'https://news.example.net/release', 'https://blog.example.com/tour')
 
 

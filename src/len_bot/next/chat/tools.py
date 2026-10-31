@@ -223,7 +223,7 @@ def task_data_tools(config: LabConfig, persona: Persona, *, platform: bool,
     """Chat-data tools a task worker may call for the scene, as far as the role allows.
 
     The web tools follow the task's network mode: ``off`` has neither, ``allowlist`` only ``web_read`` (which
-    reads the listed hosts), ``public`` both. ``knowledge`` follows the role alone.
+    reads the listed hosts), ``public`` both. ``knowledge`` follows the role and whether the role or the scene has materials.
     In a scene whose memory is a plugin, ``memory`` is that plugin's tool, or absent while it has none.
     """
     mode = "off" if config.worker is None else config.worker.egress.mode
