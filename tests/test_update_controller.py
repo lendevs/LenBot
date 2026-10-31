@@ -463,6 +463,22 @@ def test_native_task_image_follows_only_official_release_images(tmp_path, image,
     assert json.loads((tmp_path / 'instance/lenbot.config.json').read_text())['worker']['image'] == (follows or image)
 
 
+def test_native_upgrade_moves_a_package_task_runtime_to_the_new_release(tmp_path):
+    (tmp_path / 'instance').mkdir()
+    write_json(tmp_path / 'deployment.json', {'mode': 'native', 'platform': 'linux', 'uv': 'uv'})
+    write_json(tmp_path / 'current.json', {'version': '0.2.0rc1'})
+    old = tmp_path / 'releases/0.2.0rc1/task-runtime'
+    worker = {'sandbox': 'bwrap', 'bwrap_binary': '/usr/bin/bwrap', 'task_runtime': str(old)}
+    write_json(tmp_path / 'instance/lenbot.config.json', {'worker': worker})
+    with (tmp_path / 'log').open('w') as log:
+        native = Native(tmp_path, log)
+        native.maintenance = lambda action, **kwargs: '{"blocked_plugins": [], "work_enabled": true}'
+        native.command = lambda arguments, **kwargs: None
+        native.migrate({'version': '0.2.0'})
+    saved = json.loads((tmp_path / 'instance/lenbot.config.json').read_text())['worker']
+    assert saved['task_runtime'] == str(tmp_path / 'releases/0.2.0/task-runtime')
+
+
 def test_shutdown_endpoint_stops_the_controller_server(make, tmp_path):
     import threading
     import urllib.request
@@ -678,3 +694,43 @@ def test_read_only_files_are_removed_with_their_snapshot(make, monkeypatch):
         unlink(path, dir_fd=dir_fd)
     monkeypatch.setattr(os, 'unlink', windows_unlink)
     assert controller.delete_snapshot(snapshot.name) == [] and not snapshot.exists()
+
+
+def test_requests_with_a_bad_length_or_body_are_answered_4xx(make, tmp_path):
+    import socket
+    import threading
+    (tmp_path / 'instance').mkdir()
+    controller = make(Backend())
+    controller.backend.instance = tmp_path / 'instance'
+    http = updater.server(controller)
+    thread = threading.Thread(target=http.serve_forever)
+    thread.start()
+    reference = json.loads((tmp_path / 'instance/.runtime/update-control.json').read_text())
+
+    def post(length: str | None, body: bytes = b'') -> int:
+        lines = ['POST /api/prepare HTTP/1.1', 'Host: 127.0.0.1', 'Authorization: Bearer ' + reference['token'],
+                 'Connection: close']
+        if length is not None:
+            lines.append('Content-Length: ' + length)
+        with socket.create_connection(('127.0.0.1', http.server_port), timeout=5) as connection:
+            connection.sendall('\r\n'.join(lines).encode() + b'\r\n\r\n' + body)
+            reply = b''
+            while block := connection.recv(4096):
+                reply += block
+        return int(reply.split(b' ', 2)[1])
+    try:
+        assert post('-1') == 400
+        assert post('abc') == 400
+        assert post('1.5') == 400
+        assert post('99999999999999999999') == 400
+        assert post('5000', b'{}') == 400
+        assert post('4', b'nope') == 400
+        assert post('2', b'[]') == 400
+        assert post('4', b'null') == 400
+        assert post('2', b'42') == 400
+        assert controller.status()['status'] == 'idle'
+        assert post('2', b'{}') == 409
+    finally:
+        http.shutdown()
+        thread.join(5)
+        http.server_close()

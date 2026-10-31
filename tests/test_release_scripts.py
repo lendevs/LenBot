@@ -157,3 +157,64 @@ def test_manifest_leaves_out_hidden_files(tmp_path):
     shutil.copy2(SCRIPTS.parent / 'pyproject.toml', tmp_path / 'pyproject.toml')
     manifest = json.loads(metadata.write_manifest(tmp_path, tmp_path / 'artifacts', revision='r').read_text())
     assert list(manifest['files']) == ['requirements.txt']
+
+
+def _elf(machine: int) -> bytes:
+    return b'\x7fELF\x02\x01\x01' + bytes(11) + machine.to_bytes(2, 'little') + bytes(44)
+
+
+def _package(root: Path, name: str, **fields) -> None:
+    directory = root / 'node_modules' / name
+    directory.mkdir(parents=True)
+    (directory / 'package.json').write_text(json.dumps({'name': name, **fields}))
+
+
+def _runtime(root: Path, *, esbuild: str, node_machine: int) -> Path:
+    """A task runtime shaped like the real one: node, a package with per-platform optional packages."""
+    (root / 'node' / 'bin').mkdir(parents=True)
+    (root / 'node' / 'bin' / 'node').write_bytes(_elf(node_machine))
+    host = root / 'node' / 'lib'
+    _package(host, 'esbuild', optionalDependencies={f'@esbuild/{name}': '1' for name in ('linux-x64', 'linux-arm64')})
+    _package(host, f'@esbuild/{esbuild}', os=['linux'], cpu=[esbuild.split('-')[1]])
+    return root
+
+
+@pytest.mark.parametrize('architecture', ['x64', 'arm64'])
+def test_runtime_with_its_own_platform_binaries_passes_the_build_checks(tmp_path, architecture):
+    build = load('build_task_runtime')
+    machine = build.ELF_MACHINES[architecture]
+    runtime = _runtime(tmp_path, esbuild=f'linux-{architecture}', node_machine=machine)
+    build.check_runtime(runtime, architecture)
+
+
+def test_runtime_built_for_the_wrong_platform_fails_the_build_checks(tmp_path):
+    build = load('build_task_runtime')
+    runtime = _runtime(tmp_path, esbuild='linux-x64', node_machine=build.ELF_MACHINES['x64'])
+    with pytest.raises(RuntimeError) as failure:
+        build.check_runtime(runtime, 'arm64')
+    message = str(failure.value)
+    assert 'esbuild: no package for linux-arm64' in message
+    assert 'node' in message and 'ELF machine 62' in message
+
+
+def test_foreign_elf_files_in_the_python_libraries_fail_the_build_checks(tmp_path):
+    build = load('build_task_runtime')
+    runtime = _runtime(tmp_path / 'runtime', esbuild='linux-arm64', node_machine=build.ELF_MACHINES['arm64'])
+    libraries = tmp_path / 'python' / 'numpy'
+    libraries.mkdir(parents=True)
+    (libraries / '_core.so').write_bytes(_elf(build.ELF_MACHINES['x64']))
+    (libraries / 'notes.txt').write_text('not a binary')
+    with pytest.raises(RuntimeError, match=r'_core\.so: ELF machine 62'):
+        build.check_runtime(runtime, 'arm64', tmp_path / 'python')
+
+
+def test_pruning_keeps_only_the_target_binaries(tmp_path):
+    build = load('build_task_runtime')
+    for name in ('linux-x64', 'linux-arm64', 'darwin-arm64', 'win32-x64'):
+        _package(tmp_path, f'@esbuild/{name}')
+    native = tmp_path / 'node_modules' / 'tui' / 'native' / 'prebuilds'
+    for name in ('linux-x64', 'linux-arm64', 'darwin-x64', 'other'):
+        (native / name).mkdir(parents=True)
+    build.prune_node_modules(tmp_path, 'arm64')
+    assert sorted(path.name for path in (tmp_path / 'node_modules' / '@esbuild').iterdir()) == ['linux-arm64']
+    assert sorted(path.name for path in native.iterdir()) == ['linux-arm64', 'other']

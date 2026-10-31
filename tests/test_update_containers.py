@@ -108,3 +108,13 @@ def test_applying_a_candidate_that_compose_removed_asks_to_prepare_again(deploym
     with pytest.raises(ValueError, match='重新准备更新'):
         engine.inspect({'version': '0.2.0', 'container': 'candidate-removed', 'host_image': 'registry/lenbot:0.2.0'})
     assert engine.commands == [] and engine.containers['running']['State']['Running']
+
+
+@pytest.mark.parametrize('images', [{}, {'ghcr': {'host': 'ghcr.io/lenbot:0.2.0', 'worker': 'ghcr.io/lenbot-worker:0.2.0'}}])
+def test_preparing_a_release_without_images_for_the_registry_names_version_and_registry(deployment: Path, images: dict) -> None:
+    write_json(deployment / 'deployment.json', {**read_json(deployment / 'deployment.json'), 'registry': 'dockerhub'})
+    engine = Engine(deployment, [])
+    manifest = {'version': '0.2.0', 'tag': 'v0.2.0', 'images': images}
+    with pytest.raises(ValueError, match='0.2.0.*dockerhub'):
+        engine.prepare(manifest, None, deployment / 'candidate-1')
+    assert engine.commands == []

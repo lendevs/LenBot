@@ -10,7 +10,7 @@ import re
 import socket
 from collections.abc import Callable
 from http import HTTPStatus
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 from websockets.asyncio.client import ClientConnection, connect
@@ -237,16 +237,43 @@ class OneBot:
     def _handshake(self, connection: ServerConnection, request: Request) -> Response | None:
         if not self._running:
             return connection.respond(HTTPStatus.SERVICE_UNAVAILABLE, "OneBot transport is stopping\n")
-        if self.settings.access_token and not hmac.compare_digest(
-                request.headers.get("Authorization", '').encode(), f"Bearer {self.settings.access_token}".encode()):
+        reason = self._token_rejection(request)
+        if reason is not None:
+            self.on_error(self._safe(f"OneBot reverse connection rejected: {reason}"))
             return connection.respond(HTTPStatus.FORBIDDEN, "OneBot authorization failed\n")
-        if request.headers.get("X-Client-Role") != "Universal":
+        role = request.headers.get("X-Client-Role", "")
+        if role.casefold() != "universal":
+            self.on_error(self._safe(f"OneBot reverse connection rejected: X-Client-Role is {role!r}, expected Universal"))
             return connection.respond(HTTPStatus.BAD_REQUEST, "OneBot Universal role is required\n")
         if self.bot_id is not None and request.headers.get("X-Self-ID") != self.bot_id:
+            self.on_error(self._safe(f"OneBot reverse connection rejected: X-Self-ID is "
+                                     f"{request.headers.get('X-Self-ID')!r}, expected {self.bot_id!r}"))
             return connection.respond(HTTPStatus.FORBIDDEN, "OneBot account does not match\n")
         if self._ws is not None:
             return connection.respond(HTTPStatus.CONFLICT, "OneBot already has an active connection\n")
         return None
+
+    def _token_rejection(self, request: Request) -> str | None:
+        """Why the handshake carries no valid access token; None when it does or none is configured."""
+        expected = self.settings.access_token
+        if not expected:
+            return None
+        wanted = expected.encode()
+        supplied: list[str] = []
+        authorization = request.headers.get("Authorization")
+        if authorization is not None:
+            scheme, _, credential = authorization.strip().partition(" ")
+            if scheme.casefold() in ("bearer", "token"):
+                supplied.append(credential.strip())
+        supplied += parse_qs(urlsplit(request.path).query).get("access_token", [])
+        # Every candidate is compared so the answer does not depend on which one matched.
+        matches = [hmac.compare_digest(value.encode(), wanted) for value in supplied]
+        if any(matches):
+            return None
+        if not supplied:
+            return ("no access token; expected 'Authorization: Bearer <access_token>', "
+                    "'Authorization: Token <access_token>' or the access_token query parameter")
+        return "access token does not match the configured access_token"
 
     def _attach(self, websocket: ClientConnection | ServerConnection) -> None:
         self._verified_ws = None

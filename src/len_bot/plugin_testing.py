@@ -40,8 +40,13 @@ class _LocalHost(PluginHost):
         self.model_enabled = model_enabled
         self.deliveries = deliveries
         self.messages: list[ChatMessage] = []
+        # Per scene: the session position at the start of the simulated turn that tool calls run in.
+        self.turn_floors: dict[str, int] = {}
         self.runtime = SimpleNamespace(store=Store(config.database), mcp=None, slots=None, runners={
             scene: SimpleNamespace(state=SimpleNamespace(paused=False)) for scene in config.scenes})
+
+    def source_floor(self, scene: str) -> int | None:
+        return self.turn_floors.get(scene, 0)
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
         self._speaking(plugin, scene)
@@ -151,8 +156,13 @@ class PluginTest:
 
     def add_message(self, text: str, *, scene: str = 'onebot:group:80001', sender: str = 'onebot:70001',
                     message_id: str | None = None, timestamp: float | None = None,
-                    parts: Sequence[Segment] = ()) -> ChatMessage:
-        """Store text followed by optional message parts; return its actual ID for source calls."""
+                    parts: Sequence[Segment] = (), received: bool = True) -> ChatMessage:
+        """Store text followed by optional message parts; return its actual ID for source calls.
+
+        A message belongs to the simulated turn tool calls run in, as one received since the last
+        ``new_turn``. ``received=False`` stores it without the session having taken it in, like a
+        message that arrived after the turn's batch was formed.
+        """
         scene = validate_scene(scene)
         HostConfig.valid_bot_id(sender)
         identifier = uuid4().hex if message_id is None else message_id
@@ -162,8 +172,23 @@ class PluginTest:
                               segments=[Segment('text', {'text': text}), *parts], reply_to=None,
                               mentions_bot=False, is_self=sender == self.host.bot_id, send_status='received')
         self.host.messages.append(message)
-        self.host.runtime.store.enqueue(message, {}, message.time)
+        store = self.host.runtime.store
+        seq = store.enqueue(message, {}, message.time)
+        if received:
+            with store.db:
+                store.db.execute(
+                    "INSERT INTO mind_sessions(scene,last_message_seq) VALUES (?,?) "
+                    "ON CONFLICT(scene) DO UPDATE SET last_message_seq=MAX(last_message_seq,excluded.last_message_seq)",
+                    (scene, seq))
         return message
+
+    def new_turn(self, scene: str = 'onebot:group:80001') -> None:
+        """Start the next simulated turn: earlier messages stop being valid request sources.
+
+        Messages taken in after this call (``add_message``) are the new turn's received messages.
+        """
+        scene = validate_scene(scene)
+        self.host.turn_floors[scene] = self.host.runtime.store.session_through(scene)
 
     def preview_tools(self, scene: str = 'onebot:group:80001') -> list[dict]:
         """Discovery, full schema, shared instructions and availability in this scene."""

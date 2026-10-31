@@ -325,6 +325,18 @@ def release_installation() -> bool:
     return not (direct and json.loads(direct).get("dir_info", {}).get("editable"))
 
 
+def packaged_task_runtime() -> Path | None:
+    """The task runtime of the deployment package this host runs from, ``releases/<version>/task-runtime``.
+
+    The package's interpreter is ``releases/<version>/python``; a source checkout or image has no such directory.
+    """
+    prefix = Path(sys.prefix)
+    runtime = prefix.parent / "task-runtime"
+    if prefix.name != "python" or not (prefix.parent / "release.json").is_file():
+        return None
+    return runtime if all((runtime / name).exists() for name in ("node/bin/node", "node/bin/pi")) else None
+
+
 def _instance_volume(root: Path, suggestion: dict) -> tuple[str, str] | None:
     """The named volume holding the instance root when this host runs in a container, and its mount point."""
     if not Path("/.dockerenv").exists() or "docker_binary" not in suggestion or "docker_host" not in suggestion:
@@ -378,4 +390,6 @@ def suggested_worker(root: Path) -> dict:
     suggestion["sandbox"] = "docker" if bwrap is None else "bwrap"
     if bwrap is not None:
         suggestion["bwrap_binary"] = bwrap
+        if (runtime := packaged_task_runtime()) is not None:
+            suggestion["task_runtime"] = str(runtime)
     return suggestion

@@ -77,6 +77,7 @@ export type WorkerDefaults = Partial<
     Worker,
     | 'sandbox'
     | 'bwrap_binary'
+    | 'task_runtime'
     | 'docker_binary'
     | 'docker_host'
     | 'image'

@@ -25,11 +25,39 @@ from ...image_assets import OriginalImage
 from ..models.usage import UNBUDGETED, record_usage, totals as usage_totals
 from ..chat.schedule_time import CronTimeError, next_cron, parse_cron
 from .codec import decode_message, encode
-from .schema import FORMAT_RESET, create_database, expected_tables
+from .schema import FORMAT_RESET, business_script, create_database, expected_tables, require_columns, stored_state
 from ..chat.schedule_store import ScheduleStore
 
 
 FORMAT_VERSION = 1
+MAX_SEARCH_TERMS = 8
+
+
+def search_terms(query: str) -> list[str]:
+    """The distinct keywords of a history query, split on whitespace and casefolded; a message must match all."""
+    terms = list(dict.fromkeys(query.casefold().split()))
+    if not terms:
+        raise ValueError("query must contain a keyword")
+    if len(terms) > MAX_SEARCH_TERMS:
+        raise ValueError(f"query has {len(terms)} keywords; at most {MAX_SEARCH_TERMS} are accepted")
+    return terms
+
+
+def _require_current_format(path: Path, application_id: int, version: int, tables: frozenset[str]) -> None:
+    """Refuse a file that is not a business database of the current format, naming the way forward."""
+    if not tables:
+        return
+    if application_id == 0:
+        raise ValueError(f"{path} 带有数据表但没有 LenBot 的格式标识（application_id=0），不是当前格式的业务数据库。{FORMAT_RESET}")
+    if application_id != 0x4C424E31:
+        raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
+    if version != FORMAT_VERSION:
+        raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
+    missing = expected_tables() - tables
+    if missing:
+        names = sorted(missing)
+        listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
+        raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -65,6 +93,10 @@ class ImageAsset:
 class Store:
     def __init__(self, path: Path, *, now: Callable[[], float] = time.time, readonly: bool = False):
         self.now = now
+        # Opening read-write switches the file to WAL, so a file of another format is refused before that.
+        state = stored_state(path)
+        if state is not None:
+            _require_current_format(path, *state)
         if not readonly:
             path.parent.mkdir(parents=True, exist_ok=True)
         # Read connections let a read skip the wait while the other thread holds the write connection.
@@ -75,19 +107,8 @@ class Store:
         # The database thread: chat-path writes fsync there instead of on the event loop.
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
         try:
-            tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            if tables:
-                application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
-                version = self.db.execute("PRAGMA user_version").fetchone()[0]
-                if application_id != 0x4C424E31:
-                    raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
-                if version != FORMAT_VERSION:
-                    raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
-                missing = expected_tables() - {row[0] for row in tables}
-                if missing:
-                    names = sorted(missing)
-                    listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
-                    raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
+            if state is not None and state[2]:
+                require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION)
             else:
                 if readonly:
                     raise ValueError(f'Existing business database is not initialized: {path}')
@@ -920,6 +941,20 @@ class Store:
         ).fetchone()
         return None if row is None else decode_message(row[0])
 
+    def find_session_message(self, scene: str, platform_id: str, after: int) -> ChatMessage | None:
+        """A message that entered the scene's session after seq ``after``: the turn's batch and its appends."""
+        row = self.db.execute(
+            "SELECT body FROM messages WHERE scene=? AND platform_id=? AND seq>? "
+            "AND seq<=COALESCE((SELECT last_message_seq FROM mind_sessions WHERE scene=?),0)",
+            (scene, platform_id, after, scene),
+        ).fetchone()
+        return None if row is None else decode_message(row[0])
+
+    def session_through(self, scene: str) -> int:
+        """Highest message seq the scene's session has taken in; 0 before the first batch."""
+        row = self.db.execute("SELECT last_message_seq FROM mind_sessions WHERE scene=?", (scene,)).fetchone()
+        return 0 if row is None or row[0] is None else row[0]
+
     def messages_after(self, scene: str, platform_id: str) -> int:
         """Count actual visible messages after a known reply target in this scene."""
         return self.db.execute(
@@ -983,19 +1018,26 @@ class Store:
 
     def search_messages(self, scene: str, *, query: str | None, who: str | None,
                         after: float | None, before: float | None, snapshot: int,
-                        offset: int, limit: int) -> list[tuple[int, ChatMessage]]:
-        join = ""
-        conditions = ["m.scene=?", "m.seq<=?"]
+                        offset: int, limit: int,
+                        order: Literal["newest", "oldest"] = "oldest") -> list[tuple[int, ChatMessage]]:
+        # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.
+        cte, join = "", ""
+        conditions = ["m.scene=?", "+m.seq<=?"]
         params: list[object] = [scene, snapshot]
         if query is not None:
-            join = " JOIN message_search s ON s.rowid=m.seq"
-            normalized = query.casefold()
-            if len(normalized) >= 3:
-                conditions.append("s.search_text MATCH ?")
-                params.append('"' + normalized.replace('"', '""') + '"')
-            else:
-                conditions.append("instr(s.search_text,?)>0")
-                params.append(normalized)
+            phrases, shorts = [], []
+            for term in search_terms(query):
+                (phrases if len(term) >= 3 else shorts).append(term)
+            if phrases:
+                # The full-text hits are computed once; probing the virtual table per message is far slower.
+                cte = "WITH hit(seq) AS MATERIALIZED (SELECT rowid FROM message_search WHERE search_text MATCH ?) "
+                join = " JOIN hit ON hit.seq=m.seq"
+                params.insert(0, " AND ".join('"' + term.replace('"', '""') + '"' for term in phrases))
+            if shorts:
+                join += " JOIN message_search s ON s.rowid=m.seq"
+                for term in shorts:
+                    conditions.append("instr(s.search_text,?)>0")
+                    params.append(term)
         if who is not None:
             conditions.append("json_extract(m.body,'$.sender.uid')=?")
             params.append(who)
@@ -1005,9 +1047,10 @@ class Store:
         if before is not None:
             conditions.append("json_extract(m.body,'$.time')<?")
             params.append(before)
+        direction = " DESC" if order == "newest" else ""
         rows = self.db.execute(
-            "SELECT m.seq,m.body FROM messages m" + join + " WHERE " + " AND ".join(conditions)
-            + " ORDER BY json_extract(m.body,'$.time'),m.seq LIMIT ? OFFSET ?",
+            cte + "SELECT m.seq,m.body FROM messages m" + join + " WHERE " + " AND ".join(conditions)
+            + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
         return [(row[0], decode_message(row[1])) for row in rows]
@@ -1018,26 +1061,26 @@ class Store:
         ).fetchone()
         return None if row is None else decode_message(row[0])
 
-    def context_messages(self, scene: str, record: int) -> list[tuple[int, ChatMessage]]:
+    def context_messages(self, scene: str, record: int, before: int = 3,
+                         after: int = 3) -> list[tuple[int, ChatMessage]]:
         center = self.db.execute(
             "SELECT body FROM messages WHERE scene=? AND seq=?", (scene, record)
         ).fetchone()
         if center is None:
             raise ValueError(f"Scene {scene} has no message {record}")
         message = decode_message(center[0])
+        # The time bound alone drives the index; the seq tie-break only filters messages sent at the same instant.
         earlier = self.db.execute(
-            "SELECT seq,body FROM messages WHERE scene=? AND "
-            "(json_extract(body,'$.time')<? OR "
-            "(json_extract(body,'$.time')=? AND seq<?)) "
-            "ORDER BY json_extract(body,'$.time') DESC,seq DESC LIMIT 3",
-            (scene, message.time, message.time, record),
+            "SELECT seq,body FROM messages WHERE scene=? AND json_extract(body,'$.time')<=? "
+            "AND (json_extract(body,'$.time')<? OR seq<?) "
+            "ORDER BY json_extract(body,'$.time') DESC,seq DESC LIMIT ?",
+            (scene, message.time, message.time, record, before),
         ).fetchall()
         later = self.db.execute(
-            "SELECT seq,body FROM messages WHERE scene=? AND "
-            "(json_extract(body,'$.time')>? OR "
-            "(json_extract(body,'$.time')=? AND seq>?)) "
-            "ORDER BY json_extract(body,'$.time'),seq LIMIT 3",
-            (scene, message.time, message.time, record),
+            "SELECT seq,body FROM messages WHERE scene=? AND json_extract(body,'$.time')>=? "
+            "AND (json_extract(body,'$.time')>? OR seq>?) "
+            "ORDER BY json_extract(body,'$.time'),seq LIMIT ?",
+            (scene, message.time, message.time, record, after),
         ).fetchall()
         return ([(row[0], decode_message(row[1])) for row in reversed(earlier)]
                 + [(record, message)]

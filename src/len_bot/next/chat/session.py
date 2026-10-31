@@ -441,6 +441,8 @@ class Chat:
         talking = set() if batch is None else {
             message.sender.uid for seq, message, _ in self.store.pending_messages(scene)
             if seq <= batch[0] and not message.is_self}
+        # Requests may only cite messages the session takes in after this point; read before the batch joins.
+        source_floor = self.store.session_through(scene)
         # Synchronous: a cancellation between this write and the try below would leave the turn open.
         turn_id = self.store.start_turn(scene, batch=batch, attention_state=attention_state,
                                        scheduled=scheduled, task_notices=task_notices,
@@ -463,6 +465,7 @@ class Chat:
         status, error_text = "step_limit", None
         limit_until = limit_kind = None
         phase = None
+        self.toolset.source_floor = source_floor
         try:
             async with asyncio.timeout(self.config.turn_timeout_seconds):
                 recalled = None
@@ -671,6 +674,8 @@ class Chat:
             error_text = f"{type(error).__name__}: {error}"
             if phase is not None:
                 error_text = f'{phase}失败：{error_text}'
+        finally:
+            self.toolset.source_floor = None
         self.store.finish_pending_tools(scene, error_text or status)
         self.trace('turn.ended', turn_id, status=status, error=error_text,
                    expressions=len(expressions), steps=self.trace_step or 0)
