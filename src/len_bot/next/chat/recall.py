@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..platform.messages import ChatMessage, render_message
-from ..storage.store import Store
+from ..storage.store import MAX_SEARCH_TERMS, Store, search_terms
 from ..media.audio_store import AudioStore
 from ..prompt_files import read_prompt
 
@@ -24,12 +24,15 @@ class RecallArguments(BaseModel):
     snapshot: int | None = Field(default=None, ge=0)
     record: int | None = Field(default=None, gt=0)
     offset: int = Field(default=0, ge=0)
+    order: Literal["newest", "oldest"] = "newest"
+    context_before: int = Field(default=3, ge=0, le=20)
+    context_after: int = Field(default=3, ge=0, le=20)
 
     @field_validator("query")
     @classmethod
-    def nonblank_query(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("query must not be blank")
+    def keywords(cls, value: str | None) -> str | None:
+        if value is not None:
+            search_terms(value)
         return value
 
     @field_validator("after", "before", mode="before")
@@ -46,6 +49,11 @@ class RecallArguments(BaseModel):
 
     @model_validator(mode="after")
     def operation_fields(self) -> "RecallArguments":
+        given = self.model_fields_set
+        if self.action != "search" and "order" in given:
+            raise ValueError(f"{self.action} does not accept order")
+        if self.action != "context" and given & {"context_before", "context_after"}:
+            raise ValueError(f"{self.action} does not accept context_before or context_after")
         if self.action == "search":
             if self.record is not None:
                 raise ValueError("search does not accept record")
@@ -70,9 +78,11 @@ class RecallArguments(BaseModel):
 
 RECALL_TOOL = {"type": "function", "function": {
     "name": "recall_chat",
-    "description": "查当前场景历史原话。search按消息时间升序，每页10条；recent按落库位置取最新10条，"
-                   "页内正序，向前续页；两者续页均带原snapshot和offset。read用已有record与字符offset"
-                   "分段读全文；context查看前后各3条。who是实际账号，时间须含时区。",
+    "description": "查当前场景历史原话。search每页10条，order=newest（默认）从最新往前，order=oldest从最早往后；"
+                   f"query按空白拆成最多{MAX_SEARCH_TERMS}个关键词，消息须全部包含；续页带原order、snapshot和offset。"
+                   "recent按落库位置取最新10条，页内正序，向前续页，带原snapshot和offset。read用已有record与字符offset"
+                   "分段读全文；context查看record前后的消息，context_before、context_after各0到20条，默认3条。"
+                   "who是实际账号，时间须含时区。",
     "parameters": RecallArguments.model_json_schema(),
 }}
 
@@ -131,16 +141,19 @@ def recall_chat(store: Store, scene: str, timezone: str, arguments: RecallArgume
                 scene, query=arguments.query, who=arguments.who,
                 after=None if arguments.after is None else arguments.after.timestamp(),
                 before=None if arguments.before is None else arguments.before.timestamp(),
-                snapshot=snapshot, offset=arguments.offset, limit=11,
+                snapshot=snapshot, offset=arguments.offset, limit=11, order=arguments.order,
             )
             page = rows[:10]
-            direction = "更晚的"
+            newest = arguments.order == "newest"
+            direction = "更早的" if newest else "更晚的"
+            label = "search（最新优先）" if newest else "search（最早优先）"
+            carry = f"order={arguments.order}、"
         else:
             rows = store.recent_records(scene, limit=11, snapshot=snapshot, offset=arguments.offset)
             page = rows[-10:]
-            direction = "更早的"
-        summary = (f"{arguments.action} 第 {arguments.offset // 10 + 1} 页，共 {len(page)} 条。"
-                   + (f"还有{direction}记录：同一 action 带 snapshot={snapshot}、offset={arguments.offset + 10} 翻页。"
+            direction, label, carry = "更早的", "recent", ""
+        summary = (f"{label} 第 {arguments.offset // 10 + 1} 页，共 {len(page)} 条。"
+                   + (f"还有{direction}记录：同一 action 带 {carry}snapshot={snapshot}、offset={arguments.offset + 10} 翻页。"
                       if len(rows) > 10 else "没有下一页了。"))
         result = _listing(store, scene, timezone, page)
     elif arguments.action == "read":
@@ -154,7 +167,7 @@ def recall_chat(store: Store, scene: str, timezone: str, arguments: RecallArgume
                    + ("" if page["next_offset"] is None else f"后面还有，read 带 offset={page['next_offset']} 续读。"))
         result = page["text"]
     else:
-        rows = store.context_messages(scene, arguments.record)
+        rows = store.context_messages(scene, arguments.record, arguments.context_before, arguments.context_after)
         summary = f"record={arguments.record} 前后的消息。"
         result = _listing(store, scene, timezone, rows, center=arguments.record)
     return Template(read_prompt("next_recall.md")).substitute(summary=summary, result=result)

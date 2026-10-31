@@ -30,6 +30,17 @@ from ..chat.schedule_store import ScheduleStore
 
 
 FORMAT_VERSION = 1
+MAX_SEARCH_TERMS = 8
+
+
+def search_terms(query: str) -> list[str]:
+    """The distinct keywords of a history query, split on whitespace and casefolded; a message must match all."""
+    terms = list(dict.fromkeys(query.casefold().split()))
+    if not terms:
+        raise ValueError("query must contain a keyword")
+    if len(terms) > MAX_SEARCH_TERMS:
+        raise ValueError(f"query has {len(terms)} keywords; at most {MAX_SEARCH_TERMS} are accepted")
+    return terms
 
 
 def _require_current_format(path: Path, application_id: int, version: int, tables: frozenset[str]) -> None:
@@ -1007,19 +1018,26 @@ class Store:
 
     def search_messages(self, scene: str, *, query: str | None, who: str | None,
                         after: float | None, before: float | None, snapshot: int,
-                        offset: int, limit: int) -> list[tuple[int, ChatMessage]]:
-        join = ""
-        conditions = ["m.scene=?", "m.seq<=?"]
+                        offset: int, limit: int,
+                        order: Literal["newest", "oldest"] = "oldest") -> list[tuple[int, ChatMessage]]:
+        # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.
+        cte, join = "", ""
+        conditions = ["m.scene=?", "+m.seq<=?"]
         params: list[object] = [scene, snapshot]
         if query is not None:
-            join = " JOIN message_search s ON s.rowid=m.seq"
-            normalized = query.casefold()
-            if len(normalized) >= 3:
-                conditions.append("s.search_text MATCH ?")
-                params.append('"' + normalized.replace('"', '""') + '"')
-            else:
-                conditions.append("instr(s.search_text,?)>0")
-                params.append(normalized)
+            phrases, shorts = [], []
+            for term in search_terms(query):
+                (phrases if len(term) >= 3 else shorts).append(term)
+            if phrases:
+                # The full-text hits are computed once; probing the virtual table per message is far slower.
+                cte = "WITH hit(seq) AS MATERIALIZED (SELECT rowid FROM message_search WHERE search_text MATCH ?) "
+                join = " JOIN hit ON hit.seq=m.seq"
+                params.insert(0, " AND ".join('"' + term.replace('"', '""') + '"' for term in phrases))
+            if shorts:
+                join += " JOIN message_search s ON s.rowid=m.seq"
+                for term in shorts:
+                    conditions.append("instr(s.search_text,?)>0")
+                    params.append(term)
         if who is not None:
             conditions.append("json_extract(m.body,'$.sender.uid')=?")
             params.append(who)
@@ -1029,9 +1047,10 @@ class Store:
         if before is not None:
             conditions.append("json_extract(m.body,'$.time')<?")
             params.append(before)
+        direction = " DESC" if order == "newest" else ""
         rows = self.db.execute(
-            "SELECT m.seq,m.body FROM messages m" + join + " WHERE " + " AND ".join(conditions)
-            + " ORDER BY json_extract(m.body,'$.time'),m.seq LIMIT ? OFFSET ?",
+            cte + "SELECT m.seq,m.body FROM messages m" + join + " WHERE " + " AND ".join(conditions)
+            + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
         return [(row[0], decode_message(row[1])) for row in rows]
@@ -1042,26 +1061,26 @@ class Store:
         ).fetchone()
         return None if row is None else decode_message(row[0])
 
-    def context_messages(self, scene: str, record: int) -> list[tuple[int, ChatMessage]]:
+    def context_messages(self, scene: str, record: int, before: int = 3,
+                         after: int = 3) -> list[tuple[int, ChatMessage]]:
         center = self.db.execute(
             "SELECT body FROM messages WHERE scene=? AND seq=?", (scene, record)
         ).fetchone()
         if center is None:
             raise ValueError(f"Scene {scene} has no message {record}")
         message = decode_message(center[0])
+        # The time bound alone drives the index; the seq tie-break only filters messages sent at the same instant.
         earlier = self.db.execute(
-            "SELECT seq,body FROM messages WHERE scene=? AND "
-            "(json_extract(body,'$.time')<? OR "
-            "(json_extract(body,'$.time')=? AND seq<?)) "
-            "ORDER BY json_extract(body,'$.time') DESC,seq DESC LIMIT 3",
-            (scene, message.time, message.time, record),
+            "SELECT seq,body FROM messages WHERE scene=? AND json_extract(body,'$.time')<=? "
+            "AND (json_extract(body,'$.time')<? OR seq<?) "
+            "ORDER BY json_extract(body,'$.time') DESC,seq DESC LIMIT ?",
+            (scene, message.time, message.time, record, before),
         ).fetchall()
         later = self.db.execute(
-            "SELECT seq,body FROM messages WHERE scene=? AND "
-            "(json_extract(body,'$.time')>? OR "
-            "(json_extract(body,'$.time')=? AND seq>?)) "
-            "ORDER BY json_extract(body,'$.time'),seq LIMIT 3",
-            (scene, message.time, message.time, record),
+            "SELECT seq,body FROM messages WHERE scene=? AND json_extract(body,'$.time')>=? "
+            "AND (json_extract(body,'$.time')>? OR seq>?) "
+            "ORDER BY json_extract(body,'$.time'),seq LIMIT ?",
+            (scene, message.time, message.time, record, after),
         ).fetchall()
         return ([(row[0], decode_message(row[1])) for row in reversed(earlier)]
                 + [(record, message)]

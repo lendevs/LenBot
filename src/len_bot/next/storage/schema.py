@@ -98,6 +98,8 @@ CREATE INDEX message_overview ON messages(scene,
     json_extract(body,'$.send_status'),raw IS NULL);
 CREATE INDEX message_failed_sends ON messages(scene,json_extract(body,'$.time'),json_extract(body,'$.send_status'))
     WHERE raw IS NULL AND json_extract(body,'$.send_status') IN ('failed','unconfirmed');
+CREATE INDEX message_scene_time ON messages(scene,json_extract(body,'$.time'),seq);
+CREATE INDEX message_sender_time ON messages(scene,json_extract(body,'$.sender.uid'),json_extract(body,'$.time'),seq);
 CREATE INDEX model_call_expiry ON model_calls(ended,id);
 CREATE INDEX turns_scene_time ON turns(scene,started);
 CREATE INDEX turns_expiry ON turns(ended,id);
