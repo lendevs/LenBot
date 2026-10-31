@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 import itertools
 import json
@@ -204,7 +205,7 @@ class _Session:
         reader = asyncio.StreamReader(limit=2 ** 26)
         # Each host end is owned by exactly one file object from here on, so a cancelled start closes it once.
         stdout_file, stdin_file = os.fdopen(host_stdout, "rb", 0), os.fdopen(host_stdin, "wb", 0)
-        read_transport = write_transport = None
+        read_transport = write_transport = started = None
         try:
             read_transport, _ = await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), stdout_file)
             write_transport, protocol = await loop.connect_write_pipe(_WriteProtocol, stdin_file)
@@ -219,6 +220,11 @@ class _Session:
         except BaseException:
             self.starting.pop(ident, None)
             self.processes.pop(ident, None)
+            if started is not None and started.done() and not started.cancelled() and started.exception() is None:
+                # The starter answered, but the launch was cancelled before it resumed: stop that process too.
+                log_event(logger, "sandbox_orphan_process", level=logging.WARNING, ident=ident, pid=started.result())
+                with suppress(SandboxError, OSError):
+                    self.send({"signal": ident, "number": signal.SIGKILL})
             for transport, file in ((read_transport, stdout_file), (write_transport, stdin_file)):
                 if transport is None:
                     file.close()
