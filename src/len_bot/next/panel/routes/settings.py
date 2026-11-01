@@ -27,6 +27,8 @@ from ...configuration.chat import (
 from ...config import HostConfig, _read_root
 from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
+from ...platform import feishu as feishu_platform, telegram as telegram_platform
+from ...platform.adapter import PlatformCallError
 from ...configuration.models import Roles
 from ...configuration.tasks import suggested_worker
 from ...work.bwrap import check_local_sandbox
@@ -235,11 +237,38 @@ class ReversePublic(OneBotPublic):
     listen_port: int
 
 
+class TelegramPublic(BaseModel):
+    """Telegram settings without the token; the bot account follows from the token."""
+    model_config = STRICT
+
+    api_url: str = "https://api.telegram.org"
+    proxy: str | None = None
+    poll_timeout_seconds: int = 30
+    request_timeout_seconds: float = 15.0
+
+
+class FeishuPublic(BaseModel):
+    """Feishu settings without the secret; ``bot_id`` comes from a connection test."""
+    model_config = STRICT
+
+    bot_id: str
+    app_id: str
+    domain: Literal["feishu", "lark"] = "feishu"
+    request_timeout_seconds: float = 15.0
+
+
 class ConnectionChange(BaseModel):
+    """The connection page. Absent ``telegram``, ``feishu`` and ``bot_id`` keep their saved values."""
     model_config = STRICT
 
     onebot: Annotated[ForwardPublic | ReversePublic, Field(discriminator="mode")] | None
     access_token: str | None = Field(default=None, repr=False)
+    # The QQ account OneBot logs in as, for an instance whose root account belongs to another platform.
+    bot_id: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$")
+    telegram: TelegramPublic | None = None
+    telegram_token: str | None = Field(default=None, repr=False)
+    feishu: FeishuPublic | None = None
+    feishu_secret: str | None = Field(default=None, repr=False)
     owners: list[str]
     timezone: str
     delivery: Literal["simulated", "live"]
@@ -247,6 +276,39 @@ class ConnectionChange(BaseModel):
     turn_timeout_seconds: float
     max_model_requests: int
     text_delivery: TextDelivery
+
+
+class ConnectionTest(BaseModel):
+    """One platform's settings as typed on the connection page; secrets left empty use the saved ones."""
+    model_config = STRICT
+
+    platform: Literal["telegram", "feishu"]
+    telegram: TelegramPublic | None = None
+    telegram_token: str | None = Field(default=None, repr=False)
+    feishu: FeishuPublic | None = None
+    feishu_secret: str | None = Field(default=None, repr=False)
+
+
+def _telegram_source(change: TelegramPublic, token: str | None, saved: HostConfig) -> dict:
+    """The saved Telegram section: a new token, or the saved one while the Bot API address stays the same."""
+    if token is None:
+        if saved.telegram is None:
+            raise ValueError("启用 Telegram 需要填写 Bot 令牌")
+        if saved.telegram.api_url != change.api_url.rstrip("/"):
+            raise ValueError("Bot API 地址改变后需要重新填写 Bot 令牌")
+        token = saved.telegram.bot_token
+    return {**change.model_dump(mode="json"), "bot_token": token, "bot_id": "telegram:" + token.split(":", 1)[0]}
+
+
+def _feishu_source(change: FeishuPublic, secret: str | None, saved: HostConfig) -> dict:
+    """The saved Feishu section: a new secret, or the saved one for the same app."""
+    if secret is None:
+        if saved.feishu is None:
+            raise ValueError("启用飞书需要填写 App Secret")
+        if (saved.feishu.app_id, saved.feishu.domain) != (change.app_id, change.domain):
+            raise ValueError("App ID 或域名改变后需要重新填写 App Secret")
+        secret = saved.feishu.app_secret
+    return {**change.model_dump(mode="json"), "app_secret": secret}
 
 
 class CommandsChange(BaseModel):
@@ -284,6 +346,8 @@ def _project(config: HostConfig) -> dict:
     if config.onebot is not None:
         onebot = config.onebot.model_dump(mode="json", exclude={"access_token"})
         onebot["access_token_configured"] = bool(config.onebot.access_token)
+    telegram = None if config.telegram is None else config.telegram.model_dump(mode="json", exclude={"bot_token"})
+    feishu = None if config.feishu is None else config.feishu.model_dump(mode="json", exclude={"app_secret"})
     return {
         "limits": config.limits.model_dump(mode="json"),
         "retention": None if config.retention is None else config.retention.model_dump(mode="json"),
@@ -293,6 +357,8 @@ def _project(config: HostConfig) -> dict:
             "bot_id": config.bot_id,
             "owners": config.owners,
             "onebot": onebot,
+            "telegram": telegram,
+            "feishu": feishu,
             "timezone": config.timezone,
             "delivery": config.delivery,
             "max_steps": config.max_steps,
@@ -381,7 +447,7 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
-                for name in ("bot_id", "owners", "onebot", "timezone", "delivery", "max_steps",
+                for name in ("bot_id", "owners", "onebot", "telegram", "feishu", "timezone", "delivery", "max_steps",
                              "turn_timeout_seconds", "max_model_requests", "text_delivery")
             ),
             "limits": running.limits != saved.limits,
@@ -795,6 +861,19 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 onebot["access_token"] = (
                     "" if saved.onebot is None else saved.onebot.access_token
                 ) if change.access_token is None else change.access_token
+            if change.bot_id is not None and change.bot_id != saved.bot_id:
+                if saved.bot_id.startswith("onebot:"):
+                    raise ValueError("QQ Bot 账号由已连接的协议端确定，不能在这里修改")
+                source["bot_id"] = change.bot_id
+            if onebot is not None and not source["bot_id"].startswith("onebot:"):
+                raise ValueError("启用 QQ 需要填写 Bot QQ 号")
+            fields = change.model_fields_set
+            if "telegram" in fields:
+                source["telegram"] = (None if change.telegram is None else
+                                      _telegram_source(change.telegram, change.telegram_token, saved))
+            if "feishu" in fields:
+                source["feishu"] = (None if change.feishu is None else
+                                    _feishu_source(change.feishu, change.feishu_secret, saved))
             source.update(
                 onebot=onebot,
                 owners=change.owners,
@@ -807,6 +886,30 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             )
 
         return await save(edit)
+
+    @app.post("/api/host/settings/connection/test", response_model=responses.ConnectionTest, response_model_exclude_unset=True)
+    async def test_connection(request: Request, _: str = Depends(user)):
+        """Check typed Telegram or Feishu credentials without saving; Telegram updates stay with the running host."""
+        item: ConnectionTest = await _body(request, ConnectionTest)
+        try:
+            saved = await asyncio.to_thread(_read_saved, root)
+            if item.platform == "telegram":
+                if item.telegram is None:
+                    raise ValueError("缺少 Telegram 设置")
+                settings = _telegram_source(item.telegram, item.telegram_token, saved)
+                result = await telegram_platform.probe(
+                    settings["bot_token"], api_url=settings["api_url"], proxy=settings["proxy"],
+                    timeout_seconds=settings["request_timeout_seconds"])
+            else:
+                if item.feishu is None:
+                    raise ValueError("缺少飞书设置")
+                settings = _feishu_source(item.feishu, item.feishu_secret, saved)
+                result = await feishu_platform.probe(
+                    settings["app_id"], settings["app_secret"], domain=settings["domain"],
+                    timeout_seconds=settings["request_timeout_seconds"])
+        except (ValueError, PlatformCallError) as error:
+            raise HTTPException(422, str(error)) from error
+        return {"bot_id": result["bot_id"], "name": result["name"]}
 
     @app.put("/api/host/settings/commands", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
     async def put_commands(request: Request, _: str = Depends(user)):

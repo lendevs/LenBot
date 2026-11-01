@@ -231,6 +231,8 @@ class Telegram:
         self._members: dict[str, tuple[str | None, str | None]] = {}
         # The forum topic each chat last spoke in; a send without a reply goes there.
         self._threads: dict[int, int] = {}
+        # Group titles by scene from messages received; the Bot API cannot list the chats a bot is in.
+        self.chats: dict[str, str] = {}
 
     def _safe(self, text: str) -> str:
         return text.replace(self.settings.bot_token, REDACTED)[:2000]
@@ -360,6 +362,9 @@ class Telegram:
                 self._members[f"telegram:{user['id']}"] = (user.get("username"), _name(user) or None)
         if message.get("is_topic_message") and isinstance(message.get("message_thread_id"), int):
             self._threads[message["chat"]["id"]] = message["message_thread_id"]
+        chat = message.get("chat") or {}
+        if chat.get("type") in {"group", "supergroup"} and isinstance(chat.get("id"), int):
+            self.chats[f"telegram:group:{chat['id']}"] = chat.get("title") or str(chat["id"])
 
     async def _post(self, method: str, params: dict, *, files: dict | None = None,
                     timeout: float | None = None) -> dict:
@@ -443,6 +448,49 @@ class Telegram:
             length += _utf16_length(piece)
         return "".join(parts), entities
 
+    def _chunks(self, segments: list[Segment], first_limit: int) -> list[list[Segment]]:
+        """Split text and mentions into messages within Telegram's limits, at line breaks where possible.
+
+        The first message keeps the image and reply and is limited to ``first_limit``; the rest to TEXT_LIMIT.
+        """
+        chunks: list[list[Segment]] = [[segment for segment in segments if segment.type in {"image", "reply"}]]
+        used, limit = 0, first_limit
+
+        def start_next() -> None:
+            nonlocal used, limit
+            chunks.append([])
+            used, limit = 0, TEXT_LIMIT
+
+        for segment in segments:
+            if segment.type == "mention":
+                size = _utf16_length(self._compose([segment])[0])
+                if used + size > limit and used:
+                    start_next()
+                chunks[-1].append(segment)
+                used += size
+            elif segment.type == "text":
+                text = segment.data["text"]
+                while text:
+                    room = limit - used
+                    if _utf16_length(text) <= room:
+                        chunks[-1].append(Segment("text", {"text": text}))
+                        used += _utf16_length(text)
+                        break
+                    cut, size = 0, 0
+                    for index, character in enumerate(text):
+                        size += _utf16_length(character)
+                        if size > room:
+                            break
+                        cut = index + 1
+                    newline = text.rfind("\n", 0, cut)
+                    if newline > 0:
+                        cut = newline + 1
+                    if cut:
+                        chunks[-1].append(Segment("text", {"text": text[:cut]}))
+                    text = text[cut:]
+                    start_next()
+        return [chunk for chunk in chunks if any(segment.type in {"text", "mention", "image"} for segment in chunk)]
+
     def _target(self, chat: int, reply: str | None) -> dict:
         if reply is not None and reply.isdecimal():
             return {"chat_id": chat, "reply_parameters": {"message_id": int(reply), "allow_sending_without_reply": True}}
@@ -468,24 +516,36 @@ class Telegram:
             return SendResult("failed", None, "Telegram image segment requires nonempty image bytes")
         if not image_count and image_bytes is not None:
             return SendResult("failed", None, "Telegram image bytes require an image segment")
-        text, entities = self._compose(message.segments)
-        limit = CAPTION_LIMIT if image_count else TEXT_LIMIT
-        if _utf16_length(text) > limit:
-            return SendResult("failed", None, f"Telegram {'caption' if image_count else 'text'} exceeds {limit} characters")
+        text, _ = self._compose(message.segments)
         if not image_count and not text.strip():
             return SendResult("failed", None, "Telegram text message is empty")
         reply = next((str(segment.data["id"]) for segment in message.segments if segment.type == "reply"),
                      message.reply_to)
+        if not self._running or self._client is None:
+            return SendResult("failed", None, "Telegram transport is not running; message was not sent")
+        chunks = self._chunks(message.segments, CAPTION_LIMIT if image_count else TEXT_LIMIT)
+        first = await self._send_one(chat, chunks[0], reply, image_bytes if image_count else None)
+        for number, chunk in enumerate(chunks[1:], 2):
+            if first.status != "sent":
+                break
+            later = await self._send_one(chat, chunk, None, None)
+            if later.status != "sent":
+                # The first part is in the chat; what follows it may be missing.
+                return SendResult("unconfirmed", first.platform_message_id,
+                                  f"part {number} of {len(chunks)}: {later.error}")
+        return first
+
+    async def _send_one(self, chat: int, segments: list[Segment], reply: str | None,
+                        image_bytes: bytes | None) -> SendResult:
+        text, entities = self._compose(segments)
         params = self._target(chat, reply)
-        if image_count:
+        if image_bytes is not None:
             method, files = "sendPhoto", {"photo": ("image", image_bytes)}
             params.update({"caption": text} if text else {})
             params.update({"caption_entities": entities} if entities else {})
         else:
             method, files = "sendMessage", None
             params.update(text=text, **({"entities": entities} if entities else {}))
-        if not self._running or self._client is None:
-            return SendResult("failed", None, "Telegram transport is not running; message was not sent")
         try:
             result = await self._send(method, params, files=files)
         except TelegramCallError as error:
@@ -531,6 +591,10 @@ class Telegram:
             return info.get("title") or str(chat), count if type(count) is int else None
         return _name(info) or info.get("username") or str(chat), None
 
+    async def joined_groups(self) -> list[dict]:
+        """Groups that sent the bot a message since it started."""
+        return [{"scene": scene, "name": name, "members": None} for scene, name in self.chats.items()]
+
     async def call(self, action: str, params: dict) -> dict:
         """One Bot API method with Telegram's answer as sent, ok=false included."""
         return await self._post(action, params)
@@ -554,3 +618,52 @@ class Telegram:
         except httpx.HTTPError as error:
             raise TelegramCallError(self._safe(f"Telegram file download: {type(error).__name__}: {error}"),
                                     submitted=False) from None
+
+
+async def probe(bot_token: str, *, api_url: str = "https://api.telegram.org", proxy: str | None = None,
+                timeout_seconds: float = 15.0, updates: bool = False) -> dict:
+    """Check a token with getMe; with ``updates``, list the groups and people in the pending updates.
+
+    getUpdates without an offset confirms nothing, so the host still receives these updates later. A running
+    host's long poll is interrupted by it, which is why the panel of a running host probes without updates.
+    """
+    def safe(text: str) -> str:
+        return text.replace(bot_token, REDACTED)[:2000]
+
+    async def request(client: httpx.AsyncClient, method: str, params: dict) -> object:
+        try:
+            response = await client.post(method, json=params)
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise TelegramCallError(safe(f"{type(error).__name__}: {error}"), submitted=False) from None
+        if not isinstance(body, dict) or body.get("ok") is not True:
+            description = body.get("description") if isinstance(body, dict) else repr(body)[:300]
+            raise TelegramCallError(safe(f"Telegram {method}: {description}"), submitted=False)
+        return body.get("result")
+
+    async with httpx.AsyncClient(base_url=f"{api_url.rstrip('/')}/bot{bot_token}/", transport=_transport(proxy),
+                                 timeout=timeout_seconds, follow_redirects=False) as client:
+        me = await request(client, "getMe", {})
+        if not isinstance(me, dict) or type(me.get("id")) is not int:
+            raise TelegramCallError(f"getMe returned {repr(me)[:300]}", submitted=False)
+        groups: dict[str, str] = {}
+        people: dict[str, str] = {}
+        if updates:
+            try:
+                pending = await request(client, "getUpdates", {"timeout": 0, "allowed_updates": ALLOWED_UPDATES})
+            except TelegramCallError:
+                # A webhook or another poller holds the updates; the token itself is fine.
+                pending = []
+            for update in pending if isinstance(pending, list) else []:
+                message = update.get("message") if isinstance(update, dict) else None
+                if not isinstance(message, dict):
+                    continue
+                chat, author = message.get("chat") or {}, message.get("from") or {}
+                if chat.get("type") in {"group", "supergroup"} and isinstance(chat.get("id"), int):
+                    groups[str(chat["id"])] = chat.get("title") or str(chat["id"])
+                if isinstance(author.get("id"), int) and not author.get("is_bot"):
+                    people[str(author["id"])] = _name(author) or author.get("username") or str(author["id"])
+    username = me.get("username")
+    return {"bot_id": f"telegram:{me['id']}", "name": f"@{username}" if isinstance(username, str) else _name(me),
+            "groups": [{"id": key, "name": value} for key, value in groups.items()],
+            "people": [{"id": key, "name": value} for key, value in people.items()]}

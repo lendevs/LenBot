@@ -31,6 +31,18 @@ class GroupFileInput(BaseModel):
 GroupFileFetch = Callable[[GroupFileInput, int], Awaitable[bytes]]
 
 
+class ChatFileInput(BaseModel):
+    model_config = STRICT
+
+    message: str = Field(min_length=1, description="发文件的那条消息的平台消息 ID。")
+    file: int = Field(default=1, gt=0, description="这条消息里的第几个文件，从 1 开始。")
+    name: MaterialName = Field(description="任务输入里的文件名，通常沿用原文件名。")
+
+
+# Fetches a file a message of this scene carries; absent where files are read as group files instead.
+ChatFileFetch = Callable[[ChatFileInput, int], Awaitable[bytes]]
+
+
 class DelegateArguments(BaseModel):
     model_config = STRICT
 
@@ -43,12 +55,15 @@ class DelegateArguments(BaseModel):
         description='本场景已有任务文件或交付的实际引用及输入文件名；与 materials 合计最多16份，名称不得重复。')
     group_files: list[GroupFileInput] = Field(default_factory=list, max_length=16,
         description='本群群文件（group_files 查到的 file_id 与 busid）；登记前下载当前版本，复制为本任务私有只读快照。')
+    chat_files: list[ChatFileInput] = Field(default_factory=list, max_length=16,
+        description='Telegram、飞书聊天里发来的文件（消息 ID 与第几个文件）；登记前下载，复制为本任务私有只读快照。')
 
     @model_validator(mode='after')
     def distinct_inputs(self):
-        names = [*self.materials, *(item.name for item in self.resources), *(item.name for item in self.group_files)]
+        names = [*self.materials, *(item.name for item in self.resources), *(item.name for item in self.group_files),
+                 *(item.name for item in self.chat_files)]
         if len(names) > 16 or len(names) != len(set(names)):
-            raise ValueError('materials、resources 与 group_files 合计最多16份，输入文件名必须不同')
+            raise ValueError('materials、resources、group_files 与 chat_files 合计最多16份，输入文件名必须不同')
         return self
 
     @field_validator("goal", "deliverable")
@@ -157,12 +172,24 @@ async def group_file_inputs(items: list[GroupFileInput], fetch: GroupFileFetch |
             for item in items]
 
 
+async def chat_file_inputs(items: list[ChatFileInput], fetch: ChatFileFetch | None,
+                           max_bytes: int) -> list[DownloadedInput]:
+    """Download each file sent in the chat, keeping the message it came from."""
+    if items and fetch is None:
+        raise ValueError('当前场景读取不到聊天里的文件：chat_files 用于真实发送的 Telegram、飞书场景，QQ 群用 group_files')
+    return [DownloadedInput(item.name, await fetch(item, max_bytes), {'chat_file': {
+                'message': item.message, 'file': item.file}})
+            for item in items]
+
+
 async def execute_tasks(service: WorkTasks, scene: str, name: str, args: dict,
-                        fetch_group_file: GroupFileFetch | None = None) -> dict:
+                        fetch_group_file: GroupFileFetch | None = None,
+                        fetch_chat_file: ChatFileFetch | None = None) -> dict:
     """Validate one native call, then let the owning service check permissions."""
     if name == "delegate":
         parsed = DelegateArguments.model_validate(args)
         downloads = await group_file_inputs(parsed.group_files, fetch_group_file, service.settings.max_file_bytes)
+        downloads += await chat_file_inputs(parsed.chat_files, fetch_chat_file, service.settings.max_file_bytes)
         result = await service.delegate(
             scene, requester=parsed.requester, goal=parsed.goal,
             deliverable=parsed.deliverable, context=parsed.context,

@@ -55,14 +55,18 @@ class SceneService:
         await asyncio.gather(*self.tasks.values())
 
     async def available(self) -> list[dict]:
+        """Groups the bot is in on each connected platform that are not scenes yet.
+
+        OneBot and Feishu list the joined groups; Telegram lists the groups that sent the bot a message.
+        """
         runtime = self.runtime
-        # Only OneBot lists the groups an account has joined.
-        onebot = adapter_for(runtime.platform, 'onebot')
-        if onebot is None:
-            return []
-        if not onebot.connected:
+        adapters = [(name, adapter_for(runtime.platform, name)) for name in runtime.config.platform_names]
+        connected = [(name, adapter) for name, adapter in adapters if adapter is not None and adapter.connected]
+        if adapters and not connected:
             raise ValueError('平台尚未连接，无法读取已加入的群')
-        groups = await joined_groups(onebot.call)
+        groups: list[dict] = []
+        for name, adapter in connected:
+            groups += await (joined_groups(adapter.call) if name == 'onebot' else adapter.joined_groups())
         return [item for item in groups if item['scene'] not in runtime.chats]
 
     async def apply(self, saved: HostConfig) -> None:

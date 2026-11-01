@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
 import { PlugZap } from '@lucide/vue'
-import { setupApi } from '../../../api/setup'
 import Button from '../../../ui/Button.vue'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
@@ -25,9 +24,15 @@ const modes = computed(() =>
     label: t(`system.connection.modes.${value}`),
   })),
 )
-const connects = computed(() => [
-  { value: 'now' as const, label: t('setup.platform.now') },
+const platforms = computed(() => [
+  { value: 'onebot' as const, label: t('chatPlatforms.onebot') },
+  { value: 'telegram' as const, label: t('chatPlatforms.telegram') },
+  { value: 'feishu' as const, label: t('chatPlatforms.feishu') },
   { value: 'later' as const, label: t('setup.platform.later') },
+])
+const domains = computed(() => [
+  { value: 'feishu', label: t('chatPlatforms.feishu') },
+  { value: 'lark', label: 'Lark' },
 ])
 const deliveries = computed(() => [
   { value: 'simulated' as const, label: t('setup.platform.simulated') },
@@ -39,21 +44,12 @@ watch(
   (problem) => problem && (more.value = true),
 )
 
-const connect = useMutation({
-  mutationFn: async () => {
-    const signature = wizard.platformSignature.value
-    const result = await setupApi.platform(wizard.onebot())
-    return { signature, botId: result.bot_id, groups: result.groups }
-  },
-  onSuccess: (result) => (wizard.platform.value = result),
-})
+const connect = useMutation({ mutationFn: () => wizard.testPlatform() })
 // A result belongs to the settings it was asked with.
 watch(wizard.platformSignature, () => connect.reset())
 
 const passed = computed(() =>
-  wizard.platformReady.value
-    ? t('setup.platform.connected', { id: wizard.platform.value!.botId.replace(/^onebot:/, '') })
-    : null,
+  wizard.platformReady.value ? t('setup.platform.connected', { id: wizard.platform.value!.name }) : null,
 )
 /** Tests only settings that pass the checks; otherwise the step shows what is wrong. */
 function test() {
@@ -67,7 +63,11 @@ function test() {
   <div class="flex flex-col gap-5">
     <Field :label="t('setup.platform.connect')">
       <div>
-        <SegmentedControl v-model="draft.connect" :options="connects" :label="t('setup.platform.connect')" />
+        <SegmentedControl
+          v-model="draft.chatPlatform"
+          :options="platforms"
+          :label="t('setup.platform.connect')"
+        />
       </div>
     </Field>
     <Field
@@ -78,7 +78,7 @@ function test() {
     >
       <Input v-model="draft.botAccount" mono inputmode="numeric" placeholder="10001" />
     </Field>
-    <div v-if="!wizard.connectLater.value" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+    <div v-else-if="draft.chatPlatform === 'onebot'" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
       <Field :label="t('system.connection.mode')" wide>
         <Select v-model="draft.transport" :options="modes" />
       </Field>
@@ -114,7 +114,30 @@ function test() {
         />
       </Field>
     </div>
-    <MoreFields v-if="!wizard.connectLater.value" v-model="more" :title="t('system.connection.advanced')">
+    <div v-else-if="draft.chatPlatform === 'telegram'" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+      <Field :label="t('system.connection.telegram.token')" :error="error('telegramToken')" required wide>
+        <Input v-model="draft.telegramToken" type="password" autocomplete="off" mono />
+      </Field>
+      <Field :label="t('system.connection.telegram.proxy')" :error="error('telegramProxy')" wide>
+        <Input v-model="draft.telegramProxy" type="url" mono placeholder="http://127.0.0.1:7890" />
+      </Field>
+    </div>
+    <div v-else class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+      <Field :label="t('system.connection.feishu.appId')" :error="error('feishuAppId')" required>
+        <Input v-model="draft.feishuAppId" mono placeholder="cli_" />
+      </Field>
+      <Field :label="t('system.connection.feishu.secret')" :error="error('feishuSecret')" required>
+        <Input v-model="draft.feishuSecret" type="password" autocomplete="off" mono />
+      </Field>
+      <Field :label="t('system.connection.feishu.domain')">
+        <Select v-model="draft.feishuDomain" :options="domains" />
+      </Field>
+    </div>
+    <MoreFields
+      v-if="draft.chatPlatform === 'onebot'"
+      v-model="more"
+      :title="t('system.connection.advanced')"
+    >
       <Field
         :label="t('system.connection.fields.request_timeout_seconds')"
         :error="error('onebotTimeout')"

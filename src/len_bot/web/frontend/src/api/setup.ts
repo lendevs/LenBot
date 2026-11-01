@@ -102,6 +102,8 @@ export interface FirstSetup {
   timezone: string
   delivery: 'simulated' | 'live'
   onebot: OneBotLink | null
+  telegram: SetupTelegram | null
+  feishu: SetupFeishu | null
   provider: SetupProvider
   mind: SetupBinding
   embedding: { provider: SetupProvider | null; model: string; dimensions: number | null } | null
@@ -129,6 +131,27 @@ export interface FirstSetup {
 export interface SetupGroup {
   id: string
   name: string
+}
+
+export interface SetupTelegram {
+  bot_id: string
+  bot_token: string
+  proxy: string | null
+}
+
+export interface SetupFeishu {
+  bot_id: string
+  app_id: string
+  app_secret: string
+  domain: 'feishu' | 'lark'
+}
+
+/** A Telegram or Feishu test: the bot, its groups and, for Telegram, the people in pending messages. */
+export interface SetupChatPlatform {
+  bot_id: string
+  name: string
+  groups: SetupGroup[]
+  people?: SetupGroup[]
 }
 
 export interface SetupSaved {
@@ -162,6 +185,10 @@ export const setupApi = {
     call<{ protocols: Protocol[]; container: boolean; panel_port: number | null }>('/api/setup/protocols'),
   platform: (onebot: OneBotLink) =>
     call<{ bot_id: string; groups: SetupGroup[] }>('/api/setup/platform', { onebot }),
+  telegram: (body: { bot_token: string; proxy: string | null }) =>
+    call<SetupChatPlatform>('/api/setup/telegram', body),
+  feishu: (body: { app_id: string; app_secret: string; domain: 'feishu' | 'lark' }) =>
+    call<SetupChatPlatform>('/api/setup/feishu', body),
   models: (provider: SetupProvider) => call<{ models: SetupModel[] }>('/api/setup/models', { provider }),
   model: (provider: SetupProvider, mind: SetupBinding, kind: 'text' | 'tools') =>
     call<ProbeAnswer>('/api/setup/model', { provider, mind, kind }),

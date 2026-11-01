@@ -156,7 +156,7 @@ WAIT_TOOL = {"type": "function", "function": {
 
 LOOKED_IMAGES = 4
 # Tools built on OneBot actions (get_record, group files, forward records, member info, reactions).
-ONEBOT_TOOLS = frozenset({"open_forward", "member_info", "group_files", "message_reaction", "transcribe"})
+ONEBOT_TOOLS = frozenset({"open_forward", "member_info", "group_files", "message_reaction"})
 
 
 def tool_catalog(*, platform: bool) -> list[dict]:
@@ -465,6 +465,21 @@ class SceneTools:
             return None
         return group_file_fetch(self.platform_call, group_id)
 
+    def _chat_file_fetch(self):
+        """Downloads a file sent in this chat for delegate; None on OneBot, whose files are group files."""
+        if self.fetch_media is None or self.config.delivery != "live" or self.config.scene.startswith("onebot:"):
+            return None
+
+        async def fetch(item, max_bytes: int) -> bytes:
+            message = self.store.find_message(self.config.scene, item.message)
+            if message is None:
+                raise ValueError(f"当前场景没有平台消息 {item.message}")
+            files = [segment for segment in message.segments if segment.type == "file"]
+            if item.file > len(files):
+                raise ValueError(f"消息 {item.message} 只有 {len(files)} 个文件，没有第 {item.file} 个")
+            return await self.fetch_media(files[item.file - 1].data, max_bytes)
+        return fetch
+
     def _connection(self, settings):
         """The provider a web search or read setting names, if it uses one."""
         return None if settings.connection is None else self.config.models.providers[settings.connection]
@@ -536,7 +551,8 @@ class SceneTools:
             return await self.run_memory(call.arguments), None, None
         if call.name in {"delegate", "task"}:
             return tool_result(await execute_tasks(self.tasks, self.config.scene, call.name, call.arguments,
-                                                   fetch_group_file=self._group_file_fetch())), None, None
+                                                   fetch_group_file=self._group_file_fetch(),
+                                                   fetch_chat_file=self._chat_file_fetch())), None, None
         if call.name == "group_files":
             return await list_group_files(self.config.scene, self.config.timezone,
                                           GroupFilesArguments.model_validate(call.arguments), self.platform_call), None, None

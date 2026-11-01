@@ -1,6 +1,7 @@
 """Authenticated inspection and explicit processing of saved scene audio."""
 import json
 
+from ...models.asr import audio_type
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 
@@ -40,7 +41,7 @@ def register_host_audio(app: FastAPI, *, runtime, user) -> None:
         item = service.records.item(scene, message, audio_index)
         if item is None or item['wav'] is None:
             raise HTTPException(404, "本场景尚未保存此语音原件")
-        return Response(item['wav'], media_type='audio/wav', headers={'Cache-Control': 'no-store'})
+        return Response(item['wav'], media_type=audio_type(item['wav']), headers={'Cache-Control': 'no-store'})
 
     @app.get('/api/host/scenes/{scene}/audio/{message}/{audio_index}/calls', response_model=list[responses.JsonObject], response_model_exclude_unset=True)
     async def calls(scene: str, message: str, audio_index: int = Path(ge=1), _: str = Depends(user)):

@@ -39,6 +39,15 @@ const chosen = computed({
   get: () => draft.sceneId || undefined,
   set: (value: string | string[] | undefined) => (draft.sceneId = typeof value === 'string' ? value : ''),
 })
+const placeholder = computed(() =>
+  wizard.prefix.value === 'feishu'
+    ? draft.sceneKind === 'group'
+      ? 'oc_'
+      : 'ou_'
+    : wizard.prefix.value === 'telegram' && draft.sceneKind === 'group'
+      ? '-100'
+      : undefined,
+)
 const more = ref(false)
 watch(
   () => error('personaId'),
@@ -86,12 +95,20 @@ watch(
         </div>
       </Field>
       <Field
-        :label="draft.sceneKind === 'group' ? t('setup.persona.groupId') : t('setup.persona.privateId')"
+        :label="
+          t(`setup.persona.${draft.sceneKind === 'group' ? 'groupIds' : 'privateIds'}.${wizard.prefix.value}`)
+        "
         :error="error('sceneId')"
         required
       >
         <Combobox v-if="listed" v-model="chosen" :options="groups" />
-        <Input v-else v-model="draft.sceneId" mono inputmode="numeric" />
+        <Input
+          v-else
+          v-model="draft.sceneId"
+          mono
+          :inputmode="wizard.prefix.value === 'feishu' ? 'text' : 'numeric'"
+          :placeholder="placeholder"
+        />
       </Field>
       <ParticipationChoice v-if="draft.sceneKind === 'group'" v-model="draft.participation" />
     </div>

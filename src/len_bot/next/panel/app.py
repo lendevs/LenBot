@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket
 
 from len_bot.web.shell import mount_panel
 from . import responses
+from ..platform.adapter import adapter_for
 from ..config import HostConfig
 from ..configuration.editing import _read_saved
 from ..models.limits import speech_quota
@@ -174,6 +175,10 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                 "can_disconnect": runtime.can_disconnect,
                 "disconnect_requested": runtime.disconnect_requested,
                 "accepting": runtime.accepting,
+                # Each configured platform's own connection, by platform name.
+                "platforms": {name: bool(adapter is not None and adapter.connected)
+                              for name in config.platform_names
+                              for adapter in [adapter_for(runtime.platform, name)]},
             },
             "scenes": [
                 {"scene": scene, "persona": {"id": runtime.chats[scene].persona.id,

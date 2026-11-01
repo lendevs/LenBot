@@ -16,6 +16,25 @@ export type OneBot =
   | (OneBotCommon & { mode: 'reverse_ws'; listen_host: string; listen_port: number | null })
 export type SavedOneBot = OneBot & { access_token_configured: boolean }
 
+/** Telegram without the token; the Bot account follows from the token. */
+export interface TelegramLink {
+  api_url: string
+  proxy: string | null
+  poll_timeout_seconds: number | null
+  request_timeout_seconds: number | null
+}
+export type SavedTelegram = TelegramLink & { bot_id: string }
+
+/** Feishu without the App Secret; `bot_id` comes from a connection test. */
+export interface FeishuLink {
+  bot_id: string
+  app_id: string
+  domain: 'feishu' | 'lark'
+  request_timeout_seconds: number | null
+}
+
+export type ChatPlatform = 'onebot' | 'telegram' | 'feishu'
+
 export interface TextDelivery {
   max_chars: number | null
   min_interval_seconds: number | null
@@ -29,6 +48,8 @@ export interface Connection {
   bot_id: string
   owners: string[]
   onebot: SavedOneBot | null
+  telegram: SavedTelegram | null
+  feishu: FeishuLink | null
   /** Edited in the config file only. */
   timezone: string
   delivery: Delivery
@@ -173,13 +194,25 @@ export interface Release {
 const named = (value: string) => encodeURIComponent(value)
 
 export const systemApi = {
-  /** `access_token` null keeps the saved one. */
+  /** `access_token`, `telegram_token` and `feishu_secret` null keep the saved ones. */
   saveConnection: (
-    body: Omit<Connection, 'bot_id' | 'onebot'> & {
+    body: Omit<Connection, 'bot_id' | 'onebot' | 'telegram' | 'feishu'> & {
       onebot: OneBot | null
       access_token: string | null
+      bot_id?: string
+      /** An absent platform section keeps its saved value. */
+      telegram?: TelegramLink | null
+      telegram_token?: string | null
+      feishu?: FeishuLink | null
+      feishu_secret?: string | null
     },
   ) => http.put<SettingsSnapshot>('/api/host/settings/connection', body),
+  /** Checks typed Telegram or Feishu settings without saving; empty secrets use the saved ones. */
+  testConnection: (
+    body:
+      | { platform: 'telegram'; telegram: TelegramLink; telegram_token: string | null }
+      | { platform: 'feishu'; feishu: FeishuLink; feishu_secret: string | null },
+  ) => http.post<{ bot_id: string; name: string }>('/api/host/settings/connection/test', body),
   /** `password` null keeps the saved one. */
   savePanel: (body: PanelAccount & { password: string | null }) =>
     http.put<SettingsSnapshot>('/api/host/settings/panel', body),

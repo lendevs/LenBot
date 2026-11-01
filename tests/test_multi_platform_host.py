@@ -90,9 +90,10 @@ def test_tools_follow_the_platform_of_the_scene(tmp_path):
     role = tmp_path / 'persona' / 'persona.yaml'
     role.write_text(role.read_text().replace('tools: []', 'tools: [say]'))
     config, persona = load_host_config(tmp_path), load_persona(tmp_path / 'persona')
-    for name in ('member_info', 'group_files', 'open_forward', 'message_reaction', 'transcribe'):
+    for name in ('member_info', 'group_files', 'open_forward', 'message_reaction'):
         assert '只支持 OneBot 平台' in tool_unavailable_reasons(config.scene_config(TELEGRAM_SCENE), persona, name)
         assert '只支持 OneBot 平台' not in tool_unavailable_reasons(config.scene_config(SCENE), persona, name)
+    assert '只支持 OneBot 平台' not in tool_unavailable_reasons(config.scene_config(TELEGRAM_SCENE), persona, 'transcribe')
     say = next(tool['function'] for tool in build_tools(config.scene_config(TELEGRAM_SCENE), persona, platform=True)
                if tool['function']['name'] == 'say')
     mention = say['parameters']['properties']['mention']
@@ -232,3 +233,82 @@ async def test_retained_task_containers_distinguish_platform_hosts_from_stdin(tm
     expected = 'stdin模拟宿主' if platform is None else '保留原 worker 配置完成清理'
     with pytest.raises(ValueError, match=expected):
         await run(HostLifecycle())
+
+
+@pytest.mark.asyncio
+async def test_a_telegram_voice_is_downloaded_as_sent_and_transcribed_automatically(tmp_path, monkeypatch):
+    from len_bot.next.media import audio as audio_module
+    from len_bot.next.models.asr import Transcript
+
+    api = BotAPI()
+    monkeypatch.setattr(telegram, '_transport', lambda proxy: httpx.MockTransport(api.handle))
+    sent = []
+
+    async def recognized(binding, *, base_url, api_key, wav, proxy=None):
+        sent.append(wav)
+        return Transcript('合成语音文字', None, {'text': '合成语音文字'}, None)
+
+    monkeypatch.setattr(audio_module, 'transcribe_audio', recognized)
+    write_config(tmp_path, onebot=None, bot_id=f'telegram:{BOT}', owners=['telegram:501'],
+                 telegram={'bot_id': f'telegram:{BOT}', 'bot_token': TOKEN},
+                 models={'providers': {'fixture': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1',
+                                                   'api_key': 'synthetic-unused'}},
+                         'roles': {'mind': {'provider': 'fixture', 'model': 'synthetic-unused',
+                                            'context_window_tokens': 8192},
+                                   'asr': {'provider': 'fixture', 'model': 'synthetic-asr'}}},
+                 audio={'wait_seconds': 0}, scenes={TELEGRAM_SCENE: {**SCENE_SETTINGS, 'transcribe_audio': True}})
+    config = load_host_config(tmp_path)
+    persona = load_persona(tmp_path / 'persona')
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as model:
+            runtime = NetworkRuntime(config, [(config.scene_config(scene), persona) for scene in config.scenes],
+                                     store, model)
+            running = asyncio.create_task(runtime.run(manage_signals=False))
+            await until(lambda: runtime.status == 'running')
+            try:
+                api.push(_message(message_id=7, voice={'file_id': 'voice-1', 'file_unique_id': 'v', 'duration': 3,
+                                                       'mime_type': 'audio/ogg'}))
+                await until(lambda: [row['status'] for row in store.db.execute(
+                    "SELECT status FROM audio_cache WHERE scene=? AND platform_id='7'", (TELEGRAM_SCENE,))] == ['complete'], 5)
+                row = store.db.execute("SELECT * FROM audio_cache WHERE scene=? AND platform_id='7'",
+                                       (TELEGRAM_SCENE,)).fetchone()
+                assert row['transcript'] == '合成语音文字' and row['duration'] == 3
+                assert sent == [b'photo-bytes' * 10] and row['wav'] == sent[0]
+                assert ('getFile', {'file_id': 'voice-1'}) in api.calls
+            finally:
+                runtime.stop()
+                await asyncio.wait_for(running, 3)
+
+
+@pytest.mark.asyncio
+async def test_delegate_takes_files_sent_in_a_telegram_chat(tmp_path):
+    from types import SimpleNamespace
+    from len_bot.next.chat.tools import SceneTools
+    from len_bot.next.work.tools import ChatFileInput, DelegateArguments, chat_file_inputs
+
+    update = {'update_id': 1, 'message': _message(message_id=9, caption='数据', document={
+        'file_id': 'BQAC-sales', 'file_unique_id': 's', 'file_name': 'sales.csv', 'file_size': 12})}
+    requested = []
+
+    async def fetch_media(data: dict, max_bytes: int) -> bytes:
+        requested.append((data['file_id'], max_bytes))
+        return b'month,total\n'
+
+    with Store(tmp_path / 'chat.sqlite3') as store:
+        store.enqueue(parse_update(update, bot=BOT, username='len_bot'), update, time.time())
+        tools = SimpleNamespace(fetch_media=fetch_media, store=store,
+                                config=SimpleNamespace(delivery='live', scene=TELEGRAM_SCENE))
+        fetch = SceneTools._chat_file_fetch(tools)
+        downloads = await chat_file_inputs([ChatFileInput(message='9', name='sales.csv')], fetch, 1024)
+        assert [(item.name, item.data, item.source) for item in downloads] == [
+            ('sales.csv', b'month,total\n', {'chat_file': {'message': '9', 'file': 1}})]
+        assert requested == [('BQAC-sales', 1024)]
+        with pytest.raises(ValueError, match='没有第 2 个'):
+            await fetch(ChatFileInput(message='9', file=2, name='other.csv'), 1024)
+        tools.config.scene, tools.config.delivery = SCENE, 'live'
+        assert SceneTools._chat_file_fetch(tools) is None
+    with pytest.raises(ValueError, match='group_files'):
+        await chat_file_inputs([ChatFileInput(message='9', name='sales.csv')], None, 1024)
+    with pytest.raises(ValueError, match='合计最多16份'):
+        DelegateArguments(goal='g', deliverable='d', requester='telegram:501', materials=['sales.csv'],
+                          chat_files=[ChatFileInput(message='9', name='sales.csv')])

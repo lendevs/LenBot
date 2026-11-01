@@ -366,8 +366,6 @@ class HostConfig(SharedConfig):
                 raise ValueError(f"scenes.{scene}.tasks.enabled requires global worker settings")
             if settings.transcribe_audio and self.models.roles.asr is None:
                 raise ValueError(f"scenes.{scene}.transcribe_audio requires explicit models.roles.asr")
-            if settings.transcribe_audio and not scene.startswith("onebot:"):
-                raise ValueError(f"scenes.{scene}.transcribe_audio fetches voice through OneBot and needs a onebot scene")
             if settings.proactive is not None and scene.split(":", 2)[1] != "group":
                 raise ValueError(f"scenes.{scene}.proactive is only supported for group scenes")
             if settings.proactive is not None and (settings.learning is None or not settings.learning.reply_effects):

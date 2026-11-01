@@ -215,8 +215,28 @@ async def test_receives_updates_and_sends_mentions_replies_photos_and_files(api)
         assert api.calls[-1] == ("file", {"path": "photos/large.jpg"})
         with pytest.raises(ValueError, match="above 100"):
             await adapter.download({"file_id": "large"}, 100)
-        refused = await adapter.send_message(outgoing(Segment("text", {"text": "x" * 4097})))
-        assert refused.status == "failed" and "4096" in refused.error
+        # Longer text goes out as several messages, cut after a line break; only the first one replies.
+        api.calls.clear()
+        long = "甲" * 3000 + "\n" + "乙" * 3000
+        split = await adapter.send_message(outgoing(Segment("reply", {"id": "2"}), Segment("text", {"text": long}),
+                                                    Segment("mention", {"user": "telegram:502"})))
+        sends = [params for method, params in api.calls if method == "sendMessage"]
+        assert split.status == "sent" and split.platform_message_id == str(api.next_id - 1)
+        assert [len(params["text"]) for params in sends] == [3001, 3004]
+        assert sends[0]["text"].endswith("\n") and sends[0]["reply_parameters"]["message_id"] == 2
+        assert "reply_parameters" not in sends[1]
+        assert sends[1]["entities"] == [{"type": "text_mention", "offset": 3000, "length": 4,
+                                         "user": {"id": 502, "is_bot": False, "first_name": "Carl"}}]
+        api.calls.clear()
+        photo = await adapter.send_message(outgoing(Segment("image", {"file": "x"}), Segment("text", {"text": "图" * 1500})),
+                                           image_bytes=b"png")
+        assert photo.status == "sent"
+        assert [(method, len(params.get("text", ""))) for method, params in api.calls] == [("sendPhoto", 0), ("sendMessage", 476)]
+        api.failures["sendMessage"] = [
+            api._ok({"message_id": 900, "date": int(time.time()), "chat": {"id": GROUP, "type": "supergroup"}}),
+            httpx.Response(400, json={"ok": False, "error_code": 400, "description": "Bad"})]
+        partial = await adapter.send_message(outgoing(Segment("text", {"text": "x" * 5000})))
+        assert partial.status == "unconfirmed" and partial.platform_message_id == "900" and "part 2 of 2" in partial.error
     finally:
         await adapter.close()
     assert not adapter.connected and errors == []

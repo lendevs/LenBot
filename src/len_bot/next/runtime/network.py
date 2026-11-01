@@ -126,11 +126,12 @@ class NetworkRuntime:
         self.commands = Commands()
         self.platform = open_platform(config, on_event=self._receive, on_error=self._platform_error,
                                       on_connection_change=self._connection_changed)
-        # Voice is fetched with OneBot's get_record; other platforms do not transcribe yet.
+        # OneBot converts voice with get_record; Telegram and Feishu voice is downloaded as sent.
         onebot = adapter_for(self.platform, "onebot")
+        live = config.delivery == "live"
         self.audio = AudioService(store, {cfg.scene: cfg for cfg, _ in scene_configs},
-                                  onebot.call if config.delivery == "live" and onebot is not None else None, slots,
-                                  self.audio_updated)
+                                  onebot.call if live and onebot is not None else None, slots,
+                                  self.audio_updated, download=self.fetch_media if live else None)
         if tasks is not None:
             tasks.audio = self.audio
             tasks.memory_call = lambda scene, arguments: self.chats[scene].toolset.run_memory(arguments)

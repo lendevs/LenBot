@@ -1,9 +1,22 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown } from '@lucide/vue'
+import { useMutation } from '@tanstack/vue-query'
+import { ChevronDown, PlugZap } from '@lucide/vue'
 import type { SettingsSnapshot } from '../../api/settings'
-import { systemApi, systemOf, type Connection, type OneBot, type OneBotCommon } from '../../api/system'
+import {
+  systemApi,
+  systemOf,
+  type ChatPlatform,
+  type Connection,
+  type FeishuLink,
+  type OneBot,
+  type OneBotCommon,
+  type TelegramLink,
+} from '../../api/system'
+import { host } from '../../api/hostStore'
+import Badge from '../../ui/Badge.vue'
+import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Combobox from '../../ui/Combobox.vue'
 import Field from '../../ui/Field.vue'
@@ -14,34 +27,66 @@ import SaveBar from '../../ui/SaveBar.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
+import Switch from '../../ui/Switch.vue'
 import { confirm } from '../../ui/confirm'
+import TestResult from '../setup/TestResult.vue'
 import { useSettingsDraft } from './draft'
 
-type Draft = Omit<Connection, 'owners' | 'bot_id' | 'onebot'> & { onebot: OneBot | null }
+type Draft = Omit<Connection, 'owners' | 'bot_id' | 'onebot' | 'telegram'> & {
+  onebot: OneBot | null
+  telegram: TelegramLink | null
+  /** The QQ account typed when the root account belongs to another platform. */
+  qq: string
+}
+
+const TELEGRAM_TOKEN = /^[1-9][0-9]*:[A-Za-z0-9_-]{20,}$/
+const TELEGRAM_DEFAULTS: TelegramLink = {
+  api_url: 'https://api.telegram.org',
+  proxy: null,
+  poll_timeout_seconds: 30,
+  request_timeout_seconds: 15,
+}
+const FEISHU_DEFAULTS: FeishuLink = { bot_id: '', app_id: '', domain: 'feishu', request_timeout_seconds: 15 }
 
 const { t } = useI18n()
 const token = ref('')
+const telegramToken = ref('')
+const feishuSecret = ref('')
 const pick = (snapshot: SettingsSnapshot): Draft => {
-  const { owners: _owners, bot_id: _bot, onebot, ...rest } = systemOf(snapshot).connection
-  if (onebot === null) return { ...rest, onebot: null }
+  const { owners: _owners, bot_id: _bot, onebot, telegram, ...rest } = systemOf(snapshot).connection
+  const { bot_id: _telegramBot, ...telegramLink } = telegram ?? { bot_id: '' }
+  const base = { ...rest, telegram: telegram ? (telegramLink as TelegramLink) : null, qq: '' }
+  if (onebot === null) return { ...base, onebot: null }
   const { access_token_configured: _configured, ...link } = onebot
-  return { ...rest, onebot: link }
+  return { ...base, onebot: link }
 }
 const form = useSettingsDraft<Draft>({
   pick,
   section: 'connection',
-  extra: () => token.value !== '',
-  reset: () => (token.value = ''),
-  save: (value): Promise<SettingsSnapshot> =>
-    systemApi.saveConnection({
-      ...value,
+  extra: () => Boolean(token.value || telegramToken.value || feishuSecret.value),
+  reset: () => {
+    token.value = ''
+    telegramToken.value = ''
+    feishuSecret.value = ''
+    telegramTest.reset()
+    feishuTest.reset()
+  },
+  save: (value): Promise<SettingsSnapshot> => {
+    const { qq, ...rest } = value
+    return systemApi.saveConnection({
+      ...rest,
       onebot: value.onebot && {
         ...value.onebot,
         http_url: value.onebot.action_transport === 'http' ? value.onebot.http_url : null,
       },
+      ...(value.onebot && needsQq.value ? { bot_id: `onebot:${qq.trim()}` } : {}),
+      telegram: value.telegram && { ...value.telegram, proxy: value.telegram.proxy?.trim() || null },
       owners: connection.value!.owners,
       access_token: token.value || null,
-    }),
+      telegram_token: telegramToken.value.trim() || null,
+      feishu_secret: feishuSecret.value || null,
+    })
+  },
   confirm: async (value): Promise<boolean> => {
     if (value.delivery === 'simulated' || connection.value?.delivery !== 'simulated') return true
     return confirm({
@@ -60,6 +105,14 @@ const value = computed(() => draft.value!)
 const link = computed(() => draft.value?.onebot ?? null)
 const forward = computed(() => (link.value?.mode === 'forward_ws' ? link.value : null))
 const reverse = computed(() => (link.value?.mode === 'reverse_ws' ? link.value : null))
+/** OneBot logs in as the root account, so an instance set up on another platform names its QQ account here. */
+const needsQq = computed(() => Boolean(connection.value && !connection.value.bot_id.startsWith('onebot:')))
+const anyPlatform = computed(() =>
+  Boolean(draft.value && (draft.value.onebot || draft.value.telegram || draft.value.feishu)),
+)
+watch(anyPlatform, (on) => {
+  if (!on && draft.value) draft.value.delivery = 'simulated'
+})
 
 const modes = computed(() => [
   { value: 'none', label: t('system.connection.modes.none') },
@@ -73,7 +126,6 @@ const mode = computed({
     if (!current) return
     if (next === 'none') {
       current.onebot = null
-      current.delivery = 'simulated'
       token.value = ''
       return
     }
@@ -110,6 +162,83 @@ const mode = computed({
           }
   },
 })
+
+const telegramOn = computed({
+  get: () => Boolean(draft.value?.telegram),
+  set: (on: boolean) => {
+    if (!draft.value) return
+    const saved = connection.value?.telegram
+    draft.value.telegram = on ? { ...TELEGRAM_DEFAULTS, ...(saved ? withoutBot(saved) : {}) } : null
+    if (!on) telegramToken.value = ''
+  },
+})
+const feishuOn = computed({
+  get: () => Boolean(draft.value?.feishu),
+  set: (on: boolean) => {
+    if (!draft.value) return
+    draft.value.feishu = on ? { ...FEISHU_DEFAULTS, ...(connection.value?.feishu ?? {}) } : null
+    if (!on) feishuSecret.value = ''
+  },
+})
+function withoutBot(saved: TelegramLink & { bot_id: string }): TelegramLink {
+  const { bot_id: _bot, ...rest } = saved
+  return rest
+}
+const telegram = computed(() => draft.value?.telegram ?? null)
+const feishu = computed(() => draft.value?.feishu ?? null)
+const domains = computed(() => [
+  { value: 'feishu', label: t('chatPlatforms.feishu') },
+  { value: 'lark', label: 'Lark' },
+])
+/** Another app or domain has another bot, found again by the test. */
+watch(
+  () => [feishu.value?.app_id, feishu.value?.domain],
+  () => {
+    const saved = connection.value?.feishu
+    const current = feishu.value
+    if (!current) return
+    const same = saved && saved.app_id === current.app_id && saved.domain === current.domain
+    if (!same && current.bot_id === saved?.bot_id) current.bot_id = ''
+    if (same && !current.bot_id) current.bot_id = saved.bot_id
+  },
+)
+
+const telegramTest = useMutation({
+  mutationFn: () =>
+    systemApi.testConnection({
+      platform: 'telegram',
+      telegram: { ...telegram.value!, proxy: telegram.value!.proxy?.trim() || null },
+      telegram_token: telegramToken.value.trim() || null,
+    }),
+})
+const feishuTest = useMutation({
+  mutationFn: () =>
+    systemApi.testConnection({
+      platform: 'feishu',
+      feishu: feishu.value!,
+      feishu_secret: feishuSecret.value || null,
+    }),
+  onSuccess: (result) => {
+    if (feishu.value) feishu.value.bot_id = result.bot_id
+  },
+})
+watch([telegram, telegramToken], () => telegramTest.reset(), { deep: true })
+watch(
+  () => [feishu.value?.app_id, feishu.value?.domain, feishuSecret.value],
+  () => feishuTest.reset(),
+)
+
+/** The running host's own connection for each platform it runs. */
+function status(name: ChatPlatform): { tone: 'success' | 'warning' | 'neutral'; label: string } | null {
+  const on = name === 'onebot' ? Boolean(link.value) : name === 'telegram' ? telegramOn.value : feishuOn.value
+  if (!on) return { tone: 'neutral', label: t('system.connection.status.off') }
+  const running = host.state?.connection.platforms
+  if (!running || !(name in running)) return null
+  return running[name]
+    ? { tone: 'success', label: t('system.connection.status.connected') }
+    : { tone: 'warning', label: t('system.connection.status.disconnected') }
+}
+
 const deliveries = computed(() => [
   { value: 'live', label: t('system.connection.real') },
   { value: 'simulated', label: t('system.connection.simulated') },
@@ -144,6 +273,19 @@ const addressChanged = computed(() => {
   ]
   return JSON.stringify(at(before)) !== JSON.stringify(at(after))
 })
+const telegramSaved = computed(() => connection.value?.telegram ?? null)
+const telegramMoved = computed(
+  () =>
+    Boolean(telegramSaved.value && telegram.value) &&
+    telegramSaved.value!.api_url.replace(/\/+$/, '') !== telegram.value!.api_url.trim().replace(/\/+$/, ''),
+)
+const feishuSaved = computed(() => connection.value?.feishu ?? null)
+const feishuMoved = computed(
+  () =>
+    Boolean(feishuSaved.value && feishu.value) &&
+    (feishuSaved.value!.app_id !== feishu.value!.app_id ||
+      feishuSaved.value!.domain !== feishu.value!.domain),
+)
 
 const numbers = [
   ['max_steps', 1, false],
@@ -163,6 +305,7 @@ const linkNumbers = [
   ['max_frame_bytes', 1024, false],
 ] as const
 
+const httpUrl = (text: string) => /^https?:\/\/[^/]+/.test(text.trim())
 const errors = computed(() => {
   const result: Record<string, string> = {}
   const current = draft.value
@@ -183,10 +326,33 @@ const errors = computed(() => {
       if (!link.listen_host.trim()) result.listen_host = required
       if (link.listen_port === null) result.listen_port = required
     }
-    if (link.action_transport === 'http' && !/^https?:\/\/[^/]+/.test((link.http_url ?? '').trim()))
+    if (link.action_transport === 'http' && !httpUrl(link.http_url ?? ''))
       result.http_url = t('system.connection.httpRule')
     if (addressChanged.value && tokenConfigured.value && !token.value)
       result.token = t('system.connection.tokenAgain')
+    if (needsQq.value && !/^[1-9][0-9]*$/.test(current.qq.trim())) result.qq = t('system.connection.qqRule')
+  }
+  const telegram = current.telegram
+  if (telegram) {
+    const typed = telegramToken.value.trim()
+    if (typed && !TELEGRAM_TOKEN.test(typed)) result.telegramToken = t('system.connection.telegram.tokenRule')
+    else if (!typed && !telegramSaved.value) result.telegramToken = required
+    else if (!typed && telegramMoved.value) result.telegramToken = t('system.connection.telegram.tokenAgain')
+    if (!httpUrl(telegram.api_url)) result.telegramApi = t('system.connection.httpRule')
+    if (telegram.proxy?.trim() && !httpUrl(telegram.proxy))
+      result.telegramProxy = t('system.connection.httpRule')
+    if (telegram.request_timeout_seconds === null) result.telegramTimeout = required
+    if (telegram.poll_timeout_seconds === null) result.telegramPoll = required
+  }
+  const feishu = current.feishu
+  if (feishu) {
+    if (!/^cli_[A-Za-z0-9]+$/.test(feishu.app_id.trim()))
+      result.feishuApp = t('system.connection.feishu.appRule')
+    if (!feishuSecret.value && (!feishuSaved.value || feishuMoved.value))
+      result.feishuSecret = feishuSaved.value ? t('system.connection.feishu.secretAgain') : required
+    if (!result.feishuApp && !result.feishuSecret && !feishu.bot_id)
+      result.feishuBot = t('system.connection.feishu.testFirst')
+    if (feishu.request_timeout_seconds === null) result.feishuTimeout = required
   }
   return result
 })
@@ -197,6 +363,10 @@ const advancedKeys = new Set<string>([
   ...deliveryNumbers.map(([key]) => key),
   ...linkNumbers.map(([key]) => key),
   'http_url',
+  'telegramApi',
+  'telegramTimeout',
+  'telegramPoll',
+  'feishuTimeout',
 ])
 watch(invalid, () => {
   if (Object.keys(errors.value).some((key) => advancedKeys.has(key))) advanced.value = true
@@ -214,13 +384,21 @@ watch(invalid, () => {
   <div v-else-if="draft && connection" class="flex min-w-0 flex-col gap-4">
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection :title="t('system.connection.qq')">
-        <Field :label="t('system.connection.bot')">
+        <template #actions>
+          <Badge v-if="status('onebot')" :tone="status('onebot')!.tone" dot>
+            {{ status('onebot')!.label }}
+          </Badge>
+        </template>
+        <Field v-if="!needsQq" :label="t('system.connection.bot')">
           <Input :model-value="connection.bot_id" mono readonly />
         </Field>
         <Field :label="t('system.connection.mode')">
           <Select v-model="mode" :options="modes" />
         </Field>
         <template v-if="link">
+          <Field v-if="needsQq" :label="t('system.connection.qqAccount')" :error="errors.qq" required>
+            <Input v-model="value.qq" mono inputmode="numeric" placeholder="10001" />
+          </Field>
           <Field v-if="forward" :label="t('system.connection.wsUrl')" :error="errors.ws_url" required wide>
             <Input
               :model-value="forward!.ws_url"
@@ -254,12 +432,118 @@ watch(invalid, () => {
             />
           </Field>
         </template>
+      </FormSection>
+
+      <FormSection :title="t('chatPlatforms.telegram')">
+        <template #actions>
+          <Badge v-if="status('telegram')" :tone="status('telegram')!.tone" dot>
+            {{ status('telegram')!.label }}
+          </Badge>
+          <Switch v-model="telegramOn" :aria-label="t('chatPlatforms.telegram')" />
+        </template>
+        <template v-if="telegram">
+          <Field v-if="telegramSaved" :label="t('system.connection.bot')">
+            <Input :model-value="telegramSaved.bot_id" mono readonly />
+          </Field>
+          <Field :label="t('system.connection.telegram.token')" :error="errors.telegramToken" required wide>
+            <Input
+              v-model="telegramToken"
+              type="password"
+              autocomplete="new-password"
+              mono
+              :placeholder="telegramSaved ? t('system.connection.tokenKept') : undefined"
+            />
+          </Field>
+          <Field :label="t('system.connection.telegram.proxy')" :error="errors.telegramProxy" wide>
+            <Input
+              :model-value="telegram!.proxy ?? ''"
+              type="url"
+              mono
+              placeholder="http://127.0.0.1:7890"
+              @update:model-value="(text: string) => (telegram!.proxy = text.trim() ? text : null)"
+            />
+          </Field>
+          <div class="flex flex-col gap-3 sm:col-span-2">
+            <div>
+              <Button
+                :icon="PlugZap"
+                :loading="telegramTest.isPending.value"
+                :disabled="Boolean(errors.telegramToken || errors.telegramApi || errors.telegramProxy)"
+                @click="telegramTest.mutate()"
+              >
+                {{ t('system.connection.test') }}
+              </Button>
+            </div>
+            <TestResult
+              :passed="
+                telegramTest.data.value
+                  ? t('system.connection.testPassed', { name: telegramTest.data.value.name })
+                  : null
+              "
+              :error="telegramTest.error.value"
+              :failed-title="t('system.connection.testFailed')"
+            />
+          </div>
+        </template>
+      </FormSection>
+
+      <FormSection :title="t('chatPlatforms.feishu')">
+        <template #actions>
+          <Badge v-if="status('feishu')" :tone="status('feishu')!.tone" dot>
+            {{ status('feishu')!.label }}
+          </Badge>
+          <Switch v-model="feishuOn" :aria-label="t('chatPlatforms.feishu')" />
+        </template>
+        <template v-if="feishu">
+          <Field :label="t('system.connection.feishu.appId')" :error="errors.feishuApp" required>
+            <Input v-model="feishu.app_id" mono placeholder="cli_" />
+          </Field>
+          <Field :label="t('system.connection.feishu.secret')" :error="errors.feishuSecret" required>
+            <Input
+              v-model="feishuSecret"
+              type="password"
+              autocomplete="new-password"
+              mono
+              :placeholder="feishuSaved && !feishuMoved ? t('system.connection.tokenKept') : undefined"
+            />
+          </Field>
+          <Field :label="t('system.connection.feishu.domain')">
+            <Select v-model="feishu.domain" :options="domains" />
+          </Field>
+          <Field :label="t('system.connection.bot')" :error="errors.feishuBot">
+            <Input :model-value="feishu.bot_id" mono readonly />
+          </Field>
+          <div class="flex flex-col gap-3 sm:col-span-2">
+            <div>
+              <Button
+                :icon="PlugZap"
+                :loading="feishuTest.isPending.value"
+                :disabled="Boolean(errors.feishuApp || errors.feishuSecret)"
+                @click="feishuTest.mutate()"
+              >
+                {{ t('system.connection.test') }}
+              </Button>
+            </div>
+            <TestResult
+              :passed="
+                feishuTest.data.value
+                  ? t('system.connection.testPassed', { name: feishuTest.data.value.name })
+                  : null
+              "
+              :error="feishuTest.error.value"
+              :failed-title="t('system.connection.testFailed')"
+            />
+          </div>
+        </template>
+      </FormSection>
+
+      <FormSection :title="t('system.connection.general')">
         <Field :label="t('system.connection.delivery')" wide>
           <div>
             <SegmentedControl
               v-model="value.delivery"
               :options="deliveries"
-              :disabled="link === null"
+              :disabled="!anyPlatform"
               :label="t('system.connection.delivery')"
             />
           </div>
@@ -321,6 +605,46 @@ watch(invalid, () => {
                 :steppers="false"
                 :unit="key === 'max_frame_bytes' ? 'B' : t('system.seconds')"
                 @update:model-value="(number: number | null) => (link![key] = number)"
+              />
+            </Field>
+          </div>
+          <div v-if="telegram" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+            <Field :label="t('system.connection.telegram.apiUrl')" :error="errors.telegramApi" required wide>
+              <Input
+                :model-value="telegram!.api_url"
+                mono
+                placeholder="https://api.telegram.org"
+                @update:model-value="(text: string) => (telegram!.api_url = text)"
+              />
+            </Field>
+            <Field :label="t('system.connection.telegram.poll')" :error="errors.telegramPoll">
+              <NumberInput
+                :model-value="telegram!.poll_timeout_seconds"
+                :min="1"
+                :max="50"
+                snap
+                :steppers="false"
+                :unit="t('system.seconds')"
+                @update:model-value="(number: number | null) => (telegram!.poll_timeout_seconds = number)"
+              />
+            </Field>
+            <Field :label="t('system.connection.telegram.timeout')" :error="errors.telegramTimeout">
+              <NumberInput
+                :model-value="telegram!.request_timeout_seconds"
+                :min="0.1"
+                :steppers="false"
+                :unit="t('system.seconds')"
+                @update:model-value="(number: number | null) => (telegram!.request_timeout_seconds = number)"
+              />
+            </Field>
+          </div>
+          <div v-if="feishu" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+            <Field :label="t('system.connection.feishu.timeout')" :error="errors.feishuTimeout">
+              <NumberInput
+                v-model="feishu.request_timeout_seconds"
+                :min="0.1"
+                :steppers="false"
+                :unit="t('system.seconds')"
               />
             </Field>
           </div>

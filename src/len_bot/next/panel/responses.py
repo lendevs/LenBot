@@ -661,6 +661,17 @@ class SetupPlatform(PanelResponse):
     groups: list[SetupGroup]
 
 
+class SetupChatPlatform(SetupPlatform):
+    """A Telegram or Feishu connection test: the bot's name, and for Telegram the people in pending messages."""
+    name: str
+    people: list[SetupGroup] = []
+
+
+class ConnectionTest(PanelResponse):
+    bot_id: str
+    name: str
+
+
 class SetupPlugins(PanelResponse):
     plugins: list[JsonObject]
 

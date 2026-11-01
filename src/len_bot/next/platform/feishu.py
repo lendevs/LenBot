@@ -17,7 +17,7 @@ import httpx
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from ..configuration.platforms import FeishuSettings
+from ..configuration.platforms import FEISHU_DOMAINS, FeishuSettings
 from ..runtime.logs import REDACTED
 from .adapter import PlatformCallError, read_capped
 from .messages import ChatMessage, Notice, Segment, Sender, SendResult, UploadResult
@@ -727,9 +727,63 @@ class Feishu:
             raise FeishuCallError(self._safe(f"Feishu resource {key}: {type(error).__name__}: {error}"),
                                   submitted=False) from None
 
+    async def joined_groups(self) -> list[dict]:
+        """The group chats the bot is a member of."""
+        chats = await _list_chats(lambda params: self._api("GET", "/open-apis/im/v1/chats", params=params))
+        return [{"scene": f"feishu:group:{chat}", "name": name, "members": None} for chat, name in chats]
+
     async def call(self, action: str, params: dict) -> dict:
         """One Open API call: ``action`` is "<METHOD> <path>", ``params`` the query or JSON body."""
         method, _, path = action.partition(" ")
         if method == "GET":
             return await self._api(method, path, params=params)
         return await self._api(method, path, json_body=params)
+
+
+async def _list_chats(get: Callable[[dict], object]) -> list[tuple[str, str]]:
+    chats: list[tuple[str, str]] = []
+    token = ""
+    while True:
+        data = await get({"page_size": 100, **({"page_token": token} if token else {})})
+        for item in data.get("items") or []:
+            if isinstance(item.get("chat_id"), str):
+                chats.append((item["chat_id"], item.get("name") or item["chat_id"]))
+        token = data.get("page_token") or ""
+        if not data.get("has_more") or not token:
+            return chats
+
+
+async def probe(app_id: str, app_secret: str, *, domain: str = "feishu", timeout_seconds: float = 15.0) -> dict:
+    """Check an app's credentials: its tenant token, the bot's open_id and the group chats the bot is in."""
+    def safe(text: str) -> str:
+        return text.replace(app_secret, REDACTED)[:2000]
+
+    async def answer(response_call) -> dict:
+        try:
+            body = (await response_call).json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise FeishuCallError(safe(f"{type(error).__name__}: {error}"), submitted=False) from None
+        if not isinstance(body, dict) or body.get("code") != 0:
+            detail = f"{body.get('code')} {body.get('msg')}" if isinstance(body, dict) else repr(body)[:300]
+            raise FeishuCallError(safe(f"Feishu: {detail}"), submitted=False)
+        return body
+
+    async with httpx.AsyncClient(base_url=FEISHU_DOMAINS[domain], transport=_transport(), timeout=timeout_seconds,
+                                 follow_redirects=False) as client:
+        body = await answer(client.post("/open-apis/auth/v3/tenant_access_token/internal",
+                                        json={"app_id": app_id, "app_secret": app_secret}))
+        headers = {"Authorization": f"Bearer {body.get('tenant_access_token')}"}
+        bot = (await answer(client.get("/open-apis/bot/v3/info", headers=headers))).get("bot") or {}
+        if not isinstance(bot.get("open_id"), str):
+            raise FeishuCallError(f"bot info has no open_id: {repr(bot)[:300]}", submitted=False)
+
+        async def get(params: dict) -> dict:
+            return (await answer(client.get("/open-apis/im/v1/chats", params=params, headers=headers))).get("data") or {}
+
+        try:
+            chats = await _list_chats(get)
+        except FeishuCallError:
+            # Listing chats needs its own permission; the credentials themselves passed.
+            chats = []
+    return {"bot_id": f"feishu:{bot['open_id']}", "name": bot.get("app_name") or bot["open_id"],
+            "groups": [{"id": chat, "name": name} for chat, name in chats]}

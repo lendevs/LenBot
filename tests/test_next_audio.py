@@ -183,3 +183,27 @@ def test_received_onebot_voice_is_queued_for_automatic_transcription(tmp_path):
         audio = AudioStore(store)
         assert tuple(audio.pending("onebot:group:80001")) == ("123", 1)
         assert audio.item("onebot:group:80001", "123", 2)["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_platform_voice_keeps_the_sent_file_and_the_duration_its_message_gave():
+    from len_bot.next.media.audio import download_voice
+    from len_bot.next.models.asr import audio_type
+
+    ogg = b"OggS" + b"\x00" * 60
+    asked = []
+
+    async def download(scene, data, max_bytes):
+        asked.append((scene, max_bytes))
+        return ogg
+
+    settings = AudioSettings(max_seconds=60)
+    assert await download_voice(download, "telegram:group:-1001", {"file_id": "v", "duration": 3}, settings) == (ogg, 3.0)
+    # Feishu reports milliseconds.
+    assert (await download_voice(download, "feishu:group:oc_x", {"file_key": "k", "duration": 2500}, settings))[1] == 2.5
+    assert (await download_voice(download, "telegram:private:7", {"file_id": "v"}, settings))[1] == 0.0
+    with pytest.raises(ValueError, match="not truncated"):
+        await download_voice(download, "telegram:group:-1001", {"file_id": "v", "duration": 61}, settings)
+    assert asked == [("telegram:group:-1001", settings.max_bytes), ("feishu:group:oc_x", settings.max_bytes),
+                     ("telegram:private:7", settings.max_bytes)]
+    assert audio_type(ogg) == "audio/ogg" and audio_type(wav_bytes()) == "audio/wav"

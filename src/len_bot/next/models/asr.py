@@ -91,6 +91,11 @@ def parse_transcription(body: object) -> Transcript:
                                usage=usage, metering=metering) from error
 
 
+def audio_type(audio: bytes) -> str:
+    """The media type of a stored voice: WAV from OneBot, OGG Opus as Telegram and Feishu send it."""
+    return "audio/ogg" if audio[:4] == b"OggS" else "audio/wav"
+
+
 async def transcribe_audio(binding: ASRBinding, *, base_url: str, api_key: str, wav: bytes, proxy: str | None = None) -> Transcript:
     data = {"model": binding.model, "response_format": "json"}
     if binding.language is not None:
@@ -100,7 +105,7 @@ async def transcribe_audio(binding: ASRBinding, *, base_url: str, api_key: str, 
             transport=httpx.AsyncHTTPTransport(retries=0, trust_env=False, proxy=proxy)) as client:
         response = await client.post(base_url.rstrip("/") + "/audio/transcriptions",
             headers={"Authorization": f"Bearer {api_key}"}, data=data,
-            files={"file": ("record.wav", wav, "audio/wav")})
+            files={"file": ("record.ogg" if audio_type(wav) == "audio/ogg" else "record.wav", wav, audio_type(wav))})
         if not response.is_success:
             raise RuntimeError(f"ASR HTTP {response.status_code}: {response.text[:2000]}")
         try:

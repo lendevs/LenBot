@@ -71,6 +71,8 @@ export interface HostState {
     can_disconnect: boolean
     disconnect_requested: boolean
     accepting: boolean
+    /** Each configured platform's own connection. */
+    platforms?: Partial<Record<'onebot' | 'telegram' | 'feishu', boolean>>
   }
   scenes: HostScene[]
   send_hold: boolean
