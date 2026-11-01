@@ -32,7 +32,7 @@ Windows 解压 zip 后双击 `run.cmd`。首次启动建立 `instance/`、`curre
 | `run`、`run.cmd`、`run.ps1` | 启动更新器和 Bot |
 | `service`、`service.ps1` | 注册 systemd 用户服务或 Windows 登录计划任务 |
 
-日常设置在面板修改。版本发布后，在**系统 → 版本与更新**执行更新、查看快照和恢复。启动失败时先查看终端错误和 `updates/updater.log`。
+日常设置在面板修改。版本发布后，在**系统 → 设置 → 版本与更新**执行更新、查看快照和恢复。启动失败时先查看终端错误和 `updates/updater.log`。
 
 ## Docker
 
