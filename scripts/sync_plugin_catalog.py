@@ -1,6 +1,6 @@
 """Copy plugin repositories' catalog-entry.json into the built-in catalog, pinned to a commit.
 
-    uv run --no-sync python scripts/sync_plugin_catalog.py ../lenbot-plugin-asoul ../lenbot-plugin-bilibili@v1.1.0
+    uv run --no-sync python scripts/sync_plugin_catalog.py ../lenbot-plugin-group-digest ../lenbot-plugin-bilibili@v1.1.0
 
 Each argument is a local checkout, optionally ``@ref`` (default ``HEAD``). The entry is
 read from that ref, its ``ref`` becomes the resolved commit, and name, version and

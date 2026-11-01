@@ -100,7 +100,7 @@ def task_runtime(project: Path, platform: str, downloads: Path, destination: Pat
     worker = project / 'docker/next-worker'
     for name in ('lenbot-extension.ts', 'matplotlibrc', 'browser-files.cjs'):
         shutil.copy2(worker / name, destination / name)
-    # bin/ lists the programs a task can call; lenbot-render joins it once a Chromium is available.
+    # bin/ lists the programs a task can call; the sandbox adds lenbot-render once the host has checked Chromium.
     (destination / 'bin').mkdir()
     shutil.copy2(worker / 'lenbot-render.cjs', destination / 'lenbot-render.cjs')
     install(platform, destination / 'python', '--requirement', str(worker / 'task-python.txt'))

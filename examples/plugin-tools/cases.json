@@ -71,20 +71,6 @@
       ]
     },
     {
-      "id": "asoul-member-card",
-      "messages": [
-        {
-          "id": "request-4",
-          "sender": "onebot:70002",
-          "text": "查一下嘉然最近的动态，发张卡片"
-        }
-      ],
-      "expect": [
-        "asoul_dynamics 用 action=search 和源站完整成员名查询；asoul_send_card 用 action=dynamic 与返回的真实 dynamicId 发送。也可用 dynamics 的 members 操作先读真实 ID。",
-        "nextCursor 原样传递；从 delivery 判断实际发送状态，simulated 不称为平台成功。"
-      ]
-    },
-    {
       "id": "bilibili-public",
       "messages": [
         {

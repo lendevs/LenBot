@@ -77,7 +77,7 @@ uv run --no-sync python scripts/check_plugin_catalog.py src/len_bot/next/plugins
 
 ## 官方插件发行准备
 
-群聊总结、GSUID、A-SOUL、哔哩哔哩和[插件模板](https://github.com/lendevs/lenbot-plugin-template)都已经在 lendevs 组织下公开。随附的目录收录四个业务插件，模板作为开发的起点。
+群聊总结、GSUID、哔哩哔哩和[插件模板](https://github.com/lendevs/lenbot-plugin-template)都已经在 lendevs 组织下公开。随附的目录收录三个业务插件，模板作为开发的起点。
 
 所有独立插件和模板都使用接口 1，`requires_lenbot` 为 `>=0.2,<1`。当前源码需要包含插件接口扩展的宿主开发提交，最低基线见各插件的 CHANGELOG。
 
@@ -90,7 +90,7 @@ uv run --no-sync python scripts/check_plugin_catalog.py src/len_bot/next/plugins
 随附目录中的条目来自各插件仓库的 `catalog-entry.json`，用同步脚本写入并固定到提交。
 
 ```sh
-uv run --no-sync python scripts/sync_plugin_catalog.py ../lenbot-plugin-asoul ../lenbot-plugin-bilibili@v1.1.0
+uv run --no-sync python scripts/sync_plugin_catalog.py ../lenbot-plugin-group-digest ../lenbot-plugin-bilibili@v1.1.0
 ```
 
 参数是插件仓库在本机的检出目录，`@ref` 可选，默认为当前的 `HEAD`。脚本会核对条目与该提交中 `plugin.toml` 的名称、版本和接口是否一致，并要求这个提交已经推送到远端分支。`plugin.toml` 声明了 `permissions` 时，脚本把它写进条目；`catalog-entry.json` 写了不同的权限时拒绝同步。

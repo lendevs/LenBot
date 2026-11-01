@@ -20,7 +20,7 @@ from len_bot.plugin import Invocation, Notice, Plugin, command, fullmatch, on_no
 - 插件的命令先于宿主命令匹配。注册了 `/角色` 这类与宿主同名的命令时由插件处理。
 - 处理器的返回值只作记录。发消息要调用 `ctx.reply`，见[发送消息](plugin-sending)。
 
-部署方可以在根配置的 `plugins.disabled_rules` 里关掉插件的某几条规则，例如 `{"asoul": ["今日直播"]}`，被关掉的文字按普通聊天处理。
+部署方可以在根配置的 `plugins.disabled_rules` 里关掉插件的某几条规则，例如 `{"group_digest": ["/群日报"]}`，被关掉的文字按普通聊天处理。
 
 ## 通知
 
