@@ -1,10 +1,6 @@
 # 发布到插件目录
 
-LenBot 随附的插件目录只收录官方插件。其他插件收录在社区插件目录 [lenbot-plugin-index](https://github.com/lendevs/lenbot-plugin-index) 中，用户在面板**插件 → 发现插件 → 目录来源**填入社区目录的地址后即可浏览和安装：
-
-```text
-https://raw.githubusercontent.com/lendevs/lenbot-plugin-index/main/catalog.json
-```
+LenBot 随附的插件目录只收录官方插件。其他插件收录在社区插件目录 [lenbot-plugin-index](https://github.com/lendevs/lenbot-plugin-index) 中，面板**插件 → 发现插件**默认读取它，与官方插件一起列出并标明来源。
 
 ## 收录条件
 
@@ -57,4 +53,4 @@ uv run --no-project python ../LenBot/scripts/check_plugin_catalog.py catalog.jso
 
 ## 自建目录
 
-目录也可以放在任何 HTTP(S) 地址上，格式与随附目录相同：顶层 `{"version": 1, "entries": [...]}`。用户在**目录来源**填入地址后点刷新读取。私人目录和需要凭据的仓库都保存在用户自己的配置中。
+目录也可以放在任何 HTTP(S) 地址上，格式与随附目录相同：顶层 `{"version": 1, "entries": [...]}`。用户在**发现插件 → 自定义目录**填入地址后读取，与官方和社区目录一起列出。私人目录和需要凭据的仓库都保存在用户自己的配置中。
