@@ -6,7 +6,7 @@ const steps = [
   { icon: 'package', title: '部署', text: 'Docker、部署包或源码', link: '/start/quick-start' },
   { icon: 'settings', title: '首次配置', text: '五步向导', link: '/start/first-setup' },
   { icon: 'users', title: '对话测试', text: '模拟一个群', link: '/start/playground' },
-  { icon: 'plug', title: '接入群聊', text: '发送到 QQ', link: '/start/playground#接入群聊' },
+  { icon: 'plug', title: '接入群聊', text: '切换为真实发送', link: '/start/playground#接入群聊' },
 ]
 </script>
 

@@ -74,7 +74,7 @@ const sendOptions = computed(() => [
 
 const delivery = computed(() => {
   const value = state.value
-  if (value.delivery !== 'onebot') return t('shell.status.simulated')
+  if (value.delivery !== 'live') return t('shell.status.simulated')
   return value.send_hold ? t('overview.status.deliveryHeld') : t('overview.status.deliveryReal')
 })
 const note = computed(() => {
@@ -153,7 +153,7 @@ const menu = computed<MenuEntry[]>(() => [
           {{ t('overview.status.connect') }}
         </Button>
         <SegmentedControl
-          v-if="state.delivery === 'onebot'"
+          v-if="state.delivery === 'live'"
           v-model="sendMode"
           :options="sendOptions"
           size="sm"

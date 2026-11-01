@@ -225,11 +225,12 @@ class PluginInstaller:
 
     async def candidate(self, checkout: Path, source: Source, paths: list[Path], *, switch_source: bool,
                         expected_name: str | None = None,
-                        expected_permissions: Sequence[str] | None = None) -> tuple[Manifest, Installation]:
+                        expected_permissions: Sequence[str] | None = None,
+                        expected_chat_platforms: Sequence[str] | None = None) -> tuple[Manifest, Installation]:
         """Validate and stage a checkout against what a catalog entry or an update says it is.
 
-        ``expected_name`` must be the manifest's name; ``expected_permissions``, when the manifest
-        declares permissions too, must be the same set.
+        ``expected_name`` must be the manifest's name; ``expected_permissions`` and
+        ``expected_chat_platforms``, when the manifest declares them too, must be the same sets.
         """
         bytecode = await finish_file_operation(lambda: next((path for path in checkout.rglob('*')
             if path.name.casefold() == '__pycache__' or path.suffix.lower() == '.pyc'), None))
@@ -242,6 +243,10 @@ class PluginInstaller:
                 and set(expected_permissions) != set(manifest.permissions)):
             raise ValueError(f'仓库清单声明的权限是 {manifest.permissions}，目录写的是 {list(expected_permissions)}；'
                              '没有准备候选版本')
+        if (expected_chat_platforms is not None and manifest.chat_platforms is not None
+                and set(expected_chat_platforms) != set(manifest.chat_platforms)):
+            raise ValueError(f'仓库清单声明的聊天平台是 {manifest.chat_platforms}，目录写的是 '
+                             f'{list(expected_chat_platforms)}；没有准备候选版本')
         manifest.require_compatible()
         if not (checkout / '__init__.py').is_file():
             raise ValueError(f'Plugin package lacks __init__.py: {checkout}')
@@ -276,7 +281,8 @@ class PluginInstaller:
 
     async def prepare_git(self, url: str, paths: list[Path], *, ref: str | None = None,
                           switch_source: bool = False, expected_name: str | None = None,
-                          expected_permissions: Sequence[str] | None = None) -> tuple[Manifest, Installation, str]:
+                          expected_permissions: Sequence[str] | None = None,
+                          expected_chat_platforms: Sequence[str] | None = None) -> tuple[Manifest, Installation, str]:
         url = repository_url(url)
         self.candidates.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='.git-', dir=self.candidates) as temporary:
@@ -289,7 +295,8 @@ class PluginInstaller:
                             revision=await run_command('git', 'rev-parse', 'HEAD', cwd=checkout), version='')
             manifest, record = await self.candidate(checkout, source, paths, switch_source=switch_source,
                                                     expected_name=expected_name,
-                                                    expected_permissions=expected_permissions)
+                                                    expected_permissions=expected_permissions,
+                                                    expected_chat_platforms=expected_chat_platforms)
         return manifest, record, output
 
     @staticmethod

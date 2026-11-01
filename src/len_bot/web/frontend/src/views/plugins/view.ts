@@ -33,6 +33,9 @@ export const versionOf = (snapshot: PluginsSnapshot, name: string) =>
   ''
 export const descriptionOf = (snapshot: PluginsSnapshot, name: string) =>
   runningOf(snapshot, name)?.description || manifestOf(snapshot, name)?.description || ''
+/** Chat platforms the plugin declares; null when it supports every platform. */
+export const chatPlatformsOf = (snapshot: PluginsSnapshot, name: string): string[] | null =>
+  runningOf(snapshot, name)?.chat_platforms ?? manifestOf(snapshot, name)?.chat_platforms ?? null
 export const permissionsOf = (snapshot: PluginsSnapshot, name: string): Permission[] | null =>
   runningOf(snapshot, name)?.permissions ?? manifestOf(snapshot, name)?.permissions ?? null
 export const isolationOf = (snapshot: PluginsSnapshot, name: string) =>

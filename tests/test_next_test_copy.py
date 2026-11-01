@@ -17,7 +17,7 @@ def source_instance(root: Path) -> dict:
     root.mkdir()
     source = {
         'mode': 'isolated-multi', 'bot_id': 'onebot:90001', 'owners': ['onebot:70001'],
-        'timezone': 'UTC', 'database': 'state.db', 'delivery': 'onebot',
+        'timezone': 'UTC', 'database': 'state.db', 'delivery': 'live',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9', 'access_token': 'fixture'},
         'panel': {'host': '127.0.0.1', 'port': 8088, 'username': 'fixture',
                   'password_hash': 'pbkdf2_sha256$600000$fixture$' + '0' * 64},
@@ -54,7 +54,7 @@ def test_copy_preserves_files_permissions_and_other_configuration(tmp_path):
     assert result.returncode == 0, result.stderr
     assert str(source) in result.stdout and str(target) in result.stdout and '8089' in result.stdout
     copied = json.loads((target / 'lenbot.config.json').read_text())
-    expected = {**original, 'delivery': 'simulated', 'onebot': None,
+    expected = {**original, 'config_version': 2, 'delivery': 'simulated', 'onebot': None,
                 'panel': {**original['panel'], 'port': 8089}}
     assert copied == expected
     assert json.loads((source / 'lenbot.config.json').read_text()) == original
@@ -102,3 +102,32 @@ def test_copy_points_absolute_instance_paths_at_the_copy(tmp_path):
     copied = json.loads((target / 'lenbot.config.json').read_text())
     assert copied['plugins']['data_directory'] == str(target.absolute() / 'plugin-data')
     assert copied['plugins']['paths'] == ['plugins']
+
+
+def test_copy_disconnects_every_configured_platform(tmp_path):
+    source, target = tmp_path / 'source', tmp_path / 'target'
+    original = source_instance(source)
+    original.update(telegram={'bot_id': 'telegram:7001', 'bot_token': '7001:' + 'T' * 35},
+                    feishu={'bot_id': 'feishu:ou_bot', 'app_id': 'cli_fixture', 'app_secret': 'fixture'})
+    original['scenes'].update({'telegram:group:-100123': {'persona': 'role'},
+                               'feishu:group:oc_room': {'persona': 'role'}})
+    (source / 'lenbot.config.json').write_text(json.dumps(original))
+    result = command(source, target, 8089)
+    assert result.returncode == 0, result.stderr
+    config = load_host_config(target)
+    assert config.delivery == 'simulated' and config.platform_names == ()
+    assert set(config.scenes) == set(original['scenes'])
+    assert json.loads((source / 'lenbot.config.json').read_text()) == original
+
+
+def test_copy_migrates_an_explicit_format_one_configuration(tmp_path):
+    source, target = tmp_path / 'source', tmp_path / 'target'
+    original = source_instance(source)
+    original.update(config_version=1, delivery='onebot')
+    (source / 'lenbot.config.json').write_text(json.dumps(original))
+    result = command(source, target, 8089)
+    assert result.returncode == 0, result.stderr
+    config = load_host_config(target)
+    assert config.config_version == 2 and config.delivery == 'simulated'
+    assert json.loads((target / 'lenbot.config.json').read_text())['config_version'] == 2
+    assert json.loads((source / 'lenbot.config.json').read_text()) == original

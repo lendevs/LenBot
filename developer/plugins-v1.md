@@ -27,6 +27,7 @@ description = "每群独立计数"
 - `platforms` 使用 Python 的 `sys.platform` 名称：Linux（`linux`）、macOS（`darwin`）和 Windows（`win32`）。部署包覆盖 Linux 和 Windows，Docker 镜像是 Linux，从源码运行时三者都可能出现。
 - `reload` 为 `plugin` 时允许单独更换这个插件的版本，为 `host` 时需要重启宿主。
 - 可选的 `repository` 和 `homepage` 是 HTTP(S) 地址。
+- 可选的 `chat_platforms` 列出支持的聊天平台（`onebot`、`telegram`、`feishu`），不写时为全部平台，见[多平台](#多平台)。
 - 可选的 `data_version`（正整数，默认为 1）是插件数据目录和 KV 的格式编号。改变数据的结构时，需要提高这个编号并实现 `migrate_data`，见下文的[数据版本](#数据版本)。
 
 `dependencies = ["包名>=版本"]` 声明 Python 依赖，由 uv 解析，安装到实例的 `.runtime/plugin-packages/<宿主版本>-py313` 目录，宿主更换版本后重新安装。当前环境中已有的版本会作为约束，冲突时原样报告。对系统软件、外部服务和凭据的要求，请写在插件的 README 中。
@@ -449,7 +450,7 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 - 命令匹配和全文／正则匹配中，`Invocation.message` 是真实触发的消息。
 - `needs_source=True` 的工具有宿主解析出的真实来源，普通工具没有 message。
 - `ctx.scene` 是当前启用的场景，例如 `onebot:group:80001`。
-- `ctx.message.sender.uid` 和 `self.ctx.bot_id` 是带平台前缀的账号，例如 `onebot:70001`。
+- `ctx.message.sender.uid` 和 `ctx.bot_id` 是带平台前缀的账号，例如 `onebot:70001`。`ctx.bot_id` 是当前场景发言的 Bot 账号，`ctx.platform` 是场景的平台；`self.ctx.bot_for(scene)`、`self.ctx.platform(scene)` 按场景取，`self.ctx.bot_id` 是根配置的 Bot 账号。
 - 提及使用 `Mention("onebot:70001")`。
 
 | 能力 | 使用方式 |
@@ -557,6 +558,19 @@ OneBot 的通知按原来的 `notice_type` 和 `sub_type` 转发，常见的有�
 | 管理员变动、群文件上传 | `group_admin`（`set`、`unset`）、`group_upload` |
 
 通知只送到启用了这个插件的场景，私聊通知的场景为 `onebot:private:<QQ>`。
+
+## 多平台
+
+宿主可以同时接入 OneBot、Telegram 和飞书，场景和账号都带平台前缀。
+
+- **声明平台**：清单的 `chat_platforms` 不包含某个场景的平台时，配置在这个场景启用插件会让插件加载失败，并列出这些场景；面板的群选择只列出支持的平台的群。目录条目可以写同名字段，从目录安装时与仓库清单核对。
+- **媒体**：图片段在 OneBot 有 `url`，Telegram 是 `file_id`，飞书是 `image_key` 加 `message_id`。`await ctx.fetch_media(segment, max_bytes=20_000_000)`（`PluginContext.fetch_media(scene, segment, ...)`）读取 `image`、`audio`、`file`、`video` 段的文件：平台引用经平台下载，带 `url` 的段按宿主的公网检查读取，超过 `max_bytes` 时报错。需要 `history` 权限。
+- **段类型**：`face`、`json`、`forward`、`poke` 等只在 OneBot 出现；Telegram 另有 `sticker`（动态贴纸）、`poll`、`location` 等；飞书富文本里的表情转成文字 `[表情名]`。
+- **命令**：Telegram 的 `/命令@Bot用户名` 去掉本 Bot 的后缀后匹配。Telegram 群默认开启隐私模式，Bot 收不到中文命令和全文规则，需要关闭隐私模式或设为管理员；飞书群默认只收到 @机器人的消息，`@Bot /命令` 照常由插件接管。
+- **通知**：Telegram 只有 `group_increase`、`group_decrease`；飞书有这两项和 `group_recall`、`friend_recall`；其他通知只在 OneBot 出现。
+- **提及**：`Mention` 的账号必须属于场景的平台，否则发送报错。`Mention("all")` 在 Telegram 被省略，其余内容照常发出，`Sent.report` 写明已省略。
+- **文字长度**：Telegram 单条文字最多 4096 个字符，带图片时说明文字最多 1024 个，超过时发送失败；宿主先按群的单条字数上限拆分。
+- **测试**：`PluginTest(..., bots={"telegram": "telegram:7001"})` 为其他平台的场景给出 Bot 账号，`add_media(reference, data)` 登记 `fetch_media` 返回的内容。
 
 ## 卡片与图片
 

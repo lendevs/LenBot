@@ -95,7 +95,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f"{type(error).__name__}: {error}") from error
         tools = []
-        for tool in tool_catalog(platform=chat.config.delivery == "onebot"):
+        for tool in tool_catalog(platform=chat.config.delivery == "live"):
             function = tool["function"]
             name = function["name"]
             tools.append({
@@ -142,7 +142,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
                          "public_browser": (chat.tasks is not None
                                             and chat.tasks.settings.public_browser),
                          "public_network": chat.tasks is not None and chat.tasks.settings.egress.enabled,
-                         "file_upload": chat.config.delivery == "onebot" and chat.tasks is not None,
+                         "file_upload": chat.config.delivery == "live" and chat.tasks is not None,
                          "schedules": chat.config.schedules.enabled},
             "not_implemented": [],
         }
@@ -187,7 +187,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
         affected = [key for key, value in saved.scenes.items() if value.persona == path]
         # A role no group uses is still checked against one group, so unknown names are refused.
         for key in affected or list(saved.scenes)[:1]:
-            build_tools(saved.scene_config(key), persona, platform=saved.delivery == "onebot", host_management=True)
+            build_tools(saved.scene_config(key), persona, platform=saved.delivery == "live", host_management=True)
             if saved.worker is not None:
                 select_skills(scene_skill_catalog(saved, key), persona.skills)
         metadata = persona.model_dump(exclude={"voice", "boundaries", "examples", "knowledge"})
@@ -221,7 +221,7 @@ def register_host_capabilities(app: FastAPI, *, root: Path, runtime: NetworkRunt
         chat = runtime.chats[reference]
         host_management = chat.toolset.host_management is not None
         tools = []
-        for tool in tool_catalog(platform=chat.config.delivery == "onebot"):
+        for tool in tool_catalog(platform=chat.config.delivery == "live"):
             function = tool["function"]
             name = function["name"]
             tools.append({"name": name, "description": function["description"], "summary": function["description"],

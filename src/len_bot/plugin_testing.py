@@ -1,6 +1,6 @@
 """Public local plugin harness: real lifecycle and KV, captured simulated delivery."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import asyncio
@@ -12,9 +12,10 @@ from uuid import uuid4
 
 from .next.config import HostConfig
 from .next.platform.identity import validate_scene
+from .next.media.images import platform_reference
 from .next.platform.messages import ChatMessage, Notice, Sender, Segment
 from .plugin import CompactRequest, Content, Image, RecallRequest, Sent, Text
-from .next.plugins.host import PluginHost
+from .next.plugins.host import PluginHost, platform_parts
 from .next.plugins.data import write_version
 from .next.plugins.manifest import parse_manifest
 from .next.plugins.store import PluginStore
@@ -39,6 +40,8 @@ class _LocalHost(PluginHost):
         super().__init__(config, core_tools=set(), now=now)
         self.model_enabled = model_enabled
         self.deliveries = deliveries
+        # Media references or URLs -> bytes that fetch_media returns.
+        self.media: dict[str, bytes] = {}
         self.messages: list[ChatMessage] = []
         # Per scene: the session position at the start of the simulated turn that tool calls run in.
         self.turn_floors: dict[str, int] = {}
@@ -50,11 +53,13 @@ class _LocalHost(PluginHost):
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
         self._speaking(plugin, scene)
+        parts, omitted = platform_parts(scene, parts)
         captured = tuple(Text(self.redact(plugin, item.text)) if isinstance(item, Text) else
                          Image(item.data, self.redact(plugin, item.description)) if isinstance(item, Image) else item
                          for item in parts)
         self.deliveries.append(Delivery(plugin, scene, captured, reply_to))
-        return Sent('simulated', 'Captured locally; no platform message was sent')
+        report = 'Captured locally; no platform message was sent'
+        return Sent('simulated', report if omitted is None else f'{report}；{omitted}')
 
     def recent_messages(self, plugin: str, scene: str, limit: int) -> list[ChatMessage]:
         self._active(plugin, scene)
@@ -70,6 +75,17 @@ class _LocalHost(PluginHost):
     def emit_event(self, plugin: str, scene: str, text: str) -> None:
         self._active(plugin, scene)
         PluginStore(self.runtime.store).add_plugin_event(scene, plugin, 'event', self.redact(plugin, text))
+
+    async def fetch_media(self, plugin: str, scene: str, segment: Segment, max_bytes: int) -> bytes:
+        self._permit(self._active(plugin, scene), 'history')
+        keys = [segment.data.get(key) for key in (('file_id', 'image_key', 'file_key') if platform_reference(segment.data)
+                                                   else ('url',))]
+        found = next((self.media[key] for key in keys if isinstance(key, str) and key in self.media), None)
+        if found is None:
+            raise RuntimeError(f'Local plugin testing has no media for {segment.data!r}; register it with add_media')
+        if len(found) > max_bytes:
+            raise ValueError(f'media exceeds {max_bytes} bytes')
+        return found
 
     async def generate(self, plugin, scene, prompt, role, system):
         if not self.model_enabled:
@@ -95,8 +111,10 @@ class PluginTest:
     def __init__(self, package: Path, *, config: dict | None = None,
                  scenes: Sequence[str] = ('onebot:group:80001',), owners: Sequence[str] = (),
                  now: Callable[[], float] = time.time, models: dict | None = None,
-                 data: Path | None = None, data_version: int | None = None, memory: bool = False):
-        """``memory`` makes the plugin every scene's ``memory_plugin``. ``data`` is copied in as the plugin's existing data directory; ``data_version`` records the
+                 data: Path | None = None, data_version: int | None = None, memory: bool = False,
+                 bots: Mapping[str, str] | None = None):
+        """``bots`` gives the bot account of other platforms' scenes, such as ``{"telegram": "telegram:7001"}``;
+        OneBot scenes use ``onebot:90001``. ``memory`` makes the plugin every scene's ``memory_plugin``. ``data`` is copied in as the plugin's existing data directory; ``data_version`` records the
         version it was written with (data without one counts as 1). A higher manifest ``data_version``
         then runs ``migrate_data`` before ``start``, as on a real upgrade."""
         self.now, self.models = now, models
@@ -108,6 +126,10 @@ class PluginTest:
         self.scenes = tuple(validate_scene(scene) for scene in scenes)
         self.manifest.values_model(self.scenes).model_validate(self.values)
         self.owners = list(owners)
+        self.bots = dict(bots or {})
+        unknown = set(self.bots) - {'telegram', 'feishu'}
+        if unknown:
+            raise ValueError(f'bots 只能为 telegram、feishu 给出 Bot 账号：{sorted(unknown)}')
         self.deliveries: list[Delivery] = []
         self.host: _LocalHost | None = None
         # Handler tasks suspended in wait_message; the next message() resumes and settles them.
@@ -128,6 +150,10 @@ class PluginTest:
             'bot_id': 'onebot:90001', 'owners': self.owners, 'mode': 'isolated-multi',
             'timezone': 'Asia/Shanghai', 'database': root / 'messages.db',
             'delivery': 'simulated', 'onebot': None, 'compaction': {'input_tokens': 2000},
+            **({} if 'telegram' not in self.bots else {'telegram': {
+                'bot_id': self.bots['telegram'], 'bot_token': self.bots['telegram'].split(':', 1)[1] + ':' + 'T' * 35}}),
+            **({} if 'feishu' not in self.bots else {'feishu': {
+                'bot_id': self.bots['feishu'], 'app_id': 'cli_plugintest', 'app_secret': 'plugin-test-secret'}}),
             'models': self.models if self.models is not None else {'providers': {'local': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1',
                                               'api_key': 'synthetic'}},
                        'roles': {'mind': {'provider': 'local', 'model': 'local', 'context_window_tokens': 8192}}},
@@ -168,11 +194,14 @@ class PluginTest:
         scene = validate_scene(scene)
         HostConfig.valid_bot_id(sender)
         identifier = uuid4().hex if message_id is None else message_id
-        message = ChatMessage(id=identifier, platform=scene.split(':', 1)[0], bot_id=self.host.bot_id,
+        bot = self.host.bot_for(scene)
+        segments = [Segment('text', {'text': text}), *parts]
+        message = ChatMessage(id=identifier, platform=scene.split(':', 1)[0], bot_id=bot,
                               scene=scene, platform_message_id=identifier, sender=Sender(sender, 'Test user', None, None),
                               time=self.host.now() if timestamp is None else timestamp,
-                              segments=[Segment('text', {'text': text}), *parts], reply_to=None,
-                              mentions_bot=False, is_self=sender == self.host.bot_id, send_status='received')
+                              segments=segments, reply_to=None,
+                              mentions_bot=any(item.type == 'mention' and item.data.get('user') == bot for item in segments),
+                              is_self=sender == bot, send_status='received')
         self.host.messages.append(message)
         store = self.host.runtime.store
         seq = store.enqueue(message, {}, message.time)
@@ -183,6 +212,10 @@ class PluginTest:
                     "ON CONFLICT(scene) DO UPDATE SET last_message_seq=MAX(last_message_seq,excluded.last_message_seq)",
                     (scene, seq))
         return message
+
+    def add_media(self, reference: str, data: bytes) -> None:
+        """What ``fetch_media`` returns for a segment naming ``reference`` (a ``file_id``, ``image_key``, ``file_key`` or ``url``)."""
+        self.host.media[reference] = data
 
     def new_turn(self, scene: str = 'onebot:group:80001') -> None:
         """Start the next simulated turn: earlier messages stop being valid request sources.

@@ -133,6 +133,13 @@ class RemoteHost:
     def now(self) -> float:
         return self.channel.call_sync("now")
 
+    def bot_for(self, scene):
+        return self.channel.call_sync("bot_for", scene)
+
+    async def fetch_media(self, plugin, scene, segment, max_bytes):
+        value = {"type": segment.type, "data": segment.data}
+        return base64.b64decode(await self.channel.call("fetch_media", scene, value, max_bytes))
+
     def scene_timezone(self, scene):
         return self.channel.call_sync("scene_timezone", scene)
 

@@ -4,9 +4,9 @@
 
 The catalog uses the built-in catalog's format. Every entry pins ``ref`` to a full commit;
 the script fetches that commit into a temporary directory and checks that ``plugin.toml``
-is a valid manifest whose name, version, interface and declared permissions match the
-entry, and that the package has ``__init__.py`` and a license file. Plugin code is never
-imported or run. Exits 1 when any entry fails.
+is a valid manifest whose name, version, interface, declared permissions, chat platforms and
+host range match the entry, and that the package has ``__init__.py`` and a license file.
+Plugin code is never imported or run. Exits 1 when any entry fails.
 """
 
 from __future__ import annotations
@@ -41,6 +41,9 @@ def check_checkout(entry: CatalogEntry, checkout: Path) -> list[str]:
             problems.append('条目写了 permissions，plugin.toml 没有声明')
         elif sorted(entry.permissions) != sorted(manifest.permissions):
             problems.append(f'permissions 在条目中是 {entry.permissions!r}，plugin.toml 是 {manifest.permissions!r}')
+    if entry.chat_platforms is not None and (manifest.chat_platforms is None
+                                             or sorted(entry.chat_platforms) != sorted(manifest.chat_platforms)):
+        problems.append(f'chat_platforms 在条目中是 {entry.chat_platforms!r}，plugin.toml 是 {manifest.chat_platforms!r}')
     if entry.requires_lenbot is not None and entry.requires_lenbot != str(SpecifierSet(manifest.requires_lenbot)):
         problems.append(f'requires_lenbot 在条目中是 {entry.requires_lenbot!r}，plugin.toml 是 {manifest.requires_lenbot!r}')
     if not (checkout / '__init__.py').is_file():

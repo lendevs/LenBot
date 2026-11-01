@@ -289,6 +289,16 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
             <dt class="text-muted">{{ t('plugins.discover.host') }}</dt>
             <dd class="font-mono">{{ selected.requires_lenbot }}</dd>
           </template>
+          <template v-if="selected.chat_platforms">
+            <dt class="text-muted">{{ t('plugins.version.chatPlatforms') }}</dt>
+            <dd>
+              {{
+                selected.chat_platforms
+                  .map((platform) => t(`plugins.chatPlatforms.${platform}`))
+                  .join(t('personas.separator'))
+              }}
+            </dd>
+          </template>
           <template v-if="selected.installed">
             <dt class="text-muted">{{ t('plugins.discover.here') }}</dt>
             <dd>v{{ selected.installed_version ?? '?' }}</dd>

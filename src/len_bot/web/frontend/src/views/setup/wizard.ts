@@ -6,11 +6,13 @@ import type {
   FirstSetup,
   OneBotLink,
   SetupBinding,
+  SetupChatPlatform,
   SetupEmbedding,
   SetupGroup,
   SetupModel,
   SetupProvider,
 } from '../../api/setup'
+import { setupApi } from '../../api/setup'
 import {
   READ_APIS,
   SEARCH_APIS,
@@ -36,11 +38,17 @@ export interface Draft {
   listenPort: number | null
   accessToken: string
   onebotTimeout: number | null
-  /** `later` skips the OneBot connection; the host then runs simulated, with no connection to wait for. */
-  connect: 'now' | 'later'
+  /** `later` connects no platform; the host then runs simulated, with no connection to wait for. */
+  chatPlatform: 'onebot' | 'telegram' | 'feishu' | 'later'
+  telegramToken: string
+  telegramProxy: string
+  feishuAppId: string
+  feishuSecret: string
+  feishuDomain: 'feishu' | 'lark'
   botAccount: string
-  delivery: 'simulated' | 'onebot'
+  delivery: 'simulated' | 'live'
   groupSource: 'list' | 'manual'
+  ownerSource: 'list' | 'manual'
   owner: string
   timezone: string
   preset: 'deepseek' | 'compatible' | 'anthropic'
@@ -92,6 +100,8 @@ const SECRETS = [
   'password',
   'passwordAgain',
   'accessToken',
+  'telegramToken',
+  'feishuSecret',
   'apiKey',
   'vectorKey',
   'searchKey',
@@ -119,10 +129,16 @@ function initial(): Draft {
     listenPort: 8080,
     accessToken: '',
     onebotTimeout: 30,
-    connect: 'now',
+    chatPlatform: 'onebot',
+    telegramToken: '',
+    telegramProxy: '',
+    feishuAppId: '',
+    feishuSecret: '',
+    feishuDomain: 'feishu',
     botAccount: '',
     delivery: 'simulated',
     groupSource: 'list',
+    ownerSource: 'list',
     owner: '',
     timezone: 'Asia/Shanghai',
     preset: 'deepseek',
@@ -191,6 +207,11 @@ function restored(): Draft {
 }
 
 const ACCOUNT = /^[1-9][0-9]*$/
+const TELEGRAM_TOKEN = /^[1-9][0-9]*:[A-Za-z0-9_-]{20,}$/
+const TELEGRAM_CHAT = /^-?[1-9][0-9]*$/
+const FEISHU_APP = /^cli_[A-Za-z0-9]+$/
+const FEISHU_CHAT = /^oc_[A-Za-z0-9]+$/
+const FEISHU_USER = /^ou_[A-Za-z0-9]+$/
 const PERSONA_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 /** The folder a new persona gets when none is typed: an ASCII name in lowercase words, otherwise my-bot. */
@@ -232,7 +253,13 @@ export function createWizard() {
   const vectorCatalog = ref<SetupModel[]>([])
 
   /** What a connection or model test passed with; a later edit makes it stale. */
-  const platform = ref<{ signature: string; botId: string; groups: SetupGroup[] } | null>(null)
+  const platform = ref<{
+    signature: string
+    botId: string
+    name: string
+    groups: SetupGroup[]
+    people: SetupGroup[]
+  } | null>(null)
   const modelPassed = ref<string | null>(null)
   let keep = true
 
@@ -261,6 +288,33 @@ export function createWizard() {
           listen_port: draft.listenPort ?? 0,
           ...common,
         }
+  }
+
+  function telegram() {
+    return { bot_token: draft.telegramToken.trim(), proxy: trimUrl(draft.telegramProxy) || null }
+  }
+
+  function feishu() {
+    return { app_id: draft.feishuAppId.trim(), app_secret: draft.feishuSecret, domain: draft.feishuDomain }
+  }
+
+  /** Tests the chosen platform; the answer is kept with the settings it was asked with. */
+  async function testPlatform() {
+    const signature = platformSignature.value
+    let found: SetupChatPlatform
+    if (draft.chatPlatform === 'telegram') found = await setupApi.telegram(telegram())
+    else if (draft.chatPlatform === 'feishu') found = await setupApi.feishu(feishu())
+    else {
+      const result = await setupApi.platform(onebot())
+      found = { ...result, name: result.bot_id.replace(/^onebot:/, '') }
+    }
+    platform.value = {
+      signature,
+      botId: found.bot_id,
+      name: found.name,
+      groups: found.groups,
+      people: found.people ?? [],
+    }
   }
 
   function provider(): SetupProvider {
@@ -326,14 +380,23 @@ export function createWizard() {
     }
   }
 
-  const platformSignature = computed(() => JSON.stringify(onebot()))
-  const connectLater = computed(() => draft.connect === 'later')
+  const platformSignature = computed(() =>
+    JSON.stringify([
+      draft.chatPlatform,
+      draft.chatPlatform === 'telegram' ? telegram() : draft.chatPlatform === 'feishu' ? feishu() : onebot(),
+    ]),
+  )
+  const connectLater = computed(() => draft.chatPlatform === 'later')
+  /** The scene and account prefix: the chosen platform, or onebot when none is connected yet. */
+  const prefix = computed(() => (draft.chatPlatform === 'later' ? 'onebot' : draft.chatPlatform))
   const modelSignature = computed(() => JSON.stringify([provider(), binding(), draft.probeKind]))
   const platformReady = computed(
     () => !connectLater.value && platform.value?.signature === platformSignature.value,
   )
   /** Groups the connected account has joined; empty when there is no passed connection or no list. */
   const joinedGroups = computed(() => (platformReady.value ? platform.value!.groups : []))
+  /** People in Telegram's pending messages, offered as the owner. */
+  const knownPeople = computed(() => (platformReady.value ? platform.value!.people : []))
   const modelReady = computed(() => modelPassed.value === modelSignature.value)
 
   function choosePreset(preset: Draft['preset']) {
@@ -445,6 +508,14 @@ export function createWizard() {
     }
     if (step === 'platform' && connectLater.value) {
       need('botAccount', ACCOUNT.test(draft.botAccount.trim()), 'account')
+    } else if (step === 'platform' && draft.chatPlatform === 'telegram') {
+      need('telegramToken', TELEGRAM_TOKEN.test(draft.telegramToken.trim()), 'telegramToken')
+      if (draft.telegramProxy.trim()) need('telegramProxy', httpUrl(draft.telegramProxy.trim()), 'httpUrl')
+      if (!Object.keys(found).length) need('connect', platformReady.value, 'connectFirst')
+    } else if (step === 'platform' && draft.chatPlatform === 'feishu') {
+      need('feishuAppId', FEISHU_APP.test(draft.feishuAppId.trim()), 'feishuApp')
+      need('feishuSecret', Boolean(draft.feishuSecret.trim()))
+      if (!Object.keys(found).length) need('connect', platformReady.value, 'connectFirst')
     } else if (step === 'platform') {
       if (draft.transport === 'forward_ws') need('wsUrl', wsUrl(draft.wsUrl.trim()), 'wsUrl')
       else {
@@ -459,7 +530,8 @@ export function createWizard() {
       if (!Object.keys(found).length) need('connect', platformReady.value, 'connectFirst')
     }
     if (step === 'owner') {
-      need('owner', ACCOUNT.test(draft.owner.trim()), 'account')
+      if (prefix.value === 'feishu') need('owner', FEISHU_USER.test(draft.owner.trim()), 'openId')
+      else need('owner', ACCOUNT.test(draft.owner.trim()), 'account')
       need('timezone', Boolean(draft.timezone.trim()))
     }
     if (step === 'model') {
@@ -505,7 +577,16 @@ export function createWizard() {
         need('personaName', Boolean(draft.personaName.trim()))
         need('brief', Boolean(draft.brief.trim()))
       }
-      need('sceneId', ACCOUNT.test(draft.sceneId.trim()), 'account')
+      const id = draft.sceneId.trim()
+      if (prefix.value === 'telegram' && draft.sceneKind === 'group')
+        need('sceneId', TELEGRAM_CHAT.test(id), 'telegramChat')
+      else if (prefix.value === 'feishu')
+        need(
+          'sceneId',
+          (draft.sceneKind === 'group' ? FEISHU_CHAT : FEISHU_USER).test(id),
+          draft.sceneKind === 'group' ? 'chatId' : 'openId',
+        )
+      else need('sceneId', ACCOUNT.test(id), 'account')
     }
     return found
   }
@@ -528,10 +609,13 @@ export function createWizard() {
           }
     return {
       bot_id: connectLater.value ? `onebot:${draft.botAccount.trim()}` : (platform.value?.botId ?? ''),
-      owners: [`onebot:${draft.owner.trim()}`],
+      owners: [`${prefix.value}:${draft.owner.trim()}`],
       timezone: draft.timezone.trim(),
       delivery: connectLater.value ? 'simulated' : draft.delivery,
-      onebot: connectLater.value ? null : onebot(),
+      onebot: draft.chatPlatform === 'onebot' ? onebot() : null,
+      telegram:
+        draft.chatPlatform === 'telegram' ? { bot_id: platform.value?.botId ?? '', ...telegram() } : null,
+      feishu: draft.chatPlatform === 'feishu' ? { bot_id: platform.value?.botId ?? '', ...feishu() } : null,
       provider: provider(),
       mind: binding(),
       embedding:
@@ -574,7 +658,7 @@ export function createWizard() {
       max_steps: draft.maxSteps ?? 16,
       voice_mode: 'direct',
       compaction: { input_tokens: draft.inputBudget ?? 0 },
-      scene: `onebot:${draft.sceneKind}:${draft.sceneId.trim()}`,
+      scene: `${prefix.value}:${draft.sceneKind}:${draft.sceneId.trim()}`,
       attention:
         draft.sceneKind === 'group'
           ? draft.participation
@@ -609,7 +693,10 @@ export function createWizard() {
     modelPassed,
     platformReady,
     connectLater,
+    prefix,
     joinedGroups,
+    knownPeople,
+    testPlatform,
     modelReady,
     platformSignature,
     modelSignature,

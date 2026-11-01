@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import importlib.util
 import inspect
@@ -23,8 +23,10 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, Valid
 
 from ..config import HostConfig
 from ..tools.external_tools import ExternalTool
-from ..platform.messages import ChatMessage
-from ...plugin import (MARK, Content, GenerationRole, Image, Text,
+from ..platform.identity import MENTION_ALL
+from ..platform.messages import ChatMessage, Segment
+from ..media.images import image_url, platform_reference
+from ...plugin import (MARK, Content, GenerationRole, Image, Mention, Text,
                      CompactRequest, Invocation, Notice, Plugin, PluginContext, RecallBlock, RecallRequest, Sent)
 from .kv import PluginKV
 from .data import prepare_data
@@ -142,6 +144,27 @@ class Pattern:
     priority: int
 
 
+MEDIA_SEGMENTS = frozenset({"image", "audio", "file", "video"})
+
+
+def platform_parts(scene: str, parts: Sequence[Content]) -> tuple[list[Content], str | None]:
+    """Check mentions against the scene's platform; drop a mention of everyone where the platform has none."""
+    platform = scene.split(":", 1)[0]
+    kept: list[Content] = []
+    omitted = None
+    for part in parts:
+        if isinstance(part, Mention):
+            if part.user == "all" and platform not in MENTION_ALL:
+                omitted = f"{platform} 没有全员提醒，已省略提及全体成员"
+                continue
+            if part.user != "all" and not part.user.startswith(platform + ":"):
+                raise ValueError(f"插件 Mention 的账号 {part.user} 不属于场景 {scene} 的平台 {platform}")
+        kept.append(part)
+    if not kept:
+        raise ValueError(f"{platform} 没有全员提醒，这条消息只有提及全体成员，没有可发送的内容")
+    return kept, omitted
+
+
 @dataclass(frozen=True)
 class Waiter:
     record: Loaded
@@ -236,6 +259,8 @@ class PluginHost:
             shutil.rmtree(cache)
         record.manifest = manifest = read_manifest(directory)
         SECRETS.add(secret_values(manifest, values))
+        if unsupported := manifest.unsupported_scenes(record.scenes):
+            raise ValueError(f"插件只支持 {'、'.join(manifest.chat_platforms)} 平台，不能在 {'、'.join(unsupported)} 启用")
         if manifest.model is not None:
             instructions = (directory / manifest.model.instructions).resolve()
             if not instructions.is_relative_to(directory.resolve()):
@@ -430,6 +455,23 @@ class PluginHost:
     async def delete_kv(self, plugin: str, key: str) -> bool:
         return await asyncio.to_thread(PluginKV(self._active(plugin).context.data_dir).delete, key)
 
+    def bot_for(self, scene: str) -> str:
+        return self.config.bot_for(scene)
+
+    async def fetch_media(self, plugin: str, scene: str, segment: Segment, max_bytes: int) -> bytes:
+        """The file of an image, audio, file or video segment: through the platform, or its public URL."""
+        self._permit(self._active(plugin, scene), "history")
+        if segment.type not in MEDIA_SEGMENTS:
+            raise ValueError(f"只能读取 {'、'.join(sorted(MEDIA_SEGMENTS))} 段的文件，实际为 {segment.type}")
+        if platform_reference(segment.data):
+            if self.runtime is None:
+                raise RuntimeError("插件宿主尚未接入运行中的场景")
+            return await self.runtime.fetch_media(scene, segment.data, max_bytes)
+        _, _, data = await fetch_public(image_url(segment.data), 60, lambda _type, _prefix: max_bytes,
+                                        fake_ip_networks=self.config.network.networks(),
+                                        public_dns_url=self.config.network.public_dns_url)
+        return data
+
     async def fetch_image(self, plugin: str, url: str, timeout_seconds: float) -> bytes:
         self._permit(self._active(plugin), "network")
         async with asyncio.timeout(timeout_seconds):
@@ -454,10 +496,12 @@ class PluginHost:
         self._permit(self._speaking(plugin, scene), "send")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
+        parts, omitted = platform_parts(scene, parts)
         safe_parts = [Text(self.redact(plugin, part.text)) if isinstance(part, Text)
                       else Image(part.data, self.redact(plugin, part.description)) if isinstance(part, Image)
                       else part for part in parts]
-        return await self.runtime.chats[scene].expression.send_plugin_content(plugin, safe_parts, reply_to=reply_to)
+        sent = await self.runtime.chats[scene].expression.send_plugin_content(plugin, safe_parts, reply_to=reply_to)
+        return sent if omitted is None else replace(sent, report=f"{sent.report}；{omitted}")
 
     def emit_event(self, plugin: str, scene: str, text: str) -> None:
         self._permit(self._speaking(plugin, scene), "events")
@@ -806,7 +850,7 @@ class PluginHost:
                 pieces.append(segment.data["text"])
                 started = started or bool(segment.data["text"].strip())
             elif not started and (segment.type == "reply" or
-                                  (segment.type == "mention" and str(segment.data["user"]) == self.bot_id)):
+                                  (segment.type == "mention" and str(segment.data["user"]) == message.bot_id)):
                 continue
             elif started and segment.type == "mention":
                 mentions = True
@@ -1064,6 +1108,7 @@ class PluginHost:
                 "version": record.manifest.version if record.status == "running" else None,
                 "description": None if record.manifest is None else record.manifest.description,
                 "isolation": None if record.manifest is None else record.manifest.isolation,
+                "chat_platforms": None if record.manifest is None else record.manifest.chat_platforms,
                 # None: the manifest does not declare permissions and keeps every capability.
                 "permissions": (None if record.manifest is None or record.manifest.permissions is None else
                                 [{"name": name, "title": PERMISSION_TITLES[name]}

@@ -39,6 +39,15 @@ LOOK_TOOL = {"type": "function", "function": {
 }}
 
 
+# Downloads an inbound file named by a platform reference (Telegram file_id, Feishu file key) up to a byte limit.
+MediaFetch = Callable[[dict, int], Awaitable[bytes]]
+
+
+def platform_reference(data: dict[str, object]) -> bool:
+    """Whether a segment names its file by a platform reference rather than a public URL."""
+    return not isinstance(data.get("url"), str) and any(key in data for key in ("file_id", "image_key", "file_key"))
+
+
 def image_url(data: dict[str, object]) -> str:
     url = data.get("url")
     if not isinstance(url, str) or not url.strip():
@@ -85,7 +94,8 @@ def _display(scene: str, arguments: LookArguments, asset: ImageAsset, *,
 
 async def load_look_image(store: Store, scene: str, arguments: LookArguments, settings: ImageSettings, *,
                           recording: RecordedImages | None = None, fake_ip_networks: tuple,
-                          public_dns_url: str | None = None) -> tuple[ImageAsset, bool, str]:
+                          public_dns_url: str | None = None,
+                          fetch_media: MediaFetch | None = None) -> tuple[ImageAsset, bool, str]:
     """The prepared pixels of one saved image, whether they were cached, and where they came from."""
     message = store.find_message(scene, arguments.message)
     if message is None:
@@ -110,6 +120,10 @@ async def load_look_image(store: Store, scene: str, arguments: LookArguments, se
                 elif recording is not None:
                     body, fetched_at = recording.image(arguments.message, arguments.image)
                     pixels_source = 'frozen_original'
+                elif fetch_media is not None and platform_reference(pictures[arguments.image - 1].data):
+                    body = await fetch_media(pictures[arguments.image - 1].data, settings.max_bytes)
+                    fetched_at = store.now()
+                    pixels_source = 'platform_download'
                 else:
                     url = image_url(pictures[arguments.image - 1].data)
                     _, _, body = await fetch_public(
@@ -132,10 +146,11 @@ async def load_look_image(store: Store, scene: str, arguments: LookArguments, se
 async def execute_look(store: Store, scene: str, arguments: LookArguments,
                        settings: ImageSettings, *, model_name: str,
                        describe: Callable[[ImageAsset], Awaitable[str]],
-                       recording: RecordedImages | None = None, fake_ip_networks: tuple, public_dns_url: str | None = None) -> str:
+                       recording: RecordedImages | None = None, fake_ip_networks: tuple, public_dns_url: str | None = None,
+                       fetch_media: MediaFetch | None = None) -> str:
     asset, pixels_reused, pixels_source = await load_look_image(
         store, scene, arguments, settings, recording=recording, fake_ip_networks=fake_ip_networks,
-        public_dns_url=public_dns_url)
+        public_dns_url=public_dns_url, fetch_media=fetch_media)
     description_reused = asset.description is not None and not arguments.refresh
     if not description_reused:
         description = await describe(asset)

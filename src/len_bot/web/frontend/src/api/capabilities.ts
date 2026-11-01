@@ -96,7 +96,7 @@ export interface TaskReadiness {
   worker: boolean
   running: boolean
   sandbox: 'docker' | 'bwrap' | null
-  delivery: 'simulated' | 'onebot'
+  delivery: 'simulated' | 'live'
   scenes: {
     scene: string
     enabled: boolean

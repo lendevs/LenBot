@@ -18,7 +18,7 @@ def host_source(onebot):
     binding = {'provider': 'fixture', 'model': 'synthetic', 'context_window_tokens': 4096}
     return {"compaction": {"input_tokens": 2000},
         'mode': 'isolated-multi', 'bot_id': 'onebot:90001', 'timezone': 'UTC', 'database': 'unused.db',
-        'delivery': 'onebot', 'onebot': onebot,
+        'delivery': 'live', 'onebot': onebot,
         'models': {
             'providers': {'fixture': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1',
                                       'api_key': 'synthetic-unused'}},

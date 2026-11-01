@@ -1,8 +1,8 @@
 # 认识 LenBot
 
-LenBot 是面向 QQ 群聊的自主决策 Agent 框架。何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。
+LenBot 是面向群聊的自主决策 Agent 框架，接入 QQ、Telegram 和飞书。何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。
 
-LenBot 通过已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用）收发消息。模型服务由部署者自行配置，只需准备一个聊天模型及其 API Key（例如 DeepSeek）。
+LenBot 通过已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用）收发 QQ 消息，直接调用 Telegram Bot API 和飞书开放平台收发另外两个平台的消息，几个平台可以同时运行。模型服务由部署者自行配置，只需准备一个聊天模型及其 API Key（例如 DeepSeek）。
 
 日常对话无需输入命令前缀。群友 @ Bot、回复 Bot 或提到角色名字时，Bot 读取近期上下文并决定如何回应；开启**同时参与群内讨论**后，Bot 也会在群聊讨论活跃时自主判断是否接话。
 
@@ -22,7 +22,7 @@ LenBot 通过已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://gith
 ## 运行条件
 
 - **运行主机**：支持 Linux、macOS 和 Windows。
-- **OneBot v11 客户端**：例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（推荐使用），已登录 Bot 的 QQ 号并启用 WebSocket。
+- **聊天平台**：QQ 需要 OneBot v11 客户端，例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（推荐使用），已登录 Bot 的 QQ 号并启用 WebSocket；Telegram 需要 Bot 令牌，见[接入 Telegram](../connect/telegram)；飞书需要企业自建应用，见[接入飞书](../connect/feishu)。
 - **聊天模型服务**：支持 OpenAI 兼容聊天（`openai-chat`）、OpenAI Responses（`openai-responses`）、Anthropic Messages（`anthropic`）和 Gemini GenerateContent（`gemini`）四种协议。
 
 向量检索服务、语音转写服务、外部搜索服务与 Docker 均为按需选配项。
@@ -33,13 +33,13 @@ LenBot 通过已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://gith
 : 保存一个 Bot 全部运行配置与持久化数据的根目录。从源码运行时即仓库根目录。全部运行配置集中保存在 `lenbot.config.json` 一个文件中。
 
 **场景（`scene`）**
-: 一个群聊或一段私聊。场景与账号均带平台前缀：群聊写作 `onebot:group:80001`，私聊写作 `onebot:private:70001`，个人账号写作 `onebot:70001`。
+: 一个群聊或一段私聊。场景与账号均带平台前缀：群聊写作 `onebot:group:80001`，私聊写作 `onebot:private:70001`，个人账号写作 `onebot:70001`；Telegram 与飞书分别以 `telegram:`、`feishu:` 开头。
 
 **主人**
 : 权限最高的操作者账号，可使用全部管理命令并在群内通过自然语言让 Bot 修改设置。首次配置时填写首个主人，后续可在面板中增补。
 
 **模拟发送**
-: Bot 照常接收平台消息并执行回合决策，但生成的回复、表情和文件只记录在面板中，不实际发往 QQ。
+: Bot 照常接收平台消息并执行回合决策，但生成的回复、表情和文件只记录在面板中，不实际发往群聊。
 
 **回合**
 : Bot 被唤醒后的一次完整决策循环，包含自动召回记忆、一至多步模型请求与工具调用，以及最终发出的发言或旁听结束。面板中每个回合渲染为一张可展开的步骤卡片。
@@ -49,7 +49,7 @@ LenBot 通过已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://gith
 
 ## 当前范围
 
-- 平台接入支持 QQ（OneBot v11）。
+- 平台接入支持 QQ（OneBot v11）、Telegram 和飞书，几个平台可以同时运行。群文件、成员资料查询、合并转发和表情回应只在 QQ 提供。
 - 配置语音转写模型后可理解群内语音消息，Bot 自身以文字、表情图片和文件形式回复。
 - 内置框架提示词为中文，网页面板界面支持中文和英文。
 

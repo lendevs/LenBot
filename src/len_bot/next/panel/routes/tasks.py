@@ -92,7 +92,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                            for scene, chat in runtime.chats.items()],
                 "public_network": service is not None and service.settings.egress.enabled,
                 "group_files": runtime.config.onebot is not None,
-                "file_upload": runtime.config.delivery == "onebot" and service is not None}
+                "file_upload": runtime.config.delivery == "live" and service is not None}
 
     @app.get("/api/host/tasks", response_model=TaskPage)
     async def listing(scene: str, status: str = "active", offset: int = Query(0, ge=0),
@@ -254,9 +254,9 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         scene_exists(scene)
         if runtime.tasks is None:
             raise HTTPException(409, "尚未配置任务执行器")
-        _, kind, target = scene.split(":", 2)
+        platform, kind, target = scene.split(":", 2)
         fetch = (group_file_fetch(partial(runtime.platform_call, scene=scene), target)
-                 if runtime.config.onebot is not None and kind == "group" else None)
+                 if runtime.config.onebot is not None and platform == "onebot" and kind == "group" else None)
         try:
             downloads = await group_file_inputs(body.group_files, fetch, runtime.tasks.settings.max_file_bytes)
         except (PlatformCallError, httpx.HTTPError) as error:

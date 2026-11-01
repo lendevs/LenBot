@@ -120,7 +120,7 @@ def _entry(directory: Path) -> dict:
                 # None: undeclared, every capability (the same shape as the running plugin's state).
                 "permissions": (None if manifest.permissions is None else
                                 [{"name": name, "title": PERMISSION_TITLES[name]} for name in manifest.permissions]),
-                "isolation": manifest.isolation}
+                "isolation": manifest.isolation, "chat_platforms": manifest.chat_platforms}
     except (OSError, ValueError) as error:
         return {"directory": str(directory), "error": f"{type(error).__name__}: {error}"}
 
@@ -264,9 +264,11 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             raise HTTPException(409, f'插件 {name} 已安装，请使用更新')
         if not entry.compatible:
             raise HTTPException(422, f'插件 {name} 不能在本机加载：{entry.incompatible_reason}')
-        # The repository's own manifest must be the plugin the catalog entry names, with the permissions it shows.
+        # The repository's own manifest must be the plugin the catalog entry names, with the permissions
+        # and chat platforms it shows.
         return await operate(lambda: manager.install(entry.repository, ref=entry.ref, expected_name=entry.name,
-                                                     expected_permissions=entry.permissions))
+                                                     expected_permissions=entry.permissions,
+                                                     expected_chat_platforms=entry.chat_platforms))
 
     @app.get('/api/host/plugins/health', response_model=responses.PluginHealth, response_model_exclude_unset=True)
     async def plugins_health(_: str = Depends(user)):

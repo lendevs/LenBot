@@ -99,7 +99,7 @@ def register_host_reference(app: FastAPI, *, runtime: NetworkRuntime, user: Call
             raise HTTPException(409, "没有实例目录，不能保存资料文件")
 
     def has_group_files(scene: str) -> bool:
-        return runtime.config.onebot is not None and scene.split(":", 2)[1] == "group"
+        return runtime.config.onebot is not None and scene.startswith("onebot:group:")
 
     def group(scene: str) -> str:
         configured(scene)

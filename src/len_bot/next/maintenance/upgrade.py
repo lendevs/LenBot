@@ -10,7 +10,9 @@ import sys
 import tomllib
 from importlib.metadata import PackageNotFoundError, version
 
-from ..config import HostConfig, load_instance_config
+from ..config import CONFIG_VERSION, HostConfig, load_instance_config
+from ..configuration.migrations import migrate_source
+from ..storage.files import atomic_text
 from ..instance_lock import instance_lock
 from ..memory.service import LocalMemoryConfig
 from ..plugins.manifest import INTERFACE, Manifest, discover
@@ -96,8 +98,19 @@ def _trial_roots(root: Path) -> list[Path]:
     return [path.parent for path in sorted((root / '.runtime/chat-tests').glob('*/lenbot.config.json'))]
 
 
+def migrate_config_file(directory: Path) -> bool:
+    """Write an earlier-format root configuration back in the current format; True when it changed."""
+    path = directory / 'lenbot.config.json'
+    source = json.loads(path.read_text(encoding='utf-8'))
+    if source.get('config_version', 1) == CONFIG_VERSION:
+        return False
+    atomic_text(path, json.dumps(migrate_source(source, CONFIG_VERSION), ensure_ascii=False, indent=2) + '\n')
+    return True
+
+
 def _apply_locked(root: Path, trials: list[Path]) -> None:
     for directory in (root, *trials):
+        migrate_config_file(directory)
         if isinstance(load_instance_config(directory), HostConfig):
             asyncio.run(install(directory))
         failed = [item for item in check(directory) if item['status'] == 'error']

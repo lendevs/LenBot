@@ -67,7 +67,7 @@
 
 ## 数据格式版本
 
-第一个候选发布版（RC）之前，以下 6 项持久化格式与接口编号均固定为 `1`：`lenbot.config.json` 的 `config_version`、业务数据库 `storage/store.py`、记忆处理库 `memory/jobs.py`、本地记忆索引 `memory/local.py`、插件键值库 `plugins/kv.py` 以及插件公开接口 `plugin/manifest.py`。资料库派生索引 `state/reference/index.sqlite3` 在结构版本变化时自动重建。格式编号不匹配时宿主启动直接报错；从第一个 RC 起，跨版本结构变更统一由 `upgrade` 处理。
+第一个候选发布版（RC）之前，以下 6 项持久化格式与接口编号均固定为 `1`；之后 `lenbot.config.json` 的 `config_version` 因接入 Telegram 与飞书升为 `2`，格式 `1` 的配置读取时自动迁移，`upgrade` 写回文件。6 项分别是：`lenbot.config.json` 的 `config_version`、业务数据库 `storage/store.py`、记忆处理库 `memory/jobs.py`、本地记忆索引 `memory/local.py`、插件键值库 `plugins/kv.py` 以及插件公开接口 `plugin/manifest.py`。资料库派生索引 `state/reference/index.sqlite3` 在结构版本变化时自动重建。格式编号不匹配时宿主启动直接报错；从第一个 RC 起，跨版本结构变更统一由 `upgrade` 处理。
 
 ## 用量记账与后台任务资源
 

@@ -81,6 +81,8 @@ export interface AvailableEntry {
   /** null: undeclared, the plugin keeps every capability. */
   permissions?: Permission[] | null
   isolation?: 'inline' | 'process'
+  /** Chat platforms whose groups may enable the plugin; null: every platform. */
+  chat_platforms?: string[] | null
 }
 
 export interface Health {
@@ -120,6 +122,7 @@ export interface RunningPlugin {
   description: string | null
   isolation: 'inline' | 'process'
   permissions: Permission[] | null
+  chat_platforms: string[] | null
   scenes: string[]
   commands: { name: string; description: string }[]
   rules: { kind: 'fullmatch' | 'regex'; pattern: string; description: string; priority?: number }[]
@@ -217,6 +220,7 @@ export interface CatalogEntry {
   ref: string | null
   /** Bare permission names; absent or null when the entry does not list them. */
   permissions?: string[] | null
+  chat_platforms?: string[] | null
 }
 
 export interface CatalogView {

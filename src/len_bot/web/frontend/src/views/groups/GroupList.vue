@@ -19,6 +19,11 @@ const statusLabel = useStatusLabel()
 const query = ref('')
 
 const number = (scene: string) => scene.split(':').slice(2).join(':')
+/** Telegram and Feishu groups name their platform; QQ groups are the default. */
+const platform = (scene: string) => {
+  const name = scene.split(':', 1)[0]
+  return name === 'onebot' ? '' : t(`chatPlatforms.${name}`)
+}
 const titles = sceneTitles as Record<string, string>
 const shown = computed(() => {
   const words = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
@@ -80,7 +85,9 @@ const shown = computed(() => {
               {{ t(`groups.status.${item.chat_status.status}`) }} ·
             </template>
             {{
-              [titles[item.scene] ? number(item.scene) : '', item.persona.name].filter(Boolean).join(' · ')
+              [platform(item.scene), titles[item.scene] ? number(item.scene) : '', item.persona.name]
+                .filter(Boolean)
+                .join(' · ')
             }}
           </span>
         </span>

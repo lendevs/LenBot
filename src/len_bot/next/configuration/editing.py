@@ -96,7 +96,7 @@ def _prepare(root: Path, edit: Callable[[dict, HostConfig], None]
                 for path in dict.fromkeys(settings.persona for settings in candidate.scenes.values())}
     for scene, settings in candidate.scenes.items():
         build_tools(candidate.scene_config(scene), personas[settings.persona],
-                    platform=candidate.delivery == "onebot", host_management=True)
+                    platform=candidate.delivery == "live", host_management=True)
         if candidate.worker is not None:
             select_skills(scene_skill_catalog(candidate, scene),
                           personas[settings.persona].skills)

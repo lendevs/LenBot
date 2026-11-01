@@ -172,14 +172,15 @@ async def test_onebot_outlet_encodes_qualified_scene_and_mention_without_changin
 
 
 @pytest.mark.parametrize('mention', ['onebot:all', 'qq:12345', 'onebot:abc', 'all', 'onebot:0', 'onebot:007',
-                                     'telegram:7001'])
+                                     'telegram:abc', 'telegram:-1001234', 'feishu:oc_room'])
 def test_model_speech_accepts_only_individual_platform_accounts(mention):
     from pydantic import ValidationError
     from len_bot.next.chat.tools import SayArguments
 
     with pytest.raises(ValidationError, match='mention'):
         SayArguments(content='合成回复', mention=mention)
-    assert SayArguments(content='合成回复', mention='onebot:70001').mention == 'onebot:70001'
+    for account in ('onebot:70001', 'telegram:7001', 'feishu:ou_ann'):
+        assert SayArguments(content='合成回复', mention=account).mention == account
 
 
 @pytest.mark.parametrize('kind', ['group', 'private'])

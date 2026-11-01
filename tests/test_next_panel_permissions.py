@@ -360,7 +360,7 @@ def test_web_panel_rejects_nonisolated_outlet_configurations(panel_config, panel
     with pytest.raises(ValueError, match="onebot=null and delivery=simulated"):
         create_app(panel_config.model_copy(update={"onebot": transport}), root=panel_root)
     with pytest.raises(ValueError, match="onebot=null and delivery=simulated"):
-        create_app(panel_config.model_copy(update={"onebot": transport, "delivery": "onebot"}), root=panel_root)
+        create_app(panel_config.model_copy(update={"onebot": transport, "delivery": "live"}), root=panel_root)
 
 
 def test_scene_persona_rejects_scope_smuggling_without_any_file_or_runtime_change(panel_config, panel_root):

@@ -48,6 +48,7 @@ const name = computed(() => groupLabel(scene.value))
 const members = computed(() => (host.members as Record<string, number>)[scene.value])
 const details = computed(() =>
   [
+    scene.value.startsWith('onebot:') ? '' : t(`chatPlatforms.${scene.value.split(':', 1)[0]}`),
     (sceneTitles as Record<string, string>)[scene.value] ? scene.value.split(':').slice(2).join(':') : '',
     members.value === undefined ? '' : t('groups.members', { n: formatNumber(members.value) }),
   ].filter(Boolean),

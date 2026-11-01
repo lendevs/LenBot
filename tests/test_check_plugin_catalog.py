@@ -69,3 +69,10 @@ def test_a_pinned_local_repository_is_fetched_and_checked(tmp_path, capsys, monk
     catalog.write_text('{}')
     assert main([str(catalog)]) == 0
     assert 'sample 1.0.0：通过' in capsys.readouterr().out
+
+
+def test_chat_platforms_must_match_the_manifest(tmp_path):
+    root = checkout(tmp_path, manifest_extra='chat_platforms = ["onebot"]\n')
+    assert check_checkout(entry(chat_platforms=['onebot']), root) == []
+    assert check_checkout(entry(chat_platforms=['onebot', 'telegram']), root) == [
+        "chat_platforms 在条目中是 ['onebot', 'telegram']，plugin.toml 是 ['onebot']"]

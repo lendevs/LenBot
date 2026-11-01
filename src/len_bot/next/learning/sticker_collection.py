@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -15,7 +15,7 @@ from len_bot.media.images import image_block
 from ..config import HostConfig
 from ..chat.recap import ContextBudgetError, estimate_text_request
 from ..tools.http_read import fetch_public
-from ..media.images import image_url, prepare_pixels
+from ..media.images import image_url, platform_reference, prepare_pixels
 from ..platform.messages import plain_text
 from ..models.client import ChatModel, ModelProtocolError, ModelReply
 from ..models.slots import ModelSlots
@@ -79,6 +79,8 @@ class StickerCollector:
         self.slots = slots
         self.recording = recording
         self.on_update = on_update
+        # Set by the runtime: downloads an image a platform names by reference instead of a URL.
+        self.fetch_media: Callable[[str, dict, int], Awaitable[bytes]] | None = None
         self.records = StickerStore(store)
         self.scenes = tuple(scene for scene, settings in config.scenes.items()
                             if settings.learning is not None and settings.learning.collect_stickers)
@@ -206,6 +208,9 @@ class StickerCollector:
                                 raise ValueError(f'Frozen sticker original requires an actual platform message ID: scene={scene}, record={candidate["source_message_seq"]}')
                             data, recorded_fetched_at = recording.image(message.platform_message_id, image_index)
                             pixels_source = 'frozen_original'
+                        elif self.fetch_media is not None and platform_reference(pictures[image_index - 1].data):
+                            data = await self.fetch_media(scene, pictures[image_index - 1].data, MAX_IMAGE_BYTES)
+                            pixels_source = 'platform_download'
                         else:
                             url = image_url(pictures[image_index - 1].data)
                             _, _, data = await fetch_public(

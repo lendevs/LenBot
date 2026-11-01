@@ -18,9 +18,10 @@ from ..tools.discovery import DISCOVERY_REQUIRED_NAMES, TOOL_SEARCH, deferred_na
 from ..platform.delivery import Expression
 from ..tools.external_tools import ExternalTool
 from ..platform.file_delivery import SEND_FILE_TOOL, SendFileArguments, execute_send_file
-from ..media.images import LOOK_TOOL, LookArguments, execute_look, load_look_image, shown_image
+from ..media.images import LOOK_TOOL, LookArguments, MediaFetch, execute_look, load_look_image, shown_image
 from ..memory.service import MEMORY_TOOL, MemoryService
 from ..platform.messages import UploadResult
+from ..platform.identity import ACCOUNT_EXAMPLES, ACCOUNTS, account_pattern
 from ..models.client import ChatModel, ToolCall
 from ..models.request import ChatRequest
 from ..persona.profile import Persona
@@ -93,7 +94,7 @@ class SayArguments(BaseModel):
     reply_to: str | None = Field(default=None, description="默认不填，直接接话。群里同时有几个话头、不引用会让人认错你在回哪句时，才填该平台消息 ID。")
     # Individual accounts of the platforms with an adapter; express() also requires the scene's platform,
     # and build_tools narrows the schema the model sees to it.
-    mention: str | None = Field(default=None, pattern=r"^onebot:[1-9][0-9]*$",
+    mention: str | None = Field(default=None, pattern="^(?:" + "|".join(account_pattern(name) for name in ACCOUNTS) + ")$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
         description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query、candidate 四选一，素材目录见 react。")
@@ -154,6 +155,8 @@ WAIT_TOOL = {"type": "function", "function": {
 
 
 LOOKED_IMAGES = 4
+# Tools built on OneBot actions (get_record, group files, forward records, member info, reactions).
+ONEBOT_TOOLS = frozenset({"open_forward", "member_info", "group_files", "message_reaction"})
 
 
 def tool_catalog(*, platform: bool) -> list[dict]:
@@ -203,14 +206,16 @@ def tool_unavailable_reasons(config: LabConfig, persona: Persona, name: str, *, 
     if name == "send_file":
         if config.worker is None:
             reasons.append("还没有启用独立任务")
-        if config.delivery != "onebot":
+        if config.delivery != "live":
             reasons.append("模拟发送时不能发文件")
     if (name == "knowledge" and not persona.knowledge
             and not has_files(scene_directory(config._instance_root, config.scene))):
         reasons.append("角色没有设定资料，本聊天也没有资料文件")
     if (name in {"open_forward", "member_info", "group_files", "transcribe", "message_reaction"}
-            and config.delivery != "onebot"):
+            and config.delivery != "live"):
         reasons.append("模拟发送时用不了")
+    if name in ONEBOT_TOOLS and config.scene.partition(":")[0] != "onebot":
+        reasons.append("只支持 OneBot 平台")
     if name in {"member_info", "group_files", "message_reaction"} and config.scene.split(":", 2)[1] != "group":
         reasons.append("只能在群里用")
     if name == "group_files" and config.worker is None:
@@ -266,10 +271,10 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
             parameters["properties"]["content"]["description"] = read_prompt(mode).strip()
             scene_platform = config.scene.partition(":")[0]
             mention = parameters["properties"]["mention"]["anyOf"][0]
-            mention["pattern"] = f"^{scene_platform}:[1-9][0-9]*$"
+            mention["pattern"] = f"^{account_pattern(scene_platform)}$"
             parameters["properties"]["mention"]["description"] = (
                 "默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，"
-                f"例如 {scene_platform}:70001。")
+                f"例如 {scene_platform}:{ACCOUNT_EXAMPLES.get(scene_platform, '70001')}。")
             description = function['description']
             if 'react' in names:
                 description += ' 一句话带一张表情包图片时设置 sticker；只发图、不说话时用 react。'
@@ -309,7 +314,8 @@ class SceneTools:
                  memory: MemoryService | None, tasks: WorkTasks | None, audio: AudioService | None,
                  upload_file: Callable[[str, str, str], Awaitable[UploadResult]] | None,
                  platform_call: PlatformCall | None, notify: Callable[[], None], now: Callable[[], float],
-                 plugins: MemoryPlugins | None = None, reference: ReferenceLibrary | None = None):
+                 plugins: MemoryPlugins | None = None, reference: ReferenceLibrary | None = None,
+                 fetch_media: MediaFetch | None = None):
         self.config, self.persona, self.store = config, persona, store
         self.plugins = plugins
         self.reference = ReferenceLibrary(config._instance_root) if reference is None else reference
@@ -318,6 +324,7 @@ class SceneTools:
         self.looked: list[tuple[str, bytes]] = []
         self.memory, self.tasks, self.audio = memory, tasks, audio
         self.upload_file, self.platform_call = upload_file, platform_call
+        self.fetch_media = fetch_media
         self.notify, self.now = notify, now
         self.scene_control: Callable[[SceneControlArguments], dict] | None = None
         self.attention: Callable[[AttentionArguments, str, str], dict] | None = None
@@ -453,10 +460,25 @@ class SceneTools:
 
     def _group_file_fetch(self):
         """Downloads a group file of this scene for delegate; None when the scene has no live group files."""
-        kind, group_id = self.config.scene.split(":", 2)[1:]
-        if self.platform_call is None or self.config.delivery != "onebot" or kind != "group":
+        platform, kind, group_id = self.config.scene.split(":", 2)
+        if self.platform_call is None or self.config.delivery != "live" or kind != "group" or platform != "onebot":
             return None
         return group_file_fetch(self.platform_call, group_id)
+
+    def _chat_file_fetch(self):
+        """Downloads a file sent in this chat for delegate; None on OneBot, whose files are group files."""
+        if self.fetch_media is None or self.config.delivery != "live" or self.config.scene.startswith("onebot:"):
+            return None
+
+        async def fetch(item, max_bytes: int) -> bytes:
+            message = self.store.find_message(self.config.scene, item.message)
+            if message is None:
+                raise ValueError(f"当前场景没有平台消息 {item.message}")
+            files = [segment for segment in message.segments if segment.type == "file"]
+            if item.file > len(files):
+                raise ValueError(f"消息 {item.message} 只有 {len(files)} 个文件，没有第 {item.file} 个")
+            return await self.fetch_media(files[item.file - 1].data, max_bytes)
+        return fetch
 
     def _connection(self, settings):
         """The provider a web search or read setting names, if it uses one."""
@@ -529,7 +551,8 @@ class SceneTools:
             return await self.run_memory(call.arguments), None, None
         if call.name in {"delegate", "task"}:
             return tool_result(await execute_tasks(self.tasks, self.config.scene, call.name, call.arguments,
-                                                   fetch_group_file=self._group_file_fetch())), None, None
+                                                   fetch_group_file=self._group_file_fetch(),
+                                                   fetch_chat_file=self._chat_file_fetch())), None, None
         if call.name == "group_files":
             return await list_group_files(self.config.scene, self.config.timezone,
                                           GroupFilesArguments.model_validate(call.arguments), self.platform_call), None, None
@@ -556,7 +579,8 @@ class SceneTools:
             arguments = LookArguments.model_validate(call.arguments)
             asset, reused, source = await load_look_image(
                 self.store, self.config.scene, arguments, self.config.images, recording=self.replay_images,
-                fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url)
+                fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
+                fetch_media=self.fetch_media)
             self.looked = [*self.looked, (f"消息 {arguments.message} 的第 {arguments.image} 张图片", asset.jpeg)][-LOOKED_IMAGES:]
             return shown_image(self.config.scene, arguments, asset, pixels_reused=reused, pixels_source=source), None, None
         if call.name == "look":
@@ -564,6 +588,7 @@ class SceneTools:
                 self.store, self.config.scene, LookArguments.model_validate(call.arguments), self.config.images,
                 model_name=self.vision.settings.model, describe=lambda asset: self.describe_image(turn_id, asset),
                 recording=self.replay_images, fake_ip_networks=self.config.network.networks(), public_dns_url=self.config.network.public_dns_url,
+                fetch_media=self.fetch_media,
             ), None, None
         if call.name == "transcribe":
             return await self.audio.transcribe(

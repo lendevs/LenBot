@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 from ...plugin import MARK, CompactRequest, Invocation, Plugin, PluginContext, RecallRequest
-from ..platform.messages import ChatMessage, Notice
+from ..platform.messages import ChatMessage, Notice, Segment
 from ..runtime.logs import log_event
 from .codec import (blocks_from, error_value, message_value, notice_value, part_from, raise_error, recall_value,
                     sent_value)
@@ -242,6 +242,11 @@ class Worker:
                 return host.now()
             case "scene_timezone":
                 return host.scene_timezone(self._scene(args[0]))
+            case "bot_for":
+                return host.bot_for(self._scene(args[0]))
+            case "fetch_media":
+                segment = Segment(args[1]["type"], args[1]["data"])
+                return base64.b64encode(await host.fetch_media(name, self._scene(args[0]), segment, args[2])).decode()
             case "scene_paused":
                 return host.scene_paused(self._scene(args[0]))
             case "require_owner":

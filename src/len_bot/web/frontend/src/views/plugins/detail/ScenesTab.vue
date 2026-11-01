@@ -9,14 +9,20 @@ import EmptyState from '../../../ui/EmptyState.vue'
 import Switch from '../../../ui/Switch.vue'
 import { confirmMemorySwitch } from '../../groups/settings/memory'
 import { usePluginsState } from '../state'
-import { enabledIn, scenesUsing } from '../view'
+import { chatPlatformsOf, enabledIn, scenesUsing } from '../view'
 
 const props = defineProps<{ name: string; snapshot: PluginsSnapshot }>()
 
 const { t } = useI18n()
 const state = usePluginsState()
-const scenes = computed(() => Object.keys(props.snapshot.scenes))
 const used = computed(() => scenesUsing(props.snapshot, props.name))
+// Groups on platforms the plugin does not declare are left out, except ones already using it.
+const scenes = computed(() => {
+  const platforms = chatPlatformsOf(props.snapshot, props.name)
+  return Object.keys(props.snapshot.scenes).filter(
+    (scene) => !platforms || platforms.includes(scene.split(':')[0]) || used.value.includes(scene),
+  )
+})
 const enabled = computed(() => enabledIn(props.snapshot, props.name))
 
 async function toggle(scene: string, on: boolean) {

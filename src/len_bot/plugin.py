@@ -193,9 +193,11 @@ class RecallBlock:
 class HostPort(Protocol):
     @property
     def bot_id(self) -> str: ...
+    def bot_for(self, scene: str) -> str: ...
     def scene_timezone(self, scene: str) -> str: ...
     def now(self) -> float: ...
     async def fetch_image(self, plugin: str, url: str, timeout_seconds: float) -> bytes: ...
+    async def fetch_media(self, plugin: str, scene: str, segment: Segment, max_bytes: int) -> bytes: ...
     async def send_text(self, plugin: str, scene: str, text: str, reply_to: str | None) -> Sent: ...
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent: ...
     def emit_event(self, plugin: str, scene: str, text: str) -> None: ...
@@ -239,7 +241,27 @@ class PluginContext:
 
     @property
     def bot_id(self) -> str:
+        """The root bot account; ``bot_for(scene)`` is the account that speaks in a scene."""
         return self.host.bot_id
+
+    def bot_for(self, scene: str) -> str:
+        """The bot account of the scene's platform, such as ``telegram:7001`` in a Telegram group."""
+        return self.host.bot_for(self._scene(scene))
+
+    @staticmethod
+    def platform(scene: str) -> str:
+        """The chat platform of a scene: ``onebot``, ``telegram`` or ``feishu``."""
+        return scene.split(":", 1)[0]
+
+    async def fetch_media(self, scene: str, segment: Segment, *, max_bytes: int = 20_000_000) -> bytes:
+        """The file of an image, audio, file or video segment of a message in ``scene``.
+
+        Platform references (Telegram ``file_id``, Feishu ``image_key``) download through the platform;
+        a segment with a ``url`` is read under the host's public network checks. Longer files raise.
+        """
+        if not 1 <= max_bytes <= 100_000_000:
+            raise ValueError("max_bytes 必须在 1 到 100000000 之间")
+        return await self.host.fetch_media(self.name, self._scene(scene), segment, max_bytes)
 
     @property
     def log(self) -> logging.Logger:
@@ -354,6 +376,19 @@ class Invocation:
     @property
     def data_dir(self) -> Path:
         return self.plugin.data_dir
+
+    @property
+    def bot_id(self) -> str:
+        """The bot account that speaks in this scene."""
+        return self.plugin.bot_for(self.scene)
+
+    @property
+    def platform(self) -> str:
+        """This scene's chat platform: ``onebot``, ``telegram`` or ``feishu``."""
+        return self.plugin.platform(self.scene)
+
+    async def fetch_media(self, segment: Segment, *, max_bytes: int = 20_000_000) -> bytes:
+        return await self.plugin.fetch_media(self.scene, segment, max_bytes=max_bytes)
 
     def timezone(self) -> str:
         return self.plugin.timezone(self.scene)

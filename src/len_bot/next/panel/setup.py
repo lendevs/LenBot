@@ -27,6 +27,9 @@ from ..tools.web_search import WebSearchSettings
 from ..configuration.chat import Compaction, Participation, WebReadSettings
 from ..config import CONFIG_VERSION, HostConfig
 from ..configuration.onebot import OneBotSettings
+from ..configuration.platforms import FeishuSettings, TelegramSettings
+from ..platform import feishu, telegram
+from ..platform.adapter import PlatformCallError
 from ..platform.onebot import OneBot, OneBotCallError
 from .model_access import model_error_detail, probe_model as run_model_probe
 from ..models.providers import PROTOCOLS, list_models
@@ -54,8 +57,10 @@ class FirstSetup(BaseModel):
     bot_id: str
     owners: list[str]
     timezone: str
-    delivery: Literal['simulated', 'onebot']
+    delivery: Literal['simulated', 'live']
     onebot: OneBotSettings | None
+    telegram: TelegramSettings | None = None
+    feishu: FeishuSettings | None = None
     provider: Provider
     mind: Binding
     embedding: SetupEmbedding | None = None
@@ -89,8 +94,8 @@ class FirstSetup(BaseModel):
 
     @model_validator(mode='after')
     def matching_password(self):
-        if self.onebot is None and self.delivery != 'simulated':
-            raise ValueError('暂不接入 OneBot 时只能使用模拟发送')
+        if not self.platforms and self.delivery != 'simulated':
+            raise ValueError('暂不接入平台时只能使用模拟发送')
         if not self.default_persona and any(value is None for value in (self.persona_name, self.brief)):
             raise ValueError('自定义角色需要填写名字和人物设定')
         if not self.password.strip():
@@ -98,6 +103,10 @@ class FirstSetup(BaseModel):
         if self.password_confirmation is not None and self.password != self.password_confirmation:
             raise ValueError('两次密码不一致')
         return self
+
+    @property
+    def platforms(self) -> list[str]:
+        return [name for name in ('onebot', 'telegram', 'feishu') if getattr(self, name) is not None]
 
     @property
     def default_persona(self) -> bool:
@@ -119,6 +128,22 @@ class ProviderList(BaseModel):
 class PlatformProbe(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     onebot: OneBotSettings
+
+
+class TelegramProbe(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', hide_input_in_errors=True)
+    bot_token: str = Field(repr=False)
+    api_url: str = 'https://api.telegram.org'
+    proxy: str | None = None
+    request_timeout_seconds: float = Field(default=15.0, gt=0)
+
+
+class FeishuProbe(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', hide_input_in_errors=True)
+    app_id: str
+    app_secret: str = Field(repr=False)
+    domain: Literal['feishu', 'lark'] = 'feishu'
+    request_timeout_seconds: float = Field(default=15.0, gt=0)
 
 
 class ModelProbe(BaseModel):
@@ -159,9 +184,10 @@ def setup_source(item: FirstSetup) -> dict:
         vector = {'provider': alias, 'model': item.embedding.model, 'dimensions': item.embedding.dimensions}
     return {
         'config_version': CONFIG_VERSION, 'mode': 'isolated-multi', 'bot_id': item.bot_id, 'owners': item.owners,
-        'timezone': item.timezone, 'delivery': 'onebot' if item.onebot else 'simulated',
+        'timezone': item.timezone, 'delivery': 'live' if item.platforms else 'simulated',
         'database': 'state/lenbot.sqlite3',
-        'onebot': None if item.onebot is None else item.onebot.model_dump(mode='json'),
+        **{name: None if getattr(item, name) is None else getattr(item, name).model_dump(mode='json')
+           for name in ('onebot', 'telegram', 'feishu')},
         'compaction': item.compaction.model_dump(mode='json'),
         'max_steps': item.max_steps,
         'web_search': None if item.web_search is None else item.web_search.model_dump(mode='json'),
@@ -181,8 +207,8 @@ def setup_source(item: FirstSetup) -> dict:
 def initialize(root: Path, item: FirstSetup) -> dict:
     """Validate first, create only new files, publish the root config last.
 
-    With OneBot, the wizard's delivery choice becomes the send hold, written before the config exists: a host
-    that starts from the published config never sends before the hold is in place. Without OneBot the config
+    With a platform, the wizard's delivery choice becomes the send hold, written before the config exists: a host
+    that starts from the published config never sends before the hold is in place. Without a platform the config
     itself is simulated and there is nothing to hold.
     """
     config_path = root / 'lenbot.config.json'
@@ -216,7 +242,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     load_persona(role_path)
     # Plugins are installed into, or dropped by hand into, the instance's plugins/.
     (root / 'plugins').mkdir(exist_ok=True)
-    if item.onebot is not None:
+    if item.platforms:
         SendHold(root).set(item.delivery == 'simulated', at=time.time())
     # A new instance already matches this program; the container start compares against this record.
     from ..maintenance.upgrade import record_release
@@ -273,6 +299,22 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
             raise HTTPException(422, str(error)) from error
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
+
+    @app.post('/api/setup/telegram', dependencies=[Depends(authorize)], response_model=responses.SetupChatPlatform, response_model_exclude_unset=True)
+    async def probe_telegram(item: TelegramProbe):
+        try:
+            return await telegram.probe(item.bot_token, api_url=item.api_url, proxy=item.proxy,
+                                        timeout_seconds=item.request_timeout_seconds, updates=True)
+        except PlatformCallError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post('/api/setup/feishu', dependencies=[Depends(authorize)], response_model=responses.SetupChatPlatform, response_model_exclude_unset=True)
+    async def probe_feishu(item: FeishuProbe):
+        try:
+            return await feishu.probe(item.app_id, item.app_secret, domain=item.domain,
+                                      timeout_seconds=item.request_timeout_seconds)
+        except PlatformCallError as error:
+            raise HTTPException(422, str(error)) from error
 
     @app.post('/api/setup/model', dependencies=[Depends(authorize)], response_model=responses.ModelProbe, response_model_exclude_unset=True)
     async def probe_model(item: ModelProbe):
@@ -368,7 +410,7 @@ async def run_setup(root: Path, *, container: bool = False) -> None:
         server = uvicorn.Server(uvicorn.Config(app, log_level='warning', access_log=False, forwarded_allow_ips=['127.0.0.1']))
         url = f'http://127.0.0.1:{port}/#token={token}'
         print(f'尚无根配置。请打开 {url}\n'
-              '保存后直接启动，按新配置连接 OneBot 并打开面板。', flush=True)
+              '保存后直接启动，按新配置连接聊天平台并打开面板。', flush=True)
         problem = missing_build(BUILT_PANEL)
         if problem is not None:
             # The wizard page is the built panel; without it the link only shows this error.

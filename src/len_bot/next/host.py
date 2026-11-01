@@ -1,4 +1,4 @@
-"""Run the configured multi-scene host with OneBot or explicit simulated stdin."""
+"""Run the configured multi-scene host with chat platforms or explicit simulated stdin."""
 
 import asyncio
 from contextlib import contextmanager, nullcontext
@@ -114,7 +114,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
     with configure_logging(config.logging, credentials(config)), Store(config.database) as store:
         activate_prompts(root)
         PluginStore(store).recover_plugin_calls()
-        if config.onebot is None and TaskStore(store).containers():
+        if not config.platform_names and TaskStore(store).containers():
             raise ValueError('stdin模拟宿主不能清理原库中残留的容器；先在所属原实例明确处理，不使用导入的定位访问外部实例')
         budget = ModelBudget(config, store, root=config._instance_root)
         budget.trials_root = root / ".runtime" / "chat-tests"
@@ -140,7 +140,7 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                     runner.changed.set()
                 runtime.notify()
 
-            data_tools = {settings.scene: task_data_tools(settings, persona, platform=config.delivery == "onebot",
+            data_tools = {settings.scene: task_data_tools(settings, persona, platform=config.delivery == "live",
                                                           memory=memory, plugins=plugins)
                           for settings, persona in scenes}
             tasks = (WorkTasks(config, store, slots, task_update, skills=skills,

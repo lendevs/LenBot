@@ -55,7 +55,7 @@ async def test_live_scene_add_remove_drains_current_turn_without_stopping_other_
             path = root / 'lenbot.config.json'
             source = json.loads(path.read_text())
             source['onebot'] = {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{platform.sockets[0].getsockname()[1]}'}
-            source['delivery'] = 'onebot'
+            source['delivery'] = 'live'
             source['models']['providers']['local']['base_url'] = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
             source['models']['roles']['mind']['context_window_tokens'] = 64000
             source['models']['roles']['memory'] = dict(source['models']['roles']['mind'])

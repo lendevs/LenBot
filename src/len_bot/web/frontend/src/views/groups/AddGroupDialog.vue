@@ -6,7 +6,7 @@ import { Check } from '@lucide/vue'
 import { hostApi } from '../../api/host'
 import { keys } from '../../api/query'
 import { sceneTitles } from '../../api/scenes'
-import { readHostState, readSceneTitles } from '../../api/hostStore'
+import { host, readHostState, readSceneTitles } from '../../api/hostStore'
 import { formatNumber } from '../../i18n/format'
 import Avatar from '../../ui/Avatar.vue'
 import Button from '../../ui/Button.vue'
@@ -30,6 +30,23 @@ const client = useQueryClient()
 const picked = ref<string | null>(null)
 const kind = ref<'group' | 'private'>('group')
 const number = ref('')
+type Platform = 'onebot' | 'telegram' | 'feishu'
+/** The platforms the host runs; with none yet, groups are QQ groups waiting for a connection. */
+const platforms = computed<Platform[]>(() => {
+  const running = Object.keys(host.state?.connection.platforms ?? {}) as Platform[]
+  return running.length ? running : ['onebot']
+})
+const platform = ref<Platform>('onebot')
+watch(
+  platforms,
+  (names) => {
+    if (!names.includes(platform.value)) platform.value = names[0]
+  },
+  { immediate: true },
+)
+const platformOptions = computed(() =>
+  platforms.value.map((name) => ({ value: name, label: t(`chatPlatforms.${name}`) })),
+)
 const persona = ref<string>()
 const participation = ref<Participation>({ only_direct: true, activity: ACTIVITY_LEVELS.medium })
 
@@ -53,7 +70,9 @@ watch(personaOptions, (options) => {
   if (!persona.value && options.length === 1) persona.value = options[0].value
 })
 
-const manual = computed(() => (number.value.trim() ? `onebot:${kind.value}:${number.value.trim()}` : ''))
+const manual = computed(() =>
+  number.value.trim() ? `${platform.value}:${kind.value}:${number.value.trim()}` : '',
+)
 const target = computed(() => picked.value ?? manual.value)
 watch(number, (value) => {
   if (value.trim()) picked.value = null
@@ -131,6 +150,12 @@ watch(open, (value) => {
         <h3 class="text-sm font-medium text-ink-2">{{ t('groups.join.manual') }}</h3>
         <div class="flex flex-wrap items-center gap-2">
           <SegmentedControl
+            v-if="platformOptions.length > 1"
+            v-model="platform"
+            :options="platformOptions"
+            :label="t('groups.join.platform')"
+          />
+          <SegmentedControl
             v-model="kind"
             :options="[
               { value: 'group', label: t('groups.join.kinds.group') },
@@ -140,7 +165,7 @@ watch(open, (value) => {
           />
           <Input
             v-model="number"
-            inputmode="numeric"
+            :inputmode="platform === 'feishu' ? 'text' : 'numeric'"
             :placeholder="kind === 'group' ? t('groups.join.number') : t('groups.join.account')"
             :aria-label="kind === 'group' ? t('groups.join.number') : t('groups.join.account')"
             class="min-w-40 flex-1"

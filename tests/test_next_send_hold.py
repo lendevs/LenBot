@@ -36,7 +36,7 @@ async def test_held_turn_is_recorded_as_simulated_and_counts_speech(tmp_path):
                                 for body in [first, recorded_text_response()]], models)
     async with server:
         source = instance(tmp_path)
-        source['delivery'] = 'onebot'
+        source['delivery'] = 'live'
         source['compaction']['input_tokens'] = 6000
         source['text_delivery'] = {'max_chars': 10, 'min_interval_seconds': 0, 'max_interval_seconds': 0}
         source['models']['providers']['fixture']['base_url'] = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
@@ -107,7 +107,7 @@ async def test_scene_simulated_delivery_holds_only_that_scene(tmp_path):
                                 for body in [first, recorded_text_response()]], [])
     async with server:
         source = instance(tmp_path)
-        source['delivery'] = 'onebot'
+        source['delivery'] = 'live'
         source['scenes'][SCENE]['simulated_delivery'] = True
         source['compaction']['input_tokens'] = 6000
         source['models']['providers']['fixture']['base_url'] = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'

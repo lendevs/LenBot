@@ -179,6 +179,7 @@ class ModelInstructions(BaseModel):
 # Host capabilities a plugin may declare in ``permissions``; its own KV, data directory, commands,
 # message rules, tools and notices need none.
 PluginPermission = Literal["send", "events", "history", "memory", "generate", "delegate", "network", "schedule"]
+ChatPlatform = Literal["onebot", "telegram", "feishu"]
 PERMISSION_TITLES: dict[str, str] = {
     "send": "在启用的群内发送消息", "events": "将插件事件作为背景提供给 Bot", "history": "读取启用的群的聊天记录",
     "memory": "读写启用的群的长期记忆", "generate": "调用模型做单次生成（计入用量）",
@@ -209,13 +210,20 @@ class Manifest(BaseModel):
     permissions: list[PluginPermission] | None = None
     # process: run in a separate worker so a crash or hang cannot take the host down.
     isolation: Literal["inline", "process"] = "inline"
+    # Chat platforms whose scenes may enable the plugin; None: every platform.
+    chat_platforms: list[ChatPlatform] | None = Field(default=None, min_length=1)
 
-    @field_validator("permissions")
+    @field_validator("permissions", "chat_platforms")
     @classmethod
-    def distinct_permissions(cls, value: list[str] | None) -> list[str] | None:
+    def distinct_permissions(cls, value: list[str] | None, info) -> list[str] | None:
         if value is not None and len(set(value)) != len(value):
-            raise ValueError("permissions must not repeat")
+            raise ValueError(f"{info.field_name} must not repeat")
         return value
+
+    def unsupported_scenes(self, scenes: Collection[str]) -> list[str]:
+        """Scenes on chat platforms this plugin does not declare."""
+        return [] if self.chat_platforms is None else [
+            scene for scene in scenes if scene.split(":", 1)[0] not in self.chat_platforms]
 
     def granted(self, permission: str) -> bool:
         return self.permissions is None or permission in self.permissions

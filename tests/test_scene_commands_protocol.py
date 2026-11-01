@@ -67,7 +67,7 @@ def write_config(root: Path, **changes) -> None:
     (role / 'examples.yaml').write_text('[]\n')
     source = {
         'mode': 'isolated-multi', 'bot_id': 'onebot:90001', 'timezone': 'UTC', 'owners': [f'onebot:{OWNER}'],
-        'database': 'chat.sqlite3', 'delivery': 'onebot',
+        'database': 'chat.sqlite3', 'delivery': 'live',
         'models': {'providers': {'fixture': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1',
                                              'api_key': 'synthetic-unused'}},
                    'roles': {'mind': {'provider': 'fixture', 'model': 'synthetic-unused', 'context_window_tokens': 8192}}},

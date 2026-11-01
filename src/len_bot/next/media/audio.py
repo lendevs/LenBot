@@ -4,13 +4,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from typing import TYPE_CHECKING
 from weakref import WeakValueDictionary
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..models.asr import ASRProtocolError, transcribe_audio, transcription_tokens
+from ..models.asr import ASRProtocolError, AudioSettings, audio_type, transcribe_audio, transcription_tokens
 from .audio_store import AudioStore
 from ..models.slots import ModelSlots
 from ..platform.platform_tools import PlatformCall
@@ -23,6 +24,26 @@ if TYPE_CHECKING:
     from ..config import LabConfig
 
 LOG = logging.getLogger(__name__)
+# Downloads a file named by a platform reference through the scene's platform: (scene, data, max_bytes).
+AudioDownload = Callable[[str, dict, int], Awaitable[bytes]]
+
+
+async def download_voice(download: AudioDownload, scene: str, data: dict, settings: AudioSettings) -> tuple[bytes, float]:
+    """A Telegram or Feishu voice message as sent (OGG Opus) and the duration its message gave.
+
+    Telegram gives seconds and Feishu milliseconds; a voice without a duration is kept with 0.
+    """
+    raw = data.get("duration")
+    seconds = 0.0
+    if isinstance(raw, int | float) and not isinstance(raw, bool):
+        seconds = raw / 1000 if scene.startswith("feishu:") else float(raw)
+    if seconds > settings.max_seconds:
+        raise ValueError(f"record duration {seconds:g}s exceeds {settings.max_seconds:g}s; not truncated")
+    async with asyncio.timeout(settings.timeout_seconds):
+        audio = await download(scene, data, settings.max_bytes)
+    if not audio:
+        raise ValueError("the platform returned an empty voice file")
+    return audio, seconds
 
 
 class TranscribeArguments(BaseModel):
@@ -49,8 +70,8 @@ TRANSCRIBE_TOOL = {"type": "function", "function": {
 
 
 async def execute_transcribe(store: Store, config: LabConfig, arguments: TranscribeArguments, *,
-                             turn_id: str | None, platform: PlatformCall, slots: ModelSlots | None,
-                             direct: bool, notify) -> str:
+                             turn_id: str | None, platform: PlatformCall | None, slots: ModelSlots | None,
+                             direct: bool, notify, download: AudioDownload | None = None) -> str:
     scene = config.scene
     message = store.find_message(scene, arguments.message)
     if message is None:
@@ -73,15 +94,19 @@ async def execute_transcribe(store: Store, config: LabConfig, arguments: Transcr
             "DO UPDATE SET status='running',updated=excluded.updated,error=NULL", (*position, store.now(), store.now()))
     notify()
     return await process_audio(store, config, arguments, turn_id=turn_id, platform=platform,
-                               slots=slots, direct=direct, notify=notify, row=row, records=records)
+                               slots=slots, direct=direct, notify=notify, row=row, records=records, download=download)
 
 
-async def process_audio(store, config, arguments, *, turn_id, platform, slots, direct, notify, row, records):
+async def process_audio(store, config, arguments, *, turn_id, platform, slots, direct, notify, row, records,
+                        download: AudioDownload | None = None):
     scene = config.scene
     position = (scene, arguments.message, arguments.audio)
     audio_reused = row is not None and row["wav"] is not None
     if not audio_reused:
-        wav, duration = await fetch_record(platform, records[arguments.audio - 1].data, config.audio)
+        data = records[arguments.audio - 1].data
+        # OneBot converts voice to WAV with get_record; other platforms serve the file as sent.
+        wav, duration = (await fetch_record(platform, data, config.audio) if scene.startswith("onebot:")
+                         else await download_voice(download, scene, data, config.audio))
         with store.db:
             store.db.execute("UPDATE audio_cache SET wav=?,duration=?,fetched_at=? "
                              "WHERE scene=? AND platform_id=? AND audio_index=?", (wav, duration, store.now(), *position))
@@ -95,7 +120,7 @@ async def process_audio(store, config, arguments, *, turn_id, platform, slots, d
             request = {
                 "settings": binding.model_dump(mode="json"), "base_url": provider.base_url,
                 "file": {"scene": scene, "platform_message_id": arguments.message, "audio": arguments.audio,
-                         "content_type": "audio/wav", "bytes": len(row["wav"]), "duration": row["duration"],
+                         "content_type": audio_type(row["wav"]), "bytes": len(row["wav"]), "duration": row["duration"],
                          "source": "audio_cache"}, "response_format": "json",
             }
             calls = AudioStore(store)
@@ -141,8 +166,10 @@ def display(row, arguments, *, audio_reused: bool, reused: bool) -> str:
 
 class AudioService:
     def __init__(self, store: Store, configs: dict[str, LabConfig], platform: PlatformCall | None,
-                 slots: ModelSlots | None, on_update):
+                 slots: ModelSlots | None, on_update, *, download: AudioDownload | None = None):
+        # ``platform`` serves OneBot scenes' get_record; ``download`` fetches other platforms' voice files.
         self.store, self.configs, self.platform, self.slots = store, configs, platform, slots
+        self.download = download
         self.records = AudioStore(store)
         self.on_update = on_update
         self.changed = {scene: asyncio.Event() for scene, cfg in configs.items() if cfg.transcribe_audio}
@@ -256,8 +283,9 @@ class AudioService:
     async def process(self, scene: str, arguments: TranscribeArguments, *,
                       turn_id: str | None, direct: bool, automatic: bool) -> str | None:
         config = self.configs[scene]
-        if config.models.roles.asr is None or self.platform is None:
-            raise ValueError("Audio processing requires configured ASR and a real OneBot transport")
+        fetch = self.platform if scene.startswith("onebot:") else self.download
+        if config.models.roles.asr is None or fetch is None:
+            raise ValueError("Audio processing requires configured ASR and a real platform transport")
         position = (scene, arguments.message, arguments.audio)
         lock = self.locks.get(position)
         if lock is None:
@@ -270,7 +298,8 @@ class AudioService:
                     return None
             try:
                 return await execute_transcribe(self.store, config, arguments, turn_id=turn_id,
-                    platform=self.platform, slots=self.slots, direct=direct, notify=lambda: self.on_update(scene))
+                    platform=self.platform, slots=self.slots, direct=direct, notify=lambda: self.on_update(scene),
+                    download=self.download)
             except BaseException as error:
                 with self.store.db:
                     self.store.db.execute("UPDATE audio_cache SET status=?,error=?,updated=? "
