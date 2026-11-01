@@ -15,10 +15,10 @@
   <a href="https://github.com/lendevs/LenBot/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/lendevs/LenBot?include_prereleases&color=b4476a&label=release"></a>
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-b4476a">
   <img alt="Python" src="https://img.shields.io/badge/python-3.13%2B-b4476a">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-QQ%20%7C%20Telegram%20%7C%20Feishu-b4476a">
 </p>
 
-**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。接入 QQ（OneBot v11），需要一个聊天模型和它的 API Key。
+**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。接入 QQ（OneBot v11）、Telegram 和飞书，几个平台可以同时运行，需要一个聊天模型和它的 API Key。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.dark.svg">
@@ -59,7 +59,7 @@
   <img src="website/public/readme/setup.svg" alt="四步：选择部署方式、首次配置、模拟群聊、接入群聊" width="100%">
 </picture>
 
-准备一个已登录 QQ 的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用）和聊天模型服务的 API Key，再选一种部署方式：
+准备要接入的平台和聊天模型服务的 API Key：QQ 需要一个已登录的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用），Telegram 需要 BotFather 给出的 Bot 令牌，飞书需要一个企业自建应用。再选一种部署方式：
 
 | 部署方式 | 运行环境 | 文档 |
 |---|---|---|

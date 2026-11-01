@@ -34,7 +34,7 @@ const playground = [
   { icon: 'user-plus', text: '添加群友，设置昵称和身份' },
   { icon: 'at-sign', text: '以任一群友的身份发言、@ 或回复' },
   { icon: 'copy', text: '复制群内最近 20、50、100 条消息作为初始上下文' },
-  { icon: 'shield-check', text: '独立的空白记忆，回复不发送到 QQ' },
+  { icon: 'shield-check', text: '独立的空白记忆，回复不发到群聊' },
 ]
 
 const map = [

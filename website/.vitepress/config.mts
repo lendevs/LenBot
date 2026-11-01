@@ -38,6 +38,8 @@ export default defineConfigWithTheme<DefaultTheme.Config & { version: string }>(
       ] },
       { text: '接入', collapsed: false, items: [
         { text: 'QQ（OneBot）', link: '/connect/onebot' },
+        { text: 'Telegram', link: '/connect/telegram' },
+        { text: '飞书', link: '/connect/feishu' },
         { text: '模型与用量', link: '/connect/models' },
         { text: '联网与工具', link: '/connect/web' },
       ] },

@@ -15,10 +15,10 @@
   <a href="https://github.com/lendevs/LenBot/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/lendevs/LenBot?include_prereleases&color=b4476a&label=release"></a>
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-b4476a">
   <img alt="Python" src="https://img.shields.io/badge/python-3.13%2B-b4476a">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-QQ-b4476a">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-QQ%20%7C%20Telegram%20%7C%20Feishu-b4476a">
 </p>
 
-**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by a ReAct loop. It connects to QQ (OneBot v11) and needs a chat model and its API key.
+**LenBot is a group chat agent that decides for itself.** When to speak, whom to answer, what to look up first and when to follow up are decided by a ReAct loop. It connects to QQ (OneBot v11), Telegram and Feishu, several at once, and needs a chat model and its API key.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.en.dark.svg">
@@ -59,7 +59,7 @@ The panel's playground simulates a group in an isolated instance: add members, p
   <img src="website/public/readme/setup.en.svg" alt="Four steps: choose a deployment, first-time setup, simulate a group, go live in your groups" width="100%">
 </picture>
 
-Prepare a OneBot v11 implementation logged in to QQ (for example [SnowLuma](https://github.com/SnowLuma/SnowLuma), recommended) and an API key for a chat model service, then pick a deployment:
+Prepare the platform to connect and an API key for a chat model service: QQ needs a OneBot v11 implementation logged in to QQ (for example [SnowLuma](https://github.com/SnowLuma/SnowLuma), recommended), Telegram a bot token from BotFather, and Feishu a self-built app. Then pick a deployment:
 
 | Deployment | Requirements | Guide |
 |---|---|---|
@@ -103,7 +103,7 @@ uv run --no-sync len-bot
 
 </details>
 
-On first start the terminal or container log prints a one-time setup link. Open it and follow the five-step wizard to set up the panel account, connect QQ, fill in the owner account, and choose a chat model and persona. Try a few turns in the playground, then switch delivery to QQ on the overview page.
+On first start the terminal or container log prints a one-time setup link. Open it and follow the five-step wizard to set up the panel account, connect a chat platform, fill in the owner account, and choose a chat model and persona. Try a few turns in the playground, then switch to real sending on the overview page.
 
 <img src="website/public/screenshots/home.png" alt="Panel overview" width="100%">
 
