@@ -250,3 +250,19 @@ def test_inspect_and_paths_run_on_a_read_only_instance(tmp_path):
         os.chmod(root, stat.S_IRWXU)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['blocked_plugins'] == [] and not (root / 'logs').exists()
+
+
+@pytest.mark.parametrize('discard', [False, True])
+def test_failed_migration_restores_and_keeps_the_snapshot_only_when_asked(tmp_path, monkeypatch, discard):
+    from len_bot.next.maintenance import upgrade
+    root, outside = _instance_with_outside_data(tmp_path)
+    monkeypatch.setattr(upgrade, 'data_paths', lambda directory: [str(root), str(outside)])
+    def fail(directory, trials):
+        (outside / 'memory.md').write_text('迁移到一半')
+        raise ValueError('插件依赖安装失败')
+    monkeypatch.setattr(upgrade, '_apply_locked', fail)
+    snapshot = tmp_path / 'backups/attempt'
+    with pytest.raises(ValueError, match='插件依赖'):
+        upgrade.upgrade_instance(root, snapshot, discard_restored=discard)
+    assert (outside / 'memory.md').read_text() == '升级前正文'
+    assert snapshot.exists() is not discard
