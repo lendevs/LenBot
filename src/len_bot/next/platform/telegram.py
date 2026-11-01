@@ -491,10 +491,9 @@ class Telegram:
                     start_next()
         return [chunk for chunk in chunks if any(segment.type in {"text", "mention", "image"} for segment in chunk)]
 
-    def _target(self, chat: int, reply: str | None) -> dict:
+    def _target(self, chat: int, reply: str | None, thread: int | None) -> dict:
         if reply is not None and reply.isdecimal():
             return {"chat_id": chat, "reply_parameters": {"message_id": int(reply), "allow_sending_without_reply": True}}
-        thread = self._threads.get(chat)
         return {"chat_id": chat, **({} if thread is None else {"message_thread_id": thread})}
 
     async def send_message(self, message: ChatMessage, *, image_bytes: bytes | None = None) -> SendResult:
@@ -524,21 +523,25 @@ class Telegram:
         if not self._running or self._client is None:
             return SendResult("failed", None, "Telegram transport is not running; message was not sent")
         chunks = self._chunks(message.segments, CAPTION_LIMIT if image_count else TEXT_LIMIT)
-        first = await self._send_one(chat, chunks[0], reply, image_bytes if image_count else None)
+        # Every part goes to the first part's topic, even if another topic becomes active meanwhile.
+        planned = None if reply is not None and reply.isdecimal() else self._threads.get(chat)
+        first, landed = await self._send_one(chat, chunks[0], reply, image_bytes if image_count else None, planned)
+        thread = planned if landed is None else landed
         for number, chunk in enumerate(chunks[1:], 2):
             if first.status != "sent":
                 break
-            later = await self._send_one(chat, chunk, None, None)
+            later, _ = await self._send_one(chat, chunk, None, None, thread)
             if later.status != "sent":
                 # The first part is in the chat; what follows it may be missing.
                 return SendResult("unconfirmed", first.platform_message_id,
                                   f"part {number} of {len(chunks)}: {later.error}")
         return first
 
-    async def _send_one(self, chat: int, segments: list[Segment], reply: str | None,
-                        image_bytes: bytes | None) -> SendResult:
+    async def _send_one(self, chat: int, segments: list[Segment], reply: str | None, image_bytes: bytes | None,
+                        thread: int | None) -> tuple[SendResult, int | None]:
+        """Send one message; the second value is the forum topic it landed in, when Telegram names one."""
         text, entities = self._compose(segments)
-        params = self._target(chat, reply)
+        params = self._target(chat, reply, thread)
         if image_bytes is not None:
             method, files = "sendPhoto", {"photo": ("image", image_bytes)}
             params.update({"caption": text} if text else {})
@@ -549,11 +552,12 @@ class Telegram:
         try:
             result = await self._send(method, params, files=files)
         except TelegramCallError as error:
-            return SendResult("unconfirmed" if error.submitted else "failed", None, str(error))
+            return SendResult("unconfirmed" if error.submitted else "failed", None, str(error)), None
         message_id = result.get("message_id") if isinstance(result, dict) else None
         if type(message_id) is int:
-            return SendResult("sent", str(message_id), None)
-        return SendResult("unconfirmed", None, self._safe(repr(result)[:500]))
+            landed = result.get("message_thread_id") if result.get("is_topic_message") else None
+            return SendResult("sent", str(message_id), None), landed if type(landed) is int else None
+        return SendResult("unconfirmed", None, self._safe(repr(result)[:500])), None
 
     async def upload_file(self, scene: str, file: str, name: str) -> UploadResult:
         """Send a file as a document; ``file`` is base64:// data or a local path."""
@@ -570,7 +574,7 @@ class Telegram:
         if len(data) > DOCUMENT_LIMIT_BYTES:
             return UploadResult("failed", None, f"Telegram documents are limited to {DOCUMENT_LIMIT_BYTES} bytes", None)
         try:
-            result = await self._send("sendDocument", self._target(chat, None), files={"document": (name, data)})
+            result = await self._send("sendDocument", self._target(chat, None, self._threads.get(chat)), files={"document": (name, data)})
         except TelegramCallError as error:
             return UploadResult("unconfirmed" if error.submitted else "failed", None, str(error), None)
         document = result.get("document") if isinstance(result, dict) else None

@@ -58,9 +58,12 @@ class PluginManager:
                 disabled.append(name)
         else:
             values.pop(name, None)
+        rules = {key: list(value) for key, value in current.disabled_rules.items() if key != name}
+        if selected is not None and name in selected.disabled_rules:
+            rules[name] = list(selected.disabled_rules[name])
         self.running.plugins = PluginSettings.model_validate({
             'paths': current.paths if selected is None else selected.paths,
-            'data_directory': current.data_directory, 'disabled': disabled, **values})
+            'data_directory': current.data_directory, 'disabled': disabled, 'disabled_rules': rules, **values})
         for scene, settings in self.running.scenes.items():
             names = list(settings.plugins)
             if scene in saved.scenes and name in saved.scenes[scene].plugins:

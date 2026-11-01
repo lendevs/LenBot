@@ -99,7 +99,8 @@ function stateOf(entry: MarketEntry): { key: string; tone: 'neutral' | 'error' |
   if (running?.status === 'running') return { key: 'running', tone: 'success' }
   return { key: entry.name in props.snapshot.saved.plugins ? 'configured' : 'installed', tone: 'info' }
 }
-const managed = (name: string) => Boolean(manifestOf(props.snapshot, name)?.managed)
+// Only Git installs can update in place; a ZIP install takes its next ZIP through import.
+const updatable = (name: string) => manifestOf(props.snapshot, name)?.source?.installed?.kind === 'git'
 
 const selected = ref<MarketEntry | null>(null)
 const detailOpen = computed({
@@ -258,7 +259,7 @@ watch(sources, (value) => {
             {{ t('plugins.discover.details') }}
           </Button>
           <Button
-            v-if="entry.update_available && managed(entry.name)"
+            v-if="entry.update_available && updatable(entry.name)"
             size="sm"
             variant="ghost"
             :disabled="state.busy.value !== null"
