@@ -3,8 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { refDebounced } from '@vueuse/core'
-import { ArrowUpRight, RefreshCw, Search, Settings2, Store } from '@lucide/vue'
-import { pluginsApi, type MarketEntry, type PluginsSnapshot } from '../../api/plugins'
+import { ArrowUpRight, RefreshCw, Search, Settings2 } from '@lucide/vue'
+import { pluginsApi, type CatalogSourceKind, type MarketEntry, type PluginsSnapshot } from '../../api/plugins'
 import { keys } from '../../api/query'
 import { formatDateTime } from '../../i18n/format'
 import Avatar from '../../ui/Avatar.vue'
@@ -32,16 +32,17 @@ const search = ref('')
 const query = refDebounced(search, 250)
 const ALL = '*'
 const category = ref(ALL)
+const source = ref<CatalogSourceKind | typeof ALL>(ALL)
 const catalog = useQuery({
   queryKey: keys.plugins.catalog(),
   queryFn: ({ signal }) => pluginsApi.catalog(signal),
 })
+const chosenCategory = computed(() => (category.value === ALL ? null : category.value))
+const chosenSource = computed(() => (source.value === ALL ? null : source.value))
 const market = useQuery({
-  queryKey: computed(() =>
-    keys.plugins.market(query.value.trim(), category.value === ALL ? null : category.value),
-  ),
+  queryKey: computed(() => keys.plugins.market(query.value.trim(), chosenCategory.value, chosenSource.value)),
   queryFn: ({ signal }) =>
-    pluginsApi.market(query.value.trim(), category.value === ALL ? null : category.value, signal),
+    pluginsApi.market(query.value.trim(), chosenCategory.value, chosenSource.value, signal),
   placeholderData: keepPreviousData,
 })
 // Installing, removing or updating changes what the catalog marks as installed.
@@ -54,6 +55,24 @@ const categories = computed(() => [
   ...(market.data.value?.categories ?? []).map((value) => ({ value, label: value })),
 ])
 const entries = computed(() => market.data.value?.entries ?? [])
+const sources = computed(() => market.data.value?.sources ?? catalog.data.value?.sources ?? [])
+const sourceOptions = computed(() => [
+  { value: ALL, label: t('plugins.discover.allSources') },
+  ...sources.value.map((item) => ({ value: item.kind, label: t(`plugins.discover.sources.${item.kind}`) })),
+])
+const sourceTone = { official: 'brand', community: 'info', custom: 'neutral' } as const
+const loadedText = computed(() => {
+  const loaded = sources.value.filter((item) => item.loaded_at !== null)
+  if (!loaded.length) return ''
+  const counts = loaded
+    .map((item) =>
+      t('plugins.discover.sourceCount', { name: t(`plugins.discover.sources.${item.kind}`), n: item.total }),
+    )
+    .join(' · ')
+  const time = Math.max(...loaded.map((item) => item.loaded_at!))
+  return t('plugins.discover.loaded', { counts, time: formatDateTime(time) })
+})
+const failedSources = computed(() => sources.value.filter((item) => item.error))
 
 const refresh = useMutation({
   mutationFn: () => pluginsApi.refreshCatalog(),
@@ -62,11 +81,12 @@ const refresh = useMutation({
     void client.invalidateQueries({ queryKey: [...keys.plugins.catalog(), 'market'] })
   },
 })
-// A remote catalog is only read on request; opening this view is that request.
+// Remote catalogs are only read on request; opening this view is that request.
 watch(
   () => catalog.data.value,
   (value, previous) => {
-    if (value && !previous && !value.loaded_at) refresh.mutate()
+    if (value && !previous && value.sources.some((item) => item.loaded_at === null && !item.error))
+      refresh.mutate()
   },
   { immediate: true },
 )
@@ -79,7 +99,8 @@ function stateOf(entry: MarketEntry): { key: string; tone: 'neutral' | 'error' |
   if (running?.status === 'running') return { key: 'running', tone: 'success' }
   return { key: entry.name in props.snapshot.saved.plugins ? 'configured' : 'installed', tone: 'info' }
 }
-const managed = (name: string) => Boolean(manifestOf(props.snapshot, name)?.managed)
+// Only Git installs can update in place; a ZIP install takes its next ZIP through import.
+const updatable = (name: string) => manifestOf(props.snapshot, name)?.source?.installed?.kind === 'git'
 
 const selected = ref<MarketEntry | null>(null)
 const detailOpen = computed({
@@ -118,6 +139,13 @@ const permissionText = (entry: MarketEntry) => {
   })
 }
 
+// The server normalizes ">=0.2,<1" to "<1,>=0.2"; lower bounds read first.
+const hostRange = (value: string) =>
+  value
+    .split(',')
+    .sort((a, b) => Number(b.startsWith('>')) - Number(a.startsWith('>')))
+    .join(', ')
+
 const sourceOpen = ref(false)
 const sourceUrl = ref('')
 watch(sourceOpen, (value) => {
@@ -133,6 +161,10 @@ const setSource = useMutation({
 })
 const sourceDirty = computed(() => sourceUrl.value.trim() !== (catalog.data.value?.url ?? ''))
 const readError = computed(() => market.error.value ?? catalog.error.value ?? refresh.error.value)
+// A source left without a custom URL disappears from the filter; fall back to every source.
+watch(sources, (value) => {
+  if (source.value !== ALL && !value.some((item) => item.kind === source.value)) source.value = ALL
+})
 </script>
 
 <template>
@@ -148,7 +180,8 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
         clearable
         class="w-full sm:w-72"
       />
-      <div class="w-full sm:w-44"><Select v-model="category" :options="categories" size="sm" /></div>
+      <div class="w-full sm:w-36"><Select v-model="source" :options="sourceOptions" size="sm" /></div>
+      <div class="w-full sm:w-40"><Select v-model="category" :options="categories" size="sm" /></div>
       <div class="ml-auto flex items-center gap-1">
         <Button
           size="sm"
@@ -160,18 +193,11 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
           {{ t('plugins.discover.refresh') }}
         </Button>
         <Button size="sm" variant="ghost" :icon="Settings2" @click="sourceOpen = true">
-          {{ t('plugins.discover.source') }}
+          {{ t('plugins.discover.custom') }}
         </Button>
       </div>
     </div>
-    <p v-if="catalog.data.value?.loaded_at" class="text-xs text-muted">
-      {{
-        t(`plugins.discover.loaded.${catalog.data.value.source}`, {
-          time: formatDateTime(catalog.data.value.loaded_at),
-          n: market.data.value?.total ?? 0,
-        })
-      }}
-    </p>
+    <p v-if="loadedText" class="text-xs text-muted">{{ loadedText }}</p>
 
     <ErrorNote
       v-if="readError"
@@ -179,13 +205,14 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
       :error="readError"
       :retry="() => refresh.mutate()"
     />
-    <Skeleton v-if="market.isPending.value || (refresh.isPending.value && !entries.length)" :lines="6" />
-    <EmptyState
-      v-else-if="market.data.value && !market.data.value.loaded_at"
-      :icon="Store"
-      :title="t('plugins.discover.notLoaded')"
-      compact
+    <ErrorNote
+      v-for="item in failedSources"
+      :key="item.kind"
+      :title="t('plugins.discover.sourceReadFailed', { name: t(`plugins.discover.sources.${item.kind}`) })"
+      :error="item.error"
+      :retry="() => refresh.mutate()"
     />
+    <Skeleton v-if="market.isPending.value || (refresh.isPending.value && !entries.length)" :lines="6" />
     <EmptyState v-else-if="!entries.length" :icon="Search" :title="t('common.noResults')" compact />
     <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
       <article
@@ -197,7 +224,12 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
         <div class="flex items-center gap-3">
           <Avatar :name="entry.name" shape="square" :size="40" />
           <div class="min-w-0 flex-1">
-            <h3 class="truncate text-base font-semibold text-ink">{{ entry.title }}</h3>
+            <div class="flex min-w-0 items-center gap-2">
+              <h3 class="truncate text-base font-semibold text-ink">{{ entry.title }}</h3>
+              <Badge :tone="sourceTone[entry.source]">
+                {{ t(`plugins.discover.sources.${entry.source}`) }}
+              </Badge>
+            </div>
             <p class="truncate text-xs text-subtle">
               {{ entry.authors.join(t('personas.separator')) }} · v{{ entry.version }}
             </p>
@@ -227,7 +259,7 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
             {{ t('plugins.discover.details') }}
           </Button>
           <Button
-            v-if="entry.update_available && managed(entry.name)"
+            v-if="entry.update_available && updatable(entry.name)"
             size="sm"
             variant="ghost"
             :disabled="state.busy.value !== null"
@@ -275,19 +307,21 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
         <dl class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
           <dt class="text-muted">{{ t('plugins.discover.name') }}</dt>
           <dd class="font-mono">{{ selected.name }}</dd>
+          <dt class="text-muted">{{ t('plugins.discover.source') }}</dt>
+          <dd>{{ t(`plugins.discover.sources.${selected.source}`) }}</dd>
           <dt class="text-muted">{{ t('plugins.discover.version') }}</dt>
           <dd>
             v{{ selected.version }}
             <template v-if="selected.ref">
               ·
-              <span class="font-mono">{{ selected.ref }}</span>
+              <span class="font-mono" :title="selected.ref">{{ selected.ref.slice(0, 7) }}</span>
             </template>
           </dd>
           <dt class="text-muted">{{ t('plugins.discover.license') }}</dt>
           <dd>{{ selected.license }}</dd>
           <template v-if="selected.requires_lenbot">
             <dt class="text-muted">{{ t('plugins.discover.host') }}</dt>
-            <dd class="font-mono">{{ selected.requires_lenbot }}</dd>
+            <dd class="font-mono">{{ hostRange(selected.requires_lenbot) }}</dd>
           </template>
           <template v-if="selected.chat_platforms">
             <dt class="text-muted">{{ t('plugins.version.chatPlatforms') }}</dt>
@@ -347,7 +381,7 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
 
     <Dialog
       v-model:open="sourceOpen"
-      :title="t('plugins.discover.source')"
+      :title="t('plugins.discover.custom')"
       size="sm"
       :busy="setSource.isPending.value"
     >
@@ -357,7 +391,7 @@ const readError = computed(() => market.error.value ?? catalog.error.value ?? re
         @submit.prevent="sourceDirty && setSource.mutate()"
       >
         <Field :label="t('plugins.discover.sourceUrl')">
-          <Input v-model="sourceUrl" type="url" mono :placeholder="t('plugins.discover.sourceBuiltin')" />
+          <Input v-model="sourceUrl" type="url" mono placeholder="https://example.com/catalog.json" />
         </Field>
         <ErrorNote
           v-if="setSource.isError.value"

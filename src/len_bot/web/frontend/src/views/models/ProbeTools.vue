@@ -11,7 +11,7 @@ import Field from '../../ui/Field.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 import RawRecord from '../groups/tasks/RawRecord.vue'
 import ModelName from './ModelName.vue'
-import { candidateOf, hasKey, newBinding, useForm, type ProviderRow } from './form'
+import { candidateOf, chatRoles, hasKey, newBinding, useForm, type ProviderRow } from './form'
 
 /** Read a provider's models and send a test request; with `binding`, the test uses that role's settings. */
 const props = defineProps<{ row: ProviderRow; binding?: ChatBinding }>()
@@ -24,6 +24,22 @@ const embedding = computed(() => !chat.value && form.supports(props.row, 'embedd
 const models = computed(() => form.catalog.value[props.row.id] ?? [])
 
 const testModel = ref('')
+// Start from a model this provider already serves, so the test can run without typing one.
+const boundModel = computed(() => {
+  const value = form.draft.value
+  if (!value) return ''
+  const bindings = embedding.value
+    ? [value.memory_embedding, ...Object.values(value.learning_embeddings)]
+    : chatRoles.map((role) => value.roles[role])
+  return bindings.find((item) => item?.provider === props.row.id && item.model)?.model ?? ''
+})
+watch(
+  boundModel,
+  (value) => {
+    if (!testModel.value) testModel.value = value
+  },
+  { immediate: true },
+)
 const kind = ref<'text' | 'tools'>('text')
 const kinds = computed(() => [
   { value: 'text' as const, label: t('models.probe.text') },

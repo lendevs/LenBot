@@ -1,5 +1,6 @@
-"""A packaged or explicitly refreshed JSON directory; installation stays in PluginManager."""
+"""The packaged official catalog plus remote indexes read on refresh; installation stays in PluginManager."""
 
+import asyncio
 from importlib.metadata import version
 from pathlib import Path
 import time
@@ -16,6 +17,7 @@ from .install import repository_url, revision_ref
 from .manifest import ChatPlatform, PluginPermission, host_satisfies
 
 CATALOG = Path(__file__).with_name('plugin_catalog.json')
+COMMUNITY = 'https://raw.githubusercontent.com/lendevs/lenbot-plugin-index/main/catalog.json'
 
 
 class CatalogEntry(BaseModel):
@@ -89,11 +91,26 @@ class CatalogIndex(BaseModel):
         return entries
 
 
-class CatalogView(BaseModel):
-    source: Literal['builtin', 'remote']
+CatalogSourceKind = Literal['official', 'community', 'custom']
+
+
+class CatalogSource(BaseModel):
+    kind: CatalogSourceKind
     url: str | None
     loaded_at: float | None
-    entries: list[CatalogEntry]
+    error: str | None
+    total: int
+
+
+class SourcedEntry(CatalogEntry):
+    source: CatalogSourceKind
+
+
+class CatalogView(BaseModel):
+    """Every source in order; a name listed by an earlier source hides the same name further down."""
+    url: str | None
+    sources: list[CatalogSource]
+    entries: list[SourcedEntry]
 
 
 def parse_index(raw: bytes, source: str) -> CatalogIndex:
@@ -104,35 +121,60 @@ def parse_index(raw: bytes, source: str) -> CatalogIndex:
 
 
 class PluginCatalog:
+    """The packaged official catalog, the community index and an optional custom URL.
+
+    Remote sources are read only on refresh; one source failing keeps the others and records its error."""
+
     def __init__(self):
         self.builtin = parse_index(CATALOG.read_bytes(), str(CATALOG))
         self.loaded_at = time.time()
-        self.remote: CatalogView | None = None
+        self.community: str | None = COMMUNITY
+        self.remote: dict[str, tuple[float, CatalogIndex] | str] = {}
+
+    def _remote(self, kind: CatalogSourceKind, url: str) -> tuple[CatalogSource, list[CatalogEntry]]:
+        loaded = self.remote.get(url)
+        if isinstance(loaded, tuple):
+            return CatalogSource(kind=kind, url=url, loaded_at=loaded[0], error=None,
+                                 total=len(loaded[1].entries)), loaded[1].entries
+        return CatalogSource(kind=kind, url=url, loaded_at=None, error=loaded, total=0), []
 
     def view(self, settings: PluginCatalogSettings) -> CatalogView:
-        if settings.url is None:
-            return CatalogView(source='builtin', url=None, loaded_at=self.loaded_at, entries=self.builtin.entries)
-        if self.remote is not None and self.remote.url == settings.url:
-            return self.remote
-        return CatalogView(source='remote', url=settings.url, loaded_at=None, entries=[])
+        sources = [(CatalogSource(kind='official', url=None, loaded_at=self.loaded_at, error=None,
+                                  total=len(self.builtin.entries)), self.builtin.entries)]
+        if self.community is not None:
+            sources.append(self._remote('community', self.community))
+        if settings.url is not None and settings.url != self.community:
+            sources.append(self._remote('custom', settings.url))
+        seen: set[str] = set()
+        entries = []
+        for source, listed in sources:
+            for entry in listed:
+                if entry.name not in seen:
+                    seen.add(entry.name)
+                    entries.append(SourcedEntry(**entry.model_dump(), source=source.kind))
+        return CatalogView(url=settings.url, sources=[source for source, _ in sources], entries=entries)
 
-    async def refresh(self, settings: PluginCatalogSettings) -> CatalogView:
-        if settings.url is None:
-            return self.view(settings)
-        async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=True) as client:
-            async with client.stream('GET', settings.url) as response:
+    async def _fetch(self, client: httpx.AsyncClient, url: str) -> None:
+        try:
+            async with client.stream('GET', url) as response:
                 response.raise_for_status()
                 raw = bytearray()
                 async for chunk in response.aiter_bytes():
                     raw.extend(chunk)
                     if len(raw) > 2 * 1024 * 1024:
                         raise ValueError('插件目录超过 2 MiB')
-        index = parse_index(bytes(raw), settings.url)
-        self.remote = CatalogView(source='remote', url=settings.url, loaded_at=time.time(), entries=index.entries)
-        return self.remote
+            self.remote[url] = (time.time(), parse_index(bytes(raw), url))
+        except (ValueError, httpx.HTTPError, httpx.InvalidURL) as error:
+            self.remote[url] = str(error) or type(error).__name__
+
+    async def refresh(self, settings: PluginCatalogSettings) -> CatalogView:
+        urls = list(dict.fromkeys(url for url in (self.community, settings.url) if url is not None))
+        async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=True) as client:
+            await asyncio.gather(*(self._fetch(client, url) for url in urls))
+        return self.view(settings)
 
 
-class MarketEntry(CatalogEntry):
+class MarketEntry(SourcedEntry):
     installed: bool
     installed_version: str | None
     update_available: bool
@@ -141,9 +183,8 @@ class MarketEntry(CatalogEntry):
 
 
 class MarketView(BaseModel):
-    source: Literal['builtin', 'remote']
     url: str | None
-    loaded_at: float | None
+    sources: list[CatalogSource]
     categories: list[str]
     total: int
     entries: list[MarketEntry]
@@ -156,7 +197,7 @@ def _newer(candidate: str, installed: str) -> bool:
         return candidate != installed
 
 
-def market_entry(entry: CatalogEntry, installed: bool, installed_version: str | None,
+def market_entry(entry: SourcedEntry, installed: bool, installed_version: str | None,
                  host: str | None = None) -> MarketEntry:
     """Annotate one catalog entry with what this host already has and whether it can load it."""
     host = version('len-bot') if host is None else host
@@ -172,20 +213,21 @@ def market_entry(entry: CatalogEntry, installed: bool, installed_version: str | 
 
 
 def market(view: CatalogView, installed: dict[str, str | None], *, query: str = '', category: str | None = None,
-           host: str | None = None) -> MarketView:
-    """Filter the catalog by a case-insensitive text query and a category.
+           source: CatalogSourceKind | None = None, host: str | None = None) -> MarketView:
+    """Filter the catalog by a case-insensitive text query, a category and a source.
 
     installed maps installed plugin names to their manifest version (None when the manifest is
     unreadable); categories always lists every category of the unfiltered catalog."""
     words = query.casefold().split()
 
-    def matches(entry: CatalogEntry) -> bool:
+    def matches(entry: SourcedEntry) -> bool:
         text = ' '.join([entry.name, entry.title, entry.description, entry.category,
                          *entry.capabilities, *entry.authors]).casefold()
-        return (category is None or entry.category == category) and all(word in text for word in words)
+        return ((category is None or entry.category == category) and (source is None or entry.source == source)
+                and all(word in text for word in words))
 
     entries = [market_entry(entry, entry.name in installed, installed.get(entry.name), host)
                for entry in view.entries if matches(entry)]
-    return MarketView(source=view.source, url=view.url, loaded_at=view.loaded_at,
+    return MarketView(url=view.url, sources=view.sources,
                       categories=sorted({entry.category for entry in view.entries}),
                       total=len(view.entries), entries=entries)

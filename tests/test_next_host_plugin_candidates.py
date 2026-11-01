@@ -41,6 +41,10 @@ def test_candidate_cancel_disable_apply_and_rollback_preserve_matching_config(tm
         'compaction': {'input_tokens': 2000}, 'mind': binding, 'scene': 'onebot:group:80001',
         'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
     })))
+    # Rules switched off for another plugin survive operations on this one.
+    raw = json.loads((tmp_path / 'lenbot.config.json').read_text())
+    raw['plugins']['disabled_rules'] = {'other': ['/签到']}
+    (tmp_path / 'lenbot.config.json').write_text(json.dumps(raw, ensure_ascii=False))
     config = load_host_config(tmp_path)
 
     async def run():
@@ -76,7 +80,9 @@ def test_candidate_cancel_disable_apply_and_rollback_preserve_matching_config(tm
                     # The new plugin waits disabled for apply; the panel does not ask for a restart.
                     assert (await client.get('/api/host/plugins')).json()['restart_required'] is False
                     await configure({'show_details': False})
-                    await operate('apply')
+                    applied = await operate('apply')
+                    assert applied['restart_required'] is False
+                    assert runtime.config.plugins.disabled_rules == {'other': ['/签到']}
                     await upload('2.0.0', text_value=True)
                     await configure({'show_details': 'expanded'})
                     assert load_host_config(tmp_path).plugins.configured['sample'] == {'show_details': False}

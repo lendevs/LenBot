@@ -6,14 +6,13 @@ import asyncio
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-import httpx
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .. import responses
 from ...configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings
-from ...plugins.catalog import CatalogView, MarketView, PluginCatalog, market
+from ...plugins.catalog import CatalogSourceKind, CatalogView, MarketView, PluginCatalog, market
 from ...config import HostConfig, _read_root
 from .settings import _body
 from ...configuration.editing import _read_saved
@@ -237,17 +236,19 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
         return {name: (entries[0].get('version') if len(entries) == 1 else None)
                 for name, entries in available.items()}
 
-    async def market_view(query: str, category: str | None) -> MarketView:
+    async def market_view(query: str, category: str | None, source: CatalogSourceKind | None = None) -> MarketView:
         try:
             saved = await asyncio.to_thread(_read_saved, root)
             installed = await asyncio.to_thread(installed_versions, saved)
-            return market(catalog.view(saved.plugin_catalog), installed, query=query, category=category)
+            return market(catalog.view(saved.plugin_catalog), installed, query=query, category=category,
+                          source=source)
         except (ValueError, OSError) as error:
             raise HTTPException(422, str(error)) from error
 
     @app.get('/api/host/plugin-market', response_model=MarketView)
-    async def read_market(query: str = '', category: str | None = None, _: str = Depends(user)):
-        return await market_view(query, category)
+    async def read_market(query: str = '', category: str | None = None, source: CatalogSourceKind | None = None,
+                          _: str = Depends(user)):
+        return await market_view(query, category, source)
 
     async def read_market_entry(name: str, _: str = Depends(user)):
         require_name(name)
@@ -292,9 +293,10 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
     async def refresh_catalog(_: str = Depends(user)):
         try:
             saved = await asyncio.to_thread(_read_saved, root)
-            return await catalog.refresh(saved.plugin_catalog)
-        except (ValueError, OSError, httpx.HTTPError, httpx.InvalidURL) as error:
-            raise HTTPException(502, str(error)) from error
+        except (ValueError, OSError) as error:
+            raise HTTPException(422, str(error)) from error
+        # A source that cannot be read keeps its error in the view; the others still list.
+        return await catalog.refresh(saved.plugin_catalog)
 
     async def save(edit: Callable[[dict, HostConfig], None], names: Sequence[str] = ()) -> dict:
         async with manager.lock:

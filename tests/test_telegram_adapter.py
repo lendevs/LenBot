@@ -37,6 +37,8 @@ class BotAPI:
         self.updates: asyncio.Queue = asyncio.Queue()
         self.calls: list[tuple[str, dict]] = []
         self.failures: dict[str, list[httpx.Response]] = {}
+        # Forum topic of each message a reply may point at.
+        self.topics: dict[int, int] = {}
         self.next_id = 100
         self.update_id = 0
 
@@ -68,6 +70,9 @@ class BotAPI:
         if method in {"sendMessage", "sendPhoto", "sendDocument"}:
             self.next_id += 1
             result = {"message_id": self.next_id, "date": int(time.time()), "chat": {"id": GROUP, "type": "supergroup"}}
+            topic = params.get("message_thread_id") or self.topics.get(params.get("reply_parameters", {}).get("message_id"))
+            if topic is not None:
+                result.update(is_topic_message=True, message_thread_id=topic)
             if method == "sendDocument":
                 result["document"] = {"file_id": "BQAC-document", "file_unique_id": "doc"}
             return self._ok(result)
@@ -241,6 +246,36 @@ async def test_receives_updates_and_sends_mentions_replies_photos_and_files(api)
         await adapter.close()
     assert not adapter.connected and errors == []
     await asyncio.wait_for(adapter.wait_terminated(), 1)
+
+
+@pytest.mark.asyncio
+async def test_long_messages_stay_in_the_first_parts_topic(api):
+    received = []
+    adapter = Telegram(_settings(), on_event=received.append, on_error=lambda error: None)
+    await adapter.start()
+    try:
+        api.topics = {20: 7}
+        api.push(_message("话题 7", message_id=20, is_topic_message=True, message_thread_id=7))
+        api.push(_message("话题 9", message_id=21, is_topic_message=True, message_thread_id=9))
+        api.push(_message("综合区", message_id=22))
+        await _until(lambda: len(received) == 3)
+        scene = f"telegram:group:{GROUP}"
+
+        def outgoing(*segments: Segment) -> ChatMessage:
+            return ChatMessage(id="out", platform="telegram", bot_id=f"telegram:{BOT}", scene=scene,
+                               platform_message_id=None, sender=Sender(f"telegram:{BOT}", None, None, None),
+                               time=time.time(), segments=list(segments), reply_to=None, mentions_bot=False,
+                               is_self=True, send_status="sent")
+
+        long = Segment("text", {"text": "甲" * 3000 + "\n" + "乙" * 3000})
+        for reply, topic in (("20", 7), ("22", None), (None, 9)):
+            api.calls.clear()
+            segments = [long] if reply is None else [Segment("reply", {"id": reply}), long]
+            assert (await adapter.send_message(outgoing(*segments))).status == "sent"
+            sends = [params for method, params in api.calls if method == "sendMessage"]
+            assert len(sends) == 2 and sends[1].get("message_thread_id") == topic
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.asyncio

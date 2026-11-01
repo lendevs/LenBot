@@ -14,6 +14,8 @@ const props = withDefaults(
     /** Change against the previous period, shown with an arrow. */
     delta?: number | null
     trend?: number[]
+    /** A short secondary line under the figure, such as how a total splits. */
+    caption?: string
     tone?: Tone
     loading?: boolean
     formatOptions?: Intl.NumberFormatOptions
@@ -22,6 +24,7 @@ const props = withDefaults(
     unit: undefined,
     delta: null,
     trend: undefined,
+    caption: undefined,
     tone: 'brand',
     formatOptions: () => ({ maximumFractionDigits: 1 }),
   },
@@ -73,5 +76,6 @@ const deltaText = computed(() =>
       </span>
     </div>
     <Sparkline v-if="trend && !loading" :values="trend" :tone="tone" :height="28" class="mt-1" />
+    <span v-if="caption && !loading" class="truncate text-xs text-muted tabular">{{ caption }}</span>
   </div>
 </template>

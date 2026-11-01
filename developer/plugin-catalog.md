@@ -6,19 +6,19 @@
 
 在**插件 → 发现插件**中可以搜索插件的名称、用途、作者和能力，也可以按分类筛选。详情中包含用法、许可证、接口要求和源码位置。准备候选版本后，转到配置、应用和选择启用的群。
 
-在**目录来源**中填写 HTTP(S) JSON 地址，保存并读取。留空时恢复为随附的目录。对应的根配置如下。
+目录有三个来源，依次合并：随附的官方目录、社区目录 `lendevs/lenbot-plugin-index`，以及在**自定义目录**中填写的 HTTP(S) JSON 地址。同名插件以排在前面的来源为准，每个条目带上它的来源。自定义目录对应的根配置如下，留空时只读官方和社区目录。
 
 ```json
 "plugin_catalog": {"url": "https://example.com/lenbot-plugins.json"}
 ```
 
-远程目录在点击刷新时读取。页面显示目录的来源和成功读取的时间。读取失败时显示原始错误，已经读取的同一来源的内容保留原来的时间。更换 URL 后，需要等待读取新的目录。目录快照只保存在当前进程中。
+社区目录和自定义目录在打开发现插件页和点击刷新时读取。页面显示各来源的插件数和读取时间；某个来源读取失败时单独显示它的原始错误，其余来源照常列出。目录快照只保存在当前进程中。
 
 ### 市场接口
 
 面板之外的客户端也可以通过管理接口使用目录，接口都需要登录。
 
-- `GET /api/host/plugin-market?query=&category=`：按关键词（名称、标题、描述、分类、能力、作者，多个词需同时出现）和分类筛选，返回全部分类、目录总数和条目。每个条目附带 `installed`、`installed_version`、`update_available`（按版本号比较）、`compatible` 和 `incompatible_reason`（接口版本或宿主版本范围不符）。
+- `GET /api/host/plugin-market?query=&category=&source=`：按关键词（名称、标题、描述、分类、能力、作者，多个词需同时出现）、分类和来源（`official`、`community`、`custom`）筛选，返回各来源的读取状态、全部分类、目录总数和条目。每个条目附带 `installed`、`installed_version`、`update_available`（按版本号比较）、`compatible` 和 `incompatible_reason`（接口版本或宿主版本范围不符）。
 - `GET /api/host/plugin-market/{name}`：单个条目，格式同上。
 - `POST /api/host/plugin-market/{name}/install`：用条目里的仓库和 ref 准备候选版本，之后的配置和应用与手动安装相同。已经安装的返回 409；不兼容的返回 422。仓库 `plugin.toml` 中的插件名与条目的 `name` 不一致时返回 422，不准备候选版本。更新已安装的插件时同样要求清单名称不变。
 
@@ -67,7 +67,7 @@
 
 ## 社区插件目录
 
-随附目录只收录官方插件。第三方插件收录在社区目录仓库 `lendevs/lenbot-plugin-index` 的 `catalog.json` 中，作者提交 Pull Request 加入条目，用户在**目录来源**填入它的地址。收录条件和提交方式见文档站[发布到插件目录](https://lendevs.github.io/LenBot/develop/plugin-catalog)。
+随附目录只收录官方插件。第三方插件收录在社区目录仓库 `lendevs/lenbot-plugin-index` 的 `catalog.json` 中，作者提交 Pull Request 加入条目，发现插件页默认读取它。收录条件和提交方式见文档站[发布到插件目录](https://lendevs.github.io/LenBot/develop/plugin-catalog)。
 
 `scripts/check_plugin_catalog.py` 检查任一目录文件：每个条目的 `ref` 必须是完整的提交号，脚本把这个提交取到临时目录，核对 `plugin.toml` 是有效清单、名称、版本、接口、权限和 `requires_lenbot` 与条目一致，并且有 `__init__.py` 和许可证文件。插件代码不会被导入或运行。社区目录仓库的 CI 对改动的条目运行它，也可以对随附目录运行。
 

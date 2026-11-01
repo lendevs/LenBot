@@ -92,8 +92,8 @@ export const keys = {
     all: () => ['plugins'] as const,
     health: () => ['plugins', 'health'] as const,
     catalog: () => ['plugin-catalog'] as const,
-    market: (query: string, category: string | null) =>
-      ['plugin-catalog', 'market', { query, category }] as const,
+    market: (query: string, category: string | null, source: string | null) =>
+      ['plugin-catalog', 'market', { query, category, source }] as const,
   },
   memory: {
     all: () => ['memory'] as const,

@@ -223,14 +223,26 @@ export interface CatalogEntry {
   chat_platforms?: string[] | null
 }
 
-export interface CatalogView {
-  source: 'builtin' | 'remote'
+export type CatalogSourceKind = 'official' | 'community' | 'custom'
+
+export interface CatalogSource {
+  kind: CatalogSourceKind
   url: string | null
+  /** null until a remote source is read successfully. */
   loaded_at: number | null
-  entries: CatalogEntry[]
+  error: string | null
+  total: number
+}
+
+export interface CatalogView {
+  /** The custom catalog URL; the official and community sources are always listed. */
+  url: string | null
+  sources: CatalogSource[]
+  entries: (CatalogEntry & { source: CatalogSourceKind })[]
 }
 
 export interface MarketEntry extends CatalogEntry {
+  source: CatalogSourceKind
   installed: boolean
   installed_version: string | null
   update_available: boolean
@@ -239,9 +251,8 @@ export interface MarketEntry extends CatalogEntry {
 }
 
 export interface MarketView {
-  source: 'builtin' | 'remote'
   url: string | null
-  loaded_at: number | null
+  sources: CatalogSource[]
   categories: string[]
   total: number
   entries: MarketEntry[]
@@ -280,12 +291,12 @@ export const pluginsApi = {
   removeData: (plugin: string) =>
     request<PluginsSnapshot>(`/api/host/plugin-data/${name(plugin)}`, { method: 'DELETE' }),
   catalog: (signal?: AbortSignal) => http.get<CatalogView>('/api/host/plugin-catalog', undefined, signal),
-  /** null goes back to the catalog shipped with this version. */
+  /** null removes the custom catalog. */
   setCatalog: (url: string | null) => http.put<CatalogView>('/api/host/plugin-catalog', { url }),
   refreshCatalog: () => http.post<CatalogView>('/api/host/plugin-catalog/refresh'),
   /** The catalog marked with what is installed here; filtered on the server. */
-  market: (query: string, category: string | null, signal?: AbortSignal) =>
-    http.get<MarketView>('/api/host/plugin-market', { query, category }, signal),
+  market: (query: string, category: string | null, source: CatalogSourceKind | null, signal?: AbortSignal) =>
+    http.get<MarketView>('/api/host/plugin-market', { query, category, source }, signal),
   /** The server takes repository, version and permissions from the catalog entry. */
   installEntry: (plugin: string) =>
     http.post<PluginsSnapshot>(`/api/host/plugin-market/${name(plugin)}/install`),

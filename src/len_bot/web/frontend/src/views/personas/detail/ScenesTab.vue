@@ -100,7 +100,7 @@ async function apply() {
 <template>
   <EmptyState v-if="!rows.length" :icon="MessagesSquare" :title="t('groups.empty')" />
   <div v-else class="flex max-w-3xl flex-col gap-4">
-    <div class="flex flex-wrap items-center gap-3">
+    <div v-if="choosable.length" class="flex flex-wrap items-center gap-3">
       <Checkbox
         :model-value="
           chosen.length === 0 ? false : chosen.length === choosable.length ? true : 'indeterminate'
@@ -136,11 +136,11 @@ async function apply() {
           :aria-label="groupLabel(row.scene)"
           @update:model-value="(on) => toggle(row.scene, on === true)"
         />
-        <span v-else class="size-4.5 shrink-0" aria-hidden="true" />
+        <span v-else-if="choosable.length" class="size-4.5 shrink-0" aria-hidden="true" />
         <Avatar :name="groupLabel(row.scene)" shape="square" :size="32" />
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium text-ink">{{ groupLabel(row.scene) }}</span>
-          <span class="block truncate text-xs text-muted">{{ row.current }}</span>
+          <span v-if="!row.using" class="block truncate text-xs text-muted">{{ row.current }}</span>
         </span>
         <Badge v-if="row.using" tone="brand">{{ t('personas.detail.scenes.using') }}</Badge>
         <Badge v-else-if="row.waiting" tone="warning" dot pulse>

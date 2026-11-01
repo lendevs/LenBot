@@ -539,13 +539,16 @@ watch(invalid, () => {
 
       <FormSection :title="t('system.connection.general')">
         <Field :label="t('system.connection.delivery')" wide>
-          <div>
+          <div class="flex flex-wrap items-center gap-3">
             <SegmentedControl
               v-model="value.delivery"
               :options="deliveries"
               :disabled="!anyPlatform"
               :label="t('system.connection.delivery')"
             />
+            <Badge v-if="value.delivery === 'live' && host.state?.send_hold" tone="warning" dot>
+              {{ t('system.connection.held') }}
+            </Badge>
           </div>
         </Field>
         <Field :label="t('system.connection.timezone')" :error="errors.timezone">
