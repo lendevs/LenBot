@@ -205,12 +205,18 @@ async function exit() {
             class="flex min-w-0 items-center gap-2 text-base max-sm:hidden"
             :aria-label="t('shell.nav.sections')"
           >
-            <span v-if="group" class="text-muted">{{ t(group.label) }}</span>
-            <span v-if="group" class="text-line-strong" aria-hidden="true">/</span>
+            <template v-if="group && (!area || t(group.label) !== t(area.label))">
+              <span class="text-muted">{{ t(group.label) }}</span>
+              <span class="text-line-strong" aria-hidden="true">/</span>
+            </template>
             <strong class="truncate font-semibold">{{ area ? t(area.label) : '' }}</strong>
             <template v-if="subpage && area && area.pages[0]?.route !== subpage.route">
               <span class="text-line-strong" aria-hidden="true">/</span>
               <span class="truncate text-ink-2">{{ t(subpage.label) }}</span>
+            </template>
+            <template v-else-if="area?.id === 'groups' && route.params.scene">
+              <span class="text-line-strong" aria-hidden="true">/</span>
+              <span class="truncate text-ink-2">{{ groupLabel(String(route.params.scene)) }}</span>
             </template>
           </nav>
           <div class="ml-auto flex items-center gap-1.5">
@@ -282,7 +288,7 @@ async function exit() {
           </div>
         </header>
 
-        <div v-if="tabs.length" class="shrink-0 px-3 sm:px-6">
+        <div v-if="tabs.length" class="shrink-0 px-3 pt-2 sm:px-4 lg:px-8 lg:pt-4">
           <Tabs v-model="tab" :items="tabs" :label="area ? t(area.label) : undefined" />
         </div>
 

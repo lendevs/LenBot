@@ -94,6 +94,7 @@ const effects = computed(() =>
               :value="item.value"
               :trend="item.trend"
               :tone="item.tone"
+              :caption="item.key === 'tokens' ? tokenNote : undefined"
               :format-options="
                 item.key === 'tokens' ? { notation: 'compact', maximumFractionDigits: 1 } : undefined
               "
@@ -103,9 +104,8 @@ const effects = computed(() =>
             <StatTile v-for="n in 5" :key="n" label="" :value="null" loading />
           </template>
         </div>
-        <p v-if="stats" class="flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs text-muted">
-          <span>{{ tokenNote }}</span>
-          <span v-if="effects.length">{{ t('overview.stats.effectsLabel') }}{{ effects.join(' · ') }}</span>
+        <p v-if="stats && effects.length" class="flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs text-muted">
+          <span>{{ t('overview.stats.effectsLabel') }}{{ effects.join(' · ') }}</span>
         </p>
       </section>
 

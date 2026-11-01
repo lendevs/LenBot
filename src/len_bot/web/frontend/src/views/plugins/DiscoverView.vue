@@ -138,6 +138,13 @@ const permissionText = (entry: MarketEntry) => {
   })
 }
 
+// The server normalizes ">=0.2,<1" to "<1,>=0.2"; lower bounds read first.
+const hostRange = (value: string) =>
+  value
+    .split(',')
+    .sort((a, b) => Number(b.startsWith('>')) - Number(a.startsWith('>')))
+    .join(', ')
+
 const sourceOpen = ref(false)
 const sourceUrl = ref('')
 watch(sourceOpen, (value) => {
@@ -306,14 +313,14 @@ watch(sources, (value) => {
             v{{ selected.version }}
             <template v-if="selected.ref">
               ·
-              <span class="font-mono">{{ selected.ref }}</span>
+              <span class="font-mono" :title="selected.ref">{{ selected.ref.slice(0, 7) }}</span>
             </template>
           </dd>
           <dt class="text-muted">{{ t('plugins.discover.license') }}</dt>
           <dd>{{ selected.license }}</dd>
           <template v-if="selected.requires_lenbot">
             <dt class="text-muted">{{ t('plugins.discover.host') }}</dt>
-            <dd class="font-mono">{{ selected.requires_lenbot }}</dd>
+            <dd class="font-mono">{{ hostRange(selected.requires_lenbot) }}</dd>
           </template>
           <template v-if="selected.chat_platforms">
             <dt class="text-muted">{{ t('plugins.version.chatPlatforms') }}</dt>

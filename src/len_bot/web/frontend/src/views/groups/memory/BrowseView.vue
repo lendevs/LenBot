@@ -142,7 +142,11 @@ const detail = computed(() => Boolean(file.value || creating.value))
           {{ t('groups.memory.create') }}
         </Button>
       </div>
-      <nav class="flex flex-wrap items-center gap-0.5 text-sm" :aria-label="t('groups.memory.path')">
+      <nav
+        v-if="crumbs.length > 1"
+        class="flex flex-wrap items-center gap-0.5 text-sm"
+        :aria-label="t('groups.memory.path')"
+      >
         <template v-for="(crumb, index) in crumbs" :key="crumb.path">
           <ChevronRight v-if="index > 0" :size="13" class="text-subtle" aria-hidden="true" />
           <button
@@ -166,7 +170,7 @@ const detail = computed(() => Boolean(file.value || creating.value))
       <EmptyState
         v-else-if="!nodes.length"
         :icon="FolderOpen"
-        :title="t('groups.memory.emptyDirectory')"
+        :title="directory ? t('groups.memory.emptyDirectory') : t('groups.memory.empty')"
         compact
       >
         <Button v-if="writable" variant="primary" :icon="Plus" @click="create">

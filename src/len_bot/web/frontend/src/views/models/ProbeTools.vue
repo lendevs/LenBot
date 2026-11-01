@@ -24,6 +24,22 @@ const embedding = computed(() => !chat.value && form.supports(props.row, 'embedd
 const models = computed(() => form.catalog.value[props.row.id] ?? [])
 
 const testModel = ref('')
+// Start from a model this provider already serves, so the test can run without typing one.
+const boundModel = computed(() => {
+  const value = form.draft.value
+  if (!value) return ''
+  const bindings = embedding.value
+    ? [value.memory_embedding, ...Object.values(value.learning_embeddings)]
+    : Object.values(value.roles)
+  return bindings.find((item) => item?.provider === props.row.id && item.model)?.model ?? ''
+})
+watch(
+  boundModel,
+  (value) => {
+    if (!testModel.value) testModel.value = value
+  },
+  { immediate: true },
+)
 const kind = ref<'text' | 'tools'>('text')
 const kinds = computed(() => [
   { value: 'text' as const, label: t('models.probe.text') },

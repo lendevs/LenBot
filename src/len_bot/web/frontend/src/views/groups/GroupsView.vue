@@ -121,7 +121,7 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
     <div v-else class="grid min-w-0 items-start gap-6 lg:grid-cols-[264px_minmax(0,1fr)]">
       <aside
         v-if="wide"
-        class="sticky top-20 flex max-h-[calc(100dvh-6.5rem)] min-h-0 flex-col border-r border-line pr-4"
+        class="sticky top-20 flex h-[calc(100dvh-6.5rem)] min-h-0 flex-col border-r border-line pr-4"
       >
         <GroupList :scenes="scenes" :selected="scene" @select="select" @add="adding = true" />
       </aside>

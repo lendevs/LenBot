@@ -137,7 +137,12 @@ const describe = (file: string) => (editing.value = { file, description: '', emo
           <p class="line-clamp-2 text-sm text-ink-2">{{ entry.description }}</p>
           <div v-if="entry.emotions.length || entry.tags.length" class="flex flex-wrap gap-1">
             <Badge v-for="item in entry.emotions" :key="`e${item}`" tone="brand">{{ item }}</Badge>
-            <Badge v-for="item in entry.tags" :key="`t${item}`">{{ item }}</Badge>
+            <Badge
+              v-for="item in entry.tags.filter((tag) => !entry.emotions.includes(tag))"
+              :key="`t${item}`"
+            >
+              {{ item }}
+            </Badge>
           </div>
         </li>
       </ul>

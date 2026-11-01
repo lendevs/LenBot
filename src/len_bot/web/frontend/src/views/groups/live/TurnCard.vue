@@ -45,7 +45,7 @@ const summary = computed(() => {
             time: formatDuration(Math.max(0, turn.first_expression_wait) * 1000),
           }),
         ]),
-    formatDuration(Math.max(0, ended - turn.started) * 1000),
+    t('groups.live.turn.duration', { time: formatDuration(Math.max(0, ended - turn.started) * 1000) }),
     t('groups.live.turn.tokens', {
       input: formatCompact(turn.tokens.input),
       output: formatCompact(turn.tokens.output),
