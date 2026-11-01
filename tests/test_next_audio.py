@@ -163,3 +163,23 @@ def test_daily_token_limit_needs_no_prices(tmp_path):
     with pytest.raises(ValueError):
         load()
 
+
+
+def test_received_onebot_voice_is_queued_for_automatic_transcription(tmp_path):
+    import time
+    from len_bot.next.media.audio_store import AudioStore
+    from len_bot.next.platform.onebot_messages import parse_message
+    from len_bot.next.storage.store import Store
+
+    raw = {"post_type": "message", "message_type": "group", "sub_type": "normal", "time": 1790000000,
+           "self_id": 90001, "group_id": 80001, "user_id": 70001, "message_id": 123,
+           "sender": {"user_id": 70001, "nickname": "member", "card": "", "role": "member"},
+           "message": [{"type": "record", "data": {"file": "a.amr", "url": "http://example.invalid/a.amr"}},
+                       {"type": "record", "data": {"file": "b.amr", "url": "http://example.invalid/b.amr"}}],
+           "raw_message": "", "font": 0}
+    message = parse_message(raw, own_message_ids=set())
+    with Store(tmp_path / "messages.db") as store:
+        store.enqueue(message, raw, time.time(), transcribe_audio=True)
+        audio = AudioStore(store)
+        assert tuple(audio.pending("onebot:group:80001")) == ("123", 1)
+        assert audio.item("onebot:group:80001", "123", 2)["status"] == "queued"
