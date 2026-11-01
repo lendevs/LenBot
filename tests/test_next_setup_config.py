@@ -275,7 +275,7 @@ async def test_setup_official_plugins_are_optional_and_selected_sources_stay_dis
         assert (await client.get('/api/setup/plugins')).status_code == 401
         client.headers['X-Setup-Token'] = 'fixture-token'
         choices = (await client.get('/api/setup/plugins')).json()['plugins']
-        assert {p['name'] for p in choices} == {'group_digest', 'gscore_adapter', 'asoul', 'bilibili'}
+        assert {p['name'] for p in choices} == {'group_digest', 'gscore_adapter', 'bilibili'}
         assert all(not p['installed'] and p['repository'].startswith('https://github.com/lendevs/') for p in choices)
         invalid = await client.post('/api/setup', json={**body, 'install_plugins': ['unknown']})
         assert invalid.status_code == 422 and not (tmp_path/'lenbot.config.json').exists()
