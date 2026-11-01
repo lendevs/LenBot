@@ -182,6 +182,8 @@ class WorkerSettings(BaseModel):
         runtime = self.task_runtime
         if runtime is not None:
             found.update(name for name in RUNTIME_PROGRAMS if (runtime / "bin" / name).exists())
+            if ready_task_browser(runtime) is not None:
+                found.add("lenbot-render")
             found.update(f"python:{name}" for name, module in PYTHON_LIBRARIES.items()
                          if (runtime / "python" / module).exists())
         if _chinese_font():
@@ -335,6 +337,32 @@ def packaged_task_runtime() -> Path | None:
     if prefix.name != "python" or not (prefix.parent / "release.json").is_file():
         return None
     return runtime if all((runtime / name).exists() for name in ("node/bin/node", "node/bin/pi")) else None
+
+
+TASK_BROWSER_READY = "ready.json"
+
+
+def task_browser(runtime: Path) -> Path | None:
+    """Where the local sandbox keeps Chromium for ``lenbot-render``; None when the runtime has no renderer.
+
+    The user's cache holds one download per Playwright version, shared by instances and left out of snapshots.
+    """
+    try:
+        manifest = json.loads((runtime / "browser/node_modules/playwright-core/package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("version"), str):
+        return None
+    if not (runtime / "lenbot-render.cjs").is_file():
+        return None
+    cache = Path(os.environ.get("XDG_CACHE_HOME", ""))
+    return (cache if cache.is_absolute() else Path.home() / ".cache") / "lenbot" / f"task-browser-{manifest['version']}"
+
+
+def ready_task_browser(runtime: Path) -> Path | None:
+    """The browser directory once a page has rendered with it inside the sandbox."""
+    root = task_browser(runtime)
+    return root if root is not None and (root / TASK_BROWSER_READY).is_file() else None
 
 
 def _instance_volume(root: Path, suggestion: dict) -> tuple[str, str] | None:

@@ -6,7 +6,9 @@ the egress bridge and Pi on host request, so the three share one loopback
 network and still talk to the host only through their own pipes. The sandbox
 sees the system's read-only ``/usr``, a few read-only ``/etc`` entries, the
 task runtime at ``/opt/lenbot``, and this task's directories at the same
-container paths as the worker image.
+container paths as the worker image. Once the host has downloaded and checked
+Chromium (``prepare_task_browser``), it is mounted at ``/opt/lenbot-browser``
+and ``lenbot-render`` joins the task's programs.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ import uuid
 from .pi_rpc import PiRpc
 from .sandbox import SandboxError, SandboxHandle, copy_regular_out, prepare_task_directories, task_identity
 from ..tools.skills import Skill
-from ..configuration.tasks import EgressSettings, WorkerSettings
+from ..configuration.tasks import TASK_BROWSER_READY, EgressSettings, WorkerSettings, ready_task_browser, task_browser
 from .worker_egress import EgressTransport
 from .worker_model import WorkerModelProxy
 from .worker_transport import WorkerTransport
@@ -47,6 +49,9 @@ _ETC = ("ssl", "ca-certificates", "pki", "fonts", "alternatives", "localtime", "
 _SYSTEM = ("bin", "sbin", "lib", "lib32", "lib64", "libx32")
 _AGENT = 10000
 _HOST_PROGRAMS = "/opt/lenbot-host"
+_BROWSER = "/opt/lenbot-browser"
+_RENDER = '#!/bin/sh\nexec node /opt/lenbot/lenbot-render.cjs "$@"\n'
+_RENDER_PAGE = '<!doctype html><meta charset="utf-8"><body style="font: 32px sans-serif">LenBot 渲染检查 ✓</body>\n'
 # /opt/lenbot-host/bin holds python3 and python: the host's base interpreter, with the runtime's task libraries.
 _PATH = "/opt/lenbot/bin:/opt/lenbot/node/bin:/opt/lenbot-host/bin:/usr/local/bin:/usr/bin:/bin"
 _PROBE = """\
@@ -71,6 +76,8 @@ class BwrapSettings:
     file_bytes: int
     tmpfs_bytes: int
     command_timeout_seconds: float = 30.0
+    # Mounted even before it is marked ready; only the render check sets it.
+    browser: Path | None = None
 
 
 def byte_size(value: str) -> int:
@@ -291,6 +298,10 @@ class BwrapSandbox:
         system.mkdir(exist_ok=True)
         (system / "passwd").write_text(f"agent:x:{_AGENT}:{_AGENT}::/home/agent:/bin/bash\n", encoding="utf-8")
         (system / "group").write_text(f"agent:x:{_AGENT}:\n", encoding="utf-8")
+        browser = self.settings.browser or ready_task_browser(self.settings.task_runtime)
+        if browser is not None:
+            (system / "lenbot-render").write_text(_RENDER, encoding="utf-8")
+            (system / "lenbot-render").chmod(0o755)
         arguments = [
             str(self.settings.bwrap_binary), "--unshare-all", "--die-with-parent", "--new-session",
             "--cap-drop", "ALL", "--uid", str(_AGENT), "--gid", str(_AGENT), "--hostname", "lenbot-task",
@@ -305,6 +316,9 @@ class BwrapSandbox:
             "--bind", str(workspace), "/workspace", "--bind", str(home), "/home/agent",
             "--ro-bind", str(control), "/run/lenbot",
         ]
+        if browser is not None:
+            arguments += ["--ro-bind", str(browser), _BROWSER,
+                          "--ro-bind", str(system / "lenbot-render"), f"{_HOST_PROGRAMS}/bin/lenbot-render"]
         if input_names:
             arguments += ["--ro-bind", str(runtime / "inputs"), "/inputs"]
         for skill in skills:
@@ -353,7 +367,7 @@ class BwrapSandbox:
     def _environment(self, **extra: str) -> dict[str, str]:
         return {"PATH": _PATH, "HOME": "/home/agent", "PI_CODING_AGENT_DIR": "/home/agent/.pi/agent",
                 "LANG": "C.UTF-8", "TMPDIR": "/tmp", "PYTHONPATH": "/opt/lenbot/python",
-                "MATPLOTLIBRC": "/opt/lenbot/matplotlibrc", **extra}
+                "MATPLOTLIBRC": "/opt/lenbot/matplotlibrc", "PLAYWRIGHT_BROWSERS_PATH": _BROWSER, **extra}
 
     def _launch(self, sandbox: SandboxHandle, **extra: str):
         session = self._sessions[sandbox.container_id]
@@ -495,6 +509,59 @@ class _Completed:
     stderr: str
 
 
+def _check_settings(bwrap_binary: Path, task_runtime: Path, root: Path, browser: Path | None = None) -> BwrapSettings:
+    """The default task limits, with task directories under a temporary ``root``."""
+    defaults = WorkerSettings.model_fields
+    return BwrapSettings(
+        bwrap_binary=bwrap_binary, task_runtime=task_runtime,
+        workspace_root=root / "workspaces", runtime_root=root / "runtime",
+        memory_bytes=byte_size(defaults["memory"].default), pids_limit=defaults["pids_limit"].default,
+        file_bytes=defaults["max_workspace_bytes"].default, tmpfs_bytes=byte_size(defaults["tmpfs_size"].default),
+        command_timeout_seconds=defaults["command_timeout_seconds"].default, browser=browser)
+
+
+async def prepare_task_browser(bwrap_binary: Path, task_runtime: Path, *, timeout_seconds: float = 1200.0) -> Path:
+    """Download Chromium for ``lenbot-render`` and render one page with it inside a sandbox.
+
+    The ready mark is written only after that page rendered, so tasks get the renderer only where it works.
+    A failure raises with the installer's or the renderer's own output and is tried again at the next start.
+    """
+    root = task_browser(task_runtime)
+    if root is None:
+        raise SandboxError(f"{task_runtime} has no lenbot-render or Playwright library")
+    root.mkdir(parents=True, exist_ok=True)
+    installer = await asyncio.create_subprocess_exec(
+        str(task_runtime / "node/bin/node"), str(task_runtime / "browser/node_modules/playwright-core/cli.js"),
+        "install", "--only-shell", "--no-progress", "chromium",
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        env={**os.environ, "PLAYWRIGHT_BROWSERS_PATH": str(root)})
+    try:
+        output, _ = await asyncio.wait_for(installer.communicate(), timeout_seconds)
+    except BaseException:
+        if installer.returncode is None:
+            installer.kill()
+            await installer.wait()
+        raise
+    if installer.returncode:
+        raise SandboxError(f"Chromium download failed ({installer.returncode}): "
+                           f"{output.decode('utf-8', errors='replace')[-4000:]}")
+    with tempfile.TemporaryDirectory(prefix="lenbot-render-check-") as directory:
+        sandbox = BwrapSandbox(_check_settings(bwrap_binary, task_runtime, Path(directory), browser=root))
+        handle = await sandbox.ensure("local:private:check", "render")
+        try:
+            (handle.workspace / "check.html").write_text(_RENDER_PAGE, encoding="utf-8")
+            result = await sandbox._run(handle, "lenbot-render", "check.html", "--pdf", "out/check.pdf",
+                                        "--screenshot", "out/check.png")
+        finally:
+            await sandbox.stop(handle)
+    if result.returncode:
+        raise SandboxError(f"lenbot-render check failed ({result.returncode}): {result.stderr[-4000:]}")
+    ready = root / f".{TASK_BROWSER_READY}.{uuid.uuid4().hex}"
+    ready.write_text(result.stdout, encoding="utf-8")
+    ready.replace(root / TASK_BROWSER_READY)
+    return root
+
+
 async def check_local_sandbox(bwrap_binary: Path, task_runtime: Path) -> list[dict]:
     """Each startup step in order, stopping at the first failure; ``detail`` keeps the original output."""
     defaults = WorkerSettings.model_fields
@@ -525,13 +592,7 @@ async def check_local_sandbox(bwrap_binary: Path, task_runtime: Path) -> list[di
                   f"{runtime} 缺少 {', '.join(missing)}" if missing else f"{runtime} 含 Node、Pi、任务扩展与 Python 库"):
         return steps
     with tempfile.TemporaryDirectory(prefix="lenbot-sandbox-check-") as directory:
-        root = Path(directory)
-        sandbox = BwrapSandbox(BwrapSettings(
-            bwrap_binary=bwrap_binary, task_runtime=task_runtime,
-            workspace_root=root / "workspaces", runtime_root=root / "runtime",
-            memory_bytes=byte_size(defaults["memory"].default), pids_limit=defaults["pids_limit"].default,
-            file_bytes=defaults["max_workspace_bytes"].default, tmpfs_bytes=byte_size(defaults["tmpfs_size"].default),
-            command_timeout_seconds=defaults["command_timeout_seconds"].default))
+        sandbox = BwrapSandbox(_check_settings(bwrap_binary, task_runtime, Path(directory)))
         try:
             handle = await sandbox.ensure("local:private:check", "check")
         except Exception as error:
