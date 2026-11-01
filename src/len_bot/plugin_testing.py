@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from .next.config import HostConfig
 from .next.platform.identity import validate_scene
-from .next.platform.messages import ChatMessage, Sender, Segment
+from .next.platform.messages import ChatMessage, Notice, Sender, Segment
 from .plugin import CompactRequest, Content, Image, RecallRequest, Sent, Text
 from .next.plugins.host import PluginHost
 from .next.plugins.data import write_version
@@ -110,6 +110,8 @@ class PluginTest:
         self.owners = list(owners)
         self.deliveries: list[Delivery] = []
         self.host: _LocalHost | None = None
+        # Handler tasks suspended in wait_message; the next message() resumes and settles them.
+        self.waiting: set[asyncio.Task] = set()
         self.temporary = None
 
     async def __aenter__(self):
@@ -206,7 +208,11 @@ class PluginTest:
 
     async def message(self, text: str, *, scene: str = 'onebot:group:80001', sender: str = 'onebot:70001',
                       parts: Sequence[Segment] = ()) -> bool:
-        """Return whether a real handler consumed this text and its optional message parts."""
+        """Return whether a real handler consumed this text and its optional message parts.
+
+        Returns once the handlers this message started or resumed have finished or are waiting in
+        ``wait_message``; the next ``message`` call answers such a wait.
+        """
         message = self.add_message(text, scene=scene, sender=sender, parts=parts)
         matched = self.host.match_message(message, ())
         if matched is None:
@@ -214,10 +220,48 @@ class PluginTest:
         previous_error = matched.record.errors[-1] if matched.record.errors else None
         tasks_before = set(self.host.tasks)
         self.host.dispatch_message(message, matched)
-        await asyncio.gather(*(task for task in self.host.tasks if task not in tasks_before))
+        await self._settle({task for task in self.host.tasks if task not in tasks_before} | self.waiting)
         if matched.record.errors and matched.record.errors[-1] is not previous_error:
             raise RuntimeError(matched.record.errors[-1]['error'])
         return True
+
+    async def notice(self, notice_type: str, *, sub_type: str | None = None, user: str | None = None,
+                     operator: str | None = None, scene: str = 'onebot:group:80001', message_id: str | None = None,
+                     duration: int | None = None, raw: dict | None = None) -> int:
+        """Deliver one platform notice to ``@on_notice`` handlers; return how many handlers ran."""
+        scene = validate_scene(scene)
+        for account in (user, operator):
+            if account is not None:
+                HostConfig.valid_bot_id(account)
+        notice = Notice(scene=scene, notice_type=notice_type, sub_type=sub_type, user_id=user, operator_id=operator,
+                        time=self.host.now(), raw={} if raw is None else raw, platform_message_id=message_id,
+                        duration=duration)
+        record = self.host.plugins[self.manifest.name]
+        previous_error = record.errors[-1] if record.errors else None
+        tasks_before = set(self.host.tasks)
+        count = self.host.handle_notice(notice)
+        await self._settle({task for task in self.host.tasks if task not in tasks_before})
+        if record.errors and record.errors[-1] is not previous_error:
+            raise RuntimeError(record.errors[-1]['error'])
+        return count
+
+    async def _settle(self, tasks: set[asyncio.Task]) -> None:
+        """Wait until each task has finished or is suspended in ``wait_message``."""
+        pending = {task for task in tasks if not task.done()}
+        while pending:
+            waiting = {task for task in pending if task in self._waiting_tasks()}
+            if waiting == pending:
+                break
+            await asyncio.wait(pending - waiting, timeout=0.01, return_when=asyncio.FIRST_COMPLETED)
+            pending = {task for task in pending if not task.done()}
+        self.waiting = pending
+        for task in tasks - pending:
+            if not task.cancelled() and task.exception() is not None:
+                raise task.exception()
+
+    def _waiting_tasks(self) -> set[asyncio.Task]:
+        return {waiter.task for waiter in self.host.waiters.values()
+                if waiter.task is not None and not waiter.future.done()}
 
     async def tool(self, name: str, arguments: dict, *, scene: str = 'onebot:group:80001') -> str:
         """Call the actual registered tool with normal schema and scene checks."""

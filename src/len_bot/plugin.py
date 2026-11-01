@@ -19,6 +19,7 @@ from pydantic import JsonValue
 
 # Public message types for plugin authors; explicit re-exports.
 from .next.platform.messages import ChatMessage as ChatMessage, Notice as Notice, Segment as Segment, Sender as Sender
+from .next.platform.messages import render_body
 
 
 INTERFACE = 1
@@ -100,6 +101,15 @@ def compact():
     adopts it. At most one per plugin.
     """
     return _mark(("compact",))
+
+
+def message_text(message: ChatMessage, *, names: Mapping[str, str] | None = None) -> str:
+    """The words of one message as the chat context shows them, without the quoted reply.
+
+    Media and mentions become placeholders such as ``[图片1]``, ``[语音1]`` and
+    ``[提及 onebot:70001]``; ``names`` maps accounts to display names for mentions.
+    """
+    return render_body(message.segments, names=names)
 
 
 def _mark(value: tuple):
@@ -203,6 +213,8 @@ class HostPort(Protocol):
                        system: str | None) -> str: ...
     async def delegate(self, plugin: str, scene: str, requester: str, goal: str, deliverable: str,
                        context: str, materials: Sequence[str]) -> dict: ...
+    async def wait_message(self, plugin: str, scene: str, sender: str | None,
+                           timeout_seconds: float) -> ChatMessage | None: ...
     def cron(self, plugin: str, name: str, scene: str, expression: str, timezone: str,
              handler: Callable[[Invocation], Awaitable[None]]) -> asyncio.Task: ...
     def start_task(self, plugin: str, name: str, coroutine: Coroutine) -> asyncio.Task: ...
@@ -404,6 +416,22 @@ class Invocation:
 
     async def memory(self, arguments: dict) -> str:
         return await self.plugin.memory(self.scene, arguments)
+
+    async def wait_message(self, *, timeout_seconds: float = 60, sender: str | None = "same") -> ChatMessage | None:
+        """Wait for the next message in this scene; ``None`` when ``timeout_seconds`` pass first.
+
+        ``sender`` is ``"same"`` for this invocation's sender, an account such as ``onebot:70001``, or
+        ``None`` for anyone. The message goes to the plugin instead of waking the chat, as a command
+        does. One wait per scene and sender at a time.
+        """
+        if sender == "same":
+            if self.message is None or self.message.is_self:
+                raise ValueError("sender=\"same\" 需要真实触发消息；没有触发消息时写明账号或 None")
+            sender = self.message.sender.uid
+        if not 0 < timeout_seconds <= 600:
+            raise ValueError("timeout_seconds 必须大于 0 且不超过 600")
+        return await self.plugin.host.wait_message(self.plugin.name, self.plugin._scene(self.scene),
+                                                   sender, timeout_seconds)
 
 
 class Plugin:
