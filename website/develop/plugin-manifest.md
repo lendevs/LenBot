@@ -23,6 +23,7 @@
 | `permissions` | 需要的宿主能力，见下文 |
 | `dependencies` | Python 依赖，例如 `["httpx>=0.28"]`，由 uv 解析安装 |
 | `isolation` | `inline`（默认，与宿主同进程）或 `process` |
+| `chat_platforms` | 支持的聊天平台，例如 `["onebot"]`，不写时为全部平台，见[多平台](plugin-platforms) |
 | `data_version` | 数据格式编号，默认 1，见[数据与迁移](plugin-data) |
 | `repository`、`homepage` | HTTP(S) 地址 |
 | `[model] instructions` | 模型工具的共享指南文件，见[模型工具](plugin-tools) |

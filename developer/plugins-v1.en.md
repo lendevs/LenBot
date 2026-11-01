@@ -29,6 +29,7 @@ description = "Per-scene counter"
 - `platforms` uses Python `sys.platform` values: Linux (`linux`), macOS (`darwin`), and Windows (`win32`). Deployment packages cover Linux and Windows, the Docker image is Linux, and a source checkout may run on any of the three.
 - `reload` is `plugin` (hot-reloadable without stopping other plugins) or `host` (applied on host restart).
 - Optional `repository` and `homepage` are HTTP(S) URLs.
+- Optional `chat_platforms` lists supported chat platforms (`onebot`, `telegram`, `feishu`); absent means all. See [Multiple platforms](#multiple-platforms).
 - Optional `data_version` (positive integer, default `1`) numbers the format of the plugin's data directory and KV store; see [Data versions](#data-versions).
 
 `dependencies = ["pkg>=version"]` declares Python package requirements resolved by `uv` and installed into the instance's `.runtime/plugin-packages/<host version>-py313`, reinstalled when the host changes versions. Packages already installed in the host environment act as constraints, and conflicts report the underlying resolver output. Document external binaries, services, and credentials in the plugin's README.
@@ -301,7 +302,7 @@ Override synchronous `unavailable_tools(self, scene: str) -> dict[str, str]` to 
 ## Invocation context
 
 - Command, `fullmatch`, `regex`, and `needs_source=True` tool calls populate `Invocation.message`; ordinary tools and cron handlers have `ctx.message == None`.
-- Scene IDs (`onebot:group:80001`) and user IDs (`onebot:70001`) always carry their platform prefix.
+- Scene IDs (`onebot:group:80001`) and user IDs (`onebot:70001`) always carry their platform prefix. `ctx.bot_id` is the bot account speaking in the scene and `ctx.platform` its platform; `self.ctx.bot_for(scene)` and `self.ctx.platform(scene)` take a scene; `self.ctx.bot_id` is the root bot account.
 
 | Capability | Usage |
 |---|---|
@@ -387,6 +388,19 @@ Each `Segment` has `type` and `data`. The host normalizes the following; other s
 | `raw` | The protocol's original event |
 
 OneBot notices keep their `notice_type` and `sub_type`. Common ones: `group_increase` (`approve`, `invite`), `group_decrease` (`leave`, `kick`, `kick_me`), `group_recall`, `friend_recall`, `group_ban` (`ban`, `lift_ban`, with `duration`), `notify.poke`, `group_admin` (`set`, `unset`), `group_upload`. Notices reach only scenes that enable the plugin; private notices use `onebot:private:<QQ>`.
+
+## Multiple platforms
+
+The host can serve OneBot, Telegram, and Feishu at once; scenes and accounts carry the platform prefix.
+
+- **Declared platforms**: the optional manifest field `chat_platforms` (`onebot`, `telegram`, `feishu`; absent means all) makes the plugin fail to load when configured in a scene of another platform, naming those scenes; the panel lists only supported groups. A catalog entry may state the same field, checked against the repository manifest on install.
+- **Media**: image segments carry `url` on OneBot, `file_id` on Telegram, and `image_key` plus `message_id` on Feishu. `await ctx.fetch_media(segment, max_bytes=20_000_000)` (`PluginContext.fetch_media(scene, segment, ...)`) reads the file of an `image`, `audio`, `file`, or `video` segment: platform references download through the platform, a `url` is read under the host's public network checks, and larger files raise. Requires `history`.
+- **Segments**: `face`, `json`, `forward`, `poke` and similar appear only on OneBot; Telegram adds `sticker` (animated), `poll`, `location`; Feishu rich text emoji become `[name]` text.
+- **Commands**: Telegram `/command@BotUsername` matches without this bot's suffix. Telegram privacy mode (on by default in groups) hides non-Latin commands and full-text rules until it is turned off or the bot is an admin; Feishu groups deliver only messages mentioning the bot by default, and `@Bot /command` is still taken by the plugin.
+- **Notices**: Telegram has only `group_increase` and `group_decrease`; Feishu adds `group_recall` and `friend_recall`; other notices are OneBot only.
+- **Mentions**: a `Mention` account must belong to the scene's platform, or sending raises. `Mention("all")` is left out on Telegram; the rest is sent and `Sent.report` says so.
+- **Text length**: Telegram allows 4096 characters per message and 1024 with an image; longer sends fail. The host first splits text by the group's per-message limit.
+- **Testing**: `PluginTest(..., bots={"telegram": "telegram:7001"})` gives bot accounts for other platforms' scenes; `add_media(reference, data)` registers what `fetch_media` returns.
 
 ## Cards and images
 

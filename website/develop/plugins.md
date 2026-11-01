@@ -14,6 +14,7 @@
 | [数据与迁移](plugin-data) | KV、数据目录和数据版本 |
 | [模型调用与后台任务](plugin-models) | 单次生成、委派任务、定点任务和后台循环 |
 | [记忆插件](plugin-memory) | 替换某个群的自动召回、记忆工具和压缩回想 |
+| [多平台](plugin-platforms) | QQ、Telegram、飞书之间的差异和 `chat_platforms` |
 | [测试与发行](plugin-testing) | `PluginTest`、CI、打包和许可证 |
 | [发布到插件目录](plugin-catalog) | 把插件加入社区插件目录 |
 

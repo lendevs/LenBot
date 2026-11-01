@@ -67,6 +67,7 @@ export default defineConfigWithTheme<DefaultTheme.Config & { version: string }>(
           { text: '数据与迁移', link: '/develop/plugin-data' },
           { text: '模型调用与后台任务', link: '/develop/plugin-models' },
           { text: '记忆插件', link: '/develop/plugin-memory' },
+          { text: '多平台', link: '/develop/plugin-platforms' },
           { text: '测试与发行', link: '/develop/plugin-testing' },
           { text: '发布到插件目录', link: '/develop/plugin-catalog' },
         ] },
