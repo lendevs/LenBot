@@ -52,7 +52,7 @@ def test_container_volume_is_migrated_once_and_refuses_newer_data(tmp_path, monk
     root.mkdir()
     monkeypatch.setattr(upgrade, 'installed_release', lambda: '0.2.0')
     calls = []
-    monkeypatch.setattr(upgrade, 'upgrade_instance', lambda path, snapshot: calls.append(snapshot))
+    monkeypatch.setattr(upgrade, 'upgrade_instance', lambda path, snapshot, **options: calls.append((snapshot, options)))
     launcher.migrate_container_volume(root)
     assert upgrade.recorded_release(root) == '0.2.0' and calls == []
     (root / 'lenbot.config.json').write_text('{}')
@@ -60,8 +60,8 @@ def test_container_volume_is_migrated_once_and_refuses_newer_data(tmp_path, monk
     assert calls == []
     (root / upgrade.RELEASE_RECORD).write_text('{"version": "0.1.0"}')
     launcher.migrate_container_volume(root)
-    snapshot, = calls
-    assert snapshot.parent == tmp_path / 'backups'
+    (snapshot, options), = calls
+    assert snapshot.parent == tmp_path / 'backups' and options == {'discard_restored': True}
     (root / upgrade.RELEASE_RECORD).write_text('{"version": "0.3.0"}')
     with pytest.raises(SystemExit, match='0.3.0'):
         launcher.migrate_container_volume(root)

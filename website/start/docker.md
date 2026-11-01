@@ -52,7 +52,7 @@ docker rm lenbot
 docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:<新版本>
 ```
 
-新镜像第一次启动时，先把实例保存为 `/data/backups/<时间>-<编号>` 快照，再迁移数据格式和插件依赖，日志中会列出快照名。任务镜像是官方 `lenbot-worker` 时，配置随之改为同版本，启用了后台任务时同时执行 `docker pull ghcr.io/lendevs/lenbot-worker:<新版本>`。数据卷由更新的版本用过时，旧镜像拒绝启动并在日志中说明。
+新镜像第一次启动时，先把实例保存为 `/data/backups/<时间>-<编号>` 快照，再迁移数据格式和插件依赖，日志中会列出快照名。迁移失败时实例恢复为快照内容，这份快照随即删除，容器退出并在日志中给出原因。任务镜像是官方 `lenbot-worker` 时，配置随之改为同版本，启用了后台任务时同时执行 `docker pull ghcr.io/lendevs/lenbot-worker:<新版本>`。数据卷由更新的版本用过时，旧镜像拒绝启动并在日志中说明。
 
 ### 从快照恢复
 
@@ -66,6 +66,14 @@ docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot
 ```
 
 最后一条命令里的快照名换成 `ls` 列出的、更换版本前的那一个。恢复后实例回到快照时的状态，之后写入的消息、记忆和设置修改不保留。然后按第 1 步用 `0.2.0rc1` 镜像启动。
+
+### 删除旧快照
+
+每次更换版本都会新增一份完整快照。确认新版本运行正常后，删除不再需要的快照：
+
+```sh
+docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint rm ghcr.io/lendevs/lenbot:0.2.0rc1 -rf /data/backups/20261030-140217-cba39904
+```
 
 ## 后台任务
 
