@@ -93,7 +93,12 @@ class Channel:
         future = self.loop.create_future()
         self.waiting[number] = (future, [])
         self.write({"type": "call", "id": number, "method": method, "args": list(args)})
-        return self._value(await future)
+        try:
+            return self._value(await future)
+        except asyncio.CancelledError:
+            self.waiting.pop(number, None)
+            self.write({"type": "cancel", "id": number})
+            raise
 
     @staticmethod
     def _value(reply: dict):
@@ -102,7 +107,11 @@ class Channel:
         return reply.get("value")
 
     def answered(self, reply: dict) -> None:
-        waiter, box = self.waiting.pop(reply["id"])
+        pending = self.waiting.pop(reply["id"], None)
+        if pending is None:
+            # A cancelled call can still have a reply in transit.
+            return
+        waiter, box = pending
         if isinstance(waiter, threading.Event):
             box.append(reply)
             waiter.set()
@@ -183,6 +192,9 @@ class RemoteHost:
         # The requester is not sent: the host takes it from the message of the current invocation.
         return await self.channel.call("delegate", scene, INVOCATION.get(), goal, deliverable, context,
                                        list(materials))
+
+    async def wait_message(self, plugin, scene, sender, timeout_seconds):
+        return message_from(await self.channel.call("wait_message", scene, sender, timeout_seconds, INVOCATION.get()))
 
     def cron(self, *args, **kwargs):
         raise RuntimeError("进程隔离的插件暂不支持定点任务")

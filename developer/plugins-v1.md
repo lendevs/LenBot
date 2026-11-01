@@ -43,7 +43,7 @@ permissions = ["send", "history"]
 |---|---|
 | `send` | 在启用的群内发送消息，包括 `ctx.reply` 回复自己的命令 |
 | `events` | `emit_event` 唤醒群聊 |
-| `history` | `recent_messages` 和 `messages_between` |
+| `history` | `recent_messages`、`messages_between` 和 `wait_message` |
 | `memory` | `ctx.memory` |
 | `generate` | `ctx.generate` 单次模型调用 |
 | `delegate` | `ctx.delegate` 以请求人的名义发起后台任务 |
@@ -152,7 +152,7 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 | `@command("查询", "说明")` | `self, ctx: Invocation, args: str` | `/查询` 后面剩余的文字作为 args |
 | `@fullmatch("今日直播", "说明")` | `self, ctx: Invocation` | 去掉首尾空白后，全文与文本相同 |
 | `@regex(r"查 (?P<name>.+)", "说明", priority=0)` | `self, ctx: Invocation, match` | 使用 Python 正则的 fullmatch，命名组从 match 中读取 |
-| `@on_notice("group_increase")` | `self, ctx: Invocation, notice` | OneBot 的 notice_type，也支持 type.sub_type |
+| `@on_notice("group_increase")` | `self, ctx: Invocation, notice` | 通知类型，也支持 type.sub_type，见[通知](#通知) |
 | `@tool("plugin_read", "完整说明", summary="发现简介", needs_source=False)` | `self, ctx: Invocation, ...` | 根据参数类型生成 schema，返回文本或 JSON 值 |
 | `@background(every="5m")` | `self, ctx: PluginContext` | 本次执行完成后再等待一个周期，最短 10 秒。它按间隔执行，与定点的 cron 不同 |
 | `@recall()` | `self, request: RecallRequest` | 群设置 `memory_plugin` 指向本插件时，每轮在第一次模型请求前调用一次，返回 `RecallBlock` 列表，见[自动召回](#自动召回) |
@@ -465,6 +465,8 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 | 时间 | `ctx.now()` 和 `ctx.timezone()`，明确使用场景的时区 |
 | 主人权限 | `ctx.require_owner()`，使用真实来源的发送者 |
 | 公网原图 | `await ctx.fetch_image(url, timeout_seconds=15)`，返回已经校验的原始图片 bytes |
+| 等下一条消息 | `await ctx.wait_message(timeout_seconds=60, sender="same")`，见[多轮对话](#多轮对话) |
+| 消息文字 | `message_text(message, names=None)`，见[消息](#消息) |
 
 `PluginContext` 用于 `self.ctx`、start／stop 和后台入口。发送消息、读取消息、记忆和事件相关的方法需要明确传入启用的场景，例如 `await self.ctx.send(scene, text)`。
 
@@ -476,12 +478,107 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 
 `PluginContext.fetch_image` 和 `Invocation.fetch_image` 使用宿主的公网地址检查和重定向规则，以及实例的 fake-ip 配置和图片的字节数、像素上限。它们返回完整的、已经验证的图片。
 
-以下是稳定的公共辅助接口。
+外部业务的协议、签名和轮询仍然由插件负责。卡片和图片的辅助接口见[卡片与图片](#卡片与图片)。
 
-- `image_assets.inspect_image`、`MAX_IMAGE_BYTES`、`MAX_IMAGE_PIXELS`、`OriginalImage`
-- `text_cards.CardSection`、`TextCards`、`CardPage`
+### 多轮对话
 
-外部业务的协议、签名和轮询仍然由插件负责。耗时的绘图请使用 `await asyncio.to_thread(renderer, ...)`，以免阻塞聊天主循环。
+`Invocation.wait_message` 等同一场景中的下一条消息，用于插件提问后等回答。
+
+```python
+@command("问卷", "逐题提问")
+async def survey(self, ctx: Invocation, args: str) -> None:
+    await ctx.reply("你喜欢什么颜色？")
+    answer = await ctx.wait_message(timeout_seconds=60)
+    if answer is None:
+        await ctx.reply("超时了，下次再来")
+        return
+    await ctx.reply("记下了：" + message_text(answer))
+```
+
+- `sender` 为 `"same"`（默认）时等触发这次调用的人，写账号（如 `onebot:70001`）时等这个人，`None` 时等这个场景里的任何人。没有触发消息的调用（定点任务、通知、没有来源的工具）不能用 `"same"`。
+- 等到的消息由插件接管：不唤醒聊天模型，处理记录作为背景进入之后的上下文，与命令相同。等待中的发送者发来的下一条消息无论内容是什么都交给插件，包括命令。
+- `timeout_seconds` 大于 0、不超过 600，到时返回 `None`。同一场景中同一个发送者（或任何人）同时只能有一个等待，重复等待时报错。插件重新加载、停用时等待随调用一起取消。
+- 需要 `history` 权限。进程隔离的插件同样可以使用。
+- 插件用 `asyncio.timeout` 或任务取消结束等待时，宿主同步释放该等待，后续消息恢复正常分发；同进程和进程隔离模式行为一致。
+
+## 消息与通知
+
+### 消息
+
+`ChatMessage` 是宿主保存的一条消息，`ctx.message`、`recent_messages`、`messages_between`、`wait_message` 和 `RecallRequest.messages` 都返回它。
+
+| 字段 | 内容 |
+|---|---|
+| `id` | 宿主内部的消息 ID，`report_memory_progress` 使用它 |
+| `platform`、`bot_id`、`scene` | 平台名、本场景的 Bot 账号、场景 |
+| `platform_message_id` | 平台的消息 ID，回复、`needs_source` 和 `reply_to` 使用它；未发出的 Bot 消息为 None |
+| `sender` | `uid`（带平台前缀的账号）、`nickname`、`card`（群名片）、`role`（协议端给出的群身份，OneBot 为 `owner`、`admin`、`member`，没有时为 None） |
+| `time` | Unix 秒 |
+| `segments` | 消息段列表，见下表 |
+| `reply_to` | 被回复消息的平台 ID，没有时为 None |
+| `mentions_bot`、`is_self` | 是否提及 Bot、是否 Bot 自己发的 |
+| `send_status` | 收到的消息为 `received`；Bot 的消息为 `sent`、`failed`、`unconfirmed` 或 `simulated` |
+| `recalled` | 是否已撤回 |
+
+每个 `Segment` 有 `type` 和 `data`。宿主统一以下几种段，其余段沿用协议端的类型名和字段，`data` 原样保留。
+
+| `type` | `data` |
+|---|---|
+| `text` | `text` |
+| `mention` | `user`：带平台前缀的账号，提及全体成员时为 `all` |
+| `reply` | `id`：被回复消息的平台 ID |
+| `image` | 协议端的图片字段，OneBot 常见 `file`、`url`、`summary`；QQ 表情包的 `sub_type` 不为 0 |
+| `audio` | 协议端的语音字段，OneBot 的 `record` 段统一为 `audio` |
+| `face`、`json`、`forward`、`file`、`video` 等 | OneBot 的原始字段，例如 `face` 的 `id`、`json` 的 `data`（卡片 JSON 文本）、`forward` 的 `id` |
+
+`message_text(message, names=None)` 返回消息的文字，媒体和提及按聊天上下文的写法变成占位：`[图片1]`、`[语音1]`、`[提及 onebot:70001]`、`[提及全体成员]`，卡片写成 `[卡片：…]`，其他段写成 `[类型：主要字段]` 或 `[类型]`，回复段不输出。`names` 把账号换成显示名，例如 `{"onebot:70001": "小明"}` 时写成 `[提及 小明]`。插件需要把消息交给模型或写进总结时用它，不必自己逐段拼接。
+
+### 通知
+
+`@on_notice` 收到的 `Notice` 字段如下。
+
+| 字段 | 内容 |
+|---|---|
+| `scene` | 通知所在的场景 |
+| `notice_type`、`sub_type` | 通知类型和子类型 |
+| `user_id`、`operator_id` | 相关账号和操作者，带平台前缀；没有时为 None |
+| `time` | Unix 秒 |
+| `platform_message_id` | 撤回通知中被撤回消息的平台 ID |
+| `duration` | 禁言通知的秒数 |
+| `raw` | 协议端的原始事件 |
+
+OneBot 的通知按原来的 `notice_type` 和 `sub_type` 转发，常见的有：
+
+| 通知 | 写法 |
+|---|---|
+| 入群、退群 | `group_increase`（`approve`、`invite`）、`group_decrease`（`leave`、`kick`、`kick_me`） |
+| 撤回 | `group_recall`、`friend_recall` |
+| 禁言 | `group_ban`（`ban`、`lift_ban`），`duration` 为秒数 |
+| 戳一戳 | `notify.poke` |
+| 管理员变动、群文件上传 | `group_admin`（`set`、`unset`）、`group_upload` |
+
+通知只送到启用了这个插件的场景，私聊通知的场景为 `onebot:private:<QQ>`。
+
+## 卡片与图片
+
+`len_bot.text_cards` 把文字排成图片卡片，自动换行和分页，`len_bot.image_assets` 校验图片。两者都是稳定的公共接口。
+
+```python
+import asyncio
+from pathlib import Path
+from len_bot.text_cards import CardSection, TextCards
+
+cards = TextCards(Path(self.ctx.config["font_path"]))
+pages = await asyncio.to_thread(cards.render, "今日日程", "11 月 1 日",
+                                [CardSection("20:00", "直播")], source="示例日历")
+for page in pages:
+    await ctx.reply_image(page.data, page.text)
+```
+
+- `TextCards(font)` 的字体必须是字体文件的绝对路径，宿主不附带字体。插件可以把字体放进自己的 `assets/`（打包时一起发行，注意字体许可），或者做成 `path` 类型的配置项。
+- `render(title, subtitle, sections, source=...)` 返回 `CardPage` 列表，每页有 PNG 字节 `data` 和这一页的文字 `text`。超过 32 页时报错。`text` 适合作为图片说明交给 `reply_image`，聊天模型之后读到的是这段文字。
+- `image_assets.inspect_image(data)` 校验图片字节，返回 `(MIME 类型, 宽, 高, 是否动图)`；只接受 PNG、JPEG、GIF、WebP，上限是 `MAX_IMAGE_BYTES`（10 MB）和 `MAX_IMAGE_PIXELS`（2500 万像素），不符合时抛出 `ValueError`。插件从外部服务取到图片后先校验再发送。
+- 排版和绘图占用 CPU，用 `asyncio.to_thread` 调用，以免阻塞聊天主循环。
 
 ## 单次生成、工作与定点播报
 
@@ -579,7 +676,8 @@ async def check():
 ```
 
 - `scenes` 和 `owners` 可以在构造时指定，`scene`／`scene_list` 参数按 `scenes` 校验。
-- `message(text, scene=..., sender=..., parts=...)` 模拟身份和消息，返回是否被接管。`parts` 是追加在文字之后的公开 `Segment` 列表，可验证提及或媒体的接管边界。
+- `message(text, scene=..., sender=..., parts=...)` 模拟身份和消息，返回是否被接管。`parts` 是追加在文字之后的公开 `Segment` 列表，可验证提及或媒体的接管边界。处理器停在 `wait_message` 时 `message` 立即返回，下一次 `message` 作为回答，并等处理器继续执行完。
+- `notice(notice_type, sub_type=..., user=..., operator=..., scene=..., message_id=..., duration=..., raw=...)` 按宿主的分发调用 `@on_notice`，返回运行的处理器数，处理器出错时报错。
 - `deliveries` 包含插件、场景、组合内容、reply_to 和 simulated 状态。
 - `events()` 用于查看实际记录的插件事件。
 - `recall(scene=..., recap=None, tasks=(), budget_chars=1500)` 用最近 8 条 `add_message` 的消息调用 `@recall`，返回聊天实际收到的召回条目。

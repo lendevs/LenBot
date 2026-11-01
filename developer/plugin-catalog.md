@@ -65,6 +65,16 @@
 
 目录是插件的分发索引。手动填写仓库地址的安装和从目录安装使用同一个管理器。
 
+## 社区插件目录
+
+随附目录只收录官方插件。第三方插件收录在社区目录仓库 `lendevs/lenbot-plugin-index` 的 `catalog.json` 中，作者提交 Pull Request 加入条目，用户在**目录来源**填入它的地址。收录条件和提交方式见文档站[发布到插件目录](https://lendevs.github.io/LenBot/develop/plugin-catalog)。
+
+`scripts/check_plugin_catalog.py` 检查任一目录文件：每个条目的 `ref` 必须是完整的提交号，脚本把这个提交取到临时目录，核对 `plugin.toml` 是有效清单、名称、版本、接口、权限和 `requires_lenbot` 与条目一致，并且有 `__init__.py` 和许可证文件。插件代码不会被导入或运行。社区目录仓库的 CI 对改动的条目运行它，也可以对随附目录运行。
+
+```sh
+uv run --no-sync python scripts/check_plugin_catalog.py src/len_bot/next/plugins/plugin_catalog.json
+```
+
 ## 官方插件发行准备
 
 群聊总结、GSUID、A-SOUL、哔哩哔哩和[插件模板](https://github.com/lendevs/lenbot-plugin-template)都已经在 lendevs 组织下公开。随附的目录收录四个业务插件，模板作为开发的起点。

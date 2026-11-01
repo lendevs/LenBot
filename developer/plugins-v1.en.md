@@ -45,7 +45,7 @@ permissions = ["send", "history"]
 |---|---|
 | `send` | Send messages in enabled scenes, including `ctx.reply` |
 | `events` | Wake the chat model via `emit_event` |
-| `history` | Read `recent_messages` and `messages_between` |
+| `history` | Read `recent_messages` and `messages_between`; `wait_message` |
 | `memory` | Call `ctx.memory` |
 | `generate` | Run single-shot model calls via `ctx.generate` |
 | `delegate` | Create background worker tasks via `ctx.delegate` on behalf of the requester |
@@ -134,7 +134,7 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 | `@command("query", "Description")` | `self, ctx: Invocation, args: str` | Matches `/query` and passes remaining text in `args` |
 | `@fullmatch("live today", "Description")` | `self, ctx: Invocation` | Matches exact trimmed plain text |
 | `@regex(r"find (?P<name>.+)", "Description", priority=0)` | `self, ctx: Invocation, match` | Python `re.fullmatch`; read named groups from `match` |
-| `@on_notice("group_increase")` | `self, ctx: Invocation, notice` | OneBot `notice_type` or `type.sub_type` |
+| `@on_notice("group_increase")` | `self, ctx: Invocation, notice` | Notice type or `type.sub_type`; see [Notices](#notices) |
 | `@tool("plugin_read", "Full description", summary="Short summary", needs_source=False)` | `self, ctx: Invocation, ...` | Typed schema for chat model tool discovery; returns `str` or JSON value |
 | `@background(every="5m")` | `self, ctx: PluginContext` | Waits one interval after each run finishes (minimum 10 seconds) |
 | `@recall()` | `self, request: RecallRequest` | Supplies per-turn automatic recall when `memory_plugin` names this plugin |
@@ -315,10 +315,100 @@ Override synchronous `unavailable_tools(self, scene: str) -> dict[str, str]` to 
 | Scene clock | `ctx.now()`, `ctx.timezone()` |
 | Owner check | `ctx.require_owner()` |
 | Verified public image | `await ctx.fetch_image(url, timeout_seconds=15)` |
+| Wait for the next message | `await ctx.wait_message(timeout_seconds=60, sender="same")`; see [Multi-turn conversations](#multi-turn-conversations) |
+| Message words | `message_text(message, names=None)`; see [Messages](#messages) |
 
 `self.ctx` (`PluginContext`) is used in `start()`, `stop()`, and `@background`, where scene-bound methods take an explicit `scene` argument. `self.ctx.scenes` lists enabled scenes whose chat switch is currently on. `Sent.status` is one of `sent`, `failed`, `unconfirmed`, `simulated`, or `partial`.
 
-Public image and card rendering helpers are `len_bot.image_assets` (`inspect_image`, `MAX_IMAGE_BYTES`, `MAX_IMAGE_PIXELS`, `OriginalImage`) and `len_bot.text_cards` (`CardSection`, `TextCards`, `CardPage`). Run CPU-bound rendering in `await asyncio.to_thread(...)`.
+Card and image helpers are described in [Cards and images](#cards-and-images).
+
+### Multi-turn conversations
+
+`Invocation.wait_message` waits for the next message in the same scene, for a plugin that asks a question and waits for the answer:
+
+```python
+@command("survey", "Ask one question")
+async def survey(self, ctx: Invocation, args: str) -> None:
+    await ctx.reply("What is your favourite colour?")
+    answer = await ctx.wait_message(timeout_seconds=60)
+    if answer is None:
+        await ctx.reply("Time is up")
+        return
+    await ctx.reply("Noted: " + message_text(answer))
+```
+
+- `sender="same"` (default) waits for this invocation's sender, an account such as `onebot:70001` waits for that account, and `None` waits for anyone in the scene. Invocations without a triggering message (cron, notices, tools without a source) cannot use `"same"`.
+- The awaited message goes to the plugin instead of waking the chat model, like a command; the handling report enters later context. Whatever the waited sender sends next goes to the plugin, commands included.
+- `timeout_seconds` is above 0 and at most 600; the call returns `None` when it passes. One wait per scene and sender (or anyone) at a time; a second wait raises. Reloading or disabling the plugin cancels the wait with its invocation.
+- Requires the `history` permission. Works under process isolation.
+- Cancelling the wait through `asyncio.timeout` or task cancellation releases it in the host, so subsequent messages resume normal dispatch. This applies to both inline and process isolation.
+
+## Messages and notices
+
+### Messages
+
+`ChatMessage` is one stored message, returned by `ctx.message`, `recent_messages`, `messages_between`, `wait_message`, and `RecallRequest.messages`.
+
+| Field | Content |
+|---|---|
+| `id` | The host's message ID, used by `report_memory_progress` |
+| `platform`, `bot_id`, `scene` | Platform name, the scene's bot account, scene |
+| `platform_message_id` | The platform's message ID for replies, `needs_source`, and `reply_to`; None for a bot message that was not sent |
+| `sender` | `uid` (prefixed account), `nickname`, `card` (group card), `role` (the group role the protocol reports; OneBot uses `owner`, `admin`, `member`; otherwise None) |
+| `time` | Unix seconds |
+| `segments` | Message segments, below |
+| `reply_to` | Platform ID of the replied message, or None |
+| `mentions_bot`, `is_self` | Whether it mentions the bot; whether the bot sent it |
+| `send_status` | `received` for received messages; `sent`, `failed`, `unconfirmed`, or `simulated` for the bot's |
+| `recalled` | Whether it was recalled |
+
+Each `Segment` has `type` and `data`. The host normalizes the following; other segments keep the protocol's type name and `data` unchanged.
+
+| `type` | `data` |
+|---|---|
+| `text` | `text` |
+| `mention` | `user`: a prefixed account, or `all` for everyone |
+| `reply` | `id`: platform ID of the replied message |
+| `image` | The protocol's image fields; OneBot commonly has `file`, `url`, `summary`; QQ stickers have a `sub_type` other than 0 |
+| `audio` | The protocol's voice fields; OneBot `record` segments become `audio` |
+| `face`, `json`, `forward`, `file`, `video`, and others | Original OneBot fields, e.g. `face.id`, `json.data` (card JSON text), `forward.id` |
+
+`message_text(message, names=None)` returns the words of a message with the same placeholders as the chat context: `[图片1]`, `[语音1]`, `[提及 onebot:70001]`, `[提及全体成员]`, `[卡片：…]` for cards, and `[type：main fields]` or `[type]` for other segments; reply segments are left out. `names` maps accounts to display names for mentions. Use it when handing messages to a model or writing summaries instead of joining segments by hand.
+
+### Notices
+
+| `Notice` field | Content |
+|---|---|
+| `scene` | Scene of the notice |
+| `notice_type`, `sub_type` | Notice type and subtype |
+| `user_id`, `operator_id` | Prefixed accounts involved and the operator, or None |
+| `time` | Unix seconds |
+| `platform_message_id` | Platform ID of the recalled message in recall notices |
+| `duration` | Seconds of a mute |
+| `raw` | The protocol's original event |
+
+OneBot notices keep their `notice_type` and `sub_type`. Common ones: `group_increase` (`approve`, `invite`), `group_decrease` (`leave`, `kick`, `kick_me`), `group_recall`, `friend_recall`, `group_ban` (`ban`, `lift_ban`, with `duration`), `notify.poke`, `group_admin` (`set`, `unset`), `group_upload`. Notices reach only scenes that enable the plugin; private notices use `onebot:private:<QQ>`.
+
+## Cards and images
+
+`len_bot.text_cards` lays out text as image cards with wrapping and pagination; `len_bot.image_assets` validates images. Both are stable public interfaces.
+
+```python
+import asyncio
+from pathlib import Path
+from len_bot.text_cards import CardSection, TextCards
+
+cards = TextCards(Path(self.ctx.config["font_path"]))
+pages = await asyncio.to_thread(cards.render, "Today", "1 November",
+                                [CardSection("20:00", "Live stream")], source="Example calendar")
+for page in pages:
+    await ctx.reply_image(page.data, page.text)
+```
+
+- `TextCards(font)` takes an absolute font file path; the host ships no font. Bundle one in the plugin's `assets/` (it is packaged with releases; mind the font license) or declare a `path` config field.
+- `render(title, subtitle, sections, source=...)` returns `CardPage` items with PNG bytes `data` and the page's words `text`; more than 32 pages raises. Pass `text` as the image description to `reply_image`; it is what the chat model reads later.
+- `image_assets.inspect_image(data)` validates image bytes and returns `(MIME type, width, height, animated)`. Only PNG, JPEG, GIF, and WebP within `MAX_IMAGE_BYTES` (10 MB) and `MAX_IMAGE_PIXELS` (25 million) pass; otherwise it raises `ValueError`. Validate images from external services before sending.
+- Layout and drawing are CPU-bound; call them through `asyncio.to_thread`.
 
 ## Single generation, work tasks and scheduled jobs
 
@@ -362,6 +452,8 @@ async def check():
 
 - Pass `scenes`, `owners`, `now=lambda: 1791298800`, or `data=Path("tests/data-v1"), data_version=1` (runs `migrate_data` before `start()`) in the constructor.
 - `message(text, scene=..., sender=..., parts=...)` and `add_message(...)` support `Segment` lists to test mention and media matching boundaries; `add_message` returns a `ChatMessage` whose `platform_message_id` can be passed as `source_message_id`. A message belongs to the current simulated turn by default; `received=False` stores one the session has not taken in yet, and `new_turn(scene)` starts the next turn so earlier messages stop being valid sources.
+- When a handler stops in `wait_message`, `message` returns at once; the next `message` answers it and waits for the handler to continue to its end.
+- `notice(notice_type, sub_type=..., user=..., operator=..., scene=..., message_id=..., duration=..., raw=...)` dispatches to `@on_notice` as the host does and returns how many handlers ran; a handler error raises.
 - `recall(...)`, `memory(...)`, and `compact(...)` exercise `@recall`, `@memory_tool`, and `@compact` under host checks.
 - `preview_tools(scene)` returns discovery summaries, full descriptions, shared guides, schemas, `needs_source`, allowed scenes, and unavailability reasons.
 - `wait_tasks(name_prefix)` awaits one-shot background tasks registered via `start_task` matching `name_prefix`.
