@@ -1873,6 +1873,7 @@ export default {
       features: '{n} feature | {n} features',
       errors: '{n} error in the last hour | {n} errors in the last hour',
     },
+    chatPlatforms: { onebot: 'QQ', telegram: 'Telegram', feishu: 'Feishu' },
     permissions: {
       title: 'Permissions',
       undeclared: 'No permissions declared; it can use every host capability',
@@ -2063,6 +2064,7 @@ export default {
       previous: 'Previous version',
       compatible: 'Compatible with',
       requires: 'host {host} · Python {python} · {platforms}',
+      chatPlatforms: 'Chat platforms',
       dependencies: 'Dependencies',
       reload: 'Takes effect by',
       reloadBy: { plugin: 'reloading this plugin', host: 'restarting LenBot' },

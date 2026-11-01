@@ -120,6 +120,19 @@ def test_text_mentions_are_split_on_utf16_offsets():
         Segment("text", {"text": " 看 @bob 和 "}), Segment("mention", {"user": "telegram:502"})]
 
 
+def test_commands_addressed_to_this_bot_lose_the_bot_suffix():
+    message = _message("/日程@Len_Bot 明天 /start@other_bot", entities=[
+        {"type": "bot_command", "offset": 0, "length": 11},
+        {"type": "bot_command", "offset": 15, "length": 16},
+    ])
+    parsed = parse_update({"update_id": 1, "message": message}, bot=BOT, username="len_bot")
+    assert parsed.mentions_bot
+    assert parsed.segments == [Segment("text", {"text": "/日程"}), Segment("text", {"text": " 明天 /start@other_bot"})]
+    other = parse_update({"update_id": 2, "message": _message("/start@other_bot", entities=[
+        {"type": "bot_command", "offset": 0, "length": 16}])}, bot=BOT, username="len_bot")
+    assert not other.mentions_bot and other.segments == [Segment("text", {"text": "/start@other_bot"})]
+
+
 def test_media_replies_and_forum_topics():
     photo = _message(caption="看图", photo=[
         {"file_id": "small", "file_unique_id": "s", "width": 90, "height": 90},

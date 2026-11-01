@@ -3,12 +3,13 @@
 import asyncio
 import time
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 import pytest
 from websockets.asyncio.server import serve
 
-from len_bot.next.chat.tools import build_tools, tool_unavailable_reasons
+from len_bot.next.chat.tools import build_tools, tool_catalog, tool_unavailable_reasons
 from len_bot.next.config import load_host_config
 from len_bot.next.configuration.chat import ImageSettings
 from len_bot.next.media.images import LookArguments, load_look_image
@@ -20,6 +21,7 @@ from len_bot.next.platform.identity import validate_scene
 from len_bot.next.platform.telegram import parse_update
 from len_bot.next.platform.onebot import OneBot
 from len_bot.next.platform.telegram import Telegram
+from len_bot.next.plugins.host import PluginHost
 from len_bot.next.runtime.network import NetworkRuntime
 from len_bot.next.storage.store import Store
 from test_scene_commands_protocol import MEMBER, SCENE, Peer, until, write_config
@@ -133,3 +135,75 @@ async def test_look_downloads_an_image_a_platform_names_by_reference(tmp_path):
         again = await load_look_image(store, TELEGRAM_SCENE, LookArguments(message='8'), ImageSettings(),
                                       fake_ip_networks=(), fetch_media=fetch_media)
         assert again[1:] == (True, 'cache') and len(requested) == 1
+
+
+PLUGIN = '''from len_bot.plugin import Mention, Plugin, Text, command
+
+
+class Where(Plugin):
+    @command('在哪', '说出本群的平台和 Bot 账号')
+    async def where(self, ctx, args):
+        await ctx.reply(ctx.platform + ' ' + ctx.bot_id + ' ' + self.ctx.bot_for(ctx.scene))
+
+    @command('全员', '提及全体成员')
+    async def everyone(self, ctx, args):
+        sent = await ctx.reply_parts([Mention('all'), Text(' 开会了')])
+        await ctx.reply(sent.report)
+'''
+
+
+def plugin_package(root, *, chat_platforms=None):
+    package = root / 'plugins' / 'where'
+    package.mkdir(parents=True)
+    manifest = (Path(__file__).parent / 'fixtures/plugins/sample/plugin.toml').read_text().replace(
+        'name = "sample"', 'name = "where"')
+    if chat_platforms is not None:
+        manifest = manifest.replace('interface = 1\n', f'interface = 1\nchat_platforms = {chat_platforms}\n', 1)
+    (package / 'plugin.toml').write_text(manifest)
+    (package / '__init__.py').write_text(PLUGIN)
+    return package
+
+
+@pytest.mark.asyncio
+async def test_a_plugin_command_after_at_bot_is_handled_in_a_telegram_group(tmp_path, monkeypatch):
+    api = BotAPI()
+    monkeypatch.setattr(telegram, '_transport', lambda proxy: httpx.MockTransport(api.handle))
+    plugin_package(tmp_path)
+    plugin_scene = {**SCENE_SETTINGS, 'plugins': ['where']}
+    write_config(tmp_path, onebot=None, bot_id=f'telegram:{BOT}', owners=['telegram:501'],
+                 telegram={'bot_id': f'telegram:{BOT}', 'bot_token': TOKEN},
+                 plugins={'paths': ['plugins'], 'where': {}}, scenes={TELEGRAM_SCENE: plugin_scene})
+    config = load_host_config(tmp_path)
+    persona = load_persona(tmp_path / 'persona')
+    plugins = PluginHost(config, core_tools={tool['function']['name'] for tool in tool_catalog(platform=True)})
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as model:
+            runtime = NetworkRuntime(config, [(config.scene_config(TELEGRAM_SCENE), persona)], store, model,
+                                     plugins=plugins)
+            running = asyncio.create_task(runtime.run(manage_signals=False))
+            await until(lambda: runtime.status == 'running')
+            try:
+                api.push(_message('@len_bot /在哪', message_id=5, entities=[{'type': 'mention', 'offset': 0, 'length': 8}]))
+                api.push(_message('/全员@len_bot', message_id=6, entities=[{'type': 'bot_command', 'offset': 0, 'length': 11}]))
+                await until(lambda: [method for method, _ in api.calls].count('sendMessage') == 3)
+                texts = [params['text'] for method, params in api.calls if method == 'sendMessage']
+                assert texts[0] == f'telegram telegram:{BOT} telegram:{BOT}'
+                assert texts[1] == ' 开会了'
+                assert texts[2].endswith('telegram 没有全员提醒，已省略提及全体成员')
+            finally:
+                runtime.stop()
+                await asyncio.wait_for(running, 3)
+                await plugins.close()
+
+
+def test_a_plugin_declaring_chat_platforms_refuses_other_platforms_scenes(tmp_path):
+    plugin_package(tmp_path, chat_platforms='["onebot"]')
+    write_config(tmp_path, onebot={'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
+                 telegram={'bot_id': f'telegram:{BOT}', 'bot_token': TOKEN},
+                 plugins={'paths': ['plugins'], 'where': {}},
+                 scenes={SCENE: {**SCENE_SETTINGS, 'plugins': ['where']},
+                         TELEGRAM_SCENE: {**SCENE_SETTINGS, 'plugins': ['where']}})
+    plugins = PluginHost(load_host_config(tmp_path), core_tools=set())
+    record = plugins.plugins['where']
+    assert record.status == 'failed'
+    assert f'插件只支持 onebot 平台，不能在 {TELEGRAM_SCENE} 启用' in record.error

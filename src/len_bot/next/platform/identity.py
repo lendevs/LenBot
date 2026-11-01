@@ -9,6 +9,8 @@ import sys
 ACCOUNTS = {'onebot': r'[1-9][0-9]*', 'telegram': r'[1-9][0-9]*', 'feishu': r'ou_[A-Za-z0-9]+'}
 GROUPS = {'onebot': r'[1-9][0-9]*', 'telegram': r'-[1-9][0-9]*', 'feishu': r'oc_[A-Za-z0-9]+'}
 ACCOUNT_EXAMPLES = {'onebot': '70001', 'telegram': '70001', 'feishu': 'ou_7d8a6e'}
+# Platforms whose groups can mention every member at once; Telegram has no such mention.
+MENTION_ALL = frozenset({'onebot', 'feishu'})
 
 
 def account_pattern(platform: str) -> str:

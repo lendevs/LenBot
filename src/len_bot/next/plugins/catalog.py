@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ..configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings, catalog_url
 from ...plugin import INTERFACE
 from .install import repository_url, revision_ref
-from .manifest import PluginPermission, host_satisfies
+from .manifest import ChatPlatform, PluginPermission, host_satisfies
 
 CATALOG = Path(__file__).with_name('plugin_catalog.json')
 
@@ -38,12 +38,14 @@ class CatalogEntry(BaseModel):
     # The host capabilities the plugin uses, as its plugin.toml declares them (or will); None: not stated.
     # Shown before installation; what the installed plugin may do is still its own manifest.
     permissions: list[PluginPermission] | None = None
+    # Chat platforms the plugin declares; None: every platform. Checked against the manifest on install.
+    chat_platforms: list[ChatPlatform] | None = Field(default=None, min_length=1)
 
-    @field_validator('permissions')
+    @field_validator('permissions', 'chat_platforms')
     @classmethod
-    def distinct_permissions(cls, value: list[str] | None) -> list[str] | None:
+    def distinct_permissions(cls, value: list[str] | None, info) -> list[str] | None:
         if value is not None and len(set(value)) != len(value):
-            raise ValueError('permissions 不能重复')
+            raise ValueError(f'{info.field_name} 不能重复')
         return value
 
     @field_validator('name')

@@ -60,6 +60,12 @@ const facts = computed(() => {
           })
         : '',
     ],
+    [
+      t('plugins.version.chatPlatforms'),
+      (manifest.value?.chat_platforms ?? [])
+        .map((platform) => t(`plugins.chatPlatforms.${platform}`))
+        .join(t('personas.separator')),
+    ],
     [t('plugins.version.dependencies'), (manifest.value?.dependencies ?? []).join(t('personas.separator'))],
     [
       t('plugins.version.reload'),

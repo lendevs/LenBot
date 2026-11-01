@@ -70,10 +70,21 @@ def _text_segments(text: str, entities: list, *, bot: int, username: str | None)
     data = text.encode("utf-16-le")
     segments: list[Segment] = []
     mentioned, position = False, 0
-    for entity in sorted((item for item in entities if item.get("type") in {"mention", "text_mention"}),
+    for entity in sorted((item for item in entities if item.get("type") in {"mention", "text_mention", "bot_command"}),
                          key=lambda item: item["offset"]):
         start, end = entity["offset"] * 2, (entity["offset"] + entity["length"]) * 2
         if start < position:
+            continue
+        if entity["type"] == "bot_command":
+            command, _, target = data[start:end].decode("utf-16-le").partition("@")
+            if not target or username is None or target.casefold() != username.casefold():
+                continue
+            # /command@ThisBot: the command without its bot suffix, addressed to the bot.
+            if start > position:
+                segments.append(Segment("text", {"text": data[position:start].decode("utf-16-le")}))
+            segments.append(Segment("text", {"text": command}))
+            mentioned = True
+            position = end
             continue
         if entity["type"] == "text_mention":
             user = entity["user"]["id"]

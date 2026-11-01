@@ -1819,6 +1819,7 @@ export default {
       features: '{n} 项功能',
       errors: '近 1 小时报错 {n} 次',
     },
+    chatPlatforms: { onebot: 'QQ', telegram: 'Telegram', feishu: '飞书' },
     permissions: {
       title: '权限',
       undeclared: '未声明权限，可使用全部宿主能力',
@@ -2001,6 +2002,7 @@ export default {
       previous: '上一版本',
       compatible: '兼容范围',
       requires: '宿主 {host} · Python {python} · {platforms}',
+      chatPlatforms: '聊天平台',
       dependencies: '依赖',
       reload: '生效方式',
       reloadBy: { plugin: '重载插件', host: '重启 LenBot' },
