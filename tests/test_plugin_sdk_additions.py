@@ -34,6 +34,14 @@ class Survey(Plugin):
         finally:
             first.cancel()
 
+    @command('取消等待', '取消本次等待')
+    async def cancel_wait(self, ctx, args):
+        try:
+            async with asyncio.timeout(0.05):
+                await ctx.wait_message(timeout_seconds=30)
+        except TimeoutError:
+            await ctx.reply('已取消等待')
+
     @on_notice('group_increase')
     async def welcome(self, ctx, notice):
         await ctx.reply('欢迎 ' + notice.user_id)
@@ -119,3 +127,16 @@ async def test_waiting_needs_the_history_permission(tmp_path):
     async with PluginTest(make_package(tmp_path, permissions='["send"]')) as bot:
         with pytest.raises(RuntimeError, match='history'):
             await bot.message('/问卷')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('isolation', ['inline', 'process'])
+async def test_cancelled_wait_releases_messages_and_allows_a_new_wait(tmp_path, isolation):
+    async with PluginTest(make_package(tmp_path, isolation=isolation)) as bot:
+        assert await bot.message('/取消等待')
+        await bot.wait_tasks('命令 /取消等待')
+        assert bot.deliveries[-1].text == '已取消等待'
+        assert not await bot.message('普通聊天')
+        assert await bot.message('/问卷')
+        assert await bot.message('蓝色')
+        assert bot.deliveries[-1].text == '记下了：蓝色'

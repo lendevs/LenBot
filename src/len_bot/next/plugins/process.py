@@ -126,7 +126,7 @@ class Worker:
         self.reader: asyncio.Task | None = None
         self.ids = itertools.count(1)
         self.pending: dict[int, asyncio.Future] = {}
-        self.calls: set[asyncio.Task] = set()
+        self.calls: dict[int, asyncio.Task] = {}
         # Running invocations triggered by a real message: token -> (scene, message).
         self.invocations: dict[str, tuple[str, ChatMessage]] = {}
         # Every running invocation: token -> the host task forwarding it, which a wait suspends.
@@ -190,9 +190,16 @@ class Worker:
                     if future is not None and not future.done():
                         future.set_result(message)
                 elif message["type"] == "call":
+                    number = message["id"]
                     task = asyncio.create_task(self._answer(message))
-                    self.calls.add(task)
-                    task.add_done_callback(self.calls.discard)
+                    self.calls[number] = task
+                    task.add_done_callback(lambda _, number=number: self.calls.pop(number, None))
+                elif message["type"] == "cancel":
+                    task = self.calls.get(message["id"])
+                    if task is not None:
+                        task.cancel()
+                        # Release the wait before serving the worker's next capability call.
+                        await asyncio.gather(task, return_exceptions=True)
                 else:
                     raise ValueError(f"未知的消息类型：{line[:200]!r}")
         except Exception as error:
@@ -316,5 +323,5 @@ class Worker:
                     raise
             if self.reader is not None:
                 await self.reader
-            for task in tuple(self.calls):
+            for task in tuple(self.calls.values()):
                 task.cancel()

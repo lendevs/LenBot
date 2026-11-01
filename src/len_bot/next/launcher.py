@@ -143,7 +143,7 @@ def migrate_container_volume(root: Path) -> None:
                          f'回到旧版本需要从 {root.parent / "backups"} 中的快照恢复，或改用 {previous} 的镜像。')
     snapshot = root.parent / 'backups' / (time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
     print(f'LenBot：实例数据来自{f" {previous}" if previous else "更早的版本"}，先保存快照 {snapshot}，再迁移到 {current}。', flush=True)
-    upgrade_instance(root, snapshot)
+    upgrade_instance(root, snapshot, discard_restored=True)
     follow_release_worker(root, current)
     print('LenBot：迁移完成。', flush=True)
 

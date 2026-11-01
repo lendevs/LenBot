@@ -417,7 +417,7 @@ def test_new_updater_protocol_gives_commands_instead_of_preparing(make, monkeypa
     backend = Backend()
     controller = make(backend)
     state = run(controller, 'prepare', {'tag': 'v0.2.0'})
-    assert '运行新目录中的 run' in state['error'] and 'prepare' not in backend.calls and backend.running
+    assert '复制到新目录' in state['error'] and '移到' not in state['error'] and 'prepare' not in backend.calls and backend.running
 
 
 def test_docker_updater_switch_changes_only_the_updater_image(tmp_path):

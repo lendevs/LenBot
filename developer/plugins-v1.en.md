@@ -342,6 +342,7 @@ async def survey(self, ctx: Invocation, args: str) -> None:
 - The awaited message goes to the plugin instead of waking the chat model, like a command; the handling report enters later context. Whatever the waited sender sends next goes to the plugin, commands included.
 - `timeout_seconds` is above 0 and at most 600; the call returns `None` when it passes. One wait per scene and sender (or anyone) at a time; a second wait raises. Reloading or disabling the plugin cancels the wait with its invocation.
 - Requires the `history` permission. Works under process isolation.
+- Cancelling the wait through `asyncio.timeout` or task cancellation releases it in the host, so subsequent messages resume normal dispatch. This applies to both inline and process isolation.
 
 ## Messages and notices
 

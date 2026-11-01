@@ -5,6 +5,7 @@ import asyncio
 from contextlib import ExitStack
 import json
 from pathlib import Path
+import shutil
 import sys
 import tomllib
 from importlib.metadata import PackageNotFoundError, version
@@ -129,8 +130,12 @@ def apply_instance(root: Path) -> None:
         _apply_locked(root, trials)
 
 
-def upgrade_instance(root: Path, snapshot: Path) -> None:
-    """Back up, apply and check a stopped source installation, restoring on failure."""
+def upgrade_instance(root: Path, snapshot: Path, *, discard_restored: bool = False) -> None:
+    """Back up, apply and check a stopped source installation, restoring on failure.
+
+    With discard_restored, a snapshot the instance was restored from is removed, so a migration that keeps
+    failing on every container restart does not leave one full copy per attempt.
+    """
     with ExitStack() as locks:
         locks.enter_context(instance_lock(root))
         trials = _trial_roots(root)
@@ -143,6 +148,8 @@ def upgrade_instance(root: Path, snapshot: Path) -> None:
             _apply_locked(root, trials)
         except BaseException:
             restore(root, snapshot)
+            if discard_restored:
+                shutil.rmtree(snapshot, ignore_errors=True)
             raise
 
 
