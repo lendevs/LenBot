@@ -4,13 +4,12 @@
 
 ## 官方插件目录
 
-内置插件目录（`plugin_catalog.json`）收录四个官方插件，可在首次配置向导或面板**插件 → 发现插件**中直接安装：
+内置插件目录（`plugin_catalog.json`）收录三个官方插件，可在首次配置向导或面板**插件 → 发现插件**中直接安装：
 
 | 插件 | 主要功能 |
 |---|---|
 | [群聊总结与群工作](https://github.com/lendevs/lenbot-plugin-group-digest)（`group_digest`） | `/群日报` 生成图文总结卡片并支持每日定时播报，`/群总结` 生成文字摘要，`/群工作` 委派后台长任务；同时提供对应的聊天模型工具 |
 | [GSUID Core 桥接](https://github.com/lendevs/lenbot-plugin-gscore-adapter)（`gscore_adapter`） | `/gs` 将指令桥接至独立运行的 GSUID Core 服务并由宿主发送返回图文，提供 `/gs连接` 重连指令与连接状态查询工具 |
-| [A-SOUL 日程与动态](https://github.com/lendevs/lenbot-plugin-asoul)（`asoul`） | 读取日历通过 `/日程` 发送日程卡片并在开播前推送场景事件，提供成员动态、往年今日与二创检索及卡片发送工具 |
 | [哔哩哔哩](https://github.com/lendevs/lenbot-plugin-bilibili)（`bilibili`） | 公开视频、分 P、搜索与评论查询，订阅直播间开播／下播与关注 UP 主动态推送，以及经主人明确授权的账号读取与点赞收藏操作 |
 
 官方目录默认使用随当前宿主版本测试固定的提交；也可在**发现插件 → 目录来源**中填入自定义远程目录地址。

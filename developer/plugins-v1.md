@@ -163,7 +163,7 @@ from len_bot.plugin import Plugin, Invocation, command, fullmatch, regex, tool, 
 
 插件先于宿主命令匹配。插件显式注册 `/角色` 等同名命令时由插件处理；否则 `/角色` 交给宿主，只有主人和全局管理员可以切换角色。需要保留宿主命令时，不要给插件注册同名命令。
 
-部署方可以只关掉插件的某几条规则，插件其余功能继续可用：在 `plugins.disabled_rules` 里按插件名列出，命令写 `/日程`，全文写原文，正则写模式字符串，例如 `"disabled_rules": {"asoul": ["今日直播"]}`。被关掉的文本当普通聊天处理。写了插件没有的规则时，日志里有一条警告。
+部署方可以只关掉插件的某几条规则，插件其余功能继续可用：在 `plugins.disabled_rules` 里按插件名列出，命令写 `/群日报`，全文写原文，正则写模式字符串，例如 `"disabled_rules": {"group_digest": ["/群日报"]}`。被关掉的文本当普通聊天处理。写了插件没有的规则时，日志里有一条警告。
 
 处理结果会作为背景记录到之后的对话上下文中，等下一次唤醒时供模型参考。发送消息需要调用 `await ctx.reply("文字")`，处理器的返回值只作记录。聊天模型选择调用某个 tool，属于一轮聊天的一部分；插件的 tool 内部如果调用模型，要在插件说明中写清楚。
 
@@ -368,7 +368,6 @@ class Example(Plugin):
 
 | 插件 | 工具 |
 |---|---|
-| A-SOUL | 四项，即日程、动态、二创和发卡片 |
 | B 站 | 五项，即视频、搜索、监测、账号读取和账号写入 |
 | 群聊总结 | 两项 |
 | GSUID | 一项 |
@@ -711,7 +710,7 @@ async with PluginTest(package, models=models, now=lambda: fixed_time) as bot:
     print(bot.preview_tools())
 ```
 
-测试模型配置直接发起真实 HTTP 请求，协议测试可指向本机模拟服务。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。四个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。
+测试模型配置直接发起真实 HTTP 请求，协议测试可指向本机模拟服务。模板同时提供返回 JSON 的查询工具 `counter_read`，以及在后台生成并自行发送的 `counter_card`。三个业务插件和[回放场景](../examples/plugin-tools/README.md)用于核对真实 ID、时间范围和结果的含义。
 
 在 GitHub 上打开[插件模板仓库](https://github.com/lendevs/lenbot-plugin-template)，点击 Use this template 生成自己的仓库。
 
