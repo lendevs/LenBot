@@ -11,7 +11,7 @@ import Field from '../../ui/Field.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 import RawRecord from '../groups/tasks/RawRecord.vue'
 import ModelName from './ModelName.vue'
-import { candidateOf, hasKey, newBinding, useForm, type ProviderRow } from './form'
+import { candidateOf, chatRoles, hasKey, newBinding, useForm, type ProviderRow } from './form'
 
 /** Read a provider's models and send a test request; with `binding`, the test uses that role's settings. */
 const props = defineProps<{ row: ProviderRow; binding?: ChatBinding }>()
@@ -30,7 +30,7 @@ const boundModel = computed(() => {
   if (!value) return ''
   const bindings = embedding.value
     ? [value.memory_embedding, ...Object.values(value.learning_embeddings)]
-    : Object.values(value.roles)
+    : chatRoles.map((role) => value.roles[role])
   return bindings.find((item) => item?.provider === props.row.id && item.model)?.model ?? ''
 })
 watch(

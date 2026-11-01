@@ -257,7 +257,7 @@ async function save() {
           </Field>
         </template>
       </FormSection>
-      <FormSection v-if="draft.read || draft.search" :title="t('capabilities.web.network')">
+      <FormSection :title="t('capabilities.web.network')">
         <Field :label="t('capabilities.web.fakeIp')">
           <Textarea v-model="draft.fakeIp" :rows="2" mono placeholder="198.18.0.0/15" />
         </Field>

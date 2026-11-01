@@ -77,8 +77,7 @@ watch(scene, () => (inspected.value = null))
 
 <template>
   <div class="flex min-w-0 flex-col gap-4">
-    <!-- Without a task runner there are no skills to look at per group. -->
-    <div v-if="!data || data.directory" class="flex flex-wrap items-end gap-3">
+    <div class="flex flex-wrap items-end gap-3">
       <Field :label="t('capabilities.skills.group')" class="w-full sm:w-64">
         <Select
           v-model="scene"
