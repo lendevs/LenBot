@@ -146,7 +146,7 @@ Each method takes one entry decorator. Matching order is command, `fullmatch`, t
 
 Plugin commands match before built-in host commands. Registering `/角色` overrides the host persona-switching command in scenes where the plugin is active.
 
-Operators can disable individual text rules per plugin via `plugins.disabled_rules` in `lenbot.config.json` (for example `"disabled_rules": {"asoul": ["今日直播"]}` using `/command`, exact text, or regex pattern strings); disabled rules pass through as normal chat messages.
+Operators can disable individual text rules per plugin via `plugins.disabled_rules` in `lenbot.config.json` (for example `"disabled_rules": {"group_digest": ["/群日报"]}` using `/command`, exact text, or regex pattern strings); disabled rules pass through as normal chat messages.
 
 Handler return values are recorded as background context for subsequent chat turns; sending a message to the scene requires `await ctx.reply(...)`. If a `@tool` calls a model internally, state that in its description.
 
@@ -250,7 +250,6 @@ Group related list, search, and detail operations into one capability tool discr
 
 | Plugin | Tools |
 |---|---|
-| `asoul` | 4 (`schedule`, `dynamics`, `creations`, card sending) |
 | `bilibili` | 5 (video info, search, live/follow monitor, account read, account write) |
 | `group_digest` | 2 |
 | `gscore_adapter` | 1 |

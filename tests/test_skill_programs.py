@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from len_bot.next.configuration.tasks import WorkerSettings
+from len_bot.next.configuration.tasks import WorkerSettings, ready_task_browser, task_browser
 from len_bot.next.tools.skills import load_catalog, worker_catalog
 from len_bot.next.work.environment import environment_prompt
 
@@ -55,6 +55,26 @@ def test_the_local_sandbox_lists_what_its_task_runtime_holds(tmp_path: Path) -> 
     assert not programs & {'lenbot-browser', 'python:openpyxl', 'python:python-docx'}
     skills = {skill.name for skill in worker_catalog(local, 'onebot:group:1')}
     assert 'html-document' in skills and not skills & {'public-browser', 'spreadsheet', 'word-document'}
+
+
+def test_the_local_sandbox_offers_lenbot_render_once_its_browser_rendered_a_page(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path.resolve()
+    monkeypatch.setenv('XDG_CACHE_HOME', str(root / 'cache'))
+    runtime = root / 'task-runtime'
+    (runtime / 'bin').mkdir(parents=True)
+    library = runtime / 'browser/node_modules/playwright-core'
+    library.mkdir(parents=True)
+    (library / 'package.json').write_text('{"version": "1.62.0"}')
+    local = worker(root, sandbox='bwrap', bwrap_binary=root / 'bwrap', task_runtime=runtime)
+    assert task_browser(runtime) is None
+    (runtime / 'lenbot-render.cjs').touch()
+    browser = root / 'cache/lenbot/task-browser-1.62.0'
+    assert task_browser(runtime) == browser and ready_task_browser(runtime) is None
+    assert 'lenbot-render' not in local.available_programs()
+    browser.mkdir(parents=True)
+    (browser / 'ready.json').write_text('{}')
+    assert ready_task_browser(runtime) == browser
+    assert 'lenbot-render' in local.available_programs()
 
 
 def test_the_worker_image_has_every_program_and_the_network_mode_follows_egress(tmp_path: Path) -> None:

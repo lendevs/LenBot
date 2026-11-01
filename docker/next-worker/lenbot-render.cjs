@@ -44,9 +44,10 @@ async function main() {
   for (const output of [values.pdf, values.screenshot, values["print-preview"]].filter(Boolean)) {
     await fs.mkdir(path.dirname(path.resolve(output)), { recursive: true });
   }
+  // The worker image links its Chromium here; the local sandbox points Playwright at the host's download.
   const browser = await chromium.launch({
-    executablePath: "/usr/local/bin/lenbot-chromium", headless: true,
-    args: ["--disable-dev-shm-usage"],
+    executablePath: process.env.PLAYWRIGHT_BROWSERS_PATH ? undefined : "/usr/local/bin/lenbot-chromium",
+    headless: true, args: ["--disable-dev-shm-usage"],
   });
   const result = { input, network: "offline", viewport };
   try {

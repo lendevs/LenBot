@@ -15,14 +15,14 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from ..config import HostConfig
-from ..configuration.tasks import WorkerSettings
+from ..configuration.tasks import WorkerSettings, ready_task_browser, task_browser
 from ..media.audio import AudioService
 from ..runtime.identity import roles_for
 from .egress_usage import EgressUsage
 from ..models.slots import ModelSlots
 from ..memory.service import MemoryService
 from ..models.tokens import token_summary
-from .bwrap import BwrapSandbox, BwrapSettings, byte_size
+from .bwrap import BwrapSandbox, BwrapSettings, byte_size, prepare_task_browser
 from .sandbox import DockerSandbox, DockerSettings, TaskSandbox
 from ..tools.skills import Skill
 from ..storage.store import Store
@@ -100,6 +100,7 @@ class WorkTasks:
         self.retiring_scenes: set[str] = set()
         self._pump: asyncio.Task | None = None
         self._upkeep: asyncio.Task | None = None
+        self._browser: asyncio.Task | None = None
         self.disk_waiting = False
         self.error: str | None = None
         self._failure: asyncio.Future[BaseException] = asyncio.get_running_loop().create_future()
@@ -519,6 +520,21 @@ class WorkTasks:
         self.accepting = True
         self._pump = asyncio.create_task(self._schedule())
         self._upkeep = asyncio.create_task(self._keep_storage())
+        runtime = self.settings.task_runtime
+        if (self.settings.sandbox == "bwrap" and task_browser(runtime) is not None
+                and ready_task_browser(runtime) is None):
+            self._browser = asyncio.create_task(self._prepare_browser())
+
+    async def _prepare_browser(self) -> None:
+        """Tasks run meanwhile without ``lenbot-render``; the next task after the check gets it."""
+        settings = self.settings
+        log_event(logger, "task_browser_download", directory=str(task_browser(settings.task_runtime)))
+        try:
+            directory = await prepare_task_browser(settings.bwrap_binary, settings.task_runtime)
+        except Exception as error:
+            log_event(logger, "task_browser_failed", level=logging.WARNING, error=error)
+        else:
+            log_event(logger, "task_browser_ready", directory=str(directory))
 
     async def _keep_storage(self) -> None:
         """Stop runs over the task or disk limit, resume a queue held for space, and remove expired workspaces."""
@@ -568,8 +584,9 @@ class WorkTasks:
     def stop(self) -> None:
         self.accepting = False
         self.changed.set()
-        if self._upkeep is not None:
-            self._upkeep.cancel()
+        for job in (self._upkeep, self._browser):
+            if job is not None:
+                job.cancel()
 
     async def close(self) -> None:
         self.stop()
@@ -577,8 +594,8 @@ class WorkTasks:
             if self._pump is not None:
                 await self._pump
         finally:
-            if self._upkeep is not None:
-                await asyncio.gather(self._upkeep, return_exceptions=True)
+            await asyncio.gather(*(job for job in (self._upkeep, self._browser) if job is not None),
+                                 return_exceptions=True)
             executions = list(self.running.values())
             for current in executions:
                 current.interrupt()
