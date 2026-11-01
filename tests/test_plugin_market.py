@@ -37,9 +37,17 @@ ENTRIES = [
 ]
 
 
+# The community index lists notes too; a name already listed by an earlier source keeps that source.
+COMMUNITY = [{**ENTRIES[2], 'title': '社区群笔记'}]
+
+
 class Catalog(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps({'version': 1, 'entries': ENTRIES}).encode()
+        listed = {'/catalog.json': ENTRIES, '/community.json': COMMUNITY}.get(self.path)
+        if listed is None:
+            self.send_error(404)
+            return
+        body = json.dumps({'version': 1, 'entries': listed}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -51,7 +59,8 @@ class Catalog(BaseHTTPRequestHandler):
 
 
 @asynccontextmanager
-async def market_client(tmp_path, server):
+async def market_client(tmp_path, server, monkeypatch, community='/community.json'):
+    monkeypatch.setattr('len_bot.next.plugins.catalog.COMMUNITY', f'http://127.0.0.1:{server.server_port}{community}')
     binding = {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 16000}
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
         'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
@@ -88,19 +97,30 @@ def catalog_server():
         server.server_close()
 
 
-def test_market_lists_filters_and_guards_installation(tmp_path):
+def test_market_lists_filters_and_guards_installation(tmp_path, monkeypatch):
+    from len_bot.next.plugins.catalog import PluginCatalog
+    official = PluginCatalog().builtin.entries
+
     async def run(server):
-        async with market_client(tmp_path, server) as client:
+        async with market_client(tmp_path, server, monkeypatch) as client:
             listed = (await client.get('/api/host/plugin-market')).json()
-            assert listed['categories'] == ['工具', '生活'] and listed['total'] == 3
+            assert [(item['kind'], item['total'], item['error']) for item in listed['sources']] == [
+                ('official', len(official), None), ('community', 1, None), ('custom', 3, None)]
+            assert all(item['loaded_at'] for item in listed['sources'])
+            assert {'工具', '生活'} <= set(listed['categories']) and listed['total'] == len(official) + 3
             view = {item['name']: item for item in listed['entries']}
+            assert {view[entry.name]['source'] for entry in official} == {'official'}
+            assert view['notes']['source'] == 'community' and view['notes']['title'] == '社区群笔记'
+            assert view['sample']['source'] == view['weather']['source'] == 'custom'
+            custom = (await client.get('/api/host/plugin-market', params={'source': 'custom'})).json()
+            assert [item['name'] for item in custom['entries']] == ['sample', 'weather']
             assert view['sample']['installed'] and view['sample']['installed_version'] == '1.0.0'
             assert view['sample']['update_available'] and view['sample']['compatible']
             assert not view['notes']['installed'] and not view['notes']['update_available']
             assert not view['weather']['compatible'] and '99' in view['weather']['incompatible_reason']
 
             tools = (await client.get('/api/host/plugin-market', params={'category': '工具', 'query': '约定'})).json()
-            assert [item['name'] for item in tools['entries']] == ['notes'] and tools['total'] == 3
+            assert [item['name'] for item in tools['entries']] == ['notes'] and tools['total'] == len(official) + 3
             notes = view['notes']
             assert notes['version'] == '0.3.0' and notes['permissions'] == ['send']
             assert view['weather']['permissions'] is None
@@ -114,6 +134,24 @@ def test_market_lists_filters_and_guards_installation(tmp_path):
             status = (await client.get('/api/host/plugins/health')).json()['plugins']
             assert [item['name'] for item in status] == ['sample']
             assert set(status[0]['health']) == {'level', 'errors_last_hour', 'failing', 'last_error_at'}
+
+    with catalog_server() as server:
+        asyncio.run(run(server))
+
+
+def test_market_keeps_other_sources_when_one_cannot_be_read(tmp_path, monkeypatch):
+    async def run(server):
+        async with market_client(tmp_path, server, monkeypatch, community='/missing.json') as client:
+            listed = (await client.get('/api/host/plugin-market')).json()
+            community = listed['sources'][1]
+            assert community['kind'] == 'community' and community['loaded_at'] is None
+            assert '404' in community['error'] and community['total'] == 0
+            assert {item['name'] for item in listed['entries'] if item['source'] == 'custom'} == {
+                'sample', 'weather', 'notes'}
+
+            assert (await client.put('/api/host/plugin-catalog', json={'url': None})).status_code == 200
+            sources = (await client.get('/api/host/plugin-catalog')).json()['sources']
+            assert [item['kind'] for item in sources] == ['official', 'community']
 
     with catalog_server() as server:
         asyncio.run(run(server))
@@ -156,7 +194,7 @@ def test_market_install_requires_the_manifest_to_be_the_catalog_entry(tmp_path, 
     root.mkdir()
 
     async def run(server):
-        async with market_client(root, server) as client:
+        async with market_client(root, server, monkeypatch) as client:
             refused = await client.post('/api/host/plugin-market/notes/install')
             assert refused.status_code == 422, refused.text
             assert '仓库清单的插件名是 sample_other，不是 notes' in refused.json()['detail']['message']
@@ -191,9 +229,9 @@ def declared_package(version: str, permissions: str) -> bytes:
     return content.getvalue()
 
 
-def test_plugin_details_show_a_candidates_own_permissions_before_it_is_applied(tmp_path):
+def test_plugin_details_show_a_candidates_own_permissions_before_it_is_applied(tmp_path, monkeypatch):
     async def run(server):
-        async with market_client(tmp_path, server) as client:
+        async with market_client(tmp_path, server, monkeypatch) as client:
             uploaded = await client.post('/api/host/plugins/zip',
                                          files={'file': ('sample.zip', declared_package('2.0.0', '["send", "history"]'))})
             assert uploaded.status_code == 200, uploaded.text
