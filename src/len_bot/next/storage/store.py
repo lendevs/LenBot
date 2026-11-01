@@ -590,7 +590,7 @@ class Store:
                     (message.scene, plugin, content, received_at),
                 )
             if transcribe_audio:
-                for index, _ in enumerate((part for part in message.segments if part.type == "record"), 1):
+                for index, _ in enumerate((part for part in message.segments if part.type == "audio"), 1):
                     self.db.execute("INSERT INTO audio_cache(scene,platform_id,audio_index,status,created,updated) "
                                     "VALUES (?,?,?,'queued',?,?)",
                                     (message.scene, message.platform_message_id, index, received_at, received_at))
