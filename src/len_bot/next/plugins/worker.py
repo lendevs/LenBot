@@ -184,6 +184,9 @@ class RemoteHost:
         return await self.channel.call("delegate", scene, INVOCATION.get(), goal, deliverable, context,
                                        list(materials))
 
+    async def wait_message(self, plugin, scene, sender, timeout_seconds):
+        return message_from(await self.channel.call("wait_message", scene, sender, timeout_seconds, INVOCATION.get()))
+
     def cron(self, *args, **kwargs):
         raise RuntimeError("进程隔离的插件暂不支持定点任务")
 

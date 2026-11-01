@@ -143,11 +143,19 @@ class Pattern:
 
 
 @dataclass(frozen=True)
+class Waiter:
+    record: Loaded
+    future: asyncio.Future
+    task: asyncio.Task | None
+
+
+@dataclass(frozen=True)
 class Matched:
     record: Loaded
     label: str
     method: str
     arguments: tuple = ()
+    waiter: Waiter | None = None
 
 
 def _arguments(tool: str, function: Callable, *, needs_source: bool) -> type[BaseModel]:
@@ -186,6 +194,8 @@ class PluginHost:
         self.patterns: dict[str, str] = {}
         self.tool_owner: dict[str, str] = {}
         self.tasks: dict[asyncio.Task, str] = {}
+        # (scene, sender or None for anyone) -> the plugin waiting for that next message.
+        self.waiters: dict[tuple[str, str | None], Waiter] = {}
         self.closing = False
         found, self.discovery_errors = discover([] if settings is None else settings.paths)
         for name, directories in found.items():
@@ -534,6 +544,32 @@ class PluginHost:
                 plugin=plugin, slots=self.runtime.slots, validate=text_reply, notify=self._notify)
         return reply.text
 
+    async def wait_message(self, plugin: str, scene: str, sender: str | None, timeout_seconds: float, *,
+                           task: asyncio.Task | None = None) -> ChatMessage | None:
+        """``task`` is the handler task the wait suspends when it is not the current one (process isolation)."""
+        record = self._permit(self._active(plugin, scene), "history")
+        if sender is not None:
+            HostConfig.valid_bot_id(sender)
+        key = (scene, sender)
+        current = self.waiters.get(key)
+        if current is not None and self._waiting(current):
+            raise RuntimeError(f"插件 {current.record.name} 已在等场景 {scene} 中"
+                               f"{'任何人' if sender is None else ' ' + sender + ' '}的下一条消息")
+        waiter = Waiter(record, asyncio.get_running_loop().create_future(), task or asyncio.current_task())
+        self.waiters[key] = waiter
+        try:
+            return await asyncio.wait_for(waiter.future, timeout_seconds)
+        except TimeoutError:
+            return None
+        finally:
+            if self.waiters.get(key) is waiter:
+                del self.waiters[key]
+
+    def _waiting(self, waiter: Waiter) -> bool:
+        """A wait still served: its plugin instance is the running one and nobody answered yet."""
+        return (not waiter.future.done() and self.plugins.get(waiter.record.name) is waiter.record
+                and waiter.record.status == "running")
+
     async def delegate(self, plugin: str, scene: str, requester: str, goal: str, deliverable: str,
                        context: str, materials: Sequence[str]) -> dict:
         self._permit(self._active(plugin, scene), "delegate")
@@ -758,6 +794,10 @@ class PluginHost:
         if (self.closing or message.is_self or message.sender.uid in other_bots
                 or message.sender.uid in self.config.scene_config(message.scene).permissions.blacklist):
             return None
+        for key in ((message.scene, message.sender.uid), (message.scene, None)):
+            waiter = self.waiters.get(key)
+            if waiter is not None and self._waiting(waiter) and message.scene in waiter.record.scenes:
+                return Matched(waiter.record, "等待的回复", "", waiter=waiter)
         # Body mentions are accepted only by commands that explicitly opt in.
         pieces = []
         started = mentions = False
@@ -802,6 +842,14 @@ class PluginHost:
 
     def dispatch_message(self, message: ChatMessage, matched: Matched) -> None:
         record = matched.record
+        if matched.waiter is not None:
+            answered = not matched.waiter.future.done()
+            if answered:
+                matched.waiter.future.set_result(message)
+            PluginStore(self.runtime.store).add_plugin_event(message.scene, record.name, "reply", self.message_report(
+                message, matched, "已交给插件。" if answered else "插件的等待已结束，未处理这条消息。"))
+            self._notify()
+            return
 
         async def invoke() -> None:
             result = "处理被中断；未确认完成。"

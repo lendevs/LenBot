@@ -109,7 +109,8 @@ def card_text(data: str) -> str:
     return '[卡片：' + '｜'.join(texts) + ']' if texts else '[json]'
 
 
-def _body(segments: list[Segment], audio: dict[int, str] | None = None) -> str:
+def _body(segments: list[Segment], audio: dict[int, str] | None = None,
+          names: Mapping[str, str] | None = None) -> str:
     parts: list[str] = []
     image_index = 0
     audio_index = 0
@@ -122,7 +123,8 @@ def _body(segments: list[Segment], audio: dict[int, str] | None = None) -> str:
             parts.append(card_text(segment.data["data"]))
         elif segment.type == "mention":
             user = segment.data["user"]
-            parts.append("[提及全体成员]" if user == "all" else f"[提及 {user}]")
+            name = None if names is None else names.get(user)
+            parts.append("[提及全体成员]" if user == "all" else f"[提及 {name or user}]")
         elif segment.type == "image":
             image_index += 1
             summary = segment.data.get("summary")
@@ -144,9 +146,9 @@ def _body(segments: list[Segment], audio: dict[int, str] | None = None) -> str:
     return "".join(parts)
 
 
-def render_body(segments: list[Segment]) -> str:
-    """Segment text and placeholders exactly as in rendered chat lines."""
-    return _body(segments)
+def render_body(segments: list[Segment], *, names: Mapping[str, str] | None = None) -> str:
+    """Segment text and placeholders exactly as in rendered chat lines; ``names`` replaces mentioned accounts."""
+    return _body(segments, names=names)
 
 
 def render_message(message: ChatMessage, *, timezone: str, reply: ChatMessage | None = None,
