@@ -37,10 +37,10 @@ from len_bot.next.platform.messages import UploadResult
 from len_bot.next.platform.onebot import OneBot
 from len_bot.next.storage.store import Store
 from len_bot.next.work import service as service_module, worker_bridge
-from len_bot.next.work.bwrap import check_local_sandbox
+from len_bot.next.work.bwrap import BwrapSandbox, _check_settings, check_local_sandbox, prepare_task_browser
 from len_bot.next.work.pi_rpc import PiRpc
 from len_bot.next.platform.identity import scene_directory
-from len_bot.next.work.sandbox import DockerSandbox, SandboxHandle
+from len_bot.next.work.sandbox import DockerSandbox, SandboxError, SandboxHandle
 from len_bot.next.work.service import WorkTasks
 from len_bot.next.work.store import TaskStore
 from len_bot.next.work.worker_egress import EgressTransport
@@ -513,6 +513,60 @@ async def test_local_sandbox_check_names_each_step_and_the_first_failure(tmp_pat
     (runtime / 'lenbot-extension.ts').unlink()
     steps = await check_local_sandbox(binary, runtime)
     assert steps[-1] == {'step': 'task_runtime', 'ok': False, 'detail': f'{runtime} 缺少 lenbot-extension.ts'}
+
+
+# Stands in for Node: the Playwright installer fills the browser directory, and the renderer needs it mounted.
+FAKE_NODE = """#!/bin/sh
+case "$1" in
+  */cli.js)
+    [ "$2 $3 $4 $5" = "install --only-shell --no-progress chromium" ] || exit 2
+    [ -n "$LENBOT_FAIL_DOWNLOAD" ] && { echo "download refused"; exit 1; }
+    mkdir -p "$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-1" && echo shell > "$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-1/chrome" ;;
+  */lenbot-render.cjs)
+    [ -f "$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-1/chrome" ] || { echo "no browser" >&2; exit 3; }
+    [ -f "$PLAYWRIGHT_BROWSERS_PATH/broken" ] && { echo "libnss3.so: cannot open shared object file" >&2; exit 1; }
+    echo "{\\"input\\": \\"$2\\", \\"pages\\": 1}" ;;
+  *) exit 4 ;;
+esac
+"""
+
+
+@pytest.mark.asyncio
+async def test_local_sandbox_downloads_chromium_and_offers_lenbot_render_after_one_page_rendered(
+        tmp_path, environment, monkeypatch):
+    if environment != 'bwrap':
+        pytest.skip('needs a working bwrap')
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path / 'cache'))
+    binary = Path(shutil.which('bwrap'))
+    runtime = task_runtime(tmp_path)
+    (runtime / 'node' / 'bin' / 'node').write_text(FAKE_NODE)
+    library = runtime / 'browser/node_modules/playwright-core'
+    library.mkdir(parents=True)
+    (library / 'package.json').write_text('{"version": "1.62.0"}')
+    (library / 'cli.js').touch()
+    (runtime / 'lenbot-render.cjs').touch()
+    browser = tmp_path / 'cache/lenbot/task-browser-1.62.0'
+
+    monkeypatch.setenv('LENBOT_FAIL_DOWNLOAD', '1')
+    with pytest.raises(SandboxError, match='download refused'):
+        await prepare_task_browser(binary, runtime)
+    monkeypatch.delenv('LENBOT_FAIL_DOWNLOAD')
+    (browser / 'broken').touch()
+    with pytest.raises(SandboxError, match='libnss3'):
+        await prepare_task_browser(binary, runtime)
+    assert not (browser / 'ready.json').exists()
+
+    (browser / 'broken').unlink()
+    assert await prepare_task_browser(binary, runtime) == browser
+    assert json.loads((browser / 'ready.json').read_text()) == {'input': 'check.html', 'pages': 1}
+    # A task sandbox created after the check finds lenbot-render on its PATH.
+    sandbox = BwrapSandbox(_check_settings(binary, runtime, tmp_path / 'tasks'))
+    handle = await sandbox.ensure(SCENE, '1')
+    try:
+        output = await sandbox._run(handle, 'lenbot-render', 'page.html')
+    finally:
+        await sandbox.stop(handle)
+    assert output.returncode == 0 and json.loads(output.stdout)['input'] == 'page.html'
 
 
 def egress_events(tasks: WorkTasks, id: int) -> list[dict]:
