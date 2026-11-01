@@ -207,3 +207,28 @@ def test_a_plugin_declaring_chat_platforms_refuses_other_platforms_scenes(tmp_pa
     record = plugins.plugins['where']
     assert record.status == 'failed'
     assert f'插件只支持 onebot 平台，不能在 {TELEGRAM_SCENE} 启用' in record.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('platform', ['telegram', 'feishu', None])
+async def test_retained_task_containers_distinguish_platform_hosts_from_stdin(tmp_path, monkeypatch, platform):
+    from len_bot.next.host import run
+    from len_bot.next.runtime.lifecycle import HostLifecycle
+    from len_bot.next.work.store import TaskStore
+
+    settings = ({'telegram': {'bot_id': f'telegram:{BOT}', 'bot_token': TOKEN}} if platform == 'telegram' else
+                {'feishu': {'bot_id': 'feishu:ou_bot', 'app_id': 'cli_fixture', 'app_secret': 'fixture'}}
+                if platform == 'feishu' else {})
+    scene = TELEGRAM_SCENE if platform == 'telegram' else 'feishu:group:oc_room' if platform == 'feishu' else SCENE
+    write_config(tmp_path, onebot=None, delivery='simulated', **settings,
+                 scenes={scene: SCENE_SETTINGS})
+    config = load_host_config(tmp_path)
+    with Store(config.database) as store:
+        tasks = TaskStore(store)
+        task = tasks.create(scene, 'onebot:70001', '任务', '结果', '', '')
+        tasks.set_container(scene, task.id, 'retained-container')
+    monkeypatch.chdir(tmp_path)
+    # Platform hosts reach the worker configuration check; stdin hosts reject imported containers.
+    expected = 'stdin模拟宿主' if platform is None else '保留原 worker 配置完成清理'
+    with pytest.raises(ValueError, match=expected):
+        await run(HostLifecycle())

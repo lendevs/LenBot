@@ -29,7 +29,7 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-The command copies `lenbot.config.json` together with the databases, memory, personas, reference files and task directories it points to. The copy switches to simulated delivery, disconnects OneBot, listens on the specified panel port, and rewrites absolute paths inside the original instance root to point into the copy. Model providers, plugins and background task services run with their configured bindings.
+The command copies `lenbot.config.json` together with the databases, memory, personas, reference files and task directories it points to. The copy converts its configuration to the current format, switches to simulated delivery, disconnects OneBot, Telegram and Feishu, listens on the specified panel port, and rewrites absolute paths inside the original instance root to point into the copy. Model providers, plugins and background task services run with their configured bindings.
 
 ## Source layout
 

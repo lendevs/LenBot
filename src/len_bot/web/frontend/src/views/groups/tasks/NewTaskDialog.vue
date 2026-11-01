@@ -34,7 +34,7 @@ const groupPicked = ref<{ file_id: string; busid: number; name: string }[]>([])
 const browsing = ref(false)
 const service = useQuery({ queryKey: keys.tasks.state(), queryFn: ({ signal }) => tasksApi.state(signal) })
 const groupFiles = computed(
-  () => Boolean(service.data.value?.group_files) && props.scene.split(':')[1] === 'group',
+  () => Boolean(service.data.value?.group_files) && props.scene.startsWith('onebot:group:'),
 )
 function pickGroupFile(file: GroupFile) {
   groupPicked.value.push({ file_id: file.file_id, busid: file.busid, name: file.name })

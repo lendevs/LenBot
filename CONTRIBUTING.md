@@ -29,7 +29,7 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-命令会复制 `lenbot.config.json` 及其引用的数据库、记忆、角色、资料与任务目录。副本自动设为模拟发送、断开 OneBot，并监听指定的面板端口；指向原实例目录内部的绝对路径会重写为副本路径。模型、插件和后台任务服务在副本中按原配置运行。
+命令会复制 `lenbot.config.json` 及其引用的数据库、记忆、角色、资料与任务目录。副本配置转换为当前格式，自动设为模拟发送、断开 OneBot、Telegram 和飞书，并监听指定的面板端口；指向原实例目录内部的绝对路径会重写为副本路径。模型、插件和后台任务服务在副本中按原配置运行。
 
 ## 源码结构
 

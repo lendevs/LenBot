@@ -9,7 +9,8 @@ import json
 from pathlib import Path
 import shutil
 
-from ..config import _load_host_source, load_instance_config
+from ..config import CONFIG_VERSION, _load_host_source, load_instance_config
+from ..configuration.migrations import migrate_source
 from ..instance_lock import instance_lock
 
 
@@ -40,9 +41,9 @@ def _relocate(value, source: Path, destination: Path):
 
 def copy_instance(source: Path, destination: Path, panel_port: int) -> None:
     with instance_lock(source):
-        load_instance_config(source)
+        loaded = load_instance_config(source)
         config = source / 'lenbot.config.json'
-        value = json.loads(config.read_text(encoding='utf-8'))
+        value = migrate_source(json.loads(config.read_text(encoding='utf-8')), CONFIG_VERSION)
         database = source / value['database']
         # SQLite WAL files and the memory job database sit next to the business database; copying a stopped
         # database together with its -wal and -shm keeps every committed write.
@@ -62,7 +63,8 @@ def copy_instance(source: Path, destination: Path, panel_port: int) -> None:
         path = destination / config.name
         value = _relocate(value, source, destination)
         value['delivery'] = 'simulated'
-        value['onebot'] = None
+        for platform in loaded.platform_names:
+            value[platform] = None
         if value.get('panel') is None:
             raise ValueError('测试副本面板需要原实例配置面板账号')
         value['panel']['port'] = panel_port

@@ -28,8 +28,14 @@ PATH = f"/api/host/scenes/{SCENE}/reference"
 
 
 @asynccontextmanager
-async def panel(root, *, knowledge: str | None = None):
-    instance(root)
+async def panel(root, *, knowledge: str | None = None, other_platforms: bool = False):
+    source = instance(root)
+    if other_platforms:
+        source.update(telegram={'bot_id': 'telegram:7001', 'bot_token': '7001:' + 'T' * 35},
+                      feishu={'bot_id': 'feishu:ou_bot', 'app_id': 'cli_fixture', 'app_secret': 'fixture'})
+        source['scenes'].update({'telegram:group:-100123': {'persona': 'persona'},
+                                 'feishu:group:oc_room': {'persona': 'persona'}})
+        (root / 'lenbot.config.json').write_text(json.dumps(source))
     if knowledge is not None:
         (root / "persona/knowledge").mkdir()
         (root / "persona/knowledge/设定.md").write_text(knowledge, encoding="utf-8")
@@ -234,3 +240,17 @@ async def test_download_stops_at_the_size_limit():
         await download("https://files.example/large", transport)
     with pytest.raises(httpx.HTTPStatusError):
         await download("https://files.example/gone", transport)
+
+
+@pytest.mark.asyncio
+async def test_group_files_are_only_available_in_onebot_groups(tmp_path):
+    async with panel(tmp_path, other_platforms=True) as (client, runtime):
+        assert (await client.get(PATH)).json()['group_files'] is True
+        for scene in ('telegram:group:-100123', 'feishu:group:oc_room'):
+            path = f'/api/host/scenes/{scene}/reference'
+            assert (await client.get(path)).json()['group_files'] is False
+            response = await client.get(f'{path}/group-files')
+            assert response.status_code == 409
+            response = await client.post(f'{path}/group-files', json={
+                'file_id': '/file', 'busid': 102, 'name': 'notes.md'})
+            assert response.status_code == 409

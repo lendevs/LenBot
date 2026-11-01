@@ -60,6 +60,13 @@ def test_panel_delegate_downloads_the_picked_group_files(tmp_path, monkeypatch):
     path = tmp_path / 'lenbot.config.json'
     path.write_text(json.dumps({**json.loads(path.read_text()),
                                 'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'}}))
+    source = json.loads(path.read_text())
+    other_scenes = ('telegram:group:-100123', 'feishu:group:oc_room')
+    source.update(telegram={'bot_id': 'telegram:7001', 'bot_token': '7001:' + 'T' * 35},
+                  feishu={'bot_id': 'feishu:ou_bot', 'app_id': 'cli_fixture', 'app_secret': 'fixture'})
+    for scene in other_scenes:
+        source['scenes'][scene] = source['scenes'][SCENE]
+    path.write_text(json.dumps(source))
     config = load_host_config(tmp_path)
     downloaded, delegated = [], []
 
@@ -76,7 +83,8 @@ def test_panel_delegate_downloads_the_picked_group_files(tmp_path, monkeypatch):
     async def run():
         with Store(config.database) as store:
             async with ChatModel(config.model_settings('mind')) as mind:
-                runtime = NetworkRuntime(config, [(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona))],
+                runtime = NetworkRuntime(config, [(config.scene_config(scene), load_persona(config.scenes[scene].persona))
+                                                  for scene in config.scenes],
                                          store, mind)
                 runtime.tasks = SimpleNamespace(settings=SimpleNamespace(max_file_bytes=1024), delegate=delegate)
                 app = create_app(config, runtime, root=tmp_path)
@@ -88,6 +96,11 @@ def test_panel_delegate_downloads_the_picked_group_files(tmp_path, monkeypatch):
                     picked = await client.post(f'/api/host/tasks/delegate?scene={SCENE}', json={
                         **body, 'group_files': [{'file_id': '/a1', 'busid': 102, 'name': 'sales.csv'}]})
                     assert picked.status_code == 200, picked.text
+                    for scene in other_scenes:
+                        refused = await client.post(f'/api/host/tasks/delegate?scene={scene}', json={
+                            **body, 'group_files': [{'file_id': '/a1', 'busid': 102, 'name': 'sales.csv'}]})
+                        assert refused.status_code == 422, refused.text
+                        assert '群文件' in refused.json()['detail']['message']
     asyncio.run(run())
 
     assert downloaded == [('80001', '/a1', 102, 1024)]
