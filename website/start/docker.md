@@ -2,7 +2,7 @@
 
 宿主镜像 `ghcr.io/lendevs/lenbot` 运行 Bot 和面板，支持 amd64 和 arm64。实例数据保存在一个命名数据卷里，新版本在面板中一键更新。
 
-下文以 `0.2.2` 为例，该版本见 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.2)，部署其他版本时换成对应的版本号。
+下文以 `0.2.3` 为例，该版本见 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.3)，部署其他版本时换成对应的版本号。
 
 ## 准备
 
@@ -14,7 +14,7 @@
 下文的命令在 PowerShell、macOS 和 Linux 终端中写法相同。
 
 ```sh
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.2
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.3
 docker logs lenbot
 ```
 
@@ -56,7 +56,7 @@ ssh -L 11307:127.0.0.1:11307 你的服务器
 ```sh
 docker stop lenbot
 docker rm lenbot
-docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.2 -m len_bot.next.maintenance.upgrade restore --snapshot /data/backups/20261030-140217-cba39904
+docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.3 -m len_bot.next.maintenance.upgrade restore --snapshot /data/backups/20261030-140217-cba39904
 ```
 
 然后按第 1 步用该版本的镜像启动。
@@ -66,7 +66,7 @@ docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot
 后台任务在同版本的 `ghcr.io/lendevs/lenbot-worker` 任务容器中运行，由宿主容器通过 Docker socket 创建。启用任务时，创建容器时多挂载一项：
 
 ```sh
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data -v /var/run/docker.sock:/var/run/docker.sock --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.2
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data -v /var/run/docker.sock:/var/run/docker.sock --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.3
 ```
 
 宿主启动时加入 socket 的所属组，之后以 `10000:10000` 运行。任务目录放在 `lenbot-data` 数据卷内，任务容器按子目录挂载（`volume-subpath`），需要 Docker Engine 26 或更高版本。然后在面板**能力 → 后台任务**中启用，步骤见[后台任务](../use/tasks)。
@@ -76,13 +76,13 @@ docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbo
 不使用浏览器时，可用 JSON 初始化。把 [`first-setup.example.json`](https://github.com/lendevs/LenBot/blob/master/deploy/current/first-setup.example.json) 复制为 `setup.json` 并填写，保持 `panel_host` 为 `0.0.0.0`、`panel_port` 为 `11307`，在第 1 步之前执行：
 
 ```sh
-docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.2 -m len_bot.next.maintenance.initialize < setup.json
+docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.3 -m len_bot.next.maintenance.initialize < setup.json
 ```
 
 PowerShell 不支持 `<` 输入重定向，改用管道：
 
 ```powershell
-Get-Content -Raw setup.json | docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.2 -m len_bot.next.maintenance.initialize
+Get-Content -Raw setup.json | docker run --rm -i --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.3 -m len_bot.next.maintenance.initialize
 ```
 
 初始化后删除 `setup.json`，其中包含初始密码和模型密钥。
