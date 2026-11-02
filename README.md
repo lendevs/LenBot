@@ -59,7 +59,13 @@
   <img src="website/public/readme/setup.svg" alt="四步：选择部署方式、首次配置、模拟群聊、接入群聊" width="100%">
 </picture>
 
-准备要接入的平台和聊天模型服务的 API Key：QQ 需要一个已登录的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用），Telegram 需要 BotFather 给出的 Bot 令牌，飞书需要一个企业自建应用。再选一种部署方式：
+把这段发给你的 Agent，它会问清部署方式和平台，再帮你装好并启动：
+
+```text
+请阅读 https://lendevs.github.io/LenBot/start/agent ，按页面中给 Agent 的部署步骤帮我部署 LenBot：先问我选择部署方式和要接入的聊天平台，再在这台机器上安装并启动，最后把首次配置链接交给我。
+```
+
+也可以自己部署。准备要接入的平台和聊天模型服务的 API Key：QQ 需要一个已登录的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用），Telegram 需要 BotFather 给出的 Bot 令牌，飞书需要一个企业自建应用。再选一种部署方式：
 
 | 部署方式 | 运行环境 | 文档 |
 |---|---|---|
@@ -111,7 +117,7 @@ uv run --no-sync len-bot
 |---|---|
 | 部署、接入与日常使用 | [文档站](https://lendevs.github.io/LenBot/) |
 | 编写角色包 | [写角色包](https://lendevs.github.io/LenBot/develop/personas)、[示例角色小然](examples/personas/companion/) |
-| 编写插件 | [写插件](https://lendevs.github.io/LenBot/develop/plugins)、[插件接口 v1](developer/plugins-v1.md)、[插件模板](https://github.com/lendevs/lenbot-plugin-template) |
+| 编写插件 | [写插件](https://lendevs.github.io/LenBot/develop/plugins)、[插件接口 v1](developer/plugins-v1.md)、[插件模板](https://github.com/lendevs/lenbot-plugin-template)、[插件开发 skill](skills/lenbot-plugin/SKILL.md) |
 | 部署包、容器配方与本机运维 | [部署资料](deploy/README.md) |
 | 核心架构与模块说明 | [开发者文档](developer/README.md) |
 | 参与核心开发 | [CONTRIBUTING](CONTRIBUTING.md) |

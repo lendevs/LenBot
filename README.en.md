@@ -59,7 +59,13 @@ The panel's playground simulates a group in an isolated instance: add members, p
   <img src="website/public/readme/setup.en.svg" alt="Four steps: choose a deployment, first-time setup, simulate a group, go live in your groups" width="100%">
 </picture>
 
-Prepare the platform to connect and an API key for a chat model service: QQ needs a OneBot v11 implementation logged in to QQ (for example [SnowLuma](https://github.com/SnowLuma/SnowLuma), recommended), Telegram a bot token from BotFather, and Feishu a self-built app. Then pick a deployment:
+Send this to your agent; it asks which deployment and platform you want, then installs and starts LenBot:
+
+```text
+Read https://lendevs.github.io/LenBot/start/agent and follow its deployment steps for agents to deploy LenBot for me: first ask me which deployment method and chat platform to use, then install and start it on this machine, and finally give me the first-setup link.
+```
+
+To deploy by hand, prepare the platform to connect and an API key for a chat model service: QQ needs a OneBot v11 implementation logged in to QQ (for example [SnowLuma](https://github.com/SnowLuma/SnowLuma), recommended), Telegram a bot token from BotFather, and Feishu a self-built app. Then pick a deployment:
 
 | Deployment | Requirements | Guide |
 |---|---|---|
@@ -115,7 +121,7 @@ The documentation site is in Chinese. The web panel is available in Chinese and 
 |---|---|
 | Deployment, connections and daily use | [Documentation site (zh)](https://lendevs.github.io/LenBot/) |
 | Writing persona packages | [Authoring personas (zh)](https://lendevs.github.io/LenBot/develop/personas), [example persona](examples/personas/companion/) |
-| Writing plugins | [Authoring plugins (zh)](https://lendevs.github.io/LenBot/develop/plugins), [Plugin interface v1](developer/plugins-v1.en.md), [plugin template](https://github.com/lendevs/lenbot-plugin-template) |
+| Writing plugins | [Authoring plugins (zh)](https://lendevs.github.io/LenBot/develop/plugins), [Plugin interface v1](developer/plugins-v1.en.md), [plugin template](https://github.com/lendevs/lenbot-plugin-template), [plugin development skill](skills/lenbot-plugin/SKILL.md) |
 | Deployment bundles, containers and host operations | [Deployment guide](deploy/README.en.md) |
 | Core architecture and module notes | [Developer docs (zh)](developer/README.md) |
 | Contributing to core | [CONTRIBUTING](CONTRIBUTING.en.md) |
