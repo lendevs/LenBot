@@ -2,21 +2,21 @@
 
 部署包内含 Python 3.13、锁定的依赖和预构建的网页面板，解压后直接启动，本机不需要另外安装 Python 或 uv。Linux 部署包还带有后台任务的本机沙箱运行时。macOS 使用 [Docker 部署](./docker)。
 
-从 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.2) 下载与系统对应的文件，下文以 `0.2.2` 为例：
+从 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.3) 下载与系统对应的文件，下文以 `0.2.3` 为例：
 
 | 系统 | 文件 |
 |---|---|
-| Linux x64 | `lenbot-0.2.2-linux-x64.tar.gz` |
-| Linux arm64 | `lenbot-0.2.2-linux-arm64.tar.gz` |
-| Windows x64 | `lenbot-0.2.2-windows-x64.zip` |
+| Linux x64 | `lenbot-0.2.3-linux-x64.tar.gz` |
+| Linux arm64 | `lenbot-0.2.3-linux-arm64.tar.gz` |
+| Windows x64 | `lenbot-0.2.3-windows-x64.zip` |
 
 解压出的目录就是部署目录，配置和数据都写在里面，可以先改名或移到常用位置再启动。
 
 ## Linux
 
 ```sh
-tar -xzf lenbot-0.2.2-linux-x64.tar.gz
-mv lenbot-0.2.2-linux-x64 ~/lenbot
+tar -xzf lenbot-0.2.3-linux-x64.tar.gz
+mv lenbot-0.2.3-linux-x64 ~/lenbot
 ~/lenbot/run
 ```
 
@@ -24,7 +24,7 @@ arm64 换成对应的文件名。部署包适用于 glibc 2.28 及以上的发�
 
 ## Windows
 
-解压 `lenbot-0.2.2-windows-x64.zip`，双击目录中的 `run.cmd`，或在 PowerShell 中执行：
+解压 `lenbot-0.2.3-windows-x64.zip`，双击目录中的 `run.cmd`，或在 PowerShell 中执行：
 
 ```powershell
 .\run.cmd
@@ -47,11 +47,11 @@ arm64 换成对应的文件名。部署包适用于 glibc 2.28 及以上的发�
 | 目录或入口 | 用途 |
 |---|---|
 | `instance/` | 配置、数据库、角色、插件和运行数据 |
-| `releases/<版本>/` | 该版本的 Python、程序、更新器和任务运行时 |
-| `backups/` | 更换版本前的快照 |
-| `updates/` | 更新器日志 |
+| `releases/<版本>/` | 该版本的 Python、程序和任务运行时 |
+| `backups/` | 每次更新前的快照 |
+| `updates/` | 更新时下载的文件和上次更新的结果 |
 | `current.json` | 当前使用的版本 |
-| `run`、`run.cmd` | 启动更新器和 Bot |
+| `run`、`run.cmd` | 启动 Bot |
 | `service`、`service.ps1` | 注册为登录后自动启动的后台服务 |
 
 ## 后台任务
@@ -83,8 +83,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\service.ps1 start
 
 ## 更新与恢复
 
-在面板**系统 → 设置 → 版本与更新**中执行更新、查看快照和恢复，详见[更新与备份](../use/maintenance#部署包与-docker-实例)。新版本解压到 `releases/<新版本>/`，更换前的实例保存在 `backups/`，旧版本目录保留，恢复快照时切回它。
+在面板**系统 → 设置 → 版本与更新**点击**更新到 <版本>**：面板下载新版本的部署包，解压到 `releases/<新版本>/`，然后重启，先保存快照、迁移数据，再启动新版本。新版本没有正常启动时自动恢复快照并回到原来的版本。部署目录保留当前和上一个版本，快照可以在同一页恢复，详见[更新与备份](../use/maintenance#部署包与-docker-实例)。
 
 ## 排查
 
-安装或启动失败时，先看终端错误和 `updates/updater.log`。模型与群聊的问题见[日志与排查](../use/logs)。
+安装或启动失败时，先看终端输出；上次更新的结果在 `updates/result.json`。模型与群聊的问题见[日志与排查](../use/logs)。

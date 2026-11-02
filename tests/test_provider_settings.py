@@ -27,7 +27,7 @@ SCENE = 'onebot:group:80001'
 @pytest_asyncio.fixture
 async def instance(tmp_path: Path):
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
-        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-key'},
         'mind': {'provider': 'primary', 'model': 'synthetic-mind', 'context_window_tokens': 128000},
@@ -97,7 +97,7 @@ async def test_provider_address_change_requires_new_key_without_writing_config(i
 
 
 @pytest.mark.asyncio
-async def test_model_and_vector_bindings_can_be_saved_together_for_restart(instance):
+async def test_model_applies_live_and_vector_bindings_wait_for_reindex(instance):
     root, app = instance
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://fixture') as client:
         body = await models_body(client)
@@ -105,12 +105,14 @@ async def test_model_and_vector_bindings_can_be_saved_together_for_restart(insta
         body['memory_embedding'] = {'provider': 'vectors', 'model': 'new-vector', 'dimensions': 8}
         body['learning_embeddings'] = {SCENE: {'provider': 'vectors', 'model': 'new-vector', 'dimensions': 8}}
         response = await client.put('/api/host/settings/models', json=body)
-        assert response.status_code == 200 and response.json()['restart_required']['models'], response.text
+        restart = response.json()['restart_required']
+        # The mind model applies at once; changed vector bindings wait for the stopped reindex.
+        assert response.status_code == 200 and not restart['models'] and restart['memory'], response.text
         saved = load_host_config(root)
         assert saved.models.roles.mind.model == 'new-mind'
         assert saved.memory.local.embedding.model == 'new-vector'
         assert saved.scenes[SCENE].learning.embedding.dimensions == 8
-        assert response.json()['running']['models']['roles']['mind']['model'] == 'synthetic-mind'
+        assert response.json()['running']['models']['roles']['mind']['model'] == 'new-mind'
 
 
 @pytest.mark.asyncio

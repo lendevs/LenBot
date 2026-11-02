@@ -297,11 +297,28 @@ class ChatModel:
         self._client = http_client(base_url=settings.base_url, api_key=settings.api_key, api=settings.api,
                                    timeout_seconds=settings.timeout_seconds, proxy=settings.proxy)
 
+        self._retired: set[httpx.AsyncClient] = set()
+        self._active: dict[httpx.AsyncClient, int] = {}
+
+    async def rebind(self, settings: ModelSettings) -> None:
+        """Send later requests with ``settings``; requests already on the old connection finish on it."""
+        if settings == self.settings:
+            return
+        previous = self._client
+        self.settings = settings
+        self._client = http_client(base_url=settings.base_url, api_key=settings.api_key, api=settings.api,
+                                   timeout_seconds=settings.timeout_seconds, proxy=settings.proxy)
+        if self._active.get(previous):
+            self._retired.add(previous)
+        else:
+            await previous.aclose()
+
     async def __aenter__(self) -> ChatModel:
         return self
 
     async def __aexit__(self, *_: object) -> None:
-        await self._client.aclose()
+        for client in (*self._retired, self._client):
+            await client.aclose()
 
     async def complete(self, messages: list[dict], tools: list[dict], *,
                        max_output_tokens: int | None = None, session_id: str | None = None,
@@ -309,15 +326,32 @@ class ChatModel:
                        on_retry: Callable[[], None] | None = None) -> ModelReply:
         """``settings`` overrides request options for this call only; the client keeps its connection.
         ``on_retry`` runs before each resend of the same request."""
+        client, bound = self._client, self.settings
+        self._active[client] = self._active.get(client, 0) + 1
+        try:
+            return await self._complete(client, bound, messages, tools, max_output_tokens=max_output_tokens,
+                                        session_id=session_id, settings=settings, on_retry=on_retry)
+        finally:
+            self._active[client] -= 1
+            if not self._active[client]:
+                del self._active[client]
+                if client in self._retired:
+                    self._retired.remove(client)
+                    await client.aclose()
+
+    async def _complete(self, client: httpx.AsyncClient, bound: ModelSettings,
+                        messages: list[dict], tools: list[dict], *, max_output_tokens: int | None,
+                        session_id: str | None, settings: ModelSettings | None,
+                        on_retry: Callable[[], None] | None) -> ModelReply:
         from .protocols import build_request, parse_reply
-        settings = self.settings if settings is None else settings
+        settings = bound if settings is None else settings
         path, payload = build_request(settings, messages, tools, max_output_tokens=max_output_tokens)
         for delay in (*settings.retry_delays_seconds, None):
             deadline = asyncio.timeout(settings.timeout_seconds)
             try:
                 async with deadline:
-                    response = await self._client.post(path, json=payload,
-                                                       headers={} if session_id is None else {"Session-Id": session_id})
+                    response = await client.post(path, json=payload,
+                                                 headers={} if session_id is None else {"Session-Id": session_id})
             except TimeoutError as error:
                 if deadline.expired():
                     raise TimeoutError(f"模型请求超过 {settings.timeout_seconds:g} 秒未完成（{settings.base_url}），"
@@ -325,7 +359,7 @@ class ChatModel:
                 raise
             except httpx.TransportError as error:
                 if delay is None:
-                    raise ModelConnectionError(settings.base_url, error, self.settings.api_key) from error
+                    raise ModelConnectionError(settings.base_url, error, bound.api_key) from error
                 logger.warning("model request retry in %ss after %s", delay, type(error).__name__)
             else:
                 if delay is None or (response.status_code != 429 and response.status_code < 500):
@@ -335,7 +369,7 @@ class ChatModel:
                 on_retry()
             await asyncio.sleep(delay)
         if not response.is_success:
-            fragment = response.text.replace(self.settings.api_key, '[hidden]')[:2000]
+            fragment = response.text.replace(bound.api_key, '[hidden]')[:2000]
             match = re.search(r"request[ _-]id[\s:：=]+([^\s)\"}]+)", fragment, re.IGNORECASE)
             request_id = response.headers.get('x-request-id') or response.headers.get('request-id')
             if request_id is None and match is not None:

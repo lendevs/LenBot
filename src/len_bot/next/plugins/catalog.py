@@ -1,7 +1,9 @@
 """The packaged official catalog plus remote indexes read on refresh; installation stays in PluginManager."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from importlib.metadata import version
+import logging
 from pathlib import Path
 import time
 from typing import Literal
@@ -18,6 +20,11 @@ from .manifest import ChatPlatform, PluginPermission, host_satisfies
 
 CATALOG = Path(__file__).with_name('plugin_catalog.json')
 COMMUNITY = 'https://raw.githubusercontent.com/lendevs/lenbot-plugin-index/main/catalog.json'
+# Remote indexes are read in the background so installed plugins show their updates without a manual refresh.
+REFRESH_FIRST_DELAY_SECONDS = 30.0
+REFRESH_INTERVAL_SECONDS = 6 * 3600.0
+
+logger = logging.getLogger(__name__)
 
 
 class CatalogEntry(BaseModel):
@@ -130,6 +137,7 @@ class PluginCatalog:
         self.loaded_at = time.time()
         self.community: str | None = COMMUNITY
         self.remote: dict[str, tuple[float, CatalogIndex] | str] = {}
+        self.refreshed_at: float | None = None
 
     def _remote(self, kind: CatalogSourceKind, url: str) -> tuple[CatalogSource, list[CatalogEntry]]:
         loaded = self.remote.get(url)
@@ -171,7 +179,19 @@ class PluginCatalog:
         urls = list(dict.fromkeys(url for url in (self.community, settings.url) if url is not None))
         async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=True) as client:
             await asyncio.gather(*(self._fetch(client, url) for url in urls))
+        self.refreshed_at = time.time()
         return self.view(settings)
+
+    async def run(self, settings: Callable[[], Awaitable[PluginCatalogSettings]]) -> None:
+        """Background loop for the panel's lifetime: read the remote indexes now and then."""
+        from ..runtime.logs import log_event
+        await asyncio.sleep(REFRESH_FIRST_DELAY_SECONDS)
+        while True:
+            try:
+                await self.refresh(await settings())
+            except Exception as error:
+                log_event(logger, 'plugin_catalog_refresh', level=logging.WARNING, error=error)
+            await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
 
 
 class MarketEntry(SourcedEntry):
@@ -210,6 +230,36 @@ def market_entry(entry: SourcedEntry, installed: bool, installed_version: str | 
                        update_available=(installed_version is not None
                                          and _newer(entry.version, installed_version)),
                        compatible=reason is None, incompatible_reason=reason)
+
+
+class PluginUpdate(BaseModel):
+    """A newer catalog version of an installed plugin."""
+    name: str
+    title: str
+    installed_version: str
+    version: str
+    ref: str | None
+    source: CatalogSourceKind
+    compatible: bool
+    incompatible_reason: str | None
+    # The new version is prepared and applies when the host restarts.
+    prepared: bool = False
+
+
+def updates(view: CatalogView, installed: dict[str, str | None], *, host: str | None = None,
+            prepared: frozenset[str] = frozenset()) -> list[PluginUpdate]:
+    """Installed plugins whose catalog entry is newer than the installed manifest version."""
+    found = []
+    for entry in view.entries:
+        current = installed.get(entry.name)
+        if current is None or not _newer(entry.version, current):
+            continue
+        annotated = market_entry(entry, True, current, host)
+        found.append(PluginUpdate(name=entry.name, title=entry.title, installed_version=current,
+                                  version=entry.version, ref=entry.ref, source=entry.source,
+                                  compatible=annotated.compatible, incompatible_reason=annotated.incompatible_reason,
+                                  prepared=entry.name in prepared))
+    return found
 
 
 def market(view: CatalogView, installed: dict[str, str | None], *, query: str = '', category: str | None = None,

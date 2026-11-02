@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from len_bot.next import prompt_files
 from len_bot.next.panel.routes.prompts import register_host_prompts
-from len_bot.next.prompt_files import activate, bundled, check, pending, read_prompt, save
+from len_bot.next.prompt_files import activate, bundled, check, read_prompt, reload, save
 from len_bot.web.errors import install_panel_errors
 
 TEMPLATE = 'next_expression_principles.md'  # uses $name
@@ -33,14 +33,14 @@ def test_check_keeps_placeholders_identical_to_the_default():
     check(PLAIN, '价格写成 $5 也可以，这个文件不做替换。')
 
 
-def test_saved_edit_applies_after_activation(tmp_path):
+def test_saved_edit_applies_after_reload(tmp_path):
     save(tmp_path, TEMPLATE, '$name 只说一句。')
     assert read_prompt(TEMPLATE) == bundled(TEMPLATE)
-    assert pending(tmp_path) is True
-    activate(tmp_path)
+    reload(tmp_path)
     assert read_prompt(TEMPLATE) == '$name 只说一句。'
     assert read_prompt(PLAIN) == bundled(PLAIN)
-    assert pending(tmp_path) is False
+    activate(tmp_path)
+    assert read_prompt(TEMPLATE) == '$name 只说一句。'
 
 
 def test_new_version_moves_edits_aside_by_default(tmp_path, monkeypatch):

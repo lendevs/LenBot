@@ -29,8 +29,8 @@
 | [current/asr.md](current/asr.md)、[current/start-asr.sh](current/start-asr.sh) | macOS 本地语音转写（`whisper.cpp`）编译与接入 |
 | [current/task-storage.md](current/task-storage.md) | 后台任务独立文件系统存储池（Linux `ext4` / macOS `APFS`） |
 | [current/lenbot.service](current/lenbot.service)、[current/start.command](current/start.command) | Linux `systemd` 单元模板与 macOS 双击启动脚本 |
-| [current/Dockerfile](current/Dockerfile)、`current/host*.compose.yaml`、[current/services.compose.yaml](current/services.compose.yaml) | 宿主容器镜像、更新器使用的 Compose 配方与本地向量服务配置 |
+| [current/Dockerfile](current/Dockerfile)、[current/host.compose.yaml](current/host.compose.yaml)、[current/services.compose.yaml](current/services.compose.yaml) | 宿主容器镜像、Compose 配方与本地向量服务配置 |
 | [current/first-setup.example.json](current/first-setup.example.json) | 首次配置无交互初始化的 JSON 模板 |
-| `package/`、`updater/` | 跨平台部署包安装脚本与本机更新控制器源码 |
+| `package/` | 跨平台部署包启动与服务脚本 |
 
-CI 产出各平台候选部署包；Release 工作流以 `publish=false` 执行时产出各架构的宿主、任务执行器与更新器候选镜像。
+CI 产出各平台候选部署包；Release 工作流以 `publish=false` 执行时产出各架构的宿主与任务执行器候选镜像。

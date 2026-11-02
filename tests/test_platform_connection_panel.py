@@ -20,7 +20,6 @@ from len_bot.next.persona.profile import load_persona
 from len_bot.next.platform import feishu, telegram
 from len_bot.next.runtime.lifecycle import HostLifecycle
 from len_bot.next.runtime.network import NetworkRuntime
-from len_bot.next.runtime.send_hold import SendHold
 from len_bot.next.storage.store import Store
 from test_next_host_manage_permissions_config import instance
 
@@ -124,7 +123,7 @@ async def test_setup_tests_telegram_and_feishu_before_configuration(tmp_path, mo
 
 def setup_body(**changes) -> dict:
     return {
-        'bot_id': 'telegram:7001', 'owners': ['telegram:70001'], 'timezone': 'Asia/Shanghai', 'delivery': 'simulated',
+        'bot_id': 'telegram:7001', 'owners': ['telegram:70001'], 'timezone': 'Asia/Shanghai',
         'onebot': None, 'telegram': {'bot_id': 'telegram:7001', 'bot_token': TOKEN},
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-secret'},
         'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
@@ -135,7 +134,7 @@ def setup_body(**changes) -> dict:
 
 
 @pytest.mark.parametrize('platform', ['telegram', 'feishu'])
-def test_setup_with_only_telegram_or_feishu_runs_live_behind_the_send_hold(tmp_path: Path, platform):
+def test_setup_with_only_telegram_or_feishu_runs_live(tmp_path: Path, platform):
     body = setup_body() if platform == 'telegram' else setup_body(
         bot_id='feishu:ou_bot', owners=['feishu:ou_owner'], telegram=None, scene='feishu:group:oc_one',
         feishu={'bot_id': 'feishu:ou_bot', 'app_id': 'cli_fixture', 'app_secret': 'fixture-secret'})
@@ -143,12 +142,9 @@ def test_setup_with_only_telegram_or_feishu_runs_live_behind_the_send_hold(tmp_p
     config = load_host_config(tmp_path)
     assert config.delivery == 'live' and config.platform_names == (platform,)
     assert config.bot_for(body['scene']) == body['bot_id'] and body['scene'] in config.scenes
-    assert SendHold(tmp_path).enabled is True
 
 
 def test_setup_without_any_platform_stays_simulated():
-    with pytest.raises(ValueError, match='暂不接入平台'):
-        FirstSetup.model_validate(setup_body(telegram=None, delivery='live'))
     assert first_run.setup_source(FirstSetup.model_validate(setup_body(telegram=None)))['delivery'] == 'simulated'
 
 
@@ -174,7 +170,7 @@ def connection(snapshot: dict, **changes) -> dict:
     saved = snapshot['saved']['connection']
     onebot = saved['onebot'] and {key: value for key, value in saved['onebot'].items()
                                   if key != 'access_token_configured'}
-    return {'onebot': onebot, 'owners': saved['owners'], 'timezone': saved['timezone'], 'delivery': saved['delivery'],
+    return {'onebot': onebot, 'owners': saved['owners'], 'timezone': saved['timezone'],
             'max_steps': saved['max_steps'], 'turn_timeout_seconds': saved['turn_timeout_seconds'],
             'max_model_requests': saved['max_model_requests'], 'text_delivery': saved['text_delivery'], **changes}
 
@@ -194,7 +190,7 @@ async def test_connection_page_adds_telegram_and_feishu_and_keeps_their_secrets(
         assert projected['telegram']['bot_id'] == 'telegram:7001' and 'bot_token' not in projected['telegram']
         assert projected['feishu']['app_id'] == 'cli_fixture' and 'app_secret' not in projected['feishu']
         assert TOKEN not in saved.text and 'fixture-secret' not in saved.text
-        assert saved.json()['restart_required']['connection'] is True
+        assert saved.json()['restart_required']['connection'] is False
 
         # Leaving the sections out, or sending them without secrets for the same address, keeps the secrets.
         snapshot = saved.json()

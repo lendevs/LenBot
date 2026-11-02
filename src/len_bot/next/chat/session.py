@@ -148,7 +148,7 @@ class Chat:
         self.turn_channels: set[str] = set()
         self.on_update = on_update
         self.on_compaction = on_compaction
-        if (config.models.roles.vision is None) != (vision is None):
+        if config.models.roles.vision is not None and vision is None:
             raise ValueError("vision 客户端必须与根配置的视觉模型绑定一起提供")
         self.skills = () if tasks is None else tasks.skills[config.scene]
         self.context = ChatContext(config, persona, store, platform=send_message is not None, memory=memory)
@@ -165,6 +165,14 @@ class Chat:
             platform_call=platform_call, notify=self.notify, now=now, plugins=plugins, reference=reference,
             fetch_media=fetch_media)
         self.set_external_tools(external_tools)
+
+    def bind_delivery(self, send_message: Callable | None, upload_file: Callable | None,
+                      platform_call: Callable | None) -> None:
+        """Switch between platform and simulated delivery for the next turn; caller owns the scene lock."""
+        self.expression.send_message = send_message
+        self.toolset.upload_file, self.toolset.platform_call = upload_file, platform_call
+        self.context.platform = send_message is not None
+        self.set_external_tools(list(self.toolset.external.values()))
 
     def set_external_tools(self, external_tools: list[ExternalTool]) -> None:
         """Refresh both the available schemas and their system-prompt descriptions."""

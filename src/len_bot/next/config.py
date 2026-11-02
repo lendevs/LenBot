@@ -48,12 +48,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[3] = 3
+    config_version: Literal[4] = 4
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -333,10 +333,6 @@ class HostConfig(SharedConfig):
                     if settings.replay_web is not None or settings.replay_images is not None]
         if recorded and self.platform_names:
             raise ValueError(f'Per-scene replay materials require the explicit stdin host, not platform input: {recorded!r}')
-        if self.delivery == 'live':
-            unreachable = sorted(scene for scene in self.scenes if scene.split(':', 1)[0] not in self.platform_names)
-            if unreachable:
-                raise ValueError(f'delivery=live needs the platform of every scene; not configured for: {unreachable!r}')
         return self
 
     @field_validator("mcp")

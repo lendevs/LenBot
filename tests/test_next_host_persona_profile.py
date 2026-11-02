@@ -18,7 +18,7 @@ from len_bot.next.memory.service import open_memory
 def test_profile_form_rewrites_role_files_and_rejects_invalid_values(tmp_path):
     binding = {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 16000}
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
-        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-unused'},
         'compaction': {'input_tokens': 2000}, 'mind': binding,  'scene': 'onebot:group:80001', 'persona_id': 'fixture',

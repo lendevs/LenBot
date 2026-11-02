@@ -19,7 +19,18 @@ def _format_2_to_3(source: dict) -> dict:
     return source
 
 
-STEPS = {1: _format_1_to_2, 2: _format_2_to_3}
+def _format_3_to_4(source: dict) -> dict:
+    # Format 4 drops simulated sending: a host with a platform sends to it, and scenes lose their own switch.
+    if any(source.get(name) for name in ("onebot", "telegram", "feishu")):
+        source["delivery"] = "live"
+    for scene in source.get("scenes", {}).values():
+        if isinstance(scene, dict):
+            scene.pop("simulated_delivery", None)
+    source["config_version"] = 4
+    return source
+
+
+STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4}
 
 
 def migrate_source(source: dict, target: int) -> dict:

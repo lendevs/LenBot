@@ -93,7 +93,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [host, worker, updater]
+        component: [host, worker]
         target:
           - {runner: ubuntu-24.04, platform: linux/amd64, arch: amd64}
           - {runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64}
@@ -118,7 +118,6 @@ jobs:
           case "$COMPONENT" in
             host) CONTEXT=.; FILE=deploy/current/Dockerfile; TAG="$IMAGE" ;;
             worker) CONTEXT=.; FILE=docker/next-worker/Dockerfile; TAG="$IMAGE-worker" ;;
-            updater) CONTEXT=.; FILE=docker/updater/Dockerfile; TAG="$IMAGE-updater" ;;
           esac
           printf 'context=%s\nfile=%s\ntag=%s\n' "$CONTEXT" "$FILE" "$TAG" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
@@ -163,7 +162,6 @@ jobs:
             host) python3 scripts/smoke_install.py docker packages "$RUNNER_TEMP/image-smoke" --image "$TAG" ;;
             # One task with real Pi: a question, a delivery and offline CSV/XLSX, chart, DOCX and HTML-to-PDF work.
             worker) uv run --no-sync python scripts/smoke_worker.py --image "$TAG" --workloads ;;
-            updater) docker run --rm --network none --entrypoint python "$TAG" /opt/lenbot-updater/controller.py --help ;;
           esac
           docker save -o "$RUNNER_TEMP/image.tar" "$TAG"
       - name: Push the verified architecture image to both registries
@@ -222,7 +220,7 @@ jobs:
           images = {}
           for registry, base in [('ghcr', os.environ['IMAGE']), ('dockerhub', os.environ['DOCKERHUB'])]:
               images[registry] = {}
-              for component, suffix in [('host', ''), ('worker', '-worker'), ('updater', '-updater')]:
+              for component, suffix in [('host', ''), ('worker', '-worker')]:
                   image = base + suffix
                   tag = image + ':' + os.environ['VERSION']
                   subprocess.run(['docker', 'buildx', 'imagetools', 'create', '-t', tag,
@@ -247,7 +245,7 @@ jobs:
           VERSION: ${{ needs.packages.outputs.version }}
         run: |
           for base in "$IMAGE" "$DOCKERHUB"; do
-            for suffix in '' '-worker' '-updater'; do
+            for suffix in '' '-worker'; do
               docker buildx imagetools create -t "$base$suffix:latest" "$base$suffix:$VERSION"
             done
           done

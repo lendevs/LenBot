@@ -22,8 +22,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --python ${{ matrix.python }}
-      - run: uv run --no-sync python -m compileall -q src/len_bot scripts deploy/updater deploy/package
-      - run: uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package tests
+      - run: uv run --no-sync python -m compileall -q src/len_bot scripts deploy/package
+      - run: uv run --no-sync ruff check src/len_bot scripts deploy/package tests
       # The local task sandbox tests need bwrap; Ubuntu 24.04 keeps unprivileged user namespaces behind AppArmor.
       - run: |
           sudo apt-get update -q
@@ -47,7 +47,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --python 3.13
-      # The deployment package starts the host in UTF-8 mode (deploy/updater/native.py).
+      # The deployment package starts the host in UTF-8 mode (len_bot/next/deployment.py).
       - run: uv run --no-sync pytest -q -p no:cacheprovider -rfE
         env:
           PYTHONUTF8: '1'

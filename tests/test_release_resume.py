@@ -126,14 +126,19 @@ def test_interrupted_upload_resumes_without_replacing_assets_and_finishes_instal
     assert publish().returncode == 0
     assert all((remote / 'uploads' / path.name).read_bytes() == path.read_bytes() for path in artifacts.iterdir())
 
-    sys.path.insert(0, str(SCRIPTS.parent / 'deploy/updater'))
-    from common import download, fetch_json, release_manifest
+    import hashlib
+    import urllib.request
     destination = tmp_path / 'downloaded'
     destination.mkdir()
     with downloads(remote / 'uploads') as base:
-        manifest = release_manifest(fetch_json(base + '/release-manifest.json'))
+        with urllib.request.urlopen(base + '/release-manifest.json') as response:
+            manifest = json.load(response)
+        assert manifest['updater_protocol'] == 2
         for name, expected in manifest['files'].items():
-            download(base + '/' + name, destination / name, expected)
+            with urllib.request.urlopen(base + '/' + name) as response:
+                body = response.read()
+            assert (len(body), hashlib.sha256(body).hexdigest()) == (expected['bytes'], expected['sha256'])
+            (destination / name).write_bytes(body)
     bundle = destination / manifest['bundles']['linux-x64']
     with tarfile.open(bundle) as archive:
         archive.extractall(destination / 'unpacked', filter='data')

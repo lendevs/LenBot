@@ -143,8 +143,6 @@ class RemoteHost:
     def scene_timezone(self, scene):
         return self.channel.call_sync("scene_timezone", scene)
 
-    def scene_paused(self, scene):
-        return self.channel.call_sync("scene_paused", scene)
 
     def require_owner(self, scene, requester_id):
         self.channel.call_sync("require_owner", scene, requester_id)

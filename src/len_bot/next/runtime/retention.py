@@ -37,6 +37,12 @@ class Retention:
         self.lock = asyncio.Lock()
         self.last_result = None
         self.error = None
+        self.changed = asyncio.Event()
+
+    def wake(self) -> None:
+        """Run a batch now under the saved settings; turning retention on starts the daily cycle."""
+        self.error = None
+        self.changed.set()
 
     def batch(self, *, preview: bool = False) -> dict:
         path = self.runtime.config.database.with_name(self.runtime.config.database.name + '.memory.sqlite3')
@@ -214,22 +220,24 @@ class Retention:
         return result
 
     async def run(self):
-        if self.runtime.config.retention is None:
-            return
         while not self.runtime.stopped.is_set():
+            self.changed.clear()
+            if self.runtime.config.retention is not None and self.error is None:
+                try:
+                    async with self.lock:
+                        while True:
+                            result=await self.batch_async()
+                            self.runtime.notify()
+                            if not any(result[key] for key in ('model_snapshots','auxiliary_snapshots','task_snapshots','turns','messages','notices','memory_snapshots','extraction_jobs')):
+                                break
+                            await asyncio.sleep(0)
+                except Exception as error:
+                    self.error=f'{type(error).__name__}: {error}'
+                    self.runtime._emit({'type':'retention','status':'failed','error':self.error})
+            stopping = asyncio.ensure_future(self.runtime.stopped.wait())
+            changed = asyncio.ensure_future(self.changed.wait())
             try:
-                async with self.lock:
-                    while True:
-                        result=await self.batch_async()
-                        self.runtime.notify()
-                        if not any(result[key] for key in ('model_snapshots','auxiliary_snapshots','task_snapshots','turns','messages','notices','memory_snapshots','extraction_jobs')):
-                            break
-                        await asyncio.sleep(0)
-            except Exception as error:
-                self.error=f'{type(error).__name__}: {error}'
-                self.runtime._emit({'type':'retention','status':'failed','error':self.error})
-                return
-            try:
-                await asyncio.wait_for(self.runtime.stopped.wait(),timeout=86400)
-            except TimeoutError:
-                pass
+                await asyncio.wait({stopping, changed}, timeout=86400, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                stopping.cancel()
+                changed.cancel()

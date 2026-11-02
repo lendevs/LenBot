@@ -34,10 +34,6 @@ const domains = computed(() => [
   { value: 'feishu', label: t('chatPlatforms.feishu') },
   { value: 'lark', label: 'Lark' },
 ])
-const deliveries = computed(() => [
-  { value: 'simulated' as const, label: t('setup.platform.simulated') },
-  { value: 'live' as const, label: t('setup.platform.real') },
-])
 const more = ref(Boolean(error('onebotTimeout')))
 watch(
   () => error('onebotTimeout'),
@@ -157,14 +153,5 @@ function test() {
         {{ error('connect') }}
       </p>
     </div>
-    <Field v-if="!wizard.connectLater.value" :label="t('system.connection.delivery')">
-      <div>
-        <SegmentedControl
-          v-model="draft.delivery"
-          :options="deliveries"
-          :label="t('system.connection.delivery')"
-        />
-      </div>
-    </Field>
   </div>
 </template>

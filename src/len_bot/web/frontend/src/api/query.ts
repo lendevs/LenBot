@@ -90,6 +90,7 @@ export const keys = {
   },
   plugins: {
     all: () => ['plugins'] as const,
+    updates: () => ['plugins', 'updates'] as const,
     health: () => ['plugins', 'health'] as const,
     catalog: () => ['plugin-catalog'] as const,
     market: (query: string, category: string | null, source: string | null) =>

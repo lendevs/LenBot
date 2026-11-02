@@ -8,7 +8,7 @@
 
 - `len-bot` 启动器管理单个 `len_bot.next.host` 子进程。面板确认重启后，宿主停止接收新消息与新工作，等当前回合结束并以退出码 `75` 退出（后台任务中断但保留工作区与会话供后续续接，试聊停止），启动器随即拉起新进程。直接运行 `python -m len_bot.next.host` 不带进程内重启能力。
 - 宿主、面板与所有维护写命令共用实例根目录下的 `.lenbot-instance.lock`。锁被占用时新命令直接退出；终端中按 `Ctrl-Z` 挂起的进程仍持有该锁，需 `fg` 恢复后按 `Ctrl-C` 正常结束。
-- 配置中所有账号均带平台前缀（如 `onebot:70001`），场景写成 `onebot:group:80001` 或 `onebot:private:70001`。真实发送开关保存在 `state/send-hold.json`，文件无法读取时按开启模拟发送处理。
+- 配置中账号均带平台前缀（如 `onebot:70001`），场景写成 `onebot:group:80001` 或 `onebot:private:70001`。接入平台后直接发送；在总览切换聊天／插件模式，选择模型参与程度。
 
 ## 群内设置管理
 
@@ -62,12 +62,12 @@
 面板启动 60 秒后及之后每 24 小时检查一次新版本（源码运行查询 GitHub Releases，托管部署查询本机更新控制器；设置 `panel.update_check: false` 可关闭）。
 
 - 源码安装按上表 `upgrade run --snapshot <新目录>` 升级，快照路径须位于实例目录与外部任务目录之外。
-- 部署包与 Docker 更新器在升级前将快照写入部署目录的 `backups/`（以 UTC 时间命名），面板**系统 → 设置 → 版本与更新**可查看或清理旧快照。上次更新失败且尚未恢复时，对应恢复快照锁定不可删除；快照失败会清理半成品并重新拉起旧版本。
-- 不经更新器、直接 `docker run` 的宿主容器比较 `.runtime/release.json` 记录的版本与镜像版本：镜像较新时先把实例快照到数据卷的 `/data/backups/`，再执行与 `upgrade run` 相同的迁移，迁移失败并恢复后删除这份快照；数据卷由更新的版本用过时拒绝启动。
+- 面板更新前，启动器把快照写入部署目录的 `backups/`（以 UTC 时间命名，旁边的 `<快照名>.json` 记录所属版本），保留最近两份；面板**系统 → 设置 → 版本与更新**可恢复或删除。快照失败时不切换版本，直接重新启动原版本。
+- Docker 宿主容器启动时比较 `.runtime/release.json` 记录的版本与镜像版本：镜像较新时先把实例快照到数据卷的 `/data/backups/`，再执行与 `upgrade run` 相同的迁移，迁移失败并恢复后删除这份快照；数据卷由更新的版本用过时拒绝启动。
 
 ## 数据格式版本
 
-第一个候选发布版（RC）之前，以下 6 项持久化格式与接口编号均固定为 `1`；之后 `lenbot.config.json` 的 `config_version` 因接入 Telegram 与飞书升为 `2`，格式 `1` 的配置读取时自动迁移，`upgrade` 写回文件。6 项分别是：`lenbot.config.json` 的 `config_version`、业务数据库 `storage/store.py`、记忆处理库 `memory/jobs.py`、本地记忆索引 `memory/local.py`、插件键值库 `plugins/kv.py` 以及插件公开接口 `plugin/manifest.py`。资料库派生索引 `state/reference/index.sqlite3` 在结构版本变化时自动重建。格式编号不匹配时宿主启动直接报错；从第一个 RC 起，跨版本结构变更统一由 `upgrade` 处理。
+根配置格式为 `4`：接入平台后使用 `delivery: "live"`，群配置移除 `simulated_delivery`。旧配置读取时按 `configuration/migrations.py` 转换，更新时 `upgrade apply` 阶段写回。业务数据库、记忆处理库、本地记忆索引、插件键值库和插件接口的格式编号均为 `1`。资料索引由源文件重建。
 
 ## 用量记账与后台任务资源
 
@@ -91,6 +91,6 @@
 
 推送 `v<版本>` 标签、Release 工作流完成后，在 Release 页逐项核对：
 
-- `release-manifest.json` 的 `images` 含 ghcr 和 Docker Hub 两个 registry 的 host、worker、updater 镜像。
+- `release-manifest.json` 的 `images` 含 ghcr 和 Docker Hub 两个 registry 的 host、worker 镜像；`updater_protocol` 为 `2`。
 - 文档中的版本示例与标签一致：`uv run --no-sync python scripts/prepare_release.py <版本>` 在设置版本时同步 `README.md`、`README.en.md`、`deploy/current/installation.md` 和 `website/start/*.md`，`tests/test_release_scripts.py` 检查示例版本与 `pyproject.toml` 一致。
 - 预发布版本（版本号带 `a`、`b` 或 `rc`）在 Release 页标为预发布，没有被标为 latest；文档里的下载链接指向该版本的 Release 页面 `https://github.com/lendevs/LenBot/releases/tag/v<版本>`。

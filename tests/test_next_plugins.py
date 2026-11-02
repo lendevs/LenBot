@@ -451,20 +451,9 @@ async def test_hung_plugin_start_and_stop_are_cut_off(tmp_path, monkeypatch):
     assert host.plugins["slowstop"].status == "failed"
 
 
-def test_scene_being_added_has_no_runner_and_is_not_paused():
-    """Adding a group from the panel builds its chat, and asks plugins for tools, before the runner exists."""
-    from types import SimpleNamespace
-
-    paused = SimpleNamespace(state=SimpleNamespace(paused=True))
-    host = SimpleNamespace(runtime=SimpleNamespace(runners={"onebot:group:80001": paused}))
-    assert PluginHost.scene_paused(host, "onebot:group:80001")
-    assert not PluginHost.scene_paused(host, "onebot:group:80002")
-    assert not PluginHost.scene_paused(SimpleNamespace(runtime=None), "onebot:group:80002")
-
-
 @pytest.mark.asyncio
-async def test_a_scene_with_chat_off_keeps_plugin_tools_for_when_chat_is_on_again(tmp_path):
-    """Chat switched back on does not rebuild a scene's tools, so a paused scene still lists them."""
+async def test_a_scene_with_chat_off_keeps_plugin_tools_available(tmp_path):
+    """Chat off only stops waking the model; the scene's plugin tools stay listed and callable."""
     from types import SimpleNamespace
 
     extra = tmp_path / "personal"
@@ -480,7 +469,7 @@ async def test_a_scene_with_chat_off_keeps_plugin_tools_for_when_chat_is_on_agai
     await host.start()
     try:
         assert [tool.name for tool in host.tools_for("onebot:group:80001")] == ["scoped_read"]
-        assert host.tool_previews("onebot:group:80001")[0]["reasons"] == ["当前群已关闭聊天"]
+        assert host.tool_previews("onebot:group:80001")[0]["reasons"] == []
     finally:
         await host.close()
 

@@ -189,6 +189,8 @@ export interface PluginsSnapshot {
     }
   >
   restart_required: boolean
+  /** Newer catalog versions of installed plugins. */
+  updates: PluginUpdate[]
   /** What an install, apply or other operation returned. */
   operation?: {
     name: string
@@ -250,6 +252,20 @@ export interface MarketEntry extends CatalogEntry {
   incompatible_reason: string | null
 }
 
+/** `plugins/catalog.py` PluginUpdate: a newer catalog version of an installed Git plugin. */
+export interface PluginUpdate {
+  name: string
+  title: string
+  installed_version: string
+  version: string
+  ref: string | null
+  source: CatalogSourceKind
+  compatible: boolean
+  incompatible_reason: string | null
+  /** Prepared; applies when the host restarts. */
+  prepared: boolean
+}
+
 export interface MarketView {
   url: string | null
   sources: CatalogSource[]
@@ -285,6 +301,10 @@ export const pluginsApi = {
     http.post<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}/${action}`),
   update: (plugin: string, ref: string | null) =>
     http.post<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}/update`, { ref }),
+  /** Newer catalog versions of installed plugins; the remote indexes are read in the background. */
+  updates: (signal?: AbortSignal) => http.get<PluginUpdate[]>('/api/host/plugin-updates', undefined, signal),
+  /** Prepares and applies each update; null applies every compatible one. */
+  applyUpdates: (names: string[] | null) => http.post<PluginsSnapshot>('/api/host/plugin-updates', { names }),
   /** Removes the source and the saved settings; the data directory stays. */
   uninstall: (plugin: string) =>
     request<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}`, { method: 'DELETE' }),

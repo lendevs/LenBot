@@ -247,8 +247,6 @@ class Worker:
             case "fetch_media":
                 segment = Segment(args[1]["type"], args[1]["data"])
                 return base64.b64encode(await host.fetch_media(name, self._scene(args[0]), segment, args[2])).decode()
-            case "scene_paused":
-                return host.scene_paused(self._scene(args[0]))
             case "require_owner":
                 return host.require_owner(self._scene(args[0]), args[1])
             case "redact":

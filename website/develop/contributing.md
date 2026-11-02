@@ -18,7 +18,7 @@ uv run --no-sync pytest -q
 
 日常开发常用校验命令：
 
-- **Python 代码与测试**：执行 `uv run --no-sync pytest -q` 与 `uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package tests`。
+- **Python 代码与测试**：执行 `uv run --no-sync pytest -q` 与 `uv run --no-sync ruff check src/len_bot scripts deploy/package tests`。
 - **管理面板前端**：修改 `src/len_bot/web/frontend/` 后，在该目录执行 `npm run typecheck`、`npm run lint` 和 `npm run build`（产物 `src/len_bot/web/static/dist/` 不提交到 Git）。
 - **文档站**：修改 `website/` 后，执行 `npm --prefix website run dev` 在本地预览，提交前执行 `npm --prefix website run build` 检查死链。
 

@@ -3,7 +3,7 @@
 Edited copies live in ``state/prompts/`` of the instance. ``.state.json`` there records the LenBot
 version the edits were made against and whether they survive an upgrade; without that permission a
 new version moves them aside and the bundled prompts of the new version apply again. Edits are read
-once at startup, so a saved change applies after the next restart, the same as the root config.
+at startup and again after each panel edit, which the host applies to the next turn of every scene.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def bundled(name: str) -> str:
 
 
 def read_prompt(name: str) -> str:
-    """The prompt text in effect: the instance's edited copy loaded at startup, otherwise the bundled file."""
+    """The prompt text in effect: the instance's loaded edited copy, otherwise the bundled file."""
     return _running[name] if name in _running else bundled(name)
 
 
@@ -52,9 +52,10 @@ def _read_edits(folder: Path) -> dict[str, str]:
     return {name: (folder / name).read_text(encoding="utf-8") for name in edited(folder)}
 
 
-def pending(root: Path) -> bool:
-    """Whether the saved edits differ from the ones this process started with."""
-    return _read_edits(directory(root)) != _running
+def reload(root: Path) -> None:
+    """Take the saved edits into this process after a panel change."""
+    global _running
+    _running = _read_edits(directory(root))
 
 
 def load_state(folder: Path) -> dict:

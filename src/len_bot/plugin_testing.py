@@ -47,8 +47,7 @@ class _LocalHost(PluginHost):
         self.turn_floors: dict[str, int] = {}
         # Values a plugin saved with update_config, by plugin name; the root file of a real host.
         self.saved_configs: dict[str, dict] = {}
-        self.runtime = SimpleNamespace(store=Store(config.database), mcp=None, slots=None, runners={
-            scene: SimpleNamespace(state=SimpleNamespace(paused=False)) for scene in config.scenes},
+        self.runtime = SimpleNamespace(store=Store(config.database), mcp=None, slots=None, runners={},
             save_plugin_config=self._save_config, refresh_external_tools=lambda: None)
 
     async def _save_config(self, name: str, values: dict) -> None:
@@ -58,7 +57,7 @@ class _LocalHost(PluginHost):
         return self.turn_floors.get(scene, 0)
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
-        self._speaking(plugin, scene)
+        self._active(plugin, scene)
         parts, omitted = platform_parts(scene, parts)
         captured = tuple(Text(self.redact(plugin, item.text)) if isinstance(item, Text) else
                          Image(item.data, self.redact(plugin, item.description)) if isinstance(item, Image) else item

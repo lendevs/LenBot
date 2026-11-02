@@ -58,6 +58,7 @@ const loaded = computed(() => configuredIn(props.snapshot, props.name))
 const busy = computed(() => state.busy.value !== null)
 const working = computed(() => state.busy.value === props.name)
 const version = computed(() => versionOf(props.snapshot, props.name))
+const catalogUpdate = computed(() => props.snapshot.updates?.find((item) => item.name === props.name) ?? null)
 
 // The draft of the settings tab lives here, so the header's enable button saves what is typed.
 const fields = computed(() => manifest.value?.fields ?? [])
@@ -252,6 +253,13 @@ const permissions = computed(() => permissionsOf(props.snapshot, props.name))
         <div class="flex min-w-0 flex-wrap items-center gap-2">
           <h1 class="truncate text-2xl font-semibold">{{ name }}</h1>
           <Badge v-if="version" class="tabular">v{{ version }}</Badge>
+          <Badge v-if="catalogUpdate" tone="brand" class="tabular">
+            {{
+              catalogUpdate.prepared
+                ? t('plugins.updates.prepared')
+                : t('plugins.card.update', { version: catalogUpdate.version })
+            }}
+          </Badge>
           <Badge :tone="statusTone(status)" dot>{{ t(`plugins.status.${status}`) }}</Badge>
         </div>
         <p v-if="manifest?.description || running?.description" class="max-w-3xl text-sm text-muted">

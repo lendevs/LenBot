@@ -69,12 +69,30 @@ def test_container_volume_is_migrated_once_and_refuses_newer_data(tmp_path, monk
 
 def test_migration_moves_only_an_official_task_image_to_the_new_version(tmp_path):
     import json
-    path = tmp_path / 'lenbot.config.json'
+    from len_bot.next.deployment import Deployment, follow_release
+    deployment = Deployment('docker', tmp_path)
+    deployment.instance.mkdir()
+    path = deployment.instance / 'lenbot.config.json'
     for image, expected in [('ghcr.io/lendevs/lenbot-worker:0.1.0', 'ghcr.io/lendevs/lenbot-worker:0.2.0'),
                             ('lendevs/lenbot-worker@sha256:' + '0' * 64, 'lendevs/lenbot-worker:0.2.0'),
                             ('lenbot-worker:local', 'lenbot-worker:local')]:
         path.write_text(json.dumps({'worker': {'sandbox': 'docker', 'image': image}}))
-        launcher.follow_release_worker(tmp_path, '0.2.0')
+        follow_release(deployment, '0.1.0', '0.2.0')
         assert json.loads(path.read_text())['worker']['image'] == expected
     path.write_text(json.dumps({'worker': None}))
-    launcher.follow_release_worker(tmp_path, '0.2.0')
+    follow_release(deployment, '0.1.0', '0.2.0')
+
+
+def test_a_package_task_runtime_follows_the_release_unless_the_owner_chose_another(tmp_path):
+    import json
+    from len_bot.next.deployment import Deployment, follow_release
+    deployment = Deployment('package', tmp_path)
+    deployment.instance.mkdir()
+    path = deployment.instance / 'lenbot.config.json'
+    own = str(deployment.directory('0.1.0') / 'task-runtime')
+    path.write_text(json.dumps({'worker': {'sandbox': 'bwrap', 'task_runtime': own}}))
+    follow_release(deployment, '0.1.0', '0.2.0')
+    assert json.loads(path.read_text())['worker']['task_runtime'] == str(deployment.directory('0.2.0') / 'task-runtime')
+    path.write_text(json.dumps({'worker': {'sandbox': 'bwrap', 'task_runtime': '/opt/custom'}}))
+    follow_release(deployment, '0.2.0', '0.3.0')
+    assert json.loads(path.read_text())['worker']['task_runtime'] == '/opt/custom'

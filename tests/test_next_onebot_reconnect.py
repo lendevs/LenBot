@@ -136,7 +136,7 @@ async def test_forward_host_keeps_running_across_a_peer_restart(tmp_path, monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode', ['forward_ws', 'reverse_ws'])
-async def test_panel_disconnect_while_the_peer_is_away_stops_cleanly(tmp_path, monkeypatch, mode):
+async def test_panel_disconnect_while_the_peer_is_away_keeps_the_host_running(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(onebot_module, 'RECONNECT_INITIAL_SECONDS', 60)
     connections = asyncio.Queue()
 
@@ -168,6 +168,11 @@ async def test_panel_disconnect_while_the_peer_is_away_stops_cleanly(tmp_path, m
                 runtime.runners[SCENE].changed.set()
                 await asyncio.sleep(.05)
                 await runtime.disconnect()
+                # The host keeps running without the platform until the panel connects again.
+                await asyncio.sleep(.05)
+                assert not running.done() and runtime.status == 'running'
+                assert runtime.missing_platforms == ['onebot'] and runtime.can_connect
+                runtime.stop()
                 await asyncio.wait_for(running, 3)
         assert runtime.status == 'stopped'
 

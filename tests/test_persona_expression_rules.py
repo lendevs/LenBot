@@ -53,7 +53,7 @@ def test_expression_files_travel_with_the_package(tmp_path):
 
 def test_files_page_edits_and_clears_expression_files(tmp_path):
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
-        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-unused'},
         'compaction': {'input_tokens': 6000}, 'mind': {'provider': 'primary', 'model': 'fixture',

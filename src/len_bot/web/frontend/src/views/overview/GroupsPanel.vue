@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
 import { ArrowRight, MessagesSquare, Plus, Search } from '@lucide/vue'
-import { hostApi, type HostState } from '../../api/host'
+import { hostApi, type HostState, type WakeLevel } from '../../api/host'
 import { host, readHostState } from '../../api/hostStore'
 import { formatNumber } from '../../i18n/format'
 import { groupLabel } from '../../layouts/shell/scenes'
@@ -11,8 +11,8 @@ import Avatar from '../../ui/Avatar.vue'
 import Button from '../../ui/Button.vue'
 import EmptyState from '../../ui/EmptyState.vue'
 import Input from '../../ui/Input.vue'
+import SegmentedControl from '../../ui/SegmentedControl.vue'
 import StatusDot from '../../ui/StatusDot.vue'
-import Switch from '../../ui/Switch.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import { groupsTarget } from '../groups/route'
@@ -39,6 +39,27 @@ const chat = useMutation({
   onSettled: () => void readHostState(),
 })
 const switching = (scene: string) => chat.isPending.value && chat.variables.value?.scene === scene
+const chatOn = (item: HostState['scenes'][number]) =>
+  switching(item.scene) ? Boolean(chat.variables.value?.enabled) : item.chat_enabled
+
+const levels = computed(() =>
+  (['active', 'moderate', 'quiet'] as const).map((value) => ({
+    value,
+    label: t(`overview.groups.levels.${value}`),
+  })),
+)
+const level = useMutation({
+  mutationFn: ({ scene, value }: { scene: string; value: WakeLevel }) => hostApi.setWakeLevel(scene, value),
+  onError: (error) =>
+    toast.error(t('overview.groups.levelFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    }),
+  onSettled: () => void readHostState(),
+})
+const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
+  level.isPending.value && level.variables.value?.scene === item.scene
+    ? level.variables.value.value
+    : (item.wake_level ?? '')
 </script>
 
 <template>
@@ -95,13 +116,33 @@ const switching = (scene: string) => chat.isPending.value && chat.variables.valu
               </span>
             </span>
           </RouterLink>
-          <Switch
-            :model-value="switching(item.scene) ? Boolean(chat.variables.value?.enabled) : item.chat_enabled"
-            :loading="switching(item.scene)"
-            :disabled="!state.connection.accepting"
-            :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
-            @update:model-value="(enabled: boolean) => chat.mutate({ scene: item.scene, enabled })"
+          <SegmentedControl
+            :model-value="levelOf(item)"
+            :options="levels"
+            size="sm"
+            class="max-sm:hidden"
+            :disabled="level.isPending.value"
+            :label="t('overview.groups.level', { name: groupLabel(item.scene) })"
+            @update:model-value="
+              (value) => value && level.mutate({ scene: item.scene, value: value as WakeLevel })
+            "
           />
+          <button
+            type="button"
+            class="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border text-sm font-semibold transition-colors focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+            :class="
+              chatOn(item)
+                ? 'border-primary bg-primary text-on-primary hover:brightness-95'
+                : 'border-line-strong bg-fill text-ink-2 hover:bg-hover'
+            "
+            :aria-pressed="chatOn(item)"
+            :disabled="!state.connection.accepting || switching(item.scene)"
+            :title="t(chatOn(item) ? 'overview.groups.chatHint' : 'overview.groups.pluginsHint')"
+            :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
+            @click="chat.mutate({ scene: item.scene, enabled: !item.chat_enabled })"
+          >
+            {{ t(chatOn(item) ? 'overview.groups.modeChat' : 'overview.groups.modePlugins') }}
+          </button>
         </li>
         <li v-if="!shown.length" class="px-4 py-6 text-center text-sm text-muted">
           {{ t('common.noResults') }}

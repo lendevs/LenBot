@@ -160,12 +160,12 @@ def test_readiness_names_what_delegation_still_needs(tmp_path: Path) -> None:
     exercise(tmp_path, check)
 
 
-def test_a_release_installation_defaults_to_the_same_version_official_worker(tmp_path: Path) -> None:
+def test_a_release_installation_defaults_to_the_same_version_official_worker(tmp_path: Path, monkeypatch) -> None:
     from importlib.metadata import version
+    from len_bot.next.configuration import tasks
 
     write_instance(tmp_path, ['onebot:70001'])
-    (tmp_path / '.runtime').mkdir()
-    (tmp_path / '.runtime' / 'update-control.json').write_text('{}', encoding='utf-8')
+    monkeypatch.setattr(tasks, 'release_installation', lambda: True)
 
     async def check(client) -> None:
         defaults = (await client.get('/api/host/settings/worker/defaults')).json()

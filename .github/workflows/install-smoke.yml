@@ -1,7 +1,7 @@
 name: Install smoke
 
 # Called after release-packages is uploaded in the same run. Installs what a user would download,
-# walks first setup to a logged-in panel and stops it; simulated delivery, no OneBot or model.
+# walks first setup to a logged-in panel and stops it; no OneBot service or model.
 on:
   workflow_call:
 
@@ -56,9 +56,12 @@ jobs:
           print(f"In-package task smoke on {sys.argv[2]}: Pi {result['pi']}, host {result['host']}, "
                 f"{'passed' if all(result['checks'].values()) else 'failed'} ({len(result['checks'])} checks)")
           PY
-      - name: Upgrade and restore two real packaged versions
+      - name: Update from the panel, roll back a release that does not start, and restore a snapshot
+        if: runner.os == 'Linux'
         shell: bash
-        run: uv run --no-project --python 3.13 python scripts/smoke_update.py packages "$RUNNER_TEMP/update-smoke"
+        run: |
+          uv run --no-project --python 3.13 python scripts/smoke_update.py "$RUNNER_TEMP/update-smoke" \
+            --wheel packages/len_bot-*.whl --requirements packages/requirements.txt
 
   docker:
     strategy:
@@ -82,17 +85,7 @@ jobs:
             -f deploy/current/Dockerfile -t lenbot-current:smoke .
       - name: Initialize a new data volume, start the documented docker run and log in to the panel
         run: python3 scripts/smoke_install.py docker packages "$RUNNER_TEMP/smoke" --image lenbot-current:smoke
-      - name: Build the independent updater, the synthetic baseline and a release that fails during startup
+      - name: Update the container from the panel into the data volume and keep it after a restart
         run: |
-          docker build -f docker/updater/Dockerfile -t lenbot-updater:smoke .
-          uv run --no-project --python 3.13 python scripts/smoke_update.py packages "$RUNNER_TEMP/baseline" --baseline-only
-          docker build --build-arg PACKAGE_SOURCE=wheel --build-context "release=$RUNNER_TEMP/baseline/baseline-artifacts" \
-            -f deploy/current/Dockerfile -t lenbot-current:baseline .
-          uv run --no-project --python 3.13 python scripts/smoke_update.py packages "$RUNNER_TEMP/broken" --broken-only
-          docker build --build-arg PACKAGE_SOURCE=wheel --build-context "release=$RUNNER_TEMP/broken/broken-artifacts" \
-            -f deploy/current/Dockerfile -t lenbot-current:broken .
-      - name: Replace the image and restore program, volume and instance data
-        run: |
-          python3 scripts/smoke_docker_update.py packages "$RUNNER_TEMP/docker-update" \
-            --baseline-image lenbot-current:baseline --host-image lenbot-current:smoke --updater-image lenbot-updater:smoke \
-            --broken-image lenbot-current:broken
+          uv run --no-project --python 3.13 python scripts/smoke_update.py "$RUNNER_TEMP/update-smoke" \
+            --image lenbot-current:smoke --wheel packages/len_bot-*.whl --requirements packages/requirements.txt

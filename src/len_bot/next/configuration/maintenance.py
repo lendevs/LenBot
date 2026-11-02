@@ -23,8 +23,8 @@ class PanelSettings(BaseModel):
     cookie_secure: bool = False
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1"])
     assets_dir: Path | None = None
-    # Once a day the panel asks GitHub (or a managed installation's updater) whether a newer release exists.
-    # Nothing is downloaded or installed; false turns the background request off, the explicit check stays.
+    # Every few hours the panel asks GitHub whether a newer release exists and reads the plugin indexes.
+    # Nothing is downloaded or installed; false turns the background requests off, the explicit check stays.
     update_check: bool = True
 
     @field_validator("host", "username")

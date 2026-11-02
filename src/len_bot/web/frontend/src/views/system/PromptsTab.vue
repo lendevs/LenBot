@@ -88,7 +88,7 @@ const save = useMutation({
   mutationFn: (text: string) => systemApi.savePrompt(name.value!, text),
   onSuccess: (summary, text) => {
     adopt(summary, text)
-    toast.success(t('system.savedRestart'))
+    toast.success(t('common.saved'))
   },
 })
 const restore = useMutation({

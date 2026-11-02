@@ -179,7 +179,7 @@ async def test_group_files_are_listed_by_folder_and_imported_into_the_reference_
 
     monkeypatch.setattr(routes, "download", download)
     async with panel(tmp_path) as (client, runtime):
-        runtime.platform.call = call
+        runtime.platform.adapters['onebot'].call = call
         assert (await client.get(PATH)).json()["group_files"] is True
         root = (await client.get(f"{PATH}/group-files")).json()
         assert [(item["name"], item["supported"], item["uploader"]) for item in root["files"]] == [
@@ -211,7 +211,7 @@ async def test_group_file_failures_name_the_step_and_a_private_chat_has_no_group
         return {"status": "ok", "retcode": 0, "data": {}}
 
     async with panel(tmp_path) as (client, runtime):
-        runtime.platform.call = call
+        runtime.platform.adapters['onebot'].call = call
         listed = await client.get(f"{PATH}/group-files")
         assert listed.status_code == 502 and "读取群文件失败" in listed.json()["detail"]["message"]
         assert "不支持的动作" in listed.json()["detail"]["message"]

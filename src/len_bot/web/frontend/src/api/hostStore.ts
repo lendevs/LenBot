@@ -16,6 +16,8 @@ export interface HostStore {
   overviewError: unknown
   members: Record<string, number>
   updates: Record<string, unknown> | null
+  /** Installed plugins with a newer catalog version. */
+  pluginUpdates: number
 }
 
 export const host = reactive<HostStore>({
@@ -27,9 +29,10 @@ export const host = reactive<HostStore>({
   overviewError: null,
   members: {},
   updates: null,
+  pluginUpdates: 0,
 })
 
-const reads = { state: 0, titles: 0, overview: 0, restart: 0, updates: 0 }
+const reads = { state: 0, titles: 0, overview: 0, restart: 0, updates: 0, pluginUpdates: 0 }
 
 export async function readHostState(): Promise<void> {
   const own = ++reads.state
@@ -89,6 +92,16 @@ export async function readUpdates(): Promise<void> {
   }
 }
 
+export async function readPluginUpdates(): Promise<void> {
+  const own = ++reads.pluginUpdates
+  try {
+    const value = await http.get<{ prepared: boolean }[]>('/api/host/plugin-updates')
+    if (own === reads.pluginUpdates) host.pluginUpdates = value.filter((item) => !item.prepared).length
+  } catch {
+    if (own === reads.pluginUpdates) host.pluginUpdates = 0
+  }
+}
+
 export function clearHost(): void {
   for (const key of Object.keys(reads) as (keyof typeof reads)[]) reads[key] += 1
   Object.assign(host, {
@@ -98,6 +111,7 @@ export function clearHost(): void {
     titleErrors: {},
     overview: null,
     overviewError: null,
+    pluginUpdates: 0,
     members: {},
   })
   for (const key of Object.keys(sceneTitles)) delete sceneTitles[key]

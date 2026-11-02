@@ -70,12 +70,12 @@ def _annotation(reply: ModelReply) -> tuple[str, str, list[str], list[str], bool
 class StickerCollector:
     """Per-scene sticker candidate queue; failed items keep a failed status."""
 
-    def __init__(self, config: HostConfig, store: Store, vision: ChatModel, *,
+    def __init__(self, config: HostConfig, store: Store, mind: ChatModel, vision: ChatModel, *,
                  recording: Callable[[str], RecordedImages | None],
                  slots: ModelSlots | None = None, on_update: Callable[[], None] | None = None):
         self.config = config
         self.store = store
-        self.vision = vision
+        self.mind, self.seeing = mind, vision
         self.slots = slots
         self.recording = recording
         self.on_update = on_update
@@ -91,6 +91,11 @@ class StickerCollector:
         self._prompt = read_prompt("next_sticker_learning.md")
         for scene in self.scenes:
             self.records.recover(scene)
+
+    @property
+    def vision(self) -> ChatModel:
+        """The model that reads images under the running configuration."""
+        return self.mind if self.config.models.roles.mind.image_input else self.seeing
 
     def _start_scene(self, scene: str) -> None:
         with log_context(scene=scene, job='sticker_collection'):

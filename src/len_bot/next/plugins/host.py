@@ -417,20 +417,6 @@ class PluginHost:
     def scene_timezone(self, scene: str) -> str:
         return self.config.scene_timezone(scene)
 
-    def scene_paused(self, scene: str) -> bool:
-        """Whether the operator switched this scene's chat off; plugins stay silent there too.
-
-        A scene being added from the panel has no runner yet while its chat is built, and is not paused.
-        """
-        runner = None if self.runtime is None else self.runtime.runners.get(scene)
-        return runner is not None and runner.state.paused
-
-    def _speaking(self, plugin: str, scene: str) -> Loaded:
-        record = self._active(plugin, scene)
-        if self.scene_paused(scene):
-            raise PermissionError(f"场景 {scene} 已关闭聊天，插件 {plugin} 不在该群发言")
-        return record
-
     def _active(self, plugin: str, scene: str | None = None) -> Loaded:
         record = self.plugins[plugin]
         if scene is not None and scene not in record.scenes:
@@ -519,7 +505,7 @@ class PluginHost:
         return await self.send_parts(plugin, scene, [Text(text)], reply_to)
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
-        self._permit(self._speaking(plugin, scene), "send")
+        self._permit(self._active(plugin, scene), "send")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         parts, omitted = platform_parts(scene, parts)
@@ -530,7 +516,7 @@ class PluginHost:
         return sent if omitted is None else replace(sent, report=f"{sent.report}；{omitted}")
 
     def emit_event(self, plugin: str, scene: str, text: str) -> None:
-        self._permit(self._speaking(plugin, scene), "events")
+        self._permit(self._active(plugin, scene), "events")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         now = datetime.fromtimestamp(self.now(), ZoneInfo(self.scene_timezone(scene)))
@@ -666,9 +652,6 @@ class PluginHost:
         await record.ready.wait()
         while True:
             await asyncio.sleep(max(0, job.next_run - self.now()))
-            if self.scene_paused(job.scene):
-                job.next_run = next_cron(job.cron, job.timezone, self.now())
-                continue
             job.last_started = self.now()
             try:
                 await handler(Invocation(record.context, job.scene))
@@ -724,8 +707,6 @@ class PluginHost:
         return task
 
     def tools_for(self, scene: str, *, preparing: bool = False) -> list[ExternalTool]:
-        # A scene with chat off keeps its tools: it takes no turns, and switching chat back on does
-        # not rebuild them. Plugins speaking there are refused in _speaking.
         tools = []
         for record in self.plugins.values():
             if (record.status != "running" and not (preparing and record.status == "loaded")) or scene not in record.scenes:
@@ -753,8 +734,6 @@ class PluginHost:
                     reasons.append(f"插件未运行：{record.status}")
                 if scene not in record.scenes:
                     reasons.append("插件未在当前群启用")
-                if self.scene_paused(scene):
-                    reasons.append("当前群已关闭聊天")
                 if name in unavailable:
                     reasons.append(unavailable[name])
                 previews.append({**tool.discovery, "summary": tool.discovery["description"],
@@ -767,7 +746,7 @@ class PluginHost:
                    ) -> Callable[[str, dict], Awaitable[str]]:
         async def call(scene: str, arguments: dict) -> str:
             try:
-                self._speaking(record.name, scene)
+                self._active(record.name, scene)
                 if record.status != "running":
                     raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
                 unavailable = record.instance.unavailable_tools(scene)
@@ -954,8 +933,7 @@ class PluginHost:
         keys = {notice.notice_type} | ({f"{notice.notice_type}.{notice.sub_type}"} if notice.sub_type else set())
         count = 0
         for record in self.plugins.values():
-            if (record.status not in {"loaded", "running"} or notice.scene not in record.scenes
-                    or self.scene_paused(notice.scene)):
+            if record.status not in {"loaded", "running"} or notice.scene not in record.scenes:
                 continue
             for key in sorted(keys & set(record.notices)):
                 method = getattr(record.instance, record.notices[key])

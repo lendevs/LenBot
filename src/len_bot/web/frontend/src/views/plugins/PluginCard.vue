@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CircleAlert, MessagesSquare, Wrench } from '@lucide/vue'
+import { ArrowUpCircle, CircleAlert, MessagesSquare, Wrench } from '@lucide/vue'
 import type { PluginsSnapshot } from '../../api/plugins'
 import Avatar from '../../ui/Avatar.vue'
 import Badge from '../../ui/Badge.vue'
@@ -32,6 +32,9 @@ const groups = computed(() => scenesUsing(props.snapshot, props.name).length)
 const features = computed(() => featureCount(running.value))
 const permissions = computed(() => permissionsOf(props.snapshot, props.name))
 const recent = computed(() => health.value?.errors_last_hour ?? 0)
+const update = computed(
+  () => props.snapshot.updates?.find((item) => item.name === props.name && !item.prepared) ?? null,
+)
 </script>
 
 <template>
@@ -52,8 +55,15 @@ const recent = computed(() => health.value?.errors_last_hour ?? 0)
         >
           {{ name }}
         </button>
-        <p v-if="versionOf(snapshot, name)" class="truncate text-xs text-subtle tabular">
+        <p
+          v-if="versionOf(snapshot, name)"
+          class="flex items-center gap-1.5 truncate text-xs text-subtle tabular"
+        >
           v{{ versionOf(snapshot, name) }}
+          <span v-if="update" class="inline-flex items-center gap-1 font-semibold text-primary">
+            <ArrowUpCircle :size="12" aria-hidden="true" />
+            {{ t('plugins.card.update', { version: update.version }) }}
+          </span>
         </p>
       </div>
       <Badge :tone="statusTone(status)" dot>{{ t(`plugins.status.${status}`) }}</Badge>

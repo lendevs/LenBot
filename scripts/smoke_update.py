@@ -1,234 +1,343 @@
-"""Install two real wheel versions and exercise the native update HTTP protocol and snapshot restore."""
+"""Update a deployment from the panel end to end: the launcher, the version switch, readiness and rollback.
+
+The current wheel is installed as version A in a deployment package layout, with a virtual environment in
+place of the packaged Python. Copies relabelled A.post1 and A.post2 (whose host exits at start) are served
+as releases in GitHub's list format. After first setup the script, through the panel API only:
+
+1. updates to A.post1: snapshot, migration, start and readiness, and the new version keeps running and
+   then runs the plugin updates;
+2. updates to A.post2: the new host fails, the launcher restores the snapshot and A.post1 runs again;
+3. restores the snapshot taken before step 1: A runs again with its data.
+
+With --image the same update runs in a container started from that host image: the panel installs A.post1
+into the data volume, and after a container restart the volume version still runs.
+
+Needs uv and Python 3.13 (and Docker for --image); no OneBot service or model.
+
+    uv run --no-sync python scripts/smoke_update.py <work directory> [--image I] [--wheel W --requirements R]
+"""
+
+from __future__ import annotations
 
 import argparse
-from http.cookiejar import CookieJar
+import base64
+import hashlib
+import http.cookiejar
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import threading
 import time
-import tomllib
 import urllib.request
 import zipfile
+from functools import partial
 
-from build_deployment import build_deployments, current_platform
-from release_metadata import write_manifest
-from smoke_install import check_panel, request, smoke_package
+from smoke_install import Output, free_port, request, wait_until_served
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def baseline(artifacts: Path, work: Path, *, version: str = '0.0.0', broken: bool = False) -> Path:
-    prefix = 'broken' if broken else 'baseline'
-    project = work / (prefix + '-source')
-    source = project / 'src'
-    source.mkdir(parents=True)
-    wheel, = artifacts.glob('*.whl')
-    with zipfile.ZipFile(wheel) as package:
-        for name in package.namelist():
-            if name.startswith('len_bot/'):
-                package.extract(name, source)
-    for name in ('pyproject.toml', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'):
-        shutil.copy2(ROOT / name, project / name)
-    config = (project / 'pyproject.toml').read_text(encoding='utf-8')
-    current = tomllib.loads(config)['project']['version']
-    (project / 'pyproject.toml').write_text(config.replace(f'version = "{current}"', f'version = "{version}"', 1), encoding='utf-8')
-    if broken:
-        host = source / 'len_bot/next/host.py'
-        text = host.read_text(encoding='utf-8')
-        assert 'import asyncio' in text
-        host.write_text(text.replace('import asyncio',
-            'raise RuntimeError("synthetic startup failure")\nimport asyncio', 1), encoding='utf-8')
-    output = work / (prefix + '-artifacts')
-    output.mkdir()
-    subprocess.run(['uv', 'build', '--wheel', '--out-dir', str(output)], cwd=project, check=True)
-    old_wheel, = output.glob('*.whl')
-    requirements = output / 'requirements.txt'
-    shutil.copy2(artifacts / 'requirements.txt', requirements)
-    build_deployments(old_wheel, ROOT, output, requirements, platforms=(current_platform(),))
-    write_manifest(project, output, revision='synthetic-upgrade-fixture')
-    return output
+PROJECT = Path(__file__).resolve().parents[1]
+PLATFORM = 'smoke'
+SWITCH_SECONDS = 300
 
 
-def next_patch(artifacts: Path) -> str:
-    """The version after the built release; the synthetic broken release takes it."""
-    version = json.loads((artifacts / 'release-manifest.json').read_text(encoding='utf-8'))['version']
-    major, minor, patch = map(int, re.match(r'(\d+)\.(\d+)\.(\d+)', version).groups())
-    return f'{major}.{minor}.{patch + 1}'
+def build_inputs(work: Path) -> tuple[Path, Path]:
+    dist = work / 'dist'
+    subprocess.run(['uv', 'build', '--wheel', '--out-dir', str(dist)], cwd=PROJECT, check=True)
+    requirements = work / 'requirements.txt'
+    subprocess.run(['uv', 'export', '--frozen', '--no-dev', '--no-emit-project', '--no-hashes',
+                    '--output-file', str(requirements)], cwd=PROJECT, check=True, stdout=subprocess.DEVNULL)
+    wheel, = dist.glob('len_bot-*.whl')
+    return wheel, requirements
 
 
-def enable_local_sandbox(root: Path, version: str) -> bool:
-    """Switch the installed package's tasks on in the local sandbox, with its own release's task runtime.
+def relabel(wheel: Path, version: str, destination: Path, *, broken: bool = False) -> Path:
+    """The same wheel under another version; broken makes its host exit before the panel starts."""
+    old = wheel.name.split('-')[1]
+    target = destination / wheel.name.replace(f'-{old}-', f'-{version}-')
+    records = []
+    with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as output:
+        for item in source.infolist():
+            name = item.filename.replace(f'len_bot-{old}.dist-info', f'len_bot-{version}.dist-info')
+            data = source.read(item)
+            if name.endswith('.dist-info/METADATA'):
+                data = re.sub(rb'^Version: .*$', f'Version: {version}'.encode(), data, count=1, flags=re.M)
+            if broken and name == 'len_bot/next/host.py':
+                data = b"raise SystemExit('smoke: this release does not start')\n" + data
+            if name.endswith('.dist-info/RECORD'):
+                continue
+            output.writestr(name, data)
+            digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode()
+            records.append(f'{name},sha256={digest},{len(data)}')
+        record = f'len_bot-{version}.dist-info/RECORD'
+        output.writestr(record, '\n'.join([*records, f'{record},,']) + '\n')
+    return target
 
-    Only Linux packages have one, and it needs bwrap on the machine; returns whether it was set.
-    """
-    bwrap = shutil.which('bwrap') if sys.platform == 'linux' else None
-    if bwrap is None:
-        return False
-    path = root / 'instance/lenbot.config.json'
-    config = json.loads(path.read_text(encoding='utf-8'))
-    config['worker'] = {'sandbox': 'bwrap', 'bwrap_binary': bwrap, 'model_reasoning': False,
-                        'compaction_reserve_tokens': 1024, 'compaction_keep_recent_tokens': 2048,
-                        'task_runtime': str(root / 'releases' / version / 'task-runtime'),
-                        'workspace_root': str(root / 'instance/task-workspaces'),
-                        'runtime_root': str(root / 'instance/task-runtime'),
-                        'delivery_root': str(root / 'instance/deliveries')}
-    path.write_text(json.dumps(config, indent=2), encoding='utf-8')
-    return True
+
+def install_release(directory: Path, version: str, wheel: Path, requirements: Path) -> None:
+    """releases/<version>: python/ (a virtual environment here) and release.json."""
+    directory.mkdir(parents=True)
+    subprocess.run(['uv', 'venv', '--quiet', '--python', '3.13', str(directory / 'python')], check=True)
+    subprocess.run(['uv', 'pip', 'install', '--quiet', '--python', str(directory / 'python/bin/python3'),
+                    '--requirement', str(requirements), str(wheel)], check=True)
+    (directory / 'release.json').write_text(json.dumps({'version': version, 'platform': PLATFORM}) + '\n')
 
 
-def task_runtime(root: Path) -> str:
-    return json.loads((root / 'instance/lenbot.config.json').read_text(encoding='utf-8'))['worker']['task_runtime']
+def publish(work: Path, served: Path, base: str, version: str, wheel: Path, requirements: Path) -> dict:
+    """One release in the served folder: its package and manifest, and its entry in the GitHub list."""
+    name = f'lenbot-{version}-{PLATFORM}'
+    staging = work / 'staging' / name
+    install_release(staging / 'releases' / version, version, wheel, requirements)
+    folder = served / version
+    folder.mkdir(parents=True)
+    bundle = folder / f'{name}.tar.gz'
+    with tarfile.open(bundle, 'w:gz') as archive:
+        archive.add(staging, arcname=name)
+    shutil.rmtree(staging)
+    body = bundle.read_bytes()
+    manifest = {'manifest_version': 1, 'updater_protocol': 2, 'version': version, 'tag': 'v' + version,
+                'bundles': {PLATFORM: bundle.name},
+                'files': {bundle.name: {'sha256': hashlib.sha256(body).hexdigest(), 'bytes': len(body)}}}
+    (folder / 'release-manifest.json').write_text(json.dumps(manifest))
+    return {'tag_name': 'v' + version, 'prerelease': False, 'draft': False, 'body': f'# LenBot {version}\n',
+            'published_at': None, 'assets': [{'name': item, 'browser_download_url': f'{base}/{version}/{item}'}
+                                             for item in (bundle.name, 'release-manifest.json')]}
 
 
-def run(artifacts: Path, work: Path) -> dict:
-    work.mkdir(parents=True, exist_ok=False)
-    old = baseline(artifacts, work)
-    installed = smoke_package(old, work / 'installed')
-    root = Path(installed['root'])
-    local_sandbox = enable_local_sandbox(root, '0.0.0')
-    fixture = work / 'release-server'
-    shutil.copytree(artifacts, fixture)
-    manifest = json.loads((fixture / 'release-manifest.json').read_text(encoding='utf-8'))
-    broken = baseline(artifacts, work, version=next_patch(artifacts), broken=True)
-    broken_manifest = json.loads((broken / 'release-manifest.json').read_text(encoding='utf-8'))
-    shutil.copytree(broken, fixture / 'broken')
-    # The real HTTP fixture serves the actual built package, including its original checksums.
-    class Handler(SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(fixture), **kwargs)
-        def log_message(self, *args):
-            pass
-    http = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    thread = threading.Thread(target=http.serve_forever, daemon=True)
-    thread.start()
-    address = f'http://127.0.0.1:{http.server_port}'
-    available = [{'tag_name': manifest['tag'], 'draft': False,
-        'prerelease': manifest['prerelease'], 'body': 'Synthetic candidate update; no public release.',
-        'assets': [{'name': file.name, 'browser_download_url': address + '/' + file.name}
-                   for file in fixture.iterdir() if file.is_file() and file.name != 'releases']},
-        {'tag_name': broken_manifest['tag'], 'draft': False, 'prerelease': False,
-         'body': 'Synthetic version that fails during startup.',
-         'assets': [{'name': file.name, 'browser_download_url': address + '/broken/' + file.name}
-                    for file in broken.iterdir() if file.is_file()]}]
-    (fixture / 'releases').write_text(json.dumps(available), encoding='utf-8')
-    deployment = json.loads((root / 'deployment.json').read_text(encoding='utf-8'))
-    deployment['release_api'] = address + '/releases'
-    (root / 'deployment.json').write_text(json.dumps(deployment), encoding='utf-8')
-    config = json.loads((root / 'instance/lenbot.config.json').read_text(encoding='utf-8'))
-    panel_port = config['panel']['port']
-    marker = root / 'instance/upgrade-fixture.txt'
-    marker.write_text('before upgrade', encoding='utf-8')
-    release = root / 'releases' / json.loads((root / 'current.json').read_text(encoding='utf-8'))['version']
-    command = [str(release / ('python/python.exe' if sys.platform == 'win32' else 'python/bin/python3')),
-               '-X', 'utf8', str(release / 'updater/controller.py'), str(root)]
-    with (work / 'controller.log').open('w', encoding='utf-8') as log:
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
-            start_new_session=sys.platform != 'win32',
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0)
+class Panel:
+    def __init__(self, port: int):
+        self.url = f'http://127.0.0.1:{port}'
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+    def call(self, path: str, body: dict | None = None) -> dict:
+        status, text = request(self.opener, self.url + path, body=body, headers={'Origin': self.url})
+        if status != 200:
+            raise RuntimeError(f'{path} answered {status}: {text[:1000]}')
+        return json.loads(text)
+
+    def ready_version(self) -> str | None:
         try:
-            check_panel(panel_port, 'smoke', 'smoke-password', lambda: process.poll() is None)
-            reference = json.loads((root / 'instance/.runtime/update-control.json').read_text(encoding='utf-8'))
-            headers = {'Authorization': 'Bearer ' + reference['token']}
-            opener = __import__('urllib.request', fromlist=['build_opener']).build_opener()
-            def status():
-                code, text = request(opener, reference['endpoint'] + '/api/status', headers=headers)
-                assert code == 200, text
-                return json.loads(text)
-            def finish(expected: str):
-                deadline = time.monotonic() + 180
-                while time.monotonic() < deadline:
-                    value = status()
-                    if value['status'] == expected:
-                        return value
-                    if value['status'] == 'failed' and expected != 'failed':
-                        raise RuntimeError(value['error'] + '\n' + (root / 'updates/updater.jsonl').read_text(encoding='utf-8')[-4000:]
-                                           + '\n' + (root / 'updates/updater.log').read_text(encoding='utf-8')[-4000:])
-                    if expected == 'failed' and value['status'] == 'complete':
-                        raise AssertionError('The synthetic broken release unexpectedly started successfully')
-                    time.sleep(0.25)
-                raise TimeoutError(status())
-            def action(name: str, body: dict):
-                code, text = request(opener, reference['endpoint'] + '/api/' + name, body=body, headers=headers)
-                assert code == 202, text
-            code, _ = request(opener, reference['endpoint'] + '/api/status')
-            assert code == 401
-            action('prepare', {'tag': manifest['tag']})
-            finish('prepared')
-            action('apply', {})
-            updated = finish('complete')
-            assert updated['current_version'] == manifest['version']
-            if local_sandbox:
-                # The task runtime ships inside each release; the configuration follows the version in use.
-                assert task_runtime(root) == str(root / 'releases' / manifest['version'] / 'task-runtime'), task_runtime(root)
-            marker.write_text('after upgrade', encoding='utf-8')
-            action('restore', {})
-            restored = finish('restored')
-            assert restored['current_version'] == '0.0.0'
-            if local_sandbox:
-                assert task_runtime(root) == str(root / 'releases/0.0.0/task-runtime'), task_runtime(root)
-            assert marker.read_text(encoding='utf-8') == 'before upgrade'
-            action('start', {})
-            finish('complete')
-            check_panel(panel_port, 'smoke', 'smoke-password', lambda: process.poll() is None)
-            action('prepare', {'tag': broken_manifest['tag']})
-            finish('prepared')
-            action('apply', {})
-            # The broken release does not start; the updater restores the snapshot and starts 0.0.0 by itself.
-            rolled = finish('rolled_back')
-            assert rolled['current_version'] == '0.0.0' and not rolled['stopped'] and rolled['actions'] == ['prepare']
-            assert 'exited' in rolled['error'] and rolled['rolled_back_from'] == broken_manifest['version']
-            if local_sandbox:
-                assert task_runtime(root) == str(root / 'releases/0.0.0/task-runtime'), task_runtime(root)
-            assert marker.read_text(encoding='utf-8') == 'before upgrade'
-            check_panel(panel_port, 'smoke', 'smoke-password', lambda: process.poll() is None)
-            # Both updates left a snapshot; the panel lists them through the controller and deletes the older one.
-            panel = f'http://127.0.0.1:{panel_port}'
-            session = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
-            code, text = request(session, panel + '/api/auth/login', body={'username': 'smoke', 'password': 'smoke-password'})
-            assert code == 200, text
-            code, text = request(session, panel + '/api/host/updates/snapshots')
-            assert code == 200, text
-            snapshots = json.loads(text)
-            assert len(snapshots) == 2 and all(item['complete'] and item['bytes'] > 0 and not item['restore']
-                                               for item in snapshots), snapshots
-            removal = urllib.request.Request(panel + '/api/host/updates/snapshots/' + snapshots[1]['name'], method='DELETE')
-            with session.open(removal, timeout=60) as response:
-                assert [item['name'] for item in json.loads(response.read())] == [snapshots[0]['name']]
-            assert not (root / 'backups' / snapshots[1]['name']).exists() and (root / 'backups' / snapshots[0]['name']).is_dir()
-            return {'baseline': '0.0.0', 'target': manifest['version'], 'installed': True,
-                    'upgrade': 'ready', 'restore': 'data and old program restored', 'restart': 'ready',
-                    'startup_failure': 'rolled back to the previous program automatically', 'failed_update_rollback': 'ready',
-                    'snapshots': 'listed and the older one deleted from the panel',
-                    'task_runtime': 'followed the release on upgrade and back on restore' if local_sandbox
-                    else 'not checked: no local sandbox on this machine'}
-        finally:
-            process.send_signal(signal.CTRL_BREAK_EVENT if sys.platform == 'win32' else signal.SIGTERM)
-            process.wait(timeout=190)
-            http.shutdown()
-            http.server_close()
-            thread.join()
+            status, text = request(self.opener, self.url + '/api/host/ready')
+            value = json.loads(text) if status == 200 else None
+        except (OSError, ValueError):
+            return None
+        return value['version'] if value and value['ready'] else None
+
+    def login(self) -> None:
+        self.call('/api/auth/login', {'username': 'smoke', 'password': 'smoke-password'})
+
+    def switch(self, path: str, body: dict | None, previous: str, alive) -> dict:
+        """Start an update or a restore, wait until the host went away and came back, and read the result."""
+        self.call(path, body)
+        deadline = time.monotonic() + SWITCH_SECONDS
+        gone = False
+        while time.monotonic() < deadline:
+            if not alive():
+                raise RuntimeError('the launcher exited during the switch')
+            version = self.ready_version()
+            gone = gone or version is None
+            if gone and version is not None:
+                self.login()
+                state = self.call('/api/host/updates')
+                if state['result'] and state['result']['finished_at'] > deadline - SWITCH_SECONDS:
+                    return state
+            time.sleep(1)
+        raise TimeoutError(f'{path} did not finish within {SWITCH_SECONDS}s (was {previous})')
+
+
+def plugins_followed(panel: Panel, state: dict) -> dict:
+    """The new host brings plugins to their catalog versions; these instances have none."""
+    deadline = time.monotonic() + 120
+    while state['result']['plugins'] == 'pending' and time.monotonic() < deadline:
+        time.sleep(1)
+        state = panel.call('/api/host/updates')
+    assert state['result']['plugins'] == [], state['result']
+    return state
+
+
+def run(work: Path, wheel: Path | None, requirements: Path | None) -> dict:
+    work.mkdir(parents=True, exist_ok=False)
+    if wheel is None:
+        wheel, requirements = build_inputs(work)
+    current = wheel.name.split('-')[1]
+    good, broken = current + '.post1', current + '.post2'
+    wheels = work / 'wheels'
+    wheels.mkdir()
+    root = work / 'Len Bot'
+    install_release(root / 'releases' / current, current, wheel, requirements)
+    script = (PROJECT / 'deploy/package/run').read_text().replace('@VERSION@', current)
+    (root / 'run').write_text(script)
+    (root / 'run').chmod(0o755)
+
+    served = work / 'served'
+    served.mkdir()
+    server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(served)))
+    base = f'http://127.0.0.1:{server.server_address[1]}'
+    releases = [publish(work, served, base, good, relabel(wheel, good, wheels), requirements),
+                publish(work, served, base, broken, relabel(wheel, broken, wheels, broken=True), requirements)]
+    (served / 'releases.json').write_text(json.dumps(releases))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    port = free_port()
+    process = subprocess.Popen([str(root / 'run')], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, encoding='utf-8', errors='replace', start_new_session=True,
+                               env={**os.environ, 'LENBOT_RELEASES_URL': base + '/releases.json'})
+    output = Output(process.stdout)
+    alive = lambda: process.poll() is None
+    result = {'from': current}
+    try:
+        match = output.find(re.compile(r'http://127\.0\.0\.1:(\d+)/#token=(\S+)'), time.monotonic() + 90)
+        setup = f'http://127.0.0.1:{match[1]}'
+        opener = urllib.request.build_opener()
+        wait_until_served(opener, setup + '/', time.monotonic() + 90, alive)
+        status, text = request(opener, setup + '/api/setup', body={
+            'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai',
+            # No platform: the host runs at once, and with it the plugin updates that follow an update.
+            'onebot': None,
+            'provider': {'api': 'openai-chat', 'base_url': f'http://127.0.0.1:{free_port()}/v1', 'api_key': 'smoke'},
+            'mind': {'provider': 'primary', 'model': 'smoke', 'context_window_tokens': 8192},
+            'compaction': {'input_tokens': 6000},
+            'scene': 'onebot:group:80001', 'persona_id': 'smoke', 'persona_name': '冒烟角色', 'brief': '更新检查',
+            'voice_text': '简短', 'boundaries': '更新检查', 'panel_port': port,
+            'username': 'smoke', 'password': 'smoke-password'}, headers={'X-Setup-Token': match[2]})
+        assert status == 200, f'first setup answered {status}: {text}'
+        panel = Panel(port)
+        deadline = time.monotonic() + 90
+        while panel.ready_version() != current:
+            if time.monotonic() > deadline or not alive():
+                raise TimeoutError('the panel did not start after first setup')
+            time.sleep(0.5)
+        panel.login()
+        assert panel.call('/api/host/updates')['managed'] == 'package'
+
+        state = panel.switch('/api/host/updates/start', {'tag': 'v' + good, 'plugins': True}, current, alive)
+        assert state['version'] == good and state['result']['status'] == 'complete', state
+        first_snapshot = state['result']['snapshot']
+        state = plugins_followed(panel, state)
+        result['update'] = state['result']
+
+        state = panel.switch('/api/host/updates/start', {'tag': 'v' + broken, 'plugins': False}, good, alive)
+        assert state['version'] == good and state['result']['status'] == 'rolled_back', state
+        assert 'smoke: this release does not start' in output.tail(400) or state['result']['error'], state
+        result['rollback'] = state['result']
+
+        state = panel.switch(f'/api/host/updates/snapshots/{first_snapshot}/restore', {}, good, alive)
+        assert state['version'] == current and state['result']['action'] == 'restore', state
+        result['restore'] = state['result']
+        result['releases'] = sorted(path.name for path in (root / 'releases').iterdir())
+    except BaseException:
+        print(output.tail(200), file=sys.stderr)
+        raise
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+            try:
+                process.wait(60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        server.shutdown()
+        output.thread.join(5)
+    result['exit'] = process.returncode
+    if process.returncode != 0:
+        print(output.tail(), file=sys.stderr)
+        raise RuntimeError(f'run exited with {process.returncode} after SIGTERM')
+    return result
+
+
+def run_docker(work: Path, image: str, wheel: Path | None, requirements: Path | None) -> dict:
+    """The same update in a container: the panel installs the next version into the data volume and restarts."""
+    work.mkdir(parents=True, exist_ok=False)
+    if wheel is None:
+        wheel, requirements = build_inputs(work)
+    current = subprocess.run(['docker', 'run', '--rm', '--entrypoint', '/opt/lenbot/.venv/bin/python', image, '-c',
+                              'from importlib.metadata import version; print(version("len-bot"))'],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    good = current + '.post1'
+    served = work / 'served'
+    (served / good).mkdir(parents=True)
+    relabelled = relabel(wheel, good, served / good)
+    shutil.copy2(requirements, served / good / 'requirements.txt')
+    files = {path.name: path.read_bytes() for path in (served / good).iterdir()}
+    manifest = {'manifest_version': 1, 'updater_protocol': 2, 'version': good, 'tag': 'v' + good, 'bundles': {},
+                'files': {name: {'sha256': hashlib.sha256(body).hexdigest(), 'bytes': len(body)} for name, body in files.items()}}
+    (served / good / 'release-manifest.json').write_text(json.dumps(manifest))
+    server = ThreadingHTTPServer(('0.0.0.0', 0), partial(SimpleHTTPRequestHandler, directory=str(served)))
+    base = f'http://host.docker.internal:{server.server_address[1]}'
+    (served / 'releases.json').write_text(json.dumps([{
+        'tag_name': 'v' + good, 'prerelease': False, 'draft': False, 'body': f'# LenBot {good}\n', 'published_at': None,
+        'assets': [{'name': name, 'browser_download_url': f'{base}/{good}/{name}'}
+                   for name in (relabelled.name, 'requirements.txt', 'release-manifest.json')]}]))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    name = f'lenbot-update-smoke-{time.time_ns()}'
+    volume = name + '-data'
+    port = free_port()
+    setup = json.loads((PROJECT / 'deploy/current/first-setup.example.json').read_text(encoding='utf-8'))
+    setup.update(password='smoke-password', username='smoke', onebot=None)
+    setup['provider']['api_key'] = 'smoke'
+    alive = lambda: subprocess.run(['docker', 'inspect', '-f', '{{.State.Running}}', name],
+                                   capture_output=True, text=True).stdout.strip() == 'true'
+    result = {'image': image, 'from': current}
+    subprocess.run(['docker', 'volume', 'create', volume], check=True, stdout=subprocess.DEVNULL)
+    try:
+        subprocess.run(['docker', 'run', '--rm', '-i', '--user', '10000:10000', '-v', f'{volume}:/data',
+                        '--entrypoint', '/opt/lenbot/.venv/bin/python', image, '-m', 'len_bot.next.maintenance.initialize'],
+                       input=json.dumps(setup, ensure_ascii=False), text=True, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(['docker', 'run', '-d', '--name', name, '-p', f'127.0.0.1:{port}:11307', '-v', f'{volume}:/data',
+                        '--add-host', 'host.docker.internal:host-gateway',
+                        '-e', f'LENBOT_RELEASES_URL={base}/releases.json', image], check=True, stdout=subprocess.DEVNULL)
+        panel = Panel(port)
+        deadline = time.monotonic() + 120
+        while panel.ready_version() != current:
+            if time.monotonic() > deadline or not alive():
+                raise TimeoutError('the container panel did not start')
+            time.sleep(1)
+        panel.login()
+        assert panel.call('/api/host/updates')['managed'] == 'docker'
+        state = panel.switch('/api/host/updates/start', {'tag': 'v' + good, 'plugins': True}, current, alive)
+        assert state['version'] == good and state['result']['status'] == 'complete', state
+        state = plugins_followed(panel, state)
+        result['update'] = state['result']
+        # Restarted, the container runs the version in the volume instead of the image's.
+        subprocess.run(['docker', 'restart', '--timeout', '60', name], check=True, stdout=subprocess.DEVNULL)
+        deadline = time.monotonic() + 120
+        while panel.ready_version() != good:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f'after a restart the container did not run {good}')
+            time.sleep(1)
+        result['after_restart'] = good
+        foreign = subprocess.run(['docker', 'exec', name, 'find', '/data', '!', '-uid', '10000'],
+                                 capture_output=True, text=True, check=True).stdout.split()
+        if foreign:
+            raise RuntimeError(f'files not owned by the lenbot user: {foreign[:20]}')
+    except BaseException:
+        subprocess.run(['docker', 'logs', '--tail', '120', name])
+        raise
+    finally:
+        subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['docker', 'volume', 'rm', volume], stdout=subprocess.DEVNULL)
+        server.shutdown()
+    return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('artifacts', type=Path)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('work', type=Path)
-    parser.add_argument('--baseline-only', action='store_true')
-    parser.add_argument('--broken-only', action='store_true', help='Only build the next patch version that fails during startup')
+    parser.add_argument('--image', help='Update a container started from this host image instead of a package layout')
+    parser.add_argument('--wheel', type=Path, help='A built wheel; built from this checkout when omitted')
+    parser.add_argument('--requirements', type=Path, help='The locked requirements that go with --wheel')
     args = parser.parse_args()
-    if args.baseline_only or args.broken_only:
-        args.work.mkdir(parents=True, exist_ok=False)
-        artifacts = args.artifacts.resolve()
-        print(baseline(artifacts, args.work.resolve()) if args.baseline_only
-              else baseline(artifacts, args.work.resolve(), version=next_patch(artifacts), broken=True))
-    else:
-        print(json.dumps(run(args.artifacts.resolve(), args.work.resolve()), indent=2, ensure_ascii=False))
+    if (args.wheel is None) != (args.requirements is None):
+        parser.error('--wheel and --requirements go together')
+    result = (run(args.work, args.wheel, args.requirements) if args.image is None
+              else run_docker(args.work, args.image, args.wheel, args.requirements))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == '__main__':

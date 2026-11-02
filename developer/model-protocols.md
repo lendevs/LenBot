@@ -60,7 +60,7 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 
 场景以统一的格式保存可读文本和工具调用，同时保留原生响应和绑定来源。
 
-聊天模型、服务商地址与协议可以在面板中保存，重启后生效。切换到原生协议时，编辑器把兼容聊天专属的续接方式与输出字段恢复为原生默认值。
+聊天模型、服务商地址与协议保存后用于新请求，进行中的请求使用发起时的连接完成。切换到原生协议时，编辑器把兼容聊天专属的续接方式与输出字段恢复为原生默认值。
 
 - 协议、地址和模型都相同时，续接原样使用签名数据。
 - 更换绑定后，已完成的异源工具组会转为历史资料，旧的签名不会发给新模型。
@@ -95,6 +95,6 @@ Gemini 的模型名填写短名称，带 `models/` 前缀的名称也能解析�
 
 连接地址以 `/v1` 结尾时请求其下的 `tools/search`，其他地址请求其下的 `v1/tools/search`；支持网关前缀，始终请求所选地址。搜索词最多 128 字符，接口请求携带 `need_content: true`。结果保留标题、URL、短摘要、长摘要、日期和正文开头；开启网页读取时完整正文存为场景网页文档，返回 `document` 和 `next_offset` 供 `web_read` 续读。搜索为空时返回空列表，服务报错原样交给工具调用方。
 
-已有连接可即时切换搜索和读取设置；新增或修改服务商连接沿用模型连接的重启流程，重启前保持原设置。`connection` 默认为空，已有配置不用迁移。
+搜索、读取参数和服务商连接保存后用于后续调用。`connection` 默认为空。
 
 协议依据：[DeepSeek Search 与 Fetch](https://api-docs.deepseek.com/zh-cn/guides/search/)，[Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)，[Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)，[Brave Web Search](https://api-dashboard.search.brave.com/api-reference/web/search/get)，[博查开放平台](https://open.bochaai.com/)，[Jina Reader](https://jina.ai/reader/)。Tavily、Brave、博查、Jina 按公开文档实现并由本地模拟响应测试覆盖。

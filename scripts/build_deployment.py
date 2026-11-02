@@ -1,13 +1,13 @@
 """Package the built wheel into deployment packages that start after unpacking.
 
 Each package holds a stand-alone CPython with the host and its locked dependencies installed, uv for plugin
-dependencies, the update controller and the start scripts. Linux packages also hold the local sandbox's task
+dependencies and the start scripts; the launcher inside the host package switches between versions. Linux packages also hold the local sandbox's task
 runtime: Node, Pi, the task extension, the task Python libraries and the browser library for the HTML renderer.
 Every platform is assembled on this machine from binary wheels and pinned downloads.
 
     lenbot-<version>-<platform>/
       run, service (Linux) or run.cmd, run.ps1, service.ps1 (Windows)
-      releases/<version>/{python, bin/uv, updater, task-runtime, release.json}
+      releases/<version>/{python, bin/uv, task-runtime, release.json}
 """
 
 import hashlib
@@ -124,7 +124,6 @@ def release_directory(wheel: Path, requirements: Path, project: Path, platform: 
         for program in Path(directory).rglob('uv*'):
             if program.is_file() and program.name in ('uv', 'uv.exe'):
                 shutil.copy2(program, release / 'bin' / program.name)
-    shutil.copytree(project / 'deploy/updater', release / 'updater', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     if platform.startswith('linux'):
         (release / 'task-runtime').mkdir()
         task_runtime(project, platform, downloads, release / 'task-runtime')

@@ -159,13 +159,6 @@ def register_host_operations(app, *, runtime, user):
         log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
         return {'enabled': change.enabled, 'scenes': len(states)}
 
-    @app.put('/api/host/control/send-hold', response_model=responses.Enabled, response_model_exclude_unset=True)
-    async def send_hold(change: ChatSwitch, _: str = Depends(user)):
-        """enabled=true: turns run and are recorded as simulated sends; nothing reaches QQ."""
-        runtime.send_hold.set(change.enabled, at=store.now())
-        runtime.events.publish("host.state")
-        return {'enabled': runtime.send_hold.enabled}
-
     @app.get('/api/host/scenes/{scene}/turns/{turn_id}/export', response_class=Response)
     async def turn_export(scene: str, turn_id: str, _: str = Depends(user)):
         scene_exists(scene)

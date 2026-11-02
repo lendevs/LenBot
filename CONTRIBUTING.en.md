@@ -66,7 +66,7 @@ Other repository directories:
 | `src/len_bot/eval/` | Expression and social replay evaluation |
 | `developer/` | Core design notes and Plugin interface v1 reference |
 | `website/` | VitePress documentation site source; preview locally with `npm --prefix website run dev` |
-| `deploy/` | Deployment package scripts, container recipes and shared updater controller `deploy/updater/` |
+| `deploy/` | Deployment package start scripts and container recipes; version switching lives in `src/len_bot/next/deployment.py` |
 | `docker/next-worker/` | Background task container image and browser extension |
 | `scripts/` | Installation, release packaging and evaluation scripts |
 | `examples/` | Example persona, example memory plugin and public replay suites |
@@ -88,7 +88,7 @@ Run maintenance modules with `uv run --no-sync python -m len_bot.next.maintenanc
 ```sh
 uv run --no-sync pytest -q
 uv run --no-sync python -m compileall -q src/len_bot
-uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package tests
+uv run --no-sync ruff check src/len_bot scripts deploy/package tests
 ```
 
 Automated tests cover three boundaries using anonymized real protocol samples:
@@ -108,7 +108,7 @@ Until the first release candidate (RC), all six format and interface numbers sta
 | Format or interface | Current value | Location |
 |---|---|---|
 | Plugin interface | `1` | `INTERFACE` in `src/len_bot/plugin.py` |
-| Root configuration | `3` | `CONFIG_VERSION` in `src/len_bot/next/config.py` |
+| Root configuration | `4` | `CONFIG_VERSION` in `src/len_bot/next/config.py` |
 | Business database | `1` | `FORMAT_VERSION` in `src/len_bot/next/storage/store.py` |
 | Memory job database | `1` | `FORMAT_VERSION` in `src/len_bot/next/memory/jobs.py` |
 | Local memory index | `1` | `FORMAT_VERSION` in `src/len_bot/next/memory/local.py` |
@@ -122,7 +122,7 @@ When opening, the business database, memory job database, local memory index and
 
 JSON payloads stored inside database columns decode strictly into dataclasses (`ChatMessage`, `Sender`, `Segment`, `Task`, `TaskFile`, `Schedule`, plus model call and memory job records) and are part of the persistent format contract.
 
-Starting from the first RC, every persistent format change increments its version constant and adds a migration from the previous version in the `apply` step of `maintenance/upgrade.py`. The updater controller captures a full instance snapshot before running `apply`.
+Starting from the first RC, every persistent format change increments its version constant and adds a migration from the previous version in the `apply` step of `maintenance/upgrade.py`. The launcher takes a full instance snapshot before running `apply` (`src/len_bot/next/deployment.py`).
 
 ## Packaging and CI
 

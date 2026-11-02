@@ -1,7 +1,7 @@
 """Run the configured multi-scene host with chat platforms or explicit simulated stdin."""
 
 import asyncio
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 from .runtime.loop_monitor import MONITOR
 from .runtime.signals import install_stop
@@ -11,7 +11,7 @@ import uvicorn
 
 from .config import load_host_config
 from .instance_lock import instance_lock
-from .runtime.lifecycle import HostLifecycle, RESTART_EXIT
+from .runtime.lifecycle import HostLifecycle, RESTART_EXIT, UPDATE_EXIT
 from .runtime.logs import configure_logging, credentials, redact
 from .chat.tools import task_data_tools, tool_catalog
 from .panel.app import create_app
@@ -127,8 +127,8 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
             raise ValueError("仍有未清理的任务容器；保留原 worker 配置完成清理后再停用任务执行器")
         async with (
             ChatModel(config.model_settings("mind")) as mind,
-            (ChatModel(config.model_settings("vision")) if config.models.roles.vision is not None
-             else nullcontext(None)) as vision,
+            # Without a vision role this holds the mind binding until one is saved.
+            ChatModel(config.model_settings("vision")) as vision,
             open_expression_service(config, store, slots=slots) as expression_service,
             open_memory(config, store, active_personas={settings.scene: persona.id for settings, persona in scenes}, slots=slots) as memory,
             open_session_upkeep(config, store, mind, memory=memory, expression_service=expression_service,
@@ -150,10 +150,8 @@ async def run(lifecycle: HostLifecycle, *, container: bool = False) -> None:
                               tool_permissions={settings.scene: persona.tools
                                                 for settings, persona in scenes})
                      if config.worker is not None else None)
-            seeing = mind if config.models.roles.mind.image_input else vision
-            sticker_collection = (None if seeing is None else
-                StickerCollector(config, store, seeing, slots=slots,
-                                 recording=lambda scene: runtime.chats[scene].toolset.replay_images))
+            sticker_collection = StickerCollector(config, store, mind, vision, slots=slots,
+                                                  recording=lambda scene: runtime.chats[scene].toolset.replay_images)
             mcp = MCPHost(config.mcp, reserved_tools={tool["function"]["name"] for tool in tool_catalog(platform=True)}
                           | (set() if plugins is None else set(plugins.tool_owner)), log_directory=config.logging.directory)
             try:
@@ -192,6 +190,8 @@ def main(*, restartable: bool = False, container: bool = False) -> None:
         asyncio.run(run(lifecycle, container=container))
     if lifecycle.intent == 'restart':
         raise SystemExit(RESTART_EXIT)
+    if lifecycle.intent == 'update':
+        raise SystemExit(UPDATE_EXIT)
 
 
 if __name__ == "__main__":

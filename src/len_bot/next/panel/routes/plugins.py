@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 
@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .. import responses
 from ...configuration.plugin import PLUGIN_NAME, PLUGIN_RESERVED, PluginCatalogSettings
-from ...plugins.catalog import CatalogSourceKind, CatalogView, MarketView, PluginCatalog, market
+from ...plugins.catalog import CatalogSourceKind, CatalogView, MarketView, PluginCatalog, PluginUpdate, market, updates
 from ...config import HostConfig, _read_root
 from .settings import _body
 from ...configuration.editing import _read_saved
@@ -66,6 +66,12 @@ class PluginVersion(BaseModel):
     @classmethod
     def selected_ref(cls, value: str | None) -> str | None:
         return None if value is None else revision_ref(value)
+
+
+class PluginUpdates(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    # None: every compatible update.
+    names: list[str] | None = None
 
 
 class PluginInstall(PluginVersion):
@@ -148,7 +154,10 @@ def configured_values(change: PluginChange, manifest: Manifest, previous: dict, 
 
 
 def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, running: HostConfig,
-                          user: Callable[[Request], str], write_lock: asyncio.Lock) -> None:
+                          user: Callable[[Request], str], write_lock: asyncio.Lock
+                          ) -> tuple[PluginCatalog, Callable[[], Awaitable[list[dict] | None]]]:
+    """Register the plugin routes; returns the catalog, whose background refresh the panel's lifespan starts,
+    and the job that applies every compatible plugin update."""
     manager = runtime.management.plugins
     catalog = PluginCatalog()
 
@@ -221,7 +230,73 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                         entry['source'] = await manager.installer.details(name)
                     except (ValueError, OSError, RuntimeError) as error:
                         entry['error'] = f"{entry['error'] or ''}\n{type(error).__name__}: {error}".strip()
+        result['updates'] = [item.model_dump() for item in await pending_updates()]
         return result
+
+    def updatable_versions(saved: HostConfig) -> dict[str, str | None]:
+        """Installed plugins that came from Git through the installer, with their manifest version."""
+        versions = {}
+        for name, current in installed_versions(saved).items():
+            try:
+                source = manager.installer.read(name).installed
+            except (OSError, ValueError):
+                continue
+            if source is not None and source.kind == 'git':
+                versions[name] = current
+        return versions
+
+    async def pending_updates() -> list[PluginUpdate]:
+        saved = await asyncio.to_thread(_read_saved, root)
+        versions = await asyncio.to_thread(updatable_versions, saved)
+        prepared = frozenset(record.name for record in manager.installer.pending() if record.requested)
+        return updates(catalog.view(saved.plugin_catalog), versions, prepared=prepared)
+
+    @app.get('/api/host/plugin-updates', response_model=list[PluginUpdate])
+    async def read_updates(_: str = Depends(user)):
+        try:
+            return await pending_updates()
+        except (ValueError, OSError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post('/api/host/plugin-updates', response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
+    async def apply_updates(request: Request, _: str = Depends(user)):
+        change = await _body(request, PluginUpdates)
+        return await operate(lambda: update_plugins(change.names))
+
+    async def update_plugins(names: list[str] | None) -> dict:
+        """Prepare and apply each selected update in turn; one failing keeps its previous version and the rest go on."""
+        try:
+            listed = await pending_updates()
+        except (ValueError, OSError) as error:
+            raise ValueError(str(error)) from error
+        if names is not None:
+            unknown = set(names) - {item.name for item in listed}
+            if unknown:
+                raise ValueError(f'没有这些插件的更新：{", ".join(sorted(unknown))}')
+        results = []
+        for item in listed:
+            if names is not None and item.name not in names or not item.compatible or item.prepared:
+                continue
+            try:
+                await manager.update(item.name, ref=item.ref)
+                applied = await manager.apply_candidate(item.name)
+                results.append({'name': item.name, 'from': item.installed_version, 'to': item.version,
+                                'restart_required': bool(applied.get('restart_required')), 'error': None})
+            except Exception as error:
+                results.append({'name': item.name, 'from': item.installed_version, 'to': item.version,
+                                'restart_required': False, 'error': f'{type(error).__name__}: {error}'})
+        return {'name': '*', 'updates': results}
+
+    async def update_all() -> list[dict] | None:
+        """Every compatible update once the host runs its plugins; None when it stops before that."""
+        while runtime.status != 'running':
+            if runtime.status in ('failed', 'stopping', 'stopped'):
+                return None
+            await asyncio.sleep(1)
+        saved = await asyncio.to_thread(_read_saved, root)
+        await catalog.refresh(saved.plugin_catalog)
+        async with manager.lock:
+            return (await update_plugins(None))['updates']
 
     @app.get('/api/host/plugin-catalog', response_model=CatalogView)
     async def read_catalog(_: str = Depends(user)):
@@ -461,3 +536,5 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             plugins["data_directory"] = change.data_directory
 
         return await save(edit)
+
+    return catalog, update_all

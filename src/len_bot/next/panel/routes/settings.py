@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .. import responses
 from ...configuration.types import STRICT
 from ...configuration.chat import (
+    WAKE_LEVELS,
     Compaction,
     ImageSettings,
     Attention,
@@ -273,7 +274,6 @@ class ConnectionChange(BaseModel):
     # Absent keeps the saved value.
     owner_private_chat: bool | None = None
     timezone: str
-    delivery: Literal["simulated", "live"]
     max_steps: int
     turn_timeout_seconds: float
     max_model_requests: int
@@ -363,7 +363,6 @@ def _project(config: HostConfig) -> dict:
             "telegram": telegram,
             "feishu": feishu,
             "timezone": config.timezone,
-            "delivery": config.delivery,
             "max_steps": config.max_steps,
             "turn_timeout_seconds": config.turn_timeout_seconds,
             "max_model_requests": config.max_model_requests,
@@ -491,6 +490,11 @@ async def _body(request: Request, kind: type[BaseModel]) -> BaseModel:
         return kind.model_validate(raw)
     except ValidationError as error:
         raise HTTPException(422, _validation_detail(error)) from error
+
+
+class WakeLevelChange(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    level: Literal["active", "moderate", "quiet"]
 
 
 # Tools a group's role must allow before members can delegate and receive task files.
@@ -817,6 +821,20 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
         return await save(edit)
 
+    @app.put("/api/host/settings/scenes/{scene}/wake-level", response_model=responses.SettingsSnapshot, response_model_exclude_unset=True)
+    async def put_wake_level(scene: str, request: Request, _: str = Depends(user)):
+        if scene not in running.scenes:
+            raise HTTPException(404, "当前宿主未配置此场景")
+        change: WakeLevelChange = await _body(request, WakeLevelChange)
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            if scene not in saved.scenes:
+                raise ValueError(f"根配置已不包含场景 {scene!r}")
+            attention = source["scenes"][scene].setdefault("attention", {})
+            attention.update(WAKE_LEVELS[change.level], only_direct=False)
+
+        return await save(edit)
+
     @app.get("/api/host/settings/scenes/{scene}/learning", response_model=responses.LearningSettingsSnapshot, response_model_exclude_unset=True)
     async def get_learning(scene: str, _: str = Depends(user)):
         if scene not in running.scenes:
@@ -887,12 +905,13 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 onebot=onebot,
                 owners=change.owners,
                 timezone=change.timezone,
-                delivery=change.delivery,
                 max_steps=change.max_steps,
                 turn_timeout_seconds=change.turn_timeout_seconds,
                 max_model_requests=change.max_model_requests,
                 text_delivery=change.text_delivery.model_dump(mode="json"),
             )
+            # A host with a platform sends to it; without one it keeps the console outlet.
+            source["delivery"] = "live" if any(source.get(name) for name in ("onebot", "telegram", "feishu")) else "simulated"
 
         return await save(edit)
 

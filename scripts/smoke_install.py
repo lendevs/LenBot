@@ -1,9 +1,9 @@
 """Install a built release the way a user would and walk first setup to a logged-in panel, then stop it.
 
 ``package`` installs the deployment package for this platform and answers the browser setup wizard.
-``docker`` uses an already built host image with the packaged Compose recipe and offline initialization,
+``docker`` uses an already built host image with the documented ``docker run`` and offline initialization,
 on new uniquely named volumes that are removed afterwards. Both use only the standard library and need
-no OneBot service or model: delivery is simulated and nothing is sent.
+no OneBot service or model: the configured OneBot address has no server, so nothing is sent.
 """
 
 from __future__ import annotations
@@ -142,7 +142,7 @@ def smoke_package(artifacts: Path, work: Path) -> dict:
         status, _ = request(opener, setup + entry[1])
         assert status == 200, f'setup entry script {entry[1]} answered {status}'
         status, text = request(opener, setup + '/api/setup', body={
-            'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': 'simulated',
+            'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai',
             'onebot': {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{free_port()}', 'access_token': 'smoke-token'},
             'provider': {'api': 'openai-chat', 'base_url': f'http://127.0.0.1:{free_port()}/v1', 'api_key': 'smoke'},
             'mind': {'provider': 'primary', 'model': 'smoke', 'context_window_tokens': 8192},
@@ -157,11 +157,6 @@ def smoke_package(artifacts: Path, work: Path) -> dict:
         result['panel'] = 'logged in'
     except BaseException:
         print(output.tail(), file=sys.stderr)
-        for name, label in (('updater.jsonl', 'updater records'), ('updater.log', 'child process output')):
-            log = root / 'updates' / name
-            if log.exists():
-                print(f'--- updates/{name} ({label}) ---', file=sys.stderr)
-                print(log.read_text(encoding='utf-8', errors='replace')[-6000:], file=sys.stderr)
         raise
     finally:
         if process.poll() is None:

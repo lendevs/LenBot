@@ -185,7 +185,7 @@ async def _between_turns(call: CommandCall):
 def _chat_line(call: CommandCall) -> str:
     runner, now = call.runner, call.runner.store.now()
     if runner.state.paused:
-        return "聊天：已关闭（消息照常记录，/chat on 打开）"
+        return "聊天：已关闭，插件和命令照常响应（/chat on 打开）"
     period = runner.quiet_period(now)
     if period is None or not period[0] <= now < period[1]:
         return "聊天：开启"
@@ -210,10 +210,7 @@ def _model_line(call: CommandCall) -> str:
 
 
 async def _status(call: CommandCall) -> str:
-    lines = [f"场景：{call.scene}", _chat_line(call), _speech_line(call), _model_line(call)]
-    if call.runtime.held(call.scene):
-        lines.append("发送：已暂停，消息只记录不发出")
-    return "\n".join(lines)
+    return "\n".join([f"场景：{call.scene}", _chat_line(call), _speech_line(call), _model_line(call)])
 
 
 async def _chat(call: CommandCall) -> str:
