@@ -310,6 +310,8 @@ default = []
 
 ### 插件修改自己的配置
 
+从 0.2.2 起，保存配置会同步刷新聊天中的可用工具目录；按配置开放或关闭工具的插件可直接在 `unavailable_tools` 中读取新值。
+
 LenBot 0.2.1 起，声明了 `configure` 权限的插件可以用 `await ctx.update_config({"字段": 值})`（`PluginContext.update_config`）修改自己的配置，例如在聊天中按主人的要求增删订阅。
 
 - 只写给出的字段，其余字段保持原值。宿主按清单的 `[config]` 校验合并后的结果，`scene`、`scene_list` 的值必须是已接入的群；未声明的字段和不合法的值抛出 `ValueError`，配置保持不变。

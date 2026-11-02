@@ -477,6 +477,7 @@ class PluginHost:
             record.context.config.clear()
             record.context.config.update(current)
         log_event(logger, "plugin_config_updated", plugin=plugin, fields=sorted(changes))
+        self.runtime.refresh_external_tools()
         self._notify()
         return current
 

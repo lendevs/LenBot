@@ -49,7 +49,7 @@ class _LocalHost(PluginHost):
         self.saved_configs: dict[str, dict] = {}
         self.runtime = SimpleNamespace(store=Store(config.database), mcp=None, slots=None, runners={
             scene: SimpleNamespace(state=SimpleNamespace(paused=False)) for scene in config.scenes},
-            save_plugin_config=self._save_config)
+            save_plugin_config=self._save_config, refresh_external_tools=lambda: None)
 
     async def _save_config(self, name: str, values: dict) -> None:
         self.saved_configs[name] = values
