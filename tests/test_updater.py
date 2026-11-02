@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import sys
 import tarfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,9 +27,10 @@ def _install(deployment: Deployment, version: str, platform: str = 'linux-x64') 
 
 def _bundle(version: str, platform: str) -> bytes:
     data = io.BytesIO()
+    python = 'python/python.exe' if sys.platform == 'win32' else 'python/bin/python3'
     with tarfile.open(fileobj=data, mode='w:gz') as archive:
         for name, content in ((f'releases/{version}/release.json', json.dumps({'version': version, 'platform': platform})),
-                              (f'releases/{version}/python/bin/python3', '')):
+                              (f'releases/{version}/{python}', '')):
             item = tarfile.TarInfo(f'lenbot-{version}-{platform}/{name}')
             item.size = len(content.encode())
             archive.addfile(item, io.BytesIO(content.encode()))
