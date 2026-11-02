@@ -242,6 +242,28 @@ class MCPHost:
     async def close(self) -> None:
         await asyncio.gather(*(self.disconnect(name) for name in self.connections))
 
+    async def apply(self, settings: dict[str, MCPService]) -> None:
+        """Take saved services: removed ones stop, changed ones reconnect, new enabled ones connect."""
+        async def one(name: str) -> None:
+            connection = self.connections.get(name)
+            if name not in settings:
+                if connection is not None:
+                    await self.disconnect(name)
+                    del self.connections[name]
+                return
+            if connection is None:
+                connection = self.connections[name] = Connection(name, settings[name])
+            elif connection.settings == settings[name]:
+                return
+            else:
+                await self.disconnect(name)
+                connection.settings = settings[name]
+                connection.status = "disabled"
+            if connection.settings.enabled:
+                await self.connect(name)
+            self.notify()
+        await asyncio.gather(*(one(name) for name in self.connections.keys() | settings.keys()))
+
     def tools_for(self, scene: str) -> list[ExternalTool]:
         return [tool for item in self.connections.values()
                 if item.status == "running" and scene in item.settings.scenes for tool in item.tools]

@@ -83,7 +83,7 @@ async def test_sticker_intake_dedup_review_and_scene_isolation(tmp_path, mind_im
         mind = await stack.enter_async_context(ChatModel(config.model_settings('mind')))
         vision = await stack.enter_async_context(ChatModel(config.model_settings('vision')))
         with Store(config.database) as store:
-            collector = StickerCollector(config, store, mind if mind_images else vision, recording=lambda _: recording)
+            collector = StickerCollector(config, store, mind, vision, recording=lambda _: recording)
             persona = load_persona(config.scenes[SCENE].persona)
             runtime = NetworkRuntime(config, [(config.scene_config(scene), persona) for scene in config.scenes],
                                      store, mind, vision=vision, sticker_collection=collector)

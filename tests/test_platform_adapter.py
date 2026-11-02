@@ -11,7 +11,7 @@ def test_onebot_is_opened_behind_the_adapter_and_parses_its_own_events(tmp_path)
     write_config(tmp_path, onebot={'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'})
     config = load_host_config(tmp_path)
     adapter = open_platform(config, on_event=lambda raw: None, on_error=lambda text: None)
-    assert isinstance(adapter, OneBot) and isinstance(adapter, PlatformAdapter) and adapter.name == 'onebot'
+    assert isinstance(adapter.adapters['onebot'], OneBot) and isinstance(adapter, PlatformAdapter) and adapter.name == 'onebot'
     message = adapter.parse(MESSAGE)
     assert isinstance(message, ChatMessage) and message.scene == 'onebot:group:80001'
     assert adapter.parse({'post_type': 'meta_event', 'meta_event_type': 'heartbeat'}) is None

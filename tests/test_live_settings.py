@@ -15,7 +15,7 @@ from test_next_panel_acts_as_owner import SCENE
 
 
 @pytest.mark.asyncio
-async def test_settings_apply_to_wake_learning_permissions_and_preserve_cold_bindings(tmp_path):
+async def test_settings_apply_to_wake_learning_permissions_and_platform_connection(tmp_path):
     peers, requests = asyncio.Queue(), []
 
     async def model_peer(reader, writer):
@@ -145,13 +145,16 @@ async def test_settings_apply_to_wake_learning_permissions_and_preserve_cold_bin
                     connection['onebot']['ws_url'] = 'ws://127.0.0.1:9'
                     connection['access_token'] = 'synthetic-new-token'
                     connection['max_steps'] = 9
-                    cold = await client.put('/api/host/settings/connection', json=connection)
-                    assert cold.status_code == 200, cold.text
-                    assert cold.json()['restart_required']['connection']
-                    assert runtime.config.onebot.ws_url == original_url and runtime.platform.connected
+                    moved = await client.put('/api/host/settings/connection', json=connection)
+                    assert moved.status_code == 200, moved.text
+                    assert not moved.json()['restart_required']['connection']
+                    # OneBot reopens at the saved address at once; an unreachable one is reported and can be retried.
+                    assert runtime.config.onebot.ws_url == 'ws://127.0.0.1:9' != original_url
+                    assert 'onebot' not in runtime.platform.adapters and runtime.last_platform_error
+                    assert runtime.missing_platforms == ['onebot'] and runtime.can_connect
                     assert runtime.chats[SCENE].config.max_steps == 9
                     pending = (await client.get('/api/host/pending-restart')).json()
-                    assert pending['sections'] == ['onebot'] and pending['scenes'] == []
+                    assert pending['sections'] == [] and pending['scenes'] == []
                 finally:
                     runtime.stop()
                     await asyncio.wait_for(running, 3)

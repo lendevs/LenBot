@@ -29,7 +29,11 @@ const indicator = ref({ left: 0, width: 0, ready: false })
 function measure() {
   const element = root.value?.$el as HTMLElement | undefined
   const active = element?.querySelector<HTMLElement>('[data-state="on"]')
-  if (!active) return
+  if (!active) {
+    // No segment matches the value (a hand-tuned setting): hide the indicator.
+    indicator.value = { left: 0, width: 0, ready: indicator.value.ready }
+    return
+  }
   indicator.value = { left: active.offsetLeft, width: active.offsetWidth, ready: indicator.value.ready }
   if (!indicator.value.ready) requestAnimationFrame(() => (indicator.value.ready = true))
   // When the segments scroll sideways (narrow screens, long labels), keep the chosen one in view.

@@ -66,6 +66,8 @@ class HostScene(ScenePersona):
     chat_status: JsonObject
     # The running chat's only_direct and activity.
     attention: JsonObject
+    # The participation preset the attention fields match; None when tuned by hand.
+    wake_level: str | None = None
 
 
 class ServiceAlert(PanelResponse):
@@ -82,7 +84,6 @@ class HostState(PanelResponse):
     delivery: str
     connection: JsonObject
     scenes: list[HostScene]
-    send_hold: bool
     memory_backend: str | None
     plugins: list[ServiceAlert] | None
     mcp: list[ServiceAlert]
@@ -456,6 +457,8 @@ class PluginSnapshot(PanelResponse):
     scene_choices: list[str]
     scenes: dict[str, JsonObject]
     restart_required: bool
+    # Newer catalog versions of installed Git plugins (PluginUpdate).
+    updates: list[JsonObject] = []
     operation: JsonValue = None
 
 
@@ -629,21 +632,14 @@ class TrialList(PanelResponse):
 
 class UpdateState(PanelResponse):
     version: str
-    managed: bool
-    container: bool
-    status: JsonValue
+    # package, docker, or None for a source checkout.
+    managed: str | None
     check: JsonObject
-    notice: list[str] | None
-    rollback_loses_data: bool
-
-
-class UpdateSnapshot(PanelResponse):
-    """One update snapshot under the deployment's backups/; ``restore``: the restore action offered now uses it."""
-    name: str
-    created: float
-    bytes: int
-    complete: bool
-    restore: bool
+    # Updater.state(): stage idle, download, install, restart or failed.
+    operation: JsonObject
+    # What the launcher did with the last request (deployment updates/result.json).
+    result: JsonObject | None
+    snapshots: list[JsonObject]
 
 
 class SetupProtocols(Protocols):
@@ -682,7 +678,6 @@ class SetupSaved(PanelResponse):
     persona: str
     panel_url: str
     panel_port: int
-    delivery: str
     voice_mode: str
     next: str
     plugins: list[JsonValue]

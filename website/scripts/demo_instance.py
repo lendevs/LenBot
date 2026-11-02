@@ -241,7 +241,7 @@ async def main() -> None:
         setup = line[line.index('http://'):].split()[0]
         base, token = setup.split('/#token=')
         await asyncio.to_thread(post, base + '/api/setup', {
-            'bot_id': f'onebot:{BOT}', 'owners': [f'onebot:{OWNER}'], 'timezone': 'Asia/Shanghai', 'delivery': 'simulated',
+            'bot_id': f'onebot:{BOT}', 'owners': [f'onebot:{OWNER}'], 'timezone': 'Asia/Shanghai',
             'onebot': {'mode': 'forward_ws', 'ws_url': f'ws://127.0.0.1:{onebot_port}', 'access_token': 'demo'},
             'provider': {'api': 'openai-chat', 'base_url': f'http://127.0.0.1:{args.control_port}/v1', 'api_key': 'demo'},
             'mind': {'provider': 'primary', 'model': 'demo-chat', 'context_window_tokens': 128000},
@@ -256,6 +256,7 @@ async def main() -> None:
         shutil.rmtree(root / 'personas/companion')
         shutil.copytree(ROOT / 'examples/personas/companion', root / 'personas/companion')
         config = json.loads((root / 'lenbot.config.json').read_text())
+        config['delivery'] = 'simulated'
         first = config['scenes']['onebot:group:80001']
         for group in GROUPS:
             config['scenes'][f'onebot:group:{group}'] = {**first, 'attention': {**first.get('attention', {}), 'only_direct': True}}

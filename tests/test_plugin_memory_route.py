@@ -213,7 +213,7 @@ async def test_uninstalling_the_memory_plugin_returns_its_groups_to_native_memor
 
     binding = {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 16000}
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
-        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-unused'},
         'compaction': {'input_tokens': 2000}, 'mind': binding, 'scene': SCENE,

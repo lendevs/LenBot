@@ -151,7 +151,7 @@ const save = useMutation({
   mutationFn: () => capabilitiesApi.saveMcp(draft.value.name.trim(), body()),
   onSuccess: (state) => {
     accept(state)
-    toast.success(t('capabilities.savedRestart'))
+    toast.success(t('common.saved'))
     finished.value = true
     emit('saved', draft.value.name.trim())
   },
@@ -295,9 +295,6 @@ const saveError = computed(() =>
       </details>
       <RawRecord v-if="developerDetails" :label="t('capabilities.mcp.raw')" :code="running" />
     </section>
-    <p v-else-if="name" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
-      {{ t('capabilities.mcp.notRunning') }}
-    </p>
 
     <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
       <FormSection>

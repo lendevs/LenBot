@@ -100,7 +100,6 @@ export interface FirstSetup {
   bot_id: string
   owners: string[]
   timezone: string
-  delivery: 'simulated' | 'live'
   onebot: OneBotLink | null
   telegram: SetupTelegram | null
   feishu: SetupFeishu | null
@@ -158,7 +157,6 @@ export interface SetupSaved {
   saved: boolean
   panel_url: string
   panel_port: number
-  delivery: string
   plugins: { name: string; installed: boolean; version: string }[]
 }
 

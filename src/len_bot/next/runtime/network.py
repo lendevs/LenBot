@@ -12,10 +12,8 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from .scene_titles import SceneTitles
-from .send_hold import SendHold
 from ..chat.attention import SceneRunner
 from ..media.audio import AudioService
 from ..chat.session import Chat
@@ -34,7 +32,7 @@ from ..memory.service import MemoryService
 from ..chat.upkeep import SessionUpkeep, UpkeepPart, runner_fork, upkeep_parts
 from ..learning.sticker_collection import StickerCollector
 from ..learning.expression_selection import ExpressionService
-from ..platform.adapter import PlatformCallError, adapter_for, open_platform
+from ..platform.adapter import PlatformCallError, adapter_for, open_platform, platform_openers
 from ..persona.profile import Persona
 from ..plugins.host import PluginHost
 from ..tools.mcp_host import MCPHost
@@ -121,7 +119,6 @@ class NetworkRuntime:
         self.background: set[asyncio.Task] = set()
         self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
-        self.send_hold = SendHold(config._instance_root)
         self.reference = open_library(config._instance_root, memory, store, slots)
         self.accepting = not config.platform_names
         self.storage_error: sqlite3.Error | None = None
@@ -129,12 +126,8 @@ class NetworkRuntime:
         self.commands = Commands()
         self.platform = open_platform(config, on_event=self._receive, on_error=self._platform_error,
                                       on_connection_change=self._connection_changed)
-        # OneBot converts voice with get_record; Telegram and Feishu voice is downloaded as sent.
-        onebot = adapter_for(self.platform, "onebot")
-        live = config.delivery == "live"
-        self.audio = AudioService(store, {cfg.scene: cfg for cfg, _ in scene_configs},
-                                  onebot.call if live and onebot is not None else None, slots,
-                                  self.audio_updated, download=self.fetch_media if live else None)
+        self.audio = AudioService(store, {cfg.scene: cfg for cfg, _ in scene_configs}, None, slots, self.audio_updated)
+        self.bind_audio()
         if tasks is not None:
             tasks.audio = self.audio
             tasks.memory_call = lambda scene, arguments: self.chats[scene].toolset.run_memory(arguments)
@@ -161,18 +154,30 @@ class NetworkRuntime:
         if mcp is not None:
             mcp.on_update = self.refresh_external_tools
 
+    def bind_audio(self) -> None:
+        """OneBot converts voice with get_record; Telegram and Feishu voice is downloaded as sent."""
+        live = self.config.delivery == "live"
+        onebot = live and "onebot" in self.config.platform_names
+        self.audio.platform = (lambda action, params: adapter_for(self.platform, "onebot").call(action, params)) if onebot else None
+        self.audio.download = self.fetch_media if live else None
+
+    def delivery(self, scene: str) -> tuple:
+        """The send, upload and platform-call bindings a scene's chat uses under the current delivery."""
+        live = self.config.delivery == "live"
+        sending = self.config.delivery != "simulated"
+        return (self.send_message if sending else None, self.upload_file if sending else None,
+                (lambda action, params: self.platform_call(action, params, scene=scene)) if live else None)
+
     def create_chat(self, scene_config: LabConfig, persona: Persona) -> Chat:
         scene = scene_config.scene
+        send_message, upload_file, platform_call = self.delivery(scene)
         return Chat(
             scene_config, persona, self.store, self.mind, vision=self.vision, slots=self.slots, memory=self.memory,
             tasks=self.tasks, expression_service=self.expression_service,
             on_compaction=lambda scene=scene: self.compacted(scene),
             on_reply_sample=(None if self.reply_effects is None else
                              lambda scene=scene: self.reply_effects.wake(scene)),
-            send_message=self.send_message if self.config.delivery != "simulated" else None,
-            upload_file=self.upload_file if self.config.delivery != "simulated" else None,
-            platform_call=((lambda action, params, scene=scene: self.platform_call(action, params, scene=scene))
-                           if self.config.delivery == "live" else None),
+            send_message=send_message, upload_file=upload_file, platform_call=platform_call,
             fetch_media=lambda data, max_bytes, scene=scene: self.fetch_media(scene, data, max_bytes),
             external_tools=(([] if self.plugins is None else self.plugins.tools_for(scene, preparing=True))
                             + ([] if self.mcp is None else self.mcp.tools_for(scene))),
@@ -183,25 +188,14 @@ class NetworkRuntime:
             on_trace=lambda event, scene=scene: self.events.publish(scene=scene, **event),
         )
 
-    def held(self, scene: str | None) -> bool:
-        """The host-wide send hold, or a scene configured to simulate its delivery."""
-        return self.send_hold.enabled or (scene in self.chats and self.chats[scene].config.simulated_delivery)
-
-    # Scene outlets go through these, so the send hold also covers plugin sends and notices.
+    # Scene outlets, plugin sends and notices all go through these.
     async def send_message(self, message: ChatMessage, *, image_bytes: bytes | None = None) -> SendResult:
-        if self.held(message.scene):
-            return SendResult("simulated", f"simulated:{uuid4()}", None)
         return await self.platform.send_message(message, image_bytes=image_bytes)
 
     async def upload_file(self, scene: str, file: str, name: str) -> UploadResult:
-        if self.held(scene):
-            return UploadResult("simulated", None, None, None)
         return await self.platform.upload_file(scene, file, name)
 
     async def platform_call(self, action: str, params: dict, *, scene: str | None = None):
-        # While held only reads reach OneBot; actions that change QQ state are answered here.
-        if self.held(scene) and not action.startswith("get_"):
-            return {"status": "ok", "retcode": 0, "data": None}
         adapter = self.platform if scene is None else adapter_for(self.platform, scene)
         if adapter is None:
             raise PlatformCallError(f"no platform adapter serves {scene!r}", submitted=False)
@@ -372,7 +366,8 @@ class NetworkRuntime:
                         "platform_message_id": message.platform_message_id})
             return
         blocked = message.sender.uid in runner.config.permissions.blacklist
-        matched = (None if self.plugins is None or blocked or runner.state.paused else
+        # A paused chat only stops waking the model; plugin rules and commands keep answering.
+        matched = (None if self.plugins is None or blocked else
                    self.plugins.match_message(message, tuple(runner.settings.other_bot_ids)))
         claim = (None if matched is None else
                  (matched.record.name, self.plugins.message_report(message, matched, "已接管，处理尚未结束。")))
@@ -410,13 +405,13 @@ class NetworkRuntime:
         if self.platform is None:
             return True
         # A scene waits for its own platform; one that dropped does not hold the others.
-        platform = (None if scene is None else adapter_for(self.platform, scene)) or self.platform
-        if platform.connected:
+        platform = self.platform if scene is None else adapter_for(self.platform, scene)
+        if platform is not None and platform.connected:
             return True
         if not wait:
             return False
         # Both transports come back on their own: forward dials again, reverse waits for the peer.
-        connected = asyncio.create_task(platform.wait_connected(None))
+        connected = asyncio.create_task(self.platform.wait_connected(None, scene=scene))
         stopping = asyncio.create_task(self.stopped.wait())
         try:
             await asyncio.wait({connected, stopping}, return_when=asyncio.FIRST_COMPLETED)
@@ -427,29 +422,58 @@ class NetworkRuntime:
             for result in await asyncio.gather(connected, stopping, return_exceptions=True):
                 if isinstance(result, BaseException) and not isinstance(result, (PlatformCallError, asyncio.CancelledError)):
                     raise result
-        return platform.connected and not self.stopped.is_set()
+        platform = self.platform if scene is None else adapter_for(self.platform, scene)
+        return platform is not None and platform.connected and not self.stopped.is_set()
 
     @property
     def can_connect(self) -> bool:
-        return self.status == "connection_failed" and not self.stopped.is_set()
+        return not self.stopped.is_set() and (
+            self.status == "connection_failed" or self.status == "running" and bool(self.missing_platforms))
+
+    @property
+    def missing_platforms(self) -> list[str]:
+        """Configured platforms with no running member: disconnected from the panel or failed to start."""
+        if self.platform is None:
+            return []
+        return [name for name in self.config.platform_names if name not in self.platform.adapters]
 
     @property
     def can_disconnect(self) -> bool:
         return (self.platform is not None and self.status in {"waiting_connection", "running"}
-                and not self.stopped.is_set())
+                and not self.disconnect_requested and not self.stopped.is_set())
 
     async def disconnect(self) -> None:
-        """Close the platform transports now; business stops and a restart reconnects."""
+        """Close the platform transports now. While running, scenes wait until the panel connects again."""
         if not self.can_disconnect:
             raise RuntimeError("只有等待连接或正在运行时可以断开平台连接")
         self.disconnect_requested = True
-        await self.platform.close()
+        if self.status == "running":
+            await self.platform.apply({})
+            self.notify()
+        else:
+            await self.platform.close()
 
     def request_connection(self) -> None:
         if not self.can_connect:
-            raise RuntimeError("只有首次连接失败且业务尚未启动时可以手动连接；其他停止状态请重启宿主")
+            raise RuntimeError("当前状态不能手动连接")
+        if self.status == "running":
+            self.disconnect_requested = False
+            task = asyncio.create_task(self._reconnect())
+            self.background.add(task)
+            task.add_done_callback(self.background.discard)
+            return
         self._status("starting")
         self.connection_requested.set()
+
+    async def _reconnect(self) -> None:
+        try:
+            missing = self.missing_platforms
+            await self.platform.apply({**{name: None for name in self.platform.adapters},
+                                       **platform_openers(self.config, missing)})
+            self.last_platform_error = None
+        except PlatformCallError as error:
+            self._platform_error(f"{type(error).__name__}: {error}")
+        self.notify()
 
     async def _start_platform(self, *, manual_connection: bool) -> bool:
         """Before starting business services, permit only explicit connection attempts."""

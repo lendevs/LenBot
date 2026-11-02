@@ -134,17 +134,36 @@ def parse_embeddings(body: object, count: int, expected_dimensions: int | None) 
         raise ValueError(f"invalid embedding response: {error}; response fragment: {fragment}") from error
 
 
+def _embedding_client(settings: EmbeddingSettings) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=settings.timeout_seconds, trust_env=False, follow_redirects=False,
+        transport=httpx.AsyncHTTPTransport(retries=0, trust_env=False, proxy=settings.proxy),
+        headers={"Authorization": f"Bearer {settings.api_key}"},
+    )
+
+
 class EmbeddingClient:
     def __init__(self, settings: EmbeddingSettings):
         self.settings = settings
-        self._client = httpx.AsyncClient(
-            timeout=settings.timeout_seconds, trust_env=False, follow_redirects=False,
-            transport=httpx.AsyncHTTPTransport(retries=0, trust_env=False, proxy=settings.proxy),
-            headers={"Authorization": f"Bearer {settings.api_key}"},
-        )
+        self._client = _embedding_client(settings)
+        self._retired: set[httpx.AsyncClient] = set()
+        self._active: dict[httpx.AsyncClient, int] = {}
+
+    async def reconnect(self, base_url: str, api_key: str, proxy: str | None) -> None:
+        """Point later requests at a changed provider connection; the model and dimensions stay bound."""
+        settings = self.settings.model_copy(update={'base_url': base_url, 'api_key': api_key, 'proxy': proxy})
+        if settings == self.settings:
+            return
+        previous = self._client
+        self.settings, self._client = settings, _embedding_client(settings)
+        if self._active.get(previous):
+            self._retired.add(previous)
+        else:
+            await previous.aclose()
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        for client in (*self._retired, self._client):
+            await client.aclose()
 
     async def __aenter__(self) -> EmbeddingClient:
         return self
@@ -153,27 +172,40 @@ class EmbeddingClient:
         await self.aclose()
 
     async def embed(self, texts: list[str]) -> EmbeddingBatch:
+        client, settings = self._client, self.settings
+        self._active[client] = self._active.get(client, 0) + 1
+        try:
+            return await self._embed(client, settings, texts)
+        finally:
+            self._active[client] -= 1
+            if not self._active[client]:
+                del self._active[client]
+                if client in self._retired:
+                    self._retired.remove(client)
+                    await client.aclose()
+
+    async def _embed(self, client: httpx.AsyncClient, settings: EmbeddingSettings, texts: list[str]) -> EmbeddingBatch:
         if not texts or any(not text.strip() for text in texts):
             raise ValueError("embedding input must contain nonblank text")
-        deadline = asyncio.timeout(self.settings.timeout_seconds)
+        deadline = asyncio.timeout(settings.timeout_seconds)
         try:
             async with deadline:
-                response = await self._client.post(
-                    f"{self.settings.base_url}/embeddings",
-                    json={"model": self.settings.model, "input": texts, "encoding_format": "float",
-                          **({"dimensions": self.settings.dimensions} if self.settings.dimensions is not None else {})},
+                response = await client.post(
+                    f"{settings.base_url}/embeddings",
+                    json={"model": settings.model, "input": texts, "encoding_format": "float",
+                          **({"dimensions": settings.dimensions} if settings.dimensions is not None else {})},
                 )
         except TimeoutError as error:
             if deadline.expired():
-                raise TimeoutError(f"向量请求（服务商 {self.settings.provider}，模型 {self.settings.model}，"
-                                   f"地址 {self.settings.base_url}）超过 {self.settings.timeout_seconds} 秒") from error
+                raise TimeoutError(f"向量请求（服务商 {settings.provider}，模型 {settings.model}，"
+                                   f"地址 {settings.base_url}）超过 {settings.timeout_seconds} 秒") from error
             raise
         except httpx.RequestError as error:
-            detail = str(error).replace(self.settings.api_key, '[hidden]')
-            raise ValueError(f'向量请求失败（服务商 {self.settings.provider}，模型 {self.settings.model}，'
-                             f'地址 {self.settings.base_url}）：{type(error).__name__}: {detail}') from error
+            detail = str(error).replace(settings.api_key, '[hidden]')
+            raise ValueError(f'向量请求失败（服务商 {settings.provider}，模型 {settings.model}，'
+                             f'地址 {settings.base_url}）：{type(error).__name__}: {detail}') from error
         raw = response.text
-        safe = raw.replace(self.settings.api_key, '[hidden]')
+        safe = raw.replace(settings.api_key, '[hidden]')
         if response.status_code != 200:
             raise ValueError(f"embedding HTTP {response.status_code}: {safe[:2000]}")
         try:
@@ -181,6 +213,6 @@ class EmbeddingClient:
         except ValueError as error:
             raise ValueError(f"embedding response invalid JSON: {error}; response fragment: {safe[:500]!r}") from error
         try:
-            return parse_embeddings(body, len(texts), self.settings.dimensions)
+            return parse_embeddings(body, len(texts), settings.dimensions)
         except ValueError as error:
-            raise ValueError(str(error).replace(self.settings.api_key, '[hidden]')) from error
+            raise ValueError(str(error).replace(settings.api_key, '[hidden]')) from error

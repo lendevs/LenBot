@@ -238,6 +238,27 @@ class Attention(BaseModel):
         return self
 
 
+# Participation presets for the panel's wake level; each sets only these attention fields.
+WAKE_LEVELS: dict[str, dict[str, float | int]] = {
+    'active': {'activity': 0.3, 'ambient_min_interval_seconds': 60.0, 'ambient_max_interval_seconds': 900.0,
+               'focus_seconds': 180.0, 'focus_unanswered_limit': 2, 'explore_probability': 0.0},
+    'moderate': {'activity': 0.15, 'ambient_min_interval_seconds': 180.0, 'ambient_max_interval_seconds': 1800.0,
+                 'focus_seconds': 90.0, 'focus_unanswered_limit': 1, 'explore_probability': 0.0},
+    'quiet': {'activity': 0.06, 'ambient_min_interval_seconds': 600.0, 'ambient_max_interval_seconds': 3600.0,
+              'focus_seconds': 30.0, 'focus_unanswered_limit': 1, 'explore_probability': 0.0},
+}
+
+
+def wake_level(attention: Attention) -> str | None:
+    """The preset the attention fields match; None for hand-tuned values or a chat that only answers calls."""
+    if attention.only_direct:
+        return None
+    for level, values in WAKE_LEVELS.items():
+        if all(getattr(attention, field) == value for field, value in values.items()):
+            return level
+    return None
+
+
 class Participation(BaseModel):
     """The two attention fields chosen when a chat is added or tried: answer calls only, or also join in."""
     model_config = STRICT
@@ -304,8 +325,6 @@ class SceneSettings(ScenePersona):
     learning: LearningSettings | None = None
     proactive: Proactive | None = None
     transcribe_audio: bool = False
-    # This scene only: turns run and are recorded, sends, uploads and reactions never reach QQ.
-    simulated_delivery: bool = False
     # Plugins enabled in this scene; each must be loaded by root ``plugins``.
     plugins: list[str] = Field(default_factory=list)
     # The enabled plugin that recalls memory for this scene instead of the native memory; None keeps native.

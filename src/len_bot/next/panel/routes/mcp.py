@@ -1,4 +1,4 @@
-"""Authenticated MCP configuration and explicit actions on the current runtime binding."""
+"""Authenticated MCP configuration, applied to the running services on save, and connection actions."""
 from __future__ import annotations
 
 import asyncio
@@ -36,7 +36,7 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
         saved = _read_saved(root)
         _, raw = _read_root(root)
         return {'saved': {name: masked(value) for name, value in raw.get('mcp', {}).items()},
-                'scenes': list(saved.scenes), 'restart_required': saved.mcp != running.mcp}
+                'scenes': list(saved.scenes), 'restart_required': False}
 
     async def state() -> dict:
         async with write_lock:
@@ -50,7 +50,7 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
     async def save(edit) -> dict:
         async with write_lock:
             try:
-                path, temporary, _ = await asyncio.to_thread(_prepare, root, edit)
+                path, temporary, candidate = await asyncio.to_thread(_prepare, root, edit)
                 try:
                     temporary.replace(path)
                     sync_directory(path.parent)
@@ -58,6 +58,10 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
                     temporary.unlink(missing_ok=True)
             except (ValueError, OSError) as error:
                 raise HTTPException(422 if isinstance(error, ValueError) else 500, str(error)) from error
+            running.mcp = deepcopy(candidate.mcp)
+            if runtime.mcp is not None:
+                await runtime.mcp.apply(running.mcp)
+                runtime.refresh_external_tools()
         return await state()
 
     @app.get('/api/host/mcp', response_model=responses.McpState, response_model_exclude_unset=True)
@@ -103,7 +107,7 @@ def register_host_mcp(app: FastAPI, *, root: Path, runtime: NetworkRuntime, runn
         if not runtime.accepting:
             raise HTTPException(409, '宿主正在停止')
         if runtime.mcp is None or name not in runtime.mcp.connections:
-            raise HTTPException(409, '当前运行绑定中没有此服务；保存的新配置须重启后生效')
+            raise HTTPException(404, '没有此 MCP 服务')
         try:
             result = (await runtime.mcp.connect(name) if connect else await runtime.mcp.disconnect(name))
         except ValueError as error:

@@ -165,7 +165,8 @@ useHostEvent('turn.step', (event) => {
 | 角色资料 | Persona knowledge |
 | 对话测试 | Playground；其中一次测试是 session |
 | 隔离试聊实例的场景 | Chat（不用 scene） |
-| 模拟发送 | Simulated sending；分段按钮里写 Simulated |
+| 聊天／插件 | Chat / Plugins；首页方形按钮显示当前模式 |
+| 活跃／适中／安静 | Active / Moderate / Quiet；首页唤醒档位 |
 | 群友 | Member |
 | 主人 | Owner |
 | 服务商 | Provider |

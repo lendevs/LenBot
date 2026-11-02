@@ -14,7 +14,7 @@ SHIPPED = ('src', 'deploy', 'docker', 'scripts', 'pyproject.toml', 'uv.lock', 'R
 VERSION = re.compile(r'\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?')
 
 
-# Deployment packages, built by build_deployment.py and selected by the native updater.
+# Deployment packages, built by build_deployment.py and downloaded by the panel's updater.
 PLATFORMS = ('windows-x64', 'linux-x64', 'linux-arm64')
 
 
@@ -55,7 +55,7 @@ def write_manifest(project: Path, artifacts: Path, *, revision: str, images: dic
     manifest = {
         'manifest_version': 1, 'version': version, 'tag': 'v' + version, 'revision': revision,
         'prerelease': re.search(r'(a|b|rc)\d+$', version) is not None,
-        'python': '3.13', 'updater_protocol': 1,
+        'python': '3.13', 'updater_protocol': 2,
         'plugin_interface': constant(project, 'plugin.py', 'INTERFACE'),
         'formats': {'config': constant(project, 'next/config.py', 'CONFIG_VERSION'),
                     'business': constant(project, 'next/storage/store.py', 'FORMAT_VERSION'),

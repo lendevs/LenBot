@@ -119,7 +119,7 @@ def test_onebot_transport_defaults_and_can_be_selected_by_lab_root(tmp_path):
     _write_config(root, source)
     config = load_config(root)
     assert config.onebot == settings
-    assert config.delivery == "simulated"
+    assert config.delivery == "live"
 
 
 @pytest.mark.parametrize(
@@ -202,7 +202,7 @@ def test_onebot_transport_token_is_preserved_but_not_rendered_in_errors_or_repr(
     ("onebot", "delivery", "expected_type"),
     [
         ({"mode": "forward_ws", "ws_url": "wss://example.test:6700/events"},
-         "simulated", OneBotForward),
+         "live", OneBotForward),
         ({"mode": "forward_ws", "ws_url": "ws://127.0.0.1:6700/events"},
          "live", OneBotForward),
         ({"mode": "reverse_ws", "listen_host": "127.0.0.1", "listen_port": 0,
@@ -338,7 +338,7 @@ def test_explicit_multiscene_host_roundtrips_and_derives_existing_scene_contract
     assert isinstance(host, HostConfig)
     assert host.database == root / "data/isolated-chat.db"
     assert host.bot_id == 'onebot:90001' and host.max_model_requests == 4
-    assert host.delivery == "simulated"
+    assert host.delivery == "live"
     assert host.panel is None
     assert isinstance(host.onebot, OneBotReverse)
     assert list(host.scenes) == ["onebot:group:80001", "onebot:private:80002"]
@@ -731,7 +731,7 @@ def test_scene_persona_write_contract_reuses_scene_validation(field, value):
 def test_scene_persona_public_save_preserves_unedited_root_values_and_relative_paths(tmp_path):
     root = tmp_path / "isolated"
     source = _config("personas/relative-package")
-    source["config_version"] = 3
+    source["config_version"] = 4
     source["persona_aliases"] = ["原称呼"]
     source["relationships"] = {'onebot:80002': "原说明"}
     source["behavior_addendum"] = "原行为补充"
@@ -2026,7 +2026,7 @@ def test_history_projection_policy_is_explicit_not_provider_inference(tmp_path, 
         load_config(root)
 
 
-@pytest.mark.parametrize("version,message", [(4, "由更新版本的 LenBot 写入；当前版本使用格式 3"),
+@pytest.mark.parametrize("version,message", [(5, "由更新版本的 LenBot 写入；当前版本使用格式 4"),
                                              ("1", "配置格式 '1' 无效")])
 def test_configuration_format_newer_than_the_current_one_or_invalid_is_refused(tmp_path, version, message):
     root = tmp_path / "lab"
@@ -2067,10 +2067,10 @@ def test_format_1_config_reads_as_the_current_format_and_upgrade_writes_it_back(
     source.update(config_version=1, delivery="onebot")
     _write_config(root, source)
     config = load_host_config(root)
-    assert config.config_version == 3 and config.delivery == "live"
+    assert config.config_version == 4 and config.delivery == "live"
     assert migrate_config_file(root) and not migrate_config_file(root)
     written = json.loads((root / "lenbot.config.json").read_text(encoding="utf-8"))
-    assert written["config_version"] == 3 and written["delivery"] == "live"
+    assert written["config_version"] == 4 and written["delivery"] == "live"
     assert written["scenes"] == source["scenes"]
 
 
@@ -2089,10 +2089,10 @@ def test_scene_speaks_with_the_bot_account_of_its_platform(tmp_path):
     assert config.scene_config("onebot:group:80001").bot_id == config.bot_id
     assert config.scene_config("telegram:group:-1001234").bot_id == "telegram:7000000001"
     assert config.scene_config("feishu:group:oc_room").bot_id == "feishu:ou_bot"
+    # A removed platform leaves its groups configured; they wait until the platform is connected again.
     del source["feishu"]
     (root / "lenbot.config.json").write_text(json.dumps(source), encoding="utf-8")
-    with pytest.raises(ValueError, match="feishu:group:oc_room"):
-        load_host_config(root)
+    assert load_host_config(root).platform_names == ("onebot", "telegram")
     source["telegram"]["bot_id"] = "telegram:7000000002"
     (root / "lenbot.config.json").write_text(json.dumps(source), encoding="utf-8")
     with pytest.raises(ValueError, match="bot_token"):

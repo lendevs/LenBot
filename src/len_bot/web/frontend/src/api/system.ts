@@ -41,7 +41,6 @@ export interface TextDelivery {
   max_interval_seconds: number | null
   chars_per_second: number | null
 }
-export type Delivery = 'simulated' | 'live'
 
 /** `saved.connection`; number fields are null while their input is empty. */
 export interface Connection {
@@ -54,7 +53,7 @@ export interface Connection {
   feishu: FeishuLink | null
   /** Edited in the config file only. */
   timezone: string
-  delivery: Delivery
+  /** Follows whether a platform is configured. */
   max_steps: number | null
   turn_timeout_seconds: number | null
   max_model_requests: number | null
@@ -163,27 +162,52 @@ export interface ReleaseCheck {
   update_available: boolean
   error: string | null
 }
-export interface UpdateState {
-  version: string
-  /** Installed with the update controller; a source checkout cannot switch versions from the panel. */
-  managed: boolean
-  /** A host container started without the updater; a new image migrates the volume when it starts. */
-  container: boolean
-  status: { error?: string | null; [field: string]: unknown } | null
-  check: ReleaseCheck
-  notice: string[] | null
-  rollback_loses_data: boolean
+/** `runtime/updater.py` Updater.state(): what the running host is doing for an update. */
+export interface UpdateOperation {
+  stage: 'idle' | 'download' | 'install' | 'restart' | 'failed'
+  target: string | null
+  /** Bytes while downloading. */
+  progress: { done: number; total: number } | null
+  error: string | null
 }
-/** `deploy/updater/controller.py` Controller.snapshots(): one folder under the deployment's backups/. */
+/** One plugin brought to its catalog version after an update; `name` `*` when the step itself failed. */
+export interface PluginUpdateResult {
+  name: string
+  from?: string
+  to?: string
+  restart_required?: boolean
+  error: string | null
+}
+/** What the launcher did with the last request (`deployment.py` Switch). */
+export interface UpdateResult {
+  action: 'update' | 'restore'
+  status: 'complete' | 'rolled_back' | 'failed'
+  from: string
+  to: string
+  error?: string | null
+  snapshot?: string
+  finished_at: number
+  /** `pending` until the new host updated the plugins; null when not asked. */
+  plugins?: 'pending' | PluginUpdateResult[] | null
+}
+/** A snapshot the launcher took before an update or a restore. */
 export interface UpdateSnapshot {
   name: string
-  /** Unix seconds, from the folder name. */
-  created: number
+  version: string
+  reason: string
+  created_at: number
   bytes: number
-  /** The snapshot finished writing its manifest. */
-  complete: boolean
-  /** The restore action offered now uses it; deleting it after a completed update removes that action. */
-  restore: boolean
+  /** That version is still installed, so the snapshot can be restored with it. */
+  restorable: boolean
+}
+export interface UpdateState {
+  version: string
+  /** How the program is installed; null for a source checkout, which updates with Git. */
+  managed: 'package' | 'docker' | null
+  check: ReleaseCheck
+  operation: UpdateOperation
+  result: UpdateResult | null
+  snapshots: UpdateSnapshot[]
 }
 export interface Release {
   tag: string
@@ -246,9 +270,11 @@ export const systemApi = {
 
   updates: (signal?: AbortSignal) => http.get<UpdateState>('/api/host/updates', undefined, signal),
   releases: (signal?: AbortSignal) => http.get<Release[]>('/api/host/updates/releases', undefined, signal),
-  updaterSession: () => http.post<{ url: string }>('/api/host/updates/session'),
-  snapshots: (signal?: AbortSignal) =>
-    http.get<UpdateSnapshot[]>('/api/host/updates/snapshots', undefined, signal),
+  /** Downloads and installs the release, then the host restarts into it; `plugins` updates them afterwards. */
+  startUpdate: (tag: string, plugins: boolean) =>
+    http.post<UpdateState>('/api/host/updates/start', { tag, plugins }),
+  restoreSnapshot: (name: string) =>
+    http.post<UpdateState>(`/api/host/updates/snapshots/${named(name)}/restore`),
   deleteSnapshot: (name: string) =>
-    request<UpdateSnapshot[]>(`/api/host/updates/snapshots/${named(name)}`, { method: 'DELETE' }),
+    request<UpdateState>(`/api/host/updates/snapshots/${named(name)}`, { method: 'DELETE' }),
 }

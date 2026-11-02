@@ -15,6 +15,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket
 from len_bot.web.shell import mount_panel
 from . import responses
 from ..platform.adapter import adapter_for
+from len_bot.web.auth import keep_sessions
+from ..configuration.chat import wake_level
 from ..config import HostConfig
 from ..configuration.editing import _read_saved
 from ..models.limits import speech_quota
@@ -35,6 +37,9 @@ from ..runtime.lifecycle import HostLifecycle
 from ..runtime.logs import read_records
 from .routes.restart import register_host_restart
 from .routes.updates import register_host_updates
+from ..deployment import Deployment
+from ..runtime.releases import current_version
+from ..runtime.updater import Updater
 from .routes.prompts import register_host_prompts
 from .routes.operations import register_host_operations
 from .routes.diagnostics import register_host_diagnostics
@@ -86,14 +91,17 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        checking = asyncio.create_task(releases.run()) if releases.enabled else None
+        checking = ([asyncio.create_task(releases.run()),
+                     asyncio.create_task(catalog.run(lambda: asyncio.to_thread(lambda: _read_saved(root).plugin_catalog)))]
+                    if releases.enabled else [])
+        checking.extend(asyncio.create_task(job()) for job in update_jobs)
         try:
             yield
         finally:
-            if checking is not None:
-                checking.cancel()
+            for task in checking:
+                task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await checking
+                    await task
             await trials.close()
 
     app = FastAPI(title="LenBot 运行管理", lifespan=lifespan)
@@ -110,6 +118,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         notify()
         trials.notify()
 
+    keep_sessions(root / '.runtime' / 'panel-sessions.json')
     user = install_panel_auth(app, config.panel, on_logout=logged_out)
     register_host_restart(app, root=root, running=config, runtime=runtime, trials=trials,
                           lifecycle=runtime.management.lifecycle,
@@ -120,9 +129,7 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     register_host_trials(app, trials, user)
     register_host_permissions(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
     register_host_capabilities(app, root=root, runtime=runtime, user=user, write_lock=write_lock)
-    releases = register_host_updates(app, root=root, user=user, check_enabled=config.panel.update_check,
-                                     container=container)
-    register_host_prompts(app, root=root, user=user)
+    register_host_prompts(app, root=root, user=user, applied=runtime.settings.refresh_scenes)
     def speech_limits_changed() -> None:
         for runner in runtime.runners.values():
             runner.changed.set()
@@ -146,7 +153,11 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     register_host_jargon(app, runtime=runtime, user=user)
     register_host_stickers(app, runtime=runtime, user=user)
     register_host_reply_effects(app, runtime=runtime, user=user)
-    register_host_plugins(app, root=root, runtime=runtime, running=config, user=user, write_lock=write_lock)
+    catalog, update_plugins = register_host_plugins(app, root=root, runtime=runtime, running=config, user=user,
+                                                    write_lock=write_lock)
+    updater = Updater(Deployment.from_environment(), current_version(), exit_for_update=runtime.management.lifecycle.update)
+    releases, update_jobs = register_host_updates(app, updater=updater, user=user, check_enabled=config.panel.update_check,
+                                                  update_plugins=update_plugins)
     register_host_mcp(app, root=root, runtime=runtime, running=config, user=user, write_lock=write_lock)
     register_host_audio(app, runtime=runtime, user=user)
 
@@ -189,10 +200,10 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                  "chat_enabled": not runtime.runners[scene].state.paused,
                  "chat_status": runtime.runners[scene].chat_status(),
                  "attention": {key: getattr(runtime.chats[scene].config.attention, key)
-                               for key in ('only_direct', 'activity')}}
+                               for key in ('only_direct', 'activity')},
+                 "wake_level": wake_level(runtime.chats[scene].config.attention)}
                 for scene, settings in config.scenes.items()
             ],
-            "send_hold": runtime.send_hold.enabled,
             "memory_backend": None if config.memory is None else config.memory.backend,
             # Only what needs attention on the home page; details live on the capabilities page.
             "plugins": None if runtime.plugins is None else [

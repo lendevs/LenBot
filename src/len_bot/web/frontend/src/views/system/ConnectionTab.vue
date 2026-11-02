@@ -28,11 +28,10 @@ import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
-import { confirm } from '../../ui/confirm'
 import TestResult from '../setup/TestResult.vue'
 import { useSettingsDraft } from './draft'
 
-type Draft = Omit<Connection, 'owners' | 'bot_id' | 'onebot' | 'telegram'> & {
+type Draft = Omit<Connection, 'owners' | 'bot_id' | 'delivery' | 'onebot' | 'telegram'> & {
   onebot: OneBot | null
   telegram: TelegramLink | null
   /** The QQ account typed when the root account belongs to another platform. */
@@ -87,15 +86,6 @@ const form = useSettingsDraft<Draft>({
       feishu_secret: feishuSecret.value || null,
     })
   },
-  confirm: async (value): Promise<boolean> => {
-    if (value.delivery === 'simulated' || connection.value?.delivery !== 'simulated') return true
-    return confirm({
-      title: t('system.connection.realTitle'),
-      message: t('system.connection.realMessage'),
-      confirmLabel: t('common.save'),
-      tone: 'danger',
-    })
-  },
 })
 const { settings, draft } = form
 const connection = computed<Connection | undefined>(() =>
@@ -107,12 +97,6 @@ const forward = computed(() => (link.value?.mode === 'forward_ws' ? link.value :
 const reverse = computed(() => (link.value?.mode === 'reverse_ws' ? link.value : null))
 /** OneBot logs in as the root account, so an instance set up on another platform names its QQ account here. */
 const needsQq = computed(() => Boolean(connection.value && !connection.value.bot_id.startsWith('onebot:')))
-const anyPlatform = computed(() =>
-  Boolean(draft.value && (draft.value.onebot || draft.value.telegram || draft.value.feishu)),
-)
-watch(anyPlatform, (on) => {
-  if (!on && draft.value) draft.value.delivery = 'simulated'
-})
 
 const modes = computed(() => [
   { value: 'none', label: t('system.connection.modes.none') },
@@ -239,10 +223,6 @@ function status(name: ChatPlatform): { tone: 'success' | 'warning' | 'neutral'; 
     : { tone: 'warning', label: t('system.connection.status.disconnected') }
 }
 
-const deliveries = computed(() => [
-  { value: 'live', label: t('system.connection.real') },
-  { value: 'simulated', label: t('system.connection.simulated') },
-])
 const transports = [
   { value: 'websocket', label: 'WebSocket' },
   { value: 'http', label: 'HTTP' },
@@ -538,19 +518,6 @@ watch(invalid, () => {
       </FormSection>
 
       <FormSection :title="t('system.connection.general')">
-        <Field :label="t('system.connection.delivery')" wide>
-          <div class="flex flex-wrap items-center gap-3">
-            <SegmentedControl
-              v-model="value.delivery"
-              :options="deliveries"
-              :disabled="!anyPlatform"
-              :label="t('system.connection.delivery')"
-            />
-            <Badge v-if="value.delivery === 'live' && host.state?.send_hold" tone="warning" dot>
-              {{ t('system.connection.held') }}
-            </Badge>
-          </div>
-        </Field>
         <Field :label="t('system.connection.timezone')" :error="errors.timezone">
           <Combobox v-model="value.timezone" :options="zoneOptions" placeholder="Asia/Shanghai" />
         </Field>

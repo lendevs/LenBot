@@ -50,7 +50,7 @@ watch(
 )
 const subtitle = (name: string) => {
   const value = running(name)
-  if (!value) return t('capabilities.mcp.pending')
+  if (!value) return ''
   return [
     t('capabilities.mcp.tools', { n: value.tools.length }, value.tools.length),
     value.scenes.map(groupLabel).join(t('personas.separator')) || t('capabilities.mcp.noGroups'),
@@ -93,7 +93,6 @@ const subtitle = (name: string) => {
               <Badge v-if="running(name)" :tone="mcpTone(running(name)!.status)" dot>
                 {{ t(`capabilities.mcp.status.${running(name)!.status}`, running(name)!.status) }}
               </Badge>
-              <Badge v-else tone="warning" dot>{{ t('capabilities.mcp.pendingShort') }}</Badge>
             </span>
             <span class="truncate text-xs text-muted">{{ subtitle(name) }}</span>
           </button>

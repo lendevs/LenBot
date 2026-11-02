@@ -25,8 +25,14 @@ class PromptSettings(BaseModel):
     keep_on_update: bool
 
 
-def register_host_prompts(app: FastAPI, *, root: Path, user: Callable[[Request], str]) -> None:
+def register_host_prompts(app: FastAPI, *, root: Path, user: Callable[[Request], str],
+                          applied: Callable[[], None] = lambda: None) -> None:
     folder = prompt_files.directory(root)
+
+    def apply() -> dict:
+        prompt_files.reload(root)
+        applied()
+        return summary()
 
     def summary() -> dict:
         state = prompt_files.load_state(folder)
@@ -64,7 +70,7 @@ def register_host_prompts(app: FastAPI, *, root: Path, user: Callable[[Request],
                 prompt_files.reset(root, name)
             else:
                 prompt_files.save(root, name, body.text)
-            return summary()
+            return apply()
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
@@ -72,7 +78,7 @@ def register_host_prompts(app: FastAPI, *, root: Path, user: Callable[[Request],
     async def reset(name: str, _: str = Depends(user)):
         known(name)
         prompt_files.reset(root, name)
-        return summary()
+        return apply()
 
     @app.put('/api/host/prompt-settings', response_model=responses.PromptSummary, response_model_exclude_unset=True)
     async def settings(body: PromptSettings, _: str = Depends(user)):

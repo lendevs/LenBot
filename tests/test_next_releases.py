@@ -19,9 +19,9 @@ def test_github_list_keeps_published_version_tags_newest_first():
     raw = [_release('v0.2.0'), _release('v0.3.0rc1', prerelease=True), _release('v0.2.1', body=None),
            _release('v0.4.0', draft=True), _release('nightly'), _release('vnext')]
     assert github_releases(raw) == [
-        {'tag': 'v0.3.0rc1', 'version': '0.3.0rc1', 'prerelease': True, 'notes': '说明'},
-        {'tag': 'v0.2.1', 'version': '0.2.1', 'prerelease': False, 'notes': ''},
-        {'tag': 'v0.2.0', 'version': '0.2.0', 'prerelease': False, 'notes': '说明'},
+        {'tag': 'v0.3.0rc1', 'version': '0.3.0rc1', 'prerelease': True, 'notes': '说明', 'published_at': None, 'assets': {}},
+        {'tag': 'v0.2.1', 'version': '0.2.1', 'prerelease': False, 'notes': '', 'published_at': None, 'assets': {}},
+        {'tag': 'v0.2.0', 'version': '0.2.0', 'prerelease': False, 'notes': '说明', 'published_at': None, 'assets': {}},
     ]
 
 
@@ -66,73 +66,24 @@ async def test_check_keeps_the_last_answer_and_the_last_error():
 
 
 def test_update_status_reports_version_and_check_without_network(tmp_path):
+    from len_bot.next.runtime.updater import Updater
+
+    async def never():
+        raise AssertionError('a status read does not exit the host')
+
     def operator(request: Request) -> str:
         return 'operator'
 
     app = FastAPI()
-    check = register_host_updates(app, root=tmp_path, user=operator, check_enabled=False)
+    check, jobs = register_host_updates(app, updater=Updater(None, current_version(), exit_for_update=never),
+                                        user=operator, check_enabled=False)
     with TestClient(app) as client:
         body = client.get('/api/host/updates').json()
-    assert check.enabled is False
-    assert body['version'] == current_version() and body['managed'] is False and body['status'] is None
-    assert body['container'] is False
-    assert body['notice'] is None and body['rollback_loses_data'] is False
+        refused = client.post('/api/host/updates/snapshots/20261001-080000-0000000a/restore')
+    assert check.enabled is False and jobs == []
+    assert body['version'] == current_version() and body['managed'] is None
+    assert body['operation'] == {'stage': 'idle', 'target': None, 'progress': None, 'error': None}
+    assert body['result'] is None and body['snapshots'] == []
     assert body['check'] == {'enabled': False, 'current': current_version(), 'checked_at': None, 'error': None,
                              'latest': None, 'update_available': None, 'latest_prerelease': None}
-
-
-def test_managed_update_status_warns_that_rolling_back_loses_later_data(tmp_path):
-    """A real updater controller over HTTP; its status and the confirmation notice reach the panel."""
-    import sys
-    import threading
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'deploy/updater'))
-    import controller as updater
-    from common import write_json
-
-    write_json(tmp_path / 'deployment.json', {'mode': 'native', 'platform': 'linux', 'uv': 'uv', 'release_api': 'x'})
-    write_json(tmp_path / 'current.json', {'version': '0.1.0'})
-    (tmp_path / 'instance').mkdir()
-    control = updater.Controller(tmp_path)
-    write_json(control.state_file, {'status': 'rolled_back', 'stage': 'rolled_back', 'rolled_back_from': '0.2.0',
-                                    'error': '更新到 0.2.0 失败，已自动恢复到 0.1.0：TimeoutError: x'})
-    control.state = updater.read_json(control.state_file)
-    for name in ('20261001-080000-0000000a', '20261020-093000-0000000b'):
-        (tmp_path / 'backups' / name).mkdir(parents=True)
-        (tmp_path / 'backups' / name / 'snapshot.json').write_bytes(b'[]\n')
-    http = updater.server(control)
-    thread = threading.Thread(target=http.serve_forever)
-    thread.start()
-    def operator(request: Request) -> str:
-        return 'operator'
-
-    try:
-        app = FastAPI()
-        register_host_updates(app, root=tmp_path / 'instance', user=operator, check_enabled=False)
-        with TestClient(app) as client:
-            body = client.get('/api/host/updates').json()
-            listed = client.get('/api/host/updates/snapshots').json()
-            assert client.delete('/api/host/updates/snapshots/..%2Fupdates').status_code == 404
-            assert client.delete('/api/host/updates/snapshots/manual-copy').status_code == 422
-            control.state.update(status='failed', snapshot=str(tmp_path / 'backups/20261020-093000-0000000b'),
-                                 snapshot_complete=True)
-            refused = client.delete('/api/host/updates/snapshots/20261020-093000-0000000b')
-            left = client.delete('/api/host/updates/snapshots/20261001-080000-0000000a')
-            missing = client.delete('/api/host/updates/snapshots/20261001-080000-0000000a')
-    finally:
-        http.shutdown()
-        http.server_close()
-        thread.join()
-        control.log.close()
-        control.records.close()
-    assert body['managed'] is True and body['rollback_loses_data'] is True
-    assert body['status']['status'] == 'rolled_back' and body['status']['actions'] == ['prepare']
-    assert body['status']['rolled_back_from'] == '0.2.0'
-    assert any('丢弃更新开始后写入的数据' in line for line in body['notice'])
-    assert any('backups/' in line for line in body['notice'])
-    assert [item['name'] for item in listed] == ['20261020-093000-0000000b', '20261001-080000-0000000a']
-    assert listed[0] == {'name': '20261020-093000-0000000b', 'created': listed[0]['created'], 'bytes': 3,
-                         'complete': True, 'restore': False}
-    assert refused.status_code == 409 and '恢复需要使用此快照' in refused.json()['detail']
-    assert left.status_code == 200 and [item['name'] for item in left.json()] == ['20261020-093000-0000000b']
-    assert missing.status_code == 404 and missing.json()['detail'] == '快照不存在'
+    assert refused.status_code == 422 and '源码' in refused.json()['detail']

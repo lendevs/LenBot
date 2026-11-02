@@ -1,7 +1,7 @@
 """The live event protocol over an authenticated network WebSocket."""
 
 import asyncio
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager
 import json
 import socket
 
@@ -33,14 +33,13 @@ async def panel(root, configure=None):
     with Store(config.database) as store:
         slots = ModelSlots(config.max_model_requests)
         async with (ChatModel(config.model_settings('mind')) as model,
-                    (ChatModel(config.model_settings('vision')) if config.models.roles.vision is not None else nullcontext(None)) as vision,
+                    ChatModel(config.model_settings('vision')) as vision,
                     open_memory(config, store) as memory,
                     open_session_upkeep(config, store, model, memory=memory, slots=slots) as upkeep):
-            seeing = model if config.models.roles.mind.image_input else vision
             runtime = NetworkRuntime(config, [(config.scene_config(scene), load_persona(settings.persona))
                                               for scene, settings in config.scenes.items()],
                                      store, model, memory=memory, slots=slots, vision=vision, **upkeep_parts(upkeep),
-                                     sticker_collection=None if seeing is None else StickerCollector(config, store, seeing, slots=slots,
+                                     sticker_collection=StickerCollector(config, store, model, vision, slots=slots,
                                          recording=lambda scene: runtime.chats[scene].toolset.replay_images))
             app = create_app(config, runtime, root=root)
             with socket.socket() as listener:

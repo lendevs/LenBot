@@ -1,6 +1,5 @@
 {
   "timezone": "Asia/Shanghai",
-  "delivery": "simulated",
   "onebot": {
     "mode": "reverse_ws",
     "listen_host": "0.0.0.0",

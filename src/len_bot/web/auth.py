@@ -1,14 +1,53 @@
 import hashlib
 import hmac
+import json
+import os
 import secrets
 import re
 import time
+from pathlib import Path
 from typing import Optional
 from fastapi import HTTPException, status
 
-# In-memory active session tokens: token -> {"username": str, "expires_at": float}
+# Active sessions by token digest: digest -> {"username": str, "expires_at": float}
 _ACTIVE_SESSIONS: dict[str, dict] = {}
 SESSION_TTL = 7 * 86400.0  # 7 days
+# When set, sessions are kept in this file so a restart or an update keeps the panel signed in.
+_SESSION_FILE: Path | None = None
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def keep_sessions(path: Path) -> None:
+    """Load the sessions saved at ``path`` and save later changes there."""
+    global _SESSION_FILE
+    _SESSION_FILE = path
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        saved = {}
+    now = time.time()
+    _ACTIVE_SESSIONS.clear()
+    _ACTIVE_SESSIONS.update({key: value for key, value in saved.items()
+                             if value["expires_at"] > now})
+
+
+def _save_sessions() -> None:
+    if _SESSION_FILE is None:
+        return
+    _SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _SESSION_FILE.with_name(_SESSION_FILE.name + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        json.dump(_ACTIVE_SESSIONS, output)
+    temporary.replace(_SESSION_FILE)
+
+
+def revoke_all_sessions() -> None:
+    _ACTIVE_SESSIONS.clear()
+    _save_sessions()
 
 # Failed-login throttle: client identity -> recent failure timestamps.  The
 # dashboard port may be reachable beyond localhost, and PBKDF2 alone does not
@@ -76,15 +115,17 @@ def create_session(username: str) -> str:
     for expired in [key for key, session in _ACTIVE_SESSIONS.items() if session['expires_at'] <= now]:
         del _ACTIVE_SESSIONS[expired]
     token = secrets.token_urlsafe(32)
-    _ACTIVE_SESSIONS[token] = {
+    _ACTIVE_SESSIONS[_digest(token)] = {
         "username": username,
         "expires_at": time.time() + SESSION_TTL
     }
+    _save_sessions()
     return token
 
 def revoke_session(token: str) -> None:
     """Revokes a session token on logout."""
-    _ACTIVE_SESSIONS.pop(token, None)
+    if _ACTIVE_SESSIONS.pop(_digest(token), None) is not None:
+        _save_sessions()
 
 def session_user(token: str | None) -> str:
     """Validate an existing cookie session without depending on a runtime store."""
@@ -94,9 +135,9 @@ def session_user(token: str | None) -> str:
             detail="Authentication required"
         )
 
-    session = _ACTIVE_SESSIONS.get(token)
+    session = _ACTIVE_SESSIONS.get(_digest(token))
     if not session or session["expires_at"] < time.time():
-        _ACTIVE_SESSIONS.pop(token, None)
+        _ACTIVE_SESSIONS.pop(_digest(token), None)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired or invalid"

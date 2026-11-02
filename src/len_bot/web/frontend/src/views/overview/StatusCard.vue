@@ -13,7 +13,6 @@ import Button from '../../ui/Button.vue'
 import DropdownMenu, { type MenuEntry } from '../../ui/DropdownMenu.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import IconButton from '../../ui/IconButton.vue'
-import SegmentedControl from '../../ui/SegmentedControl.vue'
 import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
@@ -57,29 +56,10 @@ const allChat = useMutation({
   onSettled: after,
 })
 
-const hold = useMutation({
-  mutationFn: (enabled: boolean) => overviewApi.setSendHold(enabled),
-  onError: failed(t('overview.status.holdFailed')),
-  onSettled: after,
-})
-const sendMode = computed({
-  get: () =>
-    hold.isPending.value ? (hold.variables.value ? 'hold' : 'send') : state.value.send_hold ? 'hold' : 'send',
-  set: (value: 'send' | 'hold') => hold.mutate(value === 'hold'),
-})
-const sendOptions = computed(() => [
-  { value: 'send' as const, label: t('overview.status.sendReal') },
-  { value: 'hold' as const, label: t('shell.status.simulated') },
-])
-
-const delivery = computed(() => {
-  const value = state.value
-  if (value.delivery !== 'live') return t('shell.status.simulated')
-  return value.send_hold ? t('overview.status.deliveryHeld') : t('overview.status.deliveryReal')
-})
 const note = computed(() => {
   const value = connection.value
-  if (value.status === 'stopped' && value.disconnect_requested) return t('overview.status.notes.disconnected')
+  if (value.disconnect_requested && ['running', 'stopped'].includes(value.status))
+    return t(`overview.status.notes.${value.status === 'running' ? 'disconnected' : 'stopped'}`)
   const key = `overview.status.notes.${value.status}`
   return ['connection_failed', 'failed', 'stopped', 'waiting_connection'].includes(value.status)
     ? t(key)
@@ -132,11 +112,7 @@ const menu = computed<MenuEntry[]>(() => [
         </h2>
         <p class="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">
           {{
-            [
-              state.bot_id,
-              delivery,
-              t('overview.status.groups', { n: state.scenes.length }, state.scenes.length),
-            ]
+            [state.bot_id, t('overview.status.groups', { n: state.scenes.length }, state.scenes.length)]
               .filter(Boolean)
               .join(' · ')
           }}
@@ -152,14 +128,6 @@ const menu = computed<MenuEntry[]>(() => [
         >
           {{ t('overview.status.connect') }}
         </Button>
-        <SegmentedControl
-          v-if="state.delivery === 'live'"
-          v-model="sendMode"
-          :options="sendOptions"
-          size="sm"
-          :disabled="hold.isPending.value"
-          :label="t('overview.status.sendMode')"
-        />
         <Button
           v-if="state.scenes.length"
           size="sm"

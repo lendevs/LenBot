@@ -26,7 +26,7 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
                           user: Callable[[Request], str], write_lock: asyncio.Lock) -> None:
     @app.get('/api/host/ready', response_model=responses.Ready, response_model_exclude_unset=True)
     async def ready(request: Request, response: Response):
-        # Login sessions expire with a process, so reconnect only needs public process identity.
+        # The browser uses process identity to follow a restart.
         response.headers['Cache-Control'] = 'no-store'
         # The setup page listens on its own port and waits here for the new panel; only loopback pages may read it.
         origin = request.headers.get('origin')
@@ -34,7 +34,7 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Vary'] = 'Origin'
         # platform: whether the QQ (OneBot) connection is up now; None when no platform is configured.
-        # The updater compares it before and after an update; ``ready`` itself does not wait for it.
+        # Shown while following a restart; ``ready`` itself does not wait for it.
         platform = None if runtime.platform is None else {
             'connected': runtime.platform.connected, 'connected_since': runtime.connected_since}
         return {**lifecycle.process(), 'version': version('len-bot'), 'status': runtime.status,

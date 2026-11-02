@@ -7,12 +7,14 @@ import time
 from typing import Literal
 
 RESTART_EXIT = 75
+# The host wrote <deployment>/updates/request.json; the launcher switches versions before the next start.
+UPDATE_EXIT = 76
 
 
 @dataclass
 class HostLifecycle:
     restartable: bool = False
-    intent: Literal['running', 'stop', 'restart'] = 'running'
+    intent: Literal['running', 'stop', 'restart', 'update'] = 'running'
     started_at: float = field(default_factory=time.time)
     shutdown: Callable[[], None] | None = None
 
@@ -28,6 +30,12 @@ class HostLifecycle:
     async def restart(self) -> None:
         self.require_restart()
         self.intent = 'restart'
+        self.shutdown()
+
+    async def update(self) -> None:
+        """Exit for the launcher to carry out the request written beside the instance."""
+        self.require_restart()
+        self.intent = 'update'
         self.shutdown()
 
     def stop(self) -> None:

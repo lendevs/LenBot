@@ -31,7 +31,7 @@ TELEGRAM_SCENE = f'telegram:group:{GROUP}'
 SCENE_SETTINGS = {'persona': 'persona', 'attention': {'only_direct': True}}
 
 
-def test_several_platforms_open_as_a_group_and_one_as_its_adapter(tmp_path):
+def test_configured_platforms_open_as_a_group(tmp_path):
     write_config(tmp_path, onebot={'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
                  telegram={'bot_id': f'telegram:{BOT}', 'bot_token': TOKEN},
                  scenes={SCENE: SCENE_SETTINGS, TELEGRAM_SCENE: SCENE_SETTINGS})
@@ -43,8 +43,9 @@ def test_several_platforms_open_as_a_group_and_one_as_its_adapter(tmp_path):
     single.mkdir()
     write_config(single, onebot=None, telegram={'bot_id': f'telegram:{BOT}', 'bot_token': TOKEN}, bot_id=f'telegram:{BOT}',
                  owners=['telegram:501'], scenes={TELEGRAM_SCENE: SCENE_SETTINGS})
-    adapter = open_platform(load_host_config(single), on_event=lambda raw: None, on_error=lambda text: None)
-    assert isinstance(adapter, Telegram) and adapter_for(adapter, TELEGRAM_SCENE) is adapter
+    group = open_platform(load_host_config(single), on_event=lambda raw: None, on_error=lambda text: None)
+    assert isinstance(group, PlatformGroup) and group.name == 'telegram'
+    assert isinstance(adapter_for(group, TELEGRAM_SCENE), Telegram)
 
 
 @pytest.mark.asyncio

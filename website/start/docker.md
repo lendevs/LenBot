@@ -1,6 +1,6 @@
 # Docker 部署
 
-宿主镜像 `ghcr.io/lendevs/lenbot` 运行 Bot 和面板，支持 amd64 和 arm64。实例数据保存在一个命名数据卷里，更换版本就是用同一个卷启动新镜像。
+宿主镜像 `ghcr.io/lendevs/lenbot` 运行 Bot 和面板，支持 amd64 和 arm64。实例数据保存在一个命名数据卷里，新版本在面板中一键更新。
 
 下文以 `0.2.2` 为例，该版本见 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.2)，部署其他版本时换成对应的版本号。
 
@@ -21,7 +21,7 @@ docker logs lenbot
 | 参数 | 用途 |
 |---|---|
 | `-p 127.0.0.1:11307:11307` | 面板只在本机可访问；改宿主端口时改冒号前的 `11307` |
-| `-v lenbot-data:/data` | 数据卷，`/data/instance` 是实例，`/data/backups` 是更换版本前的快照 |
+| `-v lenbot-data:/data` | 数据卷，`/data/instance` 是实例，`/data/backups` 是更新前的快照，`/data/runtime` 是面板安装的新版本 |
 | `--add-host host.docker.internal:host-gateway` | 让容器用 `host.docker.internal` 访问宿主机；Docker Desktop 自带这个主机名 |
 | `--stop-timeout 180` | `docker stop` 等待当前回合和后台任务收尾的时间 |
 
@@ -41,39 +41,25 @@ docker logs lenbot
 ssh -L 11307:127.0.0.1:11307 你的服务器
 ```
 
-## 更换版本
+## 更新
 
-拉取新版本镜像，删除当前容器，再用同一个数据卷和原来的参数启动新镜像，命令中的 `<新版本>` 换成要使用的版本号：
+在面板**系统 → 设置 → 版本与更新**点击**更新到 <版本>**。面板下载新版本的程序，安装到数据卷的 `/data/runtime/<版本>`，然后重启：先把实例保存为 `/data/backups/<时间>-<编号>` 快照，再迁移数据，启动新版本。新版本没有正常启动时，自动恢复快照并回到原来的版本，页面显示原因。开启**同时更新插件**时，新版本启动后再把已安装的插件更新到插件目录中的最新版本。
 
-```sh
-docker pull ghcr.io/lendevs/lenbot:<新版本>
-docker stop lenbot
-docker rm lenbot
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:<新版本>
-```
+更新后容器继续使用原来的镜像启动，启动时选择镜像和数据卷中较新的版本运行。以后用 `docker pull` 换上同版本或更新的镜像时，改用镜像中的程序，数据卷中的旧版本随之删除。
 
-新镜像第一次启动时，先把实例保存为 `/data/backups/<时间>-<编号>` 快照，再迁移数据格式和插件依赖，日志中会列出快照名。迁移失败时实例恢复为快照内容，这份快照随即删除，容器退出并在日志中给出原因。任务镜像是官方 `lenbot-worker` 时，配置随之改为同版本，启用了后台任务时同时执行 `docker pull ghcr.io/lendevs/lenbot-worker:<新版本>`。数据卷由更新的版本用过时，旧镜像拒绝启动并在日志中说明。
+也可以直接换镜像：拉取新版本镜像，删除当前容器，再用同一个数据卷和原来的参数启动新镜像。新镜像第一次启动时同样先保存快照，再迁移数据。
 
 ### 从快照恢复
 
-回到旧版本时，先用旧版本镜像恢复更换前的快照，再启动旧版本：
+面板**更新快照**列出每次更新前的快照，点击**恢复**后 LenBot 重启并回到快照时的程序和数据，之后写入的消息、记忆和设置修改不保留。本机只保留当前版本和上一个版本，更早版本的快照需要先换回那个版本的镜像，再执行：
 
 ```sh
 docker stop lenbot
 docker rm lenbot
-docker run --rm -v lenbot-data:/data --entrypoint ls ghcr.io/lendevs/lenbot:0.2.2 /data/backups
 docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint /opt/lenbot/.venv/bin/python ghcr.io/lendevs/lenbot:0.2.2 -m len_bot.next.maintenance.upgrade restore --snapshot /data/backups/20261030-140217-cba39904
 ```
 
-最后一条命令里的快照名换成 `ls` 列出的、更换版本前的那一个。恢复后实例回到快照时的状态，之后写入的消息、记忆和设置修改不保留。然后按第 1 步用 `0.2.2` 镜像启动。
-
-### 删除旧快照
-
-每次更换版本都会新增一份完整快照。确认新版本运行正常后，删除不再需要的快照：
-
-```sh
-docker run --rm --user 10000:10000 -v lenbot-data:/data --entrypoint rm ghcr.io/lendevs/lenbot:0.2.2 -rf /data/backups/20261030-140217-cba39904
-```
+然后按第 1 步用该版本的镜像启动。
 
 ## 后台任务
 
@@ -101,27 +87,13 @@ Get-Content -Raw setup.json | docker run --rm -i --user 10000:10000 -v lenbot-da
 
 初始化后删除 `setup.json`，其中包含初始密码和模型密钥。
 
-## 用更新器管理
+## 使用 Compose
 
-希望在面板中切换版本、出错时自动回滚时，可以改用更新器部署。更新器 `lenbot-updater` 用 Docker Compose（v2）管理宿主容器，面板**系统 → 设置 → 版本与更新**里的**打开更新与恢复页**由它提供。在 macOS 或 Linux 终端的一个新目录中执行：
+仓库的 [`host.compose.yaml`](https://github.com/lendevs/LenBot/blob/master/deploy/current/host.compose.yaml) 是同样设置的 Compose 配方，挂载了 Docker socket，随 Docker 自动启动：
 
 ```sh
-mkdir lenbot && cd lenbot
-docker run --rm --entrypoint python \
-  -v "$PWD:/deployment" -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/lendevs/lenbot-updater:0.2.2 /opt/lenbot-updater/init.py --version 0.2.2
-docker compose -p lenbot -f host.compose.yaml -f host.version.compose.yaml \
-  -f host.updater.compose.yaml up -d
+docker compose -p lenbot -f host.compose.yaml up -d
 ```
-
-| 参数 | 默认值 | 用途 |
-|---|---|---|
-| `--project` | `lenbot` | 实例名，也是 Compose 项目名和卷名前缀，与 `-p` 保持一致 |
-| `--panel-port` | `11307` | 面板在宿主机上的端口 |
-| `--update-port` | `11308` | 更新与恢复页在宿主机上的端口 |
-| `--registry` | `ghcr` | 镜像仓库，可选 `ghcr` 或 `dockerhub` |
-
-命令创建 `<实例名>-data` 数据卷，布局与上文相同；Compose 配方挂载 Docker socket，后台任务可直接启用。更新与恢复见[更新与备份](../use/maintenance#部署包与-docker-实例)。
 
 ## 排查
 

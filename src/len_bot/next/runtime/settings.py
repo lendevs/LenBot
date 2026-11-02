@@ -1,12 +1,21 @@
-"""Apply settings read by live scenes; connection and service bindings stay explicit."""
+"""Apply a saved root configuration to the running host without a restart."""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
+import logging
+from logging.handlers import TimedRotatingFileHandler
+
 from ..chat.proactive import ProactiveStore
 from ..models.limits import apply_speech_limits
+from ..platform.adapter import PlatformCallError, platform_changes
+from .logs import SECRETS, credentials
+from len_bot.web.auth import revoke_all_sessions
+
+# Panel fields read when the host starts: the listening socket and the proxies Uvicorn trusts.
+PANEL_AT_START = ('host', 'port', 'trusted_proxies', 'assets_dir')
 
 if TYPE_CHECKING:
     from ..config import HostConfig
@@ -17,17 +26,89 @@ class LiveSettings:
     def __init__(self, runtime: NetworkRuntime):
         self.runtime = runtime
 
+    async def apply_models(self, saved: HostConfig) -> None:
+        """Rebind the long-lived model clients; requests already sent finish on their old connection."""
+        runtime, running = self.runtime, self.runtime.config
+        if running.models == saved.models:
+            return
+        running.models = deepcopy(saved.models)
+        await runtime.mind.rebind(running.model_settings('mind'))
+        if runtime.vision is not None:
+            await runtime.vision.rebind(running.model_settings('vision'))
+        embeddings = [] if runtime.expression_service is None else list(runtime.expression_service.clients.values())
+        if runtime.memory is not None and runtime.memory.backend.embedding is not None:
+            embeddings.append(runtime.memory.backend.embedding)
+        for client in embeddings:
+            provider = running.models.providers.get(client.settings.provider)
+            if provider is not None and provider.base_url == client.settings.base_url:
+                await client.reconnect(provider.base_url, provider.api_key, provider.proxy)
+
+    async def apply_connection(self, saved: HostConfig) -> None:
+        """Reopen changed platforms and switch the delivery; unchanged platforms keep their connection.
+
+        A host started without any platform (stdin simulation) keeps that until its next start.
+        """
+        runtime, running = self.runtime, self.runtime.config
+        if runtime.platform is None:
+            return
+        changes = platform_changes(running, saved)
+        delivery = running.delivery != saved.delivery
+        for name in ('bot_id', 'onebot', 'telegram', 'feishu', 'delivery'):
+            setattr(running, name, deepcopy(getattr(saved, name)))
+        if delivery:
+            runtime.bind_audio()
+            for scene, chat in runtime.chats.items():
+                chat.config.delivery = running.delivery
+                chat.bind_delivery(*runtime.delivery(scene))
+        if changes is not None:
+            try:
+                await runtime.platform.apply(changes)
+            except PlatformCallError as error:
+                # The platform status on the panel shows it; the rest of the save still applies.
+                runtime._platform_error(f'{type(error).__name__}: {error}')
+            else:
+                runtime.last_platform_error = None
+            runtime.bind_audio()
+
+    @staticmethod
+    def apply_logging(running: HostConfig, saved: HostConfig) -> None:
+        running.logging.level, running.logging.retention_days = saved.logging.level, saved.logging.retention_days
+        root = logging.getLogger()
+        root.setLevel(saved.logging.level)
+        for handler in root.handlers:
+            if isinstance(handler, TimedRotatingFileHandler):
+                handler.backupCount = saved.logging.retention_days
+
+    def refresh_scenes(self) -> None:
+        """Rebuild every scene's system prompt and tool descriptions for its next turn."""
+        for scene, runner in self.runtime.runners.items():
+            chat = self.runtime.chats[scene]
+            runner.adopt_persona(chat.persona, chat.skills, list(chat.toolset.external.values()))
+        self.runtime.notify()
+
     async def apply(self, saved: HostConfig) -> None:
         runtime, running = self.runtime, self.runtime.config
+        await self.apply_models(saved)
+        await self.apply_connection(saved)
         for name in ('owners', 'owner_private_chat', 'permissions', 'timezone', 'max_steps', 'turn_timeout_seconds',
-                     'text_delivery', 'compaction', 'images', 'audio', 'commands'):
+                     'text_delivery', 'compaction', 'images', 'audio', 'commands', 'network', 'web_read', 'web_search',
+                     'task_archive', 'plugin_catalog'):
             setattr(running, name, deepcopy(getattr(saved, name)))
-        # A web service whose connection changed waits for the restart that applies the connection.
-        for name in ('web_read', 'web_search'):
-            web = getattr(saved, name)
-            if (web is None or web.connection is None
-                    or running.models.providers.get(web.connection) == saved.models.providers[web.connection]):
-                setattr(running, name, deepcopy(web))
+        self.apply_logging(running, saved)
+        runtime.log_secrets = credentials(saved)
+        SECRETS.add(runtime.log_secrets)
+        if running.panel is not None and saved.panel is not None:
+            credentials_changed = (running.panel.password_hash != saved.panel.password_hash
+                                   or running.panel.username != saved.panel.username)
+            # The sign-in handlers hold this object, so its fields change in place.
+            for name in type(saved.panel).model_fields:
+                if name not in PANEL_AT_START:
+                    setattr(running.panel, name, getattr(saved.panel, name))
+            if credentials_changed:
+                revoke_all_sessions()
+        if running.retention != saved.retention:
+            running.retention = deepcopy(saved.retention)
+            runtime.retention.wake()
         apply_speech_limits(running, saved)
         if runtime.slots is not None:
             running.limits.daily_tokens = saved.limits.daily_tokens
@@ -56,7 +137,7 @@ class LiveSettings:
                 if service is not None and scene in service.scenes and (learning is None or not getattr(learning, flag)):
                     await service.remove_scene(scene)
             current.learning = learning
-            for name in ('timezone', 'voice_mode', 'attention', 'schedules', 'permissions', 'chat_control_roles', 'simulated_delivery'):
+            for name in ('timezone', 'voice_mode', 'attention', 'schedules', 'permissions', 'chat_control_roles'):
                 setattr(current, name, deepcopy(getattr(desired, name)))
             if desired.proactive is None or learning is not None and learning.reply_effects:
                 current.proactive = deepcopy(desired.proactive)
@@ -69,9 +150,10 @@ class LiveSettings:
                     setattr(current, name, deepcopy(getattr(desired, name)))
             fresh = running.scene_config(scene)
             for name in ('owners', 'permissions', 'timezone', 'max_steps', 'turn_timeout_seconds', 'text_delivery',
-                         'compaction', 'images', 'audio', 'commands', 'web_read', 'web_search', 'attention', 'schedules',
+                         'compaction', 'images', 'audio', 'commands', 'models', 'network', 'logging', 'bot_id', 'delivery',
+                         'web_read', 'web_search', 'attention', 'schedules',
                          'proactive', 'tasks', 'learning', 'transcribe_audio', 'persona_aliases', 'relationships',
-                         'behavior_addendum', 'chat_control_roles', 'simulated_delivery', 'inactive_personas'):
+                         'behavior_addendum', 'chat_control_roles', 'inactive_personas'):
                 setattr(chat.config, name, deepcopy(getattr(fresh, name)))
             runner.settings = chat.config.attention
             runner.proactive = None if current.proactive is None else ProactiveStore(runtime.store)

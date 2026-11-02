@@ -16,6 +16,8 @@ export interface ChatStatus {
   changes_at: number | null
 }
 
+export type WakeLevel = 'active' | 'moderate' | 'quiet'
+
 export interface HostScene {
   scene: string
   persona: { id: string; name: string }
@@ -27,6 +29,8 @@ export interface HostScene {
   chat_enabled: boolean
   chat_status: ChatStatus
   attention: Participation
+  /** The participation preset the running attention matches; null when tuned by hand. */
+  wake_level: WakeLevel | null
 }
 
 /** One condition of a persistent intent, as `chat/declarations.py` stores it. */
@@ -75,7 +79,6 @@ export interface HostState {
     platforms?: Partial<Record<'onebot' | 'telegram' | 'feishu', boolean>>
   }
   scenes: HostScene[]
-  send_hold: boolean
   memory_backend: string | null
   plugins: ItemHealth[] | null
   mcp: ItemHealth[]
@@ -140,6 +143,8 @@ export const hostApi = {
   sceneTitles: (signal?: AbortSignal) => http.get<SceneTitles>('/api/host/scene-titles', undefined, signal),
   setChat: (scene: string, enabled: boolean) =>
     http.put<SceneControl>(`${scenePath(scene)}/control/chat`, { enabled }),
+  setWakeLevel: (scene: string, level: WakeLevel) =>
+    http.put<unknown>(`/api/host/settings/scenes/${encodeURIComponent(scene)}/wake-level`, { level }),
   control: (scene: string, signal?: AbortSignal) =>
     http.get<SceneControl>(`${scenePath(scene)}/control`, undefined, signal),
   quiet: (scene: string, seconds: number, direct: 'allow' | 'defer') =>

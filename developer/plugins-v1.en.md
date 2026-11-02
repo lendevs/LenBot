@@ -105,7 +105,7 @@ Active plugin configuration and enabled scenes are stored in `lenbot.config.json
 - Applying a managed Git candidate aborts if the installed working tree has local modifications or untracked files (excluding host-generated `__pycache__`).
 - Switching a plugin's Git repository URL or switching between Git and ZIP requires explicit source replacement in the panel and preserves the plugin's data directory.
 - When dependencies are unchanged and `reload = "plugin"`, the host stops only that plugin, swaps source directories, re-imports, and calls `start()`. Saving configuration or enabled scenes also reloads only that plugin.
-- When dependencies change or `reload = "host"`, applying marks the candidate pending restart. On explicit restart, after the old host exits cleanly, the launcher runs `len_bot.next.maintenance.apply_plugins` under the instance lock to validate candidate configuration, resolve combined Python dependencies, swap source directories, and start the new host. If dependency resolution fails, the launcher exits while keeping the candidate and error message intact.
+- When an inline plugin replaces existing dependencies or declares `reload = "host"`, applying marks the candidate pending restart. On explicit restart, after the old host exits cleanly, the launcher runs `len_bot.next.maintenance.apply_plugins` under the instance lock to validate candidate configuration, resolve combined Python dependencies, swap source directories, and start the new host. If dependency resolution fails, the launcher exits while keeping the candidate and error message intact.
 
 For instances running `len_bot.next.host` directly without the launcher, stop the host, run `python -m len_bot.next.maintenance.apply_plugins` in the instance root, and start the host again. After rebuilding a Python virtual environment, restore installed plugin requirements with `python -m len_bot.next.maintenance.plugin_dependencies`. Deployment details are in [deploy/current/README.md](../deploy/current/README.md).
 
@@ -327,7 +327,7 @@ Override synchronous `unavailable_tools(self, scene: str) -> dict[str, str]` to 
 | Wait for the next message | `await ctx.wait_message(timeout_seconds=60, sender="same")`; see [Multi-turn conversations](#multi-turn-conversations) |
 | Message words | `message_text(message, names=None)`; see [Messages](#messages) |
 
-`self.ctx` (`PluginContext`) is used in `start()`, `stop()`, and `@background`, where scene-bound methods take an explicit `scene` argument. `self.ctx.scenes` lists enabled scenes whose chat switch is currently on. `Sent.status` is one of `sent`, `failed`, `unconfirmed`, `simulated`, or `partial`.
+`self.ctx` (`PluginContext`) is used in `start()`, `stop()`, and `@background`, where scene-bound methods take an explicit `scene` argument. `self.ctx.scenes` lists the scenes that enable the plugin. Switching a scene to plugins mode (chat off) only stops waking the chat model; commands, rules, notices, schedules and sending keep working there. `Sent.status` is one of `sent`, `failed`, `unconfirmed`, `simulated`, or `partial`.
 
 Card and image helpers are described in [Cards and images](#cards-and-images).
 

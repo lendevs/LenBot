@@ -7,4 +7,4 @@ if [ -f "$ROOT/current.json" ]; then
   VERSION=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ROOT/current.json" | head -n 1)
 fi
 RELEASE="$ROOT/releases/$VERSION"
-exec "$RELEASE/python/bin/python3" -X utf8 "$RELEASE/updater/controller.py" "$ROOT"
+exec "$RELEASE/python/bin/python3" -X utf8 -m len_bot.next.launcher "$ROOT"

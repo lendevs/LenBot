@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from ..runtime.network import NetworkRuntime
 from .data import restore_backup
 from .host import PluginHost
-from .install import PluginInstaller
+from .install import PluginInstaller, install_dependencies
 from .manifest import Manifest, discover, read_manifest
 
 
@@ -173,7 +173,7 @@ class PluginManager:
         values = saved.plugins.configured[name] if candidate_values is None else candidate_values.values
         applied = False
         try:
-            await self.installer.check_apply(name, values, saved.scenes)
+            manifest = await self.installer.check_apply(name, values, saved.scenes)
             if record.application == 'host':
                 record.requested, record.error = True, None
                 self.installer.write(record)
@@ -183,6 +183,7 @@ class PluginManager:
                     await self.runtime.plugins.stop_plugin(name)
                 finally:
                     self.runtime.refresh_external_tools()
+            await install_dependencies(self.root, manifest.dependencies)
             async with self.write_lock:
                 await asyncio.to_thread(self.installer.apply_files, name)
             applied = True

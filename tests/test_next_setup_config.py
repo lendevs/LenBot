@@ -9,9 +9,7 @@ import pytest
 from len_bot.next.config import load_host_config
 from len_bot.next.chat.context import build_system
 from len_bot.next.persona.profile import load_persona
-from len_bot.next.panel import setup as first_run
 from len_bot.next.panel.setup import FirstSetup, create_setup_app, initialize, opens_browser
-from len_bot.next.runtime.send_hold import SendHold
 from len_bot.web.auth import verify_password
 
 
@@ -20,7 +18,7 @@ from len_bot.web.auth import verify_password
 @pytest.mark.parametrize('embedding_mode', ['skip', 'primary', 'separate'])
 def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: str, default_persona: bool, embedding_mode: str):
     body = {
-        'bot_id':'onebot:90001','owners':['onebot:70001'],'timezone':'Asia/Shanghai','delivery':'simulated',
+        'bot_id':'onebot:90001','owners':['onebot:70001'],'timezone':'Asia/Shanghai',
         'onebot':{'mode':'forward_ws','ws_url':'ws://127.0.0.1:9','access_token':'synthetic-token'},
         'provider':{'api':'openai-chat','base_url':'http://127.0.0.1:9/v1','api_key':'synthetic-secret'},
         'mind':{'provider':'primary','model':'fixture','context_window_tokens':8192},
@@ -56,7 +54,6 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
             assert complete.is_set() and 'synthetic-secret' not in response.text
             cfg = load_host_config(tmp_path)
             assert cfg.delivery == 'live' and cfg.models.roles.mind.model == 'fixture'
-            assert SendHold(tmp_path).enabled is True
             assert cfg.memory is not None
             if embedding_mode == 'skip':
                 assert cfg.memory.local.embedding is None and set(cfg.models.providers) == {'primary'}
@@ -85,10 +82,9 @@ def test_first_setup_validates_and_never_overwrites(tmp_path: Path, voice_mode: 
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize('delivery', ['simulated', 'live'])
-def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path, monkeypatch, delivery: str):
+def test_setup_with_a_platform_sends_live(tmp_path: Path):
     item = FirstSetup.model_validate({
-        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': delivery,
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-secret'},
         'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
@@ -96,18 +92,9 @@ def test_setup_writes_the_send_hold_before_publishing_the_config(tmp_path: Path,
         'scene': 'onebot:group:80001', 'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
         'attention': {'only_direct': False, 'activity': 0.2},
     })
-    published = []
-    link = first_run.os.link
-
-    def observed(source, target):
-        published.append(SendHold(tmp_path).enabled)
-        link(source, target)
-
-    monkeypatch.setattr(first_run.os, 'link', observed)
     initialize(tmp_path, item)
-    assert published == [delivery == 'simulated']
     assert load_host_config(tmp_path).delivery == 'live'
-    assert SendHold(tmp_path).enabled is (delivery == 'simulated')
+    assert not (tmp_path / 'state' / 'send-hold.json').exists()
     attention = load_host_config(tmp_path).scene_config('onebot:group:80001').attention
     assert (attention.only_direct, attention.activity) == (False, 0.2)
 
@@ -320,7 +307,7 @@ def test_container_setup_always_uses_the_published_panel_port(tmp_path: Path):
     compose = (Path(__file__).parents[1] / 'deploy' / 'current' / 'host.compose.yaml').read_text(encoding='utf-8')
     assert f'{CONTAINER_PANEL_PORT}:{CONTAINER_PANEL_PORT}' in compose
     body = {
-        'bot_id':'onebot:90001','owners':['onebot:70001'],'timezone':'Asia/Shanghai','delivery':'simulated',
+        'bot_id':'onebot:90001','owners':['onebot:70001'],'timezone':'Asia/Shanghai',
         'onebot':{'mode':'forward_ws','ws_url':'ws://127.0.0.1:9','access_token':'synthetic-token'},
         'provider':{'api':'openai-chat','base_url':'http://127.0.0.1:9/v1','api_key':'synthetic-secret'},
         'mind':{'provider':'primary','model':'fixture','context_window_tokens':8192},
@@ -391,20 +378,9 @@ def test_wizard_link_opens_only_from_a_local_desktop_terminal(container, interac
     assert opens_browser(container=container, interactive=interactive, platform=platform, environ=environ) is expected
 
 
-def test_docker_smoke_goes_through_the_wizard_port():
-    """B-1 follow-up: the smoke test must not hardcode the port."""
-    repo = Path(__file__).parents[1]
-    smoke = (repo / 'scripts' / 'smoke_docker_update.py').read_text(encoding='utf-8')
-    assert "'panel_port': 11307" not in smoke and "'panel_port': submitted" in smoke
-    # N5: the smoke submits 8088 on purpose and checks the stored port is still the container port.
-    assert 'submitted = 8088' in smoke and "saved['panel']['port'] == published" in smoke
-    # Review 2 A6: the static HTML always says 8088, so the smoke reads the port from the setup API only.
-    assert 'id="port"' not in smoke and "wizard_port = json.loads(text)['panel_port']" in smoke
-
-
 def without_connection(**changes) -> dict:
     return {
-        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai', 'delivery': 'simulated',
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'Asia/Shanghai',
         'onebot': None,
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-secret'},
         'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
@@ -415,11 +391,9 @@ def without_connection(**changes) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_setup_without_onebot_writes_a_simulated_config_and_no_send_hold(tmp_path: Path):
+async def test_setup_without_onebot_writes_a_console_config(tmp_path: Path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(create_setup_app(tmp_path, 'fixture-token', asyncio.Event())),
                                  base_url='http://127.0.0.1', headers={'X-Setup-Token': 'fixture-token'}) as client:
-        refused = await client.post('/api/setup', json=without_connection(delivery='live'))
-        assert refused.status_code == 422 and not (tmp_path / 'lenbot.config.json').exists()
         response = await client.post('/api/setup', json=without_connection())
     assert response.status_code == 200, response.text
     config = load_host_config(tmp_path)
@@ -430,10 +404,10 @@ async def test_setup_without_onebot_writes_a_simulated_config_and_no_send_hold(t
     assert not (tmp_path / 'state' / 'send-hold.json').exists() and not list(tmp_path.rglob('send-hold.json'))
 
 
-def test_setup_with_onebot_keeps_the_send_hold_as_the_simulated_choice(tmp_path: Path):
+def test_setup_with_onebot_sends_live(tmp_path: Path):
     item = FirstSetup.model_validate(without_connection(onebot={'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'}))
     initialize(tmp_path, item)
-    assert load_host_config(tmp_path).delivery == 'live' and SendHold(tmp_path).enabled is True
+    assert load_host_config(tmp_path).delivery == 'live'
 
 
 @pytest.mark.parametrize('mode', ['shared', 'separate', 'yahoo', 'off', 'tavily', 'jina'])

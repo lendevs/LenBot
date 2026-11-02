@@ -1,56 +1,63 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { Trash2 } from '@lucide/vue'
+import { useMutation, useQueryClient } from '@tanstack/vue-query'
+import { History, Trash2 } from '@lucide/vue'
 import { keys } from '../../api/query'
-import { systemApi, type UpdateSnapshot } from '../../api/system'
+import { systemApi, type UpdateSnapshot, type UpdateState } from '../../api/system'
 import { formatBytes, formatDateTime } from '../../i18n/format'
 import Badge from '../../ui/Badge.vue'
-import ErrorNote from '../../ui/ErrorNote.vue'
+import Button from '../../ui/Button.vue'
 import IconButton from '../../ui/IconButton.vue'
-import Skeleton from '../../ui/Skeleton.vue'
 import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
-/** The deployment's update snapshots under backups/, read from the update controller. */
+/** Snapshots the launcher took before each update; restoring one restarts into its version. */
+const props = defineProps<{ items: UpdateSnapshot[]; busy: boolean }>()
+const emit = defineEmits<{ restarting: [] }>()
+
 const { t } = useI18n()
 const queryClient = useQueryClient()
-const snapshots = useQuery({
-  queryKey: keys.system.snapshots(),
-  queryFn: ({ signal }) => systemApi.snapshots(signal),
-})
-const items = computed(() => snapshots.data.value ?? [])
-const total = computed(() => items.value.reduce((sum, item) => sum + item.bytes, 0))
+const total = computed(() => props.items.reduce((sum, item) => sum + item.bytes, 0))
+const updated = (state: UpdateState) => queryClient.setQueryData(keys.system.updates(), state)
+const failed = (title: string) => (error: unknown) =>
+  toast.error(title, { detail: describeError(error, t('ui.error.network')).message })
 
 const remove = useMutation({
   mutationFn: (name: string) => systemApi.deleteSnapshot(name),
-  onSuccess: (left) => {
-    queryClient.setQueryData(keys.system.snapshots(), left)
-    // Deleting the restorable snapshot also removes the restore action from the controller status.
-    void queryClient.invalidateQueries({ queryKey: keys.system.updates(), exact: true })
+  onSuccess: (state) => {
+    updated(state)
     toast.success(t('system.updates.snapshots.deleted'))
   },
-  onError: (error) => {
-    // A removal that stopped halfway already took the restore away and left the snapshot incomplete.
-    void queryClient.invalidateQueries({ queryKey: keys.system.snapshots() })
-    void queryClient.invalidateQueries({ queryKey: keys.system.updates(), exact: true })
-    toast.error(t('system.updates.snapshots.deleteFailed'), {
-      detail: describeError(error, t('ui.error.network')).message,
-    })
-  },
+  onError: failed(t('system.updates.snapshots.deleteFailed')),
 })
-async function ask(item: UpdateSnapshot) {
+const restore = useMutation({
+  mutationFn: (name: string) => systemApi.restoreSnapshot(name),
+  onSuccess: (state) => {
+    updated(state)
+    emit('restarting')
+  },
+  onError: failed(t('system.updates.snapshots.restoreFailed')),
+})
+
+async function askDelete(item: UpdateSnapshot) {
   const sure = await confirm({
-    title: t('system.updates.snapshots.deleteTitle', { time: formatDateTime(item.created) }),
-    message: item.restore
-      ? t('system.updates.snapshots.deleteRestore')
-      : t('system.updates.snapshots.deleteMessage'),
+    title: t('system.updates.snapshots.deleteTitle', { time: formatDateTime(item.created_at) }),
+    message: t('system.updates.snapshots.deleteMessage'),
     confirmLabel: t('common.delete'),
     tone: 'danger',
   })
   if (sure) remove.mutate(item.name)
+}
+async function askRestore(item: UpdateSnapshot) {
+  const sure = await confirm({
+    title: t('system.updates.snapshots.restoreTitle', { version: item.version }),
+    message: t('system.updates.snapshots.restoreMessage', { time: formatDateTime(item.created_at) }),
+    confirmLabel: t('system.updates.snapshots.restore'),
+    tone: 'danger',
+  })
+  if (sure) restore.mutate(item.name)
 }
 </script>
 
@@ -62,40 +69,34 @@ async function ask(item: UpdateSnapshot) {
         {{ t('system.updates.snapshots.total', { n: items.length, size: formatBytes(total) }) }}
       </span>
     </header>
-    <Skeleton v-if="snapshots.isPending.value" :lines="3" />
-    <ErrorNote
-      v-else-if="snapshots.isError.value"
-      :title="t('system.updates.snapshots.readFailed')"
-      :error="snapshots.error.value"
-      :retry="snapshots.refetch"
-    />
-    <p v-else-if="!items.length" class="text-sm text-muted">{{ t('system.updates.snapshots.none') }}</p>
+    <p v-if="!items.length" class="text-sm text-muted">{{ t('system.updates.snapshots.none') }}</p>
     <ol v-else class="flex list-none flex-col divide-y divide-line">
-      <li
-        v-for="item in items"
-        :key="item.name"
-        class="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-0"
-      >
-        <div class="flex min-w-0 flex-col gap-0.5">
+      <li v-for="item in items" :key="item.name" class="flex items-center gap-3 py-3 first:pt-1 last:pb-0">
+        <div class="flex min-w-0 flex-1 flex-col gap-0.5">
           <span class="flex flex-wrap items-center gap-2 text-sm font-medium text-ink tabular">
-            {{ formatDateTime(item.created) }}
-            <Badge v-if="item.restore" tone="brand">{{ t('system.updates.snapshots.restore') }}</Badge>
-            <Badge v-if="!item.complete" tone="warning">
-              {{ t('system.updates.snapshots.incomplete') }}
-            </Badge>
+            {{ formatDateTime(item.created_at) }}
+            <Badge>v{{ item.version }}</Badge>
           </span>
-          <span class="truncate text-xs text-muted tabular">
-            {{ formatBytes(item.bytes) }} ·
-            <span class="font-mono">{{ item.name }}</span>
-          </span>
+          <span class="text-xs text-muted tabular">{{ formatBytes(item.bytes) }}</span>
         </div>
+        <Button
+          size="sm"
+          :icon="History"
+          :disabled="busy || !item.restorable || restore.isPending.value"
+          :loading="restore.isPending.value && restore.variables.value === item.name"
+          :title="
+            item.restorable ? undefined : t('system.updates.snapshots.unavailable', { version: item.version })
+          "
+          @click="askRestore(item)"
+        >
+          {{ t('system.updates.snapshots.restore') }}
+        </Button>
         <IconButton
           :icon="Trash2"
+          size="sm"
           :label="t('common.delete')"
-          variant="danger-ghost"
-          :loading="remove.isPending.value && remove.variables.value === item.name"
-          :disabled="remove.isPending.value"
-          @click="ask(item)"
+          :disabled="busy || remove.isPending.value"
+          @click="askDelete(item)"
         />
       </li>
     </ol>

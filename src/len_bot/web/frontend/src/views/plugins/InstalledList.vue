@@ -23,6 +23,7 @@ import { confirm } from '../../ui/confirm'
 import type { InstallRequest } from './InstallDialog.vue'
 import PathsDialog from './PathsDialog.vue'
 import PluginCard from './PluginCard.vue'
+import PluginUpdatesSection from './PluginUpdatesSection.vue'
 import { usePluginsState } from './state'
 import { bucketOf, descriptionOf, manifestOf, pluginNames, statusOf, type Bucket } from './view'
 
@@ -129,6 +130,7 @@ async function removeData(name: string) {
     </div>
 
     <ErrorNote v-for="error in errors" :key="error" :title="t('plugins.discoveryFailed')" :error="error" />
+    <PluginUpdatesSection />
 
     <EmptyState v-if="!names.length" :icon="Blocks" :title="t('plugins.empty')">
       <Button variant="primary" :icon="Store" @click="emit('discover')">{{ t('plugins.goDiscover') }}</Button>

@@ -11,6 +11,8 @@ const props = defineProps<{
   scene: string
   /** Areas that show a small warning dot. */
   flagged: Set<string>
+  /** Areas with updates waiting, and how many. */
+  updates?: Record<string, number>
 }>()
 
 const { t } = useI18n()
@@ -62,6 +64,18 @@ const route = useRoute()
               aria-hidden="true"
             />
             <span v-if="!collapsed" class="truncate">{{ t(area.label) }}</span>
+            <span
+              v-if="updates?.[area.id] && !collapsed"
+              class="ml-auto inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold text-white tabular"
+              :aria-label="t('shell.updatesWaiting', { n: updates[area.id] })"
+            >
+              {{ updates[area.id] }}
+            </span>
+            <span
+              v-else-if="updates?.[area.id]"
+              class="absolute top-1.5 right-2 size-1.5 shrink-0 rounded-full bg-brand"
+              aria-hidden="true"
+            />
             <span
               v-if="flagged.has(area.id)"
               class="size-1.5 shrink-0 rounded-full bg-warning"

@@ -70,6 +70,6 @@ state/services/asr/build-tools/bin/cmake --build state/services/asr/build \
 
 增大 `audio.max_bytes` 时，也要同步调整已保存的 `max_frame_bytes`。另外两种做法是减小允许的音频大小，或者显式配置已有的 HTTP actions（`action_transport: "http"` 和 `http_url`）。这项容量检查只在启用 ASR、真实发送并使用 WebSocket actions 时执行。
 
-保存后重启 LenBot。场景必须允许语音转写，角色需要开放 `transcribe`。
+保存后应用到后续语音处理。场景必须允许语音转写，角色需要开放 `transcribe`。
 
 参考资料：[服务参数](https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/examples/server/README.md)，[模型列表](https://github.com/ggml-org/whisper.cpp/blob/v1.9.4/models/README.md)。

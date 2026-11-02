@@ -1,7 +1,6 @@
 """Published LenBot releases compared with the running version; reading only, nothing is installed.
 
-Replacing the program stays with the installation's updater (deployment packages and Docker) or with
-Git and the offline migrations (source checkouts). This module only answers "is there a newer one".
+Installing one is the updater's (runtime/updater.py); this module only answers "is there a newer one".
 """
 
 from __future__ import annotations
@@ -10,6 +9,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from importlib.metadata import version as installed_version
 import logging
+import os
 import time
 
 from packaging.version import InvalidVersion, Version
@@ -18,9 +18,10 @@ from .logs import log_event
 
 logger = logging.getLogger(__name__)
 
-GITHUB_RELEASES = 'https://api.github.com/repos/lendevs/LenBot/releases?per_page=100'
+# LENBOT_RELEASES_URL points the check at another list in the same format (the update smoke serves one).
+GITHUB_RELEASES = os.environ.get('LENBOT_RELEASES_URL', 'https://api.github.com/repos/lendevs/LenBot/releases?per_page=100')
 CHECK_TIMEOUT_SECONDS = 15.0
-CHECK_INTERVAL_SECONDS = 24 * 3600.0
+CHECK_INTERVAL_SECONDS = 6 * 3600.0
 # The first background check waits, so it never delays a starting host or touches the network
 # from a host that only runs for a moment (tests, a quick restart).
 FIRST_CHECK_DELAY_SECONDS = 60.0
@@ -47,7 +48,8 @@ def github_releases(raw: object) -> list[dict]:
         except InvalidVersion:
             continue
         releases.append({'tag': tag, 'version': tag[1:], 'prerelease': item['prerelease'],
-                         'notes': item['body'] or ''})
+                         'notes': item['body'] or '', 'published_at': item.get('published_at'),
+                         'assets': {asset['name']: asset['browser_download_url'] for asset in item.get('assets', [])}})
     return sorted(releases, key=lambda release: Version(release['version']), reverse=True)
 
 
@@ -69,7 +71,7 @@ def compare(releases: list[dict], current: str) -> dict:
 
 
 class ReleaseCheck:
-    """The last answer to "is there a newer release", refreshed on request and once a day in the background."""
+    """The last answer to "is there a newer release", refreshed on request and every few hours in the background."""
 
     def __init__(self, load: Callable[[], Awaitable[list[dict]]], *, enabled: bool, current: str | None = None):
         self.load = load

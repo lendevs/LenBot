@@ -1,8 +1,8 @@
-# The deployment recipe used with the optional updater; init.py writes the instance's copy with its image.
+# Docker Compose recipe for one host; updates are installed from the panel into the lenbot-data volume.
 services:
   lenbot:
-    image: lenbot-current:local
-    restart: 'no'
+    image: ghcr.io/lendevs/lenbot:latest
+    restart: unless-stopped
     stop_grace_period: 180s
     working_dir: /data/instance
     ports:
@@ -22,5 +22,4 @@ services:
           create_host_path: false
 volumes:
   data:
-    external: true
     name: lenbot-data

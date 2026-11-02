@@ -31,12 +31,14 @@ uv run --no-sync python -m len_bot.next.maintenance.plugin_dependencies
 
 ### 部署包与 Docker 实例
 
-部署包和使用更新器的 Docker 部署由更新控制器（`deploy/updater/`）托管：
+在面板**系统 → 设置 → 版本与更新**点击**更新到 <版本>**，页面依次显示下载、安装和重启，完成后自动刷新：
 
-- 在面板**系统 → 设置 → 版本与更新**中可查看每日自动检查到的发行版本，或点击**打开更新与恢复页**在线切换版本、从 `backups/` 快照一键回滚。
-- 更新控制器的端口、环境变量与目录约定见仓库中的[部署包与容器安装](https://github.com/lendevs/LenBot/blob/master/deploy/current/installation.md)与[运维参考](https://github.com/lendevs/LenBot/blob/master/deploy/current/operations.md)。
+1. 运行中的 LenBot 下载新版本并校验：部署包下载对应平台的部署包，解压到 `releases/<版本>/`；Docker 下载新版本的 wheel 和锁定的依赖，安装到数据卷的 `/data/runtime/<版本>/`。这一步 Bot 照常工作。
+2. LenBot 退出，启动器把实例保存到 `backups/<时间>-<编号>`，用新版本迁移数据并安装插件依赖，然后启动新版本。
+3. 新版本在 2 分钟内就绪即完成；没有就绪时，启动器恢复快照、回到原来的版本，页面显示原因。
+4. 开启**同时更新插件**时，新版本运行后把已安装的插件更新到插件目录中的最新兼容版本，结果显示在同一页。
 
-直接用 `docker run` 启动的容器没有更新控制器。更换版本时用同一个数据卷启动新镜像，新镜像首次启动先把实例快照到 `/data/backups/`，再迁移数据，见 [Docker 部署](../start/docker#更换版本)。
+部署目录保留当前和上一个版本，以及最近两份快照。**更新快照**中点击**恢复**，LenBot 重启并回到快照时的程序和数据。新版本每隔几小时自动检查一次，有新版本时顶栏和侧栏显示提醒；在根配置中把 `panel.update_check` 设为 `false` 关闭自动检查。
 
 宿主进程与所有 `maintenance` 维护命令共用单实例文件锁 `.lenbot-instance.lock`，同一时刻只有一个进程读写数据库。
 

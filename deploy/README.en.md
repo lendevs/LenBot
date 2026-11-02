@@ -29,8 +29,8 @@ Modify settings through the web panel while LenBot is running; stop LenBot befor
 | [current/asr.md](current/asr.md) (zh), [current/start-asr.sh](current/start-asr.sh) | Local macOS speech recognition (`whisper.cpp`) build and configuration |
 | [current/task-storage.md](current/task-storage.md) (zh) | Dedicated filesystem storage pools for background tasks (Linux `ext4` / macOS `APFS`) |
 | [current/lenbot.service](current/lenbot.service), [current/start.command](current/start.command) | Linux `systemd` service template and macOS double-click launcher |
-| [current/Dockerfile](current/Dockerfile), `current/host*.compose.yaml`, [current/services.compose.yaml](current/services.compose.yaml) | Host container image, the Compose recipe used by the updater, and local embedding service |
+| [current/Dockerfile](current/Dockerfile), [current/host.compose.yaml](current/host.compose.yaml), [current/services.compose.yaml](current/services.compose.yaml) | Host container image, Compose recipe, and local embedding service |
 | [current/first-setup.example.json](current/first-setup.example.json) | Sample JSON payload for unattended initialization |
-| `package/`, `updater/` | Start and service scripts of the deployment packages, and the update controller |
+| `package/` | Start and service scripts of the deployment packages |
 
-CI builds candidate deployment packages for each platform; running the Release workflow with `publish=false` builds multi-architecture candidate images for the host, task worker, and updater.
+CI builds candidate deployment packages for each platform; running the Release workflow with `publish=false` builds multi-architecture candidate images for the host and task worker.

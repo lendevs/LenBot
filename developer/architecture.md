@@ -255,7 +255,7 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 
 ### 安装
 
-通过 Git 和 ZIP 安装时，都先准备候选版本，再明确应用。依赖没有变化的插件定向重新加载。依赖有变化，或者插件声明需要重启时，在下次重启的停机阶段统一安装依赖。
+通过 Git 和 ZIP 安装时，都先准备候选版本，再明确应用。可单独重载的插件定向应用；独立进程插件可在安装依赖后重新启动。声明 `reload: host` 或替换同进程插件已有依赖时，在重启阶段应用。
 
 ### 目录
 
@@ -292,10 +292,12 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 | 本群任务开关、权限和额度 | 已装配任务执行器时立即应用，正在执行的任务不因额度变小而中断 |
 | 记忆自动召回、召回条数与字符预算、已有后台整理参数 | 已启用对应服务时立即应用 |
 | 网页读取、搜索参数，当前角色的群内别名、关系和补充行为 | 立即应用，同时刷新场景工具与上下文说明 |
-| 平台连接、发送平台、模型服务与用途绑定、向量模型、任务执行器、网络策略、浏览器服务、MCP 装配 | 重启后应用；向量变化可能还需停机重建索引 |
-| 记忆后端与目录、记忆开关、后台整理开关、摘要开关、日志、保留策略、面板与登录配置、提示词 | 重启后应用 |
+| 平台连接、模型服务与用途绑定、网络策略、MCP、框架提示词 | 保存后应用；平台按服务重连，模型新请求使用新连接 |
+| 日志级别与保留天数、数据保留策略、面板登录账号 | 保存后应用；更改登录账号或密码后重新登录 |
+| 向量模型与索引绑定、任务执行器、浏览器服务、面板监听地址与代理信任设置 | 重启后应用；向量变化按维护提示重建索引 |
+| 记忆后端与目录、后台整理服务与摘要服务的首次装配 | 重启后应用 |
 
-冷配置保存后保持在待重启列表。若同时保存了尚未装配的模型绑定和依赖它的学习开关，开关也保持待重启，避免面板把未启动的服务显示为已经生效。角色包绑定通过即时换角色接口单独装配。
+需要重新装配服务的修改集中显示在顶栏的待重启列表。角色绑定与角色内容通过即时切换接口应用。
 
 权限只看真实身份。判断谁在发出请求由宿主负责，请求指向谁由模型判断。
 
@@ -394,18 +396,24 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 
 ## 发行
 
-`scripts/build_release.py` 从同一次提交构建 wheel、源码包和 Linux、Windows 部署包，Docker 宿主镜像安装同一个 wheel。部署包中，`releases/<版本>` 存放 Python、程序和更新器，`instance/` 存放数据，插件依赖装在 `instance/.runtime/plugin-packages/<版本>`。更新器升级时按以下顺序执行。
+`scripts/build_release.py` 从同一次提交构建 wheel、源码包和 Linux、Windows 部署包，Docker 宿主镜像安装同一个 wheel。部署包中，`releases/<版本>` 存放 Python 和程序，`instance/` 存放数据，插件依赖装在 `instance/.runtime/plugin-packages/<版本>`。
 
-1. 安装新版本。
-2. 停机并做完整快照。
-3. 升级数据（第一个 RC 起才有升级步骤），恢复插件依赖并运行 doctor。
-4. 切换 `current`。
+### 更新
 
-新版本检查位于 `runtime/releases.py`。托管安装（存在 `.runtime/update-control.json`）向更新控制器查询，从源码运行时直接查询 GitHub Releases。面板启动 60 秒后检查一次，之后每 24 小时检查一次，失败时记录一条 WARNING `release_check`。在根配置中把 `panel.update_check` 设为 `false`，可以关闭后台检查。
+更新由运行中的宿主和它的启动器（`launcher.py`）分工完成，布局与切换在 `deployment.py`：
+
+1. 宿主（`runtime/updater.py`）按发行清单下载并校验：部署包下载平台包，解压出 `releases/<新版本>`；Docker 下载 wheel 和 `requirements.txt`，复制当前运行环境到数据卷 `/data/runtime/<新版本>/venv` 后用 uv 安装。宿主写入 `<部署目录>/updates/request.json`，以退出码 `76`（`UPDATE_EXIT`）退出。
+2. 启动器用当前版本的 Python 做完整快照（`upgrade backup`，快照旁写 `<快照名>.json` 记录版本），用新版本的 Python 执行 `upgrade apply`，官方任务镜像和部署包的任务运行时路径跟随新版本，然后切换 `current.json`（Docker 为 `runtime/current.json`）。
+3. 启动新版本并轮询 `/api/host/ready`，120 秒内以新版本号就绪则写入 `updates/result.json`；新版本退出或超时则恢复快照、切回原版本并删除失败的版本目录。结果中的 `plugins: "pending"` 让新宿主在进入运行状态后更新插件，并把每个插件的结果写回。
+4. 保留当前和上一个版本、最近两份快照。恢复快照同样写请求后退出，启动器用快照所属版本的 Python 执行 `upgrade restore` 并切回该版本。
+
+Docker 容器的入口先比较镜像和数据卷中选定的版本，数据卷较新时 `exec` 到数据卷环境的启动器；镜像较新时删除数据卷中的版本，按镜像版本迁移。宿主与启动器只通过退出码和这两个 JSON 文件通信，启动器自身在下次完整重启时才换成新版本的代码。发行清单的 `updater_protocol` 为 `2`，宿主拒绝其他协议的发行版本。
+
+新版本检查位于 `runtime/releases.py`，直接查询 GitHub Releases（环境变量 `LENBOT_RELEASES_URL` 可换成同格式的列表）。面板启动 60 秒后检查一次，之后每 6 小时检查一次，失败时记录一条 WARNING `release_check`；插件目录的远程索引在同一开关下每 6 小时读取一次。在根配置中把 `panel.update_check` 设为 `false`，可以关闭后台检查。
 
 ### `GET /api/host/updates`
 
-除了 `version`、`managed` 和 `status`，还返回 `check`，格式如下。
+返回 `version`、`managed`（`package`、`docker`，源码运行为 `null`）、`operation`（宿主当前的下载安装进度）、`result`（上次请求的结果）、`snapshots` 和 `check`，`check` 格式如下。
 
 ```json
 {"enabled": true, "current": "0.2.0", "checked_at": 1791370000.0, "error": null, "latest": "0.2.1", "update_available": true, "latest_prerelease": null}
@@ -416,11 +424,10 @@ MCP 服务的工具与插件工具使用同一套发现和许可机制。技能�
 - 从未成功检查过时，`latest`、`update_available` 和 `latest_prerelease` 都为 `null`。
 - `latest` 是最新的正式版本。只有存在比当前版本和最新正式版本都新的预发布版本时，`latest_prerelease` 才有值。
 
+`POST /api/host/updates/start {tag, plugins}` 开始更新，`POST /api/host/updates/snapshots/{name}/restore` 恢复快照，`DELETE /api/host/updates/snapshots/{name}` 删除快照。
+
 ### `GET /api/host/updates/releases`
 
-返回一个数组，按版本从新到旧排列，每一项都带有 `newer`，表示是否比当前版本新。
-
-- 从源码运行时，过滤掉草稿和格式不符合 `v<版本号>` 的标签。每一项为 `{tag, version, prerelease, notes, newer}`，`notes` 为空时是 `""`。
-- 托管安装使用更新器提供的列表（另外带有 `assets` 和 `installable`），同样加上 `newer`。
+返回一个数组，按版本从新到旧排列，过滤掉草稿和格式不符合 `v<版本号>` 的标签。每一项为 `{tag, version, prerelease, notes, published_at, newer}`，`notes` 为空时是 `""`，`newer` 表示是否比当前版本新。
 
 每次调用都会刷新 `check`，后台检查关闭时也可以使用。查询失败时返回 422，正文是错误原因。超时时间为 15 秒。

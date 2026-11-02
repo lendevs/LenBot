@@ -29,7 +29,7 @@ SCENE = 'onebot:group:80001'
 def instance(tmp_path):
     binding = {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 16000}
     initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
-        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC',
         'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
         'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-unused'},
         'compaction': {'input_tokens': 12000}, 'mind': binding, 'scene': SCENE, 'persona_id': 'fixture',
@@ -38,6 +38,7 @@ def instance(tmp_path):
     })))
     path = tmp_path / 'lenbot.config.json'
     source = json.loads(path.read_text())
+    source['delivery'] = 'simulated'
     source['scenes'][SCENE]['persona_aliases'] = ['老称呼']
     path.write_text(json.dumps(source))
     return load_host_config(tmp_path)

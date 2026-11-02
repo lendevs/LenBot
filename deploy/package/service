@@ -6,7 +6,7 @@ UNIT="$HOME/.config/systemd/user/lenbot.service"
 case "${1:-}" in
   install)
     mkdir -p "$(dirname "$UNIT")"
-    # KillMode=mixed: only the controller gets SIGTERM, so it can let a running update step finish and stop the host itself.
+    # KillMode=mixed: only the launcher gets SIGTERM, so it can let a running update step finish and stop the host itself.
     cat > "$UNIT" <<UNIT
 [Unit]
 Description=LenBot

@@ -66,7 +66,7 @@ cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 | `src/len_bot/eval/` | 表达与社交回放评测 |
 | `developer/` | 核心设计与插件接口 v1 参考文档 |
 | `website/` | VitePress 文档站源码，用 `npm --prefix website run dev` 在本地预览 |
-| `deploy/` | 部署包脚本、容器配方与共用更新控制器 `deploy/updater/` |
+| `deploy/` | 部署包启动脚本与容器配方；版本切换在 `src/len_bot/next/deployment.py` |
 | `docker/next-worker/` | 后台任务容器镜像与浏览器扩展 |
 | `scripts/` | 安装、打包与评测辅助脚本 |
 | `examples/` | 示例角色、示例记忆插件与公开回放用例 |
@@ -88,7 +88,7 @@ cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```sh
 uv run --no-sync pytest -q
 uv run --no-sync python -m compileall -q src/len_bot
-uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package tests
+uv run --no-sync ruff check src/len_bot scripts deploy/package tests
 ```
 
 单元测试聚焦三类边界，样本采用脱敏后的真实协议数据：
@@ -108,7 +108,7 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 | 编号项 | 当前值 | 定义位置 |
 |---|---|---|
 | 插件接口版本 | `1` | `src/len_bot/plugin.py` 的 `INTERFACE` |
-| 根配置格式 | `3` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
+| 根配置格式 | `4` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
 | 业务数据库 | `1` | `src/len_bot/next/storage/store.py` 的 `FORMAT_VERSION` |
 | 记忆处理库 | `1` | `src/len_bot/next/memory/jobs.py` 的 `FORMAT_VERSION` |
 | 本地记忆索引 | `1` | `src/len_bot/next/memory/local.py` 的 `FORMAT_VERSION` |
@@ -122,7 +122,7 @@ uv run --no-sync ruff check src/len_bot scripts deploy/updater deploy/package te
 
 写入数据库的 JSON 字段按对应 dataclass 严格解码（`ChatMessage`、`Sender`、`Segment`、`Task`、`TaskFile`、`Schedule` 以及模型调用和记忆整理记录），字段结构同样属于持久化格式契约。
 
-自首个 RC 起，任何持久化格式变更都递增对应编号，并在 `maintenance/upgrade.py` 的 `apply` 阶段补齐从上一版本的迁移实现；更新控制器在执行迁移前自动建立完整实例快照。
+自首个 RC 起，任何持久化格式变更都递增对应编号，并在 `maintenance/upgrade.py` 的 `apply` 阶段补齐从上一版本的迁移实现；启动器在执行迁移前自动建立完整实例快照（`src/len_bot/next/deployment.py`）。
 
 ## 打包与持续集成
 

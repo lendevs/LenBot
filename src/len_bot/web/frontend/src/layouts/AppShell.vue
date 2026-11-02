@@ -13,6 +13,7 @@ import {
   readOverview,
   readPendingRestart,
   readSceneTitles,
+  readPluginUpdates,
   readUpdates,
 } from '../api/hostStore'
 import { openRestart, restartFlow } from './shell/restart'
@@ -116,12 +117,14 @@ const newer = computed(() => {
   const updates = host.updates as { check?: { update_available?: boolean; latest?: string } } | null
   return updates?.check?.update_available ? (updates.check.latest ?? '') : ''
 })
+const updates = computed(() => ({ plugins: host.pluginUpdates, system: newer.value ? 1 : 0 }))
 const flagged = computed(() => {
   const overview = host.overview as { memory_index?: { needs_rebuild?: boolean } } | null
   return new Set(overview?.memory_index?.needs_rebuild ? ['groups'] : [])
 })
 
 function refresh() {
+  readPluginUpdates()
   readHostState()
   readPendingRestart()
   readOverview()
@@ -173,7 +176,7 @@ async function exit() {
         class="sticky top-0 h-dvh shrink-0 border-r border-line bg-sidebar transition-[width] duration-250 ease-out"
         :class="collapsed ? 'w-16' : 'w-58'"
       >
-        <Sidebar :collapsed="collapsed" :scene="scene" :flagged="flagged">
+        <Sidebar :collapsed="collapsed" :scene="scene" :flagged="flagged" :updates="updates">
           <template #footer>
             <div class="shrink-0 border-t border-line p-2" :class="collapsed ? 'flex justify-center' : ''">
               <IconButton
@@ -187,7 +190,9 @@ async function exit() {
         </Sidebar>
       </aside>
       <Sheet v-else v-model:open="drawer" :title="t('shell.nav.label')" side="left" size="sm" hide-header>
-        <div class="h-full bg-sidebar"><Sidebar :collapsed="false" :scene="scene" :flagged="flagged" /></div>
+        <div class="h-full bg-sidebar">
+          <Sidebar :collapsed="false" :scene="scene" :flagged="flagged" :updates="updates" />
+        </div>
       </Sheet>
 
       <div class="flex min-w-0 flex-1 flex-col">
@@ -239,9 +244,14 @@ async function exit() {
               <span class="size-1.5 animate-pulse-dot rounded-full bg-brand text-brand" aria-hidden="true" />
               {{ t('shell.update', { version: newer }) }}
             </RouterLink>
-            <Badge v-if="host.state?.delivery === 'simulated'" size="md" class="max-sm:hidden">
-              {{ t('shell.status.simulated') }}
-            </Badge>
+            <RouterLink
+              v-else-if="host.pluginUpdates"
+              :to="{ name: 'host-plugins' }"
+              class="link-plain inline-flex h-8 animate-rise items-center gap-2 rounded-full bg-brand-soft px-3 text-sm font-semibold text-primary hover:brightness-97 max-sm:hidden"
+            >
+              <span class="size-1.5 animate-pulse-dot rounded-full bg-brand text-brand" aria-hidden="true" />
+              {{ t('shell.pluginUpdates', { n: host.pluginUpdates }, host.pluginUpdates) }}
+            </RouterLink>
             <button
               v-if="streamStatus !== 'open' && streamStatus !== 'idle'"
               type="button"

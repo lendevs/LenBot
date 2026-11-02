@@ -22,7 +22,7 @@ _VER = r'\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?'
 # Each pattern holds the version in group 2; the text before and after it stays as written.
 DOC_EXAMPLES = (
     re.compile(rf'(lenbot-)({_VER})(?=-(?:linux|windows))'),
-    re.compile(rf'(ghcr\.io/lendevs/lenbot(?:-worker|-updater)?:)({_VER})'),
+    re.compile(rf'(ghcr\.io/lendevs/lenbot(?:-worker)?:)({_VER})'),
     re.compile(rf'(--version )({_VER})'),
     re.compile(rf'(`)({_VER})(?=`)'),
     re.compile(rf'(\]\({re.escape(RELEASES_URL)}/tag/v)({_VER})(?=\))'),

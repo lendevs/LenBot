@@ -20,10 +20,9 @@ from release_metadata import source_revision, write_manifest
 REQUIRED_SOURCE = (
     'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'uv.lock', '.dockerignore',
     'scripts/install.sh', 'scripts/build_release.py', 'scripts/build_deployment.py', 'scripts/release_metadata.py',
-    'deploy/updater/controller.py', 'deploy/updater/native.py', 'deploy/updater/common.py', 'deploy/updater/recovery.html',
     'deploy/package/run', 'deploy/package/run.cmd', 'deploy/package/run.ps1',
     'deploy/package/service', 'deploy/package/service.ps1', 'scripts/build_task_runtime.py',
-    'scripts/prepare_release.py', 'deploy/updater/init.py',
+    'scripts/prepare_release.py',
     '.github/workflows/release.yml', '.github/workflows/install-smoke.yml', 'scripts/smoke_install.py',
     'scripts/collect_python_licenses.py',
     'scripts/collect_frontend_licenses.cjs', 'deploy/current/README.md',

@@ -387,8 +387,8 @@ def suggested_worker(root: Path) -> dict:
     In a Docker deployment the directories sit in the instance volume, which task containers mount by subpath.
     """
     # A release installation (deployment package or Docker) follows the same-version official image,
-    # as the updater does; a source checkout builds lenbot-worker:local.
-    managed = (root / ".runtime" / "update-control.json").exists() or release_installation()
+    # as an update does; a source checkout builds lenbot-worker:local.
+    managed = release_installation()
     suggestion: dict = {"image": f"{OFFICIAL_WORKER}:{installed_version('len-bot')}" if managed else WORKER_IMAGE}
     for name, folder in (("workspace_root", "task-workspaces"), ("runtime_root", "task-runtime"),
                          ("delivery_root", "deliveries"), ("skills_directory", "skills")):

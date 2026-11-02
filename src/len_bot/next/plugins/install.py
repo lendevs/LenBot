@@ -265,10 +265,12 @@ class PluginInstaller:
                                       (source.kind == 'git' and previous.location != source.location)):
                 raise ValueError(f'{name} belongs to {previous.kind} {previous.location}; explicitly choose source replacement')
             old = read_manifest(self.managed_path(name))
-            dependencies_changed = set(old.dependencies) != set(manifest.dependencies)
+            # An inline plugin may already have imported the old versions into the host process.
+            replaces_imported = (manifest.isolation == 'inline' and bool(old.dependencies)
+                                 and set(old.dependencies) != set(manifest.dependencies))
         else:
-            dependencies_changed = bool(manifest.dependencies)
-        record.application = 'host' if manifest.reload == 'host' or dependencies_changed else 'plugin'
+            replaces_imported = False
+        record.application = 'host' if manifest.reload == 'host' or replaces_imported else 'plugin'
         self.candidates.mkdir(parents=True, exist_ok=True)
         target = self.candidates / name
         if target.exists():

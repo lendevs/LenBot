@@ -10,7 +10,6 @@ import socket
 import sys
 import tempfile
 import shutil
-import time
 import webbrowser
 from typing import Literal
 
@@ -36,7 +35,6 @@ from ..models.providers import PROTOCOLS, list_models
 from .setup_plugins import official_plugins, plugin_choices, install_official
 from ..platform.platform_tools import joined_groups
 from ..persona.profile import Persona, load_persona
-from ..runtime.send_hold import SendHold
 from len_bot.web.auth import hash_password
 from len_bot.web.errors import install_panel_errors
 from len_bot.web.shell import BUILT_PANEL, missing_build, mount_panel
@@ -57,7 +55,6 @@ class FirstSetup(BaseModel):
     bot_id: str
     owners: list[str]
     timezone: str
-    delivery: Literal['simulated', 'live']
     onebot: OneBotSettings | None
     telegram: TelegramSettings | None = None
     feishu: FeishuSettings | None = None
@@ -94,8 +91,6 @@ class FirstSetup(BaseModel):
 
     @model_validator(mode='after')
     def matching_password(self):
-        if not self.platforms and self.delivery != 'simulated':
-            raise ValueError('暂不接入平台时只能使用模拟发送')
         if not self.default_persona and any(value is None for value in (self.persona_name, self.brief)):
             raise ValueError('自定义角色需要填写名字和人物设定')
         if not self.password.strip():
@@ -207,9 +202,6 @@ def setup_source(item: FirstSetup) -> dict:
 def initialize(root: Path, item: FirstSetup) -> dict:
     """Validate first, create only new files, publish the root config last.
 
-    With a platform, the wizard's delivery choice becomes the send hold, written before the config exists: a host
-    that starts from the published config never sends before the hold is in place. Without a platform the config
-    itself is simulated and there is nothing to hold.
     """
     config_path = root / 'lenbot.config.json'
     role_path = root / 'personas' / item.persona_id
@@ -242,8 +234,6 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     load_persona(role_path)
     # Plugins are installed into, or dropped by hand into, the instance's plugins/.
     (root / 'plugins').mkdir(exist_ok=True)
-    if item.platforms:
-        SendHold(root).set(item.delivery == 'simulated', at=time.time())
     # A new instance already matches this program; the container start compares against this record.
     from ..maintenance.upgrade import record_release
     record_release(root)
@@ -261,7 +251,7 @@ def initialize(root: Path, item: FirstSetup) -> dict:
     finally:
         temporary.unlink(missing_ok=True)
     return {'saved': True, 'config': str(config_path), 'persona': str(role_path),
-            'panel_url': f'http://127.0.0.1:{item.panel_port}', 'panel_port': item.panel_port, 'delivery': item.delivery,
+            'panel_url': f'http://127.0.0.1:{item.panel_port}', 'panel_port': item.panel_port,
             'voice_mode': item.voice_mode,
             'next': '配置已保存。首次配置向导将进入面板；离线初始化命令仍需显式启动。'}
 

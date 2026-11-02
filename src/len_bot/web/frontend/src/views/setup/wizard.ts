@@ -46,7 +46,6 @@ export interface Draft {
   feishuSecret: string
   feishuDomain: 'feishu' | 'lark'
   botAccount: string
-  delivery: 'simulated' | 'live'
   groupSource: 'list' | 'manual'
   ownerSource: 'list' | 'manual'
   owner: string
@@ -136,7 +135,6 @@ function initial(): Draft {
     feishuSecret: '',
     feishuDomain: 'feishu',
     botAccount: '',
-    delivery: 'simulated',
     groupSource: 'list',
     ownerSource: 'list',
     owner: '',
@@ -611,7 +609,6 @@ export function createWizard() {
       bot_id: connectLater.value ? `onebot:${draft.botAccount.trim()}` : (platform.value?.botId ?? ''),
       owners: [`${prefix.value}:${draft.owner.trim()}`],
       timezone: draft.timezone.trim(),
-      delivery: connectLater.value ? 'simulated' : draft.delivery,
       onebot: draft.chatPlatform === 'onebot' ? onebot() : null,
       telegram:
         draft.chatPlatform === 'telegram' ? { bot_id: platform.value?.botId ?? '', ...telegram() } : null,

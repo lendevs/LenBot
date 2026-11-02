@@ -97,6 +97,4 @@ export const overviewApi = {
   setAllChat: (enabled: boolean) =>
     http.put<{ enabled: boolean; scenes: number }>('/api/host/control/chat', { enabled }),
   /** While held, turns run and sends are recorded as simulated; nothing reaches the platform. */
-  setSendHold: (enabled: boolean) =>
-    http.put<{ enabled: boolean }>('/api/host/control/send-hold', { enabled }),
 }

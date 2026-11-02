@@ -54,7 +54,7 @@ def test_copy_preserves_files_permissions_and_other_configuration(tmp_path):
     assert result.returncode == 0, result.stderr
     assert str(source) in result.stdout and str(target) in result.stdout and '8089' in result.stdout
     copied = json.loads((target / 'lenbot.config.json').read_text())
-    expected = {**original, 'config_version': 3, 'delivery': 'simulated', 'onebot': None,
+    expected = {**original, 'config_version': 4, 'delivery': 'simulated', 'onebot': None,
                 'panel': {**original['panel'], 'port': 8089}}
     assert copied == expected
     assert json.loads((source / 'lenbot.config.json').read_text()) == original
@@ -128,6 +128,6 @@ def test_copy_migrates_an_explicit_format_one_configuration(tmp_path):
     result = command(source, target, 8089)
     assert result.returncode == 0, result.stderr
     config = load_host_config(target)
-    assert config.config_version == 3 and config.delivery == 'simulated'
-    assert json.loads((target / 'lenbot.config.json').read_text())['config_version'] == 3
+    assert config.config_version == 4 and config.delivery == 'simulated'
+    assert json.loads((target / 'lenbot.config.json').read_text())['config_version'] == 4
     assert json.loads((source / 'lenbot.config.json').read_text()) == original
