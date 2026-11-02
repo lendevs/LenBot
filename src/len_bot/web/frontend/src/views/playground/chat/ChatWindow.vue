@@ -140,6 +140,11 @@ function reply(message: ChatMessage) {
   replyTo.value = message
   input.value?.focus?.()
 }
+// After picking a mention the next keystrokes belong to the message, not the @ button.
+function focusInput(event: Event) {
+  event.preventDefault()
+  input.value?.focus?.()
+}
 const receipt = ref<MessageReceipt | null>(null)
 const send = useMutation({
   mutationFn: () =>
@@ -416,7 +421,13 @@ const liveTone = computed(() =>
         </span>
       </div>
       <div class="flex items-end gap-2">
-        <DropdownMenu v-if="!chat.isPrivate.value" :items="mentionItems" side="top" align="start">
+        <DropdownMenu
+          v-if="!chat.isPrivate.value"
+          :items="mentionItems"
+          side="top"
+          align="start"
+          @close-auto-focus="focusInput"
+        >
           <IconButton :icon="AtSign" :label="t('playground.mention')" :disabled="!mentionItems.length" />
         </DropdownMenu>
         <Textarea
