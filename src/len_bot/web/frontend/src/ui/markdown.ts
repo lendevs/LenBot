@@ -1,6 +1,12 @@
-/** A Markdown subset for model-written text: headings, lists, rules, code blocks, `code` and **bold**. */
+/**
+ * A Markdown subset for model-written text and release notes: headings, lists, rules, tables, code blocks,
+ * `code`, **bold** and [links](https://…). Links other than http(s) stay text.
+ */
 
-export type Span = { kind: 'text' | 'code'; text: string } | { kind: 'strong'; children: Span[] }
+export type Span =
+  | { kind: 'text' | 'code'; text: string }
+  | { kind: 'link'; text: string; href: string }
+  | { kind: 'strong'; children: Span[] }
 export type Item = { depth: number; marker: string; spans: Span[] }
 export type Block =
   | { kind: 'heading'; spans: Span[] }
@@ -8,21 +14,44 @@ export type Block =
   | { kind: 'code'; text: string }
   | { kind: 'rule' }
   | { kind: 'list'; items: Item[] }
+  | { kind: 'table'; head: Span[][]; rows: Span[][][] }
 
 const CODE = /(`[^`]+`)/
 const STRONG = /(\*\*[^*]+\*\*)/
 const HEADING = /^#{1,6}\s+(.*)$/
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/
 const LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/
+const LINK = /(\[[^\]]+\]\(https?:\/\/[^)\s]+\))/
+const ROW = /^\s*\|.*\|\s*$/
+const DIVIDER = /^\s*\|?(\s*:?-{3,}:?\s*\|)+(\s*:?-{3,}:?\s*)?\|?\s*$/
+
+function linkSpans(text: string): Span[] {
+  return text
+    .split(LINK)
+    .filter(Boolean)
+    .map((part): Span => {
+      const link = /^\[([^\]]+)\]\((\S+)\)$/.exec(part)
+      return link ? { kind: 'link', text: link[1]!, href: link[2]! } : { kind: 'text', text: part }
+    })
+}
+
+function cells(line: string): Span[][] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => spans(cell.trim()))
+}
 
 function codeSpans(text: string): Span[] {
   return text
     .split(CODE)
     .filter(Boolean)
-    .map((part) =>
+    .flatMap((part) =>
       part.length > 2 && part.startsWith('`') && part.endsWith('`')
-        ? { kind: 'code', text: part.slice(1, -1) }
-        : { kind: 'text', text: part },
+        ? [{ kind: 'code' as const, text: part.slice(1, -1) }]
+        : linkSpans(part),
     )
 }
 
@@ -54,6 +83,15 @@ export function blocks(text: string): Block[] {
       continue
     }
     if (!line.trim()) {
+      blank = true
+      continue
+    }
+    if (ROW.test(line) && DIVIDER.test(lines[index + 1] ?? '')) {
+      const rows: Span[][][] = []
+      for (index += 2; index < lines.length && ROW.test(lines[index]!); index++)
+        rows.push(cells(lines[index]!))
+      index--
+      result.push({ kind: 'table', head: cells(line), rows })
       blank = true
       continue
     }
