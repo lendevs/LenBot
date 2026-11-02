@@ -18,6 +18,7 @@ type NumberKey =
   | 'named_idle_seconds'
   | 'named_max_seconds'
   | 'focus_seconds'
+  | 'focus_unanswered_limit'
   | 'focus_idle_seconds'
   | 'focus_max_seconds'
   | 'keyword_cooldown_seconds'
@@ -55,6 +56,7 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
   { key: 'named_idle_seconds', seconds: true, step: 0.5 },
   { key: 'named_max_seconds', seconds: true, step: 0.5 },
   { key: 'focus_seconds', seconds: true, step: 10 },
+  { key: 'focus_unanswered_limit' },
   { key: 'focus_idle_seconds', seconds: true, step: 0.5 },
   { key: 'focus_max_seconds', seconds: true, step: 0.5 },
   { key: 'keyword_cooldown_seconds', seconds: true, step: 10 },

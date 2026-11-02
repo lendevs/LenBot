@@ -462,6 +462,29 @@ def test_scene_being_added_has_no_runner_and_is_not_paused():
     assert not PluginHost.scene_paused(SimpleNamespace(runtime=None), "onebot:group:80002")
 
 
+@pytest.mark.asyncio
+async def test_a_scene_with_chat_off_keeps_plugin_tools_for_when_chat_is_on_again(tmp_path):
+    """Chat switched back on does not rebuild a scene's tools, so a paused scene still lists them."""
+    from types import SimpleNamespace
+
+    extra = tmp_path / "personal"
+    extra.mkdir()
+    directory = _copy_sample(extra, "scoped")
+    (directory / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin, tool\n'
+        'class Scoped(Plugin):\n    @tool("scoped_read", "读取")\n'
+        '    async def read(self, ctx) -> str:\n        return "local"\n', encoding="utf-8")
+    root = _root(tmp_path, {"paths": [str(extra)], "scoped": {}}, ["scoped"])
+    host = PluginHost(load_host_config(root), core_tools=CORE)
+    host.runtime = SimpleNamespace(runners={"onebot:group:80001": SimpleNamespace(state=SimpleNamespace(paused=True))})
+    await host.start()
+    try:
+        assert [tool.name for tool in host.tools_for("onebot:group:80001")] == ["scoped_read"]
+        assert host.tool_previews("onebot:group:80001")[0]["reasons"] == ["当前群已关闭聊天"]
+    finally:
+        await host.close()
+
+
 def test_home_page_counts_only_recent_plugin_errors():
     """Errors read back from older logs stay on the plugin page, not in what needs attention today."""
     from len_bot.next.panel.app import attention

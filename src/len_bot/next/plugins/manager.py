@@ -74,6 +74,16 @@ class PluginManager:
             settings.plugins = names
             self.runtime.chats[scene].config.plugins = list(names)
 
+    async def save_values(self, name: str, values: dict) -> None:
+        """Store values a running plugin set for itself; the plugin already uses them, so nothing reloads."""
+        def edit(source: dict, saved: HostConfig) -> None:
+            if saved.plugins is None or name not in saved.plugins.configured:
+                raise ValueError(f'根配置没有插件 {name}')
+            source['plugins'][name] = values
+
+        saved = await self.save(edit)
+        self._binding(name, saved)
+
     async def apply(self, name: str, saved: HostConfig) -> None:
         metadata = self.installer.records / (name + '.json')
         if metadata.is_file():

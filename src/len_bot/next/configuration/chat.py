@@ -190,6 +190,9 @@ class Attention(BaseModel):
     keyword_cooldown_seconds: float = Field(default=60.0, ge=0, allow_inf_nan=False)
     focus_seconds: float = Field(default=180.0, ge=0, allow_inf_nan=False)
     close_focus_on_silence: bool = True
+    # Focus turns in a row where the bot spoke and nobody @-ed, replied to or named it; then focus stops
+    # waking it and participation scoring decides. 0 keeps focus open while the bot keeps talking.
+    focus_unanswered_limit: int = Field(default=2, ge=0, strict=True)
     focus_idle_seconds: float = Field(default=4.0, ge=0, allow_inf_nan=False)
     focus_max_seconds: float = Field(default=12.0, gt=0, allow_inf_nan=False)
     activity: float = Field(default=0.3, ge=0, le=1, allow_inf_nan=False)

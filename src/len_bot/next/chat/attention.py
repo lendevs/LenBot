@@ -91,6 +91,8 @@ class AttentionState:
     last_contact_at: float | None = None
     ambient_last_at: float | None = None
     silence_level: int = 0
+    # Focus turns the bot spoke in since someone last addressed it.
+    focus_unanswered: int = 0
     keyword_last: dict[str, float] = field(default_factory=dict)
     pending: PendingWake | None = None
     quiet_notice_until: float | None = None
@@ -338,6 +340,10 @@ class SceneRunner:
                 'direct': self.quiet_direct(now),
                 'scope': Template(read_prompt('next_scene_control.md')).substitute(scene=self.config.scene).strip()}
 
+    def focus_spent(self, state: AttentionState) -> bool:
+        limit = self.settings.focus_unanswered_limit
+        return limit > 0 and state.focus_unanswered >= limit
+
     def focus_state(self) -> dict:
         """Persistent intents and the wrap-up state in effect now, for the panel."""
         now = self.now()
@@ -499,6 +505,7 @@ class SceneRunner:
         if is_direct(message):
             state.contact(at, self.settings.focus_seconds)
             state.silence_level = 0
+            state.focus_unanswered = 0
             return offered(PendingWake('direct', at), '直接联系')
         if message.is_self:
             if message.send_status in {'sent', 'received', 'simulated'}:
@@ -521,6 +528,7 @@ class SceneRunner:
         if (self.settings.focus_seconds > 0 and state.last_contact_at is not None
                 and (not self.settings.close_focus_on_silence or state.focus_closed_at is None)
                 and state.focus_started_at <= at <= state.last_contact_at + self.settings.focus_seconds
+                and not self.focus_spent(state)
                 and not addressed_to_others(message, self.config.bot_id)):
             if self.local_allows(state, 'focus', message, at):
                 return offered(PendingWake('focus', at), '持续对话')
@@ -1110,6 +1118,11 @@ class SceneRunner:
         own_at = self.store.last_self_time(self.config.scene)
         if own_at is not None:
             state.contact(own_at, self.settings.focus_seconds)
+        channels = set(self.chat.turn_channels)
+        if channels & {'direct', 'named'}:
+            state.focus_unanswered = 0
+        elif result["expressions"] and 'focus' in channels:
+            state.focus_unanswered += 1
         if result["expressions"]:
             state.silence_level = 0
         elif (channel in {"named", "focus", "ambient"} and result["status"] == "settled"

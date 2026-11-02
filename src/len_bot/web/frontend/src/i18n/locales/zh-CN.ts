@@ -744,6 +744,7 @@ export default {
           named_idle_seconds: '被提到名字后的等待秒数',
           named_max_seconds: '被提到名字后的最长等待秒数',
           focus_seconds: '发言后的留意时长',
+          focus_unanswered_limit: '没人接话时最多接几轮',
           focus_idle_seconds: '留意期间的等待秒数',
           focus_max_seconds: '留意期间的最长等待秒数',
           keyword_cooldown_seconds: '关键词冷却',
@@ -1838,6 +1839,7 @@ export default {
         delegate: '以请求人的名义发起后台任务',
         network: '从公网获取图片',
         schedule: '登记定点任务',
+        configure: '修改本插件的配置',
       },
     },
     isolation: {
@@ -2382,6 +2384,7 @@ export default {
       },
       format: '账号格式为 平台:账号，例如 onebot:10001。格式错误：{items}',
       ownerIsBot: 'Bot 自身账号不能设为主人',
+      ownerPrivate: '主人私聊时直接对话',
     },
     chat: {
       speech: '发言上限',

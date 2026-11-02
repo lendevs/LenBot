@@ -124,6 +124,26 @@ async def test_one_pass_writes_memory_learns_and_records_one_upkeep_call(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_learning_switched_off_during_a_pass_keeps_its_candidates_pending(tmp_path):
+    replies = [
+        turns._calls(('memory', {'action': 'write', 'path': 'people/70002.md', 'content': '喜欢周末打游戏。',
+                                 'reason': '40001 自己说的'})),
+        _text({'expressions': [{'situation': '有人约周末打游戏', 'style': '冲冲冲', 'sources': ['40001']}],
+               'terms': []}),
+    ]
+    async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
+        _group_messages(store)
+        # The panel saves learning off after the pass has begun.
+        upkeep.on_update = lambda: setattr(upkeep.scenes[SCENE], 'learning', None)
+        upkeep.request(SCENE, 'memory')
+        assert await upkeep._step(SCENE)
+        learning = LearningStore(store)
+        assert learning.latest(SCENE)['status'] == 'complete'
+        assert learning.adopted(SCENE) == []
+        assert memory.jobs.latest(SCENE)['status'] == 'complete'
+
+
+@pytest.mark.asyncio
 async def test_an_unreadable_reply_is_asked_once_more(tmp_path):
     replies = [_text('不是 JSON'), _text({'expressions': [], 'terms': []})]
     async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):

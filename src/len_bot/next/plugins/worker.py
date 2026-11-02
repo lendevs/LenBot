@@ -183,6 +183,9 @@ class RemoteHost:
     async def delete_kv(self, plugin, key):
         return await self.channel.call("delete_kv", key)
 
+    async def update_config(self, plugin, changes):
+        return await self.channel.call("update_config", changes)
+
     async def memory(self, plugin, scene, arguments):
         return await self.channel.call("memory", scene, arguments)
 

@@ -12,6 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from ..config import CONFIG_VERSION, HostConfig, load_instance_config
 from ..configuration.migrations import migrate_source
+from ..configuration.plugin import PLUGIN_RESERVED
 from ..storage.files import atomic_text
 from ..instance_lock import instance_lock
 from ..memory.service import LocalMemoryConfig
@@ -31,7 +32,7 @@ def inspect(root: Path, version: str) -> dict:
         paths = [Path(value) if Path(value).is_absolute() else root / value for value in plugins.get('paths', ['plugins'])]
         found, errors = discover(paths)
         blocked.extend(errors)
-        for name in plugins.keys() - {'paths', 'data_directory', 'disabled'}:
+        for name in plugins.keys() - PLUGIN_RESERVED:
             if name in plugins.get('disabled', []):
                 stopped.append(name)
                 continue

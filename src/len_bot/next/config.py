@@ -48,12 +48,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[2] = 2
+    config_version: Literal[3] = 3
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -324,6 +324,8 @@ class HostConfig(SharedConfig):
     plugins: PluginSettings | None = None
     plugin_catalog: PluginCatalogSettings = Field(default_factory=PluginCatalogSettings)
     mcp: dict[str, MCPService] = Field(default_factory=dict)
+    # An owner's first private message opens a private scene with the role of the platform's first group.
+    owner_private_chat: bool = True
 
     @model_validator(mode='after')
     def stdin_host_is_explicitly_simulated(self):
@@ -455,8 +457,10 @@ def _read_root(root: Path) -> tuple[Path, dict]:
 
 
 def _validation_error(path: Path, error: ValidationError, kind: str) -> ValueError:
+    # A whole-model check has no field location; its text already names the fields.
     details = "; ".join(
-        f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
+        ("{}: ".format(".".join(map(str, item["loc"]))) if item["loc"] else "")
+        + item["msg"].removeprefix("Value error, ")
         for item in error.errors(include_input=False)
     )
     return ValueError(f"{path}: invalid {kind} configuration: {details}")

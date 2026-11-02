@@ -204,7 +204,7 @@ def test_a_configuration_without_a_format_number_is_format_one(tmp_path):
     root = tmp_path / 'lab'
     _write_config(root, source)
     config = root_config.load_host_config(root)
-    assert config.config_version == 2 and config.delivery == 'live'
+    assert config.config_version == 3 and config.delivery == 'live'
 
 
 @pytest.fixture

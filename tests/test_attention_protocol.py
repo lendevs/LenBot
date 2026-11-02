@@ -500,3 +500,40 @@ def test_panel_routes_read_and_cancel_intents(tmp_path):
                     assert (await client.delete(base + '/intents/i1')).status_code == 404
                 assert store.load_attention(PANEL_SCENE)['declared']['intents'] == []
     asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_focus_stops_waking_after_unanswered_turns_and_an_address_reopens_it(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.attention.activity = 0
+    config.attention.focus_seconds = 600
+    config.attention.focus_unanswered_limit = 2
+    config.compaction.input_tokens = 20000
+    config.models.roles.mind.context_window_tokens = 64000
+    replies = [response('say', {'content': f'接一句{index}', 'end_turn': True}, f'call-{index}') for index in range(3)]
+    requests, events, now = [], [], [START]
+    server = await peer_server(replies, requests)
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database, now=lambda: now[0]) as store:
+            async with ChatModel(config.model_settings('mind')) as model:
+                live = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), events.append)
+                live.closing = True
+                live.state.contact(START - 1, config.attention.focus_seconds)
+                for ident in (1, 2):
+                    now[0] += 1
+                    verdict = live.receive(message(70001 + ident % 2, ident, f'大家怎么看{ident}'))['wake_verdict']
+                    assert verdict['channel'] == 'focus'
+                    now[0] += config.attention.focus_max_seconds
+                    await asyncio.wait_for(live.run(), 5)
+                assert live.state.focus_unanswered == 2
+                now[0] += 1
+                assert not live.receive(message(70002, 3, '还有人吗'))['wake_verdict']['woke']
+                now[0] += 1
+                assert live.receive(message(70001, 4, '问你', direct=True))['wake_verdict']['channel'] == 'direct'
+                assert live.state.focus_unanswered == 0
+                now[0] += config.attention.direct_max_seconds
+                await asyncio.wait_for(live.run(), 5)
+                now[0] += 1
+                assert live.receive(message(70002, 5, '然后呢'))['wake_verdict']['channel'] == 'focus'
+    assert len(requests) == 3

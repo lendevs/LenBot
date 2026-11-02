@@ -270,6 +270,8 @@ class ConnectionChange(BaseModel):
     feishu: FeishuPublic | None = None
     feishu_secret: str | None = Field(default=None, repr=False)
     owners: list[str]
+    # Absent keeps the saved value.
+    owner_private_chat: bool | None = None
     timezone: str
     delivery: Literal["simulated", "live"]
     max_steps: int
@@ -356,6 +358,7 @@ def _project(config: HostConfig) -> dict:
         "connection": {
             "bot_id": config.bot_id,
             "owners": config.owners,
+            "owner_private_chat": config.owner_private_chat,
             "onebot": onebot,
             "telegram": telegram,
             "feishu": feishu,
@@ -679,6 +682,10 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                 "providers": providers,
                 "roles": change.roles.model_dump(mode="json"),
             }
+            if change.roles.asr is None:
+                # Turning transcription off turns it off in every group, which needs the model.
+                for scene in source["scenes"].values():
+                    scene["transcribe_audio"] = False
 
         return await save(edit)
 
@@ -874,6 +881,8 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if "feishu" in fields:
                 source["feishu"] = (None if change.feishu is None else
                                     _feishu_source(change.feishu, change.feishu_secret, saved))
+            if change.owner_private_chat is not None:
+                source["owner_private_chat"] = change.owner_private_chat
             source.update(
                 onebot=onebot,
                 owners=change.owners,

@@ -19,8 +19,8 @@ class LiveSettings:
 
     async def apply(self, saved: HostConfig) -> None:
         runtime, running = self.runtime, self.runtime.config
-        for name in ('owners', 'permissions', 'timezone', 'max_steps', 'turn_timeout_seconds', 'text_delivery',
-                     'compaction', 'images', 'audio', 'commands'):
+        for name in ('owners', 'owner_private_chat', 'permissions', 'timezone', 'max_steps', 'turn_timeout_seconds',
+                     'text_delivery', 'compaction', 'images', 'audio', 'commands'):
             setattr(running, name, deepcopy(getattr(saved, name)))
         # A web service whose connection changed waits for the restart that applies the connection.
         for name in ('web_read', 'web_search'):

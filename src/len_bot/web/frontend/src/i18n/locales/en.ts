@@ -764,6 +764,7 @@ export default {
           named_idle_seconds: 'Wait before replying when named',
           named_max_seconds: 'Longest wait when named',
           focus_seconds: 'Keep following after speaking',
+          focus_unanswered_limit: 'Replies in a row nobody answers',
           focus_idle_seconds: 'Wait before replying while following',
           focus_max_seconds: 'Longest wait while following',
           keyword_cooldown_seconds: 'Keyword cooldown',
@@ -1892,6 +1893,7 @@ export default {
         delegate: 'Start background tasks on behalf of the requester',
         network: 'Fetch images from the internet',
         schedule: 'Register scheduled jobs',
+        configure: "Change this plugin's settings",
       },
     },
     isolation: {
@@ -2451,6 +2453,7 @@ export default {
       },
       format: 'Write accounts as platform:account, such as onebot:10001. Wrong: {items}',
       ownerIsBot: "The bot's own account cannot be an owner",
+      ownerPrivate: 'Chat with owners in private messages',
     },
     chat: {
       speech: 'Speaking limit',

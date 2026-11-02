@@ -72,3 +72,22 @@ default = []
 - 半行字段尽量成对声明。
 
 运行参数保存在实例的 `lenbot.config.json` 中。KV 只放插件运行中的业务数据，不放配置。
+
+## 在聊天中修改配置
+
+LenBot 0.2.1 起，声明 `configure` 权限后，插件可以用 `await ctx.update_config({"字段": 值})` 修改自己的配置，例如提供一个工具，让聊天模型按主人的要求增删订阅：
+
+```python
+@tool("room_follow", "按房间号订阅直播间；只有主人发起的请求能执行。", needs_source=True)
+async def follow(self, ctx: Invocation, room_id: int) -> dict:
+    ctx.require_owner()
+    rooms = [*ctx.config["rooms"], {"room_id": room_id, "scenes": [ctx.scene]}]
+    saved = await ctx.update_config({"rooms": rooms})
+    return {"rooms": saved["rooms"]}
+```
+
+- 只写给出的字段，其余保持原值。宿主按 `[config]` 校验合并后的结果，不合法时抛出 `ValueError`，配置不变。
+- 保存后立即生效，`ctx.config` 返回新值，面板也显示新值，插件不重新加载。插件在 `start()` 中保留的值由插件自己按返回值更新。
+- 宿主不检查请求人，只允许主人修改时先调用 `ctx.require_owner()`。
+- 测试中 `PluginTest.saved_config` 是插件最近一次保存的配置。
+- 使用这项能力的插件把 `requires_lenbot` 写成 `">=0.2.1,<1"`。
