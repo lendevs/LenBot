@@ -18,6 +18,14 @@
 | [测试与发行](plugin-testing) | `PluginTest`、CI、打包和许可证 |
 | [发布到插件目录](plugin-catalog) | 把插件加入社区插件目录 |
 
+## 用 Agent 写插件
+
+仓库提供插件开发 skill [`skills/lenbot-plugin`](https://github.com/lendevs/LenBot/tree/master/skills/lenbot-plugin)，内容包括开发流程、清单与入口规则、工具写法和 `PluginTest` 测试，并按任务指向本组页面。把这段发给你的 Agent 安装它：
+
+```text
+请把 https://github.com/lendevs/LenBot/tree/master/skills/lenbot-plugin 安装为你的技能：下载这个目录到你的技能目录，之后帮我写 LenBot 插件时按其中的步骤和规则进行。
+```
+
 ## 从模板开始
 
 在 GitHub 打开[插件模板](https://github.com/lendevs/lenbot-plugin-template)，点 **Use this template** 生成自己的仓库。模板是一个按群计数的插件，带测试、CI 和发行工作流。生成后先改 `plugin.toml` 的 `name`、`authors`、`version` 和 `license`，再把命令和工具改成自己的名字。

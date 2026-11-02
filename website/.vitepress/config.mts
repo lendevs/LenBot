@@ -30,6 +30,7 @@ export default defineConfigWithTheme<DefaultTheme.Config & { version: string }>(
       { text: '开始', collapsed: false, items: [
         { text: '认识 LenBot', link: '/start/introduction' },
         { text: '快速开始', link: '/start/quick-start' },
+        { text: '用 Agent 部署', link: '/start/agent' },
         { text: 'Docker 部署', link: '/start/docker' },
         { text: '部署包', link: '/start/package' },
         { text: '源码运行', link: '/start/source' },

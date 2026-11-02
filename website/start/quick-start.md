@@ -2,6 +2,14 @@
 
 <DeployPicker />
 
+## 用 Agent 部署
+
+把这段发给你的 Agent，它会问清部署方式和平台，再帮你装好并启动，步骤见[用 Agent 部署](./agent)：
+
+```text
+请阅读 https://lendevs.github.io/LenBot/start/agent ，按页面中给 Agent 的部署步骤帮我部署 LenBot：先问我选择部署方式和要接入的聊天平台，再在这台机器上安装并启动，最后把首次配置链接交给我。
+```
+
 ## 准备
 
 - 已登录 QQ 并开启 WebSocket 的 OneBot v11 实现，例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（推荐使用）。首次配置向导会连接它读取 Bot 账号，连接方式见[接入 QQ](../connect/onebot)。暂时没有 OneBot 时，向导中选择**暂不接入**并填写 Bot QQ，也可以先使用对话测试。

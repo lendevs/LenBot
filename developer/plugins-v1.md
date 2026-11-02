@@ -369,7 +369,7 @@ class Example(Plugin):
 
 | 插件 | 工具 |
 |---|---|
-| B 站 | 五项，即视频、搜索、监测、账号读取和账号写入 |
+| B 站 | 四项，即视频、搜索、监测和账号读取 |
 | 群聊总结 | 两项 |
 | GSUID | 一项 |
 | 计数模板 | 两项 |
@@ -736,4 +736,4 @@ async with PluginTest(package, models=models, now=lambda: fixed_time) as bot:
 
 [English](plugins-v1.en.md)
 
-0.2.0 尚未发行。官方插件的 CI 跟随宿主的 `master`，宿主的 CI 也会按插件目录中固定的版本运行官方插件的测试，任何一方破坏兼容都会直接失败。公开发行后，补丁版本保持兼容，新接口要求的最低宿主版本写入 requires_lenbot，只有破坏接口时才提升代次。
+官方插件的 CI 跟随宿主的 `master`，宿主的 CI 也会按插件目录中固定的版本运行官方插件的测试，任何一方破坏兼容都会直接失败。补丁版本保持兼容，新接口要求的最低宿主版本写入 requires_lenbot，只有破坏接口时才提升代次。

@@ -250,7 +250,7 @@ Group related list, search, and detail operations into one capability tool discr
 
 | Plugin | Tools |
 |---|---|
-| `bilibili` | 5 (video info, search, live/follow monitor, account read, account write) |
+| `bilibili` | 4 (video info, search, live/follow monitor, account read) |
 | `group_digest` | 2 |
 | `gscore_adapter` | 1 |
 | `counter` (template) | 2 |
@@ -478,4 +478,4 @@ To publish, generate a repository from [lenbot-plugin-template](https://github.c
 - Pushing a `v*` tag matching `plugin.toml` triggers `plugin-release.yml` to attach an importable release ZIP containing source, `prompts/`, `skills/`, `assets/`, and license files.
 - **License**: The LenBot host is `AGPL-3.0-only`, and the plugin template is `GPL-3.0-only`. Because `inline` plugins run in the host process, `GPL-3.0` is recommended (GPLv3 Section 13 permits combining GPLv3 works with AGPLv3 works).
 
-Before 0.2.0 is released, official plugin CI tracks host `master` and host CI runs the pinned official plugin test suites from `plugin_catalog.json` on every push.
+Official plugin CI tracks host `master`, and host CI runs the pinned official plugin test suites from `plugin_catalog.json` on every push. Patch releases stay compatible; the minimum host version a new interface needs goes into `requires_lenbot`, and only a breaking change raises the interface generation.
