@@ -10,18 +10,24 @@ import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
 import SaveBar from '../../ui/SaveBar.vue'
 import Skeleton from '../../ui/Skeleton.vue'
+import Switch from '../../ui/Switch.vue'
 import TagInput from '../../ui/TagInput.vue'
 import { same, useSettingsDraft } from './draft'
 
 interface Draft extends Identities {
   owners: string[]
+  ownerPrivate: boolean
 }
 
 const { t } = useI18n()
 const client = useQueryClient()
 const pick = (snapshot: SettingsSnapshot): Draft => {
   const saved = systemOf(snapshot)
-  return { owners: [...saved.connection.owners], ...saved.permissions }
+  return {
+    owners: [...saved.connection.owners],
+    ownerPrivate: saved.connection.owner_private_chat,
+    ...saved.permissions,
+  }
 }
 const IDENTITY = /^[a-z][a-z0-9_-]*:[^:\s/\\]+$/
 const lists = ['owners', 'admins', 'whitelist', 'blacklist'] as const
@@ -30,14 +36,15 @@ const form = useSettingsDraft<Draft>({
   pick,
   section: 'permissions',
   // Owners are part of the connection settings; the other lists are saved on their own.
-  save: async ({ owners, ...identities }): Promise<SettingsSnapshot> => {
+  save: async ({ owners, ownerPrivate, ...identities }): Promise<SettingsSnapshot> => {
     let snapshot: SettingsSnapshot = form.settings.data.value!
     const saved = systemOf(snapshot)
-    if (!same(owners, saved.connection.owners)) {
+    if (!same(owners, saved.connection.owners) || ownerPrivate !== saved.connection.owner_private_chat) {
       const { bot_id: _bot, onebot, telegram: _telegram, feishu: _feishu, ...connection } = saved.connection
       snapshot = await systemApi.saveConnection({
         ...connection,
         owners,
+        owner_private_chat: ownerPrivate,
         onebot: onebot && (({ access_token_configured: _configured, ...link }) => link)(onebot),
         access_token: null,
       })
@@ -87,6 +94,9 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
           :error="errors[list]"
         >
           <TagInput v-model="draft[list]" placeholder="onebot:10001" :invalid="Boolean(errors[list])" />
+        </Field>
+        <Field :label="t('system.permissions.ownerPrivate')" inline wide>
+          <Switch v-model="draft.ownerPrivate" />
         </Field>
       </FormSection>
     </div>

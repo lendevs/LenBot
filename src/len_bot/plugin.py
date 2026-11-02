@@ -208,6 +208,7 @@ class HostPort(Protocol):
     async def get_kv(self, plugin: str, key: str, default: JsonValue) -> JsonValue: ...
     async def set_kv(self, plugin: str, key: str, value: JsonValue) -> None: ...
     async def delete_kv(self, plugin: str, key: str) -> bool: ...
+    async def update_config(self, plugin: str, changes: dict) -> dict: ...
     async def memory(self, plugin: str, scene: str, arguments: dict) -> str: ...
     async def native_memory(self, plugin: str, scene: str, arguments: dict) -> str: ...
     async def report_memory_progress(self, plugin: str, scene: str, message_id: str) -> None: ...
@@ -290,6 +291,19 @@ class PluginContext:
 
     def require_owner(self, scene: str, requester_id: str) -> None:
         self.host.require_owner(self._scene(scene), requester_id)
+
+    async def update_config(self, changes: Mapping[str, object]) -> Mapping[str, object]:
+        """Save changed fields of this plugin's settings to the root file; needs the ``configure`` permission.
+
+        The host validates the result against the manifest's ``[config]`` and keeps the other fields. The new
+        values apply at once: ``config`` returns them and the panel shows them. A plugin that read settings in
+        ``start()`` uses the returned values for what it keeps running.
+        """
+        values = await self.host.update_config(self.name, dict(changes))
+        if isinstance(self.config, dict) and self.config is not values:
+            self.config.clear()
+            self.config.update(values)
+        return self.config
 
     def redact(self, text: str) -> str:
         return self.host.redact(self.name, text)
@@ -407,6 +421,11 @@ class Invocation:
     async def delete_kv(self, key: str) -> bool:
         self.plugin._scene(self.scene)
         return await self.plugin.delete_kv(key)
+
+    async def update_config(self, changes: Mapping[str, object]) -> Mapping[str, object]:
+        """``PluginContext.update_config``; call ``require_owner()`` first when only the owner may change it."""
+        self.plugin._scene(self.scene)
+        return await self.plugin.update_config(changes)
 
     async def reply(self, text: str) -> Sent:
         """Send in this scene; a command reply quotes the command message."""

@@ -13,7 +13,13 @@ def _format_1_to_2(source: dict) -> dict:
     return source
 
 
-STEPS = {1: _format_1_to_2}
+def _format_2_to_3(source: dict) -> dict:
+    # Format 3 adds owner private chats and the focus limit for unanswered replies; both have defaults.
+    source["config_version"] = 3
+    return source
+
+
+STEPS = {1: _format_1_to_2, 2: _format_2_to_3}
 
 
 def migrate_source(source: dict, target: int) -> dict:

@@ -22,6 +22,7 @@ export interface Attention {
   keyword_cooldown_seconds: number
   focus_seconds: number
   close_focus_on_silence: boolean
+  focus_unanswered_limit: number
   focus_idle_seconds: number
   focus_max_seconds: number
   activity: number

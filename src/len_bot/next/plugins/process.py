@@ -275,6 +275,8 @@ class Worker:
                 return await host.set_kv(name, args[0], args[1])
             case "delete_kv":
                 return await host.delete_kv(name, args[0])
+            case "update_config":
+                return await host.update_config(name, args[0])
             case "memory":
                 return await host.memory(name, self._scene(args[0]), args[1])
             case "native_memory":

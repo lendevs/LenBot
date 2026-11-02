@@ -731,7 +731,7 @@ def test_scene_persona_write_contract_reuses_scene_validation(field, value):
 def test_scene_persona_public_save_preserves_unedited_root_values_and_relative_paths(tmp_path):
     root = tmp_path / "isolated"
     source = _config("personas/relative-package")
-    source["config_version"] = 2
+    source["config_version"] = 3
     source["persona_aliases"] = ["原称呼"]
     source["relationships"] = {'onebot:80002': "原说明"}
     source["behavior_addendum"] = "原行为补充"
@@ -2026,7 +2026,7 @@ def test_history_projection_policy_is_explicit_not_provider_inference(tmp_path, 
         load_config(root)
 
 
-@pytest.mark.parametrize("version,message", [(3, "由更新版本的 LenBot 写入；当前版本使用格式 2"),
+@pytest.mark.parametrize("version,message", [(4, "由更新版本的 LenBot 写入；当前版本使用格式 3"),
                                              ("1", "配置格式 '1' 无效")])
 def test_configuration_format_newer_than_the_current_one_or_invalid_is_refused(tmp_path, version, message):
     root = tmp_path / "lab"
@@ -2059,7 +2059,7 @@ def test_worker_docker_binary_keeps_the_link_it_names(tmp_path):
     assert worker.workspace_root == (root / "tasks/workspaces").resolve()
 
 
-def test_format_1_config_reads_as_format_2_and_upgrade_writes_it_back(tmp_path):
+def test_format_1_config_reads_as_the_current_format_and_upgrade_writes_it_back(tmp_path):
     from len_bot.next.config import load_host_config
     from len_bot.next.maintenance.upgrade import migrate_config_file
     root = tmp_path / "host"
@@ -2067,10 +2067,10 @@ def test_format_1_config_reads_as_format_2_and_upgrade_writes_it_back(tmp_path):
     source.update(config_version=1, delivery="onebot")
     _write_config(root, source)
     config = load_host_config(root)
-    assert config.config_version == 2 and config.delivery == "live"
+    assert config.config_version == 3 and config.delivery == "live"
     assert migrate_config_file(root) and not migrate_config_file(root)
     written = json.loads((root / "lenbot.config.json").read_text(encoding="utf-8"))
-    assert written["config_version"] == 2 and written["delivery"] == "live"
+    assert written["config_version"] == 3 and written["delivery"] == "live"
     assert written["scenes"] == source["scenes"]
 
 

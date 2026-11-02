@@ -193,3 +193,24 @@ async def test_search_connection_rename_delete_and_independent_chat_binding(inst
         response = await client.put('/api/host/settings/web-search', json={'web_search': {
             'provider': 'deepseek', 'connection': 'missing'}})
         assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_turning_transcription_off_turns_it_off_in_every_group(instance):
+    root, app = instance
+    path = root / 'lenbot.config.json'
+    source = json.loads(path.read_text())
+    source['models']['providers']['speech'] = {'api': 'openai-audio', 'base_url': 'http://127.0.0.1:9/v1',
+                                               'api_key': 'synthetic-speech-key'}
+    source['models']['roles']['asr'] = {'api': 'openai-audio', 'provider': 'speech', 'model': 'synthetic-asr'}
+    source['scenes'][SCENE]['transcribe_audio'] = True
+    source['onebot']['max_frame_bytes'] = 32 * 1024 * 1024
+    path.write_text(json.dumps(source))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://fixture') as client:
+        body = await models_body(client)
+        body['roles']['asr'] = None
+        result = await client.put('/api/host/settings/models', json=body)
+        assert result.status_code == 200, result.text
+    saved = json.loads(path.read_text())
+    assert saved['models']['roles']['asr'] is None
+    assert saved['scenes'][SCENE]['transcribe_audio'] is False

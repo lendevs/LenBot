@@ -104,3 +104,44 @@ def test_candidate_cancel_disable_apply_and_rollback_preserve_matching_config(tm
                     await runtime.plugins.close()
 
     asyncio.run(run())
+
+
+def test_a_plugin_saving_its_own_settings_writes_the_root_file_without_a_restart(tmp_path):
+    binding = {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 16000}
+    initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC', 'delivery': 'simulated',
+        'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
+        'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-unused'},
+        'compaction': {'input_tokens': 2000}, 'mind': binding, 'scene': 'onebot:group:80001',
+        'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
+    })))
+    config = load_host_config(tmp_path)
+    manifest = (SAMPLE / 'plugin.toml').read_text().replace(
+        'interface = 1\n', 'interface = 1\npermissions = ["configure"]\n', 1)
+    content = BytesIO()
+    with zipfile.ZipFile(content, 'w') as archive:
+        archive.writestr('plugin.toml', manifest)
+        archive.writestr('__init__.py', (SAMPLE / '__init__.py').read_bytes())
+
+    async def run():
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind, open_memory(config, store) as memory:
+                scene = config.scene_config('onebot:group:80001')
+                runtime = NetworkRuntime(config, [(scene, load_persona(scene.persona))], store, mind, memory=memory)
+                app = create_app(config, runtime, root=tmp_path)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+                    assert (await client.post('/api/auth/login', json={'username': 'fixture', 'password': 'synthetic-password'})).status_code == 200
+                    assert (await client.post('/api/host/plugins/zip', files={'file': ('sample.zip', content.getvalue())})).status_code == 200
+                    assert (await client.put('/api/host/plugins/sample', json={'enabled': True, 'config': {}})).status_code == 200
+                    assert (await client.post('/api/host/plugins/sample/apply')).status_code == 200
+                    await runtime.plugins.start()
+                    values = await runtime.plugins.update_config('sample', {'show_details': False})
+                    assert values == {'show_details': False}
+                    assert runtime.plugins.plugins['sample'].context.config == {'show_details': False}
+                    assert load_host_config(tmp_path).plugins.configured['sample'] == {'show_details': False}
+                    snapshot = (await client.get('/api/host/plugins')).json()
+                    assert snapshot['restart_required'] is False
+                if runtime.plugins is not None:
+                    await runtime.plugins.close()
+
+    asyncio.run(run())

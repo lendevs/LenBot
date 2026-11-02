@@ -10,7 +10,7 @@
 
 ## 给 Agent 的部署步骤
 
-本节写给执行部署的 Agent。下文以 `0.2.0` 为例，该版本见 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.0)。
+本节写给执行部署的 Agent。下文以 `0.2.1` 为例，该版本见 [Releases](https://github.com/lendevs/LenBot/releases/tag/v0.2.1)。
 
 ### 1. 查看环境
 
@@ -36,7 +36,7 @@
 **Docker**
 
 ```sh
-docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.0
+docker run -d --name lenbot --stop-timeout 180 -p 127.0.0.1:11307:11307 -v lenbot-data:/data --add-host host.docker.internal:host-gateway ghcr.io/lendevs/lenbot:0.2.1
 docker logs lenbot
 ```
 
@@ -47,11 +47,11 @@ docker logs lenbot
 
 **部署包**
 
-从 Releases 下载对应文件，地址为 `https://github.com/lendevs/LenBot/releases/download/v<版本>/<文件名>`：Linux 是 `lenbot-0.2.0-linux-x64.tar.gz` 或 `lenbot-0.2.0-linux-arm64.tar.gz`，Windows 是 `lenbot-0.2.0-windows-x64.zip`。
+从 Releases 下载对应文件，地址为 `https://github.com/lendevs/LenBot/releases/download/v<版本>/<文件名>`：Linux 是 `lenbot-0.2.1-linux-x64.tar.gz` 或 `lenbot-0.2.1-linux-arm64.tar.gz`，Windows 是 `lenbot-0.2.1-windows-x64.zip`。
 
 ```sh
-tar -xzf lenbot-0.2.0-linux-x64.tar.gz
-mv lenbot-0.2.0-linux-x64 ~/lenbot
+tar -xzf lenbot-0.2.1-linux-x64.tar.gz
+mv lenbot-0.2.1-linux-x64 ~/lenbot
 ~/lenbot/run
 ```
 

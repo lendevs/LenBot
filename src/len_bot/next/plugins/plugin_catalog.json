@@ -4,12 +4,12 @@
     {
       "name": "group_digest",
       "title": "群聊总结与群工作",
-      "description": "每天定时或按需生成群聊总结卡片；/群总结 文字总结，/群工作 委派长工作。",
+      "description": "按需或每天定时生成本群聊天日报卡片，支持指定时段和每小时增量整理；/群总结生成文字摘要，/群工作按群友要求完成长任务并交付文件。",
       "authors": [
         "LEN5010"
       ],
       "license": "AGPL-3.0-only",
-      "version": "1.3.4",
+      "version": "1.3.5",
       "interface": 1,
       "requires_lenbot": ">=0.2,<1",
       "category": "工作工具",
@@ -30,7 +30,7 @@
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-group-digest",
-      "ref": "d24c72d0138e568f37d3fb062f5cf6858d203b62",
+      "ref": "5734ad1649904015f3f5356c9a58cc76759b3397",
       "permissions": [
         "send",
         "history",
@@ -72,32 +72,34 @@
     {
       "name": "bilibili",
       "title": "哔哩哔哩",
-      "description": "哔哩哔哩合集：公开视频/分P/WBI搜索/评论，主人明确授权的字幕和动态；每30秒观察订阅直播间，开播推送卡片，开播/下播变化进入场景事件；关注UP主的新动态、新视频和本人评论推送卡片。",
+      "description": "搜索视频和 UP 主、查看视频与评论；主人扫码登录后可读字幕与动态，在聊天中管理本群的开播提醒、动态、视频和评论推送。",
       "authors": [
         "LEN5010"
       ],
       "license": "AGPL-3.0-or-later",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "interface": 1,
-      "requires_lenbot": ">=0.2,<1",
+      "requires_lenbot": ">=0.2.1,<1",
       "category": "内容查询",
       "capabilities": [
-        "公开视频",
-        "账号内容读取",
-        "直播与关注推送"
+        "视频与 UP 主搜索",
+        "扫码登录",
+        "直播与关注推送",
+        "聊天管理订阅"
       ],
       "usage": [
-        "配置后选择启用的群；模型工具需要当前角色许可。",
-        "参数、共享指南与实际发送语义可在群聊工具页预览。",
-        "最低宿主基线和来源参数变更见 CHANGELOG.md。",
-        "模型工具为 bilibili_video、search_bilibili、bilibili_account_read、bilibili_monitor。明确角色 tools 名单请保留这四项与 tool_search；从 1.1.x 更新时删除旧写入配置，见 CHANGELOG.md。"
+        "需要 LenBot 0.2.1；安装后选择启用的群。",
+        "主人发送 /B站登录 或要求扫码登录，二维码发送到当前聊天，扫码确认后自动保存。",
+        "让 Bot 搜索 UP 主并确认 UID 后，可以订阅或取消本群的开播、动态、视频和评论推送。",
+        "角色工具名单加入 bilibili_video、search_bilibili、bilibili_monitor、bilibili_account_read、bilibili_login、bilibili_subscription，并保留 tool_search。"
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-bilibili",
-      "ref": "846469c3266613a49fef52f8df96687712c8cf2b",
+      "ref": "52b74999cd33ca78392fa2bb5fb98b08962ddd3f",
       "permissions": [
         "send",
-        "events"
+        "events",
+        "configure"
       ]
     }
   ]

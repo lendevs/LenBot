@@ -160,6 +160,26 @@ description = "Compatibility fixture"
     assert inspect(tmp_path, '0.2.0')['blocked_plugins'] == []
 
 
+def test_disabled_rules_are_settings_rather_than_a_plugin(tmp_path):
+    plugin = tmp_path / 'plugins/fixture'
+    plugin.mkdir(parents=True)
+    (plugin / 'plugin.toml').write_text('''name = "fixture"
+version = "1.0.0"
+interface = 1
+requires_lenbot = ">=0.2,<1"
+requires_python = ">=3.13"
+platforms = ["linux", "darwin", "win32"]
+reload = "plugin"
+authors = ["fixture"]
+license = "GPL-3.0-only"
+description = "Compatibility fixture"
+''')
+    configuration = {'plugins': {'paths': ['plugins'], 'fixture': {}, 'disabled': [],
+                                 'disabled_rules': {'fixture': ['/签到']}}}
+    (tmp_path / 'lenbot.config.json').write_text(json.dumps(configuration))
+    assert inspect(tmp_path, '0.2.1')['blocked_plugins'] == []
+
+
 def test_restore_removes_a_journal_created_after_the_snapshot_outside_the_instance(tmp_path):
     root, data = tmp_path / 'instance', tmp_path / 'data'
     root.mkdir()

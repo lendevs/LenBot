@@ -134,6 +134,7 @@ class Loaded:
     errors: deque = field(default_factory=lambda: deque(maxlen=ERROR_LIMIT))
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     stop_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    config_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass(frozen=True)
@@ -455,6 +456,30 @@ class PluginHost:
     async def delete_kv(self, plugin: str, key: str) -> bool:
         return await asyncio.to_thread(PluginKV(self._active(plugin).context.data_dir).delete, key)
 
+    async def update_config(self, plugin: str, changes: dict) -> dict:
+        """Save changed fields of the plugin's own settings to the root file; they apply without a reload."""
+        record = self._permit(self._active(plugin), "configure")
+        unknown = sorted(set(changes) - set(record.manifest.config))
+        if unknown:
+            raise ValueError(f"插件 {plugin} 的配置没有这些字段：{'、'.join(unknown)}")
+        writer = getattr(self.runtime, "save_plugin_config", None)
+        if writer is None:
+            raise RuntimeError("当前宿主没有根配置写入，插件不能修改自己的配置")
+        async with record.config_lock:
+            try:
+                parsed = record.manifest.values_model(self.config.scenes).model_validate({**record.values, **changes})
+            except ValidationError as error:
+                raise ValueError(f"plugins.{plugin} 配置不合法：{error}") from error
+            values = parsed.model_dump(mode="json")
+            await writer(plugin, values)
+            record.values = values
+            current = parsed.model_dump()
+            record.context.config.clear()
+            record.context.config.update(current)
+        log_event(logger, "plugin_config_updated", plugin=plugin, fields=sorted(changes))
+        self._notify()
+        return current
+
     def bot_for(self, scene: str) -> str:
         return self.config.bot_for(scene)
 
@@ -698,9 +723,9 @@ class PluginHost:
         return task
 
     def tools_for(self, scene: str, *, preparing: bool = False) -> list[ExternalTool]:
+        # A scene with chat off keeps its tools: it takes no turns, and switching chat back on does
+        # not rebuild them. Plugins speaking there are refused in _speaking.
         tools = []
-        if self.scene_paused(scene):
-            return tools
         for record in self.plugins.values():
             if (record.status != "running" and not (preparing and record.status == "loaded")) or scene not in record.scenes:
                 continue

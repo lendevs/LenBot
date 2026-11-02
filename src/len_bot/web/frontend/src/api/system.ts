@@ -47,6 +47,8 @@ export type Delivery = 'simulated' | 'live'
 export interface Connection {
   bot_id: string
   owners: string[]
+  /** An owner's private message opens a private chat with them. */
+  owner_private_chat: boolean
   onebot: SavedOneBot | null
   telegram: SavedTelegram | null
   feishu: FeishuLink | null

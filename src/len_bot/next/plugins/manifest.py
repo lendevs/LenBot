@@ -178,12 +178,14 @@ class ModelInstructions(BaseModel):
 
 # Host capabilities a plugin may declare in ``permissions``; its own KV, data directory, commands,
 # message rules, tools and notices need none.
-PluginPermission = Literal["send", "events", "history", "memory", "generate", "delegate", "network", "schedule"]
+PluginPermission = Literal["send", "events", "history", "memory", "generate", "delegate", "network", "schedule",
+                           "configure"]
 ChatPlatform = Literal["onebot", "telegram", "feishu"]
 PERMISSION_TITLES: dict[str, str] = {
     "send": "在启用的群内发送消息", "events": "将插件事件作为背景提供给 Bot", "history": "读取启用的群的聊天记录",
     "memory": "读写启用的群的长期记忆", "generate": "调用模型做单次生成（计入用量）",
     "delegate": "以请求人的名义发起后台任务", "network": "从公网获取图片", "schedule": "登记定点任务",
+    "configure": "修改本插件的配置",
 }
 
 

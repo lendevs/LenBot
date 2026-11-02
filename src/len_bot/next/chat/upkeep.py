@@ -625,7 +625,9 @@ class SessionUpkeep:
             self.memory.jobs.status(job, "complete")
         if begun.batch is not None:
             self.learning.response(begun.batch, response, None, None)
+            # Learning switched off while the pass ran keeps what it found for review.
             settings = self.scenes[scene].learning
+            auto_adopt = settings is not None and settings.auto_adopt
             candidates = []
             vectors = self.expression_service is not None and scene in self.expression_service.clients
             for item in results["expressions"]:
@@ -633,9 +635,9 @@ class SessionUpkeep:
                 situation = item["situation"] if vectors else self._same_expression(scene, item["situation"], item["style"])
                 candidates.append((situation, item["style"], seqs))
             if self.expression_service is None:
-                self.learning.complete(begun.batch, candidates, auto_adopt=settings.auto_adopt)
+                self.learning.complete(begun.batch, candidates, auto_adopt=auto_adopt)
             else:
-                await self.expression_service.complete(scene, begun.batch, candidates, auto_adopt=settings.auto_adopt,
+                await self.expression_service.complete(scene, begun.batch, candidates, auto_adopt=auto_adopt,
                                                        same_situation=SAME_SITUATION_VECTOR)
         if begun.discovery is not None:
             self.jargon.response(begun.discovery, response, None, None)

@@ -73,7 +73,7 @@ license = "GPL-3.0-only"
 description = "一句话说明"
 ```
 
-- `permissions` 列出实际用到的宿主能力，未列出的能力调用时抛出 `PermissionError`：`send` 发送消息（含 `ctx.reply`），`events` 用 `emit_event` 唤醒聊天，`history` 读取消息记录和 `wait_message`，`memory` 调用 `ctx.memory`，`generate` 单次模型调用，`delegate` 委派后台任务，`network` 用 `fetch_image` 取公网图片，`schedule` 用 `ctx.cron` 登记定点任务。插件自己的 KV、数据目录、日志、命令、规则、工具和通知不需要权限。
+- `permissions` 列出实际用到的宿主能力，未列出的能力调用时抛出 `PermissionError`：`send` 发送消息（含 `ctx.reply`），`events` 用 `emit_event` 唤醒聊天，`history` 读取消息记录和 `wait_message`，`memory` 调用 `ctx.memory`，`generate` 单次模型调用，`delegate` 委派后台任务，`network` 用 `fetch_image` 取公网图片，`schedule` 用 `ctx.cron` 登记定点任务，`configure` 用 `ctx.update_config` 修改本插件的配置（LenBot 0.2.1 起）。插件自己的 KV、数据目录、日志、命令、规则、工具和通知不需要权限。
 - 只支持部分聊天平台时写 `chat_platforms`（`onebot`、`telegram`、`feishu`），不写为全部平台。
 - Python 依赖写在 `dependencies`；系统软件、外部服务和凭据要求写在 README。
 - 改变数据结构时提高 `data_version` 并实现 `migrate_data`。
@@ -111,6 +111,8 @@ from len_bot.plugin import Invocation, Plugin, PluginContext, background, comman
 - 角色要同时允许 `tool_search` 和这些工具名，在 README 中写明工具名。
 
 ### 配置表单
+
+让聊天模型按主人的要求改配置（例如增删订阅）时，工具先调用 `ctx.require_owner()`，再用 `await ctx.update_config({...})` 保存，需要 `configure` 权限；保存后立即生效，不重新加载插件。
 
 在清单中用 `[config.<键>]` 声明，`type` 为 `string`、`secret`、`integer`、`number`、`boolean`、`string_list`、`object_list`、`scene`、`scene_list`、`path` 或 `url`，配 `label`、`description` 和 `default`。处理器从 `ctx.config["<键>"]` 读取。字段写法见 `website/develop/plugin-config.md`。
 

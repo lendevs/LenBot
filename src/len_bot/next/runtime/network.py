@@ -116,6 +116,9 @@ class NetworkRuntime:
         self.retention = Retention(self)
         self.config_write_lock = asyncio.Lock()
         self.management: HostManagement | None = None
+        # Owners' private scenes being opened, with the messages that arrive meanwhile.
+        self.opening_private: dict[str, list[tuple]] = {}
+        self.background: set[asyncio.Task] = set()
         self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
         self.send_hold = SendHold(config._instance_root)
@@ -221,6 +224,12 @@ class NetworkRuntime:
             chat.toolset.host_management = self.management
             chat.set_external_tools(list(chat.toolset.external.values()))
 
+    async def save_plugin_config(self, name: str, values: dict) -> None:
+        """A plugin's own settings change, written like a panel save; plugins call it through update_config."""
+        if self.management is None:
+            raise RuntimeError("当前宿主没有根配置写入，插件不能修改自己的配置")
+        await self.management.plugins.save_values(name, values)
+
     def refresh_external_tools(self) -> None:
         if self.mcp is not None:
             self.mcp.reserved = {tool['function']['name'] for tool in tool_catalog(platform=True)} | (
@@ -323,12 +332,41 @@ class NetworkRuntime:
         with log_context(scene=message.scene, platform_message_id=message.platform_message_id):
             self._receive_message(message, raw)
 
+    def _owner_private(self, message) -> bool:
+        return (message.scene.split(":", 2)[1] == "private" and not message.is_self
+                and getattr(self.config, "owner_private_chat", False) and message.sender.uid in self.config.owners
+                and self.management is not None and message.scene not in self.scene_service.retiring)
+
+    async def _open_private(self, scene: str) -> None:
+        """An owner's first private message: save the private scene, then take what they sent meanwhile."""
+        try:
+            await self.management.open_private(scene)
+        except Exception as error:
+            self.opening_private.pop(scene, None)
+            log_event(logger, "private_scene_failed", "没有为主人开启私聊", level=logging.ERROR, scene=scene,
+                      error=error)
+            return
+        log_event(logger, "private_scene_opened", scene=scene)
+        for message, raw in self.opening_private.pop(scene, []):
+            with log_context(scene=message.scene, platform_message_id=message.platform_message_id):
+                self._receive_message(message, raw)
+
     def _receive_message(self, message, raw: dict) -> None:
         if not self.accepting:
             self._emit({"type": "receipt", "scene": message.scene,
                         "status": "not_accepted", "reason": self.status})
             return
         runner = self.runners.get(message.scene)
+        if runner is None and self._owner_private(message):
+            waiting = self.opening_private.get(message.scene)
+            if waiting is None:
+                self.opening_private[message.scene] = [(message, raw)]
+                task = asyncio.create_task(self._open_private(message.scene))
+                self.background.add(task)
+                task.add_done_callback(self.background.discard)
+            else:
+                waiting.append((message, raw))
+            return
         if runner is None or message.scene in self.scene_service.retiring:
             self._emit({"type": "receipt", "scene": message.scene, "status": "ignored",
                         "platform_message_id": message.platform_message_id})

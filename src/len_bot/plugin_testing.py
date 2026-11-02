@@ -45,8 +45,14 @@ class _LocalHost(PluginHost):
         self.messages: list[ChatMessage] = []
         # Per scene: the session position at the start of the simulated turn that tool calls run in.
         self.turn_floors: dict[str, int] = {}
+        # Values a plugin saved with update_config, by plugin name; the root file of a real host.
+        self.saved_configs: dict[str, dict] = {}
         self.runtime = SimpleNamespace(store=Store(config.database), mcp=None, slots=None, runners={
-            scene: SimpleNamespace(state=SimpleNamespace(paused=False)) for scene in config.scenes})
+            scene: SimpleNamespace(state=SimpleNamespace(paused=False)) for scene in config.scenes},
+            save_plugin_config=self._save_config)
+
+    async def _save_config(self, name: str, values: dict) -> None:
+        self.saved_configs[name] = values
 
     def source_floor(self, scene: str) -> int | None:
         return self.turn_floors.get(scene, 0)
@@ -181,6 +187,11 @@ class PluginTest:
             if self.host is not None:
                 self.host.runtime.store.db.close()
             self.temporary.cleanup()
+
+    @property
+    def saved_config(self) -> dict | None:
+        """The settings the plugin last saved with ``update_config``, as the root file would hold them."""
+        return self.host.saved_configs.get(self.manifest.name)
 
     def add_message(self, text: str, *, scene: str = 'onebot:group:80001', sender: str = 'onebot:70001',
                     message_id: str | None = None, timestamp: float | None = None,

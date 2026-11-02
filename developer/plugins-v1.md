@@ -50,6 +50,7 @@ permissions = ["send", "history"]
 | `delegate` | `ctx.delegate` 以请求人的名义发起后台任务 |
 | `network` | `fetch_image` 从公网获取图片 |
 | `schedule` | `ctx.cron` 登记定点任务 |
+| `configure` | `ctx.update_config` 修改本插件的配置 |
 
 插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。名称重复或未知时清单无效。没有这个字段的旧插件保留全部能力，面板显示为**未声明权限**。新插件和官方插件应明确声明实际调用的宿主能力；模板也按此编写。权限只约束宿主提供的能力，同进程插件仍然可以直接使用 Python，需要隔离时配合下面的 `isolation`。
 
@@ -306,6 +307,16 @@ default = []
 - 半行字段尽量成对声明，避免一行只放一个短字段、另一半空着。
 
 运行参数保存在实例根目录的 `lenbot.config.json` 中，KV 仅用于插件运行期业务数据。
+
+### 插件修改自己的配置
+
+LenBot 0.2.1 起，声明了 `configure` 权限的插件可以用 `await ctx.update_config({"字段": 值})`（`PluginContext.update_config`）修改自己的配置，例如在聊天中按主人的要求增删订阅。
+
+- 只写给出的字段，其余字段保持原值。宿主按清单的 `[config]` 校验合并后的结果，`scene`、`scene_list` 的值必须是已接入的群；未声明的字段和不合法的值抛出 `ValueError`，配置保持不变。
+- 校验通过后写入 `lenbot.config.json`，立即生效：返回值和 `ctx.config` 都是新值，面板显示的也是新值，插件不重新加载。插件在 `start()` 中读取并保留的值（例如后台循环的订阅列表）由插件自己按返回值更新。
+- 宿主不检查请求人。只允许主人修改时，先调用 `ctx.require_owner()`；修改他人可见的内容前，用工具结果或 `wait_message` 向请求人确认。
+- 面板保存同一插件的配置会重新加载插件，以面板保存的值为准。
+- 使用这项能力的插件把 `requires_lenbot` 写成 `">=0.2.1,<1"`。
 
 ## 工具说明如何交给聊天模型
 
@@ -692,6 +703,7 @@ async def check():
 - `message(text, scene=..., sender=..., parts=...)` 模拟身份和消息，返回是否被接管。`parts` 是追加在文字之后的公开 `Segment` 列表，可验证提及或媒体的接管边界。处理器停在 `wait_message` 时 `message` 立即返回，下一次 `message` 作为回答，并等处理器继续执行完。
 - `notice(notice_type, sub_type=..., user=..., operator=..., scene=..., message_id=..., duration=..., raw=...)` 按宿主的分发调用 `@on_notice`，返回运行的处理器数，处理器出错时报错。
 - `deliveries` 包含插件、场景、组合内容、reply_to 和 simulated 状态。
+- `saved_config` 是插件最近一次用 `update_config` 保存的配置，与根配置中保存的内容相同；没有保存过时为 `None`。
 - `events()` 用于查看实际记录的插件事件。
 - `recall(scene=..., recap=None, tasks=(), budget_chars=1500)` 用最近 8 条 `add_message` 的消息调用 `@recall`，返回聊天实际收到的召回条目。
 - `memory(arguments, scene=...)` 按聊天 `memory` 工具的校验调用 `@memory_tool`。

@@ -111,6 +111,25 @@ class HostManagement:
         self.write_lock = runtime.config_write_lock
         self.plugins = PluginManager(root, runtime, self.running, self.write_lock)
 
+    async def open_private(self, scene: str) -> None:
+        """Save and start a private scene that uses the role of the first group on the same platform."""
+        platform = scene.split(':', 1)[0]
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            if scene in saved.scenes:
+                return
+            groups = [value for key, value in source['scenes'].items() if ':group:' in key]
+            template = next((value for key, value in source['scenes'].items()
+                             if key.startswith(platform + ':group:')), groups[0] if groups else None)
+            if template is None:
+                raise ValueError('还没有接入群，没有可沿用的角色')
+            source['scenes'][scene] = {'persona': template['persona']}
+
+        async with self.write_lock:
+            saved = await asyncio.to_thread(save_config, self.root, self.running, edit)
+            if scene not in self.runtime.runners:
+                await self.runtime.scene_service.add(scene, saved.scenes[scene])
+
     def _pending(self) -> dict:
         return restart_summary(self.root, self.running,
                                {scene: chat.persona for scene, chat in self.runtime.chats.items()})
