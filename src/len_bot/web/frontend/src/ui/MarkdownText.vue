@@ -20,6 +20,29 @@ const parsed = computed(() => blocks(props.text))
         v-else-if="block.kind === 'code'"
         class="overflow-x-auto rounded-lg border border-line bg-code px-3 py-2 font-mono text-xs leading-5 scrollbar-thin"
         >{{ block.text }}</pre>
+      <div v-else-if="block.kind === 'table'" class="overflow-x-auto scrollbar-thin">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs text-muted">
+              <th
+                v-for="(cell, at) in block.head"
+                :key="at"
+                scope="col"
+                class="py-2 pr-3 font-medium last:pr-0"
+              >
+                <MarkdownSpans :spans="cell" />
+              </th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-line border-t border-line">
+            <tr v-for="(row, at) in block.rows" :key="at">
+              <td v-for="(cell, column) in row" :key="column" class="py-2 pr-3 align-top last:pr-0">
+                <MarkdownSpans :spans="cell" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <ul v-else-if="block.kind === 'list'" class="flex flex-col gap-1">
         <li
           v-for="(item, at) in block.items"

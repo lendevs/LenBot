@@ -11,6 +11,7 @@ import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
+import MarkdownText from '../../ui/MarkdownText.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
 import SnapshotsSection from './SnapshotsSection.vue'
@@ -31,6 +32,8 @@ const prerelease = ref(false)
 const visible = computed(() =>
   (releases.data.value ?? []).filter((item) => prerelease.value || !item.prerelease),
 )
+// Notes open with "# LenBot <version>", which the tag heading already shows.
+const notesBody = (notes: string) => notes.replace(/^#\s[^\n]*\n+/, '')
 const data = computed(() => current.data.value)
 const check = computed(() => data.value?.check)
 const summary = computed(() => {
@@ -152,7 +155,7 @@ const open = useMutation({
             <Badge v-if="item.version === data.version">{{ t('system.updates.installed') }}</Badge>
             <Badge v-if="item.prerelease" tone="warning">{{ t('system.updates.pre') }}</Badge>
           </h4>
-          <pre class="font-sans text-sm whitespace-pre-wrap text-muted">{{ item.notes }}</pre>
+          <MarkdownText :text="notesBody(item.notes)" class="text-sm text-ink-2" />
         </li>
       </ol>
     </section>

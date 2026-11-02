@@ -12,6 +12,15 @@ defineProps<{ spans: Span[] }>()
     <code v-else-if="span.kind === 'code'" class="rounded-sm bg-code px-1 font-mono text-[0.92em]">
       {{ span.text }}
     </code>
+    <a
+      v-else-if="span.kind === 'link'"
+      :href="span.href"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="text-primary hover:underline"
+    >
+      {{ span.text }}
+    </a>
     <template v-else>{{ span.text }}</template>
   </template>
 </template>
