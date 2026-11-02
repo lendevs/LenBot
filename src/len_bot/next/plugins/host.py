@@ -465,12 +465,12 @@ class PluginHost:
         writer = getattr(self.runtime, "save_plugin_config", None)
         if writer is None:
             raise RuntimeError("当前宿主没有根配置写入，插件不能修改自己的配置")
-        try:
-            parsed = record.manifest.values_model(self.config.scenes).model_validate({**record.values, **changes})
-        except ValidationError as error:
-            raise ValueError(f"plugins.{plugin} 配置不合法：{error}") from error
-        values = parsed.model_dump(mode="json")
         async with record.config_lock:
+            try:
+                parsed = record.manifest.values_model(self.config.scenes).model_validate({**record.values, **changes})
+            except ValidationError as error:
+                raise ValueError(f"plugins.{plugin} 配置不合法：{error}") from error
+            values = parsed.model_dump(mode="json")
             await writer(plugin, values)
             record.values = values
             current = parsed.model_dump()

@@ -108,7 +108,7 @@ Until the first release candidate (RC), all six format and interface numbers sta
 | Format or interface | Current value | Location |
 |---|---|---|
 | Plugin interface | `1` | `INTERFACE` in `src/len_bot/plugin.py` |
-| Root configuration | `1` | `CONFIG_VERSION` in `src/len_bot/next/config.py` |
+| Root configuration | `3` | `CONFIG_VERSION` in `src/len_bot/next/config.py` |
 | Business database | `1` | `FORMAT_VERSION` in `src/len_bot/next/storage/store.py` |
 | Memory job database | `1` | `FORMAT_VERSION` in `src/len_bot/next/memory/jobs.py` |
 | Local memory index | `1` | `FORMAT_VERSION` in `src/len_bot/next/memory/local.py` |

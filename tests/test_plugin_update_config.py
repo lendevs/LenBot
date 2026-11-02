@@ -1,5 +1,6 @@
 """A plugin changing its own settings with update_config, in process and isolated, and through the panel's writer."""
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,24 @@ async def test_saving_settings_needs_the_configure_permission(tmp_path):
         with pytest.raises(RuntimeError, match='permissions 中声明 configure'):
             await bot.message('/订阅 2')
         assert bot.saved_config is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_changes_preserve_both_fields(tmp_path):
+    async with PluginTest(make_package(tmp_path)) as bot:
+        writing, release = asyncio.Event(), asyncio.Event()
+        original = bot.host.runtime.save_plugin_config
+
+        async def save(name, values):
+            writing.set()
+            await release.wait()
+            await original(name, values)
+
+        bot.host.runtime.save_plugin_config = save
+        first = asyncio.create_task(bot.host.update_config('rooms', {'rooms': ['1']}))
+        await writing.wait()
+        second = asyncio.create_task(bot.host.update_config('rooms', {'show_details': False}))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(first, second)
+        assert bot.saved_config == {'show_details': False, 'rooms': ['1']}

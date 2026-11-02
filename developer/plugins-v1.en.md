@@ -52,8 +52,15 @@ permissions = ["send", "history"]
 | `delegate` | Create background worker tasks via `ctx.delegate` on behalf of the requester |
 | `network` | Download public images via `fetch_image` |
 | `schedule` | Register cron jobs via `ctx.cron` |
+| `configure` | Save the plugin's own settings via `ctx.update_config` (0.2.1+) |
 
 Plugin-local KV, `data_dir`, logging, commands, message rules, tools, and notices require no permission entry. Duplicate or unknown permission names invalidate the manifest. Manifests without `permissions` retain full capabilities and appear as **Undeclared permissions** in the panel. New plugins and official plugins declare the exact capabilities they call.
+
+### Updating the plugin's own settings
+
+Declare `configure` and `requires_lenbot = ">=0.2.1,<1"` to use `await ctx.update_config(changes)` on a `PluginContext` or `Invocation`. The host validates changed fields against the manifest, preserves other settings, saves to `plugins.<name>` in the root configuration, and updates `ctx.config` immediately. Use the returned values to update any settings copied into running services. Owner-only configuration tools declare `needs_source=True` and call `ctx.require_owner()` before saving.
+
+`PluginTest.saved_config` exposes the latest saved settings for assertions and is `None` before the first write.
 
 ### Process isolation
 
