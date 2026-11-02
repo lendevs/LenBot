@@ -58,6 +58,8 @@ Plugin-local KV, `data_dir`, logging, commands, message rules, tools, and notice
 
 ### Updating the plugin's own settings
 
+From 0.2.2, saving settings also refreshes the tools available in each chat. Plugins can read the new values in `unavailable_tools` to enable or disable tools immediately.
+
 Declare `configure` and `requires_lenbot = ">=0.2.1,<1"` to use `await ctx.update_config(changes)` on a `PluginContext` or `Invocation`. The host validates changed fields against the manifest, preserves other settings, saves to `plugins.<name>` in the root configuration, and updates `ctx.config` immediately. Use the returned values to update any settings copied into running services. Owner-only configuration tools declare `needs_source=True` and call `ctx.require_owner()` before saving.
 
 `PluginTest.saved_config` exposes the latest saved settings for assertions and is `None` before the first write.

@@ -119,9 +119,19 @@ def test_a_plugin_saving_its_own_settings_writes_the_root_file_without_a_restart
     manifest = (SAMPLE / 'plugin.toml').read_text().replace(
         'interface = 1\n', 'interface = 1\npermissions = ["configure"]\n', 1)
     content = BytesIO()
+    plugin_source = '''from len_bot.plugin import Plugin, tool
+
+class Sample(Plugin):
+    @tool('sample_lookup', '查询示例', summary='查询示例')
+    async def lookup(self, ctx):
+        return {'enabled': True}
+
+    def unavailable_tools(self, scene):
+        return {'sample_lookup': '等待开启'} if self.ctx.config['show_details'] else {}
+'''
     with zipfile.ZipFile(content, 'w') as archive:
         archive.writestr('plugin.toml', manifest)
-        archive.writestr('__init__.py', (SAMPLE / '__init__.py').read_bytes())
+        archive.writestr('__init__.py', plugin_source)
 
     async def run():
         with Store(config.database) as store:
@@ -135,12 +145,19 @@ def test_a_plugin_saving_its_own_settings_writes_the_root_file_without_a_restart
                     assert (await client.put('/api/host/plugins/sample', json={'enabled': True, 'config': {}})).status_code == 200
                     assert (await client.post('/api/host/plugins/sample/apply')).status_code == 200
                     await runtime.plugins.start()
+                    assert (await client.put('/api/host/scenes/onebot:group:80001/plugins',
+                                             json={'plugins': ['sample'], 'memory_plugin': None,
+                                                   'recap_plugin': None})).status_code == 200
+                    assert 'sample_lookup' not in runtime.chats[scene.scene].toolset.external
                     values = await runtime.plugins.update_config('sample', {'show_details': False})
+                    assert 'sample_lookup' in runtime.chats[scene.scene].toolset.external
                     assert values == {'show_details': False}
                     assert runtime.plugins.plugins['sample'].context.config == {'show_details': False}
                     assert load_host_config(tmp_path).plugins.configured['sample'] == {'show_details': False}
                     snapshot = (await client.get('/api/host/plugins')).json()
                     assert snapshot['restart_required'] is False
+                    await runtime.plugins.update_config('sample', {'show_details': True})
+                    assert 'sample_lookup' not in runtime.chats[scene.scene].toolset.external
                 if runtime.plugins is not None:
                     await runtime.plugins.close()
 
