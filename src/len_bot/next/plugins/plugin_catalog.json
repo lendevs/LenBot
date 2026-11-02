@@ -9,7 +9,7 @@
         "LEN5010"
       ],
       "license": "AGPL-3.0-only",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "interface": 1,
       "requires_lenbot": ">=0.2,<1",
       "category": "工作工具",
@@ -30,7 +30,7 @@
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-group-digest",
-      "ref": "e1426abef8cadff47c0de9cbc8372d016ce7c976",
+      "ref": "d24c72d0138e568f37d3fb062f5cf6858d203b62",
       "permissions": [
         "send",
         "history",
@@ -47,7 +47,7 @@
         "LEN5010"
       ],
       "license": "AGPL-3.0-or-later",
-      "version": "1.1.2",
+      "version": "1.2.1",
       "interface": 1,
       "requires_lenbot": ">=0.2,<1",
       "category": "外部服务",
@@ -63,7 +63,7 @@
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-gscore-adapter",
-      "ref": "59385a3c77f6afd50dcba41c9d807e55195d2e0d",
+      "ref": "b15350f06c17576cc3be849b4baf7ed3a8003014",
       "permissions": [
         "send",
         "network"
@@ -72,29 +72,29 @@
     {
       "name": "bilibili",
       "title": "哔哩哔哩",
-      "description": "哔哩哔哩合集：公开视频/分P/WBI搜索/评论，主人明确授权的字幕、动态和固定点赞收藏动作；每30秒观察订阅直播间，开播推送卡片，开播/下播变化进入场景事件；关注UP主的新动态、新视频和本人评论推送卡片。",
+      "description": "哔哩哔哩合集：公开视频/分P/WBI搜索/评论，主人明确授权的字幕和动态；每30秒观察订阅直播间，开播推送卡片，开播/下播变化进入场景事件；关注UP主的新动态、新视频和本人评论推送卡片。",
       "authors": [
         "LEN5010"
       ],
       "license": "AGPL-3.0-or-later",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "interface": 1,
       "requires_lenbot": ">=0.2,<1",
       "category": "内容查询",
       "capabilities": [
         "公开视频",
-        "账号读取与动作",
+        "账号内容读取",
         "直播与关注推送"
       ],
       "usage": [
         "配置后选择启用的群；模型工具需要当前角色许可。",
         "参数、共享指南与实际发送语义可在群聊工具页预览。",
         "最低宿主基线和来源参数变更见 CHANGELOG.md。",
-        "旧视频信息／分P／匿名评论工具统一为 bilibili_video；旧直播状态／直播订阅／关注设置工具统一为 bilibili_monitor；账号读取统一为 bilibili_account_read，点赞和收藏统一为 bilibili_account_write，search_bilibili 保留。明确角色 tools 名单需更换为这五个名称并保留 tool_search；all 无需更改。"
+        "模型工具为 bilibili_video、search_bilibili、bilibili_account_read、bilibili_monitor。明确角色 tools 名单请保留这四项与 tool_search；从 1.1.x 更新时删除旧写入配置，见 CHANGELOG.md。"
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-bilibili",
-      "ref": "92b9d7012532528adbf14604227d3704e2847154",
+      "ref": "846469c3266613a49fef52f8df96687712c8cf2b",
       "permissions": [
         "send",
         "events"

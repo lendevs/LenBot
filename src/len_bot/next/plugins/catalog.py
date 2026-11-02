@@ -64,7 +64,7 @@ class CatalogEntry(BaseModel):
 
     @field_validator('repository')
     @classmethod
-    def source(cls, value: str) -> str:
+    def repository_link(cls, value: str) -> str:
         return repository_url(value)
 
     @field_validator('homepage')
