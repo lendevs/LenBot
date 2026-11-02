@@ -28,6 +28,8 @@ withDefaults(
   defineProps<{ items: MenuEntry[]; align?: 'start' | 'center' | 'end'; side?: 'top' | 'bottom' }>(),
   { align: 'end', side: 'bottom' },
 )
+// Closing returns focus to the trigger; a listener may preventDefault and move it elsewhere.
+const emit = defineEmits<{ closeAutoFocus: [event: Event] }>()
 </script>
 
 <template>
@@ -40,6 +42,7 @@ withDefaults(
         :side-offset="4"
         :collision-padding="12"
         :class="[floatingPanel, 'min-w-44 p-1']"
+        @close-auto-focus="emit('closeAutoFocus', $event)"
       >
         <template v-for="(entry, index) in items" :key="index">
           <DropdownMenuSeparator v-if="entry.type === 'separator'" class="-mx-1 my-1 h-px bg-line" />
