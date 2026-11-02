@@ -1,9 +1,9 @@
 """Install a built release the way a user would and walk first setup to a logged-in panel, then stop it.
 
 ``package`` installs the deployment package for this platform and answers the browser setup wizard.
-``docker`` uses an already built host image with the packaged Compose recipe and offline initialization,
+``docker`` uses an already built host image with the documented ``docker run`` and offline initialization,
 on new uniquely named volumes that are removed afterwards. Both use only the standard library and need
-no OneBot service or model: delivery is simulated and nothing is sent.
+no OneBot service or model: the configured OneBot address has no server, so nothing is sent.
 """
 
 from __future__ import annotations

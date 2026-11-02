@@ -1,7 +1,7 @@
 name: Install smoke
 
 # Called after release-packages is uploaded in the same run. Installs what a user would download,
-# walks first setup to a logged-in panel and stops it; simulated delivery, no OneBot or model.
+# walks first setup to a logged-in panel and stops it; no OneBot service or model.
 on:
   workflow_call:
 
