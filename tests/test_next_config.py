@@ -1,7 +1,10 @@
 """Validation of the isolated lab configuration and role-package formats."""
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from datetime import time as WallTime
 
 import pytest
@@ -2094,3 +2097,9 @@ def test_scene_speaks_with_the_bot_account_of_its_platform(tmp_path):
     (root / "lenbot.config.json").write_text(json.dumps(source), encoding="utf-8")
     with pytest.raises(ValueError, match="bot_token"):
         load_host_config(root)
+
+
+def test_time_zones_resolve_without_a_system_zoneinfo_database():
+    # Minimal Linux images ship no /usr/share/zoneinfo; the tzdata dependency covers them.
+    script = "from zoneinfo import TZPATH, ZoneInfo; assert TZPATH == (); ZoneInfo('Asia/Shanghai')"
+    subprocess.run([sys.executable, '-c', script], env={**os.environ, 'PYTHONTZPATH': ''}, check=True)

@@ -1,6 +1,6 @@
 [project]
 name = "len-bot"
-version = "0.2.0rc1"
+version = "0.2.0rc2"
 description = "A group chat agent for QQ that decides for itself, with a web panel and Python plugins"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -28,6 +28,8 @@ dependencies = [
     "jsonschema>=4.20,<5",
     "referencing>=0.35,<1",
     "anyio>=4.9,<5",
+    # Time zone data for hosts without a system zoneinfo database (minimal Linux images, Windows).
+    "tzdata>=2026.3",
 ]
 
 [project.scripts]
