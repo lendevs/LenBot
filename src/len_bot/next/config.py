@@ -48,12 +48,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[4] = 4
+    config_version: Literal[5] = 5
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.

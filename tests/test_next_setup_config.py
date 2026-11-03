@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from len_bot.next.config import load_host_config
+from len_bot.next.configuration.chat import wake_level
 from len_bot.next.chat.context import build_system
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.panel.setup import FirstSetup, create_setup_app, initialize, opens_browser
@@ -90,13 +91,13 @@ def test_setup_with_a_platform_sends_live(tmp_path: Path):
         'mind': {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 8192},
         'compaction': {'input_tokens': 6000},
         'scene': 'onebot:group:80001', 'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
-        'attention': {'only_direct': False, 'activity': 0.2},
+        'attention': {'only_direct': False, 'level': 'moderate'},
     })
     initialize(tmp_path, item)
     assert load_host_config(tmp_path).delivery == 'live'
     assert not (tmp_path / 'state' / 'send-hold.json').exists()
     attention = load_host_config(tmp_path).scene_config('onebot:group:80001').attention
-    assert (attention.only_direct, attention.activity) == (False, 0.2)
+    assert (attention.only_direct, wake_level(attention)) == (False, 'moderate')
 
 
 @pytest.mark.asyncio

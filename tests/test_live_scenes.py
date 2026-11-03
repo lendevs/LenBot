@@ -7,6 +7,8 @@ import pytest
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
+from len_bot.next.configuration.chat import wake_level
+
 from test_attention_protocol import message, response
 from test_host_stream import login, panel, receive
 from test_next_panel_acts_as_owner import SCENE
@@ -61,7 +63,7 @@ async def test_live_scene_add_remove_drains_current_turn_without_stopping_other_
             source['models']['roles']['memory'] = dict(source['models']['roles']['mind'])
             source['memory'] = {'backend': 'local', 'local': {'directory': 'memory'}, 'ingest': {}}
             source['compaction']['input_tokens'] = 30000
-            source['scenes'][SCENE]['attention'] = {'activity': 0, 'direct_idle_seconds': 0}
+            source['scenes'][SCENE]['attention'] = {'direct_idle_seconds': 0}
             path.write_text(json.dumps(source))
             path = root / 'persona/persona.yaml'
             path.write_text(path.read_text().replace('tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [say]'))
@@ -79,10 +81,10 @@ async def test_live_scene_add_remove_drains_current_turn_without_stopping_other_
                     available = await client.get(endpoint + '/available')
                     assert available.json()['items'][0]['scene'] == NEW
                     added = await client.post(endpoint, json={'scene': NEW, 'persona': 'persona',
-                                                              'attention': {'only_direct': False, 'activity': 0.5}})
+                                                              'attention': {'only_direct': False, 'level': 'quiet'}})
                     assert added.status_code == 200, added.text
                     attention = runtime.chats[NEW].config.attention
-                    assert (attention.only_direct, attention.activity) == (False, 0.5)
+                    assert not attention.only_direct and wake_level(attention) == 'quiet'
                     assert not added.json()['restart_required']['scenes'][NEW]
                     assert NEW in runtime.ingestor.scenes
                     incoming = message(70001, 1, '新群请求', direct=True)

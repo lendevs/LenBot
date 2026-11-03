@@ -44,11 +44,11 @@ const parts = computed(() => {
       <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <dt class="text-muted">{{ t('groups.live.verdict.reason') }}</dt>
         <dd class="min-w-0 break-words text-ink">{{ verdict.reason }}</dd>
-        <template v-if="verdict.score !== null">
+        <template v-if="verdict.score != null">
           <dt class="text-muted">{{ t('groups.live.verdict.score') }}</dt>
           <dd class="tabular">
             {{ number(verdict.score) }}
-            <span v-if="verdict.threshold !== null" class="text-muted">
+            <span v-if="verdict.threshold != null" class="text-muted">
               / {{ t('groups.live.verdict.threshold') }} {{ number(verdict.threshold) }}
             </span>
           </dd>

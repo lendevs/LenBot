@@ -80,10 +80,18 @@ uv run --no-sync python scripts/first_reply_latency.py batches
 读取实际合批截止时间，输出各渠道等待中位数和切断批次数。切断指本批已发言的人在渠道上限之前补的消息没有进入本批。
 这一项按默认等待设置量合批，完整首句延迟仍由 `report` 读取回合记录。
 
-`jargon.json` 固定了十个虚构群内用法和十个普通词。黑话模式执行一遍固定候选，含义任务按现有的五词一批使用实际整理工作者，输出结果、自动拒绝计数及完整请求响应：
+`jargon.json` 包含 24 个虚构样本：11 个群内用法或固定简称、12 个普通词或通用网络用语，以及一个含义尚不清楚的称呼。黑话模式将固定候选交给实际整理工作者，每批最多判断 20 条，输出分类、误收与漏收计数、请求数、token 用量及完整请求响应：
 
 ```sh
 uv run --no-sync python scripts/compare_social.py --instance . --label jargon-baseline --jargon
 ```
+
+现有词条可从原数据库只读复制到隔离回放目录重评，保留人工决定及原话（当前入口处理单群词库）：
+
+```sh
+uv run --no-sync python scripts/compare_social.py --instance /path/to/instance --label jargon-existing --jargon-existing
+```
+
+`before.json` 保存原条目，`result.json` 保存新判定与用量。真实群聊的实验目录只保留在本机；服务请求失败时，隔离数据库的 `model_calls` 保存原始错误详情。
 
 专项对照可用 `--cases <文件>` 指向 set 为 `social` 的固定用例或子集，用 `--repetitions <次数>` 指定重复次数；`--persona <目录>` 选择试验角色。每次运行保存实际用例和角色快照。

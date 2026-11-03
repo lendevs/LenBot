@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from websockets.asyncio.server import serve
 
 from len_bot.next.config import load_host_config
+from len_bot.next.configuration.chat import WAKE_LEVELS
 from len_bot.next.configuration.mcp import MCPService
 from len_bot.next.configuration.migrations import migrate_source
 from len_bot.next.models.client import ChatModel, ModelSettings
@@ -27,6 +28,25 @@ def test_format_four_keeps_scene_data_and_removes_sending_switches():
     assert saved['scenes'] == {SCENE: {'persona': 'role'}, 'telegram:group:123': {'persona': 'other'}}
     assert source['delivery'] == 'simulated' and source['scenes'][SCENE]['simulated_delivery']
     assert migrate_source({'config_version': 3, 'delivery': 'simulated'}, 4)['delivery'] == 'simulated'
+
+
+def test_format_five_moves_wake_levels_and_drops_participation_scores():
+    scenes = {'onebot:group:1': {'persona': 'role', 'attention': {'activity': 0.06, 'ambient_min_interval_seconds': 600.0,
+                                                                  'ambient_max_interval_seconds': 3600.0,
+                                                                  'focus_seconds': 30.0, 'focus_unanswered_limit': 1,
+                                                                  'keywords': ['开播']}},
+              'onebot:group:2': {'persona': 'role', 'attention': {'only_direct': True}},
+              'onebot:group:3': {'persona': 'role', 'attention': {'activity': 0.5, 'ambient_threshold': 0.4,
+                                                                  'close_focus_on_silence': True,
+                                                                  'focus_seconds': 45.0}},
+              'onebot:private:4': {'persona': 'role'}}
+    saved = migrate_source({'config_version': 4, 'delivery': 'live', 'scenes': scenes}, 5)
+    assert saved['config_version'] == 5
+    assert saved['scenes'] == {
+        'onebot:group:1': {'persona': 'role', 'attention': {'keywords': ['开播'], **WAKE_LEVELS['quiet']}},
+        'onebot:group:2': {'persona': 'role', 'attention': {'only_direct': True}},
+        'onebot:group:3': {'persona': 'role', 'attention': {'focus_seconds': 45.0}},
+        'onebot:private:4': {'persona': 'role'}}
 
 
 def test_panel_sessions_survive_restart_and_logout_is_persisted(tmp_path, monkeypatch):
@@ -52,12 +72,12 @@ def test_panel_sessions_survive_restart_and_logout_is_persisted(tmp_path, monkey
 async def test_wake_presets_apply_live_and_keep_group_keywords(tmp_path):
     async with panel(tmp_path) as (client, runtime):
         keywords = list(runtime.config.scenes[SCENE].attention.keywords)
-        for level, activity, focus in [('active', .3, 180), ('moderate', .15, 90), ('quiet', .06, 30)]:
+        for level in ['active', 'moderate', 'quiet']:
             result = await client.put(f'/api/host/settings/scenes/{SCENE}/wake-level', json={'level': level})
             assert result.status_code == 200, result.text
             saved = load_host_config(tmp_path).scenes[SCENE].attention
             running = runtime.chats[SCENE].config.attention
-            assert (saved.activity, saved.focus_seconds) == (activity, focus)
+            assert all(getattr(saved, name) == value for name, value in WAKE_LEVELS[level].items())
             assert running == saved and saved.keywords == keywords and not saved.only_direct
             state = (await client.get('/api/host/state')).json()
             assert next(row for row in state['scenes'] if row['scene'] == SCENE)['wake_level'] == level

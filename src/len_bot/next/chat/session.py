@@ -434,7 +434,8 @@ class Chat:
     async def run_turn(self, *, batch: tuple[int, list[str]] | None,
                        append_new: Callable[[bool, str], Awaitable[bool]],
                        wait_for_messages: Callable[[float], Awaitable[str]],
-                       attention_state: dict, scheduled: list[tuple[int, str]] | None = None,
+                       attention_state: dict, followup: Callable[[], bool] | None = None,
+                       scheduled: list[tuple[int, str]] | None = None,
                        task_notices: list[tuple[int, str]] | None = None,
                        plugin_events: list[tuple[int, str]] | None = None,
                        direct: bool = False, wake_received_at: float | None = None,
@@ -661,9 +662,11 @@ class Chat:
                         break
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the
-                        # model as new input instead of waiting for the next turn.
+                        # model as new input instead of waiting for the next turn. A scene runner decides
+                        # who that is; without one, it is anyone in this turn's batch.
                         if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
-                                and self.followup_arrived(talking) and await append_new(True, turn_id)):
+                                and (self.followup_arrived(talking) if followup is None else followup())
+                                and await append_new(True, turn_id)):
                             extensions += 1
                             continue
                         status = "settled"

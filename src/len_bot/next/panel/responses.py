@@ -62,9 +62,10 @@ class HostScene(ScenePersona):
     persona_switch: dict[str, str] | None
     voice_mode: str
     timezone: str
+    scene_open: bool
     chat_enabled: bool
     chat_status: JsonObject
-    # The running chat's only_direct and activity.
+    # The running chat's only_direct and the wake level it joins in at (None when tuned by hand).
     attention: JsonObject
     # The participation preset the attention fields match; None when tuned by hand.
     wake_level: str | None = None
@@ -756,6 +757,7 @@ class SceneControl(PanelResponse):
     attention: JsonObject
     temporary_quiet: JsonObject | None
     paused: bool
+    closed: bool = False
     quiet_until: Number | None
     direct: str
     scope: str

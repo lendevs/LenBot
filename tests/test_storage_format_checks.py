@@ -13,7 +13,7 @@ from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
 from len_bot.next.models.usage import instance_usage, record_usage
 from len_bot.next.plugins.kv import PluginKV
 from len_bot.next.storage.schema import FORMAT_RESET
-from len_bot.next.storage.store import Store
+from len_bot.next.storage.store import Store, FORMAT_UPGRADE
 
 SCENE = 'onebot:group:80001'
 
@@ -83,7 +83,7 @@ def test_a_file_missing_a_column_is_refused_with_the_table_and_column(tmp_path, 
     path, opener, table, column = _file(tmp_path, name)
     opener(path)
     _edit(path, [f'ALTER TABLE {table} DROP COLUMN {column}'])
-    with pytest.raises(ValueError, match=rf'{table}（缺少列 {column}）.*{FORMAT_RESET}'):
+    with pytest.raises(ValueError, match=rf'{table}（缺少列 {column}）.*' + (FORMAT_UPGRADE if name == 'business' else FORMAT_RESET)):
         opener(path)
 
 
@@ -91,7 +91,7 @@ def test_a_file_missing_a_column_is_refused_with_the_table_and_column(tmp_path, 
 def test_a_file_with_an_extra_column_is_refused_with_the_table_and_column(tmp_path, name):
     path, opener, table, _ = _file(tmp_path, name)
     _edit(path, [f'ALTER TABLE {table} ADD COLUMN surplus TEXT'])
-    with pytest.raises(ValueError, match=rf'{table}（多出列 surplus）.*{FORMAT_RESET}'):
+    with pytest.raises(ValueError, match=rf'{table}（多出列 surplus）.*' + (FORMAT_UPGRADE if name == 'business' else FORMAT_RESET)):
         opener(path)
 
 
@@ -162,7 +162,7 @@ def test_a_business_file_without_a_format_mark_gets_the_reset_hint_and_stays_as_
     with closing(sqlite3.connect(path)) as db:
         db.executescript('PRAGMA journal_mode=DELETE; CREATE TABLE messages(seq INTEGER);')
     before = path.read_bytes()
-    with pytest.raises(ValueError, match=rf'application_id=0.*{FORMAT_RESET}'):
+    with pytest.raises(ValueError, match=rf'application_id=0.*{FORMAT_UPGRADE}'):
         Store(path)
     assert path.read_bytes() == before
 
@@ -204,7 +204,7 @@ def test_a_configuration_without_a_format_number_is_format_one(tmp_path):
     root = tmp_path / 'lab'
     _write_config(root, source)
     config = root_config.load_host_config(root)
-    assert config.config_version == 4 and config.delivery == 'live'
+    assert config.config_version == 5 and config.delivery == 'live'
 
 
 @pytest.fixture

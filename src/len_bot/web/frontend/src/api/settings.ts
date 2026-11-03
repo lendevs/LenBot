@@ -21,14 +21,12 @@ export interface Attention {
   named_max_seconds: number
   keyword_cooldown_seconds: number
   focus_seconds: number
-  close_focus_on_silence: boolean
-  focus_unanswered_limit: number
   focus_idle_seconds: number
   focus_max_seconds: number
-  activity: number
-  ambient_threshold: number
   ambient_min_interval_seconds: number
   ambient_max_interval_seconds: number
+  speech_burst: number
+  speech_interval_seconds: number
   explore_probability: number
   max_extensions: number
   quiet_hours: QuietHours | null

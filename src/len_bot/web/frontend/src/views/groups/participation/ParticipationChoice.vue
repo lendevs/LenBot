@@ -1,16 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { formatNumber } from '../../../i18n/format'
 import Field from '../../../ui/Field.vue'
 import RadioGroup from '../../../ui/RadioGroup.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
-import {
-  ACTIVITY_LEVELS,
-  activityLevel,
-  type ActivityLevel,
-  type Participation,
-} from '../../../api/participation'
+import { WAKE_LEVEL_ORDER, type Participation, type WakeLevel } from '../../../api/participation'
 
 const model = defineModel<Participation>({ required: true })
 const { t } = useI18n()
@@ -23,26 +17,14 @@ const modes = computed(() =>
   (['direct', 'join'] as const).map((value) => ({ value, label: t(`participation.modes.${value}`) })),
 )
 const level = computed({
-  get: (): ActivityLevel | 'custom' => activityLevel(model.value.activity) ?? 'custom',
-  set: (value: ActivityLevel | 'custom') => {
-    if (value !== 'custom') model.value = { ...model.value, activity: ACTIVITY_LEVELS[value] }
+  get: (): WakeLevel | 'custom' => model.value.level ?? 'custom',
+  set: (value: WakeLevel | 'custom') => {
+    if (value !== 'custom') model.value = { ...model.value, level: value }
   },
 })
 const levels = computed(() => [
-  ...(['low', 'medium', 'high'] as const).map((value) => ({
-    value,
-    label: t(`participation.levels.${value}`),
-  })),
-  ...(level.value === 'custom'
-    ? [
-        {
-          value: 'custom' as const,
-          label: t('participation.custom', {
-            value: formatNumber(model.value.activity, { maximumFractionDigits: 2 }),
-          }),
-        },
-      ]
-    : []),
+  ...WAKE_LEVEL_ORDER.map((value) => ({ value, label: t(`participation.levels.${value}`) })),
+  ...(level.value === 'custom' ? [{ value: 'custom' as const, label: t('participation.custom') }] : []),
 ])
 </script>
 

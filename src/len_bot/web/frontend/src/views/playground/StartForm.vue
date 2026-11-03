@@ -15,7 +15,7 @@ import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Select from '../../ui/Select.vue'
-import { ACTIVITY_LEVELS, type Participation } from '../../api/participation'
+import { DEFAULT_PARTICIPATION, type Participation } from '../../api/participation'
 import ParticipationChoice from '../groups/participation/ParticipationChoice.vue'
 
 const props = defineProps<{ scene?: string; persona?: string }>()
@@ -63,7 +63,7 @@ watch(
   },
   { immediate: true },
 )
-const participation = ref<Participation>({ only_direct: true, activity: ACTIVITY_LEVELS.medium })
+const participation = ref<Participation>({ ...DEFAULT_PARTICIPATION })
 watch(
   scene,
   (value) => {

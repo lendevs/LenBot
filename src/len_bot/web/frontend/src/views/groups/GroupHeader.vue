@@ -25,6 +25,7 @@ import Avatar from '../../ui/Avatar.vue'
 import Badge from '../../ui/Badge.vue'
 import DropdownMenu, { type MenuEntry } from '../../ui/DropdownMenu.vue'
 import IconButton from '../../ui/IconButton.vue'
+import SegmentedControl from '../../ui/SegmentedControl.vue'
 import StatusDot from '../../ui/StatusDot.vue'
 import Switch from '../../ui/Switch.vue'
 import { confirm } from '../../ui/confirm'
@@ -79,9 +80,28 @@ const chat = useMutation({
   onError: failed(t('groups.chatFailed')),
   onSettled: () => readHostState(),
 })
-const enabled = computed({
-  get: () => (chat.isPending.value ? Boolean(chat.variables.value) : props.item.chat_enabled),
-  set: (value: boolean) => chat.mutate(value),
+const mode = computed({
+  get: () =>
+    (chat.isPending.value ? Boolean(chat.variables.value) : props.item.chat_enabled) ? 'chat' : 'plugins',
+  set: (value: 'chat' | 'plugins') => chat.mutate(value === 'chat'),
+})
+const modes = computed(() => [
+  { value: 'chat' as const, label: t('overview.groups.modeChat') },
+  { value: 'plugins' as const, label: t('overview.groups.modePlugins') },
+])
+
+const open = useMutation({
+  mutationFn: (enabled: boolean) => hostApi.setOpen(scene.value, enabled),
+  onSuccess: (value, enabled) => {
+    client.setQueryData(keys.scene.control(scene.value), value)
+    toast.success(t(enabled ? 'groups.opened' : 'groups.closed', { name: name.value }))
+  },
+  onError: failed(t('groups.openFailed')),
+  onSettled: () => readHostState(),
+})
+const opened = computed({
+  get: () => (open.isPending.value ? Boolean(open.variables.value) : props.item.scene_open),
+  set: (value: boolean) => open.mutate(value),
 })
 
 const resume = useMutation({
@@ -182,9 +202,16 @@ const actions = computed<MenuEntry[]>(() => [
       </p>
     </div>
     <div class="flex items-center gap-2">
+      <SegmentedControl
+        v-model="mode"
+        :options="modes"
+        size="sm"
+        :disabled="chat.isPending.value || !opened"
+        :label="t('overview.groups.chat', { name })"
+      />
       <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm font-medium text-ink-2">
-        {{ t('groups.chat') }}
-        <Switch v-model="enabled" :loading="chat.isPending.value" />
+        {{ t('groups.open') }}
+        <Switch v-model="opened" :loading="open.isPending.value" />
       </label>
       <DropdownMenu :items="actions">
         <IconButton :icon="Ellipsis" :label="t('groups.actions')" variant="secondary" />

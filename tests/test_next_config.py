@@ -61,7 +61,7 @@ def _host_config() -> dict:
     source["scenes"] = {
         "onebot:group:80001": {
             "persona": "personas/group", "attention": {
-                "activity": 0.7, "quiet_hours": {
+                "ambient_min_interval_seconds": 900.0, "quiet_hours": {
                     "start": "01:00", "end": "07:30", "direct": "defer",
                 },
             },
@@ -297,10 +297,10 @@ def test_isolated_config_resolves_paths_and_explicit_model_bindings(tmp_path):
     assert (config.attention.named_idle_seconds, config.attention.named_max_seconds) == (3.0, 8.0)
     assert config.attention.keyword_cooldown_seconds == 60.0
     assert (config.attention.focus_seconds, config.attention.focus_idle_seconds,
-            config.attention.focus_max_seconds) == (180.0, 4.0, 12.0)
-    assert (config.attention.activity, config.attention.ambient_threshold) == (0.3, 0.5)
+            config.attention.focus_max_seconds) == (120.0, 4.0, 12.0)
     assert (config.attention.ambient_min_interval_seconds,
-            config.attention.ambient_max_interval_seconds) == (60.0, 900.0)
+            config.attention.ambient_max_interval_seconds) == (600.0, 2400.0)
+    assert (config.attention.speech_burst, config.attention.speech_interval_seconds) == (3, 120.0)
     assert config.schedules.enabled is True and config.schedules.max_pending == 50
     assert config.schedules.owner is None
     assert config.schedules.admins == [] and config.schedules.whitelist == []
@@ -357,9 +357,9 @@ def test_explicit_multiscene_host_roundtrips_and_derives_existing_scene_contract
     assert group.panel is None and private.panel is None
     assert group.persona == root / "personas/group"
     assert private.persona == tmp_path / "private-persona"
-    assert group.attention.activity == 0.7
+    assert group.attention.ambient_min_interval_seconds == 900.0
     assert group.attention.quiet_hours.start == WallTime(1, 0)
-    assert private.attention.activity == 0.3
+    assert private.attention.ambient_min_interval_seconds == 600.0
     assert private.voice_mode == "direct" and private.schedules.owner == 'onebot:80002'
     assert group.model_settings("mind").model == private.model_settings("mind").model == "sample-mind"
     assert group.model_settings("mind").reasoning_effort == "high"
@@ -731,7 +731,7 @@ def test_scene_persona_write_contract_reuses_scene_validation(field, value):
 def test_scene_persona_public_save_preserves_unedited_root_values_and_relative_paths(tmp_path):
     root = tmp_path / "isolated"
     source = _config("personas/relative-package")
-    source["config_version"] = 4
+    source["config_version"] = 5
     source["persona_aliases"] = ["原称呼"]
     source["relationships"] = {'onebot:80002': "原说明"}
     source["behavior_addendum"] = "原行为补充"
@@ -1484,10 +1484,10 @@ def test_isolated_attention_accepts_explicit_short_direct_timing(tmp_path):
         "focus_seconds": 0.2,
         "focus_idle_seconds": 0.04,
         "focus_max_seconds": 0.08,
-        "activity": 0.8,
-        "ambient_threshold": 0.2,
         "ambient_min_interval_seconds": 0.05,
         "ambient_max_interval_seconds": 0.1,
+        "speech_burst": 1,
+        "speech_interval_seconds": 0.01,
         "max_extensions": 0,
     }
     _write_config(root, source)
@@ -1499,6 +1499,7 @@ def test_isolated_attention_accepts_explicit_short_direct_timing(tmp_path):
     assert (attention.named_idle_seconds, attention.named_max_seconds) == (0.03, 0.06)
     assert (attention.focus_seconds, attention.focus_idle_seconds, attention.focus_max_seconds) == (0.2, 0.04, 0.08)
     assert (attention.ambient_min_interval_seconds, attention.ambient_max_interval_seconds) == (0.05, 0.1)
+    assert (attention.speech_burst, attention.speech_interval_seconds) == (1, 0.01)
 
 
 @pytest.mark.parametrize(
@@ -1604,13 +1605,12 @@ def test_quiet_hours_reject_invalid_configuration(tmp_path, quiet, field):
         (lambda source: source.update(attention={"focus_seconds": -1}), "focus_seconds"),
         (lambda source: source.update(attention={"focus_idle_seconds": 13}), "focus_idle_seconds"),
         (lambda source: source.update(attention={"focus_max_seconds": 0}), "focus_max_seconds"),
-        (lambda source: source.update(attention={"activity": -0.1}), "activity"),
-        (lambda source: source.update(attention={"activity": 1.1}), "activity"),
-        (lambda source: source.update(attention={"activity": True}), "activity"),
-        (lambda source: source.update(attention={"ambient_threshold": 0}), "ambient_threshold"),
+        (lambda source: source.update(attention={"speech_burst": 0}), "speech_burst"),
+        (lambda source: source.update(attention={"speech_burst": True}), "speech_burst"),
+        (lambda source: source.update(attention={"speech_interval_seconds": -1}), "speech_interval_seconds"),
         (lambda source: source.update(attention={"ambient_min_interval_seconds": 0}), "ambient_min_interval_seconds"),
         (lambda source: source.update(attention={"ambient_max_interval_seconds": 0}), "ambient_max_interval_seconds"),
-        (lambda source: source.update(attention={"ambient_min_interval_seconds": 901}), "ambient_min_interval_seconds"),
+        (lambda source: source.update(attention={"ambient_min_interval_seconds": 2401}), "ambient_min_interval_seconds"),
         (lambda source: source.update(attention={"ambient_max_interval_seconds": "1"}), "ambient_max_interval_seconds"),
         (lambda source: source.update(attention={"focus_seconds": float("inf")}), "focus_seconds"),
     ],
@@ -2026,7 +2026,7 @@ def test_history_projection_policy_is_explicit_not_provider_inference(tmp_path, 
         load_config(root)
 
 
-@pytest.mark.parametrize("version,message", [(5, "由更新版本的 LenBot 写入；当前版本使用格式 4"),
+@pytest.mark.parametrize("version,message", [(6, "由更新版本的 LenBot 写入；当前版本使用格式 5"),
                                              ("1", "配置格式 '1' 无效")])
 def test_configuration_format_newer_than_the_current_one_or_invalid_is_refused(tmp_path, version, message):
     root = tmp_path / "lab"
@@ -2067,10 +2067,10 @@ def test_format_1_config_reads_as_the_current_format_and_upgrade_writes_it_back(
     source.update(config_version=1, delivery="onebot")
     _write_config(root, source)
     config = load_host_config(root)
-    assert config.config_version == 4 and config.delivery == "live"
+    assert config.config_version == 5 and config.delivery == "live"
     assert migrate_config_file(root) and not migrate_config_file(root)
     written = json.loads((root / "lenbot.config.json").read_text(encoding="utf-8"))
-    assert written["config_version"] == 4 and written["delivery"] == "live"
+    assert written["config_version"] == 5 and written["delivery"] == "live"
     assert written["scenes"] == source["scenes"]
 
 
@@ -2103,3 +2103,13 @@ def test_time_zones_resolve_without_a_system_zoneinfo_database():
     # Minimal Linux images ship no /usr/share/zoneinfo; the tzdata dependency covers them.
     script = "from zoneinfo import TZPATH, ZoneInfo; assert TZPATH == (); ZoneInfo('Asia/Shanghai')"
     subprocess.run([sys.executable, '-c', script], env={**os.environ, 'PYTHONTZPATH': ''}, check=True)
+
+
+def test_panel_wake_levels_match_the_attention_presets():
+    import re
+    from len_bot.next.configuration.chat import WAKE_LEVELS
+    source = (Path(__file__).parents[1] / 'src/len_bot/web/frontend/src/api/participation.ts').read_text(encoding='utf-8')
+    panel = {level: {key: float(value) for key, value in re.findall(r'(\w+): ([\d.]+)', body)}
+             for level, body in re.findall(r'(\w+): \{([^{}]+)\}', source)}
+    assert panel == {level: {key: float(value) for key, value in values.items()}
+                     for level, values in WAKE_LEVELS.items()}

@@ -25,11 +25,12 @@ from ...image_assets import OriginalImage
 from ..models.usage import UNBUDGETED, record_usage, totals as usage_totals
 from ..chat.schedule_time import CronTimeError, next_cron, parse_cron
 from .codec import decode_message, encode
-from .schema import FORMAT_RESET, business_script, create_database, expected_tables, require_columns, stored_state
+from .schema import business_script, create_database, expected_tables, require_columns, stored_state
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+FORMAT_UPGRADE = '请停止实例后执行 uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot。'
 MAX_SEARCH_TERMS = 8
 
 
@@ -48,16 +49,16 @@ def _require_current_format(path: Path, application_id: int, version: int, table
     if not tables:
         return
     if application_id == 0:
-        raise ValueError(f"{path} 带有数据表但没有 LenBot 的格式标识（application_id=0），不是当前格式的业务数据库。{FORMAT_RESET}")
+        raise ValueError(f"{path} 带有数据表但没有 LenBot 的格式标识（application_id=0），不是当前格式的业务数据库。{FORMAT_UPGRADE}")
     if application_id != 0x4C424E31:
         raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
     if version != FORMAT_VERSION:
-        raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
+        raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_UPGRADE}")
     missing = expected_tables() - tables
     if missing:
         names = sorted(missing)
         listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
-        raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
+        raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_UPGRADE}")
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -108,7 +109,8 @@ class Store:
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
         try:
             if state is not None and state[2]:
-                require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION)
+                require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION,
+                                guidance=FORMAT_UPGRADE)
             else:
                 if readonly:
                     raise ValueError(f'Existing business database is not initialized: {path}')
@@ -611,13 +613,14 @@ class Store:
                 self._save_attention(message.scene, attention_state)
             return seq
 
-    def pending_messages(self, scene: str) -> list[tuple[int, ChatMessage, float]]:
+    def pending_messages(self, scene: str, *, since: float | None = None) -> list[tuple[int, ChatMessage, float]]:
+        """``since`` keeps only messages that arrived at or after that time."""
         rows = self.db.execute(
             "SELECT seq,body,received_at FROM messages WHERE scene=? AND raw IS NOT NULL "
             "AND NOT (json_extract(body,'$.is_self')=1 AND json_extract(body,'$.send_status')='sent') "
             "AND seq>COALESCE((SELECT last_message_seq FROM mind_sessions WHERE scene=?),0) "
-            "ORDER BY seq",
-            (scene, scene),
+            + ("" if since is None else "AND received_at>=? ") + "ORDER BY seq",
+            (scene, scene) if since is None else (scene, scene, since),
         )
         return [(row[0], decode_message(row[1]), row[2]) for row in rows]
 
@@ -921,6 +924,32 @@ class Store:
             message = decode_message(body)
             sample.append((message, message.time if raw is None else received_at))
         return sample
+
+    def own_expressions_after(self, scene: str, entry: int) -> list[tuple[int, ChatMessage]]:
+        """Expressions the bot sent here after mind entry ``entry`` that reached the platform or the simulation,
+        as (entry, first part), oldest first. Plugin and host command messages are not expressions."""
+        first: dict[int, ChatMessage] = {}
+        # "+scene" keeps the planner on the expression index instead of scanning the scene's messages.
+        for entry_seq, body in self.db.execute(
+                "SELECT expression_entry_seq,body FROM messages WHERE expression_entry_seq>? AND +scene=? "
+                "AND json_extract(body,'$.send_status') IN ('sent','received','simulated') "
+                "ORDER BY expression_entry_seq,seq", (entry, scene)):
+            first.setdefault(entry_seq, decode_message(body))
+        return list(first.items())
+
+    def count_received(self, scene: str, since: float) -> int:
+        """Messages from others that arrived here after ``since``."""
+        return self.db.execute(
+            "SELECT COUNT(*) FROM messages WHERE scene=? AND COALESCE(received_at,json_extract(body,'$.time'))>? "
+            "AND json_extract(body,'$.is_self')=0", (scene, since)).fetchone()[0]
+
+    def last_expression(self, scene: str) -> tuple[int, float] | None:
+        """The bot's latest expression here: its mind entry and when its last part went out."""
+        row = self.db.execute(
+            "SELECT expression_entry_seq,json_extract(body,'$.time') FROM messages WHERE expression_entry_seq>0 "
+            "AND +scene=? AND json_extract(body,'$.send_status') IN ('sent','received','simulated') "
+            "ORDER BY expression_entry_seq DESC,seq DESC LIMIT 1", (scene,)).fetchone()
+        return None if row is None else (row[0], float(row[1]))
 
     def last_self_time(self, scene: str) -> float | None:
         row = self.db.execute(

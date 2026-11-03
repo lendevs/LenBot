@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { Pencil } from '@lucide/vue'
-import { learningApi, type JargonTerm, type Review } from '../../../api/learning'
+import { learningApi, type JargonTerm, type JargonView, type Review } from '../../../api/learning'
 import { keys } from '../../../api/query'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
@@ -24,15 +24,21 @@ const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
-const list = usePagedList<JargonTerm, Review>(
+const list = usePagedList<JargonTerm, JargonView>(
   (status, offset) => keys.scene.learning(props.scene, 'jargon', status, offset),
   (status, offset, signal) => learningApi.jargon(props.scene, status, offset, signal),
-  'pending',
+  'learned',
 )
 const filters = computed(() =>
-  (['pending', 'adopted', 'rejected'] as const).map((value) => ({
+  (['learned', 'adopted'] as const).map((value) => ({
     value,
     label: t(`groups.learning.jargon.${value}`),
+  })),
+)
+const moreFilters = computed(() =>
+  (['uncertain', 'ordinary', 'rejected'] as const).map((value) => ({
+    value,
+    label: t(`groups.learning.jargon.${value === 'ordinary' ? 'excluded' : value}`),
   })),
 )
 const edits = useEdits((item: JargonTerm) => ({ meaning: item.meaning ?? item.latest_meaning ?? '' }))
@@ -66,8 +72,19 @@ const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?
       size="sm"
       :label="t('groups.learning.kinds.jargon')"
       class="self-start"
-      @update:model-value="(value: Review) => list.choose(value)"
+      @update:model-value="(value: JargonView) => list.choose(value)"
     />
+    <details :open="['uncertain', 'ordinary', 'rejected'].includes(list.filter.value)">
+      <summary class="cursor-pointer text-sm text-muted">{{ t('groups.learning.jargon.more') }}</summary>
+      <SegmentedControl
+        :model-value="list.filter.value"
+        :options="moreFilters"
+        size="sm"
+        :label="t('groups.learning.jargon.more')"
+        class="mt-3 self-start"
+        @update:model-value="(value: JargonView) => list.choose(value)"
+      />
+    </details>
     <Skeleton v-if="list.query.isPending.value" :lines="4" />
     <ErrorNote
       v-else-if="list.query.isError.value"
@@ -87,9 +104,12 @@ const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?
             <Badge v-if="item.status === 'adopted'" tone="brand">
               {{ t('groups.learning.jargon.fixed') }}
             </Badge>
-            <Badge v-else-if="item.status === 'rejected' && item.same_meaning">
-              {{ t('groups.learning.jargon.sameAsOrdinary') }}
+            <Badge v-else-if="item.classification === 'ordinary'">
+              {{ t('groups.learning.jargon.ordinaryLabel') }}
             </Badge>
+            <span v-if="item.judgment?.aliases.length" class="text-xs text-muted">
+              {{ item.judgment.aliases.join(' / ') }}
+            </span>
           </div>
           <Field v-if="edits.editing(item.id)" :label="t('groups.learning.jargon.meaning')">
             <Input v-model="edits.draft(item.id).meaning" />
@@ -100,12 +120,28 @@ const busy = (item: JargonTerm) => save.isPending.value && save.variables.value?
               {{ t('groups.learning.jargon.latest')
               }}{{ item.latest_meaning || t('groups.learning.jargon.noMeaning') }}
             </p>
-            <p
-              v-if="item.status === 'rejected' && item.same_meaning && item.ordinary_meaning"
-              class="text-sm break-words text-muted"
-            >
-              {{ t('groups.learning.jargon.ordinary') }}{{ item.ordinary_meaning }}
+            <p v-if="item.judgment?.usage_condition" class="text-sm break-words text-muted">
+              {{ t('groups.learning.jargon.usageCondition') }}{{ item.judgment.usage_condition }}
             </p>
+            <p v-if="item.judgment?.difference" class="text-sm break-words text-muted">
+              {{ t('groups.learning.jargon.difference') }}{{ item.judgment.difference }}
+            </p>
+            <p v-if="item.judgment?.ordinary_meaning" class="text-sm break-words text-muted">
+              {{ t('groups.learning.jargon.ordinary') }}{{ item.judgment.ordinary_meaning }}
+            </p>
+            <div v-if="item.judgment?.evidence.length" class="flex flex-col gap-1 text-sm text-ink-2">
+              <span class="text-xs text-muted">
+                {{ t('groups.learning.jargon.evidenceCount', { n: item.judgment.evidence.length }) }}
+              </span>
+              <blockquote
+                v-for="evidence in item.judgment.evidence"
+                :key="evidence.message_id"
+                class="border-l-2 border-line pl-3"
+              >
+                {{ evidence.quote }}
+                <span class="text-xs text-subtle">#{{ evidence.message_id }}</span>
+              </blockquote>
+            </div>
           </template>
           <div class="flex flex-wrap items-center justify-end gap-2">
             <template v-if="edits.editing(item.id)">

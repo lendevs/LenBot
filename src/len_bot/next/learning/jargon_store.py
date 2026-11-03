@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import deque
 from collections.abc import Iterator, Sequence
 from typing import Literal, TYPE_CHECKING
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from ..storage.store import Store
 
 
-THRESHOLDS = (4, 8, 25, 100)
 SUMMARY_COLUMNS = (
     "id,scene,purpose,after_seq,through_seq,term_id,inference_count,started,ended,"
     "status,model_started,usage,tokens,error"
@@ -31,6 +31,7 @@ CREATE TABLE jargon (
     count INTEGER NOT NULL, sample_seqs TEXT NOT NULL,
     latest_meaning TEXT, confidence REAL, meaning TEXT,
     last_inference_count INTEGER NOT NULL DEFAULT 0,
+    judgment TEXT, last_evaluated_seq INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL CHECK(status IN ('pending','adopted','rejected')),
     updated REAL NOT NULL, UNIQUE(scene,term)
 );
@@ -112,17 +113,6 @@ class JargonStore:
             )
         return cursor.lastrowid
 
-    def begin_meaning(self, scene: str, term_id: int, count: int, request: dict) -> int:
-        with self.db:
-            cursor = self.db.execute(
-                "INSERT INTO jargon_calls(scene,purpose,term_id,inference_count,started,status,request) "
-                "SELECT scene,'meaning',id,?,?,'running',? FROM jargon WHERE scene=? AND id=?",
-                (count, self.store.now(), encode(request), scene, term_id),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError(f"Jargon term {term_id} is not in {scene}")
-        return cursor.lastrowid
-
     def mark_model_started(self, id: int) -> None:
         with self.db:
             self.db.execute("UPDATE jargon_calls SET model_started=? WHERE id=?",
@@ -155,7 +145,7 @@ class JargonStore:
             yield from ((seq, plain_text(message)) for seq, message, _ in rows)
             cursor = scanned
 
-    def complete_discovery(self, id: int, proposals: list[tuple[str, int]],
+    def complete_discovery(self, id: int, proposals: list[dict],
                            exclude_uids: Sequence[str]) -> None:
         """Scan outside the writer transaction, then publish counts and the cursor together."""
         call = self.db.execute(
@@ -169,15 +159,28 @@ class JargonStore:
         if state is None or state['after_seq'] != after:
             raise ValueError(f"Jargon discovery position changed for {scene}")
         known = {row['term']: row for row in self.db.execute(
-            'SELECT id,term,count,sample_seqs FROM jargon WHERE scene=?', (scene,))}
+            'SELECT * FROM jargon WHERE scene=?', (scene,))}
         recent = list(self._scan(scene, after, through, exclude_uids))
-        hits = {term: [seq for seq, text in recent if term in text] for term in known}
-        new = {term: {'count': 0, 'samples': deque(maxlen=20)} for term, _ in proposals if term not in known}
+        hits = {term: [seq for seq, text in recent if any(contains(form, text) for form in self.forms(self._item(row)))]
+                for term, row in known.items()}
+        new = {term: {'count': 0, 'samples': deque(maxlen=20)} for item in proposals if (term := item['term']) not in known}
         for seq, text in self._scan(scene, state['start_seq'], through, exclude_uids) if new else ():
             for term, values in new.items():
-                if term in text:
+                if contains(term, text):
                     values['count'] += 1
                     values['samples'].append(seq)
+        alias_groups = {}
+        for item in proposals:
+            if item['aliases'] and (item['term'] not in known or
+                    self.forms(self._item(known[item['term']])) != [item['term'], *item['aliases']] or
+                    any(alias in known and known[alias]['status'] == 'pending' for alias in item['aliases'])):
+                alias_groups[item['term']] = {'count': 0, 'samples': deque(maxlen=20),
+                                              'forms': [item['term'], *item['aliases']]}
+        for seq, text in self._scan(scene, state['start_seq'], through, exclude_uids) if alias_groups else ():
+            for group in alias_groups.values():
+                if any(contains(form, text) for form in group['forms']):
+                    group['count'] += 1
+                    group['samples'].append(seq)
         now = self.store.now()
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
@@ -186,12 +189,34 @@ class JargonStore:
                 raise ValueError(f"Jargon discovery position changed for {scene}")
             for term, row in known.items():
                 if hits[term]:
-                    samples = (json.loads(row['sample_seqs']) + hits[term])[-20:]
+                    judgment = self._item(row)['judgment']
+                    evidence_seqs = ([] if judgment is None else
+                                     [seq for e in judgment['evidence'] for seq in (e['seq'], e['term_seq'])])
+                    samples = sorted(set((json.loads(row['sample_seqs']) + hits[term])[-20:] + evidence_seqs))
                     self.db.execute('UPDATE jargon SET count=?,sample_seqs=?,updated=? WHERE id=?',
                                     (row['count'] + len(hits[term]), encode(samples), now, row['id']))
             for term, values in new.items():
                 self.db.execute("INSERT INTO jargon(scene,term,count,sample_seqs,status,updated) "
                                 "VALUES (?,?,?,?,'pending',?)", (scene, term, values['count'], encode(list(values['samples'])), now))
+            for item in proposals:
+                term = item['term']
+                judgment = {key: value for key, value in item.items() if key not in {'term', 'evaluated_seq'}}
+                self.db.execute(
+                    "UPDATE jargon SET judgment=?,latest_meaning=?,last_evaluated_seq=?,updated=? "
+                    "WHERE scene=? AND term=?",
+                    (encode(judgment), item['group_meaning'], item['evaluated_seq'], now, scene, term))
+                # Keep the original evidence messages available to retention and later evaluations.
+                row = self.db.execute("SELECT sample_seqs FROM jargon WHERE scene=? AND term=?", (scene, term)).fetchone()
+                samples = sorted(set(json.loads(row['sample_seqs']) + [
+                    seq for evidence in item['evidence'] for seq in (evidence['seq'], evidence['term_seq'])]))
+                self.db.execute("UPDATE jargon SET sample_seqs=? WHERE scene=? AND term=?", (encode(samples), scene, term))
+            for term, group in alias_groups.items():
+                for alias in group['forms'][1:]:
+                    self.db.execute("DELETE FROM jargon WHERE scene=? AND term=? AND status='pending'", (scene, alias))
+                row = self.db.execute("SELECT sample_seqs FROM jargon WHERE scene=? AND term=?", (scene, term)).fetchone()
+                samples = sorted(set(json.loads(row['sample_seqs']) + list(group['samples'])))
+                self.db.execute("UPDATE jargon SET count=?,sample_seqs=? WHERE scene=? AND term=?",
+                                (group['count'], encode(samples), scene, term))
             changed = self.db.execute('UPDATE jargon_state SET after_seq=? WHERE scene=? AND after_seq=?',
                                       (through, scene, after))
             if changed.rowcount != 1:
@@ -201,41 +226,27 @@ class JargonStore:
             if completed.rowcount != 1:
                 raise ValueError(f"No running jargon discovery call {id}")
 
-    def complete_meaning(self, id: int, meaning: str, confidence: float, *,
-                         ordinary_meaning: str | None = None, same_meaning: bool = False) -> None:
-        """A candidate still pending whose group usage is ``same_meaning`` as the word's ordinary sense
-        is rejected; the call keeps both judgements, which ``items`` reports with the term."""
-        with self.db:
-            self.db.execute("BEGIN IMMEDIATE")
-            call = self.db.execute(
-                "SELECT scene,term_id,inference_count FROM jargon_calls "
-                "WHERE id=? AND purpose='meaning' AND status='running'", (id,),
-            ).fetchone()
-            if call is None:
-                raise ValueError(f"No running jargon meaning call {id}")
-            now = self.store.now()
-            row = self.db.execute("SELECT status FROM jargon WHERE scene=? AND id=?",
-                                  (call["scene"], call["term_id"])).fetchone()
-            # Deletion, rejection or adoption while the model ran never recreates or changes the decision.
-            rejected = same_meaning and row is not None and row["status"] == "pending"
-            self.db.execute(
-                "UPDATE jargon SET latest_meaning=?,confidence=?,last_inference_count=?,updated=?"
-                + (",status='rejected'" if rejected else "") + " WHERE scene=? AND id=?",
-                (meaning, confidence, call["inference_count"], now,
-                 call["scene"], call["term_id"]),
-            )
-            self.db.execute(
-                "UPDATE jargon_calls SET status='complete',ended=?,"
-                "response=json_set(COALESCE(response,'{}'),'$.result',json(?)) WHERE id=?",
-                (now, encode({"ordinary_meaning": ordinary_meaning, "same_meaning": same_meaning}), id))
+    @staticmethod
+    def forms(item: dict) -> list[str]:
+        judgment = item['judgment']
+        return [item['term'], *(judgment['aliases'] if judgment else [])]
+
+    def _judged_alone(self, scene: str) -> list[dict]:
+        """Records judged on their own; a spelling another record names as its alias is judged with that record."""
+        items = [item for row in self.db.execute("SELECT * FROM jargon WHERE scene=? ORDER BY id", (scene,))
+                 if (item := self._item(row)) is not None]
+        merged = {alias for item in items for alias in self.forms(item)[1:]}
+        return [item for item in items if item['term'] not in merged]
 
     def pending(self, scene: str) -> list[dict]:
-        rows = self.db.execute(
-            "SELECT * FROM jargon WHERE scene=? AND status!='rejected' ORDER BY id", (scene,),
-        )
-        return [item for row in rows if (item := self._item(row)) is not None and
-                any(item["last_inference_count"] < threshold <= item["count"]
-                    for threshold in THRESHOLDS)]
+        """Automatic records not yet judged, and records with samples added since their last judgment."""
+        return [item for item in self._judged_alone(scene)
+                if item['judgment'] is None and item['status'] == 'pending'
+                or any(seq > item['last_evaluated_seq'] for seq in item['sample_seqs'])]
+
+    def for_messages(self, scene: str, texts: list[str]) -> list[dict]:
+        return [item for item in self._judged_alone(scene)
+                if any(contains(form, text) for form in self.forms(item) for text in texts)]
 
     def advance_empty(self, scene: str, after: int, through: int) -> None:
         with self.db:
@@ -252,23 +263,25 @@ class JargonStore:
             return None
         result = dict(row)
         result["sample_seqs"] = json.loads(result["sample_seqs"])
-        if "same_meaning" in result:
-            result["same_meaning"] = None if result["same_meaning"] is None else bool(result["same_meaning"])
+        result['judgment'] = None if result['judgment'] is None else json.loads(result['judgment'])
+        result['classification'] = 'uncertain' if result['judgment'] is None else result['judgment']['classification']
         return result
 
-    # The latest completed inference's comparison with the word's ordinary sense.
-    _JUDGED = (
-        "SELECT jargon.*,json_extract(judged.response,'$.result.ordinary_meaning') AS ordinary_meaning,"
-        "json_extract(judged.response,'$.result.same_meaning') AS same_meaning FROM jargon "
-        "LEFT JOIN jargon_calls AS judged ON judged.id=(SELECT MAX(id) FROM jargon_calls WHERE term_id=jargon.id "
-        "AND purpose='meaning' AND status='complete') WHERE "
-    )
-
     def items(self, scene: str, status: str | None, limit: int, offset: int) -> dict:
-        clause = "jargon.scene=?" if status is None else "jargon.scene=? AND jargon.status=?"
-        values = (scene,) if status is None else (scene, status)
+        clause = "scene=?"
+        values: tuple = (scene,)
+        if status in {'pending', 'adopted', 'rejected'}:
+            clause += " AND status=?"
+            values += (status,)
+        elif status is not None:
+            filters = {
+                'learned': "status='adopted' OR (status='pending' AND json_extract(judgment,'$.classification')='special')",
+                'uncertain': "status='pending' AND COALESCE(json_extract(judgment,'$.classification'),'uncertain')='uncertain'",
+                'ordinary': "status='pending' AND json_extract(judgment,'$.classification')='ordinary'",
+            }
+            clause += " AND (" + filters[status] + ")"
         rows = self.db.execute(
-            self._JUDGED + clause + " ORDER BY jargon.id DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM jargon WHERE " + clause + " ORDER BY id DESC LIMIT ? OFFSET ?",
             (*values, limit, offset),
         )
         total = self.db.execute("SELECT COUNT(*) FROM jargon WHERE " + clause, values).fetchone()[0]
@@ -277,7 +290,7 @@ class JargonStore:
 
     def item(self, scene: str, id: int) -> dict | None:
         return self._item(self.db.execute(
-            self._JUDGED + "jargon.scene=? AND jargon.id=?", (scene, id),
+            "SELECT * FROM jargon WHERE scene=? AND id=?", (scene, id),
         ).fetchone())
 
     def update(self, scene: str, id: int, meaning: str | None, status: str) -> dict | None:
@@ -301,13 +314,23 @@ class JargonStore:
 
     def matches(self, scene: str, texts: list[str], limit: int = 10) -> list[dict]:
         rows = self.db.execute(
-            "SELECT term,CASE WHEN status='adopted' THEN meaning ELSE latest_meaning END AS meaning,"
-            "CASE WHEN status='adopted' THEN '人工修订' ELSE '自动推断' END AS source "
-            "FROM jargon WHERE scene=? AND status!='rejected'", (scene,),
-        )
-        found = [dict(row) for row in rows if row["meaning"]
-                 and any(row["term"] in text for text in texts)]
-        return sorted(found, key=lambda item: (-len(item["term"]), item["term"]))[:limit]
+            "SELECT * FROM jargon WHERE scene=? AND (status='adopted' OR "
+            "(status='pending' AND json_extract(judgment,'$.classification')='special'))", (scene,))
+        controlled = {row['term'] for row in self.db.execute(
+            "SELECT term FROM jargon WHERE scene=? AND status!='pending'", (scene,))}
+        found = []
+        for row in rows:
+            item = self._item(row)
+            forms = [item['term'], *(form for form in self.forms(item)[1:] if form not in controlled)]
+            if not any(contains(form, text) for form in forms for text in texts):
+                continue
+            judgment = item['judgment']
+            fixed = item['status'] == 'adopted'
+            found.append({'term': item['term'], 'meaning': item['meaning'] if fixed else item['latest_meaning'],
+                          'source': '人工固定' if fixed else '自动学习',
+                          'usage_condition': None if fixed or judgment is None else judgment['usage_condition'],
+                          'evidence': [] if fixed or judgment is None else [e['quote'] for e in judgment['evidence'][:2]]})
+        return sorted(found, key=lambda item: (-len(item['term']), item['term']))[:limit]
 
     def context(self, scene: str, sample_seq: int,
                 exclude_uids: Sequence[str]) -> list[tuple[int, ChatMessage, float]]:
@@ -341,3 +364,10 @@ class JargonStore:
         previous = side(before=True, needed=4)
         following = side(before=False, needed=3)
         return sorted([*previous, *following], key=lambda item: item[0])
+
+
+def contains(term: str, text: str) -> bool:
+    """Latin words and abbreviations match at word boundaries; Chinese forms match literally."""
+    left = r"(?<![A-Za-z0-9_])" if term[0].isascii() and term[0].isalnum() else ""
+    right = r"(?![A-Za-z0-9_])" if term[-1].isascii() and term[-1].isalnum() else ""
+    return re.search(left + re.escape(term) + right, text) is not None

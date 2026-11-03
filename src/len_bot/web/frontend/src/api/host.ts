@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { http } from './client'
-import type { Participation } from './participation'
+import type { Participation, WakeLevel } from './participation'
 
 export interface ItemHealth {
   name: string
@@ -12,11 +12,11 @@ export interface ItemHealth {
 
 /** Whether the Bot speaks here unprompted now; `changes_at` is when that changes without an event (Unix seconds). */
 export interface ChatStatus {
-  status: 'chatting' | 'paused' | 'quiet' | 'limited'
+  status: 'chatting' | 'paused' | 'quiet' | 'limited' | 'closed'
   changes_at: number | null
 }
 
-export type WakeLevel = 'active' | 'moderate' | 'quiet'
+export type { WakeLevel }
 
 export interface HostScene {
   scene: string
@@ -26,6 +26,8 @@ export interface HostScene {
   persona_switch: { key: string; name: string } | null
   voice_mode: string
   timezone: string
+  /** False when closed in the panel: neither chat nor plugins answer there. */
+  scene_open: boolean
   chat_enabled: boolean
   chat_status: ChatStatus
   attention: Participation
@@ -143,6 +145,8 @@ export const hostApi = {
   sceneTitles: (signal?: AbortSignal) => http.get<SceneTitles>('/api/host/scene-titles', undefined, signal),
   setChat: (scene: string, enabled: boolean) =>
     http.put<SceneControl>(`${scenePath(scene)}/control/chat`, { enabled }),
+  setOpen: (scene: string, enabled: boolean) =>
+    http.put<SceneControl>(`${scenePath(scene)}/control/open`, { enabled }),
   setWakeLevel: (scene: string, level: WakeLevel) =>
     http.put<unknown>(`/api/host/settings/scenes/${encodeURIComponent(scene)}/wake-level`, { level }),
   control: (scene: string, signal?: AbortSignal) =>

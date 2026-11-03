@@ -36,8 +36,7 @@
     "only_direct": true,
     "direct_idle_seconds": 0,
     "direct_max_seconds": 0.1,
-    "focus_seconds": 0,
-    "activity": 0
+    "focus_seconds": 0
   },
   "evaluation": {
     "profiles": {

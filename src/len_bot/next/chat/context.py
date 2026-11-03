@@ -157,7 +157,8 @@ def jargon_context(config: LabConfig, store: Store, messages: list[ChatMessage],
     if not terms:
         return None
     return Template(read_prompt("next_jargon_context.md")).substitute(
-        jargon=encode([{"词": item["term"], "含义": item["meaning"], "来源": item["source"]} for item in terms]),
+        jargon=encode([{"词": item["term"], "群内用法": item["meaning"],
+                        "适用语境": item["usage_condition"], "依据": item["evidence"], "来源": item["source"]} for item in terms]),
     )
 
 
@@ -272,18 +273,22 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
         count=len(expressions), habits="，".join(habits))
 
 
+RECENT_SECONDS = 600
+
+
 def current_attention(config: LabConfig, store: Store) -> str:
     attention = store.load_attention(config.scene)
-    last = None if attention is None else attention.get('last_contact_at')
-    closed = None if attention is None else attention.get('focus_closed_at')
-    until = None if last is None else last + config.attention.focus_seconds
-    active = (not config.attention.only_direct and until is not None and until > store.now()
-              and (not config.attention.close_focus_on_silence or closed is None))
-    zone = ZoneInfo(config.timezone)
-    text = ('至 ' + datetime.fromtimestamp(until, zone).strftime('%H:%M:%S') if active else '已关闭')
-    if config.attention.close_focus_on_silence and closed is not None:
-        text += '（' + datetime.fromtimestamp(closed, zone).strftime('%H:%M:%S') + ' 沉默后关闭）'
-    text = '对话继续：' + text
+    now, zone = store.now(), ZoneInfo(config.timezone)
+    window = config.attention.focus_seconds
+    followups = ({} if attention is None or config.attention.only_direct
+                 else attention.get('followups') or {})
+    waiting = [('任何人' if who == '*' else who) + ' 至 ' + datetime.fromtimestamp(at + window, zone).strftime('%H:%M:%S')
+               for who, at in followups.items() if at + window > now]
+    text = '等接话：' + ('、'.join(waiting) if waiting else '无')
+    if config.scene.split(':', 2)[1] == 'group':
+        spoken = sum(at > now - RECENT_SECONDS for at in speech_quota(store, config).times)
+        text += (f'\n最近 {RECENT_SECONDS // 60} 分钟：你说了 {spoken} 句，'
+                 f'群里其他人 {store.count_received(config.scene, now - RECENT_SECONDS)} 条')
     if attention is not None:
         disposition = attention.get('disposition')
         if disposition is not None and disposition['until'] > store.now():
@@ -324,12 +329,18 @@ class ChatContext:
                               audio=AudioStore(self.store).captions(message.scene, message.platform_message_id))
 
     def batch(self, messages: Sequence[ChatMessage], *, reason: str | None = None) -> str:
+        return self.render_items(self.batch_items(messages), reason=reason)
+
+    def batch_items(self, messages: Sequence[ChatMessage]) -> list[tuple[ChatMessage, ChatMessage | None, dict[int, str]]]:
+        """Each message with its quoted message and audio captions, read once for repeated rendering."""
         records = AudioStore(self.store)
-        return render_batch([
-            (message, None if message.reply_to is None else
-             self.store.find_message(message.scene, message.reply_to),
-             records.captions(message.scene, message.platform_message_id)) for message in messages
-        ], timezone=self.config.timezone, reason=reason)
+        return [(message, None if message.reply_to is None else
+                 self.store.find_message(message.scene, message.reply_to),
+                 records.captions(message.scene, message.platform_message_id)) for message in messages]
+
+    def render_items(self, items: Sequence[tuple[ChatMessage, ChatMessage | None, dict[int, str]]], *,
+                     reason: str | None = None) -> str:
+        return render_batch(items, timezone=self.config.timezone, reason=reason)
 
     def render_text(self, message: ChatMessage) -> str:
         quote = (None if message.reply_to is None else

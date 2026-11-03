@@ -73,6 +73,17 @@ async def _upkeep(root, replies):
                 yield upkeep, store, memory, forks, lambda: [body for _, _, body in received]
 
 
+def _judgment(term, classification='uncertain', meaning=None, evidence=None):
+    return {'term': term, 'classification': classification, 'group_meaning': meaning,
+            'ordinary_meaning': None, 'difference': '群内的特定指代' if meaning else None,
+            'usage_condition': '本群的构建讨论' if meaning else None,
+            'aliases': [], 'evidence': evidence or []}
+
+
+def _evidence(key, quote, kind='definition', episode='build'):
+    return {'message_id': key, 'quote': quote, 'kind': kind, 'term_message_id': key, 'episode': episode}
+
+
 def _group_messages(store: Store) -> None:
     for index, (user, text) in enumerate([(70002, '周末打游戏冲冲冲 yyds'), (70003, 'yyds 今天也是'),
                                           (70002, 'yyds yyds'), (70003, '真的 yyds')]):
@@ -86,8 +97,7 @@ async def test_one_pass_writes_memory_learns_and_records_one_upkeep_call(tmp_pat
                                  'reason': '40001 自己说的'}),
                      ('say', {'content': '我也想玩', 'end_turn': True})),
         _text({'expressions': [{'situation': '有人约周末打游戏', 'style': '冲冲冲', 'sources': ['40001']}],
-               'terms': [{'term': 'yyds', 'sources': ['40001', '40002']}]}),
-        _text({'meanings': [{'term': 'yyds', 'meaning': '夸东西很厉害', 'ordinary_meaning': '永远的神', 'same_meaning': False, 'confidence': 0.8}]}),
+               'terms': [_judgment('yyds', 'ordinary')]}),
     ]
     async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
         _group_messages(store)
@@ -110,16 +120,12 @@ async def test_one_pass_writes_memory_learns_and_records_one_upkeep_call(tmp_pat
         assert learning.latest(SCENE)['status'] == 'complete'
         assert [(item['situation'], item['style']) for item in learning.adopted(SCENE)] == [('有人约周末打游戏', '冲冲冲')]
         jargon = JargonStore(store)
-        assert [(item['term'], item['count']) for item in jargon.pending(SCENE)] == [('yyds', 4)]
+        assert jargon.pending(SCENE) == []
+        assert jargon.items(SCENE, 'ordinary', 20, 0)['items'][0]['count'] == 4
+        assert jargon.matches(SCENE, ['yyds']) == []
         calls = store.db.execute('SELECT role, turn_id FROM model_calls').fetchall()
         assert [tuple(row) for row in calls] == [('upkeep', None), ('upkeep', None)]
 
-        # The discovered term reached a threshold; the next pass asks only for its meaning.
-        upkeep.request(SCENE, 'jargon')
-        assert await upkeep._step(SCENE)
-        assert 'yyds' in bodies()[2]['messages'][-1]['content']
-        assert jargon.pending(SCENE) == []
-        assert store.db.execute("SELECT latest_meaning FROM jargon WHERE term='yyds'").fetchone()[0] == '夸东西很厉害'
         assert not await upkeep._step(SCENE)
 
 
@@ -181,7 +187,7 @@ async def test_a_failed_pass_runs_again_by_itself(tmp_path, monkeypatch):
 async def test_items_that_fail_a_check_are_dropped_and_the_pass_completes(tmp_path):
     replies = [_text({'expressions': [{'situation': '有人约周末打游戏', 'style': '冲冲冲', 'sources': ['40001', '99999']},
                                       {'situation': '', 'style': '空情境', 'sources': ['40001']}],
-                      'terms': [{'term': 'yyds', 'sources': ['40001']}, {'term': '不存在的词', 'sources': ['40002']}]})]
+                      'terms': [_judgment('yyds'), _judgment('不存在的词')]})]
     async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
         _group_messages(store)
         upkeep.request(SCENE, 'expressions')
@@ -215,9 +221,9 @@ def _reply(text: str) -> ModelReply:
 def test_results_keep_only_items_citing_member_messages_of_the_pass():
     humans = {'1', '2'}
     texts = {'1': '今天 yyds', '2': '好耶'}
-    results, dropped = parse_results(_reply('```json\n{"terms": [{"term": "yyds", "sources": ["1", "2"]}]}\n```'),
+    results, dropped = parse_results(_reply('```json\n' + json.dumps({'terms': [_judgment('yyds')]}) + '\n```'),
                                      humans, texts, set())
-    assert results['terms'] == [{'term': 'yyds', 'sources': ['1']}] and results['expressions'] == [] and not dropped
+    assert results['terms'] == [_judgment('yyds')] and results['expressions'] == [] and not dropped
     results, dropped = parse_results(_reply(json.dumps({
         'expressions': [{'situation': 'a', 'style': 'b', 'sources': ['9']}],
         'effects': [{'entry_seq': 5, 'reaction': 'agree', 'reason': '接话了'},
@@ -302,76 +308,157 @@ async def test_the_worker_keeps_running_after_an_unexpected_error(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_meaning_protocol_rejects_ordinary_usage_and_keeps_adopted_decisions(tmp_path):
-    result = {'meanings': [
-        {'term': '早餐', 'meaning': '早晨吃的一餐', 'ordinary_meaning': '早晨吃的一餐',
-         'same_meaning': True, 'confidence': 0.99},
-        {'term': '洗锅', 'meaning': '本群指清理构建缓存', 'ordinary_meaning': '清洗炊具',
-         'same_meaning': False, 'confidence': 0.95},
-        {'term': 'yyds', 'meaning': '模型返回的新解释', 'ordinary_meaning': '永远的神',
-         'same_meaning': True, 'confidence': 0.9},
-    ]}
-    async with _upkeep(tmp_path, [_text(result)]) as (upkeep, store, memory, forks, bodies):
+async def test_jargon_discovery_reclassification_and_manual_priority(tmp_path):
+    first = _judgment('洗锅', 'special', '清理构建缓存',
+                      [_evidence('52001', '本群洗锅就是清理构建缓存')])
+    ordinary = _judgment('早餐', 'ordinary')
+    async with _upkeep(tmp_path, [_text({'terms': [first, ordinary]}),
+                                  _text({'terms': [_judgment('洗锅', 'uncertain'), ordinary]}),
+                                  _text({'terms': [first, ordinary]})]) as (upkeep, store, memory, forks, bodies):
+        _receive(store, '本群洗锅就是清理构建缓存', 70002, 52001)
+        _receive(store, '我在吃早餐', 70003, 52002)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
         records = JargonStore(store)
-        proposals = []
-        for index, term in enumerate(['早餐', '洗锅', 'yyds']):
-            for repeat in range(4):
-                ident = 52000 + index * 10 + repeat
-                _receive(store, f'{term} 今天也提到一次', 70002, ident)
-                if repeat == 0:
-                    proposals.append((term, store.max_message_seq(SCENE)))
-        call = records.begin_discovery(SCENE, 0, store.max_message_seq(SCENE), {})
-        records.complete_discovery(call, proposals, exclude_uids=[])
-        by_term = {item['term']: item for item in records.items(SCENE, None, 100, 0)['items']}
-        adopted = records.update(SCENE, by_term['yyds']['id'], '人工固定含义', 'adopted')
-        changed = asyncio.Event()
-        upkeep.on_update = changed.set
-        upkeep.start()
-        try:
-            upkeep.request(SCENE, 'jargon')
-            async with asyncio.timeout(5):
-                while records.pending(SCENE):
-                    await changed.wait()
-                    changed.clear()
-        finally:
-            await upkeep.close()
-        ordinary = records.item(SCENE, by_term['早餐']['id'])
-        special = records.item(SCENE, by_term['洗锅']['id'])
-        assert (ordinary['status'], ordinary['latest_meaning']) == ('rejected', '早晨吃的一餐')
-        assert (ordinary['ordinary_meaning'], ordinary['same_meaning']) == ('早晨吃的一餐', True)
-        assert (special['status'], special['latest_meaning']) == ('pending', '本群指清理构建缓存')
-        assert (special['ordinary_meaning'], special['same_meaning']) == ('清洗炊具', False)
-        rejected = records.items(SCENE, 'rejected', 20, 0)['items']
-        assert [(item['term'], item['same_meaning']) for item in rejected] == [('早餐', True)]
-        # An adopted term keeps its decision and fixed meaning; only the latest inference changes.
-        relearned = records.item(SCENE, adopted['id'])
-        assert (relearned['status'], relearned['meaning']) == ('adopted', '人工固定含义')
-        assert (relearned['latest_meaning'], relearned['same_meaning']) == ('模型返回的新解释', True)
-        assert store.db.execute("SELECT count(*) FROM jargon_calls WHERE term_id=?", (adopted['id'],)).fetchone()[0] == 1
-        assert len(bodies()) == 1
-        raw = records.call(SCENE, records.latest(SCENE)['id'])
-        assert 'ordinary_meaning' in str(raw) and 'same_meaning' in str(raw)
-
-
-def test_adoption_during_meaning_request_preserves_manual_record(tmp_path):
-    from len_bot.next.platform.onebot_messages import parse_message
-
-    with Store(tmp_path / 'chat.db') as store:
-        records = JargonStore(store)
-        records.initialize(SCENE, 0)
-        for index in range(4):
-            raw = {'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
-                   'user_id': 70002, 'message_id': f'usage-{index}', 'time': 1790000000,
-                   'sender': {'nickname': '成员', 'role': 'member'},
-                   'message': [{'type': 'text', 'data': {'text': '洗锅表示清缓存'}}]}
-            store.enqueue(parse_message(raw, own_message_ids=set()), raw, 1790000000)
-        discovery = records.begin_discovery(SCENE, 0, store.max_message_seq(SCENE), {})
-        records.complete_discovery(discovery, [('洗锅', 1)], exclude_uids=[])
-        term = records.pending(SCENE)[0]
-        call = records.begin_meaning(SCENE, term['id'], term['count'], {})
-        records.update(SCENE, term['id'], '人工确认：清缓存', 'adopted')
-        records.complete_meaning(call, '异步返回的另一种解释', 0.7, ordinary_meaning='清洗炊具', same_meaning=True)
-        item = records.item(SCENE, term['id'])
-        assert (item['status'], item['meaning'], item['latest_meaning']) == ('adopted', '人工确认：清缓存', '异步返回的另一种解释')
+        learned = records.items(SCENE, 'learned', 20, 0)['items']
+        assert len(learned) == 1 and learned[0]['term'] == '洗锅'
+        term = learned[0]
+        match = records.matches(SCENE, ['这次构建要洗锅'])
+        assert match[0]['meaning'] == '清理构建缓存' and match[0]['usage_condition'] == '本群的构建讨论'
         assert records.pending(SCENE) == []
-        assert records.call(SCENE, call)['status'] == 'complete'
+        assert len(bodies()) == 1
+        records.update(SCENE, term['id'], '人工指定的解释', 'adopted')
+        _receive(store, '洗锅这个解释范围不准确', 70003, 52003)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert records.item(SCENE, term['id'])['classification'] == 'uncertain'
+        assert records.matches(SCENE, ['洗锅'])[0]['meaning'] == '人工指定的解释'
+        records.update(SCENE, term['id'], None, 'rejected')
+        _receive(store, '本群洗锅就是清理构建缓存', 70002, 52004)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert records.item(SCENE, term['id'])['status'] == 'rejected'
+        assert records.matches(SCENE, ['洗锅']) == []
+        assert len(bodies()) == 3
+
+
+@pytest.mark.parametrize('change', [
+    {'classification': 'made_up'},
+    {'group_meaning': None},
+    {'evidence': [_evidence('bot', '洗锅就是清缓存')]},
+    {'evidence': [_evidence('1', '原文没有这句话')]},
+    {'evidence': [_evidence('3', '没问题', 'usage')]},
+    {'evidence': [_evidence('1', '洗锅就是清缓存', 'usage')]},
+    {'aliases': ['刷锅']},
+    {'evidence': [_evidence(['1'], '洗锅就是清缓存')]},
+])
+def test_jargon_protocol_requires_grounded_special_usage(change):
+    item = {**_judgment('洗锅', 'special', '清缓存', [_evidence('1', '洗锅就是清缓存')]), **change}
+    results, dropped = parse_results(_reply(json.dumps({'terms': [item]})), {'1', '2', '3'},
+                                     {'1': '洗锅就是清缓存', '2': '洗锅', '3': '没问题'}, set())
+    assert results['terms'] == [] and dropped
+
+
+def test_jargon_protocol_deduplicates_sources_and_accepts_adjacent_explanations():
+    item = _judgment('洗锅', 'special', '清缓存',
+                     [_evidence('2', '是指清缓存'), _evidence('2', '是指清缓存')])
+    for evidence in item['evidence']:
+        evidence['term_message_id'] = '1'
+    results, dropped = parse_results(_reply(json.dumps({'terms': [item]})), {'1', '2'},
+                                     {'1': '什么是洗锅？', '2': '是指清缓存'}, set())
+    assert not dropped and len(results['terms'][0]['evidence']) == 1
+    usage = _judgment('洗锅', 'special', '清缓存', [
+        _evidence('1', '洗锅后编译好了', 'usage', 'day1'),
+        _evidence('2', '先洗锅再重新构建', 'usage', 'day2')])
+    results, dropped = parse_results(_reply(json.dumps({'terms': [usage]})), {'1', '2'},
+                                     {'1': '洗锅后编译好了', '2': '先洗锅再重新构建'}, set())
+    assert not dropped and results['terms'][0]['classification'] == 'special'
+
+
+@pytest.mark.asyncio
+async def test_alias_evidence_merges_automatic_forms_and_keeps_manual_control(tmp_path):
+    alias = _judgment('手帐本', 'special', '固定资料标签', [
+        _evidence('53002', '本群的手帐本和手账本都指固定资料标签')])
+    alias['aliases'] = ['手账本']
+    async with _upkeep(tmp_path, [_text({'terms': [_judgment('手账本')]}),
+                                  _text({'terms': [alias]}),
+                                  _text({'terms': [alias]})]) as (upkeep, store, memory, forks, bodies):
+        _receive(store, '手账本今天有更新', 70002, 53001)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        records = JargonStore(store)
+        _receive(store, '本群的手帐本和手账本都指固定资料标签', 70003, 53002)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        items = records.items(SCENE, None, 20, 0)['items']
+        assert len(items) == 1 and items[0]['term'] == '手帐本'
+        assert items[0]['count'] == 2
+        assert records.matches(SCENE, ['手账本'])[0]['meaning'] == '固定资料标签'
+        # An explicitly disabled spelling retains its decision during another merge.
+        with store.db:
+            store.db.execute("INSERT INTO jargon(scene,term,count,sample_seqs,status,updated) "
+                             "VALUES (?, '手账本',1,'[1]','rejected',0)", (SCENE,))
+        _receive(store, '本群的手帐本和手账本都指固定资料标签', 70003, 53003)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert records.items(SCENE, 'rejected', 20, 0)['items'][0]['term'] == '手账本'
+        assert records.matches(SCENE, ['手账本']) == []
+        assert records.matches(SCENE, ['手帐本'])[0]['meaning'] == '固定资料标签'
+
+
+@pytest.mark.asyncio
+async def test_latin_jargon_matches_whole_words_and_reassessment_removes_automatic_context(tmp_path):
+    definition = _judgment('O', 'special', '本群的固定测试节点', [
+        _evidence('54001', '在我们群 O 指固定测试节点')])
+    async with _upkeep(tmp_path, [_text({'terms': [definition]}),
+                                  _text({'terms': [_judgment('O', 'ordinary')]})]) as (upkeep, store, memory, forks, bodies):
+        _receive(store, '在我们群 O 指固定测试节点', 70002, 54001)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        records = JargonStore(store)
+        assert records.matches(SCENE, ['FOO OOPS']) == []
+        assert records.matches(SCENE, ['节点 O 可以启动'])
+        _receive(store, '现在 O 按普通字母使用了', 70003, 54002)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert records.matches(SCENE, ['O']) == []
+        assert records.pending(SCENE) == []
+
+
+@pytest.mark.asyncio
+async def test_a_spelling_merged_as_an_alias_is_not_judged_again_and_known_terms_wait_for_a_due_pass(tmp_path):
+    alias = _judgment('手帐本', 'special', '固定资料标签', [_evidence('53002', '本群的手帐本和手账本都指固定资料标签')])
+    alias['aliases'] = ['手账本']
+    async with _upkeep(tmp_path, [_text({'terms': [alias]})] * 2) as (upkeep, store, memory, forks, bodies):
+        records = JargonStore(store)
+        with store.db:
+            store.db.execute("INSERT INTO jargon(scene,term,count,sample_seqs,status,updated) "
+                             "VALUES (?, '手账本',1,'[1]','rejected',0), (?, '旧词',1,'[1]','pending',0)", (SCENE, SCENE))
+        # Unjudged records alone do not start a pass.
+        assert not await upkeep._step(SCENE) and bodies() == []
+        _receive(store, '本群的手帐本和手账本都指固定资料标签', 70003, 53002)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert records.items(SCENE, 'rejected', 20, 0)['items'][0]['term'] == '手账本'
+        assert [item['term'] for item in records.pending(SCENE)] == ['旧词']
+        # The reply leaves out 旧词: asked once more, then it waits for a later pass.
+        assert not await upkeep._step(SCENE)
+        assert len(bodies()) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_known_term_without_a_usable_judgment_waits_and_the_rest_of_the_pass_completes(tmp_path):
+    unusable = _judgment('手账本', 'uncertain', None, [_evidence('53002', '这句不在原话里', kind='usage')])
+    async with _upkeep(tmp_path, [_text({'terms': [_judgment('手账本')]}), _text({'terms': [unusable]}),
+                                  _text({'terms': [unusable]})]) as (upkeep, store, memory, forks, bodies):
+        _receive(store, '手账本今天有更新', 70002, 53001)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        before = memory.jobs.after(SCENE)
+        _receive(store, '手账本又更新了', 70002, 53002)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert SCENE not in upkeep._failures and len(bodies()) == 3
+        assert memory.jobs.after(SCENE) > before
+        assert JargonStore(store).state(SCENE)['after_seq'] == memory.jobs.after(SCENE)
+        assert [item['term'] for item in JargonStore(store).pending(SCENE)] == ['手账本']

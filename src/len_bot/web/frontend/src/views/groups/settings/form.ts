@@ -219,7 +219,7 @@ export function useSettingsForm(scene: Ref<string>) {
     for (const [key, number] of Object.entries(attention)) {
       if (
         typeof number !== 'number' &&
-        (key.endsWith('_seconds') || key === 'activity' || key === 'max_extensions')
+        (key.endsWith('_seconds') || key === 'speech_burst' || key === 'max_extensions')
       )
         found[`attention.${key}`] = required
     }

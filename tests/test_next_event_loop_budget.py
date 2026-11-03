@@ -151,3 +151,53 @@ def test_a_whole_process_pause_is_not_counted_as_a_stall():
         return monitor.state()
     state = asyncio.run(run())
     assert state['pauses'] == 1 and state['stalls'] == 0 and state['max_lag_ms'] == 0
+
+
+def test_batch_parts_match_greedy_packing_and_read_each_message_once(tmp_path, monkeypatch):
+    import json
+    from test_next_persona_permissions import _package
+    from len_bot.next.chat.attention import SceneRunner
+    from len_bot.next.chat.recap import estimate_content
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.config import load_config
+    from len_bot.next.persona.profile import load_persona
+    package = _package(tmp_path, 'plain', tools=['say'], documents={})
+    root = tmp_path / 'instance'
+    root.mkdir()
+    (root / 'lenbot.config.json').write_text(json.dumps({
+        'compaction': {'input_tokens': 60000, 'keep_recent_tokens': 300}, 'mode': 'isolated',
+        'scene': 'onebot:group:80001', 'bot_id': 'onebot:90001', 'timezone': 'UTC', 'database': 'state.sqlite3',
+        'persona': str(package), 'voice_mode': 'direct',
+        'models': {'providers': {'synthetic': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1',
+                                               'api_key': 'synthetic-unused-key'}},
+                   'roles': {'mind': {'provider': 'synthetic', 'model': 'synthetic-mind',
+                                      'context_window_tokens': 128000}}}}, ensure_ascii=False), encoding='utf-8')
+    config = load_config(root)
+    with Store(config.database) as store:
+        runner = SceneRunner(Chat(config, load_persona(package), store, None), lambda event: None)
+        for index in range(120):
+            segments = [{'type': 'text', 'data': {'text': '合成消息' * (1 + index % 9)}}]
+            if index % 5 == 4:
+                segments.insert(0, {'type': 'reply', 'data': {'id': str(50001 + index - 3)}})
+            runner.receive({'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
+                            'user_id': 70001 + index % 4, 'message_id': 50001 + index, 'time': 1790000000 + index,
+                            'sender': {'nickname': f'成员{index % 4}', 'role': 'member'}, 'message': segments})
+        pending = store.pending_messages(config.scene)
+        context, target = runner.chat.context, 300
+        # The previous packing: add one message at a time and close the part once the target is exceeded.
+        expected, selected, text = [], [], ''
+        for _, message, _ in pending:
+            candidate = context.batch([*selected, message], reason='[原因]' if not expected else None)
+            if selected and estimate_content(candidate) > target:
+                expected.append(text)
+                selected, text = [message], context.batch([message])
+            else:
+                selected, text = [*selected, message], candidate
+        expected.append(text)
+        lookups = []
+        real = store.find_message
+        monkeypatch.setattr(store, 'find_message', lambda *args: lookups.append(args) or real(*args))
+        through, contents = runner.batch(pending, '[原因]')
+    assert through == pending[-1][0]
+    assert len(expected) > 5 and contents == expected
+    assert len(lookups) == sum(message.reply_to is not None for _, message, _ in pending)

@@ -54,6 +54,25 @@ export interface Expression {
   disliked?: number
 }
 
+export type JargonView = 'learned' | 'adopted' | 'uncertain' | 'ordinary' | 'rejected'
+
+export interface JargonJudgment {
+  classification: 'special' | 'ordinary' | 'uncertain'
+  group_meaning: string | null
+  ordinary_meaning: string | null
+  difference: string | null
+  usage_condition: string | null
+  aliases: string[]
+  evidence: {
+    message_id: string
+    quote: string
+    kind: string
+    episode: string
+    seq: number
+    term_seq: number
+  }[]
+}
+
 export interface JargonTerm {
   id: number
   term: string
@@ -62,9 +81,9 @@ export interface JargonTerm {
   confidence: number | null
   meaning: string | null
   status: Review
-  /** The latest inference's ordinary sense of the word, and whether the group uses it that way. */
-  ordinary_meaning?: string | null
-  same_meaning?: boolean | null
+  classification: JargonJudgment['classification']
+  judgment: JargonJudgment | null
+  last_evaluated_seq: number
 }
 
 export interface Sticker {
@@ -140,7 +159,7 @@ export const learningApi = {
   putExpression: (scene: string, id: number, body: { situation: string; style: string; status: Review }) =>
     http.put<Expression>(`${learningBase(scene)}/expressions/${id}`, body),
 
-  jargon: (scene: string, status: Review, offset: number, signal?: AbortSignal) =>
+  jargon: (scene: string, status: JargonView, offset: number, signal?: AbortSignal) =>
     http.get<Page<JargonTerm>>(`${learningBase(scene)}/jargon/terms`, { status, offset, limit: 20 }, signal),
   putJargon: (scene: string, id: number, body: { meaning: string | null; status: Review }) =>
     http.put<JargonTerm>(`${learningBase(scene)}/jargon/terms/${id}`, body),
