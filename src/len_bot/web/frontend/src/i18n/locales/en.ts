@@ -429,6 +429,8 @@ export default {
       join: 'Also join group conversations',
     },
     frequency: 'How often',
+    chatMode: 'Mode',
+    chatModes: { chat: 'Chat', plugins: 'Plugins' },
     levels: { active: 'Active', moderate: 'Moderate', quiet: 'Quiet' },
     custom: 'Custom',
     short: { direct: 'Answers calls only', join: 'Joins discussions · {level}' },
@@ -1925,6 +1927,7 @@ export default {
         network: 'Fetch images from the internet',
         schedule: 'Register scheduled jobs',
         configure: "Change this plugin's settings",
+        quiet: 'Keep the bot quiet for a while in enabled groups',
       },
     },
     isolation: {

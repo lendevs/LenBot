@@ -394,3 +394,86 @@ async def test_a_closed_group_answers_no_command_and_reopens_in_its_chat_mode(tm
         await peer.say('/id')
         await until(lambda: peer.sends)
         assert peer.texts()[0].startswith(f'场景：{SCENE}')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('switch', ['pause', 'pause_then_close'])
+async def test_turning_chat_off_applies_at_once_and_ends_the_running_turn(tmp_path, switch):
+    asked = asyncio.Event()
+
+    async def silent_model(reader, writer):
+        await reader.readuntil(b'\r\n\r\n')
+        asked.set()
+        await reader.read()
+
+    async with await asyncio.start_server(silent_model, '127.0.0.1', 0) as model:
+        address = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
+        models = {'providers': {'fixture': {'api': 'openai-chat', 'base_url': address, 'api_key': 'synthetic-unused'}},
+                  'roles': {'mind': {'provider': 'fixture', 'model': 'synthetic-unused', 'context_window_tokens': 8192}}}
+        async with host(tmp_path, models=models, compaction={'input_tokens': 6000}) as (runtime, peer, store):
+            runner = runtime.runners[SCENE]
+            await peer.say('在吗', before=[{'type': 'at', 'data': {'qq': '90001'}}])
+            await asyncio.wait_for(asked.wait(), 10)
+            assert runner.execution.locked()
+            assert runner.set_paused(True)['paused']
+            if switch == 'pause_then_close':
+                assert runner.set_closed(True)['closed']
+            await until(lambda: not runner.execution.locked(), 10)
+            assert [tuple(row) for row in store.db.execute('SELECT status, error FROM turns')] == [
+                ('cancelled', '聊天已关闭，当前轮停止')]
+            assert runner.state.paused and peer.sends == []
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_turn_sends_nothing_when_the_model_still_answers(tmp_path):
+    """A cancellation absorbed while the model connection opens: the reply arrives, and the turn still ends."""
+    from test_attention_protocol import response
+
+    asked, answer = asyncio.Event(), asyncio.Event()
+
+    async def late_model(reader, writer):
+        await reader.readuntil(b'\r\n\r\n')
+        asked.set()
+        await answer.wait()
+        _, content_type, body = response('say', {'content': '不该发出', 'end_turn': True}, 'call-1')
+        writer.write(f'HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {len(body)}\r\n'
+                     'Connection: close\r\n\r\n'.encode() + body)
+        await writer.drain()
+        writer.close()
+
+    async with await asyncio.start_server(late_model, '127.0.0.1', 0) as model:
+        address = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
+        models = {'providers': {'fixture': {'api': 'openai-chat', 'base_url': address, 'api_key': 'synthetic-unused'}},
+                  'roles': {'mind': {'provider': 'fixture', 'model': 'synthetic-unused', 'context_window_tokens': 8192}}}
+        async with host(tmp_path, models=models, compaction={'input_tokens': 6000}) as (runtime, peer, store):
+            runner = runtime.runners[SCENE]
+            await peer.say('在吗', before=[{'type': 'at', 'data': {'qq': '90001'}}])
+            await asyncio.wait_for(asked.wait(), 10)
+            runner.chat.turn_stopped = True
+            answer.set()
+            await until(lambda: not runner.execution.locked(), 10)
+            assert [tuple(row) for row in store.db.execute('SELECT status, error FROM turns')] == [
+                ('cancelled', '聊天已关闭，当前轮停止')]
+            assert peer.sends == []
+            # The reply's say call is closed unrun.
+            last = json.loads(store.db.execute('SELECT message FROM mind_entries ORDER BY seq DESC').fetchone()[0])
+            assert (last['role'], last['content']) == ('tool', 'say 中断：聊天已关闭，当前轮停止。')
+
+
+@pytest.mark.asyncio
+async def test_a_plugin_quiet_keeps_a_longer_owner_quiet_and_lifts_only_its_own(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        runner = runtime.runners[SCENE]
+        owner = f'onebot:{OWNER}'
+        held = runner.hold_quiet('plugin:bilibili', 120, 'defer')['temporary_quiet']
+        assert (held['requester'], held['direct']) == ('plugin:bilibili', 'defer')
+        assert held['until'] == pytest.approx(runner.now() + 120, abs=1)
+        runner.set_temporary_quiet(3600, 'allow', owner)
+        runner.hold_quiet('plugin:bilibili', 120, 'defer')
+        runner.hold_quiet('plugin:bilibili', None, 'allow')
+        assert runner.state.temporary_quiet.requester == owner
+        runner.set_temporary_quiet(60, 'allow', owner)
+        runner.hold_quiet('plugin:bilibili', 120, 'defer')
+        assert runner.state.temporary_quiet.requester == 'plugin:bilibili'
+        runner.hold_quiet('plugin:bilibili', None, 'allow')
+        assert runner.state.temporary_quiet is None and runner.chat_status()['status'] == 'chatting'

@@ -1,7 +1,7 @@
 import { computed, inject, reactive, ref, watch, type InjectionKey } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Protocol } from '../../api/models'
-import { DEFAULT_PARTICIPATION, type Participation } from '../../api/participation'
+import { DEFAULT_PARTICIPATION, NEW_GROUP_PARTICIPATION, type Participation } from '../../api/participation'
 import type {
   FirstSetup,
   OneBotLink,
@@ -178,7 +178,7 @@ function initial(): Draft {
     boundaries: '',
     sceneKind: 'group',
     sceneId: '',
-    participation: { ...DEFAULT_PARTICIPATION },
+    participation: { ...NEW_GROUP_PARTICIPATION },
     plugins: [],
   }
 }
@@ -656,7 +656,10 @@ export function createWizard() {
       voice_mode: 'direct',
       compaction: { input_tokens: draft.inputBudget ?? 0 },
       scene: `${prefix.value}:${draft.sceneKind}:${draft.sceneId.trim()}`,
-      attention: draft.sceneKind === 'group' ? draft.participation : { ...DEFAULT_PARTICIPATION },
+      attention:
+        draft.sceneKind === 'group'
+          ? { ...draft.participation, only_direct: false }
+          : { ...DEFAULT_PARTICIPATION },
       ...persona,
       panel_port: draft.port ?? 0,
       username: draft.username,

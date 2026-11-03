@@ -140,11 +140,10 @@ def register_host_operations(app, *, runtime, user):
         runner = runtime.runners[scene]
         if not runtime.accepting:
             raise HTTPException(409, '宿主未运行，请先启动再切换聊天开关')
-        # Waits for a running turn to finish so its saved attention state cannot overwrite the switch.
-        async with runner.execution:
-            result = runner.set_paused(not change.enabled)
-            runtime.events.publish("host.state", scene=scene)
-            return result
+        # Applies at once: a running turn stops at the step it is in and keeps the switch when it ends.
+        result = runner.set_paused(not change.enabled)
+        runtime.events.publish("host.state", scene=scene)
+        return result
 
     @app.put('/api/host/scenes/{scene}/control/open', response_model=responses.SceneControl, response_model_exclude_unset=True)
     async def scene_open(scene: str, change: ChatSwitch, _: str = Depends(user)):
@@ -153,21 +152,17 @@ def register_host_operations(app, *, runtime, user):
         runner = runtime.runners[scene]
         if not runtime.accepting:
             raise HTTPException(409, '宿主未运行，请先启动再开关群聊')
-        async with runner.execution:
-            result = runner.set_closed(not change.enabled)
-            runtime.events.publish("host.state", scene=scene)
-            log_event(logger, 'scene_open', scene=scene, enabled=change.enabled)
-            return result
+        result = runner.set_closed(not change.enabled)
+        runtime.events.publish("host.state", scene=scene)
+        log_event(logger, 'scene_open', scene=scene, enabled=change.enabled)
+        return result
 
     @app.put('/api/host/control/chat', response_model=responses.AllChatControl, response_model_exclude_unset=True)
     async def all_chat(change: ChatSwitch, _: str = Depends(user)):
         """Every scene at once, e.g. when model quota runs out; messages are still stored."""
         if not runtime.accepting:
             raise HTTPException(409, '宿主未运行，请先启动再切换聊天开关')
-        async def switch(runner):
-            async with runner.execution:
-                return runner.set_paused(not change.enabled)
-        states = await asyncio.gather(*(switch(runner) for runner in runtime.runners.values()))
+        states = [runner.set_paused(not change.enabled) for runner in runtime.runners.values()]
         runtime.events.publish("host.state")
         log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
         return {'enabled': change.enabled, 'scenes': len(states)}

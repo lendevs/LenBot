@@ -44,3 +44,9 @@ export interface Participation {
 }
 
 export const DEFAULT_PARTICIPATION: Participation = { only_direct: true, level: 'moderate' }
+
+/** A group added from the panel or the setup wizard joins in at a wake level. */
+export const NEW_GROUP_PARTICIPATION: Participation = { only_direct: false, level: 'moderate' }
+
+/** Chat lets the model take part; plugins answers only plugins and commands. */
+export type ChatMode = 'chat' | 'plugins'

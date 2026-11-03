@@ -376,14 +376,8 @@ class HostManagement:
             if args.enabled:
                 return {**result, 'chat': 'on', 'changed': False}
             return {**result, 'chat': 'off', 'changed': True, 'applies': 'after_current_turn'}
-        # Bound the wait: another scene's turn may be waiting for this scene's execution.
-        try:
-            async with asyncio.timeout(1):
-                async with runner.execution:
-                    before = runner.state.paused
-                    state = runner.set_paused(not args.enabled)
-        except TimeoutError as error:
-            raise RuntimeError(f'目标群 {target} 正在执行，请稍后再切换聊天开关') from error
+        before = runner.state.paused
+        state = runner.set_paused(not args.enabled)
         return {**result, 'chat': 'off' if state['paused'] else 'on', 'changed': before != state['paused']}
 
     async def finish_turn(self) -> None:

@@ -415,6 +415,8 @@ export default {
     mode: '发言时机',
     modes: { direct: "只在被 {'@'}、回复或私聊时", join: '同时参与群内讨论' },
     frequency: '参与频率',
+    chatMode: '模式',
+    chatModes: { chat: '聊天', plugins: '插件' },
     levels: { active: '活跃', moderate: '适中', quiet: '安静' },
     custom: '自定义',
     short: { direct: '只回应呼叫', join: '参与讨论 · {level}' },
@@ -1871,6 +1873,7 @@ export default {
         network: '从公网获取图片',
         schedule: '登记定点任务',
         configure: '修改本插件的配置',
+        quiet: '让 Bot 在启用的群内暂时安静',
       },
     },
     isolation: {

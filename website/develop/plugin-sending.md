@@ -33,6 +33,12 @@ await ctx.reply_parts([Mention("onebot:70001"), Text(" 轮到你了")])
 
 `await ctx.emit_event(text)` 把一段文字作为插件事件交给这个群的聊天模型并唤醒它，由角色决定怎么说。它与直接发送不同：适合需要角色接话的场合，例如开播提醒交给角色用自己的口吻转述。需要 `events` 权限。
 
+## 临时安静
+
+`await ctx.quiet(scene, seconds, direct="allow")` 让这个群临时安静 `seconds` 秒（最长 86400）：Bot 不主动插话或发起话题。`direct="allow"` 时被 `@`、回复和私聊照常回应，`direct="defer"` 时延后到安静结束再回应。再次调用以当前时间续期，`seconds` 为 `None` 时解除。适合跟随外部状态的场合，例如直播期间每次采样续期几分钟，下播后解除。
+
+主人设置的、结束时间更晚的临时安静保持不变；解除只作用于本插件设置的安静。需要 `quiet` 权限。
+
 ## 公网图片
 
 `await ctx.fetch_image(url, timeout_seconds=15)` 按宿主的公网地址检查和重定向规则下载图片，校验格式和大小后返回原始字节，可以直接交给 `Image`。需要 `network` 权限。

@@ -7,7 +7,7 @@ import Input from '../../../ui/Input.vue'
 import RadioGroup from '../../../ui/RadioGroup.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Textarea from '../../../ui/Textarea.vue'
-import ParticipationChoice from '../../groups/participation/ParticipationChoice.vue'
+import NewGroupChoice from '../../groups/participation/NewGroupChoice.vue'
 import MoreFields from '../MoreFields.vue'
 import { personaFolder, useStepErrors, useWizard } from '../wizard'
 
@@ -110,7 +110,7 @@ watch(
           :placeholder="placeholder"
         />
       </Field>
-      <ParticipationChoice v-if="draft.sceneKind === 'group'" v-model="draft.participation" />
+      <NewGroupChoice v-if="draft.sceneKind === 'group'" v-model="draft.participation" />
     </div>
     <MoreFields v-if="draft.persona === 'custom'" v-model="more" :title="t('setup.persona.more')">
       <Field :label="t('setup.persona.id')" :error="error('personaId')">

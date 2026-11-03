@@ -365,7 +365,7 @@ class SceneRunner:
         return {'status': 'chatting',
                 'changes_at': next_quiet_start(self.settings.quiet_hours, self.config.timezone, now)}
 
-    def set_temporary_quiet(self, seconds: int | None, direct: Literal["allow", "defer"], requester: str | None) -> dict:
+    def set_temporary_quiet(self, seconds: float | None, direct: Literal["allow", "defer"], requester: str | None) -> dict:
         now = self.now()
         state = copy.deepcopy(self.state)
         state.temporary_quiet = (None if seconds is None else
@@ -376,8 +376,21 @@ class SceneRunner:
         self.chat.notify()
         return self.control_state()
 
+    def hold_quiet(self, requester: str, seconds: float | None, direct: Literal["allow", "defer"]) -> dict:
+        """A temporary quiet its holder renews while something lasts: it replaces its own, one already over or
+        a shorter one, keeps a longer one set by someone else, and lifting clears only its own."""
+        now = self.now()
+        current = self.state.temporary_quiet
+        held = current is not None and current.requester == requester
+        if seconds is None:
+            return self.set_temporary_quiet(None, 'allow', None) if held else self.control_state()
+        if current is not None and not held and current.until >= now + seconds:
+            return self.control_state()
+        return self.set_temporary_quiet(seconds, direct, requester)
+
     def set_closed(self, closed: bool) -> dict:
-        """Close or reopen this scene; the chat switch keeps its value for when it reopens."""
+        """Close or reopen this scene; the chat switch keeps its value for when it reopens.
+        Closing ends a running turn at the step it is in."""
         state = copy.deepcopy(self.state)
         state.closed = closed
         # Reopening does not answer what was said while closed; it stays as context, and joining in counts from now.
@@ -385,12 +398,15 @@ class SceneRunner:
         if not closed:
             state.ambient_last_at = self.now()
         self.save_state(state)
+        if closed:
+            self.chat.stop_turn()
         self.changed.set()
         self.chat.notify()
         return self.control_state()
 
     def set_paused(self, paused: bool) -> dict:
-        """Turn chat off or on for this scene; messages are still stored while off."""
+        """Turn chat off or on for this scene; messages are still stored while off.
+        Turning off ends a running turn at the step it is in."""
         state = copy.deepcopy(self.state)
         state.paused = paused
         # Turning back on does not answer what was said while off; it stays as context, and joining in counts from now.
@@ -398,6 +414,8 @@ class SceneRunner:
         if not paused:
             state.ambient_last_at = self.now()
         self.save_state(state)
+        if paused:
+            self.chat.stop_turn()
         self.changed.set()
         self.chat.notify()
         return self.control_state()

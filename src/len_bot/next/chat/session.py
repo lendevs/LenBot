@@ -146,6 +146,9 @@ class Chat:
         self.turn_messages = 0
         # Actual wake channels seen by the current turn, snapshotted per expression.
         self.turn_channels: set[str] = set()
+        # The running turn's time limit; stop_turn moves it to now.
+        self.turn_deadline: asyncio.Timeout | None = None
+        self.turn_stopped = False
         self.on_update = on_update
         self.on_compaction = on_compaction
         if config.models.roles.vision is not None and vision is None:
@@ -431,6 +434,20 @@ class Chat:
             else:
                 self.slots.admit(self.config.scene)
 
+    def stop_turn(self) -> None:
+        """End the running turn at the step it is in, the way its time limit would; it is recorded as cancelled.
+
+        A cancellation that arrives while the model connection is being opened can be absorbed there,
+        so the turn also checks ``turn_stopped`` after each model reply.
+        """
+        if self.turn_deadline is not None and not self.turn_stopped:
+            self.turn_stopped = True
+            self.turn_deadline.reschedule(asyncio.get_running_loop().time())
+
+    def _check_stopped(self) -> None:
+        if self.turn_stopped:
+            raise TimeoutError("turn stopped")
+
     async def run_turn(self, *, batch: tuple[int, list[str]] | None,
                        append_new: Callable[[bool, str], Awaitable[bool]],
                        wait_for_messages: Callable[[float], Awaitable[str]],
@@ -478,8 +495,9 @@ class Chat:
         limit_until = limit_kind = None
         phase = None
         self.toolset.source_floor = source_floor
+        self.turn_stopped = False
         try:
-            async with asyncio.timeout(self.config.turn_timeout_seconds):
+            async with asyncio.timeout(self.config.turn_timeout_seconds) as self.turn_deadline:
                 recalled = None
                 self.trace('turn.step', turn_id, kind='recall', phase='start')
                 recall_items = []
@@ -564,6 +582,7 @@ class Chat:
                 self.expression.sticker_candidates = []
                 for step in range(self.config.max_steps):
                     self.trace_step = step + 1
+                    self._check_stopped()
                     self.check_limits()
                     prepared = await self.prepare_context(turn_id, observed_at=observed_at,
                                                           expression_style=expression_style, recalled=recalled)
@@ -576,6 +595,7 @@ class Chat:
                     reply = await self.request(turn_id, "mind", messages, tools,
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method),
                                                recall_items=recall_items, quick=not stepped_lookup)
+                    self._check_stopped()
                     stepped_lookup = any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
                     looked_up = looked_up or stepped_lookup
                     end_turn, group_failed = False, False
@@ -688,8 +708,11 @@ class Chat:
             error_text = f"{type(error).__name__}: {error}"
             if phase is not None:
                 error_text = f'{phase}失败：{error_text}'
+            if isinstance(error, TimeoutError) and self.turn_stopped:
+                status, error_text = "cancelled", "聊天已关闭，当前轮停止"
         finally:
             self.toolset.source_floor = None
+            self.turn_deadline = None
         self.store.finish_pending_tools(scene, error_text or status)
         self.trace('turn.ended', turn_id, status=status, error=error_text,
                    expressions=len(expressions), steps=self.trace_step or 0)
