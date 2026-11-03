@@ -25,10 +25,13 @@ async def test_live_scene_add_remove_drains_current_turn_without_stopping_other_
     async def model_peer(reader, writer):
         header = (await reader.readuntil(b'\r\n\r\n')).decode()
         fields = dict(line.lower().split(':', 1) for line in header.split('\r\n')[1:] if ':' in line)
-        requests.append(json.loads(await reader.readexactly(int(fields['content-length']))))
-        if len(requests) == 1:
-            first_request.set()
-            await release_first.wait()
+        payload = json.loads(await reader.readexactly(int(fields['content-length'])))
+        # Memory ingestion uses the same model; only chat turns, which offer say, are counted.
+        if any(tool['function']['name'] == 'say' for tool in payload.get('tools', [])):
+            requests.append(payload)
+            if len(requests) == 1:
+                first_request.set()
+                await release_first.wait()
         _, content_type, body = response('say', {'content': '合成回答', 'end_turn': True}, f'call-{len(requests)}')
         writer.write(f'HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {len(body)}\r\n'
                      'Connection: close\r\n\r\n'.encode() + body)
