@@ -153,7 +153,7 @@ def _remove(path: Path) -> None:
 
 
 def _publish(staging: Path, target: Path) -> None:
-    if staging.is_dir() and target.is_dir():
+    if staging.is_dir() and not staging.is_symlink() and target.is_dir() and not target.is_symlink():
         for child in staging.iterdir():
             _publish(child, target / child.name)
         staging.rmdir()
@@ -178,7 +178,11 @@ def restore(root: Path, snapshot: Path) -> None:
             if target == root:
                 staging.mkdir()
                 for child in (snapshot / entry['saved']).iterdir():
-                    copy_path(child, staging / child.name)
+                    if child.is_symlink():
+                        # A link directly in the instance root is part of the instance: restore the link itself.
+                        os.symlink(os.readlink(child), staging / child.name)
+                    else:
+                        copy_path(child, staging / child.name)
             elif entry['present']:
                 copy_path(snapshot / entry['saved'], staging)
     except BaseException:
