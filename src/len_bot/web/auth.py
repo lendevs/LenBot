@@ -26,12 +26,18 @@ def keep_sessions(path: Path) -> None:
     _SESSION_FILE = path
     try:
         saved = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
+        # No file yet, or one that a power cut left empty or half written: everyone signs in again.
+        saved = {}
+    if not isinstance(saved, dict):
         saved = {}
     now = time.time()
     _ACTIVE_SESSIONS.clear()
-    _ACTIVE_SESSIONS.update({key: value for key, value in saved.items()
-                             if value["expires_at"] > now})
+    for key, value in saved.items():
+        expires_at = value.get("expires_at") if isinstance(value, dict) else None
+        if isinstance(value, dict) and isinstance(value.get("username"), str) \
+                and isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > now:
+            _ACTIVE_SESSIONS[key] = value
 
 
 def _save_sessions() -> None:
@@ -42,7 +48,18 @@ def _save_sessions() -> None:
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as output:
         json.dump(_ACTIVE_SESSIONS, output)
+        output.flush()
+        os.fsync(output.fileno())
     temporary.replace(_SESSION_FILE)
+    if os.name != "nt":
+        try:
+            directory = os.open(_SESSION_FILE.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError:
+            pass  # the rename is already done; some file systems cannot sync a directory
 
 
 def revoke_all_sessions() -> None:

@@ -40,6 +40,48 @@ def test_iterations_are_limited_to_1_through_10_million(monkeypatch):
     assert calls == []
 
 
+@pytest.mark.parametrize('content', ['', '{"abc": {"username": "u"', '[]', 'null', '{"abc": {"username": "u"}}',
+                                      '{"abc": 5}', '{"abc": {"username": "u", "expires_at": "soon"}}', '\xff'])
+def test_a_damaged_session_file_starts_the_panel_with_no_sessions(tmp_path, monkeypatch, content):
+    from len_bot.web import auth
+    monkeypatch.setattr(auth, '_ACTIVE_SESSIONS', {})
+    monkeypatch.setattr(auth, '_SESSION_FILE', None)
+    path = tmp_path / 'sessions.json'
+    path.write_bytes(content.encode('latin-1'))
+    auth.keep_sessions(path)
+    assert auth._ACTIVE_SESSIONS == {}
+    assert auth.session_user(auth.create_session('operator')) == 'operator'
+
+
+def test_valid_sessions_stay_and_expired_or_malformed_ones_are_dropped(tmp_path, monkeypatch):
+    import json
+    import time
+    from len_bot.web import auth
+    monkeypatch.setattr(auth, '_ACTIVE_SESSIONS', {})
+    monkeypatch.setattr(auth, '_SESSION_FILE', None)
+    path = tmp_path / 'sessions.json'
+    later = time.time() + 1000
+    path.write_text(json.dumps({'keep': {'username': 'u', 'expires_at': later}, 'old': {'username': 'u', 'expires_at': 1},
+                                'bad': {'username': 'u'}, 'worse': 'x'}))
+    auth.keep_sessions(path)
+    assert auth._ACTIVE_SESSIONS == {'keep': {'username': 'u', 'expires_at': later}}
+
+
+def test_saving_sessions_syncs_the_file_before_it_replaces_the_old_one(tmp_path, monkeypatch):
+    import os
+    from len_bot.web import auth
+    monkeypatch.setattr(auth, '_ACTIVE_SESSIONS', {})
+    monkeypatch.setattr(auth, '_SESSION_FILE', None)
+    path = tmp_path / 'sessions.json'
+    auth.keep_sessions(path)
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, 'fsync', lambda fd: events.append('fsync') or real_fsync(fd))
+    monkeypatch.setattr(type(path), 'replace', lambda self, target: events.append('replace') or real_replace(self, target))
+    auth.create_session('operator')
+    assert events[:2] == ['fsync', 'replace']
+
+
 def panel():
     app = FastAPI()
     settings = PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=hash_password('password'))
