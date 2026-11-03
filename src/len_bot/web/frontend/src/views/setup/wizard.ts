@@ -94,7 +94,7 @@ export interface Draft {
 }
 
 const DRAFT_KEY = 'lenbot-setup-draft'
-/** Not kept across reloads: they are typed again. */
+/** Not kept across reloads: they are typed again. Proxy addresses can carry a user name and password. */
 const SECRETS = [
   'password',
   'passwordAgain',
@@ -105,6 +105,11 @@ const SECRETS = [
   'vectorKey',
   'searchKey',
   'readKey',
+  'proxy',
+  'telegramProxy',
+  'searchProxy',
+  'readProxy',
+  'vectorProxy',
 ] as const
 
 /**
@@ -496,6 +501,11 @@ export function createWizard() {
     const need = (field: string, ok: boolean, key = 'required') => {
       if (!ok && !found[field]) found[field] = key
     }
+    /** An account number: empty is reported as required, anything else that is not digits as the number rule. */
+    const account = (field: string, value: string) => {
+      need(field, Boolean(value.trim()))
+      need(field, ACCOUNT.test(value.trim()), 'account')
+    }
     if (step === 'account') {
       need('username', Boolean(draft.username.trim()))
       need('username', draft.username === draft.username.trim(), 'spaces')
@@ -505,7 +515,7 @@ export function createWizard() {
       need('port', draft.port !== null && draft.port >= 1 && draft.port <= 65535, 'port')
     }
     if (step === 'platform' && connectLater.value) {
-      need('botAccount', ACCOUNT.test(draft.botAccount.trim()), 'account')
+      account('botAccount', draft.botAccount)
     } else if (step === 'platform' && draft.chatPlatform === 'telegram') {
       need('telegramToken', TELEGRAM_TOKEN.test(draft.telegramToken.trim()), 'telegramToken')
       if (draft.telegramProxy.trim()) need('telegramProxy', httpUrl(draft.telegramProxy.trim()), 'httpUrl')
@@ -529,7 +539,7 @@ export function createWizard() {
     }
     if (step === 'owner') {
       if (prefix.value === 'feishu') need('owner', FEISHU_USER.test(draft.owner.trim()), 'openId')
-      else need('owner', ACCOUNT.test(draft.owner.trim()), 'account')
+      else account('owner', draft.owner)
       need('timezone', Boolean(draft.timezone.trim()))
     }
     if (step === 'model') {
@@ -584,7 +594,7 @@ export function createWizard() {
           (draft.sceneKind === 'group' ? FEISHU_CHAT : FEISHU_USER).test(id),
           draft.sceneKind === 'group' ? 'chatId' : 'openId',
         )
-      else need('sceneId', ACCOUNT.test(id), 'account')
+      else account('sceneId', id)
     }
     return found
   }

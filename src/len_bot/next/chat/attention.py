@@ -289,7 +289,7 @@ class SceneRunner:
             return configured
         if configured is None:
             return temporary.started, temporary.until
-        return min(configured[0], temporary.started), min(configured[1], temporary.until)
+        return min(configured[0], temporary.started), max(configured[1], temporary.until)
 
     def quiet_direct(self, now: float) -> str:
         if self.state.off:

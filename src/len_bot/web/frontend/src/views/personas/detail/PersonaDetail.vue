@@ -82,7 +82,11 @@ const usage = computed(() => {
   const names = props.role.scenes.map(groupLabel)
   if (!names.length) return t('personas.unused')
   return names.length > 3
-    ? t('personas.usedMany', { names: names.slice(0, 3).join(t('personas.separator')), n: names.length })
+    ? t('personas.usedMany', {
+        names: names.slice(0, 3).join(t('personas.separator')),
+        n: names.length,
+        more: names.length - 3,
+      })
     : t('personas.used', { names: names.join(t('personas.separator')) })
 })
 const menu = computed<MenuEntry[]>(() => [

@@ -375,6 +375,24 @@ def test_chat_status_names_the_reason_and_when_it_changes(tmp_path):
         assert live.chat_status() == {'status': 'paused', 'changes_at': None}
 
 
+def test_temporary_quiet_outlasting_the_quiet_hours_extends_the_period(tmp_path):
+    from len_bot.next.configuration.chat import QuietHours
+    config, persona = config_for(tmp_path)
+    config.attention.quiet_hours = QuietHours(start='23:00', end='07:00')
+    begin = START + 31600
+    now = [begin + 6 * 3600]
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda event: None)
+        assert live.quiet_period(now[0]) == (begin, begin + 8 * 3600)
+        # 05:00 plus four hours ends at 09:00, after the configured 07:00: the period is the union of both.
+        live.set_temporary_quiet(4 * 3600, 'allow', None)
+        assert live.quiet_period(now[0]) == (begin, now[0] + 4 * 3600)
+        assert live.chat_status() == {'status': 'quiet', 'changes_at': now[0] + 4 * 3600}
+        # Ending inside the configured hours leaves them as they are.
+        live.set_temporary_quiet(3600, 'allow', None)
+        assert live.quiet_period(now[0]) == (begin, begin + 8 * 3600)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('channel', 'idle', 'maximum'), [('direct', 1.5, 4), ('named', 3, 8), ('focus', 4, 12)])
 async def test_onebot_bursts_wait_for_image_caption_extend_same_speaker_and_keep_channel_cap(channel, idle, maximum):

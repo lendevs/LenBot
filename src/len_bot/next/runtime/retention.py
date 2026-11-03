@@ -31,17 +31,24 @@ def expire_request(request: dict, now: float) -> dict:
             'snapshot_expired_at': now}
 
 
+# One cycle a day; after a failed batch the next attempt comes sooner, doubling from RETRY_SECONDS up to the daily period.
+PERIOD_SECONDS = 86400
+RETRY_SECONDS = 300
+
+
 class Retention:
     def __init__(self, runtime):
         self.runtime = runtime
         self.lock = asyncio.Lock()
         self.last_result = None
         self.error = None
+        self.retry = None
         self.changed = asyncio.Event()
 
     def wake(self) -> None:
         """Run a batch now under the saved settings; turning retention on starts the daily cycle."""
         self.error = None
+        self.retry = None
         self.changed.set()
 
     def batch(self, *, preview: bool = False) -> dict:
@@ -222,7 +229,7 @@ class Retention:
     async def run(self):
         while not self.runtime.stopped.is_set():
             self.changed.clear()
-            if self.runtime.config.retention is not None and self.error is None:
+            if self.runtime.config.retention is not None:
                 try:
                     async with self.lock:
                         while True:
@@ -231,13 +238,15 @@ class Retention:
                             if not any(result[key] for key in ('model_snapshots','auxiliary_snapshots','task_snapshots','turns','messages','notices','memory_snapshots','extraction_jobs')):
                                 break
                             await asyncio.sleep(0)
+                    self.error = self.retry = None
                 except Exception as error:
                     self.error=f'{type(error).__name__}: {error}'
+                    self.retry = RETRY_SECONDS if self.retry is None else min(self.retry * 2, PERIOD_SECONDS)
                     self.runtime._emit({'type':'retention','status':'failed','error':self.error})
             stopping = asyncio.ensure_future(self.runtime.stopped.wait())
             changed = asyncio.ensure_future(self.changed.wait())
             try:
-                await asyncio.wait({stopping, changed}, timeout=86400, return_when=asyncio.FIRST_COMPLETED)
+                await asyncio.wait({stopping, changed}, timeout=PERIOD_SECONDS if self.retry is None else self.retry, return_when=asyncio.FIRST_COMPLETED)
             finally:
                 stopping.cancel()
                 changed.cancel()
