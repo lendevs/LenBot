@@ -232,6 +232,22 @@ class Switch:
         write_json(self.result_path, {**result, 'finished_at': time.time()})
         self.request_path.unlink(missing_ok=True)
 
+    def restore(self, request: dict, current: str) -> dict:
+        """Restore a snapshot before the next start. A failure is recorded and the current version starts as it was."""
+        try:
+            name = request['snapshot']
+            meta = read_json(self.deployment.backups / (name + '.json'))
+            print(f'LenBot：恢复快照 {name}（{meta["version"]}）。', flush=True)
+            self.maintenance(meta['version'], 'restore', self.deployment.backups / name)
+            self.deployment.select(meta['version'])
+        except Exception as error:
+            print(f'LenBot：恢复快照失败：{error}', flush=True)
+            self.finish({'action': 'restore', 'status': 'failed', 'snapshot': request.get('snapshot'),
+                         'from': current, 'error': f'恢复快照失败：{type(error).__name__}: {error}'})
+            return {}
+        self.finish({'action': 'restore', 'status': 'complete', 'snapshot': name, 'from': current, 'to': meta['version']})
+        return {}
+
     def prepare(self, request: dict) -> dict:
         """Before the next start: snapshot and migrate for an update, or restore a snapshot.
 
@@ -239,14 +255,7 @@ class Switch:
         """
         current = self.deployment.selected()
         if request['action'] == 'restore':
-            name = request['snapshot']
-            meta = read_json(self.deployment.backups / (name + '.json'))
-            print(f'LenBot：恢复快照 {name}（{meta["version"]}）。', flush=True)
-            self.maintenance(meta['version'], 'restore', self.deployment.backups / name)
-            self.deployment.select(meta['version'])
-            self.finish({'action': 'restore', 'status': 'complete', 'snapshot': name,
-                         'from': current, 'to': meta['version']})
-            return {}
+            return self.restore(request, current)
         target = request['version']
         print(f'LenBot：更新 {current} → {target}，先保存快照。', flush=True)
         try:

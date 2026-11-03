@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from len_bot.next import deployment as deployment_module
-from len_bot.next.deployment import Deployment, Switch, wait_ready
+from len_bot.next.deployment import Deployment, Switch, wait_ready, write_json
 from len_bot.next.plugins.catalog import CatalogView, SourcedEntry, updates
 from len_bot.next.runtime.updater import PROTOCOL, Updater
 
@@ -201,6 +201,22 @@ def test_restoring_a_snapshot_runs_its_own_version(tmp_path):
     assert switch.prepare({'action': 'restore', 'snapshot': name}) == {}
     assert switch.calls == [('0.1.0', 'restore')] and deployment.selected() == '0.1.0'
     assert json.loads(switch.result_path.read_text())['action'] == 'restore'
+
+
+def test_a_failed_restore_is_recorded_and_the_request_cleared_instead_of_crashing_the_launcher(tmp_path):
+    deployment = _deployment(tmp_path)
+    switch = Recorder(deployment)
+    switch.settle(switch.prepare({'action': 'update', 'version': '0.2.0'}), None)
+    name = deployment.snapshots()[0]['name']
+    for request, failing in (({'action': 'restore', 'snapshot': name}, {'restore'}),
+                             ({'action': 'restore', 'snapshot': 'gone'}, set())):
+        switch = Recorder(deployment, failing)
+        write_json(switch.request_path, request)
+        assert switch.prepare(switch.pending()) == {}
+        result = json.loads(switch.result_path.read_text())
+        assert (result['action'], result['status'], result['from']) == ('restore', 'failed', '0.2.0')
+        assert result['error'] and not switch.request_path.exists()
+        assert deployment.selected() == '0.2.0'
 
 
 def test_docker_runs_the_newer_of_the_image_and_the_volume_version(tmp_path, monkeypatch):
