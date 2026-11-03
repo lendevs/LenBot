@@ -172,3 +172,58 @@ async def test_login_with_a_lone_surrogate_password_is_refused_with_401():
     from len_bot.web.auth import clear_login_failures
     clear_login_failures('isolated:127.0.0.1')
     assert response.status_code == 401
+
+
+def _old_hash(password: str, iterations: int = 100_000, salt: str = 'fixture-salt') -> str:
+    return f'pbkdf2_sha256${iterations}${salt}${hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations).hex()}'
+
+
+def test_only_a_record_with_fewer_iterations_than_today_needs_a_new_hash():
+    from len_bot.web.auth import password_needs_rehash
+    assert password_needs_rehash(_old_hash('password'))
+    assert not password_needs_rehash(hash_password('password'))
+    assert not password_needs_rehash(_old_hash('password', 700_000))
+    assert not password_needs_rehash('not a record')
+
+
+@pytest.mark.asyncio
+async def test_login_replaces_an_old_iteration_hash_in_the_saved_config_and_the_running_panel(tmp_path):
+    import json
+    from len_bot.web import auth
+    from test_scene_commands_protocol import host
+    from len_bot.next.panel.app import create_app
+    panel_settings = {'host': '127.0.0.1', 'port': 0, 'username': 'operator', 'password_hash': _old_hash('synthetic-password')}
+    async with host(tmp_path, panel=panel_settings) as (runtime, peer, store):
+        app = create_app(runtime.config, runtime, root=tmp_path)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+            login = {'username': 'operator', 'password': 'synthetic-password'}
+            wrong = await client.post('/api/auth/login', json={**login, 'password': 'wrong-password'})
+            assert wrong.status_code == 401
+            assert json.loads((tmp_path / 'lenbot.config.json').read_text())['panel']['password_hash'] == _old_hash('synthetic-password')
+            assert (await client.post('/api/auth/login', json=login)).status_code == 200
+            saved = json.loads((tmp_path / 'lenbot.config.json').read_text())['panel']['password_hash']
+            assert saved.startswith('pbkdf2_sha256$600000$') and verify_password('synthetic-password', saved)
+            assert runtime.config.panel.password_hash == saved
+            assert 'panel' not in (await client.get('/api/host/pending-restart')).json()['sections']
+            assert (await client.post('/api/auth/login', json=login)).status_code == 200
+            assert json.loads((tmp_path / 'lenbot.config.json').read_text())['panel']['password_hash'] == saved
+
+
+@pytest.mark.asyncio
+async def test_a_password_changed_in_the_meantime_is_not_overwritten_by_the_upgrade(tmp_path):
+    import json
+    from test_scene_commands_protocol import host
+    from len_bot.next.panel.app import create_app
+    panel_settings = {'host': '127.0.0.1', 'port': 0, 'username': 'operator', 'password_hash': _old_hash('synthetic-password')}
+    async with host(tmp_path, panel=panel_settings) as (runtime, peer, store):
+        app = create_app(runtime.config, runtime, root=tmp_path)
+        path = tmp_path / 'lenbot.config.json'
+        source = json.loads(path.read_text())
+        changed = hash_password('another-password', 'other-salt')
+        source['panel']['password_hash'] = changed
+        path.write_text(json.dumps(source))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+            response = await client.post('/api/auth/login', json={'username': 'operator', 'password': 'synthetic-password'})
+        assert response.status_code == 200
+        assert json.loads(path.read_text())['panel']['password_hash'] == changed
+        assert runtime.config.panel.password_hash == _old_hash('synthetic-password')
