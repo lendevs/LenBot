@@ -1,4 +1,4 @@
-"""Task memory is bounded in the bubblewrap sandbox: /tmp, /dev and /dev/shm."""
+"""Task memory is bounded in the bubblewrap sandbox: /tmp, /dev and /dev/shm, and shared anonymous mappings."""
 
 from dataclasses import replace
 from pathlib import Path
@@ -46,3 +46,17 @@ print("opt", fill("/opt/fill", {MIB}))
     # ENOSPC on the sized tmpfs mounts, EROFS everywhere else.
     assert dict(line.split(' ', 1) for line in result.stdout.splitlines()) == {
         'tmp': 'OSError:28', 'shm': 'OSError:28', 'dev': 'OSError:30', 'opt': 'OSError:30'}
+
+
+@pytest.mark.asyncio
+async def test_a_shared_anonymous_mapping_cannot_exceed_the_task_memory(tmp_path):
+    result = await run(tmp_path, f'''
+import mmap
+mapping = mmap.mmap(-1, 1024 * {MIB})
+for offset in range(0, len(mapping), 4096):
+    mapping[offset] = 1
+print("survived")
+''', memory=256 * MIB)
+    assert result.returncode != 0 and 'survived' not in result.stdout
+    stderr = next((tmp_path / 'tasks' / 'runtime').rglob('sandbox.stderr')).read_text()
+    assert 'sandbox memory limit exceeded' in stderr

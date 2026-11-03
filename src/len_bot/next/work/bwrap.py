@@ -330,6 +330,7 @@ class BwrapSandbox:
                 arguments += ["--ro-bind", str(skill.host_path), skill.container_path]
         host, inside = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         limits = {"file_bytes": self.settings.file_bytes, "data_bytes": self.settings.memory_bytes,
+                  "memory_bytes": self.settings.memory_bytes,
                   "processes": self.settings.pids_limit, "open_files": 4096}
         # /opt is an unsized tmpfs holding only mount points; nothing writes there.
         arguments += ["--remount-ro", "/opt", "--remount-ro", "/", "--clearenv", "--setenv", "PATH", _PATH,
