@@ -885,7 +885,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             onebot = None
             if change.onebot is not None:
                 onebot = change.onebot.model_dump(mode="json")
-                if change.access_token is None and saved.onebot is not None:
+                if change.access_token is None and saved.onebot is not None and saved.onebot.access_token:
                     old = saved.onebot.model_dump(mode='json')
                     if any(old.get(key) != onebot.get(key) for key in ('mode', 'ws_url', 'http_url')):
                         raise ValueError('OneBot 连接地址改变后需要重新填写访问令牌')
