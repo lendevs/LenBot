@@ -77,9 +77,9 @@
         "LEN5010"
       ],
       "license": "AGPL-3.0-or-later",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "interface": 1,
-      "requires_lenbot": ">=0.2.1,<1",
+      "requires_lenbot": ">=0.2.4,<1",
       "category": "内容查询",
       "capabilities": [
         "视频与 UP 主搜索",
@@ -88,18 +88,19 @@
         "聊天管理订阅"
       ],
       "usage": [
-        "需要 LenBot 0.2.1；安装后选择启用的群。",
+        "需要 LenBot 0.2.4；安装后选择启用的群。",
         "主人发送 /B站登录 或要求扫码登录，二维码发送到当前聊天，扫码确认后自动保存。",
         "让 Bot 搜索 UP 主并确认 UID 后，可以订阅或取消本群的开播、动态、视频和评论推送。",
         "角色工具名单加入 bilibili_video、search_bilibili、bilibili_monitor、bilibili_account_read、bilibili_login、bilibili_subscription，并保留 tool_search。"
       ],
       "install": "git",
       "repository": "https://github.com/lendevs/lenbot-plugin-bilibili",
-      "ref": "52b74999cd33ca78392fa2bb5fb98b08962ddd3f",
+      "ref": "fff7fd536c9bb29063d68d00b472dc878332f4bb",
       "permissions": [
         "send",
         "events",
-        "configure"
+        "configure",
+        "quiet"
       ]
     }
   ]
