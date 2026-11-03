@@ -166,6 +166,9 @@ class RemoteHost:
     def emit_event(self, plugin, scene, text):
         self.channel.call_sync("emit_event", scene, text)
 
+    def quiet(self, plugin, scene, seconds, direct):
+        self.channel.call_sync("quiet", scene, seconds, direct)
+
     async def fetch_image(self, plugin, url, timeout_seconds):
         return base64.b64decode(await self.channel.call("fetch_image", url, timeout_seconds))
 

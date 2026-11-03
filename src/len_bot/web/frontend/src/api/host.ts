@@ -156,8 +156,8 @@ export const hostApi = {
   resume: (scene: string) => http.post<SceneControl>(`${scenePath(scene)}/control/resume`),
   availableScenes: (signal?: AbortSignal) =>
     http.get<{ items: AvailableScene[] }>('/api/host/settings/scenes/available', undefined, signal),
-  addScene: (scene: string, persona: string, attention: Participation) =>
-    http.post<unknown>('/api/host/settings/scenes', { scene, persona, attention }),
+  addScene: (scene: string, persona: string, attention: Participation, chat: boolean) =>
+    http.post<unknown>('/api/host/settings/scenes', { scene, persona, attention, chat }),
   focus: (scene: string, signal?: AbortSignal) =>
     http.get<SceneFocus>(`${scenePath(scene)}/focus`, undefined, signal),
   dropIntent: (scene: string, id: string) =>

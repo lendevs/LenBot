@@ -29,6 +29,7 @@ async def test_increment():
 | `recall(...)`、`memory(...)`、`compact(...)` | 调用记忆插件的三个入口 |
 | `wait_tasks(name_prefix)` | 等 `start_task` 登记的一次性任务完成 |
 | `deliveries`、`events()` | 插件发出的内容、记录的插件事件 |
+| `quiets` | `ctx.quiet` 的每次调用，`(scene, seconds, direct)`，`seconds` 为 `None` 表示解除 |
 
 - 处理器停在 `wait_message` 时 `message` 立即返回，下一次 `message` 作为回答，并等处理器继续执行完。
 - 处理器或启动出错时测试报错。

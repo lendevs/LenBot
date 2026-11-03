@@ -202,6 +202,7 @@ class HostPort(Protocol):
     async def send_text(self, plugin: str, scene: str, text: str, reply_to: str | None) -> Sent: ...
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent: ...
     def emit_event(self, plugin: str, scene: str, text: str) -> None: ...
+    def quiet(self, plugin: str, scene: str, seconds: float | None, direct: Literal["allow", "defer"]) -> None: ...
     def recent_messages(self, plugin: str, scene: str, limit: int) -> list[ChatMessage]: ...
     def messages_between(self, plugin: str, scene: str, after: float, before: float,
                          offset: int, limit: int) -> list[ChatMessage]: ...
@@ -337,6 +338,19 @@ class PluginContext:
         if not text.strip():
             raise ValueError("场景事件文字不能为空")
         self.host.emit_event(self.name, self._scene(scene), text)
+
+    async def quiet(self, scene: str, seconds: float | None, *, direct: Literal["allow", "defer"] = "allow") -> None:
+        """Keep the bot from joining in on its own in ``scene`` for ``seconds``; needs the ``quiet`` permission.
+
+        Calling again renews it, and None lifts it. ``direct`` decides whether @, replies and private
+        messages are still answered meanwhile. A longer quiet set by the owner stays, and lifting clears
+        only the quiet this plugin set.
+        """
+        if seconds is not None and not 0 < seconds <= 86400:
+            raise ValueError("seconds 必须大于 0 且不超过 86400")
+        if direct not in ("allow", "defer"):
+            raise ValueError("direct 必须是 allow 或 defer")
+        self.host.quiet(self.name, self._scene(scene), seconds, direct)
 
     def recent_messages(self, scene: str, limit: int = 20) -> list[ChatMessage]:
         if not 1 <= limit <= 100:

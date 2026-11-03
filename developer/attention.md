@@ -28,6 +28,8 @@ min(ambient_max_interval_seconds, ambient_min_interval_seconds × 2^silence_leve
 - 对话继续、点名或环境插话回合以沉默正常结束、本回合没有直接联系时，`silence_level` 加 1。
 - 回合里发言并且来自直接联系、点名或对话继续，或者被直接联系、点名时，`silence_level` 归零。
 - 群聊重新开启或暂停后恢复时，`ambient_last_at` 设为当时，插话间隔从这时起算。
+- 关闭聊天或关闭群立即生效，不等正在执行的回合：回合在所处步骤结束，记为 `cancelled`；回合结束时从当前状态复制，保留开关。
+- 插件用 `hold_quiet` 设置临时安静，`requester` 为 `plugin:<名称>`。续期替换自己的、已结束的或更早结束的临时安静，保留别人设置的更晚结束的；解除只清除自己的。
 
 可以接的话指非自身、非其他 Bot、没有回复或 `@` 别人、去掉标点后不只是 `哈哈`、`草`、`6` 一类单独反应的消息。其余消息只在开启 `explore_probability` 时参与随机探索。
 

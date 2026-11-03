@@ -40,6 +40,8 @@ class _LocalHost(PluginHost):
         super().__init__(config, core_tools=set(), now=now)
         self.model_enabled = model_enabled
         self.deliveries = deliveries
+        # Each ctx.quiet call as (scene, seconds, direct); seconds None lifts.
+        self.quiets: list[tuple[str, float | None, str]] = []
         # Media references or URLs -> bytes that fetch_media returns.
         self.media: dict[str, bytes] = {}
         self.messages: list[ChatMessage] = []
@@ -81,6 +83,10 @@ class _LocalHost(PluginHost):
         self._active(plugin, scene)
         PluginStore(self.runtime.store).add_plugin_event(scene, plugin, 'event', self.redact(plugin, text))
 
+    def quiet(self, plugin: str, scene: str, seconds: float | None, direct: str) -> None:
+        self._permit(self._active(plugin, scene), 'quiet')
+        self.quiets.append((scene, seconds, direct))
+
     async def fetch_media(self, plugin: str, scene: str, segment: Segment, max_bytes: int) -> bytes:
         self._permit(self._active(plugin, scene), 'history')
         keys = [segment.data.get(key) for key in (('file_id', 'image_key', 'file_key') if platform_reference(segment.data)
@@ -109,7 +115,7 @@ class PluginTest:
 
     Copies source to a temporary installation, calls actual start/stop, and uses
     the normal matching, handlers, tools, scene permissions and on-disk KV.
-    ``deliveries`` contain simulated sends. Network calls made directly by the
+    ``deliveries`` contain simulated sends and ``quiets`` the ``ctx.quiet`` calls. Network calls made directly by the
     plugin still execute; this harness does not sandbox plugin Python code.
     """
 
@@ -330,6 +336,10 @@ class PluginTest:
 
     def events(self, scene: str = 'onebot:group:80001') -> list[dict]:
         return PluginStore(self.host.runtime.store).plugin_events(scene)
+
+    @property
+    def quiets(self) -> list[tuple[str, float | None, str]]:
+        return self.host.quiets
 
     def state(self) -> dict:
         return self.host.state()

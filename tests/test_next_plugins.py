@@ -514,6 +514,44 @@ async def test_a_closed_scene_silences_its_plugins_until_reopened(tmp_path):
         await host.close()
 
 
+@pytest.mark.asyncio
+async def test_plugin_quiet_needs_its_permission_and_is_held_in_the_plugin_name(tmp_path):
+    from types import SimpleNamespace
+
+    extra = tmp_path / "personal"
+    extra.mkdir()
+    directory = _copy_sample(extra, "scoped")
+    (directory / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin\nclass Scoped(Plugin):\n    pass\n', encoding="utf-8")
+    manifest = (directory / "plugin.toml").read_text(encoding="utf-8")
+    scene = "onebot:group:80001"
+    root = _root(tmp_path, {"paths": [str(extra)], "scoped": {}}, ["scoped"])
+    calls = []
+    runner = SimpleNamespace(state=SimpleNamespace(paused=False, closed=False),
+                             hold_quiet=lambda *args: calls.append(args))
+    for permissions, allowed in (('["send"]', False), ('["quiet"]', True)):
+        (directory / "plugin.toml").write_text(
+            manifest.replace("interface = 1", f"interface = 1\npermissions = {permissions}"), encoding="utf-8")
+        host = PluginHost(load_host_config(root), core_tools=CORE)
+        host.runtime = SimpleNamespace(runners={scene: runner})
+        await host.start()
+        try:
+            context = host.plugins["scoped"].context
+            if not allowed:
+                with pytest.raises(PermissionError, match="quiet"):
+                    await context.quiet(scene, 120)
+                continue
+            with pytest.raises(ValueError, match="seconds"):
+                await context.quiet(scene, 0)
+            with pytest.raises(PermissionError, match="未在场景"):
+                await context.quiet("onebot:private:80002", 120)
+            await context.quiet(scene, 120, direct="defer")
+            await context.quiet(scene, None)
+        finally:
+            await host.close()
+    assert calls == [("plugin:scoped", 120, "defer"), ("plugin:scoped", None, "allow")]
+
+
 def test_home_page_counts_only_recent_plugin_errors():
     """Errors read back from older logs stay on the plugin page, not in what needs attention today."""
     from len_bot.next.panel.app import attention

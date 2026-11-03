@@ -121,8 +121,9 @@ async def test_live_scene_add_remove_drains_current_turn_without_stopping_other_
                     assert len(requests) == 2
                     available = (await client.get(endpoint + '/available')).json()['items']
                     assert available[0]['scene'] == NEW
-                    assert (await client.post(endpoint, json={'scene': NEW, 'persona': 'persona'})).status_code == 200
-                    assert NEW in runtime.runners
+                    readded = await client.post(endpoint, json={'scene': NEW, 'persona': 'persona', 'chat': False})
+                    assert readded.status_code == 200, readded.text
+                    assert runtime.runners[NEW].chat_status()['status'] == 'paused'
                     assert NEW in runtime.ingestor.scenes
                     assert (await client.delete(endpoint + '/' + NEW)).status_code == 200
                     assert (await client.delete(endpoint + '/' + SCENE)).status_code == 200

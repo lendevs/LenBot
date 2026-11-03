@@ -46,6 +46,7 @@
 | `network` | `fetch_image` 从公网获取图片 |
 | `schedule` | `ctx.cron` 登记定点任务 |
 | `configure` | `ctx.update_config` 修改本插件的配置 |
+| `quiet` | `ctx.quiet` 让启用的群临时安静 |
 
 插件自己的 KV、数据目录、日志、命令、消息规则、工具和通知不需要权限。只用这些时写 `permissions = []`。没有这个字段的插件保留全部能力，面板显示为**未声明权限**。
 

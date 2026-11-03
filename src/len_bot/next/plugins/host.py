@@ -540,6 +540,13 @@ class PluginHost:
         self.runtime.runners[scene].changed.set()
         self._notify()
 
+    def quiet(self, plugin: str, scene: str, seconds: float | None, direct: Literal["allow", "defer"]) -> None:
+        self._permit(self._active(plugin, scene), "quiet")
+        if self.runtime is None:
+            raise RuntimeError("插件宿主尚未接入运行中的场景")
+        self.runtime.runners[scene].hold_quiet(f"plugin:{plugin}", seconds, direct)
+        self._notify()
+
     def recent_messages(self, plugin: str, scene: str, limit: int) -> list[ChatMessage]:
         self._permit(self._active(plugin, scene), "history")
         if self.runtime is None:

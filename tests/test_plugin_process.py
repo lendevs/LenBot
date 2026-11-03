@@ -87,6 +87,11 @@ class Boxed(Plugin):
         self.later = asyncio.create_task(later())
         await ctx.reply("已委派")
 
+    @command("安静", "让本群暂时安静")
+    async def hush(self, ctx: Invocation, args: str) -> None:
+        await self.ctx.quiet(ctx.scene, 120, direct="defer")
+        await ctx.reply("已安静")
+
     @command("崩溃", "让进程直接退出")
     async def crash(self, ctx: Invocation, args: str) -> None:
         print("不会进入协议输出")
@@ -101,7 +106,7 @@ def plugin_packages(root: Path) -> None:
     boxed.mkdir()
     manifest = (SAMPLE / 'plugin.toml').read_text(encoding='utf-8').split('[config')[0]
     (boxed / 'plugin.toml').write_text(manifest.replace('name = "sample"', 'name = "boxed"')
-                                       + 'isolation = "process"\npermissions = ["send", "delegate"]\n', encoding='utf-8')
+                                       + 'isolation = "process"\npermissions = ["send", "delegate", "quiet"]\n', encoding='utf-8')
     (boxed / '__init__.py').write_text(BOXED, encoding='utf-8')
 
 
@@ -148,6 +153,15 @@ async def test_isolated_plugin_constructor_can_read_host_capabilities(tmp_path):
         await peer.say('/构造状态')
         await until(lambda: f'构造完成 UTC {SCENE} True' in peer.texts(), 5)
         assert state(plugins, 'boxed')['status'] == 'running'
+
+
+@pytest.mark.asyncio
+async def test_isolated_plugin_holds_a_temporary_quiet_in_its_own_name(tmp_path):
+    async with running(tmp_path) as (plugins, peer, store):
+        await peer.say('/安静')
+        await until(lambda: '已安静' in peer.texts(), 5)
+        quiet = plugins.runtime.runners[SCENE].state.temporary_quiet
+        assert (quiet.requester, quiet.direct) == ('plugin:boxed', 'defer')
 
 
 @pytest.mark.asyncio

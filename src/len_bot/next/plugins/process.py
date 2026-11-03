@@ -262,6 +262,8 @@ class Worker:
                         host.messages_between(name, self._scene(args[0]), *args[1:])]
             case "emit_event":
                 return host.emit_event(name, self._scene(args[0]), args[1])
+            case "quiet":
+                return host.quiet(name, self._scene(args[0]), args[1], args[2])
             case "fetch_image":
                 return base64.b64encode(await host.fetch_image(name, args[0], args[1])).decode()
             case "send_text":

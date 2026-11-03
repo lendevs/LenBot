@@ -127,6 +127,8 @@ class SceneCreate(BaseModel):
     persona: str = Field(min_length=1)
     scene: str
     attention: Participation = Field(default_factory=Participation)
+    # False starts the scene in plugin mode: plugins and commands answer, the model is not woken.
+    chat: bool = True
 
 
 class MemoryChange(BaseModel):
@@ -700,7 +702,11 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             if change.scene in saved.scenes:
                 raise ValueError(f"场景已存在：{change.scene}")
             source["scenes"][change.scene] = {"persona": change.persona, "attention": change.attention.attention()}
-        return await save(edit, scenes=True)
+        snapshot = await save(edit, scenes=True)
+        if not change.chat:
+            runtime.runners[change.scene].set_paused(True)
+            runtime.events.publish("host.state", scene=change.scene)
+        return snapshot
 
     @app.get('/api/host/settings/scenes/available', response_model=responses.Records, response_model_exclude_unset=True)
     async def available_scenes(_: str = Depends(user)):

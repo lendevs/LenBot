@@ -19,8 +19,13 @@ import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { toast } from '../../ui/toast'
-import ParticipationChoice from './participation/ParticipationChoice.vue'
-import { DEFAULT_PARTICIPATION, type Participation } from '../../api/participation'
+import NewGroupChoice from './participation/NewGroupChoice.vue'
+import {
+  DEFAULT_PARTICIPATION,
+  NEW_GROUP_PARTICIPATION,
+  type ChatMode,
+  type Participation,
+} from '../../api/participation'
 
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ added: [scene: string] }>()
@@ -48,7 +53,8 @@ const platformOptions = computed(() =>
   platforms.value.map((name) => ({ value: name, label: t(`chatPlatforms.${name}`) })),
 )
 const persona = ref<string>()
-const participation = ref<Participation>({ ...DEFAULT_PARTICIPATION })
+const participation = ref<Participation>({ ...NEW_GROUP_PARTICIPATION })
+const mode = ref<ChatMode>('chat')
 
 const available = useQuery({
   queryKey: keys.host.availableScenes(),
@@ -74,6 +80,7 @@ const manual = computed(() =>
   number.value.trim() ? `${platform.value}:${kind.value}:${number.value.trim()}` : '',
 )
 const target = computed(() => picked.value ?? manual.value)
+const isGroup = computed(() => target.value.split(':')[1] !== 'private')
 watch(number, (value) => {
   if (value.trim()) picked.value = null
 })
@@ -83,7 +90,10 @@ function pick(scene: string) {
 }
 
 const add = useMutation({
-  mutationFn: () => hostApi.addScene(target.value, persona.value ?? '', participation.value),
+  mutationFn: () =>
+    isGroup.value
+      ? hostApi.addScene(target.value, persona.value ?? '', participation.value, mode.value === 'chat')
+      : hostApi.addScene(target.value, persona.value ?? '', { ...DEFAULT_PARTICIPATION }, true),
   onSuccess: async () => {
     const scene = target.value
     const item = available.data.value?.items.find((entry) => entry.scene === scene)
@@ -101,7 +111,8 @@ watch(open, (value) => {
   add.reset()
   picked.value = null
   number.value = ''
-  participation.value = { ...DEFAULT_PARTICIPATION }
+  participation.value = { ...NEW_GROUP_PARTICIPATION }
+  mode.value = 'chat'
 })
 </script>
 
@@ -177,7 +188,7 @@ watch(open, (value) => {
       <Field :label="t('groups.join.persona')" required>
         <Select v-model="persona" :options="personaOptions" :disabled="personas.isPending.value" />
       </Field>
-      <ParticipationChoice v-if="target.split(':')[1] !== 'private'" v-model="participation" />
+      <NewGroupChoice v-if="isGroup" v-model="participation" v-model:mode="mode" />
       <ErrorNote v-if="personas.isError.value" :error="personas.error.value" :retry="personas.refetch" />
       <ErrorNote v-if="add.isError.value" :title="t('groups.join.failed')" :error="add.error.value" />
     </div>
