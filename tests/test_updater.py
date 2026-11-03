@@ -112,6 +112,28 @@ async def test_package_update_unpacks_the_release_writes_the_request_and_exits(t
 
 
 @pytest.mark.asyncio
+async def test_a_download_larger_than_the_manifest_declares_is_stopped_while_streaming(tmp_path, monkeypatch):
+    from len_bot.next.runtime import updater as updater_module
+    monkeypatch.setattr(updater_module, 'CHUNK', 1024)
+    deployment = Deployment('package', tmp_path)
+    _install(deployment, '0.1.0')
+    deployment.select('0.1.0')
+    bundle = _bundle('0.2.0', 'linux-x64')
+    name = 'lenbot-0.2.0-linux-x64.tar.gz'
+    manifest = _manifest('0.2.0', {name: bundle}, 'linux-x64')
+
+    async def exit_for_update():
+        raise AssertionError('not reached')
+
+    with Files({name: bundle + b'\0' * (1 << 20), 'release-manifest.json': json.dumps(manifest).encode()}) as files:
+        updater = Updater(deployment, '0.1.0', exit_for_update=exit_for_update)
+        updater.start(_release(files, '0.2.0', manifest), plugins=False)
+        await updater.task
+    assert updater.state()['stage'] == 'failed' and '超过发行清单声明的大小' in updater.state()['error']
+    assert not deployment.installed('0.2.0')
+
+
+@pytest.mark.asyncio
 async def test_a_release_for_another_updater_protocol_is_refused_before_downloading(tmp_path):
     deployment = Deployment('package', tmp_path)
     _install(deployment, '0.1.0')
