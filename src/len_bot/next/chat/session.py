@@ -435,10 +435,18 @@ class Chat:
                 self.slots.admit(self.config.scene)
 
     def stop_turn(self) -> None:
-        """End the running turn at the step it is in, the way its time limit would; it is recorded as cancelled."""
-        if self.turn_deadline is not None:
+        """End the running turn at the step it is in, the way its time limit would; it is recorded as cancelled.
+
+        A cancellation that arrives while the model connection is being opened can be absorbed there,
+        so the turn also checks ``turn_stopped`` after each model reply.
+        """
+        if self.turn_deadline is not None and not self.turn_stopped:
             self.turn_stopped = True
             self.turn_deadline.reschedule(asyncio.get_running_loop().time())
+
+    def _check_stopped(self) -> None:
+        if self.turn_stopped:
+            raise TimeoutError("turn stopped")
 
     async def run_turn(self, *, batch: tuple[int, list[str]] | None,
                        append_new: Callable[[bool, str], Awaitable[bool]],
@@ -574,6 +582,7 @@ class Chat:
                 self.expression.sticker_candidates = []
                 for step in range(self.config.max_steps):
                     self.trace_step = step + 1
+                    self._check_stopped()
                     self.check_limits()
                     prepared = await self.prepare_context(turn_id, observed_at=observed_at,
                                                           expression_style=expression_style, recalled=recalled)
@@ -586,6 +595,7 @@ class Chat:
                     reply = await self.request(turn_id, "mind", messages, tools,
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method),
                                                recall_items=recall_items, quick=not stepped_lookup)
+                    self._check_stopped()
                     stepped_lookup = any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
                     looked_up = looked_up or stepped_lookup
                     end_turn, group_failed = False, False
