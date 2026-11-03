@@ -25,11 +25,12 @@ from ...image_assets import OriginalImage
 from ..models.usage import UNBUDGETED, record_usage, totals as usage_totals
 from ..chat.schedule_time import CronTimeError, next_cron, parse_cron
 from .codec import decode_message, encode
-from .schema import FORMAT_RESET, business_script, create_database, expected_tables, require_columns, stored_state
+from .schema import business_script, create_database, expected_tables, require_columns, stored_state
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+FORMAT_UPGRADE = '请停止实例后执行 uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot。'
 MAX_SEARCH_TERMS = 8
 
 
@@ -48,16 +49,16 @@ def _require_current_format(path: Path, application_id: int, version: int, table
     if not tables:
         return
     if application_id == 0:
-        raise ValueError(f"{path} 带有数据表但没有 LenBot 的格式标识（application_id=0），不是当前格式的业务数据库。{FORMAT_RESET}")
+        raise ValueError(f"{path} 带有数据表但没有 LenBot 的格式标识（application_id=0），不是当前格式的业务数据库。{FORMAT_UPGRADE}")
     if application_id != 0x4C424E31:
         raise ValueError(f"{path} 不是 LenBot 的业务数据库（application_id={application_id}）")
     if version != FORMAT_VERSION:
-        raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_RESET}")
+        raise ValueError(f"{path} 的格式是 {version}，当前版本使用格式 {FORMAT_VERSION}。{FORMAT_UPGRADE}")
     missing = expected_tables() - tables
     if missing:
         names = sorted(missing)
         listed = '、'.join(names[:5]) + (f' 等 {len(names)} 张' if len(names) > 5 else '')
-        raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_RESET}")
+        raise ValueError(f"{path} 缺少数据表 {listed}，属于格式 {FORMAT_VERSION} 的早期结构。{FORMAT_UPGRADE}")
 
 
 def turn_record(row: sqlite3.Row) -> dict:
@@ -108,7 +109,8 @@ class Store:
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
         try:
             if state is not None and state[2]:
-                require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION)
+                require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION,
+                                guidance=FORMAT_UPGRADE)
             else:
                 if readonly:
                     raise ValueError(f'Existing business database is not initialized: {path}')

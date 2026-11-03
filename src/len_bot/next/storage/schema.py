@@ -196,7 +196,8 @@ def column_differences(db: sqlite3.Connection, script: str) -> list[str]:
     return problems
 
 
-def require_columns(db: sqlite3.Connection, script: str, *, path: Path, label: str, version: int) -> None:
+def require_columns(db: sqlite3.Connection, script: str, *, path: Path, label: str, version: int,
+                    guidance: str = FORMAT_RESET) -> None:
     """Refuse a database whose tables differ from the current schema in their column sets."""
     if problems := column_differences(db, script):
-        raise ValueError(f'{path} 的{label}表结构与格式 {version} 不一致：{"；".join(problems)}。{FORMAT_RESET}')
+        raise ValueError(f'{path} 的{label}表结构与格式 {version} 不一致：{"；".join(problems)}。{guidance}')
