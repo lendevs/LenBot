@@ -324,12 +324,18 @@ class ChatContext:
                               audio=AudioStore(self.store).captions(message.scene, message.platform_message_id))
 
     def batch(self, messages: Sequence[ChatMessage], *, reason: str | None = None) -> str:
+        return self.render_items(self.batch_items(messages), reason=reason)
+
+    def batch_items(self, messages: Sequence[ChatMessage]) -> list[tuple[ChatMessage, ChatMessage | None, dict[int, str]]]:
+        """Each message with its quoted message and audio captions, read once for repeated rendering."""
         records = AudioStore(self.store)
-        return render_batch([
-            (message, None if message.reply_to is None else
-             self.store.find_message(message.scene, message.reply_to),
-             records.captions(message.scene, message.platform_message_id)) for message in messages
-        ], timezone=self.config.timezone, reason=reason)
+        return [(message, None if message.reply_to is None else
+                 self.store.find_message(message.scene, message.reply_to),
+                 records.captions(message.scene, message.platform_message_id)) for message in messages]
+
+    def render_items(self, items: Sequence[tuple[ChatMessage, ChatMessage | None, dict[int, str]]], *,
+                     reason: str | None = None) -> str:
+        return render_batch(items, timezone=self.config.timezone, reason=reason)
 
     def render_text(self, message: ChatMessage) -> str:
         quote = (None if message.reply_to is None else

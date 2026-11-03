@@ -713,8 +713,8 @@ class SceneRunner:
         timing = 'focus' if wake.channel in {'attention', 'explore'} else wake.channel
         idle = getattr(self.settings, timing + "_idle_seconds")
         maximum = getattr(self.settings, timing + "_max_seconds")
-        pending = [(message, at) for _, message, at in self.store.pending_messages(self.config.scene)
-                   if at >= wake.first_at and not message.is_self
+        pending = [(message, at) for _, message, at in self.store.pending_messages(self.config.scene, since=wake.first_at)
+                   if not message.is_self
                    and (is_direct(message) or message.sender.uid not in self.settings.other_bot_ids)]
         if not pending:
             latest = self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids)
@@ -920,19 +920,25 @@ class SceneRunner:
                                         self.chat.toolset.tools, 0)
                      - self.config.recap_output_tokens)
         target = max(1, min(self.config.compaction.keep_recent_tokens, available))
-        contents, selected = [], []
-        text = ""
-        for _, message, _ in pending:
-            candidate = self.chat.context.batch([*selected, message], reason=reason if not contents else None)
-            if selected and estimate_content(candidate) > target:
-                contents.append(text)
-                selected = [message]
-                text = self.chat.context.batch(selected)
-            else:
-                selected.append(message)
-                text = candidate
-        if selected:
-            contents.append(text)
+        context = self.chat.context
+        items = context.batch_items([message for _, message, _ in pending])
+        contents, start = [], 0
+        while start < len(items):
+            heading = reason if not contents else None
+
+            def fits(end: int) -> bool:
+                return estimate_content(context.render_items(items[start:end], reason=heading)) <= target
+            # Each part is the longest run within the target, and holds at least one message.
+            # Doubling then bisection renders a part O(log n) times instead of once per message.
+            good, step = start + 1, 1
+            while good + step <= len(items) and fits(good + step):
+                good, step = good + step, step * 2
+            bad = min(good + step, len(items) + 1)
+            while bad - good > 1:
+                middle = (good + bad) // 2
+                good, bad = (middle, bad) if fits(middle) else (good, middle)
+            contents.append(context.render_items(items[start:good], reason=heading))
+            start = good
         return pending[-1][0], contents
 
     def consumed_state(self, *, new_turn: bool = False) -> AttentionState:

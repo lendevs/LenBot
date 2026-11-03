@@ -611,13 +611,14 @@ class Store:
                 self._save_attention(message.scene, attention_state)
             return seq
 
-    def pending_messages(self, scene: str) -> list[tuple[int, ChatMessage, float]]:
+    def pending_messages(self, scene: str, *, since: float | None = None) -> list[tuple[int, ChatMessage, float]]:
+        """``since`` keeps only messages that arrived at or after that time."""
         rows = self.db.execute(
             "SELECT seq,body,received_at FROM messages WHERE scene=? AND raw IS NOT NULL "
             "AND NOT (json_extract(body,'$.is_self')=1 AND json_extract(body,'$.send_status')='sent') "
             "AND seq>COALESCE((SELECT last_message_seq FROM mind_sessions WHERE scene=?),0) "
-            "ORDER BY seq",
-            (scene, scene),
+            + ("" if since is None else "AND received_at>=? ") + "ORDER BY seq",
+            (scene, scene) if since is None else (scene, scene, since),
         )
         return [(row[0], decode_message(row[1]), row[2]) for row in rows]
 
