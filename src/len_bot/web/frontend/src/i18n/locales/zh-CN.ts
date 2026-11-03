@@ -1213,6 +1213,8 @@ export default {
         publicOff: '任务未开启公共浏览器。',
         container: '任务环境正在运行。',
         files: '浏览器文件 · {n}',
+        closed: '已关闭遗留运行环境',
+        closeFailed: '关闭遗留运行环境失败',
       },
       events: {
         title: '过程',
