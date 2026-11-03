@@ -103,16 +103,18 @@ uv run --no-sync ruff check src/len_bot scripts deploy/package tests
 
 ## 数据格式
 
-在首个候选发布版（RC）之前，以下六个格式与接口编号固定为 `1`。在此期间调整表结构或配置字段时直接修改建表语句与配置模型，不编写迁移步骤，本机开发实例按需手动调整或重建。根配置格式 `2` 在 0.2.0rc1 之后加入 Telegram 与飞书，并把 `delivery` 的 `onebot` 改为 `live`；读取格式 `1` 的配置时在内存中迁移，`upgrade` 的 `apply` 阶段写回文件（`configuration/migrations.py`）。
+首个候选发布版（RC）之前，六个格式与接口编号固定为 `1`，当时直接调整建表语句和配置模型。自首个 RC 起，持久化格式变更递增对应编号并补迁移；现行编号如下。根配置格式 `2` 在 0.2.0rc1 之后加入 Telegram 与飞书，并把 `delivery` 的 `onebot` 改为 `live`；读取格式 `1` 的配置时在内存中迁移，`upgrade` 的 `apply` 阶段写回文件（`configuration/migrations.py`）。
 
 | 编号项 | 当前值 | 定义位置 |
 |---|---|---|
 | 插件接口版本 | `1` | `src/len_bot/plugin.py` 的 `INTERFACE` |
 | 根配置格式 | `4` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
-| 业务数据库 | `1` | `src/len_bot/next/storage/store.py` 的 `FORMAT_VERSION` |
+| 业务数据库 | `2` | `src/len_bot/next/storage/store.py` 的 `FORMAT_VERSION` |
 | 记忆处理库 | `1` | `src/len_bot/next/memory/jobs.py` 的 `FORMAT_VERSION` |
 | 本地记忆索引 | `1` | `src/len_bot/next/memory/local.py` 的 `FORMAT_VERSION` |
 | 插件键值存储 | `1` | `src/len_bot/next/plugins/kv.py` 的 `FORMAT_VERSION` |
+
+业务数据库格式 `2` 增加黑话结构化判定与最后评估位置。更新代码后，停止实例并执行 `uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot`，迁移保留原有词条、样本、人工固定和禁用决定；旧自动解释在新判定完成后恢复使用。
 
 上述四个 SQLite 数据库通过 `PRAGMA application_id` 标识文件类型，通过 `PRAGMA user_version` 记录格式编号；宿主只打开这两个值与当前代码一致的数据库文件。资料检索索引库（`reference/library.py`）仅保存可由源文档重建的派生数据，表结构变化时自动重建。
 

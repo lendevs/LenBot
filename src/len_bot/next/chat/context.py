@@ -157,7 +157,8 @@ def jargon_context(config: LabConfig, store: Store, messages: list[ChatMessage],
     if not terms:
         return None
     return Template(read_prompt("next_jargon_context.md")).substitute(
-        jargon=encode([{"词": item["term"], "含义": item["meaning"], "来源": item["source"]} for item in terms]),
+        jargon=encode([{"词": item["term"], "群内用法": item["meaning"],
+                        "适用语境": item["usage_condition"], "依据": item["evidence"], "来源": item["source"]} for item in terms]),
     )
 
 

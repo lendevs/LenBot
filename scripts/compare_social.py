@@ -14,13 +14,14 @@ from datetime import datetime
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 
 from len_bot.eval.replay import prepare, read_report, run, write_json
 from len_bot.next.config import load_host_config
 
 
-async def jargon_replay(root: Path, host, checkout: Path) -> dict:
-    """Exercise the existing real upkeep worker on fixed fictional candidates."""
+async def jargon_replay(root: Path, host, checkout: Path, *, existing: bool = False) -> dict:
+    """Run the upkeep worker on fictional candidates or a read-only copy of existing examples."""
     from len_bot.next.chat.session import Chat
     from len_bot.next.chat.upkeep import SessionUpkeep
     from len_bot.next.config import load_host_config
@@ -37,8 +38,21 @@ async def jargon_replay(root: Path, host, checkout: Path) -> dict:
         'extract': False, 'jargon_extract': True, 'batch_size': 100})
     source.pop('evaluation')
     scene = source.pop('scene')
+    original = None
+    if existing:
+        original = sqlite3.connect(host.database.resolve().as_uri() + '?mode=ro', uri=True)
+        original.row_factory = sqlite3.Row
+        original.execute('BEGIN')
+        scenes = [row[0] for row in original.execute('SELECT DISTINCT scene FROM jargon')]
+        if len(scenes) != 1:
+            original.close()
+            raise ValueError(f'旧词条回放需要一个群的词库，当前为 {scenes}')
+        scene = scenes[0]
+        source['bot_id'] = host.bot_id
     persona_path = source.pop('persona')
     attention = source.pop('attention')
+    if existing:
+        attention = host.scenes[scene].attention.model_dump(mode='json')
     learning = source.pop('learning')
     source.update(mode='isolated-multi', onebot=None, scenes={scene: {
         'persona': persona_path, 'attention': attention, 'learning': learning}})
@@ -61,18 +75,45 @@ async def jargon_replay(root: Path, host, checkout: Path) -> dict:
                 upkeep.fork = fork
                 records = JargonStore(store)
                 proposals = []
-                for index, case in enumerate(fixtures['cases']):
-                    for repeat, text in enumerate(case['messages']):
-                        raw = {'post_type': 'message', 'message_type': 'group', 'self_id': 90002,
-                               'group_id': 80001, 'user_id': 70001 + repeat % 2,
-                               'message_id': f'jargon-{index}-{repeat}', 'time': time.time(),
-                               'sender': {'nickname': f'成员{repeat % 2}', 'role': 'member'},
-                               'message': [{'type': 'text', 'data': {'text': text}}]}
-                        seq = store.enqueue(parse_message(raw, own_message_ids=set()), raw, time.time())
-                        if repeat == 0:
-                            proposals.append((case['term'], seq))
-                call = records.begin_discovery(scene, 0, store.max_message_seq(scene), {})
-                records.complete_discovery(call, proposals, exclude_uids=[])
+                if existing:
+                    originals = [dict(row) for row in original.execute('SELECT * FROM jargon WHERE scene=?', (scene,))]
+                    # A read transaction supplies a consistent set of words and neighboring originals.
+                    messages = {}
+                    for item in originals:
+                        for seq in json.loads(item['sample_seqs']):
+                            for operator, order, limit in [('<=', 'DESC', 4), ('>', 'ASC', 3)]:
+                                rows = original.execute(
+                                    "SELECT * FROM messages WHERE scene=? AND raw IS NOT NULL AND received_at IS NOT NULL "
+                                    "AND json_extract(body,'$.is_self')=0 AND json_extract(body,'$.send_status')='received' "
+                                    f"AND seq{operator}? ORDER BY seq {order} LIMIT ?", (scene, seq, limit))
+                                for row in rows:
+                                    messages[row['seq']] = dict(row)
+                    with store.db:
+                        for item in messages.values():
+                            columns = list(item)
+                            store.db.execute(f"INSERT INTO messages({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                                             tuple(item.values()))
+                        for item in originals:
+                            columns = list(item)
+                            store.db.execute(f"INSERT INTO jargon({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                                             tuple(item.values()))
+                        store.db.execute('UPDATE jargon_state SET start_seq=?,after_seq=? WHERE scene=?',
+                                         (0, store.max_message_seq(scene), scene))
+                    write_json(root / 'before.json', originals)
+                else:
+                    for index, case in enumerate(fixtures['cases']):
+                        samples = []
+                        for repeat, text in enumerate(case['messages']):
+                            raw = {'post_type': 'message', 'message_type': 'group', 'self_id': 90002,
+                                   'group_id': 80001, 'user_id': 70001 + repeat % 2,
+                                   'message_id': f'jargon-{index}-{repeat}', 'time': time.time() + index * 3600 + repeat * 60,
+                                   'sender': {'nickname': f'成员{repeat % 2}', 'role': 'member'},
+                                   'message': [{'type': 'text', 'data': {'text': text}}]}
+                            samples.append(store.enqueue(parse_message(raw, own_message_ids=set()), raw, time.time()))
+                        proposals.append((scene, case['term'], len(samples), json.dumps(samples), time.time()))
+                    with store.db:
+                        store.db.executemany("INSERT INTO jargon(scene,term,count,sample_seqs,status,updated) "
+                                             "VALUES (?,?,?,?,'pending',?)", proposals)
                 changed = asyncio.Event()
                 upkeep.on_update = changed.set
                 upkeep.start()
@@ -90,11 +131,18 @@ async def jargon_replay(root: Path, host, checkout: Path) -> dict:
             items = records.items(scene, status=None, limit=100, offset=0)['items']
             calls = [dict(row) for row in store.db.execute(
                 "SELECT role,request,response,error,tokens FROM model_calls ORDER BY id")]
-            kinds = {case['term']: case['kind'] for case in fixtures['cases']}
+            kinds = {} if existing else {case['term']: case['kind'] for case in fixtures['cases']}
+            token_usage = [json.loads(call['tokens']) for call in calls if call['tokens']]
             return {'items': items, 'calls': calls, 'requests': len(calls),
-                    'ordinary_rejected': sum(kinds[item['term']] == 'ordinary' and item['status'] == 'rejected' for item in items),
-                    'jargon_rejected': sum(kinds[item['term']] == 'jargon' and item['status'] == 'rejected' for item in items)}
+                    'tokens': {key: sum(usage.get(key) or 0 for usage in token_usage) for key in ('input', 'output', 'cached')},
+                    'classifications': {key: sum(item['classification'] == key for item in items)
+                                        for key in ('special', 'ordinary', 'uncertain')},
+                    'ordinary_rejected': sum(kinds.get(item['term']) == 'ordinary' and item['classification'] == 'ordinary' for item in items),
+                    'ordinary_learned': sum(kinds.get(item['term']) == 'ordinary' and item['classification'] == 'special' for item in items),
+                    'jargon_rejected': sum(kinds.get(item['term']) == 'jargon' and item['classification'] != 'special' for item in items)}
     finally:
+        if original is not None:
+            original.close()
         path.unlink()
 
 
@@ -104,6 +152,7 @@ def main() -> None:
     parser.add_argument('--label')
     parser.add_argument('--report', type=Path)
     parser.add_argument('--jargon', action='store_true')
+    parser.add_argument('--jargon-existing', action='store_true', help='Reassess existing jargon in an isolated copy')
     parser.add_argument('--persona', type=Path)
     parser.add_argument('--cases', type=Path, help='A structured case file whose set is social')
     parser.add_argument('--repetitions', type=int, default=3)
@@ -122,8 +171,8 @@ def main() -> None:
     root = checkout / 'state/experiments' / f'social-{datetime.now():%Y%m%d}' / options.label
     root.mkdir(parents=True, exist_ok=False)
     shutil.copytree(options.persona or checkout / 'examples/personas/companion', root / 'persona')
-    if options.jargon:
-        result = asyncio.run(jargon_replay(root, host, checkout))
+    if options.jargon or options.jargon_existing:
+        result = asyncio.run(jargon_replay(root, host, checkout, existing=options.jargon_existing))
         write_json(root / 'result.json', result)
         print(json.dumps({key: result[key] for key in ('requests', 'ordinary_rejected', 'jargon_rejected')}, ensure_ascii=False))
         return

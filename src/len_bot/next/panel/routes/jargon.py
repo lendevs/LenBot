@@ -56,7 +56,7 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
                 "cursor": records.state(scene), "service_state": service_state(scene)}
 
     @app.get(base + "/terms", response_model=responses.RecordPage, response_model_exclude_unset=True)
-    async def terms(scene: str, status: Literal["pending", "adopted", "rejected"] | None = None,
+    async def terms(scene: str, status: Literal["pending", "adopted", "rejected", "learned", "uncertain", "ordinary"] | None = None,
                     limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
                     _: str = Depends(user)):
         chat_for(scene)

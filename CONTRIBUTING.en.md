@@ -103,16 +103,18 @@ When modifying framework prompts or default persona materials, compare before an
 
 ## Data format
 
-Until the first release candidate (RC), all six format and interface numbers stay fixed at `1`. During pre-RC development, edit SQL `CREATE` statements and Pydantic configuration models directly without migration steps, and adjust or recreate local development instances manually when needed.
+Before the first release candidate (RC), all six format and interface numbers were fixed at `1`, and SQL schemas and configuration models were edited directly. Since the first RC, each persistent format change increments its version and includes a migration. Current versions are listed below.
 
 | Format or interface | Current value | Location |
 |---|---|---|
 | Plugin interface | `1` | `INTERFACE` in `src/len_bot/plugin.py` |
 | Root configuration | `4` | `CONFIG_VERSION` in `src/len_bot/next/config.py` |
-| Business database | `1` | `FORMAT_VERSION` in `src/len_bot/next/storage/store.py` |
+| Business database | `2` | `FORMAT_VERSION` in `src/len_bot/next/storage/store.py` |
 | Memory job database | `1` | `FORMAT_VERSION` in `src/len_bot/next/memory/jobs.py` |
 | Local memory index | `1` | `FORMAT_VERSION` in `src/len_bot/next/memory/local.py` |
 | Plugin key-value store | `1` | `FORMAT_VERSION` in `src/len_bot/next/plugins/kv.py` |
+
+Business database format `2` adds structured jargon judgments and the last evaluated message position. After updating the code, stop the instance and run `uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot`. The migration preserves terms, examples, fixed meanings and disabled decisions. Existing automatic meanings become available after reassessment.
 
 The four SQLite databases above record their file type in `PRAGMA application_id` and their format version in `PRAGMA user_version`; the host opens only files matching both expected values. The reference retrieval index (`reference/library.py`) stores derived data only and rebuilds its tables automatically from source documents whenever its schema changes.
 

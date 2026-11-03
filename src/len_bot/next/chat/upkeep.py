@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 from ..config import LabConfig, SceneSettings
 from ..learning.expression_match import overlap
-from ..learning.jargon_store import JargonStore
+from ..learning.jargon_store import JargonStore, contains
 from ..learning.reply_effect_store import REACTIONS, ReplyEffectStore
 from ..learning.store import LearningStore
 from ..models.client import ChatModel, ModelReply
@@ -48,7 +48,7 @@ RETRY_DELAY_SECONDS = 60
 # After an unexpected worker error the scene waits this long before trying again.
 ERROR_BACKOFF_SECONDS = 60
 EFFECT_BATCH = 10
-MEANING_BATCH = 5
+MEANING_BATCH = 20
 MAX_ITEMS = 20
 PARTS = ("memory", "expressions", "jargon", "effects")
 # A new expression this close to an adopted one with the same wording joins it instead.
@@ -300,7 +300,15 @@ class SessionUpkeep:
                     plan.expressions_after = afters.get("expressions")
                     plan.jargon_after = afters.get("jargon")
         if scene in self.parts["jargon"]:
-            plan.meanings = self.jargon.pending(scene)[:MEANING_BATCH]
+            jargon_rows = [row for row in plan.rows if row[0] > afters['jargon']]
+            recent_texts = [plain_text(message) for _, message, _, _ in jargon_rows]
+            if jargon_rows:
+                before = [message for seq, message, _ in self.jargon.context(
+                    scene, jargon_rows[0][0], self._exclude_uids(scene)) if seq < jargon_rows[0][0]]
+                recent_texts.extend(plain_text(message) for message in before[-1:])
+            recent = self.jargon.for_messages(scene, recent_texts)
+            waiting = {item['id']: item for item in [*recent, *self.jargon.pending(scene)]}
+            plan.meanings = list(waiting.values())[:MEANING_BATCH]
         if scene in self.parts["effects"]:
             retry_of = self._effect_retry.get(scene)
             if retry_of is not None:
@@ -421,12 +429,14 @@ class SessionUpkeep:
                        for seq, message in self.effects.before(scene, min(effect["message_seqs"]))],
                 "之后": lines(effect["observed_seqs"])}
 
-    def _meaning_item(self, scene: str, term: dict) -> dict:
+    def _meaning_rows(self, scene: str, term: dict) -> list[tuple[int, ChatMessage, float]]:
         examples = {}
-        for seq in term["sample_seqs"][-5:]:
-            for row_seq, message, _ in self.jargon.context(scene, seq, self._exclude_uids(scene)):
-                examples[row_seq] = self._line(scene, row_seq, message)
-        return {"term": term["term"], "出现次数": term["count"], "例句": [examples[seq] for seq in sorted(examples)]}
+        evidence_seqs = ([] if term['judgment'] is None else
+                         [seq for e in term['judgment']['evidence'] for seq in (e['seq'], e['term_seq'])])
+        for seq in dict.fromkeys([*term['sample_seqs'][-5:], *evidence_seqs]):
+            for row_seq, message, received in self.jargon.context(scene, seq, self._exclude_uids(scene)):
+                examples[row_seq] = (row_seq, message, received)
+        return [examples[seq] for seq in sorted(examples)]
 
     async def _instruction(self, scene: str, plan: Plan, history: list[dict], tools: list[dict]
                            ) -> tuple[str, dict[str, int], set[str], bool]:
@@ -449,14 +459,30 @@ class SessionUpkeep:
         if plan.expressions_after is not None and plan.rows:
             tasks.append(read_prompt("next_upkeep_expressions.md").strip())
             formats["expressions"] = [{"situation": "情境", "style": "说法", "sources": ["消息id"]}]
-        if plan.jargon_after is not None and plan.rows:
+        if (plan.jargon_after is not None and plan.rows) or plan.meanings:
             tasks.append(read_prompt("next_upkeep_jargon.md").strip())
-            formats["terms"] = [{"term": "原话中的词", "sources": ["消息id"]}]
-        if plan.meanings:
-            tasks.append(Template(read_prompt("next_upkeep_meanings.md")).substitute(
-                terms=encode([self._meaning_item(scene, term) for term in plan.meanings])).strip())
-            formats["meanings"] = [{"term": "词", "meaning": "在这个群里的用法",
-                                    "ordinary_meaning": "通常含义", "same_meaning": False, "confidence": 0.5}]
+            previous, examples_by_seq = [], {}
+            for term in plan.meanings:
+                examples = self._meaning_rows(scene, term)
+                for seq, message, _ in examples:
+                    key = self._key(message, seq)
+                    keys[key] = seq
+                    humans.add(key)
+                    examples_by_seq[seq] = self._line(scene, seq, message)
+                previous.append({'term': term['term'], '人工控制': term['status'],
+                                 '已有解释': term['latest_meaning'], '已有判断': term['judgment'],
+                                 '上次评估位置': term['last_evaluated_seq'], '出现次数': term['count'],
+                                 '例句及相邻上下文id': [self._key(message, seq) for seq, message, _ in examples]})
+            tasks.append("需要结合新增用例重新判断的已有词条（逐条返回 terms）：\n" + encode(previous)
+                         + "\n已有词条的原话及相邻上下文：\n"
+                         + encode([examples_by_seq[seq] for seq in sorted(examples_by_seq)]))
+            formats['terms'] = [{'term': '原话中的词', 'classification': 'special | ordinary | uncertain',
+                                 'group_meaning': '群内含义，未确定时为 null', 'ordinary_meaning': '通常含义或 null',
+                                 'difference': '语义差异或 null', 'usage_condition': '适用语境或 null',
+                                 'aliases': [], 'evidence': [{'message_id': '消息id', 'quote': '原话片段',
+                                                            'kind': 'definition | correction | usage',
+                                                            'term_message_id': '包含词条的本条或相邻消息id',
+                                                            'episode': '独立对话片段的标识'}]}]
         if plan.effects:
             samples = [self._effect_sample(scene, item) for item in self.effects.effects(scene, plan.effects)]
             tasks.append(Template(read_prompt("next_upkeep_effects.md")).substitute(samples=encode(samples)).strip())
@@ -495,8 +521,9 @@ class SessionUpkeep:
             begun.memory_job = job
         if plan.expressions_after is not None and through is not None and through > plan.expressions_after:
             begun.batch = self.learning.begin(scene, plan.expressions_after, through, request)
-        if plan.jargon_after is not None and through is not None and through > plan.jargon_after:
-            begun.discovery = self.jargon.begin_discovery(scene, plan.jargon_after, through, request)
+        if (plan.jargon_after is not None and through is not None) or plan.meanings:
+            after = self.jargon.state(scene)['after_seq']
+            begun.discovery = self.jargon.begin_discovery(scene, after, max(after, through or after), request)
         if plan.effects:
             begun.effect_call = self.effects.begin_call(scene, plan.effects, request, retry_of=plan.effect_retry)
         return begun
@@ -522,9 +549,15 @@ class SessionUpkeep:
         if self.on_update is not None:
             self.on_update()
         steps = self.config.memory.ingest.max_steps if memory else 2
-        texts = {key: plain_text(message) for seq, message, _, _ in plan.rows
-                 if (key := self._key(message, seq)) in humans}
+        texts = {key: plain_text(self.store.read_message(scene, seq)) for key, seq in keys.items() if key in humans}
+        batch_seqs = {row[0] for row in plan.rows}
+        batch_humans = {key for key in humans if keys[key] in batch_seqs}
         entries = {item["entry_seq"] for item in self.effects.effects(scene, plan.effects)} if plan.effects else set()
+        def adjacent(first: str, second: str) -> bool:
+            low, high = sorted((keys[first], keys[second]))
+            return next((seq for seq, _, _ in self.jargon.context(scene, low, self._exclude_uids(scene))
+                         if seq > low), None) == high
+
         written: list[str] = []
         failed_tools = 0
         # One reminder each when the tool rounds run out and when the final JSON cannot be read.
@@ -553,7 +586,13 @@ class SessionUpkeep:
                             conversation.append({"role": "user", "content": "工具次数用完了，现在只输出整理结果的 JSON 对象。"})
                         continue
                     try:
-                        results, dropped = parse_results(reply, humans, texts, entries)
+                        results, dropped = parse_results(reply, batch_humans,
+                                                         texts, entries, jargon_humans=humans, positions=keys,
+                                                         known_terms={term['term'] for term in plan.meanings}, adjacent=adjacent)
+                        covered = {form for item in results['terms'] for form in [item['term'], *item['aliases']]}
+                        missing = {term['term'] for term in plan.meanings} - covered
+                        if missing:
+                            raise ValueError(f"terms 缺少已有词条的判断：{sorted(missing)}；证据不足时返回 uncertain")
                         break
                     except ValueError as error:
                         if corrected:
@@ -641,7 +680,16 @@ class SessionUpkeep:
                                                        same_situation=SAME_SITUATION_VECTOR)
         if begun.discovery is not None:
             self.jargon.response(begun.discovery, response, None, None)
-            proposals = [(item["term"], keys[key]) for item in results["terms"] for key in item["sources"]]
+            proposals = []
+            existing = {term['term']: term for term in plan.meanings}
+            for item in results['terms']:
+                term = existing.get(item['term'])
+                evaluated = max([plan.through or 0, term['last_evaluated_seq'] if term else 0,
+                                 *(term['sample_seqs'] if term else []),
+                                 *(keys[e[key]] for e in item['evidence'] for key in ('message_id', 'term_message_id'))])
+                evidence = [{**e, 'seq': keys[e['message_id']], 'term_seq': keys[e['term_message_id']]}
+                            for e in item['evidence']]
+                proposals.append({**item, 'evidence': evidence, 'evaluated_seq': evaluated})
             excluded = self._exclude_uids(scene)
             call_id = begun.discovery
 
@@ -649,16 +697,6 @@ class SessionUpkeep:
                 with Store(self.config.database, now=self.store.now) as store:
                     JargonStore(store).complete_discovery(call_id, proposals, exclude_uids=excluded)
             await finish_file_operation(discover)
-        # A term the reply leaves out stays pending for the next pass.
-        meanings = {item["term"]: item for item in results["meanings"]}
-        for term in plan.meanings:
-            if term["term"] in meanings:
-                call_id = self.jargon.begin_meaning(scene, term["id"], term["count"], begun.request)
-                self.jargon.response(call_id, response, None, None)
-                item = meanings[term["term"]]
-                self.jargon.complete_meaning(call_id, item["meaning"], item["confidence"],
-                                             ordinary_meaning=item["ordinary_meaning"],
-                                             same_meaning=item["same_meaning"])
         if begun.effect_call is not None:
             self.effects.response(begun.effect_call, response, None, None)
             # Samples the reply left out stay unjudged on this call.
@@ -673,7 +711,10 @@ _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
 
 
 def parse_results(reply: ModelReply, humans: set[str], texts: dict[str, str],
-                  entries: set[int]) -> tuple[dict, list[str]]:
+                  entries: set[int], *, positions: dict[str, int] | None = None,
+                  known_terms: set[str] | None = None,
+                  jargon_humans: set[str] | None = None,
+                  adjacent: Callable[[str, str], bool] | None = None) -> tuple[dict, list[str]]:
     """The final upkeep reply and the reasons for each item dropped from it.
 
     Only a reply that is not a JSON object raises; an item failing a check is dropped and the rest kept.
@@ -689,8 +730,8 @@ def parse_results(reply: ModelReply, humans: set[str], texts: dict[str, str],
         raise ValueError(f"Invalid upkeep result: expected a JSON object; response fragment: {reply.text[:500]!r}")
     dropped: list[str] = []
     checks = {"expressions": lambda item: _expression(item, humans),
-              "terms": lambda item: _term(item, humans, texts),
-              "meanings": _meaning,
+              "terms": lambda item: _term(item, humans if jargon_humans is None else jargon_humans, texts, positions or {key: i for i, key in enumerate(texts)},
+                                           known_terms or set(), adjacent),
               "effects": lambda item: _effect(item, entries)}
     results: dict = {}
     for name, check in checks.items():
@@ -709,6 +750,15 @@ def parse_results(reply: ModelReply, humans: set[str], texts: dict[str, str],
                 kept.append(check(item))
             except ValueError as error:
                 dropped.append(f"{name}[{index}]: {error}")
+        if name == 'terms':
+            unique, forms = {}, set()
+            for item in sorted(kept, key=lambda item: -len(item['aliases'])):
+                if forms.intersection([item['term'], *item['aliases']]):
+                    dropped.append(f"terms: duplicate term {item['term']!r}, kept the first")
+                else:
+                    unique[item['term']] = item
+                    forms.update([item['term'], *item['aliases']])
+            kept = list(unique.values())
         results[name] = kept
     effects: dict[int, tuple[str, str]] = {}
     for entry, reaction, reason in results["effects"]:
@@ -737,23 +787,68 @@ def _expression(item: dict, humans: set[str]) -> dict:
     return {"situation": item["situation"], "style": item["style"], "sources": _sources(item, humans)}
 
 
-def _term(item: dict, humans: set[str], texts: dict[str, str]) -> dict:
-    term = item.get("term")
+def _term(item: dict, humans: set[str], texts: dict[str, str], positions: dict[str, int],
+          known_terms: set[str], adjacent: Callable[[str, str], bool] | None) -> dict:
+    term = item.get('term')
     if not isinstance(term, str) or not term.strip():
-        raise ValueError("term must be nonblank text")
+        raise ValueError('term must be nonblank text')
     term = term.strip()
-    return {"term": term, "sources": _sources(item, {key for key in humans if term in texts[key]})}
-
-
-def _meaning(item: dict) -> dict:
-    confidence = item.get("confidence")
-    if (not isinstance(item.get("term"), str) or not item['term'].strip()
-            or any(not isinstance(item.get(key), str) or not item[key].strip()
-                   for key in ('meaning', 'ordinary_meaning'))
-            or type(item.get('same_meaning')) is not bool
-            or type(confidence) not in {int, float} or not 0 <= confidence <= 1):
-        raise ValueError("needs term, meaning, ordinary_meaning, boolean same_meaning and confidence in 0..1")
-    return item
+    classification = item.get('classification')
+    if not isinstance(classification, str) or classification not in {'special', 'ordinary', 'uncertain'}:
+        raise ValueError('classification must be special, ordinary or uncertain')
+    result = {'term': term, 'classification': classification}
+    for name in ('group_meaning', 'ordinary_meaning', 'difference', 'usage_condition'):
+        value = item.get(name)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f'{name} must be nonblank text or null')
+        result[name] = value
+    if classification == 'special' and any(result[key] is None for key in ('group_meaning', 'difference', 'usage_condition')):
+        raise ValueError('special usage needs group_meaning, difference and usage_condition')
+    aliases = item.get('aliases', [])
+    if not isinstance(aliases, list) or any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
+        raise ValueError('aliases must be nonblank strings')
+    aliases = list(dict.fromkeys(alias.strip() for alias in aliases if alias.strip() != term))
+    raw = item.get('evidence')
+    if not isinstance(raw, list):
+        raise ValueError('evidence must be a list')
+    evidence, seen = [], set()
+    ordered = sorted(humans, key=positions.__getitem__)
+    for source in raw:
+        if not isinstance(source, dict):
+            raise ValueError('evidence must contain objects')
+        key, quote, kind = source.get('message_id'), source.get('quote'), source.get('kind')
+        anchor = source.get('term_message_id', key)
+        episode = source.get('episode')
+        if not isinstance(key, str) or not isinstance(anchor, str) or key not in humans or anchor not in humans:
+            raise ValueError('evidence must cite supplied human messages of this scene')
+        if not isinstance(quote, str) or not quote.strip() or quote not in texts[key]:
+            raise ValueError('evidence quote must occur verbatim in its source')
+        if not isinstance(kind, str) or kind not in {'definition', 'correction', 'usage'}:
+            raise ValueError('evidence kind must be definition, correction or usage')
+        if not isinstance(episode, str) or not episode.strip():
+            raise ValueError('evidence needs an episode identifying its independent conversation')
+        if kind == 'usage':
+            if anchor != key or not any(contains(form, quote) for form in [term, *aliases]):
+                raise ValueError('usage quote must contain the term or an evidenced alias')
+        elif not (contains(term, texts[anchor]) and (key == anchor or
+                  (adjacent(key, anchor) if adjacent is not None else abs(ordered.index(key) - ordered.index(anchor)) <= 1))):
+            raise ValueError('definition/correction must explain a term in this or an adjacent human message')
+        if key not in seen:
+            evidence.append({'message_id': key, 'quote': quote, 'kind': kind,
+                             'term_message_id': anchor, 'episode': episode})
+            seen.add(key)
+    if term not in known_terms and not any(contains(term, texts[key]) for key in humans):
+        raise ValueError('term must occur in a supplied human message')
+    if classification == 'special' and not (
+            any(e['kind'] in {'definition', 'correction'} for e in evidence)
+            or len({e['episode'] for e in evidence}) >= 2):
+        raise ValueError('special usage needs an explicit explanation or two independent episodes')
+    for alias in aliases:
+        if not any(e['kind'] in {'definition', 'correction'} and contains(alias, e['quote'])
+                   and contains(term, texts[e['term_message_id']]) for e in evidence):
+            raise ValueError(f'alias {alias!r} needs an explicit shared-reference explanation')
+    result.update(aliases=aliases, evidence=evidence)
+    return result
 
 
 def _effect(item: dict, entries: set[int]) -> tuple[int, str, str]:
