@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowUpRight, MessageCirclePlus, Square } from '@lucide/vue'
-import { activityLevel } from '../../api/participation'
 import { keys } from '../../api/query'
 import { trialSource, trialsApi, type TrialInfo } from '../../api/trials'
 import { developerDetails } from '../../composables/useDeveloperMode'
@@ -59,11 +58,10 @@ const showForm = computed(
 )
 
 function participationLabel(trial: TrialInfo) {
-  const { only_direct, activity } = trial.attention
+  const { only_direct, level } = trial.attention
   if (only_direct) return t('participation.short.direct')
-  const level = activityLevel(activity)
   return t('participation.short.join', {
-    level: level ? t(`participation.levels.${level}`) : t('participation.custom', { value: activity }),
+    level: level ? t(`participation.levels.${level}`) : t('participation.custom'),
   })
 }
 async function started(trial: TrialInfo) {

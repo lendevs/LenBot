@@ -429,8 +429,8 @@ export default {
       join: 'Also join group conversations',
     },
     frequency: 'How often',
-    levels: { low: 'Less', medium: 'Moderate', high: 'More' },
-    custom: 'Custom {value}',
+    levels: { active: 'Active', moderate: 'Moderate', quiet: 'Quiet' },
+    custom: 'Custom',
     short: { direct: 'Answers calls only', join: 'Joins discussions · {level}' },
   },
   groups: {

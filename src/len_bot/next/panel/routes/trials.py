@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .. import responses
 from ...chat.tools import tool_catalog, tool_unavailable_reasons
 from ...config import HostConfig, LabConfig, load_host_config
-from ...configuration.chat import Participation
+from ...configuration.chat import Participation, wake_level
 from .persona import finish_role_write
 from .timeline import TurnDetail, read_turn
 from ...instance_lock import InstanceBusyError, instance_lock
@@ -54,7 +54,7 @@ class TrialStart(BaseModel):
     scene: str
     context_messages: int = Field(default=0, ge=0, le=100)
     persona_draft: PersonaDraft | None = None
-    # Replaces the group's two participation fields for this trial only; None uses the group's.
+    # Replaces the group's participation for this trial only; None uses the group's.
     attention: Participation | None = None
 
 
@@ -87,7 +87,8 @@ class Trial:
                 'draft_path': str(self.root / 'persona-draft') if self.persona_source == 'draft' else None,
                 'draft_source': self.draft_source,
                 'models': {'mind': self.config.models.roles.mind.model},
-                'attention': {key: getattr(self.config.attention, key) for key in ('only_direct', 'activity')}}
+                'attention': {'only_direct': self.config.attention.only_direct,
+                              'level': wake_level(self.config.attention, joining=True)}}
 
     def snapshot(self) -> dict:
         return self.session.snapshot() if self.final_state is None else self.final_state
@@ -217,7 +218,7 @@ class HostTrials:
                     'learning':None, 'proactive':None, 'transcribe_audio':False, 'memory':memory,
                     'web_read':None, 'web_search':None,
                     'attention': source.attention if attention is None else source.attention.model_copy(
-                        update=attention.model_dump())})
+                        update=attention.attention())})
                 config = LabConfig.model_validate_json(candidate.model_dump_json())
                 if persona_draft is None:
                     original = self.runtime.chats[scene].toolset.allowed_tool_names

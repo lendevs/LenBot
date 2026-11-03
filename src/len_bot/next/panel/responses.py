@@ -64,7 +64,7 @@ class HostScene(ScenePersona):
     timezone: str
     chat_enabled: bool
     chat_status: JsonObject
-    # The running chat's only_direct and activity.
+    # The running chat's only_direct and the wake level it joins in at (None when tuned by hand).
     attention: JsonObject
     # The participation preset the attention fields match; None when tuned by hand.
     wake_level: str | None = None

@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { http } from './client'
-import type { Participation } from './participation'
+import type { Participation, WakeLevel } from './participation'
 
 export interface ItemHealth {
   name: string
@@ -16,7 +16,7 @@ export interface ChatStatus {
   changes_at: number | null
 }
 
-export type WakeLevel = 'active' | 'moderate' | 'quiet'
+export type { WakeLevel }
 
 export interface HostScene {
   scene: string

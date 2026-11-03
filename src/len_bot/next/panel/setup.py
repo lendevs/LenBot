@@ -195,7 +195,7 @@ def setup_source(item: FirstSetup) -> dict:
         'panel': {'host': item.panel_host, 'port': item.panel_port, 'username': item.username,
                   'password_hash': hash_password(item.password)},
         'scenes': {item.scene: {'persona': f'personas/{item.persona_id}', 'voice_mode': item.voice_mode,
-                                'attention': item.attention.model_dump()}},
+                                'attention': item.attention.attention()}},
     }
 
 

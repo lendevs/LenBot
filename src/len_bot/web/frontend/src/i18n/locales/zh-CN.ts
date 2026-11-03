@@ -415,8 +415,8 @@ export default {
     mode: '发言时机',
     modes: { direct: "只在被 {'@'}、回复或私聊时", join: '同时参与群内讨论' },
     frequency: '参与频率',
-    levels: { low: '少', medium: '适中', high: '多' },
-    custom: '自定义 {value}',
+    levels: { active: '活跃', moderate: '适中', quiet: '安静' },
+    custom: '自定义',
     short: { direct: '只回应呼叫', join: '参与讨论 · {level}' },
   },
   groups: {

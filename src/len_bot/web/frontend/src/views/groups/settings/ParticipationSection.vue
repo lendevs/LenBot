@@ -9,7 +9,7 @@ import NumberInput from '../../../ui/NumberInput.vue'
 import Switch from '../../../ui/Switch.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import ParticipationChoice from '../participation/ParticipationChoice.vue'
-import type { Participation } from '../../../api/participation'
+import { WAKE_LEVELS, wakeLevelOf, type Participation } from '../../../api/participation'
 import { useForm, withPlatform } from './form'
 
 type NumberKey =
@@ -33,11 +33,14 @@ const form = useForm()
 const details = ref(false)
 
 const participation = computed({
-  get: () => ({
+  get: (): Participation => ({
     only_direct: form.draft.scene.attention.only_direct,
-    activity: form.draft.scene.attention.activity,
+    level: wakeLevelOf(form.draft.scene.attention),
   }),
-  set: (value: Participation) => Object.assign(form.draft.scene.attention, value),
+  set: (value: Participation) =>
+    Object.assign(form.draft.scene.attention, value.level ? WAKE_LEVELS[value.level] : {}, {
+      only_direct: value.only_direct,
+    }),
 })
 const otherBots = computed({
   get: () => form.draft.scene.attention.other_bot_ids,

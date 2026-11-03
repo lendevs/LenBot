@@ -199,8 +199,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                  "voice_mode": settings.voice_mode, "timezone": config.scene_timezone(scene),
                  "chat_enabled": not runtime.runners[scene].state.paused,
                  "chat_status": runtime.runners[scene].chat_status(),
-                 "attention": {key: getattr(runtime.chats[scene].config.attention, key)
-                               for key in ('only_direct', 'activity')},
+                 "attention": {"only_direct": runtime.chats[scene].config.attention.only_direct,
+                               "level": wake_level(runtime.chats[scene].config.attention, joining=True)},
                  "wake_level": wake_level(runtime.chats[scene].config.attention)}
                 for scene, settings in config.scenes.items()
             ],

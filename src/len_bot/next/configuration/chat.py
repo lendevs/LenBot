@@ -249,9 +249,12 @@ WAKE_LEVELS: dict[str, dict[str, float | int]] = {
 }
 
 
-def wake_level(attention: Attention) -> str | None:
-    """The preset the attention fields match; None for hand-tuned values or a chat that only answers calls."""
-    if attention.only_direct:
+def wake_level(attention: Attention, *, joining: bool = False) -> str | None:
+    """The preset the attention fields match; None for hand-tuned values.
+
+    A chat that only answers calls has no level unless ``joining`` asks which one it would join in at.
+    """
+    if attention.only_direct and not joining:
         return None
     for level, values in WAKE_LEVELS.items():
         if all(getattr(attention, field) == value for field, value in values.items()):
@@ -260,11 +263,17 @@ def wake_level(attention: Attention) -> str | None:
 
 
 class Participation(BaseModel):
-    """The two attention fields chosen when a chat is added or tried: answer calls only, or also join in."""
+    """Chosen when a chat is added or tried: answer calls only, or also join in at a wake level.
+
+    ``level`` None keeps the attention fields other than ``only_direct``.
+    """
     model_config = STRICT
 
     only_direct: bool = True
-    activity: float = Field(default=0.3, ge=0, le=1, allow_inf_nan=False)
+    level: Literal['active', 'moderate', 'quiet'] | None = 'moderate'
+
+    def attention(self) -> dict[str, float | int | bool]:
+        return {**({} if self.level is None else WAKE_LEVELS[self.level]), 'only_direct': self.only_direct}
 
 
 class ScenePersona(BaseModel):

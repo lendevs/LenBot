@@ -2103,3 +2103,13 @@ def test_time_zones_resolve_without_a_system_zoneinfo_database():
     # Minimal Linux images ship no /usr/share/zoneinfo; the tzdata dependency covers them.
     script = "from zoneinfo import TZPATH, ZoneInfo; assert TZPATH == (); ZoneInfo('Asia/Shanghai')"
     subprocess.run([sys.executable, '-c', script], env={**os.environ, 'PYTHONTZPATH': ''}, check=True)
+
+
+def test_panel_wake_levels_match_the_attention_presets():
+    import re
+    from len_bot.next.configuration.chat import WAKE_LEVELS
+    source = (Path(__file__).parents[1] / 'src/len_bot/web/frontend/src/api/participation.ts').read_text(encoding='utf-8')
+    panel = {level: {key: float(value) for key, value in re.findall(r'(\w+): ([\d.]+)', body)}
+             for level, body in re.findall(r'(\w+): \{([^{}]+)\}', source)}
+    assert panel == {level: {key: float(value) for key, value in values.items()}
+                     for level, values in WAKE_LEVELS.items()}

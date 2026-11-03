@@ -699,7 +699,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         def edit(source: dict, saved: HostConfig) -> None:
             if change.scene in saved.scenes:
                 raise ValueError(f"场景已存在：{change.scene}")
-            source["scenes"][change.scene] = {"persona": change.persona, "attention": change.attention.model_dump()}
+            source["scenes"][change.scene] = {"persona": change.persona, "attention": change.attention.attention()}
         return await save(edit, scenes=True)
 
     @app.get('/api/host/settings/scenes/available', response_model=responses.Records, response_model_exclude_unset=True)

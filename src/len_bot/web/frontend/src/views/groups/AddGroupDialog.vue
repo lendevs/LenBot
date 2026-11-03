@@ -20,7 +20,7 @@ import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { toast } from '../../ui/toast'
 import ParticipationChoice from './participation/ParticipationChoice.vue'
-import { ACTIVITY_LEVELS, type Participation } from '../../api/participation'
+import { DEFAULT_PARTICIPATION, type Participation } from '../../api/participation'
 
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ added: [scene: string] }>()
@@ -48,7 +48,7 @@ const platformOptions = computed(() =>
   platforms.value.map((name) => ({ value: name, label: t(`chatPlatforms.${name}`) })),
 )
 const persona = ref<string>()
-const participation = ref<Participation>({ only_direct: true, activity: ACTIVITY_LEVELS.medium })
+const participation = ref<Participation>({ ...DEFAULT_PARTICIPATION })
 
 const available = useQuery({
   queryKey: keys.host.availableScenes(),
@@ -101,7 +101,7 @@ watch(open, (value) => {
   add.reset()
   picked.value = null
   number.value = ''
-  participation.value = { only_direct: true, activity: ACTIVITY_LEVELS.medium }
+  participation.value = { ...DEFAULT_PARTICIPATION }
 })
 </script>
 
