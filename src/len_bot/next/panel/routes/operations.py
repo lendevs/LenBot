@@ -146,6 +146,19 @@ def register_host_operations(app, *, runtime, user):
             runtime.events.publish("host.state", scene=scene)
             return result
 
+    @app.put('/api/host/scenes/{scene}/control/open', response_model=responses.SceneControl, response_model_exclude_unset=True)
+    async def scene_open(scene: str, change: ChatSwitch, _: str = Depends(user)):
+        """Close the scene for chat and plugins alike, or reopen it in the chat mode it had."""
+        scene_exists(scene)
+        runner = runtime.runners[scene]
+        if not runtime.accepting:
+            raise HTTPException(409, '宿主未运行，请先启动再开关群聊')
+        async with runner.execution:
+            result = runner.set_closed(not change.enabled)
+            runtime.events.publish("host.state", scene=scene)
+            log_event(logger, 'scene_open', scene=scene, enabled=change.enabled)
+            return result
+
     @app.put('/api/host/control/chat', response_model=responses.AllChatControl, response_model_exclude_unset=True)
     async def all_chat(change: ChatSwitch, _: str = Depends(user)):
         """Every scene at once, e.g. when model quota runs out; messages are still stored."""

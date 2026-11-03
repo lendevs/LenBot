@@ -374,3 +374,23 @@ def test_unknown_command_name_in_configuration_is_refused(tmp_path):
     write_config(tmp_path, commands={'disabled': ['nope']})
     with pytest.raises(ValueError, match='disabled'):
         load_host_config(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_a_closed_group_answers_no_command_and_reopens_in_its_chat_mode(tmp_path):
+    async with host(tmp_path) as (runtime, peer, store):
+        runner = runtime.runners[SCENE]
+        runner.set_paused(True)
+        state = runner.set_closed(True)
+        assert state['closed'] and runner.chat_status()['status'] == 'closed'
+        await peer.say('/id')
+        await peer.say('在吗', before=[{'type': 'at', 'data': {'qq': '90001'}}])
+        await until(lambda: len(store.pending_messages(SCENE)) == 2)
+        await asyncio.sleep(.1)
+        assert peer.sends == [] and claims(store) == []
+        assert store.db.execute('SELECT COUNT(*) FROM turns').fetchone()[0] == 0
+        runner.set_closed(False)
+        assert runner.state.paused and runner.state.pending is None and runner.chat_status()['status'] == 'paused'
+        await peer.say('/id')
+        await until(lambda: peer.sends)
+        assert peer.texts()[0].startswith(f'场景：{SCENE}')

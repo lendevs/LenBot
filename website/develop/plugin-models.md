@@ -55,7 +55,7 @@ async def poll(self, ctx: PluginContext) -> None:
 
 插件自己的长期协程用 `self.ctx.start_task(name, coroutine)` 登记，插件停止时宿主取消它们。不要在主循环里做阻塞的网络请求。
 
-`self.ctx.scenes` 是启用了插件的群。群切到插件模式（关闭聊天）后只是不再唤醒聊天模型，插件的命令、通知、定时任务和发送照常工作。
+`self.ctx.scenes` 是启用了插件且处于开启状态的群，`self.ctx.enabled_scenes` 是启用了插件的全部群。群切到插件模式（关闭聊天）后只是不再唤醒聊天模型，插件的命令、通知、定时任务和发送照常工作。群在面板中关闭后，宿主不再向插件派发该群的消息、命令和通知，定时任务跳过该群，在该群发送或推送事件抛出 `PermissionError`；重新开启后恢复。
 
 ## 生命周期
 

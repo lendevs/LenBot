@@ -100,11 +100,18 @@ class AttentionState:
     temporary_quiet: TemporaryQuiet | None = None
     # Operator switch from the panel: no turns until turned back on, without an end time.
     paused: bool = False
+    # Panel switch closing the scene: no turns, and plugins and commands stay silent; messages are still stored.
+    closed: bool = False
     declared: Declared | None = None
     disposition: Disposition | None = None
     # A turn allowed to use the direct reserve (an @, reply, reminder or task result) was cut
     # off by the speech limit; its resume keeps that right instead of queuing as ambient talk.
     resume_reserve: bool = False
+
+    @property
+    def off(self) -> bool:
+        """No turns: chat paused, or the scene closed."""
+        return self.paused or self.closed
 
     def contact(self, at: float, duration: float) -> None:
         if self.last_contact_at is None or at > self.last_contact_at:
@@ -309,7 +316,7 @@ class SceneRunner:
         self.changed.set()
 
     def quiet_period(self, now: float) -> tuple[float, float] | None:
-        if self.state.paused:
+        if self.state.off:
             return now, math.inf
         configured = quiet_period(self.settings.quiet_hours, self.config.timezone, now)
         temporary = self.state.temporary_quiet
@@ -320,7 +327,7 @@ class SceneRunner:
         return min(configured[0], temporary.started), min(configured[1], temporary.until)
 
     def quiet_direct(self, now: float) -> str:
-        if self.state.paused:
+        if self.state.off:
             return 'defer'
         configured = quiet_period(self.settings.quiet_hours, self.config.timezone, now)
         mode = 'allow' if configured is None else self.settings.quiet_hours.direct
@@ -336,7 +343,8 @@ class SceneRunner:
                 'attention': self.settings.model_dump(mode='json'),
                 'temporary_quiet': None if self.state.temporary_quiet is None else asdict(self.state.temporary_quiet),
                 'paused': self.state.paused,
-                'quiet_until': None if period is None or self.state.paused else period[1],
+                'closed': self.state.closed,
+                'quiet_until': None if period is None or self.state.off else period[1],
                 'direct': self.quiet_direct(now),
                 'scope': Template(read_prompt('next_scene_control.md')).substitute(scene=self.config.scene).strip()}
 
@@ -383,6 +391,8 @@ class SceneRunner:
     def chat_status(self) -> dict:
         """Whether the Bot may speak here unprompted now, and when that next changes without an event."""
         now = self.now()
+        if self.state.closed:
+            return {'status': 'closed', 'changes_at': None}
         if self.state.paused:
             return {'status': 'paused', 'changes_at': None}
         period = self.quiet_period(now)
@@ -400,6 +410,17 @@ class SceneRunner:
         state.temporary_quiet = (None if seconds is None else
                                  TemporaryQuiet(now, now + seconds, direct, requester))
         self.clear_quiet_wake(state, now, None if seconds is None else (now, now + seconds))
+        self.save_state(state)
+        self.changed.set()
+        self.chat.notify()
+        return self.control_state()
+
+    def set_closed(self, closed: bool) -> dict:
+        """Close or reopen this scene; the chat switch keeps its value for when it reopens."""
+        state = copy.deepcopy(self.state)
+        state.closed = closed
+        # Reopening does not answer what was said while closed; it stays as context.
+        state.pending = None
         self.save_state(state)
         self.changed.set()
         self.chat.notify()
@@ -494,8 +515,9 @@ class SceneRunner:
             previous = None if state.pending is None else state.pending.channel
             state.offer(wake)
             threshold = self.settings.ambient_threshold if wake.channel in {'ambient', 'explore'} else None
-            if state.paused:
-                return WakeVerdict(False, None, '群聊已暂停', wake.score, threshold, factor, parts)
+            if state.off:
+                return WakeVerdict(False, None, '群聊已关闭' if state.closed else '群聊已暂停',
+                                   wake.score, threshold, factor, parts)
             if self.quiet_period(at) is not None and self.quiet_direct(at) != 'allow':
                 return WakeVerdict(False, None, '安静时段，不开启对话回合', wake.score, threshold, factor, parts)
             if previous is not None and PRIORITY[previous] <= PRIORITY[wake.channel]:
@@ -516,7 +538,7 @@ class SceneRunner:
         if message.sender.uid in self.settings.other_bot_ids:
             return WakeVerdict(False, None, '来自其他 Bot')
         if self.quiet_period(at) is not None:
-            return WakeVerdict(False, None, '群聊已暂停' if state.paused else '安静时段')
+            return WakeVerdict(False, None, '群聊已关闭' if state.closed else '群聊已暂停' if state.paused else '安静时段')
         text = plain_text(message).casefold()
         words = [word for word in self.keywords if word in text and
                  (word not in state.keyword_last or at >= state.keyword_last[word] + self.settings.keyword_cooldown_seconds)]
@@ -639,7 +661,9 @@ class SceneRunner:
             receipt["addressed_to_others"] = True
         if blocked:
             receipt['reason'] = 'blacklisted: saved without wake or automatic media processing'
-        if state.paused:
+        if state.closed:
+            receipt["closed"] = True
+        elif state.paused:
             receipt["paused"] = True
         elif period is not None:
             receipt["quiet_until"] = datetime.fromtimestamp(period[1], ZoneInfo(self.config.timezone)).isoformat()
@@ -1199,7 +1223,7 @@ class SceneRunner:
         wake_at, _ = self.proactive.next_at(self.config.scene, self.config.proactive, self.config.timezone,
                                             self.settings.quiet_hours, now, exclude,
                                             observed_since=self.observed_since())
-        if self.state.paused:
+        if self.state.off:
             return None, observe_until
         temporary = self.state.temporary_quiet
         if wake_at is not None and temporary is not None and now < temporary.until:

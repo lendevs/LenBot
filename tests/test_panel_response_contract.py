@@ -116,6 +116,8 @@ def test_write_responses_keep_the_unfiltered_json(tmp_path):
                 ('POST', f'/api/host/scenes/{SCENE}/history/new-context?confirmed=true', None),
                 ('PUT', '/api/host/control/chat', {'enabled': False}),
                 ('PUT', '/api/host/control/chat', {'enabled': True}),
+                ('PUT', f'/api/host/scenes/{SCENE}/control/open', {'enabled': False}),
+                ('PUT', f'/api/host/scenes/{SCENE}/control/open', {'enabled': True}),
                 ('POST', f'/api/host/schedules?scene={SCENE}', {'when': '2099-01-01T08:00:00+00:00', 'note': '看展', 'for': 'self'}),
             ]
             for method, path, body in operations:

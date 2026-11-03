@@ -465,11 +465,51 @@ async def test_a_scene_with_chat_off_keeps_plugin_tools_available(tmp_path):
         '    async def read(self, ctx) -> str:\n        return "local"\n', encoding="utf-8")
     root = _root(tmp_path, {"paths": [str(extra)], "scoped": {}}, ["scoped"])
     host = PluginHost(load_host_config(root), core_tools=CORE)
-    host.runtime = SimpleNamespace(runners={"onebot:group:80001": SimpleNamespace(state=SimpleNamespace(paused=True))})
+    host.runtime = SimpleNamespace(runners={"onebot:group:80001": SimpleNamespace(
+        state=SimpleNamespace(paused=True, closed=False))})
     await host.start()
     try:
         assert [tool.name for tool in host.tools_for("onebot:group:80001")] == ["scoped_read"]
         assert host.tool_previews("onebot:group:80001")[0]["reasons"] == []
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_a_closed_scene_silences_its_plugins_until_reopened(tmp_path):
+    from types import SimpleNamespace
+    from len_bot.next.platform.messages import Notice
+
+    extra = tmp_path / "personal"
+    extra.mkdir()
+    directory = _copy_sample(extra, "scoped")
+    (directory / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin, on_notice, tool\n'
+        'class Scoped(Plugin):\n    @tool("scoped_read", "读取")\n'
+        '    async def read(self, ctx) -> str:\n        return "local"\n'
+        '    @on_notice("group_increase")\n'
+        '    async def joined(self, ctx, event) -> None:\n        pass\n', encoding="utf-8")
+    root = _root(tmp_path, {"paths": [str(extra)], "scoped": {}}, ["scoped"])
+    host = PluginHost(load_host_config(root), core_tools=CORE)
+    state = SimpleNamespace(paused=False, closed=True)
+    host.runtime = SimpleNamespace(runners={"onebot:group:80001": SimpleNamespace(state=state)})
+    scene = "onebot:group:80001"
+    await host.start()
+    try:
+        context = host.plugins["scoped"].context
+        assert context.enabled_scenes == (scene,) and context.scenes == ()
+        assert host.tool_previews(scene)[0]["reasons"] == ["当前群已关闭"]
+        with pytest.raises(PermissionError, match="已关闭"):
+            await host.tools_for(scene)[0].call(scene, {})
+        with pytest.raises(PermissionError, match="已关闭"):
+            host.emit_event("scoped", scene, "推送")
+        notice = Notice(scene=scene, notice_type="group_increase", sub_type=None, user_id="onebot:70001",
+                        operator_id=None, time=1790000000, raw={}, platform_message_id=None, duration=None)
+        assert host.handle_notice(notice) == 0
+        state.closed = False
+        assert context.scenes == (scene,)
+        assert await host.tools_for(scene)[0].call(scene, {}) == "local"
+        assert host.handle_notice(notice) == 1
     finally:
         await host.close()
 

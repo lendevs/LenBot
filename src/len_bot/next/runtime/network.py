@@ -367,11 +367,13 @@ class NetworkRuntime:
             return
         blocked = message.sender.uid in runner.config.permissions.blacklist
         # A paused chat only stops waking the model; plugin rules and commands keep answering.
-        matched = (None if self.plugins is None or blocked else
+        # A closed scene answers neither; its messages are still stored.
+        silent = blocked or runner.state.closed
+        matched = (None if self.plugins is None or silent else
                    self.plugins.match_message(message, tuple(runner.settings.other_bot_ids)))
         claim = (None if matched is None else
                  (matched.record.name, self.plugins.message_report(message, matched, "已接管，处理尚未结束。")))
-        command = None if matched is not None or blocked else self.commands.match(self, runner, message)
+        command = None if matched is not None or silent else self.commands.match(self, runner, message)
         if command is not None:
             claim = ("/" + command.command.name, self.commands.report(command))
         try:

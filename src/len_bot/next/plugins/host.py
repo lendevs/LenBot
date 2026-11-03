@@ -417,6 +417,20 @@ class PluginHost:
     def scene_timezone(self, scene: str) -> str:
         return self.config.scene_timezone(scene)
 
+    def scene_closed(self, scene: str) -> bool:
+        """Whether the operator closed this scene in the panel; plugins stay silent there.
+
+        A scene being added from the panel has no runner yet while its chat is built, and is open.
+        """
+        runner = None if self.runtime is None else self.runtime.runners.get(scene)
+        return runner is not None and runner.state.closed
+
+    def _speaking(self, plugin: str, scene: str) -> Loaded:
+        record = self._active(plugin, scene)
+        if self.scene_closed(scene):
+            raise PermissionError(f"场景 {scene} 已关闭，插件 {plugin} 不在该群响应")
+        return record
+
     def _active(self, plugin: str, scene: str | None = None) -> Loaded:
         record = self.plugins[plugin]
         if scene is not None and scene not in record.scenes:
@@ -505,7 +519,7 @@ class PluginHost:
         return await self.send_parts(plugin, scene, [Text(text)], reply_to)
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
-        self._permit(self._active(plugin, scene), "send")
+        self._permit(self._speaking(plugin, scene), "send")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         parts, omitted = platform_parts(scene, parts)
@@ -516,7 +530,7 @@ class PluginHost:
         return sent if omitted is None else replace(sent, report=f"{sent.report}；{omitted}")
 
     def emit_event(self, plugin: str, scene: str, text: str) -> None:
-        self._permit(self._active(plugin, scene), "events")
+        self._permit(self._speaking(plugin, scene), "events")
         if self.runtime is None:
             raise RuntimeError("插件宿主尚未接入运行中的场景")
         now = datetime.fromtimestamp(self.now(), ZoneInfo(self.scene_timezone(scene)))
@@ -652,6 +666,9 @@ class PluginHost:
         await record.ready.wait()
         while True:
             await asyncio.sleep(max(0, job.next_run - self.now()))
+            if self.scene_closed(job.scene):
+                job.next_run = next_cron(job.cron, job.timezone, self.now())
+                continue
             job.last_started = self.now()
             try:
                 await handler(Invocation(record.context, job.scene))
@@ -734,6 +751,8 @@ class PluginHost:
                     reasons.append(f"插件未运行：{record.status}")
                 if scene not in record.scenes:
                     reasons.append("插件未在当前群启用")
+                if self.scene_closed(scene):
+                    reasons.append("当前群已关闭")
                 if name in unavailable:
                     reasons.append(unavailable[name])
                 previews.append({**tool.discovery, "summary": tool.discovery["description"],
@@ -746,7 +765,7 @@ class PluginHost:
                    ) -> Callable[[str, dict], Awaitable[str]]:
         async def call(scene: str, arguments: dict) -> str:
             try:
-                self._active(record.name, scene)
+                self._speaking(record.name, scene)
                 if record.status != "running":
                     raise RuntimeError(f"插件 {record.name} 未运行：{record.status}；{record.error or '尚未启动或已停止'}")
                 unavailable = record.instance.unavailable_tools(scene)
@@ -840,7 +859,7 @@ class PluginHost:
         return recap
 
     def match_message(self, message: ChatMessage, other_bots: tuple[str, ...]) -> Matched | None:
-        if (self.closing or message.is_self or message.sender.uid in other_bots
+        if (self.closing or message.is_self or message.sender.uid in other_bots or self.scene_closed(message.scene)
                 or message.sender.uid in self.config.scene_config(message.scene).permissions.blacklist):
             return None
         for key in ((message.scene, message.sender.uid), (message.scene, None)):
@@ -904,7 +923,7 @@ class PluginHost:
             result = "处理被中断；未确认完成。"
             try:
                 await record.ready.wait()
-                self._active(record.name, message.scene)
+                self._speaking(record.name, message.scene)
                 response = await getattr(record.instance, matched.method)(
                     Invocation(record.context, message.scene, message), *matched.arguments)
                 if response is not None and not isinstance(response, str):
@@ -933,7 +952,8 @@ class PluginHost:
         keys = {notice.notice_type} | ({f"{notice.notice_type}.{notice.sub_type}"} if notice.sub_type else set())
         count = 0
         for record in self.plugins.values():
-            if record.status not in {"loaded", "running"} or notice.scene not in record.scenes:
+            if (record.status not in {"loaded", "running"} or notice.scene not in record.scenes
+                    or self.scene_closed(notice.scene)):
                 continue
             for key in sorted(keys & set(record.notices)):
                 method = getattr(record.instance, record.notices[key])

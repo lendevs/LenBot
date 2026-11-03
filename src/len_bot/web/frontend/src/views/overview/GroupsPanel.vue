@@ -13,6 +13,7 @@ import EmptyState from '../../ui/EmptyState.vue'
 import Input from '../../ui/Input.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 import StatusDot from '../../ui/StatusDot.vue'
+import Switch from '../../ui/Switch.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import { groupsTarget } from '../groups/route'
@@ -38,6 +39,17 @@ const chat = useMutation({
     toast.error(t('groups.chatFailed'), { detail: describeError(error, t('ui.error.network')).message }),
   onSettled: () => void readHostState(),
 })
+const open = useMutation({
+  mutationFn: ({ scene, enabled }: { scene: string; enabled: boolean }) => hostApi.setOpen(scene, enabled),
+  onSuccess: (_, { scene, enabled }) =>
+    toast.success(t(enabled ? 'groups.opened' : 'groups.closed', { name: groupLabel(scene) })),
+  onError: (error) =>
+    toast.error(t('groups.openFailed'), { detail: describeError(error, t('ui.error.network')).message }),
+  onSettled: () => void readHostState(),
+})
+const opening = (scene: string) => open.isPending.value && open.variables.value?.scene === scene
+const isOpen = (item: HostState['scenes'][number]) =>
+  opening(item.scene) ? Boolean(open.variables.value?.enabled) : item.scene_open
 const switching = (scene: string) => chat.isPending.value && chat.variables.value?.scene === scene
 const chatOn = (item: HostState['scenes'][number]) =>
   switching(item.scene) ? Boolean(chat.variables.value?.enabled) : item.chat_enabled
@@ -94,7 +106,7 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
             <span class="min-w-0 flex-1">
               <span
                 class="block truncate text-sm font-medium text-ink group-hover:underline"
-                :class="!item.chat_enabled && 'text-muted'"
+                :class="(!item.chat_enabled || !isOpen(item)) && 'text-muted'"
               >
                 {{ groupLabel(item.scene) }}
               </span>
@@ -121,7 +133,7 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
             :options="levels"
             size="sm"
             class="max-sm:hidden"
-            :disabled="level.isPending.value"
+            :disabled="level.isPending.value || !isOpen(item)"
             :label="t('overview.groups.level', { name: groupLabel(item.scene) })"
             @update:model-value="
               (value) => value && level.mutate({ scene: item.scene, value: value as WakeLevel })
@@ -136,13 +148,20 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
                 : 'border-line-strong bg-fill text-ink-2 hover:bg-hover'
             "
             :aria-pressed="chatOn(item)"
-            :disabled="!state.connection.accepting || switching(item.scene)"
+            :disabled="!state.connection.accepting || switching(item.scene) || !isOpen(item)"
             :title="t(chatOn(item) ? 'overview.groups.chatHint' : 'overview.groups.pluginsHint')"
             :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
             @click="chat.mutate({ scene: item.scene, enabled: !item.chat_enabled })"
           >
             {{ t(chatOn(item) ? 'overview.groups.modeChat' : 'overview.groups.modePlugins') }}
           </button>
+          <Switch
+            :model-value="isOpen(item)"
+            :loading="opening(item.scene)"
+            :disabled="!state.connection.accepting"
+            :aria-label="t('overview.groups.open', { name: groupLabel(item.scene) })"
+            @update:model-value="(enabled: boolean) => open.mutate({ scene: item.scene, enabled })"
+          />
         </li>
         <li v-if="!shown.length" class="px-4 py-6 text-center text-sm text-muted">
           {{ t('common.noResults') }}

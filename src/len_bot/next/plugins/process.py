@@ -242,6 +242,8 @@ class Worker:
                 return host.now()
             case "scene_timezone":
                 return host.scene_timezone(self._scene(args[0]))
+            case "scene_closed":
+                return host.scene_closed(self._scene(args[0]))
             case "bot_for":
                 return host.bot_for(self._scene(args[0]))
             case "fetch_media":

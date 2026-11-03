@@ -7,6 +7,7 @@ export const statusTones = {
   paused: 'idle',
   quiet: 'info',
   limited: 'warning',
+  closed: 'idle',
 } as const satisfies Record<ChatStatus['status'], string>
 
 /** 聊天中, or 安静中，到 23:00 when the state ends by itself. */

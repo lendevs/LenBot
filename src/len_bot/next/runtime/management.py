@@ -221,6 +221,7 @@ class HostManagement:
                 titles, title_errors = await self.runtime.scene_titles.read()
                 scene_rows = [{'scene': name, 'title': titles.get(name),
                                'chat': 'off' if self.runtime.runners[name].state.paused else 'on',
+                               **({'closed': True} if self.runtime.runners[name].state.closed else {}),
                                **({'title_error': title_errors[name]} if name in title_errors else {})}
                               for name in scenes]
                 return {'sections': SECTIONS, 'scenes': scene_rows,
