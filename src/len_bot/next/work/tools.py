@@ -188,6 +188,7 @@ async def execute_tasks(service: WorkTasks, scene: str, name: str, args: dict,
     """Validate one native call, then let the owning service check permissions."""
     if name == "delegate":
         parsed = DelegateArguments.model_validate(args)
+        service.admit_delegate(scene, parsed.requester)
         downloads = await group_file_inputs(parsed.group_files, fetch_group_file, service.settings.max_file_bytes)
         downloads += await chat_file_inputs(parsed.chat_files, fetch_chat_file, service.settings.max_file_bytes)
         result = await service.delegate(
