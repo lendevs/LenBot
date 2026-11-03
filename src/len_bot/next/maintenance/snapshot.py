@@ -115,21 +115,26 @@ def create(paths: list[str], destination: Path) -> None:
     checkpoint_logs(Path(name) for name in paths)
     check_space(paths, destination)
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
-    entries = []
-    for index, name in enumerate(paths):
-        source = Path(name)
-        if destination.is_relative_to(source):
-            raise ValueError(f'Backup must be outside every saved path: {destination}, {source}')
-        present = source.exists()
-        entry = {'source': str(source), 'saved': str(index), 'present': present}
-        if present:
-            copy_path(source, destination / str(index))
-            entry['files'] = manifest(destination / str(index))
-        entries.append(entry)
-    with (destination / 'snapshot.json').open('w', encoding='utf-8') as output:
-        output.write(json.dumps(entries, ensure_ascii=False, indent=2) + '\n')
-        output.flush()
-        os.fsync(output.fileno())
+    try:
+        entries = []
+        for index, name in enumerate(paths):
+            source = Path(name)
+            if destination.is_relative_to(source):
+                raise ValueError(f'Backup must be outside every saved path: {destination}, {source}')
+            present = source.exists()
+            entry = {'source': str(source), 'saved': str(index), 'present': present}
+            if present:
+                copy_path(source, destination / str(index))
+                entry['files'] = manifest(destination / str(index))
+            entries.append(entry)
+        with (destination / 'snapshot.json').open('w', encoding='utf-8') as output:
+            output.write(json.dumps(entries, ensure_ascii=False, indent=2) + '\n')
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        # Only this call's directory (mkdir above refused an existing one): no half-made snapshot stays behind.
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
     sync_directory(destination)
     sync_directory(destination.parent)
 
