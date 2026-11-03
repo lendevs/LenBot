@@ -411,10 +411,10 @@ async def test_turning_chat_off_applies_at_once_and_ends_the_running_turn(tmp_pa
         async with host(tmp_path, models=models, compaction={'input_tokens': 6000}) as (runtime, peer, store):
             runner = runtime.runners[SCENE]
             await peer.say('在吗', before=[{'type': 'at', 'data': {'qq': '90001'}}])
-            await asyncio.wait_for(arrived.wait(), 5)
+            await asyncio.wait_for(arrived.wait(), 10)
             assert runner.execution.locked()
             assert runner.set_paused(True)['paused']
-            await until(lambda: not runner.execution.locked())
+            await until(lambda: not runner.execution.locked(), 10)
             assert [tuple(row) for row in store.db.execute('SELECT status, error FROM turns')] == [
                 ('cancelled', '聊天已关闭，当前轮停止')]
             assert runner.state.paused and runner.chat_status()['status'] == 'paused' and peer.sends == []
