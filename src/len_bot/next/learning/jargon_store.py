@@ -231,16 +231,22 @@ class JargonStore:
         judgment = item['judgment']
         return [item['term'], *(judgment['aliases'] if judgment else [])]
 
+    def _judged_alone(self, scene: str) -> list[dict]:
+        """Records judged on their own; a spelling another record names as its alias is judged with that record."""
+        items = [item for row in self.db.execute("SELECT * FROM jargon WHERE scene=? ORDER BY id", (scene,))
+                 if (item := self._item(row)) is not None]
+        merged = {alias for item in items for alias in self.forms(item)[1:]}
+        return [item for item in items if item['term'] not in merged]
+
     def pending(self, scene: str) -> list[dict]:
-        """Unassessed records and samples added since their last judgment."""
-        return [item for row in self.db.execute("SELECT * FROM jargon WHERE scene=? ORDER BY id", (scene,))
-                if (item := self._item(row)) is not None and
-                (item['judgment'] is None or any(seq > item['last_evaluated_seq'] for seq in item['sample_seqs']))]
+        """Automatic records not yet judged, and records with samples added since their last judgment."""
+        return [item for item in self._judged_alone(scene)
+                if item['judgment'] is None and item['status'] == 'pending'
+                or any(seq > item['last_evaluated_seq'] for seq in item['sample_seqs'])]
 
     def for_messages(self, scene: str, texts: list[str]) -> list[dict]:
-        return [item for row in self.db.execute("SELECT * FROM jargon WHERE scene=? ORDER BY id", (scene,))
-                if (item := self._item(row)) is not None and
-                any(contains(form, text) for form in self.forms(item) for text in texts)]
+        return [item for item in self._judged_alone(scene)
+                if any(contains(form, text) for form in self.forms(item) for text in texts)]
 
     def advance_empty(self, scene: str, after: int, through: int) -> None:
         with self.db:

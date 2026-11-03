@@ -423,3 +423,42 @@ async def test_latin_jargon_matches_whole_words_and_reassessment_removes_automat
         assert await upkeep._step(SCENE)
         assert records.matches(SCENE, ['O']) == []
         assert records.pending(SCENE) == []
+
+
+@pytest.mark.asyncio
+async def test_a_spelling_merged_as_an_alias_is_not_judged_again_and_known_terms_wait_for_a_due_pass(tmp_path):
+    alias = _judgment('手帐本', 'special', '固定资料标签', [_evidence('53002', '本群的手帐本和手账本都指固定资料标签')])
+    alias['aliases'] = ['手账本']
+    async with _upkeep(tmp_path, [_text({'terms': [alias]})] * 2) as (upkeep, store, memory, forks, bodies):
+        records = JargonStore(store)
+        with store.db:
+            store.db.execute("INSERT INTO jargon(scene,term,count,sample_seqs,status,updated) "
+                             "VALUES (?, '手账本',1,'[1]','rejected',0), (?, '旧词',1,'[1]','pending',0)", (SCENE, SCENE))
+        # Unjudged records alone do not start a pass.
+        assert not await upkeep._step(SCENE) and bodies() == []
+        _receive(store, '本群的手帐本和手账本都指固定资料标签', 70003, 53002)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert records.items(SCENE, 'rejected', 20, 0)['items'][0]['term'] == '手账本'
+        assert [item['term'] for item in records.pending(SCENE)] == ['旧词']
+        # The reply leaves out 旧词: asked once more, then it waits for a later pass.
+        assert not await upkeep._step(SCENE)
+        assert len(bodies()) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_known_term_without_a_usable_judgment_waits_and_the_rest_of_the_pass_completes(tmp_path):
+    unusable = _judgment('手账本', 'uncertain', None, [_evidence('53002', '这句不在原话里', kind='usage')])
+    async with _upkeep(tmp_path, [_text({'terms': [_judgment('手账本')]}), _text({'terms': [unusable]}),
+                                  _text({'terms': [unusable]})]) as (upkeep, store, memory, forks, bodies):
+        _receive(store, '手账本今天有更新', 70002, 53001)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        before = memory.jobs.after(SCENE)
+        _receive(store, '手账本又更新了', 70002, 53002)
+        upkeep.request(SCENE, 'jargon')
+        assert await upkeep._step(SCENE)
+        assert SCENE not in upkeep._failures and len(bodies()) == 3
+        assert memory.jobs.after(SCENE) > before
+        assert JargonStore(store).state(SCENE)['after_seq'] == memory.jobs.after(SCENE)
+        assert [item['term'] for item in JargonStore(store).pending(SCENE)] == ['手账本']

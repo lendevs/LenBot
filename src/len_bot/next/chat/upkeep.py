@@ -299,7 +299,8 @@ class SessionUpkeep:
                     plan.memory_after = afters.get("memory")
                     plan.expressions_after = afters.get("expressions")
                     plan.jargon_after = afters.get("jargon")
-        if scene in self.parts["jargon"]:
+        # Judging known terms rides on a due pass, or one asked for; it never starts a pass by itself.
+        if scene in self.parts["jargon"] and (plan.rows or force):
             jargon_rows = [row for row in plan.rows if row[0] > afters['jargon']]
             recent_texts = [plain_text(message) for _, message, _, _ in jargon_rows]
             if jargon_rows:
@@ -549,7 +550,10 @@ class SessionUpkeep:
         if self.on_update is not None:
             self.on_update()
         steps = self.config.memory.ingest.max_steps if memory else 2
-        texts = {key: plain_text(self.store.read_message(scene, seq)) for key, seq in keys.items() if key in humans}
+        texts = {key: plain_text(message) for key, seq in keys.items()
+                 if key in humans and (message := self.store.read_message(scene, seq)) is not None}
+        # A message removed by retention since the instruction was built can no longer be cited.
+        humans = {key for key in humans if key in texts}
         batch_seqs = {row[0] for row in plan.rows}
         batch_humans = {key for key in humans if keys[key] in batch_seqs}
         entries = {item["entry_seq"] for item in self.effects.effects(scene, plan.effects)} if plan.effects else set()
@@ -591,8 +595,10 @@ class SessionUpkeep:
                                                          known_terms={term['term'] for term in plan.meanings}, adjacent=adjacent)
                         covered = {form for item in results['terms'] for form in [item['term'], *item['aliases']]}
                         missing = {term['term'] for term in plan.meanings} - covered
-                        if missing:
+                        if missing and not corrected:
                             raise ValueError(f"terms 缺少已有词条的判断：{sorted(missing)}；证据不足时返回 uncertain")
+                        # A known term still without a usable judgment stays pending for a later pass.
+                        dropped.extend(f"terms: no judgment for {term!r}" for term in sorted(missing))
                         break
                     except ValueError as error:
                         if corrected:
