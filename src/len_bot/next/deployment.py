@@ -172,6 +172,10 @@ def ready_url(instance: Path) -> str:
     return f'http://{host}:{panel["port"]}/api/host/ready'
 
 
+# wait_ready's answer when the launcher itself is being stopped, which says nothing about the new version.
+STOPPING = '启动器正在停止'
+
+
 def wait_ready(instance: Path, version: str, exited: Callable[[], int | None],
                stopping: Callable[[], bool], seconds: float = READY_SECONDS) -> str | None:
     """None once the host serves this version and finished starting; otherwise why it did not."""
@@ -179,7 +183,7 @@ def wait_ready(instance: Path, version: str, exited: Callable[[], int | None],
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if stopping():
-            return '启动器正在停止'
+            return STOPPING
         code = exited()
         if code is not None:
             return f'新版本退出，退出码 {code}'
@@ -299,6 +303,14 @@ class Switch:
         self.deployment.prune({trial['version'], trial['from']})
         self.deployment.prune_snapshots()
         print(f'LenBot：已更新到 {trial["version"]}。', flush=True)
+
+    def interrupted(self, trial: dict) -> None:
+        """The launcher was stopped during the trial start: nothing is known about the new version, so keep it and its
+        snapshot (no pruning) instead of rolling back a version that may be healthy. A bad one is restored from the snapshot."""
+        self.finish({'action': 'update', 'status': 'complete', 'from': trial['from'], 'to': trial['version'],
+                     'snapshot': trial['snapshot'].name, 'verified': False,
+                     'plugins': 'pending' if trial['request'].get('plugins') else None})
+        print(f'LenBot：启动器在试启动期间停止，保留 {trial["version"]} 与更新前快照，未验证就绪。', flush=True)
 
 
 OFFICIAL_WORKERS = ('ghcr.io/lendevs/lenbot-worker', 'docker.io/lendevs/lenbot-worker', 'lendevs/lenbot-worker')

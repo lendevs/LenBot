@@ -6,7 +6,7 @@ import signal
 import subprocess
 import sys
 
-from .deployment import Deployment, Switch, image_version, wait_ready
+from .deployment import STOPPING, Deployment, Switch, image_version, wait_ready
 from .runtime.lifecycle import RESTART_EXIT, UPDATE_EXIT
 
 # Windows has no signal another program can send to a console process; service.ps1 stop writes this file.
@@ -86,6 +86,10 @@ def run(*, container: bool = False, deployment: Deployment | None = None) -> int
                          env=env)
             if trial:
                 problem = wait_ready(root, trial['version'], host.poll, stop_requested)
+                if problem == STOPPING:
+                    code = finish(host)
+                    switch.interrupted(trial)
+                    return code if code >= 0 else 128 - code
                 if problem is not None:
                     end(host)
                     child = None

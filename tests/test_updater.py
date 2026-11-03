@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import subprocess
 import sys
 import tarfile
 import threading
@@ -217,6 +218,46 @@ def test_a_failed_restore_is_recorded_and_the_request_cleared_instead_of_crashin
         assert (result['action'], result['status'], result['from']) == ('restore', 'failed', '0.2.0')
         assert result['error'] and not switch.request_path.exists()
         assert deployment.selected() == '0.2.0'
+
+
+def test_stopping_the_launcher_during_the_trial_start_keeps_the_new_version_instead_of_rolling_back(tmp_path, monkeypatch):
+    from len_bot.next import launcher
+    from len_bot.next.runtime.lifecycle import UPDATE_EXIT
+    deployment = _deployment(tmp_path)
+    switch = Recorder(deployment)
+    write_json(switch.request_path, {'action': 'update', 'version': '0.2.0', 'plugins': True})
+    write_json(deployment.instance / 'lenbot.config.json', {'panel': {'host': '127.0.0.1', 'port': 1}})
+    monkeypatch.chdir(deployment.instance)
+    monkeypatch.setattr(launcher, 'Switch', lambda _: switch)
+    started = []
+
+    class Host:
+        def __init__(self, *args, **kwargs):
+            started.append(self)
+            self.terminated = False
+            if len(started) == 2:
+                (deployment.updates / launcher.STOP_FILE).write_text('')
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            if len(started) == 1:
+                return UPDATE_EXIT
+            if not self.terminated:
+                raise subprocess.TimeoutExpired('host', timeout)
+            return 0
+
+        def send_signal(self, signum):
+            self.terminated = True
+
+    monkeypatch.setattr(launcher.subprocess, 'Popen', Host)
+    assert launcher.run(deployment=deployment) == 0
+    assert len(started) == 2 and ('0.1.0', 'restore') not in switch.calls
+    result = json.loads(switch.result_path.read_text())
+    assert (result['status'], result['to'], result['plugins'], result['verified']) == ('complete', '0.2.0', 'pending', False)
+    assert deployment.selected() == '0.2.0' and deployment.kept() >= {'0.1.0', '0.2.0'} and deployment.snapshots()
+    assert not switch.request_path.exists()
 
 
 def test_docker_runs_the_newer_of_the_image_and_the_volume_version(tmp_path, monkeypatch):
