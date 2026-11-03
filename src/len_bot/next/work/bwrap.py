@@ -307,7 +307,11 @@ class BwrapSandbox:
             "--cap-drop", "ALL", "--uid", str(_AGENT), "--gid", str(_AGENT), "--hostname", "lenbot-task",
             "--ro-bind", "/usr", "/usr", *_system_binds(), *self._python_binds,
             "--ro-bind", str(system / "passwd"), "/etc/passwd", "--ro-bind", str(system / "group"), "/etc/group",
-            "--proc", "/proc", "--dev", "/dev", *self._tmpfs_size(), "--tmpfs", "/tmp",
+            "--proc", "/proc", "--dev", "/dev",
+            # --dev mounts a tmpfs sized at half the host's RAM that --remount-ro / does not reach: give /dev/shm
+            # its own bounded tmpfs and make the rest of /dev read-only so only /tmp and /dev/shm hold task data.
+            *self._tmpfs_size(), "--tmpfs", "/dev/shm", "--remount-ro", "/dev",
+            *self._tmpfs_size(), "--tmpfs", "/tmp",
             "--tmpfs", "/opt", "--ro-bind", str(self.settings.task_runtime), "/opt/lenbot",
             *itertools.chain.from_iterable(("--ro-bind", str(_WORK / name), f"{_HOST_PROGRAMS}/{name}")
                                            for name in _PROGRAMS),
@@ -327,9 +331,10 @@ class BwrapSandbox:
         host, inside = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         limits = {"file_bytes": self.settings.file_bytes, "data_bytes": self.settings.memory_bytes,
                   "processes": self.settings.pids_limit, "open_files": 4096}
-        arguments += ["--remount-ro", "/", "--clearenv", "--setenv", "PATH", _PATH, "--chdir", "/workspace",
-                      "--", self.python, "-I", f"{_HOST_PROGRAMS}/sandbox_exec.py", str(inside.fileno()),
-                      json.dumps(limits)]
+        # /opt is an unsized tmpfs holding only mount points; nothing writes there.
+        arguments += ["--remount-ro", "/opt", "--remount-ro", "/", "--clearenv", "--setenv", "PATH", _PATH,
+                      "--chdir", "/workspace", "--", self.python, "-I", f"{_HOST_PROGRAMS}/sandbox_exec.py",
+                      str(inside.fileno()), json.dumps(limits)]
         name = f"lenbot-bwrap-{uuid.uuid4().hex}"
         if on_container is not None:
             on_container(name)
