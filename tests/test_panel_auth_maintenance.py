@@ -82,6 +82,13 @@ def test_saving_sessions_syncs_the_file_before_it_replaces_the_old_one(tmp_path,
     assert events[:2] == ['fsync', 'replace']
 
 
+def test_a_password_with_a_lone_surrogate_is_wrong_not_an_error():
+    stored = hash_password('password', 'fixture-salt')
+    for password in ('\ud800', 'ok\udfff'):
+        assert not verify_password(password, stored)
+    assert verify_password('password', stored)
+
+
 def panel():
     app = FastAPI()
     settings = PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=hash_password('password'))
@@ -154,3 +161,14 @@ async def test_a_reverse_proxy_in_front_of_the_container_keeps_https_writes_and_
         response = await client.post('/api/auth/login', json={'username': 'fixture', 'password': 'password'}, headers=owner)
         assert response.status_code == 200 and login_blocked('isolated:203.0.113.7')
     clear_login_failures('isolated:203.0.113.7')
+
+
+@pytest.mark.asyncio
+async def test_login_with_a_lone_surrogate_password_is_refused_with_401():
+    app = panel()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://panel.test') as client:
+        response = await client.post('/api/auth/login', content='{"username": "fixture", "password": "\\ud800"}',
+                                     headers={'Content-Type': 'application/json'})
+    from len_bot.web.auth import clear_login_failures
+    clear_login_failures('isolated:127.0.0.1')
+    assert response.status_code == 401

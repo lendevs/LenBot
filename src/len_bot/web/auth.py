@@ -123,7 +123,12 @@ def verify_password(password: str, stored_hash: str) -> bool:
     if not password_hash_valid(stored_hash):
         return False
     _, iterations, salt, expected_hex = stored_hash.split("$")
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations))
+    try:
+        secret, salt_bytes = password.encode("utf-8"), salt.encode("utf-8")
+    except UnicodeEncodeError:
+        # A lone surrogate (JSON "\ud800") cannot be UTF-8; no stored password contains one.
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", secret, salt_bytes, int(iterations))
     return hmac.compare_digest(dk.hex(), expected_hex)
 
 def create_session(username: str) -> str:
