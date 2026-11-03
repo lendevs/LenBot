@@ -1,6 +1,5 @@
 """Snapshots of instances with top-level links, and snapshots that fail halfway."""
 import os
-from pathlib import Path
 
 import pytest
 

@@ -189,7 +189,6 @@ def test_only_a_record_with_fewer_iterations_than_today_needs_a_new_hash():
 @pytest.mark.asyncio
 async def test_login_replaces_an_old_iteration_hash_in_the_saved_config_and_the_running_panel(tmp_path):
     import json
-    from len_bot.web import auth
     from test_scene_commands_protocol import host
     from len_bot.next.panel.app import create_app
     panel_settings = {'host': '127.0.0.1', 'port': 0, 'username': 'operator', 'password_hash': _old_hash('synthetic-password')}
