@@ -219,7 +219,7 @@ def test_host_panel_only_reads_authenticated_configured_scenes(tmp_path: Path, o
                         })
                         assert laugh.json()['status'] == 'stored'
                         [stored] = (await client.get(f"{prefix}/state")).json()['messages']
-                        assert (stored['verdict']['woke'], stored['verdict']['reason']) == (False, '参与分未达门槛')
+                        assert (stored['verdict']['woke'], stored['verdict']['reason']) == (False, '没有可接的话')
                         assert (await client.post("/api/auth/logout")).status_code == 200
                         for method, path in (("GET", prefix + "/state"), ("GET", prefix + "/turns/x/steps"),
                                              ("POST", prefix + "/stop"),

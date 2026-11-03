@@ -5,11 +5,11 @@ export interface Verdict {
   woke: boolean
   channel: 'direct' | 'named' | 'attention' | 'focus' | 'ambient' | 'explore' | null
   reason: string
-  score: number | null
-  threshold: number | null
-  /** Below 1 when recent reactions to ambient interjections lowered the participation score. */
+  /** Below 1 when recent reactions to ambient interjections stretched the wait before joining in. */
   effect_factor?: number | null
-  /** Terms of the participation score (`chat/attention.py` participation_parts); score = max(0, raw) × activity × effect. */
+  /** The participation score and its terms, only on verdicts recorded before follow-ups replaced it. */
+  score?: number | null
+  threshold?: number | null
   parts?: VerdictParts | null
 }
 

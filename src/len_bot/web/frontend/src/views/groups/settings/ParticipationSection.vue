@@ -18,13 +18,13 @@ type NumberKey =
   | 'named_idle_seconds'
   | 'named_max_seconds'
   | 'focus_seconds'
-  | 'focus_unanswered_limit'
   | 'focus_idle_seconds'
   | 'focus_max_seconds'
   | 'keyword_cooldown_seconds'
-  | 'ambient_threshold'
   | 'ambient_min_interval_seconds'
   | 'ambient_max_interval_seconds'
+  | 'speech_burst'
+  | 'speech_interval_seconds'
   | 'explore_probability'
   | 'max_extensions'
 
@@ -53,19 +53,19 @@ const timezone = computed({
 })
 
 /** Waiting and joining details; seconds unless marked otherwise. */
-const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }[] = [
+const timing: { key: NumberKey; seconds?: boolean; step?: number; min?: number; max?: number }[] = [
   { key: 'direct_idle_seconds', seconds: true, step: 0.5 },
   { key: 'direct_max_seconds', seconds: true, step: 0.5 },
   { key: 'named_idle_seconds', seconds: true, step: 0.5 },
   { key: 'named_max_seconds', seconds: true, step: 0.5 },
   { key: 'focus_seconds', seconds: true, step: 10 },
-  { key: 'focus_unanswered_limit' },
   { key: 'focus_idle_seconds', seconds: true, step: 0.5 },
   { key: 'focus_max_seconds', seconds: true, step: 0.5 },
   { key: 'keyword_cooldown_seconds', seconds: true, step: 10 },
-  { key: 'ambient_threshold', step: 0.05 },
   { key: 'ambient_min_interval_seconds', seconds: true, step: 10 },
   { key: 'ambient_max_interval_seconds', seconds: true, step: 10 },
+  { key: 'speech_burst', min: 1 },
+  { key: 'speech_interval_seconds', seconds: true, step: 10 },
   { key: 'explore_probability', step: 0.01, max: 1 },
   { key: 'max_extensions' },
 ]
@@ -108,12 +108,6 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
       </button>
     </div>
     <template v-if="details">
-      <Field :label="t('groups.settings.participation.activity')" :error="form.errors['attention.activity']">
-        <NumberInput v-model="form.draft.scene.attention.activity" :min="0" :max="1" :step="0.05" />
-      </Field>
-      <Field :label="t('groups.settings.participation.closeFocus')" inline wide>
-        <Switch v-model="form.draft.scene.attention.close_focus_on_silence" />
-      </Field>
       <Field
         v-for="item in timing"
         :key="item.key"
@@ -122,7 +116,7 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; max?: number }
       >
         <NumberInput
           :model-value="form.draft.scene.attention[item.key]"
-          :min="0"
+          :min="item.min ?? 0"
           :max="item.max"
           :step="item.step ?? 1"
           :unit="item.seconds ? t('groups.settings.seconds') : undefined"

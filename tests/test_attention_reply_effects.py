@@ -1,4 +1,4 @@
-"""Reply effects of the bot's ambient interjections scale its later participation score in that group."""
+"""Reply effects of the bot's ambient interjections stretch the wait before it joins in again in that group."""
 
 import json
 
@@ -22,9 +22,8 @@ def judged(store: Store, scene: str, at: float, reaction: str, channels=('ambien
              reaction, '合成判定'))
 
 
-def runner(root, now, activity=1.0):
+def runner(root, now):
     config, persona = config_for(root)
-    config.attention.activity = activity
     store = Store(config.database, now=lambda: now[0])
     return store, SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda event: None)
 
@@ -66,40 +65,26 @@ def test_factor_ignores_direct_turns_other_groups_and_more_than_ten_samples(tmp_
         assert live.effect_factor() == pytest.approx(1 - 0.5 * 10 / 12, abs=1e-3)
 
 
-QUESTIONS = ['有人知道周末去哪爬山好吗？', '今天好热啊', '谁会修自行车链条？', '哈哈', '这个怎么弄？',
-             '晚饭吃什么', '有没有推荐的耳机？', '嗯', '下雨了', '为什么我的快递还没到？']
-
-
-def ambient_wakes(root, reactions) -> tuple[int, int]:
-    """Ambient wakes and direct wakes for one fixed hour of group messages."""
+def waits(root, reactions) -> tuple[float, float]:
+    """How long a message worth joining in on waits after the bot spoke, and how long an @ waits."""
     now = [START]
-    store, live = runner(root, now, activity=0.3)
+    store, live = runner(root, now)
     with store:
         for reaction in reactions:
             judged(store, live.config.scene, START - 600, reaction)
-        ambient = direct = 0
-        for index in range(60):
-            now[0] = START + index * 60
-            raw = message(70001 + index % 4, 60000 + index, QUESTIONS[index % len(QUESTIONS)], direct=index % 15 == 0)
-            receipt = live.receive(raw)
-            verdict = receipt['wake_verdict']
-            ambient += verdict['woke'] and verdict['channel'] == 'ambient'
-            direct += verdict['woke'] and verdict['channel'] == 'direct'
-            if verdict['woke']:
-                # The turn reads the batch at once, so the next message starts a new one.
-                with store.db:
-                    store.db.execute("INSERT INTO mind_sessions(scene,last_message_seq) VALUES (?,?) "
-                                     "ON CONFLICT(scene) DO UPDATE SET last_message_seq=excluded.last_message_seq",
-                                     (live.config.scene, receipt['message_seq']))
-                live.state.pending = None
-                live.state.ambient_last_at = None
-        return ambient, direct
+        live.state.spoke_at = START
+        live.receive(message(70001, 1, '有人知道周末去哪爬山好吗？'))
+        ambient = live.deadline() - START
+        live.receive(message(70002, 2, '问你', direct=True))
+        assert live.state.pending.channel == 'direct'
+        return ambient, live.deadline() - START
 
 
-def test_disliked_interjections_lower_hourly_ambient_wakes_but_not_direct_replies(tmp_path):
-    baseline = ambient_wakes(tmp_path / 'none', [])
-    welcomed = ambient_wakes(tmp_path / 'welcomed', ['continue'] * 6)
-    disliked = ambient_wakes(tmp_path / 'disliked', ['negative', 'unrelated'] * 3)
-    assert baseline[0] > 0 and welcomed == baseline
-    assert disliked[0] < baseline[0]
-    assert disliked[1] == baseline[1] == 4
+def test_disliked_interjections_lengthen_the_wait_to_join_in_but_not_direct_replies(tmp_path):
+    minimum = runner(tmp_path / 'config', [START])[1].settings.ambient_min_interval_seconds
+    baseline = waits(tmp_path / 'none', [])
+    welcomed = waits(tmp_path / 'welcomed', ['continue'] * 6)
+    disliked = waits(tmp_path / 'disliked', ['negative', 'unrelated'] * 3)
+    assert baseline[0] == minimum and welcomed == baseline
+    assert disliked[0] == pytest.approx(minimum / (1 - 0.5 * 6 / 8), rel=1e-2)
+    assert disliked[1] == baseline[1]

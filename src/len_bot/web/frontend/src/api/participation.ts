@@ -3,28 +3,22 @@ export type WakeLevel = 'active' | 'moderate' | 'quiet'
 /** The attention fields each wake level sets; the same values as `WAKE_LEVELS` in `configuration/chat.py`. */
 export const WAKE_LEVELS = {
   active: {
-    activity: 0.3,
-    ambient_min_interval_seconds: 60,
-    ambient_max_interval_seconds: 900,
-    focus_seconds: 180,
-    focus_unanswered_limit: 2,
-    explore_probability: 0,
+    ambient_min_interval_seconds: 600,
+    ambient_max_interval_seconds: 2400,
+    speech_burst: 3,
+    speech_interval_seconds: 120,
   },
   moderate: {
-    activity: 0.15,
-    ambient_min_interval_seconds: 180,
-    ambient_max_interval_seconds: 1800,
-    focus_seconds: 90,
-    focus_unanswered_limit: 1,
-    explore_probability: 0,
+    ambient_min_interval_seconds: 1800,
+    ambient_max_interval_seconds: 7200,
+    speech_burst: 3,
+    speech_interval_seconds: 180,
   },
   quiet: {
-    activity: 0.06,
-    ambient_min_interval_seconds: 600,
-    ambient_max_interval_seconds: 3600,
-    focus_seconds: 30,
-    focus_unanswered_limit: 1,
-    explore_probability: 0,
+    ambient_min_interval_seconds: 5400,
+    ambient_max_interval_seconds: 21600,
+    speech_burst: 2,
+    speech_interval_seconds: 300,
   },
 } as const satisfies Record<WakeLevel, Record<string, number>>
 

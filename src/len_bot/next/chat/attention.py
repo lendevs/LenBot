@@ -5,10 +5,9 @@ import copy
 import logging
 import math
 import random
-import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from string import Template
 from typing import Literal
@@ -40,7 +39,7 @@ from ..tools.skills import Skill
 logger = logging.getLogger(__name__)
 
 Channel = Literal["direct", "named", "attention", "focus", "ambient", "explore"]
-# How the group took the bot's recent ambient interjections scales the participation score.
+# How the group took the bot's recent interjections stretches the interval before the next one.
 EFFECT_VALUES = {"agree": 1.0, "continue": 1.0, "negative": -1.0, "unrelated": -1.0}
 EFFECT_SAMPLES = 10
 EFFECT_WINDOW_SECONDS = 3 * 86400
@@ -48,7 +47,8 @@ EFFECT_HALF_LIFE_SECONDS = 86400
 EFFECT_FLOOR = 0.5
 PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
-HELP = re.compile(r"(?<!不)怎么|如何|为什么|有没有|帮我|帮忙|你们觉得")
+# The follow-up an interjection that answered no one opens: the next message from anyone.
+ANYONE = "*"
 
 
 def wake_channel(*, scheduled: bool, notices: bool, events: bool, audio: bool, pending: str | None) -> str:
@@ -67,11 +67,8 @@ class WakeVerdict:
     woke: bool
     channel: Channel | None
     reason: str
-    score: float | None = None
-    threshold: float | None = None
+    # Below 1 when recent reactions to interjections stretch the interval before the next one.
     effect_factor: float | None = None
-    # Terms of the participation score, see participation_parts; None when no score was computed.
-    parts: dict | None = None
 
 
 @dataclass
@@ -79,20 +76,25 @@ class PendingWake:
     channel: Channel
     first_at: float
     keywords: list[str] = field(default_factory=list)
-    score: float | None = None
     # A random exploration draw stays on the wake when a rule later takes over its channel.
     explored: bool = False
+    # Who offered it by calling, naming or following up on the bot; answering them opens their next follow-up.
+    people: list[str] = field(default_factory=list)
 
 
 @dataclass
 class AttentionState:
-    focus_started_at: float | None = None
-    focus_closed_at: float | None = None
-    last_contact_at: float | None = None
+    # When the bot last spoke here, and the mind entry of the last expression taken in.
+    spoke_at: float | None = None
+    spoke_through: int = 0
+    # Open follow-ups: whose next message wakes the bot without an @ (ANYONE after an interjection that
+    # answered no one), keyed to when the bot answered. Each one is used once.
+    followups: dict[str, float] = field(default_factory=dict)
+    # An interjection still waiting for someone to take it up.
+    interjected_at: float | None = None
     ambient_last_at: float | None = None
+    # Interjections in a row nobody took up and looks at the chat that ended silent; each doubles the interval.
     silence_level: int = 0
-    # Focus turns the bot spoke in since someone last addressed it.
-    focus_unanswered: int = 0
     keyword_last: dict[str, float] = field(default_factory=dict)
     pending: PendingWake | None = None
     quiet_notice_until: float | None = None
@@ -113,26 +115,29 @@ class AttentionState:
         """No turns: chat paused, or the scene closed."""
         return self.paused or self.closed
 
-    def contact(self, at: float, duration: float) -> None:
-        if self.last_contact_at is None or at > self.last_contact_at:
-            if self.focus_closed_at is not None or self.last_contact_at is None or at > self.last_contact_at + duration:
-                self.focus_started_at = at
-            self.last_contact_at = at
-            self.focus_closed_at = None
-            self.silence_level = 0
-
     def offer(self, wake: PendingWake) -> None:
         if self.pending is None:
             self.pending = wake
             return
         words = sorted(set(self.pending.keywords + wake.keywords))
+        people = list(dict.fromkeys(self.pending.people + wake.people))
         explored = self.pending.explored or wake.explored
         if PRIORITY[wake.channel] < PRIORITY[self.pending.channel]:
             self.pending = wake
         elif wake.channel == self.pending.channel:
             self.pending.first_at = min(self.pending.first_at, wake.first_at)
         self.pending.keywords = words
+        self.pending.people = people
         self.pending.explored = explored
+
+    def answered(self) -> None:
+        """Someone called or named the bot: joining in is welcome again."""
+        self.silence_level = 0
+        self.interjected_at = None
+
+
+ATTENTION_FIELDS = {item.name for item in fields(AttentionState)}
+PENDING_FIELDS = {item.name for item in fields(PendingWake)}
 
 
 def is_direct(message: ChatMessage) -> bool:
@@ -148,56 +153,15 @@ def addressed_to_others(message: ChatMessage, bot_id: str) -> bool:
 
 
 def open_for_ambient(state: AttentionState) -> bool:
-    """A random exploration wake still yields to the participation rule."""
+    """A random exploration wake still yields to the interjection rule."""
     return state.pending is None or state.pending.channel == 'explore'
 
 
-PART_NAMES = ('base', 'question', 'help', 'filler', 'no_text', 'other_bots', 'self_share', 'gap')
-
-
-def participation_parts(pending: list[tuple[ChatMessage, float]],
-                        recent: list[tuple[ChatMessage, float]], config: Attention, bot_id: str) -> dict:
-    """Each term of the participation score; ``raw`` is their sum, before ``activity`` and the effect factor."""
-    humans = [(message, at) for message, at in pending
-              if not message.is_self and message.sender.uid not in config.other_bot_ids]
-    parts = {'messages': len(humans), **{name: 0.0 for name in PART_NAMES}}
-    if humans:
-        texts = [plain_text(message).strip() for message, _ in humans]
-        substantial = [text for text in texts if text.strip(" ?？!！。~") not in REACTIONS]
-        # A question put to a particular member is theirs to answer.
-        open_texts = [text for (message, _), text in zip(humans, texts)
-                      if text.strip(" ?？!！。~") not in REACTIONS and not addressed_to_others(message, bot_id)]
-        parts['base'] = 0.2 + min(len(humans) / 10, 2.0)
-        if any(("?" in text or "？" in text) and len(re.sub(r"[\W_]", "", text)) >= 3
-               for text in open_texts):
-            parts['question'] = 1.0
-        if any(HELP.search(text) for text in open_texts):
-            parts['help'] = 1.0
-        if not substantial:
-            parts['filler'] = -0.8
-        if not any(texts):
-            parts['no_text'] = -0.7
-        other_targets = sum(any(segment.type == "mention" and str(segment.data["user"]) in config.other_bot_ids
-                                for segment in message.segments) for message, _ in humans)
-        parts['other_bots'] = -other_targets / len(humans)
-        sample = [(message, at) for message, at in recent
-                  if message.is_self or message.sender.uid not in config.other_bot_ids]
-        if sample:
-            parts['self_share'] = -1.5 * sum(message.is_self and message.send_status != "failed"
-                                             for message, _ in sample) / len(sample)
-        times = [at for message, at in sample if not message.is_self]
-        if len(times) >= 3:
-            prior_gaps = [later - earlier for earlier, later in zip(times[:-2], times[1:-1])]
-            if times[-1] - times[-2] > sum(prior_gaps) / len(prior_gaps):
-                parts['gap'] = 0.5
-    parts['raw'] = sum(parts[name] for name in PART_NAMES)
-    parts['activity'] = config.activity
-    return parts
-
-
-def participation_score(pending: list[tuple[ChatMessage, float]],
-                        recent: list[tuple[ChatMessage, float]], config: Attention, bot_id: str) -> float:
-    return max(0.0, participation_parts(pending, recent, config, bot_id)['raw']) * config.activity
+def worth_joining(message: ChatMessage, config: Attention, bot_id: str) -> bool:
+    """Something to join in on: text beyond a bare reaction, from a member, not addressed to someone else."""
+    return (not message.is_self and message.sender.uid not in config.other_bot_ids
+            and not addressed_to_others(message, bot_id)
+            and plain_text(message).strip().strip(" ?？!！。~") not in REACTIONS)
 
 
 class SceneRunner:
@@ -219,12 +183,17 @@ class SceneRunner:
         self.own_ids = self.store.own_ids(self.config.scene)
         self.proactive = None if self.config.proactive is None else ProactiveStore(self.store)
         self.keywords = self.wake_words()
+        # People whose messages woke the running turn; the bot answering them opens their follow-ups.
+        self.turn_people: set[str] = set()
         saved = self.store.load_attention(self.config.scene)
         if saved is None:
             self.state = AttentionState()
         else:
-            if saved["pending"] is not None:
-                saved["pending"] = PendingWake(**saved["pending"])
+            # A saved state may still hold fields that are no longer kept.
+            saved = {key: value for key, value in saved.items() if key in ATTENTION_FIELDS}
+            if saved.get("pending") is not None:
+                saved["pending"] = PendingWake(**{key: value for key, value in saved["pending"].items()
+                                                  if key in PENDING_FIELDS})
             if saved.get("temporary_quiet") is not None:
                 saved["temporary_quiet"] = TemporaryQuiet(**saved["temporary_quiet"])
             if saved.get('declared') is not None:
@@ -242,7 +211,6 @@ class SceneRunner:
         if restored.pending is not None:
             channel = restored.pending.channel
             disabled = (self.settings.only_direct and channel != "direct"
-                        or channel == "ambient" and self.settings.activity == 0
                         or channel == 'explore' and self.settings.explore_probability == 0
                         or channel == "focus" and self.settings.focus_seconds == 0
                         or channel == 'attention' and not self.enforcing)
@@ -250,16 +218,14 @@ class SceneRunner:
                         or self.store.last_pending_arrival(self.config.scene, self.settings.other_bot_ids) is not None)
             if disabled or not eligible:
                 restored.pending = None
-        own_at = self.store.last_self_time(self.config.scene)
-        if own_at is not None:
-            restored.contact(own_at, self.settings.focus_seconds)
+        if restored.spoke_through == 0:
+            # Expressions from before this state was kept open no follow-ups.
+            last = self.store.last_expression(self.config.scene)
+            if last is not None:
+                restored.spoke_through, restored.spoke_at = last
         if saved is None:
-            recent = self.store.attention_sample(self.config.scene, exclude_uids=self.settings.other_bot_ids)
-            seen = []
             for _, message, at in self.store.pending_messages(self.config.scene):
-                if not message.is_self and message.sender.uid not in self.settings.other_bot_ids:
-                    seen = (seen + [(message, at)])[-20:]
-                self.offer_message(restored, message, at, seen, recent)
+                self.offer_message(restored, message, at)
             # An empty state also records that older input was already considered.
             self.store.save_attention(self.config.scene, persisted(restored))
             self.state = restored
@@ -283,7 +249,6 @@ class SceneRunner:
         if wake is not None and (
             self.settings.only_direct and wake.channel != 'direct'
             or wake.channel == 'focus' and self.settings.focus_seconds == 0
-            or wake.channel == 'ambient' and self.settings.activity == 0
             or wake.channel == 'explore' and self.settings.explore_probability == 0
         ):
             state.pending = None
@@ -347,10 +312,6 @@ class SceneRunner:
                 'quiet_until': None if period is None or self.state.off else period[1],
                 'direct': self.quiet_direct(now),
                 'scope': Template(read_prompt('next_scene_control.md')).substitute(scene=self.config.scene).strip()}
-
-    def focus_spent(self, state: AttentionState) -> bool:
-        limit = self.settings.focus_unanswered_limit
-        return limit > 0 and state.focus_unanswered >= limit
 
     def focus_state(self) -> dict:
         """Persistent intents and the wrap-up state in effect now, for the panel."""
@@ -419,8 +380,10 @@ class SceneRunner:
         """Close or reopen this scene; the chat switch keeps its value for when it reopens."""
         state = copy.deepcopy(self.state)
         state.closed = closed
-        # Reopening does not answer what was said while closed; it stays as context.
+        # Reopening does not answer what was said while closed; it stays as context, and joining in counts from now.
         state.pending = None
+        if not closed:
+            state.ambient_last_at = self.now()
         self.save_state(state)
         self.changed.set()
         self.chat.notify()
@@ -430,8 +393,10 @@ class SceneRunner:
         """Turn chat off or on for this scene; messages are still stored while off."""
         state = copy.deepcopy(self.state)
         state.paused = paused
-        # Turning back on does not answer what was said while off; it stays as context.
+        # Turning back on does not answer what was said while off; it stays as context, and joining in counts from now.
         state.pending = None
+        if not paused:
+            state.ambient_last_at = self.now()
         self.save_state(state)
         self.changed.set()
         self.chat.notify()
@@ -498,9 +463,74 @@ class SceneRunner:
             if period is not None or (start is not None and start <= now):
                 state.pending = None
 
-    def offer_message(self, state: AttentionState, message: ChatMessage, at: float,
-                      pending: list[tuple[ChatMessage, float]], recent: list[tuple[ChatMessage, float]]) -> WakeVerdict:
+    def silence_cap(self) -> int:
+        return math.ceil(math.log2(self.settings.ambient_max_interval_seconds)
+                         - math.log2(self.settings.ambient_min_interval_seconds))
+
+    def note_own(self, state: AttentionState) -> None:
+        """Take in what the bot said since the last look. Each expression opens one follow-up: for the author of
+        the message it replied to, else for the people whose messages woke this turn, else for anyone."""
+        for entry, message in self.store.own_expressions_after(self.config.scene, state.spoke_through):
+            state.spoke_through = entry
+            state.spoke_at = message.time if state.spoke_at is None else max(state.spoke_at, message.time)
+            if self.settings.focus_seconds <= 0:
+                continue
+            replied = (None if message.reply_to is None
+                       else self.store.find_message(self.config.scene, message.reply_to))
+            people = ([replied.sender.uid] if replied is not None and not replied.is_self
+                      else sorted(self.turn_people) or [ANYONE])
+            for person in people:
+                state.followups[person] = message.time
+
+    def settle_followups(self, state: AttentionState, now: float) -> None:
+        """Close follow-ups past their window; an interjection nobody took up doubles the next interval."""
+        window = self.settings.focus_seconds
+        state.followups = {key: at for key, at in state.followups.items() if now <= at + window}
+        if state.interjected_at is not None and now > state.interjected_at + window:
+            state.interjected_at = None
+            state.silence_level = min(state.silence_level + 1, self.silence_cap())
+
+    def followup_of(self, state: AttentionState, message: ChatMessage, at: float) -> str | None:
+        """The open follow-up this message takes: its sender's, else the one open to anyone."""
+        if self.settings.focus_seconds <= 0 or addressed_to_others(message, self.config.bot_id):
+            return None
+        for key in (message.sender.uid, ANYONE):
+            opened = state.followups.get(key)
+            if opened is not None and opened <= at <= opened + self.settings.focus_seconds:
+                return key
+        return None
+
+    def catch_followups(self, state: AttentionState) -> None:
+        """Messages that arrived after the bot answered, before its answer was taken in, still follow up on it."""
+        if not state.followups or self.settings.only_direct or self.quiet_period(self.now()) is not None:
+            return
+        for _, message, at in self.store.pending_messages(self.config.scene):
+            if message.is_self or message.sender.uid in self.settings.other_bot_ids:
+                continue
+            key = self.followup_of(state, message, at)
+            if key is not None and self.local_allows(state, 'focus', message, at):
+                del state.followups[key]
+                state.interjected_at = None
+                state.offer(PendingWake('focus', at, people=[message.sender.uid]))
+
+    def pace_until(self) -> float | None:
+        """When the speech pace lets the next message out: up to speech_burst in a row, then one more each
+        speech_interval_seconds. None when one may go out now."""
+        interval, burst = self.settings.speech_interval_seconds, self.settings.speech_burst
+        if interval <= 0:
+            return None
+        tokens, last = float(burst), None
+        for at in speech_quota(self.store, self.config).times:
+            if last is not None:
+                tokens = min(burst, tokens + (at - last) / interval)
+            tokens, last = tokens - 1, at
+        if last is None or min(burst, tokens + (self.now() - last) / interval) >= 1:
+            return None
+        return last + (1 - tokens) * interval
+
+    def offer_message(self, state: AttentionState, message: ChatMessage, at: float) -> WakeVerdict:
         self.expire_attention(state, at)
+        self.settle_followups(state, at)
         matches = []
         settings = self.settings.declarations
         if (state.declared is not None and settings.mode != 'context' and not message.is_self
@@ -510,28 +540,22 @@ class SceneRunner:
             for match in matches:
                 log_event(logger, 'attention_candidate', **match, mode=settings.mode)
 
-        def offered(wake: PendingWake, reason: str, factor: float | None = None,
-                    parts: dict | None = None) -> WakeVerdict:
+        def offered(wake: PendingWake, reason: str, factor: float | None = None) -> WakeVerdict:
             previous = None if state.pending is None else state.pending.channel
             state.offer(wake)
-            threshold = self.settings.ambient_threshold if wake.channel in {'ambient', 'explore'} else None
             if state.off:
-                return WakeVerdict(False, None, '群聊已关闭' if state.closed else '群聊已暂停',
-                                   wake.score, threshold, factor, parts)
+                return WakeVerdict(False, None, '群聊已关闭' if state.closed else '群聊已暂停', factor)
             if self.quiet_period(at) is not None and self.quiet_direct(at) != 'allow':
-                return WakeVerdict(False, None, '安静时段，不开启对话回合', wake.score, threshold, factor, parts)
+                return WakeVerdict(False, None, '安静时段，不开启对话回合', factor)
             if previous is not None and PRIORITY[previous] <= PRIORITY[wake.channel]:
-                return WakeVerdict(False, None, '本轮已有待处理唤醒', wake.score, threshold, factor, parts)
-            return WakeVerdict(True, wake.channel, reason, wake.score, threshold, factor, parts)
+                return WakeVerdict(False, None, '本轮已有待处理唤醒', factor)
+            return WakeVerdict(True, wake.channel, reason, factor)
 
         if is_direct(message):
-            state.contact(at, self.settings.focus_seconds)
-            state.silence_level = 0
-            state.focus_unanswered = 0
-            return offered(PendingWake('direct', at), '直接联系')
+            state.followups.pop(message.sender.uid, None)
+            state.answered()
+            return offered(PendingWake('direct', at, people=[message.sender.uid]), '直接联系')
         if message.is_self:
-            if message.send_status in {'sent', 'received', 'simulated'}:
-                state.contact(at, self.settings.focus_seconds)
             return WakeVerdict(False, None, '自己的消息')
         if self.settings.only_direct:
             return WakeVerdict(False, None, '只回应直接联系')
@@ -543,48 +567,42 @@ class SceneRunner:
         words = [word for word in self.keywords if word in text and
                  (word not in state.keyword_last or at >= state.keyword_last[word] + self.settings.keyword_cooldown_seconds)]
         if words:
-            return offered(PendingWake('named', at, words), '点名：' + '、'.join(words))
+            state.followups.pop(message.sender.uid, None)
+            state.answered()
+            return offered(PendingWake('named', at, words, people=[message.sender.uid]), '点名：' + '、'.join(words))
         if matches and self.enforcing:
             return offered(PendingWake('attention', at), '持续关注条件命中')
         local_blocked = False
-        if (self.settings.focus_seconds > 0 and state.last_contact_at is not None
-                and (not self.settings.close_focus_on_silence or state.focus_closed_at is None)
-                and state.focus_started_at <= at <= state.last_contact_at + self.settings.focus_seconds
-                and not self.focus_spent(state)
-                and not addressed_to_others(message, self.config.bot_id)):
+        followup = self.followup_of(state, message, at)
+        if followup is not None:
             if self.local_allows(state, 'focus', message, at):
-                return offered(PendingWake('focus', at), '持续对话')
+                del state.followups[followup]
+                state.interjected_at = None
+                return offered(PendingWake('focus', at, people=[message.sender.uid]), '接着说')
             local_blocked = True
-        score = factor = parts = None
+        factor = None
         if open_for_ambient(state):
-            if self.settings.activity > 0:
+            if worth_joining(message, self.settings, self.config.bot_id):
                 factor = self.effect_factor()
-                parts = participation_parts(pending, recent, self.settings, self.config.bot_id)
-                score = max(0.0, parts['raw']) * self.settings.activity * factor
-            if score is not None and score > self.settings.ambient_threshold:
                 if self.local_allows(state, 'ambient', message, at):
-                    log_event(logger, 'attention_ambient', score=score, threshold=self.settings.ambient_threshold,
-                              effect_factor=factor, message_id=message.platform_message_id)
-                    return offered(PendingWake('ambient', at, score=score), '参与分超过门槛', factor, parts)
+                    log_event(logger, 'attention_ambient', effect_factor=factor, message_id=message.platform_message_id)
+                    return offered(PendingWake('ambient', at), '群里有可接的话', factor)
                 local_blocked = True
             if state.pending is None and self.settings.explore_probability > 0:
                 woke = self.random.random() < self.settings.explore_probability
                 log_event(logger, 'attention_explore', woke=woke, probability=self.settings.explore_probability,
-                          score=score, message_id=message.platform_message_id)
+                          message_id=message.platform_message_id)
                 if woke:
-                    return offered(PendingWake('explore', at, score=score, explored=True), '随机探索命中', factor, parts)
+                    return offered(PendingWake('explore', at, explored=True), '随机探索命中', factor)
         if local_blocked:
             reason = '局部收尾不允许'
         elif not open_for_ambient(state):
             reason = '本轮已有待处理唤醒'
         elif addressed_to_others(message, self.config.bot_id):
             reason = '发给别人的消息'
-        elif self.settings.activity <= 0:
-            reason = '未开启群聊参与'
         else:
-            reason = '参与分未达门槛'
-        return WakeVerdict(False, None, reason, score,
-                           self.settings.ambient_threshold if score is not None else None, factor, parts)
+            reason = '没有可接的话'
+        return WakeVerdict(False, None, reason, factor)
 
     def receive(self, raw: dict, *, ignore_other_scenes: bool = False) -> dict:
         message = parse_message(raw, own_message_ids=set())
@@ -624,22 +642,13 @@ class SceneRunner:
         state = copy.deepcopy(self.state)
         period = self.quiet_period(now)
         self.clear_quiet_wake(state, now, period)
-        # Batch statistics are only needed for a new, non-direct ambient opportunity.
-        pending, recent = [], []
-        if (wake and not is_direct(message) and not message.is_self and not self.settings.only_direct
-                and message.sender.uid not in self.settings.other_bot_ids and open_for_ambient(state)
-                and self.settings.activity > 0 and period is None):
-            pending = self.store.pending_attention_sample(self.config.scene, self.settings.other_bot_ids, limit=19)
-            pending.append((message, now))
-            recent = self.store.attention_sample(self.config.scene, limit=19,
-                                               exclude_uids=self.settings.other_bot_ids) + [(message, now)]
         if blocked:
             verdict = WakeVerdict(False, None, '黑名单')
         elif not wake:
             verdict = WakeVerdict(False, None, '宿主命令' if plugin_claim is not None and plugin_claim[0].startswith('/')
                                   else '插件接管' if plugin_claim is not None else '本条消息不参与唤醒')
         else:
-            verdict = self.offer_message(state, message, now, pending, recent)
+            verdict = self.offer_message(state, message, now)
         snapshot = persisted(state) if state != self.state else None
         seq = self.store.enqueue(
             message, raw, now, attention_state=snapshot, wake_verdict=asdict(verdict),
@@ -710,30 +719,32 @@ class SceneRunner:
         return f"等待结束 {observed}：实际等待 {time.monotonic() - started:.3f} 秒；{reason}。"
 
     def effect_factor(self) -> float:
-        """Up to EFFECT_SAMPLES judged reactions to this group's ambient interjections in the window, each
-        weighted by age: ignored or disliked ones lower the participation score toward EFFECT_FLOOR;
-        welcomed ones never raise it. With no reactions the factor is 1."""
+        """Up to EFFECT_SAMPLES judged reactions to this group's interjections in the window, each weighted by
+        age: ignored or disliked ones lower the factor toward EFFECT_FLOOR, and the interval before the next
+        interjection grows by its inverse; welcomed ones never shorten it. With no reactions the factor is 1."""
         now = self.now()
         reactions = ReplyEffectStore(self.store).reactions(
             self.config.scene, ("ambient", "explore"), now - EFFECT_WINDOW_SECONDS, EFFECT_SAMPLES)
         weights = [(0.5 ** (max(0.0, now - at) / EFFECT_HALF_LIFE_SECONDS), EFFECT_VALUES.get(reaction, 0.0))
                    for at, reaction in reactions]
-        # Two neutral samples' worth of prior keeps one bad reaction from halving the score.
+        # Two neutral samples' worth of prior keeps one bad reaction from doubling the interval.
         balance = sum(weight * value for weight, value in weights) / (sum(weight for weight, _ in weights) + 2)
         return 1 + min(0.0, balance) * (1 - EFFECT_FLOOR)
 
     def ambient_interval(self) -> float:
+        """How long after the bot last spoke, or last looked in unprompted, it may join in again."""
         base, maximum = self.settings.ambient_min_interval_seconds, self.settings.ambient_max_interval_seconds
-        cap = math.ceil(math.log2(maximum) - math.log2(base))
-        return maximum if self.state.silence_level >= cap else math.ldexp(base, self.state.silence_level)
+        level = self.state.silence_level
+        interval = maximum if level >= self.silence_cap() else math.ldexp(base, level)
+        return min(maximum, interval / self.effect_factor())
 
     def deadline(self) -> float | None:
         wake = self.state.pending
         if wake is None:
             return None
         if wake.channel == "ambient":
-            return max(wake.first_at, wake.first_at if self.state.ambient_last_at is None else
-                       self.state.ambient_last_at + self.ambient_interval())
+            since = [at for at in (self.state.ambient_last_at, self.state.spoke_at) if at is not None]
+            return wake.first_at if not since else max(wake.first_at, max(since) + self.ambient_interval())
         timing = 'focus' if wake.channel in {'attention', 'explore'} else wake.channel
         idle = getattr(self.settings, timing + "_idle_seconds")
         maximum = getattr(self.settings, timing + "_max_seconds")
@@ -835,6 +846,7 @@ class SceneRunner:
             period = self.quiet_period(now)
             state = copy.deepcopy(self.state)
             self.clear_quiet_wake(state, now, period)
+            self.settle_followups(state, now)
             if period is None:
                 self.attention_tick(state, now)
             self.save_state(state)
@@ -922,12 +934,14 @@ class SceneRunner:
                 pass  # The known burst/cooldown deadline has arrived.
 
     def speech_hold(self) -> float | None:
-        """Until when a wake that is not direct waits for the normal hourly speech limit."""
-        if self.state.pending is not None and self.state.pending.channel == "direct":
-            return None
-        if self.resume and self.state.resume_reserve:
-            return None  # The admission check above already waits for the reserve.
-        return speech_quota(self.store, self.config).until(direct=False)
+        """Until when a wake waits to speak: the speech pace holds every one, direct included, and a wake that
+        is not direct also waits for the normal hourly limit. Reminders and task results start without it."""
+        pace = self.pace_until()
+        if (self.state.pending is not None and self.state.pending.channel == "direct"
+                or self.resume and self.state.resume_reserve):
+            return pace  # The admission check above already waits for the reserve.
+        limit = speech_quota(self.store, self.config).until(direct=False)
+        return limit if pace is None else pace if limit is None else max(pace, limit)
 
     async def wait_speech(self, until: float, now: float) -> None:
         schedule_at = self.schedule_deadline(now)
@@ -987,9 +1001,7 @@ class SceneRunner:
             return "[点名：" + "、".join(wake.keywords) + "]"
         if wake.channel == "focus":
             return "[对话继续]"
-        if wake.channel == "ambient":
-            return f"[群里在聊；参与分 {wake.score:.3f}]" if self.settings.ambient_score_in_reason else "[群里在聊]"
-        if wake.channel == 'explore':
+        if wake.channel in {'ambient', 'explore'}:
             return '[群里在聊]'
         if wake.channel == 'attention':
             return '[持续关注条件命中：请判断是否已完成，未完成则继续保留]'
@@ -999,9 +1011,7 @@ class SceneRunner:
         if self.ready_for_turn is not None and not await self.ready_for_turn(False):
             return False
         state = copy.deepcopy(self.state)
-        own_at = self.store.last_self_time(self.config.scene)
-        if own_at is not None:
-            state.contact(own_at, self.settings.focus_seconds)
+        self.note_own(state)
         self.save_state(state)
         ready = await self.ready_messages(continuing=continuing, in_turn=True)
         if ready is None:
@@ -1011,6 +1021,8 @@ class SceneRunner:
         pending, _, scheduled = ready
         state = self.consumed_state()
         if pending:
+            if self.state.pending is not None:
+                self.turn_people.update(self.state.pending.people)
             if self.state.pending is not None and self.state.pending.channel == "direct":
                 self.chat.reserve_revoked = False
                 self.chat.turn_messages = 0
@@ -1055,6 +1067,18 @@ class SceneRunner:
         self.save_state(state)
         return True
 
+    def followup_waiting(self) -> bool:
+        """After a step that ended the turn: someone calling, naming or following up on the bot keeps it going,
+        unless the turn has already spoken and the pace holds the next message."""
+        state = copy.deepcopy(self.state)
+        self.note_own(state)
+        self.settle_followups(state, self.now())
+        self.catch_followups(state)
+        self.save_state(state)
+        if self.state.pending is None or self.state.pending.channel not in {'direct', 'named', 'focus'}:
+            return False
+        return not (self.chat.turn_messages and self.pace_until() is not None)
+
     def grant_reserve(self) -> None:
         self.chat.reserve_request = True
         self.chat.reserve_revoked = False
@@ -1093,6 +1117,7 @@ class SceneRunner:
             self.emit({"type": "limit_notice", "status": "failed", "error": f"{type(failure).__name__}: {failure}"})
 
     async def _quiet_notice(self, pending: list[tuple[int, ChatMessage, float]], until: float) -> None:
+        self.turn_people = set() if self.state.pending is None else set(self.state.pending.people)
         state = self.consumed_state()
         parts, note = None, None
         expressions = []
@@ -1125,9 +1150,7 @@ class SceneRunner:
                 expressions.append(content)
             # Receipt callbacks may have persisted newer attention while sending.
             state = copy.deepcopy(self.state)
-            own_at = self.store.last_self_time(self.config.scene)
-            if own_at is not None:
-                state.contact(own_at, self.settings.focus_seconds)
+            self.note_own(state)
             self.save_state(state)
         delivery = "none" if parts is None else "simulated" if self.chat.expression.send_message is None else "live"
         self.emit({"type": "notice", "status": status, "error": error_text,
@@ -1135,44 +1158,28 @@ class SceneRunner:
                    "quiet_until": datetime.fromtimestamp(until, ZoneInfo(self.config.timezone)).isoformat()})
 
     async def _turn(self, channel: str, **turn) -> None:
+        self.turn_people = set() if self.state.pending is None else set(self.state.pending.people)
         state = self.consumed_state(new_turn=True)
-        contact_before = state.last_contact_at
+        through = state.spoke_through
         self.state, self.resume = state, False
         self.chat.toolset.turn_disposition = None
         # The turn adds its own ID inside; this block drops it again once the turn ends.
         with log_context(scene=self.config.scene):
-            result = await self.chat.run_turn(append_new=self.append_during_turn,
+            result = await self.chat.run_turn(append_new=self.append_during_turn, followup=self.followup_waiting,
                                               wait_for_messages=self.wait_for_messages,
                                               attention_state=persisted(state), channel=channel, **turn)
         state = copy.deepcopy(self.state)
-        own_at = self.store.last_self_time(self.config.scene)
-        if own_at is not None:
-            state.contact(own_at, self.settings.focus_seconds)
+        self.note_own(state)
         channels = set(self.chat.turn_channels)
-        if channels & {'direct', 'named'}:
-            state.focus_unanswered = 0
-        elif result["expressions"] and 'focus' in channels:
-            state.focus_unanswered += 1
-        if result["expressions"]:
-            state.silence_level = 0
-        elif (channel in {"named", "focus", "ambient"} and result["status"] == "settled"
-              and result["failed_tools"] == 0 and state.last_contact_at == contact_before):
-            cap = math.ceil(math.log2(self.settings.ambient_max_interval_seconds)
-                            - math.log2(self.settings.ambient_min_interval_seconds))
-            state.silence_level = min(state.silence_level + 1, cap)
-            if channel == 'focus' and self.settings.close_focus_on_silence and 'direct' not in self.chat.turn_channels:
-                state.focus_closed_at = self.now()
-                # Messages arriving during the final request must also leave focus.
-                if state.pending is not None and state.pending.channel == 'focus':
-                    first_at = state.pending.first_at
-                    state.pending = None
-                    if self.settings.activity > 0:
-                        pending = self.store.pending_attention_sample(self.config.scene, self.settings.other_bot_ids)
-                        recent = self.store.attention_sample(self.config.scene, exclude_uids=self.settings.other_bot_ids)
-                        score = (participation_score(pending, recent, self.settings, self.config.bot_id)
-                                 * self.effect_factor())
-                        if score > self.settings.ambient_threshold:
-                            state.offer(PendingWake('ambient', first_at, score=score))
+        if state.spoke_through > through:
+            if channels & {'direct', 'named', 'focus'}:
+                state.silence_level = 0  # An exchange: joining in is welcome again.
+            elif channels & {'ambient', 'explore'} and self.settings.focus_seconds > 0:
+                state.interjected_at = state.spoke_at
+        elif (not result["expressions"] and channel in {"named", "focus", "ambient"} and result["status"] == "settled"
+              and result["failed_tools"] == 0 and 'direct' not in channels):
+            state.silence_level = min(state.silence_level + 1, self.silence_cap())
+        self.catch_followups(state)
         if self.settings.disposition is not None and result['status'] == 'settled':
             state.disposition = self.chat.toolset.turn_disposition
             log_event(logger, 'attention_disposition', turn_id=result['turn_id'],

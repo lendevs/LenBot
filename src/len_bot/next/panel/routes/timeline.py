@@ -19,10 +19,10 @@ class Verdict(BaseModel):
     woke: bool
     channel: Literal['direct', 'named', 'attention', 'focus', 'ambient', 'explore'] | None
     reason: str
-    score: float | None
-    threshold: float | None
     effect_factor: float | None = None
-    # Terms of the participation score, as chat/attention.py participation_parts returns them.
+    # The participation score and its terms, kept on verdicts recorded while wakes were scored.
+    score: float | None = None
+    threshold: float | None = None
     parts: dict[str, float] | None = None
 
 

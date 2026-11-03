@@ -54,7 +54,7 @@ async def test_settings_apply_to_wake_learning_permissions_and_platform_connecti
             source['models']['roles']['mind']['context_window_tokens'] = 64000
             source['compaction']['input_tokens'] = 30000
             source['scenes'][SCENE]['attention'] = {'only_direct': True, 'keywords': ['合成角色'],
-                                                    'activity': 0, 'direct_idle_seconds': 0, 'named_idle_seconds': 0}
+                                                    'direct_idle_seconds': 0, 'named_idle_seconds': 0}
             path.write_text(json.dumps(source))
             path = root / 'persona/persona.yaml'
             path.write_text(path.read_text().replace('tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [say]'))

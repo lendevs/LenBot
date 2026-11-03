@@ -40,7 +40,6 @@ def config_for(root, mode='enforce'):
     config, persona = _instance(root)
     config.attention.declarations = AttentionDeclarations(mode=mode)
     config.attention.disposition = TurnDisposition(mode='record' if mode == 'record' else 'enforce')
-    config.attention.activity = 0
     config.compaction.input_tokens = 20000
     config.models.roles.mind.context_window_tokens = 64000
     config.attention.direct_idle_seconds = config.attention.focus_idle_seconds = 0
@@ -109,7 +108,7 @@ async def test_model_intent_survives_unrelated_closed_turn_and_restart(tmp_path)
                 await asyncio.wait_for(live.run(), 5)
                 assert live.state.declared.intents == []
                 now[0] += 1
-                live.receive(message(70001, 5, '吃完了'))
+                live.receive(message(70001, 5, '嗯'))
                 assert live.state.pending is None
     turns = [event for event in events if 'turn_id' in event]
     assert len(turns) == len(requests) == 4
@@ -161,7 +160,7 @@ async def test_nonexecuting_modes_keep_baseline_wakes_and_validate_tool_actions(
                                         'minutes': 10, 'reason': '等待'})
         result, _, _ = await live.chat.toolset.execute(turn, tool, _unused_wait)
         assert json.loads(result)['id'] == 'i1'
-        live.receive(message(70001, 1, '补充信息'))
+        live.receive(message(70001, 1, '嗯'))
         assert live.state.pending is None
         with pytest.raises(ValueError, match='没有生效'):
             await live.chat.toolset.execute(turn, ToolCall('x2', 'attention', {'action': 'resolve', 'id': 'missing'}), _unused_wait)
@@ -285,7 +284,7 @@ def test_exploration_draws_only_outside_rules_and_yields_to_ambient(tmp_path):
         live.receive(message(70001, 1, '哈哈'))
         assert live.state.pending is None
         live.receive(message(70002, 2, '哈哈'))
-        assert (live.state.pending.channel, live.state.pending.score) == ('explore', 0.0)
+        assert live.state.pending.channel == 'explore'
         assert live.wake_reason() == '[群里在聊]'
         assert live.deadline() == START + config.attention.focus_idle_seconds
         live.receive(message(70003, 3, '你们觉得怎么办？'))
@@ -293,20 +292,6 @@ def test_exploration_draws_only_outside_rules_and_yields_to_ambient(tmp_path):
         assert live.random.values == []
         live.receive(message(70001, 4, '下雨了', direct=True))
         assert (live.state.pending.channel, live.state.pending.explored) == ('direct', True)
-
-
-def test_participation_wake_can_hide_its_score(tmp_path):
-    config, persona = _instance(tmp_path)
-    config.attention.focus_seconds = 0
-    now = [START]
-    with Store(config.database, now=lambda: now[0]) as store:
-        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda event: None)
-        for seq, text in enumerate(('哈哈', '哈哈', '你们觉得怎么办？'), 1):
-            live.receive(message(70001 + seq, seq, text))
-        assert live.state.pending.channel == 'ambient'
-        assert live.wake_reason() == f'[群里在聊；参与分 {live.state.pending.score:.3f}]'
-        config.attention.ambient_score_in_reason = False
-        assert live.wake_reason() == '[群里在聊]'
 
 
 def test_exploration_off_keeps_rule_wakes(tmp_path):
@@ -348,7 +333,6 @@ async def test_exploration_draw_stays_on_turn_after_ambient_takes_over(tmp_path)
 async def test_silent_exploration_turn_keeps_ambient_backoff(tmp_path):
     config, persona = _instance(tmp_path)
     config.attention.focus_seconds = 0
-    config.attention.activity = 0
     config.attention.explore_probability = 1
     config.compaction.input_tokens = 20000
     config.models.roles.mind.context_window_tokens = 64000
@@ -362,7 +346,7 @@ async def test_silent_exploration_turn_keeps_ambient_backoff(tmp_path):
             async with ChatModel(config.model_settings('mind')) as model:
                 live = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), events.append)
                 live.closing = True
-                live.receive(message(70001, 1, '今天吃什么'))
+                live.receive(message(70001, 1, '哈哈'))
                 assert live.state.pending.channel == 'explore'
                 now[0] += config.attention.focus_max_seconds
                 await asyncio.wait_for(live.run(), 5)
@@ -455,7 +439,7 @@ async def test_panel_lists_intents_and_wrap_up_and_cancels_one(tmp_path):
                 with pytest.raises(ValueError, match='i1'):
                     live.drop_intent('i1')
                 now[0] += config.attention.focus_seconds + 1  # past the baseline focus window
-                receipt = live.receive(message(70001, 3, '先去吃饭'))
+                receipt = live.receive(message(70001, 3, '嗯'))
                 assert not receipt['wake_verdict']['woke']
                 now[0] += 1800
                 assert live.focus_state()['intents'] == []
@@ -502,38 +486,120 @@ def test_panel_routes_read_and_cancel_intents(tmp_path):
     asyncio.run(run())
 
 
-@pytest.mark.asyncio
-async def test_focus_stops_waking_after_unanswered_turns_and_an_address_reopens_it(tmp_path):
-    config, persona = _instance(tmp_path)
-    config.attention.activity = 0
-    config.attention.focus_seconds = 600
-    config.attention.focus_unanswered_limit = 2
+def talking_instance(root, replies):
+    config, persona = _instance(root)
+    config.limits.messages_per_hour = None
+    config.attention.speech_interval_seconds = 0
     config.compaction.input_tokens = 20000
     config.models.roles.mind.context_window_tokens = 64000
-    replies = [response('say', {'content': f'接一句{index}', 'end_turn': True}, f'call-{index}') for index in range(3)]
-    requests, events, now = [], [], [START]
+    return config, persona, [response('say', {'content': f'接一句{index}', 'end_turn': True}, f'call-{index}')
+                             for index in range(replies)]
+
+
+@pytest.mark.asyncio
+async def test_a_followup_wakes_once_and_only_for_the_person_answered(tmp_path):
+    config, persona, replies = talking_instance(tmp_path, 2)
+    config.attention.focus_seconds = 600
+    requests, now = [], [START]
     server = await peer_server(replies, requests)
     async with server:
         config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
         with Store(config.database, now=lambda: now[0]) as store:
             async with ChatModel(config.model_settings('mind')) as model:
-                live = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), events.append)
+                live = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), lambda _: None)
                 live.closing = True
-                live.state.contact(START - 1, config.attention.focus_seconds)
-                for ident in (1, 2):
-                    now[0] += 1
-                    verdict = live.receive(message(70001 + ident % 2, ident, f'大家怎么看{ident}'))['wake_verdict']
-                    assert verdict['channel'] == 'focus'
-                    now[0] += config.attention.focus_max_seconds
-                    await asyncio.wait_for(live.run(), 5)
-                assert live.state.focus_unanswered == 2
-                now[0] += 1
-                assert not live.receive(message(70002, 3, '还有人吗'))['wake_verdict']['woke']
-                now[0] += 1
-                assert live.receive(message(70001, 4, '问你', direct=True))['wake_verdict']['channel'] == 'direct'
-                assert live.state.focus_unanswered == 0
+                live.receive(message(70001, 1, '问你个事', direct=True))
                 now[0] += config.attention.direct_max_seconds
                 await asyncio.wait_for(live.run(), 5)
+                assert set(live.state.followups) == {'onebot:70001'}
                 now[0] += 1
-                assert live.receive(message(70002, 5, '然后呢'))['wake_verdict']['channel'] == 'focus'
+                bystander = live.receive(message(70002, 2, '哈哈'))['wake_verdict']
+                assert not bystander['woke'] and not live.followup_waiting()
+                now[0] += 1
+                assert live.receive(message(70001, 3, '然后呢'))['wake_verdict']['channel'] == 'focus'
+                assert live.state.followups == {} and live.followup_waiting()
+                now[0] += config.attention.focus_max_seconds
+                await asyncio.wait_for(live.run(), 5)
+                # The answer opens the next follow-up; the bot's own message does not keep any other open.
+                assert set(live.state.followups) == {'onebot:70001'}
+                now[0] += config.attention.focus_seconds + 1
+                assert live.receive(message(70001, 4, '还在吗'))['wake_verdict']['channel'] == 'ambient'
+    assert len(requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_interjection_doubles_the_wait_and_a_reply_resets_it(tmp_path):
+    config, persona, replies = talking_instance(tmp_path, 3)
+    config.attention.focus_seconds = 120
+    requests, now = [], [START]
+    server = await peer_server(replies, requests)
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database, now=lambda: now[0]) as store:
+            async with ChatModel(config.model_settings('mind')) as model:
+                live = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), lambda _: None)
+                live.closing = True
+                live.receive(message(70001, 1, '你们觉得怎么办？'))
+                assert live.state.pending.channel == 'ambient' and live.deadline() == START
+                await asyncio.wait_for(live.run(), 5)
+                assert set(live.state.followups) == {'*'} and live.state.interjected_at == live.state.spoke_at == START
+                assert live.ambient_interval() == config.attention.ambient_min_interval_seconds
+                now[0] += config.attention.focus_seconds + 1
+                assert await live.ready_messages(wait=False) is None
+                assert live.state.silence_level == 1 and live.state.followups == {}
+                live.receive(message(70002, 2, '今天下雨了'))
+                interval = 2 * config.attention.ambient_min_interval_seconds
+                assert live.ambient_interval() == interval and live.deadline() == START + interval
+                now[0] = START + interval
+                await asyncio.wait_for(live.run(), 5)
+                now[0] += 10
+                assert live.receive(message(70003, 3, '真的吗'))['wake_verdict']['channel'] == 'focus'
+                now[0] += config.attention.focus_max_seconds
+                await asyncio.wait_for(live.run(), 5)
+                assert live.state.silence_level == 0 and live.state.interjected_at is None
     assert len(requests) == 3
+
+
+def test_the_speech_pace_lets_a_burst_out_then_holds_every_chat_wake(tmp_path):
+    from len_bot.next.models.limits import record_speech
+    config, persona = _instance(tmp_path)
+    config.limits.messages_per_hour = None
+    config.attention.speech_burst, config.attention.speech_interval_seconds = 2, 120
+    now = [START]
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
+        record_speech(store, SCENE)
+        assert live.pace_until() is None
+        record_speech(store, SCENE)
+        assert live.pace_until() == START + 120
+        live.receive(message(70001, 1, '问你', direct=True))
+        assert live.state.pending.channel == 'direct' and live.speech_hold() == START + 120
+        now[0] += 60
+        assert live.pace_until() == START + 120
+        now[0] = START + 120
+        assert live.pace_until() is None
+        config.attention.speech_interval_seconds = 0
+        record_speech(store, SCENE)
+        assert live.pace_until() is None
+
+
+def test_reopening_counts_joining_in_from_now_and_old_saved_fields_are_ignored(tmp_path):
+    config, persona = _instance(tmp_path)
+    config.attention.focus_seconds = 0
+    now = [START]
+    with Store(config.database, now=lambda: now[0]) as store:
+        store.save_attention(SCENE, {'paused': True, 'silence_level': 1, 'focus_until': START + 60,
+                                     'focus_unanswered': 2})
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
+        assert live.state.paused and live.state.silence_level == 1
+        live.state.silence_level = 0
+        now[0] += 100
+        live.set_paused(False)
+        assert live.state.ambient_last_at == START + 100
+        live.receive(message(70001, 1, '你们觉得怎么办？'))
+        assert live.deadline() == START + 100 + config.attention.ambient_min_interval_seconds
+        saved = store.load_attention(SCENE)
+        saved['pending']['score'] = 0.4
+        store.save_attention(SCENE, saved)
+        restarted = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
+        assert restarted.state.pending.channel == 'ambient'

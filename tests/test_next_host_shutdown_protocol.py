@@ -54,7 +54,6 @@ async def test_stop_releases_onebot_without_consuming_waiting_ambient_input(tmp_
                                           'context_window_tokens': 8192}}},
             'compaction': {'input_tokens': 2000},
             'scenes': {'onebot:group:80001': {'persona': 'persona', 'attention': {
-                'activity': 1, 'ambient_threshold': .1,
                 'ambient_min_interval_seconds': 60, 'ambient_max_interval_seconds': 900}}},
         }
         (tmp_path / 'lenbot.config.json').write_text(json.dumps(source, ensure_ascii=False))

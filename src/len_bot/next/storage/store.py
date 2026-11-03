@@ -923,6 +923,32 @@ class Store:
             sample.append((message, message.time if raw is None else received_at))
         return sample
 
+    def own_expressions_after(self, scene: str, entry: int) -> list[tuple[int, ChatMessage]]:
+        """Expressions the bot sent here after mind entry ``entry`` that reached the platform or the simulation,
+        as (entry, first part), oldest first. Plugin and host command messages are not expressions."""
+        first: dict[int, ChatMessage] = {}
+        # "+scene" keeps the planner on the expression index instead of scanning the scene's messages.
+        for entry_seq, body in self.db.execute(
+                "SELECT expression_entry_seq,body FROM messages WHERE expression_entry_seq>? AND +scene=? "
+                "AND json_extract(body,'$.send_status') IN ('sent','received','simulated') "
+                "ORDER BY expression_entry_seq,seq", (entry, scene)):
+            first.setdefault(entry_seq, decode_message(body))
+        return list(first.items())
+
+    def count_received(self, scene: str, since: float) -> int:
+        """Messages from others that arrived here after ``since``."""
+        return self.db.execute(
+            "SELECT COUNT(*) FROM messages WHERE scene=? AND COALESCE(received_at,json_extract(body,'$.time'))>? "
+            "AND json_extract(body,'$.is_self')=0", (scene, since)).fetchone()[0]
+
+    def last_expression(self, scene: str) -> tuple[int, float] | None:
+        """The bot's latest expression here: its mind entry and when its last part went out."""
+        row = self.db.execute(
+            "SELECT expression_entry_seq,json_extract(body,'$.time') FROM messages WHERE expression_entry_seq>0 "
+            "AND +scene=? AND json_extract(body,'$.send_status') IN ('sent','received','simulated') "
+            "ORDER BY expression_entry_seq DESC,seq DESC LIMIT 1", (scene,)).fetchone()
+        return None if row is None else (row[0], float(row[1]))
+
     def last_self_time(self, scene: str) -> float | None:
         row = self.db.execute(
             "SELECT CASE WHEN raw IS NULL THEN json_extract(body,'$.time') "

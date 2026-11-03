@@ -272,18 +272,22 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
         count=len(expressions), habits="，".join(habits))
 
 
+RECENT_SECONDS = 600
+
+
 def current_attention(config: LabConfig, store: Store) -> str:
     attention = store.load_attention(config.scene)
-    last = None if attention is None else attention.get('last_contact_at')
-    closed = None if attention is None else attention.get('focus_closed_at')
-    until = None if last is None else last + config.attention.focus_seconds
-    active = (not config.attention.only_direct and until is not None and until > store.now()
-              and (not config.attention.close_focus_on_silence or closed is None))
-    zone = ZoneInfo(config.timezone)
-    text = ('至 ' + datetime.fromtimestamp(until, zone).strftime('%H:%M:%S') if active else '已关闭')
-    if config.attention.close_focus_on_silence and closed is not None:
-        text += '（' + datetime.fromtimestamp(closed, zone).strftime('%H:%M:%S') + ' 沉默后关闭）'
-    text = '对话继续：' + text
+    now, zone = store.now(), ZoneInfo(config.timezone)
+    window = config.attention.focus_seconds
+    followups = ({} if attention is None or config.attention.only_direct
+                 else attention.get('followups') or {})
+    waiting = [('任何人' if who == '*' else who) + ' 至 ' + datetime.fromtimestamp(at + window, zone).strftime('%H:%M:%S')
+               for who, at in followups.items() if at + window > now]
+    text = '等接话：' + ('、'.join(waiting) if waiting else '无')
+    if config.scene.split(':', 2)[1] == 'group':
+        spoken = sum(at > now - RECENT_SECONDS for at in speech_quota(store, config).times)
+        text += (f'\n最近 {RECENT_SECONDS // 60} 分钟：你说了 {spoken} 句，'
+                 f'群里其他人 {store.count_received(config.scene, now - RECENT_SECONDS)} 条')
     if attention is not None:
         disposition = attention.get('disposition')
         if disposition is not None and disposition['until'] > store.now():

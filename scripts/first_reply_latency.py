@@ -287,7 +287,7 @@ async def batches() -> dict:
     checkout = Path(__file__).resolve().parents[1]
     base = json.loads((checkout / 'examples/replay/lenbot.config.example.json').read_text())
     base['models']['providers']['main']['api_key'] = 'synthetic-key'
-    base.update(persona=str(checkout / 'examples/personas/companion'), attention={'activity': 0.0})
+    base.update(persona=str(checkout / 'examples/personas/companion'), attention={})
     base.pop('evaluation')
     patterns = {
         'single-text': [(0, 70001, 'text')],
@@ -316,8 +316,6 @@ async def batches() -> dict:
                         chat = Chat(config, persona, store, mind, now=lambda: clock[0])
                         runner = SceneRunner(chat, lambda event: None)
                         runner.state.offer(PendingWake(channel, clock[0]))
-                        if channel == 'focus':
-                            runner.state.contact(clock[0], config.attention.focus_seconds)
                         start = clock[0]
                         deadline = None
                         consumed = []

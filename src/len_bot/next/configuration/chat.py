@@ -188,20 +188,20 @@ class Attention(BaseModel):
     named_idle_seconds: float = Field(default=3.0, ge=0, allow_inf_nan=False)
     named_max_seconds: float = Field(default=8.0, gt=0, allow_inf_nan=False)
     keyword_cooldown_seconds: float = Field(default=60.0, ge=0, allow_inf_nan=False)
-    focus_seconds: float = Field(default=180.0, ge=0, allow_inf_nan=False)
-    close_focus_on_silence: bool = True
-    # Focus turns in a row where the bot spoke and nobody @-ed, replied to or named it; then focus stops
-    # waking it and participation scoring decides. 0 keeps focus open while the bot keeps talking.
-    focus_unanswered_limit: int = Field(default=2, ge=0, strict=True)
+    # Each message the bot sends opens one follow-up: the next message within this window from the person it
+    # answered, or from anyone after an interjection that answered no one, wakes it once. 0 turns follow-ups off.
+    focus_seconds: float = Field(default=120.0, ge=0, allow_inf_nan=False)
     focus_idle_seconds: float = Field(default=4.0, ge=0, allow_inf_nan=False)
     focus_max_seconds: float = Field(default=12.0, gt=0, allow_inf_nan=False)
-    activity: float = Field(default=0.3, ge=0, le=1, allow_inf_nan=False)
-    ambient_threshold: float = Field(default=0.5, gt=0, allow_inf_nan=False)
-    ambient_min_interval_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
-    ambient_max_interval_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
-    # Off: a participation wake reads [群里在聊] like an exploration draw; the score stays in the log only.
-    ambient_score_in_reason: bool = True
-    # Per message outside focus that the participation rule does not admit; batches like focus.
+    # Joining in unprompted: at least the minimum after the bot last spoke, doubling up to the maximum
+    # while its interjections go unanswered or a look at the chat ends silent.
+    ambient_min_interval_seconds: float = Field(default=600.0, gt=0, allow_inf_nan=False)
+    ambient_max_interval_seconds: float = Field(default=2400.0, gt=0, allow_inf_nan=False)
+    # Pace of every chat wake, @ included: up to speech_burst messages in a row, then one more each
+    # speech_interval_seconds. Reminders and task results are not held. 0 seconds turns the pace off.
+    speech_burst: int = Field(default=3, ge=1, strict=True)
+    speech_interval_seconds: float = Field(default=120.0, ge=0, allow_inf_nan=False)
+    # Per message the interjection rule does not admit; batches like focus.
     explore_probability: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
     max_extensions: int = Field(default=4, ge=0)
     quiet_hours: QuietHours | None = None
@@ -239,13 +239,14 @@ class Attention(BaseModel):
 
 
 # Participation presets for the panel's wake level; each sets only these attention fields.
+# Answering @, replies and follow-ups works the same at every level.
 WAKE_LEVELS: dict[str, dict[str, float | int]] = {
-    'active': {'activity': 0.3, 'ambient_min_interval_seconds': 60.0, 'ambient_max_interval_seconds': 900.0,
-               'focus_seconds': 180.0, 'focus_unanswered_limit': 2, 'explore_probability': 0.0},
-    'moderate': {'activity': 0.15, 'ambient_min_interval_seconds': 180.0, 'ambient_max_interval_seconds': 1800.0,
-                 'focus_seconds': 90.0, 'focus_unanswered_limit': 1, 'explore_probability': 0.0},
-    'quiet': {'activity': 0.06, 'ambient_min_interval_seconds': 600.0, 'ambient_max_interval_seconds': 3600.0,
-              'focus_seconds': 30.0, 'focus_unanswered_limit': 1, 'explore_probability': 0.0},
+    'active': {'ambient_min_interval_seconds': 600.0, 'ambient_max_interval_seconds': 2400.0,
+               'speech_burst': 3, 'speech_interval_seconds': 120.0},
+    'moderate': {'ambient_min_interval_seconds': 1800.0, 'ambient_max_interval_seconds': 7200.0,
+                 'speech_burst': 3, 'speech_interval_seconds': 180.0},
+    'quiet': {'ambient_min_interval_seconds': 5400.0, 'ambient_max_interval_seconds': 21600.0,
+              'speech_burst': 2, 'speech_interval_seconds': 300.0},
 }
 
 

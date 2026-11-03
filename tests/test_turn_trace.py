@@ -148,7 +148,7 @@ async def test_turn_detail_uses_actual_delivery_results_and_merged_echo(tmp_path
             source['models']['providers']['local']['base_url'] = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
             source['models']['roles']['mind']['context_window_tokens'] = 64000
             source['compaction']['input_tokens'] = 30000
-            source['scenes'][SCENE]['attention'] = {'activity': 0, 'direct_idle_seconds': 0}
+            source['scenes'][SCENE]['attention'] = {'direct_idle_seconds': 0}
             path.write_text(json.dumps(source))
             path = root / 'persona/persona.yaml'
             path.write_text(path.read_text().replace('tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [say]'))
@@ -228,7 +228,7 @@ async def test_a_turn_ends_after_two_sends_that_are_not_delivered(tmp_path, batc
             source['models']['providers']['local']['base_url'] = f'http://127.0.0.1:{model.sockets[0].getsockname()[1]}/v1'
             source['models']['roles']['mind']['context_window_tokens'] = 64000
             source['compaction']['input_tokens'] = 30000
-            source['scenes'][SCENE]['attention'] = {'activity': 0, 'direct_idle_seconds': 0}
+            source['scenes'][SCENE]['attention'] = {'direct_idle_seconds': 0}
             path.write_text(json.dumps(source))
             path = root / 'persona/persona.yaml'
             path.write_text(path.read_text().replace('tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [say]'))

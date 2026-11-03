@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 
+from .chat import WAKE_LEVELS, Attention
+
 
 def _format_1_to_2(source: dict) -> dict:
     # Format 2 adds Telegram and Feishu; real sending is named for all platforms instead of OneBot.
@@ -30,7 +32,43 @@ def _format_3_to_4(source: dict) -> dict:
     return source
 
 
-STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4}
+# Wake level fields of format 4, by level.
+_FORMAT_4_LEVELS = {
+    "active": {"activity": 0.3, "ambient_min_interval_seconds": 60.0, "ambient_max_interval_seconds": 900.0,
+               "focus_seconds": 180.0, "focus_unanswered_limit": 2},
+    "moderate": {"activity": 0.15, "ambient_min_interval_seconds": 180.0, "ambient_max_interval_seconds": 1800.0,
+                 "focus_seconds": 90.0, "focus_unanswered_limit": 1},
+    "quiet": {"activity": 0.06, "ambient_min_interval_seconds": 600.0, "ambient_max_interval_seconds": 3600.0,
+              "focus_seconds": 30.0, "focus_unanswered_limit": 1},
+}
+_FORMAT_4_DEFAULTS = {"activity": 0.3, "ambient_min_interval_seconds": 60.0, "ambient_max_interval_seconds": 900.0,
+                      "focus_seconds": 180.0, "focus_unanswered_limit": 2, "explore_probability": 0.0}
+
+
+def _format_4_to_5(source: dict) -> dict:
+    # Format 5 replaces the participation score with follow-ups, interjection intervals and a speech pace.
+    # A chat at a wake level moves to the same level; hand-tuned intervals and follow-up windows stay.
+    for scene in source.get("scenes", {}).values():
+        attention = scene.get("attention") if isinstance(scene, dict) else None
+        if not isinstance(attention, dict):
+            continue
+        current = {**_FORMAT_4_DEFAULTS, **attention}
+        level = next((name for name, values in _FORMAT_4_LEVELS.items()
+                      if current["explore_probability"] == 0
+                      and all(current[field] == value for field, value in values.items())), None)
+        for name in ("activity", "ambient_threshold", "ambient_score_in_reason", "close_focus_on_silence",
+                     "focus_unanswered_limit"):
+            attention.pop(name, None)
+        if level is not None:
+            for name in _FORMAT_4_LEVELS[level]:
+                attention.pop(name, None)
+            attention.update({name: value for name, value in WAKE_LEVELS[level].items()
+                              if value != Attention.model_fields[name].default})
+    source["config_version"] = 5
+    return source
+
+
+STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4, 4: _format_4_to_5}
 
 
 def migrate_source(source: dict, target: int) -> dict:
