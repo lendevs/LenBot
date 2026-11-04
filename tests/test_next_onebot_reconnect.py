@@ -122,10 +122,12 @@ async def test_forward_host_keeps_running_across_a_peer_restart(tmp_path, monkey
                 await _until(lambda: runtime.status == 'running')
                 await first.close()
                 await _until(lambda: not runtime.accepting)
+                assert runtime.last_platform_error is not None
                 # A runner woken while the peer is away waits for the connection instead of ending.
                 runtime.runners[SCENE].changed.set()
                 second = await asyncio.wait_for(connections.get(), 3)
                 await _until(lambda: runtime.accepting)
+                assert runtime.last_platform_error is None
                 assert runtime.status == 'running' and not running.done()
                 await second.send(json.dumps(raw))
                 await _until(lambda: store.pending_messages(SCENE))

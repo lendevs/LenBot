@@ -1579,6 +1579,7 @@ export default {
     },
     todo: {
       title: '待处理事项',
+      dismiss: '关闭此项',
       none: '没有待处理事项',
       groups: '{n} 个群',
       view: '查看',

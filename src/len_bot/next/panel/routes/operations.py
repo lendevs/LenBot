@@ -141,7 +141,7 @@ def register_host_operations(app, *, runtime, user):
         if not runtime.accepting:
             raise HTTPException(409, '宿主未运行，请先启动再切换聊天开关')
         # Applies at once: a running turn stops at the step it is in and keeps the switch when it ends.
-        result = runner.set_paused(not change.enabled)
+        result = await runner.set_paused(not change.enabled)
         runtime.events.publish("host.state", scene=scene)
         return result
 
@@ -152,7 +152,7 @@ def register_host_operations(app, *, runtime, user):
         runner = runtime.runners[scene]
         if not runtime.accepting:
             raise HTTPException(409, '宿主未运行，请先启动再开关群聊')
-        result = runner.set_closed(not change.enabled)
+        result = await runner.set_closed(not change.enabled)
         runtime.events.publish("host.state", scene=scene)
         log_event(logger, 'scene_open', scene=scene, enabled=change.enabled)
         return result
@@ -162,7 +162,7 @@ def register_host_operations(app, *, runtime, user):
         """Every scene at once, e.g. when model quota runs out; messages are still stored."""
         if not runtime.accepting:
             raise HTTPException(409, '宿主未运行，请先启动再切换聊天开关')
-        states = [runner.set_paused(not change.enabled) for runner in runtime.runners.values()]
+        states = [await runner.set_paused(not change.enabled) for runner in runtime.runners.values()]
         runtime.events.publish("host.state")
         log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
         return {'enabled': change.enabled, 'scenes': len(states)}

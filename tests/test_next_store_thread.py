@@ -1,11 +1,52 @@
 """Store calls on the database thread: no interleaved transactions, writes survive cancellation."""
 import asyncio
+from contextlib import asynccontextmanager
+import json
 import threading
 import time
 
 import pytest
 
 from len_bot.next.storage.store import Store
+
+
+@asynccontextmanager
+async def _busy_database(store):
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_transaction():
+        with store.db:
+            entered.set()
+            release.wait(2)
+
+    job = asyncio.create_task(store.call(hold_transaction))
+    await asyncio.to_thread(entered.wait)
+    try:
+        yield release
+    finally:
+        release.set()
+        await job
+
+
+async def _while_database_is_busy(store, operation):
+    async with _busy_database(store) as release:
+        responsive = []
+
+        def heartbeat():
+            responsive.append(not release.is_set())
+            release.set()
+
+        # A stalled event loop needs the separate timer to release the transaction.
+        timer = threading.Timer(1, release.set)
+        timer.start()
+        asyncio.get_running_loop().call_later(.02, heartbeat)
+        try:
+            result = await operation
+            await asyncio.sleep(0)
+        finally:
+            timer.cancel()
+        assert responsive == [True], 'database lock held the event loop until the timer released it'
+        return result
 
 
 def _table(store):
@@ -131,3 +172,88 @@ async def test_store_calls_keep_the_callers_log_context(tmp_path):
             assert (await store.call(current_context))['scene'] == 'onebot:group:80001'
             assert (await store.read(current_context))['turn_id'] == 'synthetic-turn'
         assert 'scene' not in await store.call(current_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('scope', ['turn', 'scene', 'plugin'])
+async def test_model_request_can_wait_for_storage_while_the_loop_runs(tmp_path, scope):
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.models.request import request_model
+    from test_next_model import recorded_text_response
+    from test_next_native_models import peer_server
+    from test_next_persona_permissions import _config, _package
+    config = _config(tmp_path / 'instance', _package(tmp_path, 'plain', tools=[], documents={}))
+    received = []
+    server = await peer_server([(200, 'application/json', json.dumps(recorded_text_response()).encode())], received)
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database) as store:
+            options = ({'turn_id': store.start_turn(config.scene)} if scope == 'turn'
+                       else {'plugin': 'fixture'} if scope == 'plugin' else {})
+            async with ChatModel(config.model_settings('mind')) as model:
+                reply = await _while_database_is_busy(store, request_model(
+                    config, store, model, [{'role': 'user', 'content': 'hello'}], [],
+                    scene=config.scene, role='mind', output_tokens=512, **options))
+            assert reply.text and len(received) == 1
+            row = store.db.execute('SELECT ended,error,plugin FROM model_calls').fetchone()
+            assert row['ended'] is not None and row['error'] is None
+            assert row['plugin'] == ('fixture' if scope == 'plugin' else None)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_while_starting_a_model_request_settles_the_record(tmp_path):
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.models.request import request_model
+    from test_next_persona_permissions import _config, _package
+    config = _config(tmp_path / 'instance', _package(tmp_path, 'plain', tools=[], documents={}))
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as model:
+            async with _busy_database(store) as release:
+                request = asyncio.create_task(request_model(
+                    config, store, model, [{'role': 'user', 'content': 'hello'}], [],
+                    scene=config.scene, role='mind', output_tokens=512))
+                await asyncio.sleep(.02)
+                request.cancel()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+            [row] = store.db.execute('SELECT ended,error FROM model_calls').fetchall()
+            assert row['ended'] is not None and row['error'].startswith('CancelledError:')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('switch,field', [('set_paused', 'paused'), ('set_closed', 'closed')])
+async def test_scene_switch_can_wait_for_storage_while_the_loop_runs(tmp_path, switch, field):
+    from len_bot.next.chat.attention import SceneRunner
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.persona.profile import load_persona
+    from test_next_persona_permissions import _config, _package
+    package = _package(tmp_path, 'plain', tools=[], documents={})
+    config = _config(tmp_path / 'instance', package)
+    with Store(config.database) as store:
+        runner = SceneRunner(Chat(config, load_persona(package), store, None), lambda _: None)
+        state = await _while_database_is_busy(store, getattr(runner, switch)(True))
+        assert state[field] and getattr(runner.state, field)
+        assert store.load_attention(config.scene)[field]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_scene_switch_commits_and_wakes_the_runner(tmp_path):
+    from len_bot.next.chat.attention import SceneRunner
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.persona.profile import load_persona
+    from test_next_persona_permissions import _config, _package
+    package = _package(tmp_path, 'plain', tools=[], documents={})
+    config = _config(tmp_path / 'instance', package)
+    with Store(config.database) as store:
+        runner = SceneRunner(Chat(config, load_persona(package), store, None), lambda _: None)
+        runner.changed.clear()
+        async with _busy_database(store) as release:
+            switch = asyncio.create_task(runner.set_paused(True))
+            await asyncio.sleep(.02)
+            assert runner.state.paused
+            switch.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await switch
+        assert store.load_attention(config.scene)['paused'] and runner.changed.is_set()

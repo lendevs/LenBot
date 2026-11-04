@@ -196,7 +196,7 @@ def test_chat_switch_arguments_name_one_target_state():
 async def test_status_reports_each_scene_chat_switch(tmp_path):
     instance(tmp_path)
     async with running(tmp_path) as runtime:
-        runtime.runners['onebot:group:80002'].set_paused(True)
+        await runtime.runners['onebot:group:80002'].set_paused(True)
         status = await runtime.management.execute('onebot:group:80001', arguments('status'))
         assert {row['scene']: row['chat'] for row in status['scenes']} == {
             'onebot:group:80001': 'on', 'onebot:group:80002': 'off'}

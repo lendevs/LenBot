@@ -388,7 +388,7 @@ class SceneRunner:
             return self.control_state()
         return self.set_temporary_quiet(seconds, direct, requester)
 
-    def set_closed(self, closed: bool) -> dict:
+    async def set_closed(self, closed: bool) -> dict:
         """Close or reopen this scene; the chat switch keeps its value for when it reopens.
         Closing ends a running turn at the step it is in."""
         state = copy.deepcopy(self.state)
@@ -397,14 +397,19 @@ class SceneRunner:
         state.pending = None
         if not closed:
             state.ambient_last_at = self.now()
-        self.save_state(state)
+        changed = state != self.state
+        self.state = state
         if closed:
             self.chat.stop_turn()
-        self.changed.set()
-        self.chat.notify()
+        try:
+            if changed:
+                await self.store.call(self.store.save_attention, self.config.scene, persisted(state))
+        finally:
+            self.changed.set()
+            self.chat.notify()
         return self.control_state()
 
-    def set_paused(self, paused: bool) -> dict:
+    async def set_paused(self, paused: bool) -> dict:
         """Turn chat off or on for this scene; messages are still stored while off.
         Turning off ends a running turn at the step it is in."""
         state = copy.deepcopy(self.state)
@@ -413,11 +418,16 @@ class SceneRunner:
         state.pending = None
         if not paused:
             state.ambient_last_at = self.now()
-        self.save_state(state)
+        changed = state != self.state
+        self.state = state
         if paused:
             self.chat.stop_turn()
-        self.changed.set()
-        self.chat.notify()
+        try:
+            if changed:
+                await self.store.call(self.store.save_attention, self.config.scene, persisted(state))
+        finally:
+            self.changed.set()
+            self.chat.notify()
         return self.control_state()
 
     def control(self, args: SceneControlArguments) -> dict:
@@ -1215,9 +1225,9 @@ class SceneRunner:
         state.resume_reserve = (result["status"] == "limited" and self.chat.speech_reserve
                                 and self.chat.turn_messages == 0)
         # Preserve restart eligibility without treating a timeout as new input.
-        pending_wake = self.store.end_turn(result["turn_id"], result["status"], result["error"],
-                                           attention_state=persisted(state))
         self.state = state
+        pending_wake = await self.store.call(self.store.end_turn, result["turn_id"], result["status"], result["error"],
+                                            attention_state=persisted(state))
         if result["status"] == "limited":
             self.resume = True
         result["pending_wake"] = pending_wake
@@ -1230,7 +1240,7 @@ class SceneRunner:
                                     LimitReached(result["error"], result["limit_until"]))
         if self.chat.toolset.pause_after_turn:
             self.chat.toolset.pause_after_turn = False
-            self.set_paused(True)
+            await self.set_paused(True)
         if self.chat.toolset.restart_after_turn:
             self.chat.toolset.restart_after_turn = False
             await self.chat.toolset.host_management.finish_turn()

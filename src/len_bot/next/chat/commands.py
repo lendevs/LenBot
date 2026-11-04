@@ -219,7 +219,7 @@ async def _chat(call: CommandCall) -> str:
     enabled = call.arguments == ["on"]
     async with _between_turns(call):
         before = call.runner.state.paused
-        call.runner.set_paused(not enabled)
+        await call.runner.set_paused(not enabled)
     log_event(logger, "command_chat", scene=call.scene, enabled=enabled, requester=call.requester)
     if before != enabled:
         return "本群聊天已处于开启状态" if enabled else "本群聊天已处于关闭状态"

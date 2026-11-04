@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, CircleCheck } from '@lucide/vue'
+import { ChevronDown, CircleCheck, X } from '@lucide/vue'
 import Button from '../../ui/Button.vue'
 import CodeBlock from '../../ui/CodeBlock.vue'
+import IconButton from '../../ui/IconButton.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import StatusDot from '../../ui/StatusDot.vue'
 import type { Attention } from './attention'
 
 defineProps<{ items: Attention[]; loading: boolean }>()
+const emit = defineEmits<{ dismiss: [item: Attention] }>()
 
 const { t } = useI18n()
 </script>
@@ -44,12 +46,24 @@ const { t } = useI18n()
               class="shrink-0 text-muted transition-transform group-open:rotate-180"
               aria-hidden="true"
             />
+            <IconButton
+              :icon="X"
+              :label="t('overview.todo.dismiss')"
+              size="sm"
+              @click.stop.prevent="emit('dismiss', item)"
+            />
           </summary>
           <ul class="mt-2 flex list-none flex-col gap-1 border-l-2 border-line pl-3">
             <li v-for="child in item.children" :key="child.key" class="flex min-w-0 flex-col gap-1.5 py-1">
               <div class="flex min-w-0 items-center gap-3">
                 <span class="min-w-0 flex-1 text-sm text-ink-2">{{ child.text }}</span>
                 <Button v-if="child.to" size="sm" variant="ghost" :to="child.to">{{ child.action }}</Button>
+                <IconButton
+                  :icon="X"
+                  :label="t('overview.todo.dismiss')"
+                  size="sm"
+                  @click="emit('dismiss', child)"
+                />
               </div>
               <details v-if="child.error">
                 <summary class="cursor-pointer text-xs text-muted hover:text-ink">
@@ -65,6 +79,12 @@ const { t } = useI18n()
             <StatusDot :tone="item.tone" />
             <span class="min-w-0 flex-1 text-sm text-ink">{{ item.text }}</span>
             <Button v-if="item.to" size="sm" :to="item.to">{{ item.action }}</Button>
+            <IconButton
+              :icon="X"
+              :label="t('overview.todo.dismiss')"
+              size="sm"
+              @click="emit('dismiss', item)"
+            />
           </div>
           <details v-if="item.error" class="pl-5">
             <summary class="cursor-pointer text-xs text-muted hover:text-ink">

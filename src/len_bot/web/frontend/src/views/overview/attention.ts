@@ -1,4 +1,5 @@
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { useLocalStorage } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import type { RouteLocationRaw } from 'vue-router'
 import type { HostState, ItemHealth } from '../../api/host'
@@ -11,6 +12,7 @@ import { groupsTarget } from '../groups/route'
 
 export interface Attention {
   key: string
+  revision?: string | number
   text: string
   /** Error text kept as reported, shown on request. */
   error?: string | null
@@ -19,7 +21,14 @@ export interface Attention {
   tone: 'error' | 'warning' | 'info'
   /** The same trouble in several groups, one row per group. */
   children?: Attention[]
+  summary?: (groups: number) => string
 }
+
+const dismissed = useLocalStorage<{ scope: string; items: Record<string, string> }>(
+  'lenbot.overview.dismissed',
+  { scope: '', items: {} },
+)
+const revisionOf = (item: Attention) => JSON.stringify([item.revision ?? null, item.error ?? null])
 
 /** Statuses of a turn that ended without finishing its reply. */
 const FAILED_TURNS = new Set(['error', 'timeout', 'interrupted', 'step_limit', 'send_failed'])
@@ -30,6 +39,7 @@ const MERGE_FROM = 3
 export function useAttention() {
   const { t } = useI18n()
   const { online, status } = useConnectionStatus()
+  const scope = computed(() => `${host.state?.bot_id}:${(host.overview as Overview | null)?.since}`)
 
   // Each group stays one click away inside the merged item.
   function perScene(
@@ -39,16 +49,17 @@ export function useAttention() {
     summary: (groups: number) => string,
   ) {
     if (rows.length < MERGE_FROM) items.push(...rows)
-    else items.push({ key: kind, text: summary(rows.length), tone: rows[0]!.tone, children: rows })
+    else items.push({ key: kind, text: summary(rows.length), tone: rows[0]!.tone, children: rows, summary })
   }
 
-  const items = computed<Attention[]>(() => {
+  const allItems = computed<Attention[]>(() => {
     const state = host.state as HostState | null
     const day = host.overview as Overview | null
     const items: Attention[] = []
     if (state && !online.value) {
       items.push({
         key: 'connection',
+        revision: `${state.connection.status}:${state.connection.last_error}`,
         text: status.value.text,
         tone: status.value.tone === 'error' ? 'error' : 'warning',
         to: { name: 'host-system', query: { tab: 'connection' } },
@@ -64,6 +75,7 @@ export function useAttention() {
         if (item.status === 'failed') {
           items.push({
             key: `${kind}:${item.name}`,
+            revision: JSON.stringify([item.status, item.error_count, item.latest_error]),
             text: t(`overview.todo.${kind}Failed`, { name: item.name }),
             error: item.error,
             tone: 'error',
@@ -74,6 +86,7 @@ export function useAttention() {
           const latest = item.latest_error as { error?: string }
           items.push({
             key: `${kind}:${item.name}`,
+            revision: JSON.stringify([item.error_count, item.latest_error]),
             text: t(
               `overview.todo.${kind}Errors`,
               { name: item.name, n: item.error_count },
@@ -97,6 +110,7 @@ export function useAttention() {
       'send',
       Object.entries(day.undelivered).map(([scene, n]) => ({
         key: `send:${scene}`,
+        revision: n,
         text: t('overview.todo.undelivered', { group: groupLabel(scene), n }, n),
         tone: 'error',
         to: groupsTarget(scene, 'live'),
@@ -107,6 +121,7 @@ export function useAttention() {
     for (const call of day.model_errors) {
       items.push({
         key: `model:${call.id}`,
+        revision: call.count,
         text: t('overview.todo.modelErrors', { n: call.count }, call.count),
         error: call.error,
         tone: 'error',
@@ -127,6 +142,7 @@ export function useAttention() {
       'turn',
       Object.entries(failures).map(([scene, n]) => ({
         key: `turn:${scene}`,
+        revision: n,
         text: t('overview.todo.turnErrors', { group: groupLabel(scene), n }, n),
         tone: 'error',
         to: { name: 'host-logs', query: { scene } },
@@ -139,6 +155,7 @@ export function useAttention() {
       'task',
       Object.entries(day.failed_tasks).map(([scene, n]) => ({
         key: `task:${scene}`,
+        revision: n,
         text: t('overview.todo.taskFailed', { group: groupLabel(scene), n }, n),
         tone: 'warning',
         to: groupsTarget(scene, 'tasks'),
@@ -151,6 +168,7 @@ export function useAttention() {
       'memory',
       day.memory_stuck.map((job) => ({
         key: `memory:${job.scene}`,
+        revision: `${job.status}:${job.ended}`,
         text: t(`overview.todo.memory.${job.status}`, { group: groupLabel(job.scene) }),
         error: job.error,
         tone: 'warning',
@@ -174,6 +192,7 @@ export function useAttention() {
       'speech',
       Object.entries(day.speech_held).map(([scene, until]) => ({
         key: `speech:${scene}`,
+        revision: until,
         text: t('overview.todo.speech', {
           group: groupLabel(scene),
           time: formatDateTime(until, { timeZone: day.timezone }),
@@ -189,6 +208,7 @@ export function useAttention() {
       'review',
       Object.entries(day.pending_reviews).map(([scene, reviews]) => ({
         key: `review:${scene}`,
+        revision: JSON.stringify(reviews),
         text: t('overview.todo.review', {
           group: groupLabel(scene),
           what: [
@@ -209,7 +229,38 @@ export function useAttention() {
     return items
   })
 
+  function visible(item: Attention) {
+    return dismissed.value.scope !== scope.value || dismissed.value.items[item.key] !== revisionOf(item)
+  }
+  const items = computed<Attention[]>(() =>
+    allItems.value.flatMap((item) => {
+      if (!item.children) return visible(item) ? [item] : []
+      const children = item.children.filter(visible)
+      return children.length ? [{ ...item, children, text: item.summary!(children.length) }] : []
+    }),
+  )
+
+  function dismiss(item: Attention) {
+    const saved = dismissed.value.scope === scope.value ? dismissed.value.items : {}
+    dismissed.value = {
+      scope: scope.value,
+      items: {
+        ...saved,
+        ...Object.fromEntries((item.children ?? [item]).map((row) => [row.key, revisionOf(row)])),
+      },
+    }
+  }
+
+  // Resolved items can appear again if the same problem returns later.
+  watch(allItems, (rows) => {
+    if (!host.state || !host.overview || dismissed.value.scope !== scope.value) return
+    const active = new Set(rows.flatMap((row) => (row.children ?? [row]).map((item) => item.key)))
+    const saved = Object.entries(dismissed.value.items).filter(([key]) => active.has(key))
+    if (saved.length !== Object.keys(dismissed.value.items).length)
+      dismissed.value = { scope: scope.value, items: Object.fromEntries(saved) }
+  })
+
   /** Counted only once today's overview is read, so the number does not jump. */
   const count = computed(() => (host.overview || host.overviewError ? items.value.length : 0))
-  return { items, count }
+  return { items, count, dismiss }
 }
