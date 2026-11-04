@@ -704,7 +704,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             source["scenes"][change.scene] = {"persona": change.persona, "attention": change.attention.attention()}
         snapshot = await save(edit, scenes=True)
         if not change.chat:
-            runtime.runners[change.scene].set_paused(True)
+            await runtime.runners[change.scene].set_paused(True)
             runtime.events.publish("host.state", scene=change.scene)
         return snapshot
 

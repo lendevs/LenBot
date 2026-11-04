@@ -105,14 +105,16 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                       else {"estimated_total_tokens": estimated}),
                    "context_window_tokens": binding.context_window_tokens,
                    "history_policy": binding.history_policy, "session_id": session_id}
-        call_id = (PluginStore(store).start_plugin_call(scene, plugin, role, request) if plugin is not None
-                   else store.start_scene_call(scene, role, request) if turn_id is None
-                   else store.start_call(turn_id, role, request))
+        call_id = None
+
+        def begin() -> None:
+            nonlocal call_id
+            # Keep the committed ID even if cancellation arrives while the database call is awaited.
+            call_id = (PluginStore(store).start_plugin_call(scene, plugin, role, request) if plugin is not None
+                       else store.start_scene_call(scene, role, request) if turn_id is None
+                       else store.start_call(turn_id, role, request))
+
         started = time.monotonic()
-        if trace is not None:
-            trace({'kind': 'model', 'phase': 'start', 'call_id': call_id, 'role': role})
-        if notify is not None:
-            notify()
         reply = None
         retries = 0
 
@@ -121,12 +123,19 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
             retries += 1
 
         try:
+            await store.call(begin)
+            if trace is not None:
+                trace({'kind': 'model', 'phase': 'start', 'call_id': call_id, 'role': role})
+            if notify is not None:
+                notify()
             reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id,
                                          settings=None if effective is model.settings else effective,
                                          on_retry=retried)
             if validate is not None:
                 validate(reply)
         except BaseException as error:
+            if call_id is None:
+                raise
             if isinstance(error, ModelOutputLimitError):
                 if role == "recap":
                     error.describe(tokens, "回想", "系统 → 设置 → 高级 → 上下文压缩 → 回想最大长度")
@@ -140,8 +149,8 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                 response = error.response
             if isinstance(error, ModelProtocolError):
                 response, usage, token_usage = error.response, error.usage, error.token_usage
-            store.end_call(call_id, response, usage, f"{type(error).__name__}: {error}",
-                           tokens=token_record(token_usage), model=(binding.provider, binding.model), retries=retries)
+            await store.call(store.end_call, call_id, response, usage, f"{type(error).__name__}: {error}",
+                             tokens=token_record(token_usage), model=(binding.provider, binding.model), retries=retries)
             log_event(logger, 'model_call', level=logging.WARNING, call_id=call_id, role=role, model=binding.model,
                       provider=binding.provider, **({'plugin': plugin} if plugin else {}), status='failed', tokens=token_record(token_usage),
                       retries=retries,

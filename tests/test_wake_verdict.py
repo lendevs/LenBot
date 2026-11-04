@@ -41,7 +41,7 @@ async def test_unwoken_message_records_its_own_reason(tmp_path, case, reason):
         async with ChatModel(config.model_settings('mind')) as model:
             runner = SceneRunner(Chat(config, persona, store, model, now=lambda: START), lambda _: None)
             if case == 'paused':
-                runner.set_paused(True)
+                await runner.set_paused(True)
             if case == 'quiet':
                 runner.set_temporary_quiet(600, 'defer', None)
             if case == 'pending':

@@ -380,8 +380,8 @@ def test_unknown_command_name_in_configuration_is_refused(tmp_path):
 async def test_a_closed_group_answers_no_command_and_reopens_in_its_chat_mode(tmp_path):
     async with host(tmp_path) as (runtime, peer, store):
         runner = runtime.runners[SCENE]
-        runner.set_paused(True)
-        state = runner.set_closed(True)
+        await runner.set_paused(True)
+        state = await runner.set_closed(True)
         assert state['closed'] and runner.chat_status()['status'] == 'closed'
         await peer.say('/id')
         await peer.say('在吗', before=[{'type': 'at', 'data': {'qq': '90001'}}])
@@ -389,7 +389,7 @@ async def test_a_closed_group_answers_no_command_and_reopens_in_its_chat_mode(tm
         await asyncio.sleep(.1)
         assert peer.sends == [] and claims(store) == []
         assert store.db.execute('SELECT COUNT(*) FROM turns').fetchone()[0] == 0
-        runner.set_closed(False)
+        await runner.set_closed(False)
         assert runner.state.paused and runner.state.pending is None and runner.chat_status()['status'] == 'paused'
         await peer.say('/id')
         await until(lambda: peer.sends)
@@ -415,9 +415,9 @@ async def test_turning_chat_off_applies_at_once_and_ends_the_running_turn(tmp_pa
             await peer.say('在吗', before=[{'type': 'at', 'data': {'qq': '90001'}}])
             await asyncio.wait_for(asked.wait(), 10)
             assert runner.execution.locked()
-            assert runner.set_paused(True)['paused']
+            assert (await runner.set_paused(True))['paused']
             if switch == 'pause_then_close':
-                assert runner.set_closed(True)['closed']
+                assert (await runner.set_closed(True))['closed']
             await until(lambda: not runner.execution.locked(), 10)
             assert [tuple(row) for row in store.db.execute('SELECT status, error FROM turns')] == [
                 ('cancelled', '聊天已关闭，当前轮停止')]

@@ -356,7 +356,8 @@ async def test_silent_exploration_turn_keeps_ambient_backoff(tmp_path):
     assert '参与分' not in json.dumps(requests[0][2], ensure_ascii=False)
 
 
-def test_chat_status_names_the_reason_and_when_it_changes(tmp_path):
+@pytest.mark.asyncio
+async def test_chat_status_names_the_reason_and_when_it_changes(tmp_path):
     from len_bot.next.configuration.chat import QuietHours
     from len_bot.next.models.limits import record_speech
     config, persona = config_for(tmp_path)
@@ -371,7 +372,7 @@ def test_chat_status_names_the_reason_and_when_it_changes(tmp_path):
         assert live.chat_status() == {'status': 'limited', 'changes_at': START + 3600}
         live.set_temporary_quiet(600, 'allow', None)
         assert live.chat_status() == {'status': 'quiet', 'changes_at': START + 600}
-        live.set_paused(True)
+        await live.set_paused(True)
         assert live.chat_status() == {'status': 'paused', 'changes_at': None}
 
 
@@ -583,7 +584,8 @@ def test_the_speech_pace_lets_a_burst_out_then_holds_every_chat_wake(tmp_path):
         assert live.pace_until() is None
 
 
-def test_reopening_counts_joining_in_from_now_and_old_saved_fields_are_ignored(tmp_path):
+@pytest.mark.asyncio
+async def test_reopening_counts_joining_in_from_now_and_old_saved_fields_are_ignored(tmp_path):
     config, persona = _instance(tmp_path)
     config.attention.focus_seconds = 0
     now = [START]
@@ -594,7 +596,7 @@ def test_reopening_counts_joining_in_from_now_and_old_saved_fields_are_ignored(t
         assert live.state.paused and live.state.silence_level == 1
         live.state.silence_level = 0
         now[0] += 100
-        live.set_paused(False)
+        await live.set_paused(False)
         assert live.state.ambient_last_at == START + 100
         live.receive(message(70001, 1, '你们觉得怎么办？'))
         assert live.deadline() == START + 100 + config.attention.ambient_min_interval_seconds

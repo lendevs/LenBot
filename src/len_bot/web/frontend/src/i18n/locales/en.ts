@@ -1625,6 +1625,7 @@ export default {
     },
     todo: {
       title: 'Needs attention',
+      dismiss: 'Dismiss item',
       none: 'All good; nothing needs attention',
       groups: '{n} groups',
       view: 'View',
