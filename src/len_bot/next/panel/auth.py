@@ -106,13 +106,13 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
         if login_blocked(key):
             raise HTTPException(429, "登录尝试过于频繁，请稍后重试")
         record_login_failure(key)
-        password_valid = await asyncio.to_thread(verify_password, item.password, settings.password_hash)
+        old = settings.password_hash
+        password_valid = await asyncio.to_thread(verify_password, item.password, old)
         valid = hmac.compare_digest(item.username.encode('utf-8'), settings.username.encode('utf-8')) and password_valid
         if not valid:
             raise HTTPException(401, "Invalid username or password")
         clear_login_failures(key)
-        if on_rehash is not None and password_needs_rehash(settings.password_hash):
-            old = settings.password_hash
+        if on_rehash is not None and password_needs_rehash(old):
             try:
                 await on_rehash(old, await asyncio.to_thread(hash_password, item.password))
             except Exception as error:

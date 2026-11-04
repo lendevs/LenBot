@@ -257,3 +257,29 @@ async def test_cancelled_scene_switch_commits_and_wakes_the_runner(tmp_path):
             with pytest.raises(asyncio.CancelledError):
                 await switch
         assert store.load_attention(config.scene)['paused'] and runner.changed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_all_chat_switches_apply_while_the_database_is_busy(tmp_path):
+    import httpx
+    from len_bot.next.panel.app import create_app
+    from test_next_host_manage_permissions_config import instance, running
+    from test_scene_commands_protocol import until
+    instance(tmp_path)
+    async with running(tmp_path) as runtime:
+        runtime.accepting = True
+        app = create_app(runtime.config, runtime, root=tmp_path)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://testserver') as client:
+            login = await client.post('/api/auth/login', json={'username': 'operator', 'password': 'fixture-password'})
+            assert login.status_code == 200
+            async with _busy_database(runtime.store) as release:
+                switch = asyncio.create_task(client.put('/api/host/control/chat', json={'enabled': False}))
+                try:
+                    await until(lambda: all(runner.state.paused for runner in runtime.runners.values()), seconds=.5)
+                    assert not switch.done()
+                finally:
+                    release.set()
+                    response = await switch
+            assert response.status_code == 200, response.text
+            assert response.json() == {'enabled': False, 'scenes': 2}
+            assert all(runtime.store.load_attention(scene)['paused'] for scene in runtime.runners)

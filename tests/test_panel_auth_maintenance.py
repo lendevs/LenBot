@@ -226,3 +226,39 @@ async def test_a_password_changed_in_the_meantime_is_not_overwritten_by_the_upgr
         assert response.status_code == 200
         assert json.loads(path.read_text())['panel']['password_hash'] == changed
         assert runtime.config.panel.password_hash == _old_hash('synthetic-password')
+
+
+@pytest.mark.asyncio
+async def test_rehash_uses_the_record_that_was_verified_when_settings_change_during_login(monkeypatch):
+    import asyncio
+    import threading
+    from len_bot.next.panel import auth
+    from len_bot.web.auth import clear_login_failures
+    original, changed = _old_hash('password'), _old_hash('another-password')
+    settings = PanelSettings(host='127.0.0.1', port=8080, username='fixture', password_hash=original)
+    entered, release = threading.Event(), threading.Event()
+
+    def verify(password, stored):
+        entered.set()
+        release.wait(2)
+        return verify_password(password, stored)
+
+    async def replace(old, new):
+        if settings.password_hash != old:
+            raise ValueError('password changed')
+        settings.password_hash = new
+
+    monkeypatch.setattr(auth, 'verify_password', verify)
+    app = FastAPI()
+    install_panel_auth(app, settings, on_logout=lambda: None, on_rehash=replace)
+    clear_login_failures('isolated:127.0.0.1')
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://panel.test') as client:
+        login = asyncio.create_task(client.post('/api/auth/login', json={'username': 'fixture', 'password': 'password'}))
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            settings.password_hash = changed
+        finally:
+            release.set()
+            response = await login
+    assert response.status_code == 200
+    assert settings.password_hash == changed

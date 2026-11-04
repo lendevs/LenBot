@@ -162,7 +162,7 @@ def register_host_operations(app, *, runtime, user):
         """Every scene at once, e.g. when model quota runs out; messages are still stored."""
         if not runtime.accepting:
             raise HTTPException(409, '宿主未运行，请先启动再切换聊天开关')
-        states = [await runner.set_paused(not change.enabled) for runner in runtime.runners.values()]
+        states = await asyncio.gather(*(runner.set_paused(not change.enabled) for runner in runtime.runners.values()))
         runtime.events.publish("host.state")
         log_event(logger, 'chat_all', enabled=change.enabled, scenes=len(states))
         return {'enabled': change.enabled, 'scenes': len(states)}
