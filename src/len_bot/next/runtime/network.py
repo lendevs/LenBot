@@ -263,6 +263,8 @@ class NetworkRuntime:
     def _connection_changed(self) -> None:
         self.connected_since = self.store.now() if self.platform.connected else None
         self.accepting = self.status == "running" and self.platform.connected
+        if not self.missing_platforms and all(adapter.connected for adapter in self.platform.adapters.values()):
+            self.last_platform_error = None
         self.events.publish("host.state")
         self.notify()
 

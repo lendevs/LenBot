@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import subprocess
 import sys
 import tarfile
 import threading
@@ -12,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from len_bot.next import deployment as deployment_module
-from len_bot.next.deployment import Deployment, Switch, wait_ready
+from len_bot.next.deployment import Deployment, Switch, wait_ready, write_json
 from len_bot.next.plugins.catalog import CatalogView, SourcedEntry, updates
 from len_bot.next.runtime.updater import PROTOCOL, Updater
 
@@ -111,6 +112,28 @@ async def test_package_update_unpacks_the_release_writes_the_request_and_exits(t
 
 
 @pytest.mark.asyncio
+async def test_a_download_larger_than_the_manifest_declares_is_stopped_while_streaming(tmp_path, monkeypatch):
+    from len_bot.next.runtime import updater as updater_module
+    monkeypatch.setattr(updater_module, 'CHUNK', 1024)
+    deployment = Deployment('package', tmp_path)
+    _install(deployment, '0.1.0')
+    deployment.select('0.1.0')
+    bundle = _bundle('0.2.0', 'linux-x64')
+    name = 'lenbot-0.2.0-linux-x64.tar.gz'
+    manifest = _manifest('0.2.0', {name: bundle}, 'linux-x64')
+
+    async def exit_for_update():
+        raise AssertionError('not reached')
+
+    with Files({name: bundle + b'\0' * (1 << 20), 'release-manifest.json': json.dumps(manifest).encode()}) as files:
+        updater = Updater(deployment, '0.1.0', exit_for_update=exit_for_update)
+        updater.start(_release(files, '0.2.0', manifest), plugins=False)
+        await updater.task
+    assert updater.state()['stage'] == 'failed' and '超过发行清单声明的大小' in updater.state()['error']
+    assert not deployment.installed('0.2.0')
+
+
+@pytest.mark.asyncio
 async def test_a_release_for_another_updater_protocol_is_refused_before_downloading(tmp_path):
     deployment = Deployment('package', tmp_path)
     _install(deployment, '0.1.0')
@@ -201,6 +224,62 @@ def test_restoring_a_snapshot_runs_its_own_version(tmp_path):
     assert switch.prepare({'action': 'restore', 'snapshot': name}) == {}
     assert switch.calls == [('0.1.0', 'restore')] and deployment.selected() == '0.1.0'
     assert json.loads(switch.result_path.read_text())['action'] == 'restore'
+
+
+def test_a_failed_restore_is_recorded_and_the_request_cleared_instead_of_crashing_the_launcher(tmp_path):
+    deployment = _deployment(tmp_path)
+    switch = Recorder(deployment)
+    switch.settle(switch.prepare({'action': 'update', 'version': '0.2.0'}), None)
+    name = deployment.snapshots()[0]['name']
+    for request, failing in (({'action': 'restore', 'snapshot': name}, {'restore'}),
+                             ({'action': 'restore', 'snapshot': 'gone'}, set())):
+        switch = Recorder(deployment, failing)
+        write_json(switch.request_path, request)
+        assert switch.prepare(switch.pending()) == {}
+        result = json.loads(switch.result_path.read_text())
+        assert (result['action'], result['status'], result['from']) == ('restore', 'failed', '0.2.0')
+        assert result['error'] and not switch.request_path.exists()
+        assert deployment.selected() == '0.2.0'
+
+
+def test_stopping_the_launcher_during_the_trial_start_keeps_the_new_version_instead_of_rolling_back(tmp_path, monkeypatch):
+    from len_bot.next import launcher
+    from len_bot.next.runtime.lifecycle import UPDATE_EXIT
+    deployment = _deployment(tmp_path)
+    switch = Recorder(deployment)
+    write_json(switch.request_path, {'action': 'update', 'version': '0.2.0', 'plugins': True})
+    write_json(deployment.instance / 'lenbot.config.json', {'panel': {'host': '127.0.0.1', 'port': 1}})
+    monkeypatch.chdir(deployment.instance)
+    monkeypatch.setattr(launcher, 'Switch', lambda _: switch)
+    started = []
+
+    class Host:
+        def __init__(self, *args, **kwargs):
+            started.append(self)
+            self.terminated = False
+            if len(started) == 2:
+                (deployment.updates / launcher.STOP_FILE).write_text('')
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            if len(started) == 1:
+                return UPDATE_EXIT
+            if not self.terminated:
+                raise subprocess.TimeoutExpired('host', timeout)
+            return 0
+
+        def send_signal(self, signum):
+            self.terminated = True
+
+    monkeypatch.setattr(launcher.subprocess, 'Popen', Host)
+    assert launcher.run(deployment=deployment) == 0
+    assert len(started) == 2 and ('0.1.0', 'restore') not in switch.calls
+    result = json.loads(switch.result_path.read_text())
+    assert (result['status'], result['to'], result['plugins'], result['verified']) == ('complete', '0.2.0', 'pending', False)
+    assert deployment.selected() == '0.2.0' and deployment.kept() >= {'0.1.0', '0.2.0'} and deployment.snapshots()
+    assert not switch.request_path.exists()
 
 
 def test_docker_runs_the_newer_of_the_image_and_the_volume_version(tmp_path, monkeypatch):

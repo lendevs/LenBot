@@ -240,6 +240,39 @@ async def test_connection_page_takes_the_qq_account_when_the_root_account_is_ano
 
 
 @pytest.mark.asyncio
+async def test_connection_page_moves_a_qq_link_without_a_saved_token(tmp_path):
+    async with panel(tmp_path, onebot={'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'}) as (client, _):
+        snapshot = (await client.get('/api/host/settings')).json()
+        assert snapshot['saved']['connection']['onebot']['access_token_configured'] is False
+        onebot = {key: value for key, value in snapshot['saved']['connection']['onebot'].items()
+                  if key != 'access_token_configured'}
+        moved = await client.put('/api/host/settings/connection', json=connection(
+            snapshot, onebot={**onebot, 'ws_url': 'ws://127.0.0.1:10'}))
+        assert moved.status_code == 200, moved.text
+        assert load_host_config(tmp_path).onebot.ws_url == 'ws://127.0.0.1:10'
+        assert load_host_config(tmp_path).onebot.access_token == ''
+
+
+@pytest.mark.asyncio
+async def test_connection_page_asks_for_the_saved_token_again_when_the_address_moves(tmp_path):
+    async with panel(tmp_path) as (client, _):
+        snapshot = (await client.get('/api/host/settings')).json()
+        assert snapshot['saved']['connection']['onebot']['access_token_configured'] is True
+        onebot = {key: value for key, value in snapshot['saved']['connection']['onebot'].items()
+                  if key != 'access_token_configured'}
+        moved = {**onebot, 'ws_url': 'ws://127.0.0.1:10'}
+        refused = await client.put('/api/host/settings/connection', json=connection(snapshot, onebot=moved))
+        assert refused.status_code == 422 and '重新填写访问令牌' in refused.text
+        assert load_host_config(tmp_path).onebot.ws_url == 'ws://127.0.0.1:9'
+        saved = await client.put('/api/host/settings/connection', json=connection(
+            snapshot, onebot=moved, access_token='replacement-marker'))
+        assert saved.status_code == 200, saved.text
+        config = load_host_config(tmp_path)
+        assert config.onebot.ws_url == 'ws://127.0.0.1:10' and config.onebot.access_token == 'replacement-marker'
+        assert 'replacement-marker' not in saved.text
+
+
+@pytest.mark.asyncio
 async def test_connection_test_uses_the_saved_secret_and_never_reads_telegram_updates(tmp_path, monkeypatch):
     requests = []
     monkeypatch.setattr(telegram, '_transport', lambda proxy: telegram_api(requests))

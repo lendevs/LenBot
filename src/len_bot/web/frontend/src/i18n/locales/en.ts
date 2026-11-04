@@ -1256,6 +1256,8 @@ export default {
         publicOff: 'The public browser is off for this task.',
         container: 'The task environment is running.',
         files: 'Browser files · {n}',
+        closed: 'Leftover environment closed',
+        closeFailed: 'Could not close the leftover environment',
       },
       events: {
         title: 'Steps',
@@ -1625,6 +1627,7 @@ export default {
     },
     todo: {
       title: 'Needs attention',
+      dismiss: 'Dismiss item',
       none: 'All good; nothing needs attention',
       groups: '{n} groups',
       view: 'View',

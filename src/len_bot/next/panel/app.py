@@ -18,7 +18,7 @@ from ..platform.adapter import adapter_for
 from len_bot.web.auth import keep_sessions
 from ..configuration.chat import wake_level
 from ..config import HostConfig
-from ..configuration.editing import _read_saved
+from ..configuration.editing import _read_saved, save_config
 from ..models.limits import speech_quota
 from ..models.usage import instance_usage
 from ..memory.jobs import processing_records
@@ -118,8 +118,19 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         notify()
         trials.notify()
 
+    async def upgrade_password(old: str, new: str) -> None:
+        """Replace an old-iteration hash after a login, unless the password was changed in the meantime."""
+        def edit(source: dict, saved: HostConfig) -> None:
+            if saved.panel is None or saved.panel.password_hash != old:
+                raise ValueError('面板密码已被修改')
+            source['panel']['password_hash'] = new
+
+        async with write_lock:
+            await asyncio.to_thread(save_config, root, config, edit)
+            config.panel.password_hash = new
+
     keep_sessions(root / '.runtime' / 'panel-sessions.json')
-    user = install_panel_auth(app, config.panel, on_logout=logged_out)
+    user = install_panel_auth(app, config.panel, on_logout=logged_out, on_rehash=upgrade_password)
     register_host_restart(app, root=root, running=config, runtime=runtime, trials=trials,
                           lifecycle=runtime.management.lifecycle,
                           user=user, write_lock=write_lock)

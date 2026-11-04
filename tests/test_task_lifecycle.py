@@ -779,6 +779,26 @@ async def test_a_process_start_cancelled_in_flight_leaves_the_other_processes_ru
 
 
 @pytest.mark.asyncio
+async def test_a_refused_requester_downloads_no_files(tmp_path, upstream, environment):
+    from len_bot.next.work.tools import execute_tasks
+
+    config = host_config(tmp_path, upstream[0], environment)
+    fetched = []
+
+    async def fetch(item, max_bytes):
+        fetched.append(item.name)
+        return b'x'
+
+    arguments = {'requester': MEMBER, 'goal': '越权', 'deliverable': '无', 'context': '无',
+                 'group_files': [{'file_id': f'/f{i}', 'busid': 102, 'name': f'a{i}.bin'} for i in range(3)],
+                 'chat_files': [{'message': 'm1', 'file': 1, 'name': 'c.bin'}]}
+    async with task_host(config, config.database) as tasks:
+        with pytest.raises(PermissionError, match='委托任务权限'):
+            await execute_tasks(tasks, SCENE, 'delegate', arguments, fetch, fetch)
+        assert fetched == [] and tasks.list(SCENE)['items'] == []
+
+
+@pytest.mark.asyncio
 async def test_a_group_file_becomes_each_tasks_own_input_snapshot(tmp_path, upstream, environment):
     from len_bot.next.work.tools import execute_tasks
 

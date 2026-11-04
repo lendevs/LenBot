@@ -26,12 +26,18 @@ def keep_sessions(path: Path) -> None:
     _SESSION_FILE = path
     try:
         saved = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
+        # No file yet, or one that a power cut left empty or half written: everyone signs in again.
+        saved = {}
+    if not isinstance(saved, dict):
         saved = {}
     now = time.time()
     _ACTIVE_SESSIONS.clear()
-    _ACTIVE_SESSIONS.update({key: value for key, value in saved.items()
-                             if value["expires_at"] > now})
+    for key, value in saved.items():
+        expires_at = value.get("expires_at") if isinstance(value, dict) else None
+        if isinstance(value, dict) and isinstance(value.get("username"), str) \
+                and isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and expires_at > now:
+            _ACTIVE_SESSIONS[key] = value
 
 
 def _save_sessions() -> None:
@@ -42,7 +48,18 @@ def _save_sessions() -> None:
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as output:
         json.dump(_ACTIVE_SESSIONS, output)
+        output.flush()
+        os.fsync(output.fileno())
     temporary.replace(_SESSION_FILE)
+    if os.name != "nt":
+        try:
+            directory = os.open(_SESSION_FILE.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError:
+            pass  # the rename is already done; some file systems cannot sync a directory
 
 
 def revoke_all_sessions() -> None:
@@ -83,6 +100,7 @@ def clear_login_failures(key: str) -> None:
 
 
 MAX_PASSWORD_ITERATIONS = 10_000_000
+PASSWORD_ITERATIONS = 600_000
 # The digit count is bounded first; the value is converted and range-checked afterwards.
 PASSWORD_HASH_PATTERN = r"pbkdf2_sha256\$[1-9][0-9]{0,7}\$[^$]+\$[0-9a-f]{64}"
 
@@ -94,19 +112,29 @@ def password_hash_valid(stored_hash: str) -> bool:
     return int(stored_hash.split("$")[1]) <= MAX_PASSWORD_ITERATIONS
 
 
+def password_needs_rehash(stored_hash: str) -> bool:
+    """A valid record made with fewer iterations than hash_password uses now."""
+    return password_hash_valid(stored_hash) and int(stored_hash.split("$")[1]) < PASSWORD_ITERATIONS
+
+
 def hash_password(password: str, salt: Optional[str] = None) -> str:
     """PBKDF2-HMAC-SHA256 password hasher with random salt."""
     if not salt:
         salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 600_000)
-    return f"pbkdf2_sha256$600000${salt}${dk.hex()}"
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), PASSWORD_ITERATIONS)
+    return f"pbkdf2_sha256${PASSWORD_ITERATIONS}${salt}${dk.hex()}"
 
 def verify_password(password: str, stored_hash: str) -> bool:
     """Verify a pbkdf2_sha256$iterations$salt$hash record."""
     if not password_hash_valid(stored_hash):
         return False
     _, iterations, salt, expected_hex = stored_hash.split("$")
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations))
+    try:
+        secret, salt_bytes = password.encode("utf-8"), salt.encode("utf-8")
+    except UnicodeEncodeError:
+        # A lone surrogate (JSON "\ud800") cannot be UTF-8; no stored password contains one.
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", secret, salt_bytes, int(iterations))
     return hmac.compare_digest(dk.hex(), expected_hex)
 
 def create_session(username: str) -> str:

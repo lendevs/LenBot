@@ -17,7 +17,7 @@ import StatusCard from './StatusCard.vue'
 import { useAttention } from './attention'
 
 const { t } = useI18n()
-const { items } = useAttention()
+const { items, dismiss } = useAttention()
 // The shell reads today's overview and keeps it fresh from events; this page only shows it.
 const day = computed(() => host.overview as Overview | null)
 const sum = (values: Record<string, number | undefined>) =>
@@ -111,7 +111,7 @@ const effects = computed(() =>
 
       <div class="grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
         <div class="flex min-w-0 flex-col gap-6">
-          <AttentionList :items="items" :loading="!day && !host.overviewError" />
+          <AttentionList :items="items" :loading="!day && !host.overviewError" @dismiss="dismiss" />
           <LiveFeed :overview="day" />
         </div>
         <div class="flex min-w-0 flex-col gap-6">

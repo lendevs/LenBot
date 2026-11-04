@@ -377,7 +377,7 @@ class HostManagement:
                 return {**result, 'chat': 'on', 'changed': False}
             return {**result, 'chat': 'off', 'changed': True, 'applies': 'after_current_turn'}
         before = runner.state.paused
-        state = runner.set_paused(not args.enabled)
+        state = await runner.set_paused(not args.enabled)
         return {**result, 'chat': 'off' if state['paused'] else 'on', 'changed': before != state['paused']}
 
     async def finish_turn(self) -> None:

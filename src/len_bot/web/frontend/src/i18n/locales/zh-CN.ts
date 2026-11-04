@@ -1213,6 +1213,8 @@ export default {
         publicOff: '任务未开启公共浏览器。',
         container: '任务环境正在运行。',
         files: '浏览器文件 · {n}',
+        closed: '已关闭遗留运行环境',
+        closeFailed: '关闭遗留运行环境失败',
       },
       events: {
         title: '过程',
@@ -1577,6 +1579,7 @@ export default {
     },
     todo: {
       title: '待处理事项',
+      dismiss: '关闭此项',
       none: '没有待处理事项',
       groups: '{n} 个群',
       view: '查看',

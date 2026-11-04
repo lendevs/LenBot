@@ -172,6 +172,10 @@ def ready_url(instance: Path) -> str:
     return f'http://{host}:{panel["port"]}/api/host/ready'
 
 
+# wait_ready's answer when the launcher itself is being stopped, which says nothing about the new version.
+STOPPING = '启动器正在停止'
+
+
 def wait_ready(instance: Path, version: str, exited: Callable[[], int | None],
                stopping: Callable[[], bool], seconds: float = READY_SECONDS) -> str | None:
     """None once the host serves this version and finished starting; otherwise why it did not."""
@@ -179,7 +183,7 @@ def wait_ready(instance: Path, version: str, exited: Callable[[], int | None],
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if stopping():
-            return '启动器正在停止'
+            return STOPPING
         code = exited()
         if code is not None:
             return f'新版本退出，退出码 {code}'
@@ -232,6 +236,22 @@ class Switch:
         write_json(self.result_path, {**result, 'finished_at': time.time()})
         self.request_path.unlink(missing_ok=True)
 
+    def restore(self, request: dict, current: str) -> dict:
+        """Restore a snapshot before the next start. A failure is recorded and the current version starts as it was."""
+        try:
+            name = request['snapshot']
+            meta = read_json(self.deployment.backups / (name + '.json'))
+            print(f'LenBot：恢复快照 {name}（{meta["version"]}）。', flush=True)
+            self.maintenance(meta['version'], 'restore', self.deployment.backups / name)
+            self.deployment.select(meta['version'])
+        except Exception as error:
+            print(f'LenBot：恢复快照失败：{error}', flush=True)
+            self.finish({'action': 'restore', 'status': 'failed', 'snapshot': request.get('snapshot'),
+                         'from': current, 'error': f'恢复快照失败：{type(error).__name__}: {error}'})
+            return {}
+        self.finish({'action': 'restore', 'status': 'complete', 'snapshot': name, 'from': current, 'to': meta['version']})
+        return {}
+
     def prepare(self, request: dict) -> dict:
         """Before the next start: snapshot and migrate for an update, or restore a snapshot.
 
@@ -239,14 +259,7 @@ class Switch:
         """
         current = self.deployment.selected()
         if request['action'] == 'restore':
-            name = request['snapshot']
-            meta = read_json(self.deployment.backups / (name + '.json'))
-            print(f'LenBot：恢复快照 {name}（{meta["version"]}）。', flush=True)
-            self.maintenance(meta['version'], 'restore', self.deployment.backups / name)
-            self.deployment.select(meta['version'])
-            self.finish({'action': 'restore', 'status': 'complete', 'snapshot': name,
-                         'from': current, 'to': meta['version']})
-            return {}
+            return self.restore(request, current)
         target = request['version']
         print(f'LenBot：更新 {current} → {target}，先保存快照。', flush=True)
         try:
@@ -290,6 +303,14 @@ class Switch:
         self.deployment.prune({trial['version'], trial['from']})
         self.deployment.prune_snapshots()
         print(f'LenBot：已更新到 {trial["version"]}。', flush=True)
+
+    def interrupted(self, trial: dict) -> None:
+        """The launcher was stopped during the trial start: nothing is known about the new version, so keep it and its
+        snapshot (no pruning) instead of rolling back a version that may be healthy. A bad one is restored from the snapshot."""
+        self.finish({'action': 'update', 'status': 'complete', 'from': trial['from'], 'to': trial['version'],
+                     'snapshot': trial['snapshot'].name, 'verified': False,
+                     'plugins': 'pending' if trial['request'].get('plugins') else None})
+        print(f'LenBot：启动器在试启动期间停止，保留 {trial["version"]} 与更新前快照，未验证就绪。', flush=True)
 
 
 OFFICIAL_WORKERS = ('ghcr.io/lendevs/lenbot-worker', 'docker.io/lendevs/lenbot-worker', 'lendevs/lenbot-worker')

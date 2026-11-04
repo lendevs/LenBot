@@ -300,7 +300,8 @@ class WorkTasks:
             return f"任务目录所在磁盘剩余 {free} 字节，低于 {self.settings.disk_reserve_bytes}，暂不接新任务"
         return None
 
-    def _admit_delegate(self, scene: str, requester: str) -> None:
+    def admit_delegate(self, scene: str, requester: str) -> None:
+        """Permission, disk and daily-count checks; the chat tool runs them before it downloads any file."""
         self._can_delegate(scene, requester)
         if (refusal := self._disk_refusal()) is not None:
             raise ValueError(refusal)
@@ -314,7 +315,7 @@ class WorkTasks:
                        deliverable: str, context: str,
                        materials: Sequence[MaterialName] = (), resources: Sequence[ResourceInput] = (),
                        downloads: Sequence[DownloadedInput] = ()) -> dict:
-        self._admit_delegate(scene, requester)
+        self.admit_delegate(scene, requester)
         await finish_file_operation(worker_pool_usage, self.settings)
         selected = (*materials, *(item.name for item in resources), *(item.name for item in downloads))
         stage = create_stage(self.settings, scene) if selected else None
@@ -334,7 +335,7 @@ class WorkTasks:
                 size = await finish_file_operation(write_download, stage, download)
                 copies.append({'name': download.name, 'size': size, **download.source,
                                'container_path': f'/inputs/{download.name}'})
-            self._admit_delegate(scene, requester)
+            self.admit_delegate(scene, requester)
             item = self._register_delegate(scene, requester, goal, deliverable, context, selected)
             log_event(logger, 'task_created', task_id=item.id, requester=requester, inputs=len(selected))
             if stage is not None:

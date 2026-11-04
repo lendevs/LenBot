@@ -9,7 +9,8 @@ import struct
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+import logging
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -18,12 +19,15 @@ from starlette.requests import HTTPConnection
 from len_bot.web.errors import error_response, install_panel_errors
 from len_bot.web.auth import (
     clear_login_failures, create_session, login_blocked, record_login_failure,
-    revoke_session, session_user, verify_password,
+    hash_password, password_needs_rehash, revoke_session, session_user, verify_password,
 )
 from . import responses
 from ..configuration.maintenance import PanelSettings
 from ..configuration.types import STRICT
 from ..runtime.events import EventHub
+from ..runtime.logs import log_event
+
+logger = logging.getLogger(__name__)
 
 
 class Login(BaseModel):
@@ -75,7 +79,9 @@ def require_panel_origin(connection: HTTPConnection) -> None:
 
 
 def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
-                       on_logout: Callable[[], None]) -> Callable[[Request], str]:
+                       on_logout: Callable[[], None],
+                       on_rehash: Callable[[str, str], Awaitable[None]] | None = None) -> Callable[[Request], str]:
+    """``on_rehash(old, new)`` stores a stronger hash of the password just verified, in place of ``old``."""
     install_panel_errors(app)
     last_login_at: float | None = None
 
@@ -100,11 +106,17 @@ def install_panel_auth(app: FastAPI, settings: PanelSettings, *,
         if login_blocked(key):
             raise HTTPException(429, "登录尝试过于频繁，请稍后重试")
         record_login_failure(key)
-        password_valid = await asyncio.to_thread(verify_password, item.password, settings.password_hash)
+        old = settings.password_hash
+        password_valid = await asyncio.to_thread(verify_password, item.password, old)
         valid = hmac.compare_digest(item.username.encode('utf-8'), settings.username.encode('utf-8')) and password_valid
         if not valid:
             raise HTTPException(401, "Invalid username or password")
         clear_login_failures(key)
+        if on_rehash is not None and password_needs_rehash(old):
+            try:
+                await on_rehash(old, await asyncio.to_thread(hash_password, item.password))
+            except Exception as error:
+                log_event(logger, 'panel_password_rehash_failed', '面板密码哈希升级失败，仍使用原记录', level=logging.WARNING, error=error)
         last_login_at = time.time()
         old_token = request.cookies.get(cookie_name(request))
         if old_token is not None:

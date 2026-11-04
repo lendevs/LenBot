@@ -164,10 +164,14 @@ class Updater:
 
     async def _download(self, client: httpx.AsyncClient, url: str, destination: Path, expected: dict) -> None:
         digest = hashlib.sha256()
+        written = 0
         async with client.stream('GET', url) as response:
             response.raise_for_status()
             with destination.open('xb') as target:
                 async for block in response.aiter_bytes(CHUNK):
+                    written += len(block)
+                    if written > expected['bytes']:
+                        raise UpdateError(f'{destination.name} 超过发行清单声明的大小 {expected["bytes"]} 字节，已中止下载')
                     digest.update(block)
                     await asyncio.to_thread(target.write, block)
                     self.progress = {**self.progress, 'done': self.progress['done'] + len(block)}

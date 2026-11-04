@@ -141,7 +141,7 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
           />
           <button
             type="button"
-            class="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border text-sm font-semibold transition-colors focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50"
+            class="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md border px-3 text-xs font-medium transition-colors focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50"
             :class="
               chatOn(item)
                 ? 'border-primary bg-primary text-on-primary hover:brightness-95'
