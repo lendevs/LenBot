@@ -112,7 +112,7 @@ class SessionUpkeep:
         self.effects = ReplyEffectStore(store)
         self.parts: dict[str, set[str]] = {part: set() for part in PARTS}
         self._wake: dict[str, asyncio.Event] = {}
-        self._force: set[str] = set()
+        self._force: dict[str, object] = {}
         self._retry: set[str] = set()
         self._effect_retry: dict[str, int] = {}
         self._failures: dict[str, int] = {}
@@ -172,7 +172,7 @@ class SessionUpkeep:
             await asyncio.gather(worker, return_exceptions=True)
         self._wake.pop(scene, None)
         self.errors.pop(scene, None)
-        self._force.discard(scene)
+        self._force.pop(scene, None)
         self._retry.discard(scene)
         self._effect_retry.pop(scene, None)
         self._failures.pop(scene, None)
@@ -217,7 +217,7 @@ class SessionUpkeep:
         self._check(scene, part)
         if self._blocked(scene):
             raise ValueError(f"上次整理失败（{scene}），请先重试")
-        self._force.add(scene)
+        self._force[scene] = object()
         self._wake[scene].set()
 
     def retry(self, scene: str, part: str, effect_call: int | None = None) -> None:
@@ -233,7 +233,7 @@ class SessionUpkeep:
     def compacted(self, scene: str) -> None:
         """Older history just left the session: take its range now, below the usual thresholds."""
         if scene in self._wake and not self._blocked(scene):
-            self._force.add(scene)
+            self._force[scene] = object()
             self._wake[scene].set()
 
     # Planning
@@ -263,10 +263,10 @@ class SessionUpkeep:
         return False
 
     async def _plan(self, scene: str) -> Plan | None:
-        requested, retrying = scene in self._force, scene in self._retry
+        requested, retrying = self._force.get(scene), scene in self._retry
         if self._blocked(scene) and not retrying:
             return None
-        force = requested or retrying
+        force = requested is not None or retrying
         plan = Plan()
         now = self.store.now()
         afters = {}
@@ -324,9 +324,8 @@ class SessionUpkeep:
                                 or now - waiting[0]["closed_at"] >= learning.max_age_seconds):
                     plan.effects = [item["id"] for item in waiting[:EFFECT_BATCH]]
         if not (plan.rows or plan.meanings or plan.effects):
-            # Only what this plan saw: a request during the reads above stays for the next one.
-            if requested:
-                self._force.discard(scene)
+            if self._force.get(scene) is requested:
+                self._force.pop(scene, None)
             if retrying:
                 self._retry.discard(scene)
             return None
@@ -393,8 +392,10 @@ class SessionUpkeep:
         return True
 
     async def _step(self, scene: str) -> bool:
+        requested = self._force.get(scene)
         plan = await self._plan(scene)
         if plan is None and scene not in self._retry and self._blocked(scene) and self._auto_retry(scene):
+            requested = self._force.get(scene)
             plan = await self._plan(scene)
         if plan is None or self.fork is None:
             return False
@@ -402,7 +403,9 @@ class SessionUpkeep:
         if fork is None:
             # The scene is in a turn; its end wakes this worker again.
             return False
-        self._force.discard(scene)
+        # A request received during planning or the history fork belongs to the next pass.
+        if self._force.get(scene) is requested:
+            self._force.pop(scene, None)
         self._retry.discard(scene)
         self._effect_retry.pop(scene, None)
         await self._run(scene, plan, *fork)
