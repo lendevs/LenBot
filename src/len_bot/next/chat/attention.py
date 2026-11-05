@@ -1226,8 +1226,13 @@ class SceneRunner:
                                 and self.chat.turn_messages == 0)
         # Preserve restart eligibility without treating a timeout as new input.
         self.state = state
-        pending_wake = await self.store.call(self.store.end_turn, result["turn_id"], result["status"], result["error"],
-                                            attention_state=persisted(state))
+        try:
+            pending_wake = await self.store.call(self.store.end_turn, result["turn_id"], result["status"], result["error"],
+                                                attention_state=persisted(state))
+        finally:
+            # The panel rereads the turn on this event, so it follows the row's update.
+            self.chat.trace('turn.ended', result["turn_id"], status=result["status"], error=result["error"],
+                            expressions=len(result["expressions"]), steps=self.chat.trace_step or 0)
         if result["status"] == "limited":
             self.resume = True
         result["pending_wake"] = pending_wake

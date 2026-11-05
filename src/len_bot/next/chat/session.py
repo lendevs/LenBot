@@ -714,8 +714,6 @@ class Chat:
             self.toolset.source_floor = None
             self.turn_deadline = None
         self.store.finish_pending_tools(scene, error_text or status)
-        self.trace('turn.ended', turn_id, status=status, error=error_text,
-                   expressions=len(expressions), steps=self.trace_step or 0)
         return {"turn_id": turn_id, "status": status, "error": error_text,
                 "delivery": "simulated" if self.expression.send_message is None else "live",
                 "expressions": expressions, "extensions": extensions,
