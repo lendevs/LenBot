@@ -234,6 +234,15 @@ async def test_a_turn_ends_after_two_sends_that_are_not_delivered(tmp_path, batc
             path.write_text(path.read_text().replace('tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [say]'))
 
         async with panel(tmp_path, configure) as (runtime, client, url):
+            call = runtime.store.call
+
+            async def slowed(function, /, *args, **kwargs):
+                if function == runtime.store.end_turn:
+                    await asyncio.sleep(.05)
+                return await call(function, *args, **kwargs)
+
+            # However long the write takes, turn.ended arrives after the row is closed.
+            runtime.store.call = slowed
             async with connect(url, additional_headers=await login(client), proxy=None) as ws:
                 await receive(ws)
                 running = asyncio.create_task(runtime.run(manage_signals=False))
