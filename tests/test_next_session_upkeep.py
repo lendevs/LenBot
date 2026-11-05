@@ -184,6 +184,25 @@ async def test_a_failed_pass_runs_again_by_itself(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_request_during_planning_reads_outlives_an_empty_plan(tmp_path):
+    async with _upkeep(tmp_path, [_text({'expressions': [], 'terms': []})]) as (upkeep, store, memory, forks, bodies):
+        read = store.read
+
+        async def requested(function, /, *args, **kwargs):
+            store.read = read
+            upkeep.request(SCENE, 'expressions')
+            return await read(function, *args, **kwargs)
+
+        store.read = requested
+        assert not await upkeep._step(SCENE)
+        # Fresh messages below every threshold: only the kept request runs the pass.
+        store.now = lambda: 1790000000.0
+        _group_messages(store)
+        assert await upkeep._step(SCENE)
+        assert LearningStore(store).latest(SCENE)['status'] == 'complete'
+
+
+@pytest.mark.asyncio
 async def test_items_that_fail_a_check_are_dropped_and_the_pass_completes(tmp_path):
     replies = [_text({'expressions': [{'situation': '有人约周末打游戏', 'style': '冲冲冲', 'sources': ['40001', '99999']},
                                       {'situation': '', 'style': '空情境', 'sources': ['40001']}],

@@ -263,10 +263,10 @@ class SessionUpkeep:
         return False
 
     async def _plan(self, scene: str) -> Plan | None:
-        retrying = scene in self._retry
+        requested, retrying = scene in self._force, scene in self._retry
         if self._blocked(scene) and not retrying:
             return None
-        force = scene in self._force or retrying
+        force = requested or retrying
         plan = Plan()
         now = self.store.now()
         afters = {}
@@ -324,8 +324,11 @@ class SessionUpkeep:
                                 or now - waiting[0]["closed_at"] >= learning.max_age_seconds):
                     plan.effects = [item["id"] for item in waiting[:EFFECT_BATCH]]
         if not (plan.rows or plan.meanings or plan.effects):
-            self._force.discard(scene)
-            self._retry.discard(scene)
+            # Only what this plan saw: a request during the reads above stays for the next one.
+            if requested:
+                self._force.discard(scene)
+            if retrying:
+                self._retry.discard(scene)
             return None
         return plan
 
