@@ -184,22 +184,49 @@ async def test_a_failed_pass_runs_again_by_itself(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_request_during_planning_reads_outlives_an_empty_plan(tmp_path):
+@pytest.mark.parametrize('already_requested', [False, True])
+async def test_a_request_during_planning_reads_outlives_an_empty_plan(tmp_path, already_requested):
     async with _upkeep(tmp_path, [_text({'expressions': [], 'terms': []})]) as (upkeep, store, memory, forks, bodies):
+        store.now = lambda: 1790000000.0
+        if already_requested:
+            upkeep.request(SCENE, 'expressions')
         read = store.read
 
         async def requested(function, /, *args, **kwargs):
-            store.read = read
-            upkeep.request(SCENE, 'expressions')
-            return await read(function, *args, **kwargs)
+            result = await read(function, *args, **kwargs)
+            if function == store.memory_messages:
+                store.read = read
+                _group_messages(store)
+                upkeep.request(SCENE, 'expressions')
+            return result
 
         store.read = requested
         assert not await upkeep._step(SCENE)
         # Fresh messages below every threshold: only the kept request runs the pass.
-        store.now = lambda: 1790000000.0
-        _group_messages(store)
         assert await upkeep._step(SCENE)
         assert LearningStore(store).latest(SCENE)['status'] == 'complete'
+
+
+@pytest.mark.asyncio
+async def test_a_request_during_the_history_fork_runs_the_new_messages_next(tmp_path):
+    replies = [_text({'expressions': [], 'terms': []})] * 2
+    async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
+        store.now = lambda: 1790000000.0
+        _group_messages(store)
+        upkeep.request(SCENE, 'expressions')
+        fork = upkeep.fork
+
+        async def requested(scene):
+            upkeep.fork = fork
+            _receive(store, '这一条也要整理', 70002, 40005)
+            upkeep.request(scene, 'expressions')
+            return await fork(scene)
+
+        upkeep.fork = requested
+        assert await upkeep._step(SCENE)
+        assert await upkeep._step(SCENE)
+        assert LearningStore(store).state(SCENE)['after_seq'] == store.max_message_seq(SCENE)
+        assert len(bodies()) == 2
 
 
 @pytest.mark.asyncio
