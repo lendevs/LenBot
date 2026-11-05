@@ -395,10 +395,11 @@ def turn_card(t: dict, p: dict) -> Card:
     y = fy + 130
     times = [0.4, 1.2, 2.1]
     colors = p['avatars']
+    avatar_order = t.get('avatar_order', [0, 1, 0])
     for index, (who, value, verdict) in enumerate(t['messages']):
-        mention = t['mention'] if verdict == 'zap' else None
+        mention = t.get('mention') if verdict == 'zap' else None
         markup, height = message(card, cx, y, cw, who, value, verdict=verdict, time=t['times'][index],
-                                 colors=colors[[0, 1, 0][index]], mention=mention)
+                                 colors=colors[avatar_order[index]], mention=mention)
         card.add(card.group(card.show(times[index]), markup))
         y += height + 16
     first, height1 = message(card, cx, y, cw, t['bot'], t['lines'][0], me=True, time=t['times'][3])
@@ -865,21 +866,16 @@ def hero_card(t: dict, p: dict) -> Card:
     for line in t['tagline']:
         card.add(text(336, y, line, t['tagline_size'], p['ink'], weight=600))
         y += t['tagline_size'] * 1.3
-    # The rotating part of the sentence.
+    # The badge: the loop, then what it adds.
     y += 18
-    words = t['words']
-    pill_w = max(text_width(word, 22) for word in words) + 36
-    card.add(rect(336, y - 28, pill_w, 42, 21, p['card'], p['brand'], ' stroke-width="1.5"'))
-    span = card.loop / len(words)
-    for index, word in enumerate(words):
-        start = index * span
-        name = f'he-w{index}'
-        card.css.append(f'@keyframes {name}{{0%,{card.pct(start)}%{{opacity:0;transform:translateY(14px)}}'
-                        f'{card.pct(start + 0.4)}%,{card.pct(start + span - 0.4)}%{{opacity:1;transform:none}}'
-                        f'{card.pct(start + span)}%,100%{{opacity:0;transform:translateY(-14px)}}}}'
-                        f'.{name}{{animation:{name} {card.loop}s {EASE} infinite{"" if index == 0 else ";opacity:0"}}}')
-        card.add(f'<g class="{name}">{text(336 + pill_w / 2, y, word, 22, p["primary"], weight=700, anchor="middle")}</g>')
-    card.add(text(336 + pill_w + 16, y, t['decides'], 22, p['muted'], weight=500))
+    x, top, height = 336, y - 30, 46
+    head_w = text_width('ReAct Loop', 20) + 38
+    slot_w = text_width(t['loop_note'], 21) + 44
+    card.add(rect(x, top, head_w + slot_w, height, height / 2, p['card'], p['brand'], ' stroke-width="1.5"'),
+             f'<path d="M{x + height / 2} {top}H{x + head_w:.1f}V{top + height}H{x + height / 2}'
+             f'A{height / 2} {height / 2} 0 0 1 {x + height / 2} {top}Z" fill="{p["primary"]}"/>',
+             text(x + head_w / 2, y, 'ReAct Loop', 20, p['card'], weight=700, anchor='middle'),
+             text(x + head_w + slot_w / 2, y, t['loop_note'], 21, p['primary'], weight=700, anchor='middle'))
     # Floating pieces of a turn on the right.
     bx = t['bubbles_x']
     q = t['q']
@@ -915,25 +911,26 @@ ZH = {
     },
     'hero': {
         'label': 'LenBot：自主决策的群聊 Agent', 'tagline': ['自主决策的群聊 Agent'], 'tagline_size': 36,
-        'words': ['何时开口', '回复谁', '先查什么', '何时跟进'], 'decides': '由 ReAct Loop 决定',
+        'loop_note': '新消息实时并入 Agent 回合',
         'bubbles_x': 860, 'asker': '小满', 'mention': '@小然', 'q': '@小然 周六带什么零食好', 'tool': '查询聊天记录',
         'query': '零食 辣', 'a': '我带薯片和果干吧', 'summary': '3 步 · 2 条发言',
     },
     'turn': {
-        'label': '群聊现场：群友 @ 小然问零食，小然先查询聊天记录，再分两条回复',
-        'group': '周末桌游局', 'meta': '聊天中 · 80001 · 42 人 · 小然', 'chat': '聊天',
+        'label': '群聊现场：没人 @ 时，小然看到老周甩锅，先查询聊天记录找出原话，再分两条当场抓包',
+        'group': '夜猫子开黑群', 'meta': '聊天中 · 80001 · 42 人 · 小然', 'chat': '聊天',
         'tabs': ['现场', '会话', '记忆', '资料', '任务', '学习', '设置'],
-        'messages': [('小满', '这周六还是老地方吗', 'moon'), ('老周', '我带新到的那盒卡坦岛扩展', 'moon'),
-                     ('小满', '@小然 周六带什么零食好', 'zap')],
-        'mention': '@小然', 'times': ['14:38', '14:38', '14:39', '14:39'], 'bot': '小然',
-        'lines': ['我带薯片和果干吧 老周不吃辣 辣条就不拿啦', '橘子要的抹茶饼干我也带一盒'],
-        'after': [('橘子', '懂我'), ('老周', '那饮料我来')],
-        'running': '进行中', 'channel': '被 @ 或回复', 'summary': '被 @ 或回复 · 3 步 · 2 条发言',
+        'avatar_order': [0, 2, 1],
+        'messages': [('小满', '今晚三角洲谁 0 杀吸走四百多万', 'moon'), ('橘子', '纯纯打工皇帝 队友在前面打生打死', 'moon'),
+                     ('老周', '反正不是我 到底谁先喊通宵开黑的', 'zap')],
+        'mention': None, 'times': ['23:41', '23:41', '23:42', '23:42'], 'bot': '小然',
+        'lines': ['明明九点多就是你自己喊的谁先睡谁请客', '0 杀舔包王还想装失忆甩锅是吧'],
+        'after': [('橘子', '哈哈哈哈聊天记录处刑'), ('老周', '大意了')],
+        'running': '进行中', 'channel': '群内讨论', 'summary': '群内讨论 · 3 步 · 2 条发言',
         'recall': '召回记忆 1 条', 'step': '第 {n} 步', 'thought': '想法',
-        'thoughts': ['小满在问零食，大家之前说过口味，先翻翻群里的记录', '老周不吃辣，橘子点名要抹茶饼干'],
-        'tool': '查询聊天记录', 'query': '零食 辣',
-        'results': ['老周 · 10 月 26 日：我一点辣都不吃', '橘子 · 10 月 26 日：零食我要抹茶饼干'],
-        'say': '发言', 'footer': '首句 2.4 秒 · 6.1k 入 · 240 出',
+        'thoughts': ['老周又在装失忆甩锅，先翻一下今晚是谁起头喊通宵的', '九点十五就是老周自己起的头，当场抓包'],
+        'tool': '查询聊天记录', 'query': '通宵 开黑',
+        'results': ['老周 · 21:15：今晚通宵开黑 谁先睡谁请客', '老周 · 22:40：再来一局 我还能 C'],
+        'say': '发言', 'footer': '首句 2.1 秒 · 5.8k 入 · 210 出',
     },
     'listen': {
         'label': '看时机开口：被点名时先旁听，被问到才回答', 'title': '何时开口',
@@ -992,28 +989,30 @@ EN = {
     },
     'hero': {
         'label': 'LenBot: a group chat agent that decides for itself', 'tagline': ['A group chat agent', 'that decides for itself'],
-        'tagline_size': 34, 'words': ['when to speak', 'whom to answer', 'what to check', 'when to follow up'],
-        'decides': 'a ReAct loop decides', 'bubbles_x': 900, 'asker': 'Mia', 'mention': '@Xiaoran',
+        'tagline_size': 34,
+        'loop_note': 'new messages join the agent turn live',
+        'bubbles_x': 900, 'asker': 'Mia', 'mention': '@Xiaoran',
         'q': '@Xiaoran snacks for Saturday?', 'tool': 'Search chat', 'query': 'snacks spicy', 'a': "I'll bring chips",
         'summary': '3 steps · 2 sent',
     },
     'turn': {
-        'label': 'Live view: a member asks Xiaoran about snacks; she searches the chat history first, then replies twice',
-        'group': 'Weekend Board Games', 'meta': 'Chatting · 80001 · 42 members · Xiaoran', 'chat': 'Chat',
+        'label': 'Live view: without being mentioned, Xiaoran searches the chat history to catch Joe playing dumb, then replies twice',
+        'group': 'Late Night Squad', 'meta': 'Chatting · 80001 · 42 members · Xiaoran', 'chat': 'Chat',
         'tabs': ['Live', 'Session', 'Memory', 'Files', 'Tasks', 'Learning', 'Settings'],
-        'messages': [('Mia', 'Same place this Saturday?', 'moon'), ('Joe', "I'm bringing the new Catan expansion", 'moon'),
-                     ('Mia', '@Xiaoran what snacks should we bring?', 'zap')],
-        'mention': '@Xiaoran', 'times': ['14:38', '14:38', '14:39', '14:39'], 'bot': 'Xiaoran',
-        'lines': ["I'll bring chips and dried fruit, no chili strips since Joe can't do spicy",
-                  'and a box of the matcha cookies Kit wanted'],
-        'after': [('Kit', 'you get me'), ('Joe', "I'll handle drinks then")],
-        'running': 'Running', 'channel': 'Mention or reply', 'summary': 'Mention or reply · 3 steps · 2 sent',
+        'avatar_order': [0, 2, 1],
+        'messages': [('Mia', 'Who went 0 kills and looted 4M tonight', 'moon'), ('Kit', 'pure freeloader while we fought for our lives', 'moon'),
+                     ('Joe', 'Not me, who even called the all-nighter?', 'zap')],
+        'mention': None, 'times': ['23:41', '23:41', '23:42', '23:42'], 'bot': 'Xiaoran',
+        'lines': ['You literally said first to sleep buys dinner at 9',
+                  '0-kill loot king trying to play dumb now'],
+        'after': [('Kit', 'caught in 4K by chat history'), ('Joe', 'walked right into that')],
+        'running': 'Running', 'channel': 'Group chatting', 'summary': 'Group chatting · 3 steps · 2 sent',
         'recall': 'Recalled 1 memory', 'step': 'Step {n}', 'thought': 'Thoughts',
-        'thoughts': ['Mia wants snack ideas. People said what they like before, so check the chat.',
-                     "Joe can't do spicy and Kit asked for matcha cookies."],
-        'tool': 'Search chat history', 'query': 'snacks spicy',
-        'results': ["Joe · Oct 26: I don't eat anything spicy", 'Kit · Oct 26: matcha cookies for me'],
-        'say': 'Say', 'footer': 'First reply 2.4 s · 6.1k in · 240 out',
+        'thoughts': ['Joe is playing dumb again. Check who started the all-nighter tonight.',
+                     'Joe started it himself at 21:15.'],
+        'tool': 'Search chat history', 'query': 'all-nighter',
+        'results': ['Joe · 21:15: all-nighter, first to sleep pays', 'Joe · 22:40: one more match, I can carry'],
+        'say': 'Say', 'footer': 'First reply 2.1 s · 5.8k in · 210 out',
     },
     'listen': {
         'label': 'Picks its moments: listens when mentioned in passing, answers when asked', 'title': 'When to speak',

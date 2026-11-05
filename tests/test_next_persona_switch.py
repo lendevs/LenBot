@@ -1,5 +1,6 @@
 """Switching a scene's role while the host runs: library, scene settings, memory, handover and the owner command."""
 import asyncio
+import io
 import json
 from pathlib import Path
 import time
@@ -7,6 +8,7 @@ import yaml
 
 import httpx
 import pytest
+from PIL import Image
 
 from len_bot.next.config import load_host_config
 from len_bot.next.configuration.editing import restart_summary
@@ -143,6 +145,58 @@ def test_switch_waits_for_the_current_turn(tmp_path, monkeypatch):
         assert (await client.get('/api/host/state')).json()['scenes'][0]['persona_switch'] is None
 
     run_host(tmp_path, exercise)
+
+
+def test_profile_save_shares_sticker_bytes_across_idle_and_busy_scenes(tmp_path, monkeypatch):
+    monkeypatch.setattr(persona_service, 'WAIT_SECONDS', 0.05)
+    instance(tmp_path)
+    config_path = tmp_path / 'lenbot.config.json'
+    source = json.loads(config_path.read_text())
+    for group in range(80002, 80012):
+        source['scenes'][f'onebot:group:{group}'] = dict(source['scenes'][SCENE])
+    config_path.write_text(json.dumps(source))
+    config = load_host_config(tmp_path)
+    path = config.scenes[SCENE].persona
+    stickers = path / 'stickers'
+    stickers.mkdir()
+    image = io.BytesIO()
+    Image.new('RGB', (8, 8), 'red').save(image, format='PNG')
+    (stickers / 'hello.png').write_bytes(image.getvalue())
+    (stickers / 'index.yaml').write_text(yaml.safe_dump([
+        {'file': 'hello.png', 'description': '合成表情', 'emotions': [], 'tags': []}]))
+    initial = load_persona(path)
+
+    async def run():
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind, open_memory(config, store) as memory:
+                runtime = NetworkRuntime(config, [(config.scene_config(scene), initial) for scene in config.scenes],
+                                         store, mind, memory=memory)
+                app = create_app(config, runtime, root=tmp_path)
+                try:
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+                        assert (await client.post('/api/auth/login', json={
+                            'username': 'fixture', 'password': 'synthetic-password'})).status_code == 200
+                        endpoint = '/api/host/personas/fixture/profile'
+                        current = (await client.get(endpoint)).json()
+                        async with runtime.runners[SCENE].execution:
+                            saved = await client.put(endpoint, json={
+                                'directory': current['directory'], 'profile': {**current['profile'], 'name': '新名字'}})
+                            assert saved.status_code == 200, saved.text
+                            assert saved.json()['applied'] is False
+                            assert runtime.chats[SCENE].persona is initial
+                        await asyncio.gather(*runtime.personas.background)
+                        personas = [chat.persona for chat in runtime.chats.values()]
+                        assert all(persona.name == '新名字' for persona in personas)
+                        assert all('新名字' in chat.context.system for chat in runtime.chats.values())
+                        assets = {id(persona.stickers['hello.png'].data): persona.stickers['hello.png'].data
+                                  for persona in personas}
+                        assert sum(map(len, assets.values())) == len(image.getvalue())
+                        assert all(asset == image.getvalue() for asset in assets.values())
+                        assert initial.name == '合成角色'
+                finally:
+                    await app.state.trials.close()
+
+    asyncio.run(run())
 
 
 def test_failed_tool_assembly_restores_saved_binding_and_running_role(tmp_path):

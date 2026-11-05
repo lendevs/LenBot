@@ -22,7 +22,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.dark.svg">
-  <img src="website/public/readme/turn.svg" alt="小满在群里 @ 小然问周六带什么零食，小然先查询聊天记录，再分两条回复" width="100%">
+  <img src="website/public/readme/turn.svg" alt="没人 @ 时，小然看到老周甩锅，先查询聊天记录找出原话，再分两条当场抓包" width="100%">
 </picture>
 
 ## 能力
@@ -36,7 +36,7 @@
   <a href="https://lendevs.github.io/LenBot/use/plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="website/public/readme/plugin.dark.svg"><img src="website/public/readme/plugin.svg" alt="Python 插件" width="49%"></picture></a>
 </p>
 
-- **决策回合**：唤醒后，判断、查询和回复在同一个Agent循环中完成。
+- **决策回合**：连发消息合批等待后唤醒，判断、查询与回复在同一个 Agent 循环中完成；没话可接就旁听，发言后等待对方下一句接话，无人接话时自动拉长插话间隔。
 - **查证回答**：按需搜索网页、读取正文、查询聊天记录与长期记忆、检索角色和本群资料、识别图片、读取合并转发。
 - **主动跟进**：模型可以为群友创建提醒、登记持续关注的事项，或把耗时工作交给隔离容器中的后台任务。
 - **记忆学习**：记忆以 Markdown 文件按群保存在本地。学习群内的说法、黑话和回复效果。

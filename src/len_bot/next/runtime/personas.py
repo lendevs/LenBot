@@ -384,18 +384,22 @@ class PersonaService:
 
     async def reload(self, path: Path) -> list[str]:
         """Apply a saved edit of the role to every scene running it, each after its current turn."""
+        scenes = self.running_scenes(path)
+        if not scenes:
+            return []
+        persona = await asyncio.to_thread(load_persona, path)
+
         async def one(scene: str) -> str:
             runner = self.runtime.runners[scene]
             async with runner.execution:
                 if runner.chat.config.persona != path:
                     return scene
-                persona = await asyncio.to_thread(load_persona, path)
                 if persona.id != runner.chat.persona.id:
                     raise ValueError(f"角色 ID 从 {runner.chat.persona.id} 改为 {persona.id}；需要新 ID 时请复制角色")
                 self._apply(scene, persona, None)
             return scene
 
-        return list(await asyncio.gather(*(one(scene) for scene in self.running_scenes(path))))
+        return list(await asyncio.gather(*(one(scene) for scene in scenes)))
 
     async def command_reply(self, scene: str, argument: str) -> str:
         """The one fixed line answering an owner's ``/角色``; a valid name switches the scene first."""

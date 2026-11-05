@@ -22,7 +22,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.en.dark.svg">
-  <img src="website/public/readme/turn.en.svg" alt="A member mentions Xiaoran to ask what snacks to bring; she searches the chat history first, then replies in two messages" width="100%">
+  <img src="website/public/readme/turn.en.svg" alt="Without being mentioned, Xiaoran searches the chat history to catch Joe playing dumb, then replies in two messages" width="100%">
 </picture>
 
 ## Capabilities
