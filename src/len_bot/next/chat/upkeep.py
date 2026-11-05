@@ -262,7 +262,7 @@ class SessionUpkeep:
                 return True
         return False
 
-    def _plan(self, scene: str) -> Plan | None:
+    async def _plan(self, scene: str) -> Plan | None:
         retrying = scene in self._retry
         if self._blocked(scene) and not retrying:
             return None
@@ -273,9 +273,9 @@ class SessionUpkeep:
         if scene in self.parts["memory"]:
             afters["memory"] = self.memory.jobs.after(scene)
         if scene in self.parts["expressions"]:
-            afters["expressions"] = self.learning.state(scene)["after_seq"]
+            afters["expressions"] = (await self.store.read(self.learning.state, scene))["after_seq"]
         if scene in self.parts["jargon"]:
-            afters["jargon"] = self.jargon.state(scene)["after_seq"]
+            afters["jargon"] = (await self.store.read(self.jargon.state, scene))["after_seq"]
         if afters:
             start = min(afters.values())
             excluded = (self.memory.jobs.excluded_records(scene, after=start)
@@ -287,9 +287,10 @@ class SessionUpkeep:
             if "expressions" in afters or "jargon" in afters:
                 thresholds.append(self.scenes[scene].learning)
             batch = max(settings.batch_size for settings in thresholds)
-            rows = self.store.memory_messages(scene, start, limit=batch, exclude_records=excluded)
+            rows = await self.store.read(self.store.memory_messages, scene, start, limit=batch, exclude_records=excluded)
             if rows:
-                last = self.store.last_memory_input_at(scene, start, exclude_records=excluded) or rows[-1][2]
+                last = (await self.store.read(self.store.last_memory_input_at, scene, start,
+                                              exclude_records=excluded)) or rows[-1][2]
                 due = force or any(
                     now - rows[0][2] >= settings.max_age_seconds
                     or (len(rows) >= settings.min_messages and now - last >= settings.idle_seconds)
@@ -304,18 +305,20 @@ class SessionUpkeep:
             jargon_rows = [row for row in plan.rows if row[0] > afters['jargon']]
             recent_texts = [plain_text(message) for _, message, _, _ in jargon_rows]
             if jargon_rows:
-                before = [message for seq, message, _ in self.jargon.context(
-                    scene, jargon_rows[0][0], self._exclude_uids(scene)) if seq < jargon_rows[0][0]]
+                context = await self.store.read(self.jargon.context, scene, jargon_rows[0][0], self._exclude_uids(scene))
+                before = [message for seq, message, _ in context if seq < jargon_rows[0][0]]
                 recent_texts.extend(plain_text(message) for message in before[-1:])
-            recent = self.jargon.for_messages(scene, recent_texts)
-            waiting = {item['id']: item for item in [*recent, *self.jargon.pending(scene)]}
+            recent = await self.store.read(self.jargon.for_messages, scene, recent_texts)
+            pending = await self.store.read(self.jargon.pending, scene)
+            waiting = {item['id']: item for item in [*recent, *pending]}
             plan.meanings = list(waiting.values())[:MEANING_BATCH]
         if scene in self.parts["effects"]:
             retry_of = self._effect_retry.get(scene)
             if retry_of is not None:
-                plan.effects, plan.effect_retry = self.effects.retryable(scene, retry_of), retry_of
+                plan.effects = await self.store.read(self.effects.retryable, scene, retry_of)
+                plan.effect_retry = retry_of
             else:
-                waiting = self.effects.waiting(scene)
+                waiting = await self.store.read(self.effects.waiting, scene)
                 learning = self.scenes[scene].learning
                 if waiting and (force or plan.rows or len(waiting) >= EFFECT_BATCH
                                 or now - waiting[0]["closed_at"] >= learning.max_age_seconds):
@@ -326,18 +329,18 @@ class SessionUpkeep:
             return None
         return plan
 
-    def _close_windows(self, scene: str) -> float:
+    async def _close_windows(self, scene: str) -> float:
         """Freeze complete follow-up windows; return the wait until the next known deadline."""
         now = self.store.now()
         delay = float(WAKE_INTERVAL_SECONDS)
         closed = False
-        for effect in self.effects.open_effects(scene):
-            observed = self.effects.followups(scene, effect["first_sent_at"], effect["deadline"],
-                                              exclude_uids=self._exclude_uids(scene))
+        for effect in await self.store.read(self.effects.open_effects, scene):
+            observed = await self.store.read(self.effects.followups, scene, effect["first_sent_at"], effect["deadline"],
+                                             exclude_uids=self._exclude_uids(scene))
             if len(observed) >= 5 or now >= effect["deadline"]:
                 since = self.connected_since()
-                self.effects.close(effect["id"], observed,
-                                   input_gap=since is None or since > effect["first_sent_at"])
+                await self.store.call(self.effects.close, effect["id"], observed,
+                                      input_gap=since is None or since > effect["first_sent_at"])
                 closed = True
             else:
                 delay = min(delay, max(0.0, effect["deadline"] - now))
@@ -353,7 +356,7 @@ class SessionUpkeep:
             wake = self._wake[scene]
             wake.clear()
             try:
-                delay = self._close_windows(scene) if scene in self.parts["effects"] else WAKE_INTERVAL_SECONDS
+                delay = await self._close_windows(scene) if scene in self.parts["effects"] else WAKE_INTERVAL_SECONDS
                 progressed = await self._step(scene)
             except asyncio.CancelledError:
                 raise
@@ -387,9 +390,9 @@ class SessionUpkeep:
         return True
 
     async def _step(self, scene: str) -> bool:
-        plan = self._plan(scene)
+        plan = await self._plan(scene)
         if plan is None and scene not in self._retry and self._blocked(scene) and self._auto_retry(scene):
-            plan = self._plan(scene)
+            plan = await self._plan(scene)
         if plan is None or self.fork is None:
             return False
         fork = await self.fork(scene)

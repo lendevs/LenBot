@@ -111,24 +111,33 @@ def migrate_config_file(directory: Path) -> bool:
 
 
 def migrate_business_database(path: Path) -> bool:
-    """Add evidence judgments while preserving each existing manual decision and sample."""
+    """Upgrade stored records and install indexes declared by the current business schema."""
     if not path.is_file():
         return False
     from ..storage.store import FORMAT_VERSION
+    from ..storage.schema import business_script
 
     with closing(sqlite3.connect(path)) as db:
         application = db.execute('PRAGMA application_id').fetchone()[0]
         version = db.execute('PRAGMA user_version').fetchone()[0]
         if application != 0x4C424E31:
             raise ValueError(f'{path} 不是 LenBot 业务数据库（application_id={application}）')
-        if version == FORMAT_VERSION:
-            return False
-        if version != 1:
+        if version not in {1, FORMAT_VERSION}:
             raise ValueError(f'{path} 的格式是 {version}，升级支持从格式 1 到 {FORMAT_VERSION}')
+        with closing(sqlite3.connect(':memory:')) as expected:
+            expected.executescript(business_script())
+            existing = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+            missing = [sql for name, sql in expected.execute(
+                "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL") if name not in existing]
+        if version == FORMAT_VERSION and not missing:
+            return False
         with db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute('ALTER TABLE jargon ADD COLUMN judgment TEXT')
-            db.execute('ALTER TABLE jargon ADD COLUMN last_evaluated_seq INTEGER NOT NULL DEFAULT 0')
+            if version == 1:
+                db.execute('ALTER TABLE jargon ADD COLUMN judgment TEXT')
+                db.execute('ALTER TABLE jargon ADD COLUMN last_evaluated_seq INTEGER NOT NULL DEFAULT 0')
+            for sql in missing:
+                db.execute(sql)
             db.execute(f'PRAGMA user_version={FORMAT_VERSION}')
     return True
 

@@ -254,8 +254,8 @@ class Chat:
     async def upkeep_fork(self) -> tuple[list[dict], list[dict]]:
         """The chat request's system, tools and history without the turn state; caller owns the scene lock."""
         recap, entries = await self.store.read(self.store.active_history, self.config.scene)
-        self.toolset.discovered_tools = set(await self.store.call(self.store.load_discovered_tools, self.config.scene))
-        state = await self.store.call(turn_state, self.config, self.store, now=self.now())
+        self.toolset.discovered_tools = set(await self.store.read(self.store.load_discovered_tools, self.config.scene))
+        state = await self.store.read(turn_state, self.config, self.store, now=self.now())
         messages = await self.context.project(recap, entries, state)
         return messages[:-1], self.toolset.tools
 
@@ -378,12 +378,12 @@ class Chat:
             await self.store.call(AudioStore(self.store).append_late, self.config.scene)
             recap, entries = await self.store.read(self.store.active_history, self.config.scene)
             # Refresh only between model requests, never midway through a tool group.
-            self.toolset.discovered_tools = set(await self.store.call(self.store.load_discovered_tools,
+            self.toolset.discovered_tools = set(await self.store.read(self.store.load_discovered_tools,
                                                                       self.config.scene))
-            state = await self.store.call(turn_state, self.config, self.store, now=observed_at,
+            state = await self.store.read(turn_state, self.config, self.store, now=observed_at,
                                           expression_style=expression_style, recalled=recalled)
             messages = await self.context.project(recap, entries, state)
-            estimated, method = await self.store.call(
+            estimated, method = await self.store.read(
                 request_estimate, self.config, self.store, self.mind, scene=self.config.scene,
                 role='mind', messages=messages, tools=self.toolset.tools, output_tokens=0)
             if method == "usage_assisted":

@@ -8,8 +8,8 @@ const T = {
   typing: 500, wake: 1300, card: 2000, think1: 2500, tool: 4300, toolDone: 5300, think2: 5700,
   reply: 6700, say1: 7300, say2: 8300, done: 8600, after1: 9600, after2: 10400, fade: 13200, end: 13800,
 }
-const thought1 = '小满在问零食，大家之前说过口味，先翻翻群里的记录'
-const thought2 = '老周不吃辣，橘子点名要抹茶饼干'
+const thought1 = '老周又在装失忆甩锅，先翻一下今晚是谁起头喊通宵的'
+const thought2 = '九点十五就是老周自己起的头，当场抓包'
 const steps = [
   { label: '唤醒', icon: 'zap', at: T.wake },
   { label: '判断', icon: 'sparkles', at: T.think1 },
@@ -79,31 +79,31 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="head">
-      <span class="group-avatar">桌</span>
-      <span class="title">周末桌游局</span>
+      <span class="group-avatar">夜</span>
+      <span class="title">夜猫子开黑群</span>
       <span class="meta">42 人 · 小然</span>
       <span class="live"><i />实时</span>
     </div>
 
     <div class="stream">
       <div class="msg"><span class="avatar" :style="{ background: colors['小满'] }">满</span><div>
-        <div class="who">小满 <span class="time">14:37</span><Icon name="moon" :size="12" class="verdict" /></div>
-        <div class="bubble">这周六还是老地方吗</div></div></div>
-      <div class="msg"><span class="avatar" :style="{ background: colors['老周'] }">周</span><div>
-        <div class="who">老周 <span class="time">14:38</span><Icon name="moon" :size="12" class="verdict" /></div>
-        <div class="bubble">我带新到的那盒卡坦岛扩展</div></div></div>
+        <div class="who">小满 <span class="time">23:41</span><Icon name="moon" :size="12" class="verdict" /></div>
+        <div class="bubble">今晚三角洲谁 0 杀吸走四百多万</div></div></div>
+      <div class="msg"><span class="avatar" :style="{ background: colors['橘子'] }">橘</span><div>
+        <div class="who">橘子 <span class="time">23:41</span><Icon name="moon" :size="12" class="verdict" /></div>
+        <div class="bubble">纯纯打工皇帝 队友在前面打生打死</div></div></div>
 
-      <div v-if="at(T.typing) && !at(T.wake)" class="msg"><span class="avatar" :style="{ background: colors['小满'] }">满</span>
+      <div v-if="at(T.typing) && !at(T.wake)" class="msg"><span class="avatar" :style="{ background: colors['老周'] }">周</span>
         <div class="bubble typing"><i /><i /><i /></div></div>
-      <div v-if="at(T.wake)" class="msg pop"><span class="avatar" :style="{ background: colors['小满'] }">满</span><div>
-        <div class="who">小满 <span class="time">14:38</span><Icon name="zap" :size="12" class="verdict wake" /></div>
-        <div class="bubble"><b class="mention">@小然</b> 周六带什么零食好</div></div></div>
+      <div v-if="at(T.wake)" class="msg pop"><span class="avatar" :style="{ background: colors['老周'] }">周</span><div>
+        <div class="who">老周 <span class="time">23:42</span><Icon name="zap" :size="12" class="verdict wake" /></div>
+        <div class="bubble">反正不是我 到底谁先喊通宵开黑的</div></div></div>
 
       <div v-if="at(T.card)" class="turn pop">
         <div class="turn-head">
           <Icon name="sparkles" :size="15" class="spark" />
-          <template v-if="at(T.done)"><span class="summary">被 @ 或回复 · 3 步 · 2 条发言</span></template>
-          <template v-else><span class="summary">被 @ 或回复</span><span class="running"><i class="spinner" />进行中</span></template>
+          <template v-if="at(T.done)"><span class="summary">群内讨论 · 3 步 · 2 条发言</span></template>
+          <template v-else><span class="summary">群内讨论</span><span class="running"><i class="spinner" />进行中</span></template>
         </div>
         <div class="recall"><Icon name="brain" :size="13" />召回记忆 1 条</div>
         <div v-if="at(T.think1)" class="step pop">
@@ -112,13 +112,13 @@ onBeforeUnmount(() => {
           <div v-if="at(T.tool)" class="chip pop">
             <Icon name="search" :size="13" />
             <span class="tool">查询聊天记录</span>
-            <code>零食 辣</code>
+            <code>通宵 开黑</code>
             <Icon v-if="at(T.toolDone)" name="check" :size="13" class="ok" />
             <i v-else class="spinner" />
           </div>
           <ul v-if="at(T.toolDone)" class="results pop">
-            <li>老周 · 10 月 26 日：我一点辣都不吃</li>
-            <li>橘子 · 10 月 26 日：零食我要抹茶饼干</li>
+            <li>老周 · 21:15：今晚通宵开黑 谁先睡谁请客</li>
+            <li>老周 · 22:40：再来一局 我还能 C</li>
           </ul>
         </div>
         <div v-if="at(T.think2)" class="step pop">
@@ -132,23 +132,23 @@ onBeforeUnmount(() => {
             <span v-if="at(T.say1)" class="chip small pop"><Icon name="message-circle" :size="12" />发言<Icon v-if="at(T.say2)" name="check" :size="12" class="ok" /><i v-else class="spinner" /></span>
           </div>
         </div>
-        <div v-if="at(T.done)" class="foot pop">首句 2.4 秒 · 6.1k 入 · 240 出</div>
+        <div v-if="at(T.done)" class="foot pop">首句 2.1 秒 · 5.8k 入 · 210 出</div>
       </div>
 
       <div v-if="at(T.reply) && !at(T.say1)" class="msg me"><div class="bubble typing"><i /><i /><i /></div><span class="avatar bot"><img :src="mark" alt="" /></span></div>
       <div v-if="at(T.say1)" class="msg me pop"><div>
-        <div class="who">小然 <span class="time">14:39</span></div>
-        <div class="bubble">我带薯片和果干吧 老周不吃辣 辣条就不拿啦</div></div><span class="avatar bot"><img :src="mark" alt="" /></span></div>
+        <div class="who">小然 <span class="time">23:42</span></div>
+        <div class="bubble">明明九点多就是你自己喊的谁先睡谁请客</div></div><span class="avatar bot"><img :src="mark" alt="" /></span></div>
       <div v-if="at(T.say1) && !at(T.say2)" class="msg me"><div class="bubble typing"><i /><i /><i /></div><span class="avatar bot"><img :src="mark" alt="" /></span></div>
       <div v-if="at(T.say2)" class="msg me pop"><div>
-        <div class="bubble">橘子要的抹茶饼干我也带一盒</div></div><span class="avatar bot"><img :src="mark" alt="" /></span></div>
+        <div class="bubble">0 杀舔包王还想装失忆甩锅是吧</div></div><span class="avatar bot"><img :src="mark" alt="" /></span></div>
 
       <div v-if="at(T.after1)" class="msg pop"><span class="avatar" :style="{ background: colors['橘子'] }">橘</span><div>
-        <div class="who">橘子 <span class="time">14:39</span><Icon name="moon" :size="12" class="verdict" /></div>
-        <div class="bubble">懂我</div></div></div>
+        <div class="who">橘子 <span class="time">23:42</span><Icon name="moon" :size="12" class="verdict" /></div>
+        <div class="bubble">哈哈哈哈聊天记录处刑</div></div></div>
       <div v-if="at(T.after2)" class="msg pop"><span class="avatar" :style="{ background: colors['老周'] }">周</span><div>
-        <div class="who">老周 <span class="time">14:40</span><Icon name="moon" :size="12" class="verdict" /></div>
-        <div class="bubble">那饮料我来</div></div></div>
+        <div class="who">老周 <span class="time">23:42</span><Icon name="moon" :size="12" class="verdict" /></div>
+        <div class="bubble">大意了</div></div></div>
     </div>
   </div>
 </template>

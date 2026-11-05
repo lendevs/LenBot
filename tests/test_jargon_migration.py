@@ -8,6 +8,26 @@ from len_bot.next.storage.schema import business_script
 from len_bot.next.storage.store import Store
 
 
+def test_current_format_upgrade_restores_missing_message_time_indexes(tmp_path):
+    path = tmp_path / 'business.db'
+    with Store(path):
+        pass
+    with closing(sqlite3.connect(path)) as db:
+        db.execute('DROP INDEX message_scene_time')
+        db.execute('DROP INDEX message_sender_time')
+    assert migrate_business_database(path)
+    assert not migrate_business_database(path)
+    with closing(sqlite3.connect(path)) as db:
+        indexes = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert {'message_scene_time', 'message_sender_time'} <= indexes
+        plan = list(db.execute(
+            "EXPLAIN QUERY PLAN SELECT seq,body FROM messages WHERE scene=? AND +seq<=? "
+            "AND json_extract(body,'$.time')>=? AND json_extract(body,'$.time')<? "
+            "ORDER BY json_extract(body,'$.time'),seq LIMIT 500", ('test:group:1', 1000, 0, 100)))
+        assert any('message_scene_time' in row[3] for row in plan)
+        assert all('TEMP B-TREE' not in row[3] for row in plan)
+
+
 def test_jargon_upgrade_preserves_manual_controls_and_queues_old_records(tmp_path):
     path = tmp_path / 'business.db'
     old = business_script().replace('    judgment TEXT, last_evaluated_seq INTEGER NOT NULL DEFAULT 0,\n', '')
