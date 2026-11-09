@@ -80,8 +80,9 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
     session_id = None
     if binding.history_policy == "omit-reasoning":
-        # Upkeep continues the mind session, so it shares the mind's cache affinity.
-        session_id = sha256(f"{config.database.resolve()}:{scene}:{'mind' if role == 'upkeep' else role}".encode()).hexdigest()
+        # Upkeep and recap continue the mind session, so they share the mind's cache affinity.
+        session_id = sha256(f"{config.database.resolve()}:{scene}:{'mind' if role in {'upkeep', 'recap'} else role}"
+                            .encode()).hexdigest()
     if input_estimate is None:
         estimated, method = request_estimate(config, store, model, scene=scene, role=role,
                                              messages=messages, tools=tools, output_tokens=tokens)

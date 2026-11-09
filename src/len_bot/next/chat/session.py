@@ -18,8 +18,8 @@ from .context import ChatContext, style_text, turn_state
 from .expression import ChatExpression, MessageSender
 from .tools import MemoryPlugins, SceneTools
 from ..config import LabConfig
-from .recap import (CompactionPlan, ContextBudgetError, estimate_content, estimate_text_request, plan_compaction,
-                    recap_source)
+from .recap import (CompactionPlan, ContextBudgetError, continuation_request, estimate_content,
+                    estimate_text_request, plan_compaction, recap_source)
 from ..learning.expression_match import select_by_words
 from ..learning.expression_selection import ExpressionService
 from ..learning.store import DISLIKED_DAYS, LearningStore
@@ -238,8 +238,13 @@ class Chat:
             input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
             trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
 
-    async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True) -> str:
-        """Run the selected compaction strategy and commit its completed recap."""
+    async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True,
+                      chat: list[dict] | None = None) -> str:
+        """Run the selected compaction strategy and commit its completed recap.
+
+        With ``chat``, the projected chat request ending in its turn state, the native recap continues
+        that request with the same tools, so the cached prefix covers the history; a continuation
+        beyond the context window uses the standalone request instead."""
         plugin = self.config.recap_plugin if strategy else None
         if plugin is not None:
             recap = await self.plugins.compact(plugin, CompactRequest(
@@ -247,7 +252,15 @@ class Chat:
                 plan.summary_budget_tokens))
             log_event(logger, 'plugin_compaction', plugin=plugin, compact_through=plan.through)
         else:
-            recap = (await self.request(turn_id, "recap", plan.request_messages, [], recap_target=plan)).text
+            messages, tools = plan.request_messages, []
+            if chat is not None and plan.kept_first is not None:
+                continued = continuation_request(chat[:-1], plan)
+                estimated, _ = await self.store.read(
+                    request_estimate, self.config, self.store, self.mind, scene=self.config.scene, role="recap",
+                    messages=continued, tools=self.toolset.tools, output_tokens=self.config.recap_output_tokens)
+                if estimated <= self.config.models.roles.mind.context_window_tokens:
+                    messages, tools = continued, self.toolset.tools
+            recap = (await self.request(turn_id, "recap", messages, tools, recap_target=plan)).text
         await self.store.call(self.store.commit_recap, self.config.scene, plan.through, recap)
         return recap
 
@@ -284,7 +297,7 @@ class Chat:
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
                 )
-                recap = await self.compact(turn_id, plan)
+                recap = await self.compact(turn_id, plan, chat=projection)
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -404,7 +417,7 @@ class Chat:
                 window_tokens=binding.context_window_tokens,
                 source_entries=self.context.conversation_entries(entries), token_scale=scale,
             )
-            await self.compact(turn_id, plan)
+            await self.compact(turn_id, plan, chat=messages)
             compacted = True
             if self.on_compaction is not None:
                 self.on_compaction()
