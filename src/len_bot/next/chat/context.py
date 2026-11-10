@@ -475,13 +475,18 @@ class ChatContext:
             state = {**state, "content": state["content"] + "\n" + Template(
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
         state = {**state, 'content': state['content'] + '\n' + current_attention(self.config, self.store)}
+        state = {**state, 'content': '\n'.join([state['content'], *self.references(entries)])}
+        return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]
+
+    def references(self, entries: list[tuple[int, dict]]) -> list[str]:
+        """The turn's closing reference material, in order: how members here write, what the own
+        latest lines keep repeating, then the persona's own prohibitions, which always stay last,
+        closest to what the model writes next. Material about the scene goes before them."""
         references = []
         if self.group_voice is not None:
             references.append(describe_group_voice(self.group_voice))
         heard = [plain_text(message) for message in self.store.recent_context_messages(self.config.scene, limit=50)
                  if not message.is_self]
         references.append(recent_habits(entries, heard))
-        # The persona's own prohibitions stay last, closest to what the model writes next.
         references.append(avoidance_text(self.persona))
-        state = {**state, 'content': '\n'.join([state['content'], *(text for text in references if text is not None)])}
-        return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]
+        return [text for text in references if text is not None]
