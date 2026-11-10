@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from ..media.audio import AudioService
 from ..media.audio_store import AudioStore
 from .context import ChatContext, style_text, turn_state
+from .group_voice import measure_scene
 from .expression import ChatExpression, MessageSender
 from .tools import MemoryPlugins, SceneTools
 from ..config import LabConfig
@@ -286,7 +287,11 @@ class Chat:
         return recap
 
     async def upkeep_fork(self) -> tuple[list[dict], list[dict]]:
-        """The chat request's system, tools and history without the turn state; caller owns the scene lock."""
+        """The chat request's system, tools and history without the turn state; caller owns the scene lock.
+
+        Each upkeep pass starts here, and also measures how members of the scene write for later turns.
+        """
+        self.context.group_voice = await self.store.read(measure_scene, self.store, self.config)
         recap, entries = await self.store.read(self.store.active_history, self.config.scene)
         self.toolset.discovered_tools = set(await self.store.read(self.store.load_discovered_tools, self.config.scene))
         state = await self.store.read(turn_state, self.config, self.store, now=self.now())
