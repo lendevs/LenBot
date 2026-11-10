@@ -63,9 +63,13 @@ def complete_boundaries(entries: list[Entry]) -> list[int]:
 
 @dataclass(frozen=True)
 class CompactionPlan:
+    """``request_messages`` is the standalone recap request; the boundary messages let a recap
+    continue the chat request instead, so the provider's prefix cache covers the history."""
     through: int
     summary_budget_tokens: int
     request_messages: list[dict]
+    folded_last: dict | None = None
+    kept_first: dict | None = None
 
 
 def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
@@ -122,7 +126,31 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
         raise ContextBudgetError(
             f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
             "请调大窗口或调小回想最大长度")
-    return CompactionPlan(entries[cut - 1][0], budget, request)
+    return CompactionPlan(entries[cut - 1][0], budget, request, entries[cut - 1][1],
+                          entries[cut][1] if cut < len(entries) else None)
+
+
+def continuation_request(history: list[dict], plan: CompactionPlan) -> list[dict]:
+    """The chat request's system and history, then the recap rules naming the cut by its two sides."""
+    instruction = Template(read_prompt("next_recap_continue.md")).substitute(
+        last=_excerpt(plan.folded_last, tail=True), first=_excerpt(plan.kept_first, tail=False),
+        rules=plan.request_messages[0]["content"])
+    return history + [{"role": "user", "content": instruction}]
+
+
+EXCERPT_CHARS = 240
+
+
+def _excerpt(message: dict, *, tail: bool) -> str:
+    content = message["content"]
+    if isinstance(content, list):
+        content = "".join(block["text"] for block in content if block["type"] == "text")
+    calls = message.get("tool_calls")
+    text = content or ("" if not calls else encode(
+        [{"name": call["function"]["name"], "arguments": call["function"]["arguments"]} for call in calls]))
+    if len(text) > EXCERPT_CHARS:
+        text = "…" + text[-EXCERPT_CHARS:] if tail else text[:EXCERPT_CHARS] + "…"
+    return f"[{message['role']}] {text}"
 
 
 def recap_source(recap: str | None, entries: list[Entry]) -> str:
