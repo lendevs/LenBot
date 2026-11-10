@@ -131,6 +131,11 @@ def parse_message(raw: dict, *, own_message_ids: set[str]) -> ChatMessage:
         raise ValueError(f"OneBot message parse failed: {error}; raw={repr(raw)[:500]}") from error
 
 
+# SnowLuma answers a send that QQ accepted without a message receipt with a failed status and this wording;
+# the message may already be in the conversation, so the outcome is unknown rather than failed.
+UNCONFIRMED_WORDING = "delivery was not confirmed"
+
+
 def parse_send_result(raw: dict) -> SendResult:
     """Interpret a message send response, never a file-upload receipt."""
     if not isinstance(raw, dict):
@@ -138,7 +143,8 @@ def parse_send_result(raw: dict) -> SendResult:
     if raw.get("status") == "failed":
         wording = raw.get("wording")
         error = wording if isinstance(wording, str) and wording else repr(raw)[:500]
-        return SendResult(status="failed", platform_message_id=None, error=error)
+        status = "unconfirmed" if UNCONFIRMED_WORDING in error else "failed"
+        return SendResult(status=status, platform_message_id=None, error=error)
     if raw.get("status") == "ok" and type(raw.get("retcode")) is int and raw["retcode"] == 0:
         data = raw.get("data")
         if isinstance(data, dict) and "message_id" in data:

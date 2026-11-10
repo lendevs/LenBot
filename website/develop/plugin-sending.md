@@ -27,7 +27,7 @@ await ctx.reply_parts([Mention("onebot:70001"), Text(" 轮到你了")])
 | `report` | 结果说明 |
 | `message_ids` | 平台消息 ID |
 
-只有 `sent` 表示平台已确认。模型工具要返回发送结果时，把这几个字段原样放进返回值，见[模型工具](plugin-tools)。
+只有 `sent` 表示平台已确认。`unconfirmed` 时消息可能已经在群里，换一种写法重发（例如去掉提及全体成员）只在 `failed` 时做。模型工具要返回发送结果时，把这几个字段原样放进返回值，见[模型工具](plugin-tools)。
 
 ## 唤醒聊天
 

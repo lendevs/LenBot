@@ -45,6 +45,8 @@ EFFECT_SAMPLES = 10
 EFFECT_WINDOW_SECONDS = 3 * 86400
 EFFECT_HALF_LIFE_SECONDS = 86400
 EFFECT_FLOOR = 0.5
+# Welcomed interjections shorten the interval by at most a fifth; disliked ones may double it.
+EFFECT_CEILING = 1.25
 PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
 # The follow-up an interjection that answered no one opens: the next message from anyone.
@@ -755,8 +757,9 @@ class SceneRunner:
 
     def effect_factor(self) -> float:
         """Up to EFFECT_SAMPLES judged reactions to this group's interjections in the window, each weighted by
-        age: ignored or disliked ones lower the factor toward EFFECT_FLOOR, and the interval before the next
-        interjection grows by its inverse; welcomed ones never shorten it. With no reactions the factor is 1."""
+        age: ignored or disliked ones lower the factor toward EFFECT_FLOOR and welcomed ones raise it toward
+        EFFECT_CEILING; the interval before the next interjection is divided by it. The same balance moves the
+        factor down twice as far as up, so the bot holds back faster than it opens up. With no reactions it is 1."""
         now = self.now()
         reactions = ReplyEffectStore(self.store).reactions(
             self.config.scene, ("ambient", "explore"), now - EFFECT_WINDOW_SECONDS, EFFECT_SAMPLES)
@@ -764,7 +767,7 @@ class SceneRunner:
                    for at, reaction in reactions]
         # Two neutral samples' worth of prior keeps one bad reaction from doubling the interval.
         balance = sum(weight * value for weight, value in weights) / (sum(weight for weight, _ in weights) + 2)
-        return 1 + min(0.0, balance) * (1 - EFFECT_FLOOR)
+        return 1 + (balance * (1 - EFFECT_FLOOR) if balance < 0 else balance * (EFFECT_CEILING - 1))
 
     def ambient_interval(self) -> float:
         """How long after the bot last spoke, or last looked in unprompted, it may join in again."""

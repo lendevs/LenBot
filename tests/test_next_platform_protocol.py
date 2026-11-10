@@ -171,6 +171,48 @@ async def test_onebot_outlet_encodes_qualified_scene_and_mention_without_changin
         assert image.size == ((320, 320) if image_type == 1 else (1024, 1024))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('wording, status', [
+    # SnowLuma: QQ took the send but returned no message receipt; the message may already be in the group.
+    ('group message delivery was not confirmed: QQ returned no message receipt; check the conversation before '
+     'retrying', 'unconfirmed'),
+    ('send group message rejected: result=120 err=', 'failed'),
+])
+async def test_send_without_receipt_is_unconfirmed_so_callers_do_not_send_it_again(wording, status):
+    from websockets.asyncio.server import serve
+    from len_bot.next.configuration.onebot import OneBotForward
+    from len_bot.next.platform.onebot import OneBot
+    from len_bot.next.platform.messages import ChatMessage, Segment, Sender
+    import json
+
+    requests = []
+
+    async def peer(websocket):
+        while len(requests) < 2:
+            request = json.loads(await websocket.recv())
+            requests.append(request)
+            response = ({'status': 'ok', 'retcode': 0, 'data': {'user_id': 90001, 'nickname': '脱敏 Bot'}}
+                        if request['action'] == 'get_login_info' else
+                        {'status': 'failed', 'retcode': 100, 'data': None, 'wording': wording})
+            await websocket.send(json.dumps({**response, 'echo': request['echo']}))
+        await websocket.wait_closed()
+
+    async with serve(peer, '127.0.0.1', 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        settings = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{port}')
+        async with OneBot(settings, bot_id='onebot:90001', on_event=lambda event: None,
+                          on_error=lambda error: None) as bot:
+            card = ChatMessage(id='m1', platform='onebot', bot_id='onebot:90001', scene='onebot:group:80001',
+                               platform_message_id=None, sender=Sender('onebot:90001', '脱敏 Bot', None, None),
+                               time=1790000000, segments=[Segment('mention', {'user': 'all'}),
+                                                          Segment('text', {'text': '合成主播 开播了'})],
+                               reply_to=None, mentions_bot=False, is_self=True, send_status='simulated')
+            result = await bot.send_message(card)
+    assert [item['action'] for item in requests] == ['get_login_info', 'send_group_msg']
+    assert requests[1]['params']['message'][0] == {'type': 'at', 'data': {'qq': 'all'}}
+    assert result.status == status and result.platform_message_id is None and wording in result.error
+
+
 @pytest.mark.parametrize('mention', ['onebot:all', 'qq:12345', 'onebot:abc', 'all', 'onebot:0', 'onebot:007',
                                      'telegram:abc', 'telegram:-1001234', 'feishu:oc_room'])
 def test_model_speech_accepts_only_individual_platform_accounts(mention):
