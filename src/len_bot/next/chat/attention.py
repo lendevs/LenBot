@@ -14,6 +14,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from .session import Chat
+from .freshness import topic_freshness
 from .declarations import AttentionArguments, Declared, declare, match_message, next_due, persisted, tick
 from .disposition import Disposition, allows
 from .recap import estimate_content, estimate_request
@@ -1043,6 +1044,15 @@ class SceneRunner:
         return any(at is not None and at >= fresh_from and worth_joining(message, self.settings, self.config.bot_id)
                    for _, message, at in pending)
 
+    def with_freshness(self, batch: tuple[int, list[str]],
+                       pending: list[tuple[int, ChatMessage, float]]) -> tuple[int, list[str]]:
+        """An unprompted wake's batch, ending with how fresh the talk that woke it is."""
+        freshness = topic_freshness(pending, woke_at=self.state.pending.first_at, now=self.now(),
+                                    timezone=self.config.timezone,
+                                    excluded=(self.config.bot_id, *self.settings.other_bot_ids))
+        through, contents = batch
+        return through, contents if freshness is None else [*contents[:-1], contents[-1] + "\n" + freshness]
+
     def consumed_state(self, *, new_turn: bool = False) -> AttentionState:
         state = copy.deepcopy(self.state)
         if state.declared is not None:
@@ -1393,6 +1403,8 @@ class SceneRunner:
                               else self.wake_reason())
                     batch = (None if not pending else self.catch_up_batch(pending, reason) if catching_up
                              else self.batch(pending, reason))
+                    if batch is not None and channel in {"ambient", "explore", "attention"}:
+                        batch = self.with_freshness(batch, pending)
                     direct = ((self.state.pending is not None and self.state.pending.channel == "direct")
                               or (self.resume and self.state.resume_reserve))
                     wake_received_at = (self.state.pending.first_at
