@@ -209,17 +209,17 @@ HABIT_WINDOW = 8
 # Interjections: the only single characters worth naming as a habit. Sentence-final particles such
 # as 吧、呢、啊 are ordinary grammar and stay out.
 HABIT_CHARACTERS = frozenset("草哼呜哇诶欸嘿喵捏哈噢嗷嘻")
+# Function characters too common to anchor a sentence template on their own.
+TEMPLATE_FILLER = frozenset("的了是我你他她它在有和就也都不这那个一吧呢啊呀啦嘛哦么得地着过把被给让要会能说")
 HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
+HAN = re.compile(r"[\u4e00-\u9fff]")
+SENTENCE_BREAK = re.compile(r"[。！？!?~～…\n]+")
+CLAUSE_BREAK = re.compile(r"[，,。！？!?~～…；;：:、\s]+")
+TEMPLATE_GRAM = 6
 
 
-def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()) -> str | None:
-    """Name what the latest own expressions in the history keep repeating, for the next one to vary.
-
-    The model reads its earlier lines as the strongest example of how it talks, so a phrase that
-    slipped in a few times tends to stay. ``heard`` is what others said recently; words they use
-    belong to the topic and are not named. Punctuation and pictures sent with text are part of the
-    persona's voice and are not counted.
-    """
+def _expressions(entries: Sequence[tuple[int, dict]]) -> list[tuple[str, dict]]:
+    """The latest own ``say`` and ``react`` calls in the history, newest first."""
     expressions = []
     for _, message in reversed(entries):
         if message["role"] != "assistant":
@@ -235,12 +235,81 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
                 expressions.append((call["function"]["name"], arguments))
         if len(expressions) >= HABIT_WINDOW:
             break
-    expressions = expressions[:HABIT_WINDOW]
+    return expressions[:HABIT_WINDOW]
+
+
+def _common(values: Sequence[set[str]], enough: int) -> tuple[str, int] | None:
+    """The longest value shared by the most texts, when at least ``enough`` share it."""
+    frequency = Counter(value for found in values for value in found)
+    best = sorted(frequency.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))
+    return best[0] if best and best[0][1] >= enough else None
+
+
+def _prefixes(clause: str, shortest: int, longest: int) -> set[str]:
+    run = HAN_RUN.match(clause)
+    return set() if run is None else {run.group(0)[:size] for size in range(shortest, min(longest, len(run.group(0))) + 1)}
+
+
+def _templates(texts: Sequence[str], enough: int, taken: Sequence[str], others: str) -> list[tuple[str, int]]:
+    """Two fixed pieces with a changing middle that keep coming back in one sentence, such as 「越……越」."""
+    occurrences = []
+    for text in texts:
+        found: dict[str, list[tuple[int, int, int]]] = {}
+        for number, sentence in enumerate(SENTENCE_BREAK.split(text)):
+            for run in HAN_RUN.finditer(sentence):
+                for size in range(1, TEMPLATE_GRAM + 1):
+                    for start in range(run.start(), run.end() - size + 1):
+                        found.setdefault(sentence[start:start + size], []).append((number, start, start + size))
+        occurrences.append((found, SENTENCE_BREAK.split(text)))
+    frequency = Counter(gram for found, _ in occurrences for gram in found)
+    usable = {gram for gram, count in frequency.items() if count >= enough
+              and (len(gram) > 1 or gram not in TEMPLATE_FILLER)
+              and not any(gram in word or word in gram for word in taken)
+              and not (len(gram) > 1 and gram in others)}
+    # A piece inside a longer one found in as many texts says nothing more.
+    usable = {gram for gram in usable if not any(gram != longer and gram in longer and frequency[longer] == frequency[gram]
+                                                 for longer in usable)}
+    pairs: dict[tuple[str, str], tuple[int, set[str]]] = {}
+    for found, sentences in occurrences:
+        seen: dict[tuple[str, str], str] = {}
+        grams = [(gram, place) for gram in usable for place in found.get(gram, ())]
+        for first, (number, _, first_end) in grams:
+            for second, (other, second_start, _) in grams:
+                if other == number and second_start > first_end and len(first) + len(second) >= 3:
+                    seen.setdefault((first, second), sentences[number][first_end:second_start])
+        for pair, middle in seen.items():
+            count, middles = pairs.get(pair, (0, set()))
+            pairs[pair] = (count + 1, middles | {middle})
+    chosen: list[tuple[str, int]] = []
+    used: list[str] = []
+    for (first, second), (count, middles) in sorted(
+            pairs.items(), key=lambda item: (-item[1][0], -len(item[0][0]) - len(item[0][1]), item[0])):
+        if count < enough or len(chosen) == 2:
+            break
+        # The same middle every time is one fixed phrase, which the word count already covers.
+        if len(middles) < 2 or any(piece in other or other in piece for piece in (first, second) for other in used):
+            continue
+        chosen.append((f"{first}……{second}", count))
+        used += [first, second]
+    return chosen
+
+
+def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()) -> str | None:
+    """Name what the latest own expressions in the history keep repeating, for the next one to vary.
+
+    The model reads its earlier lines as the strongest example of how it talks, so a phrase or a
+    sentence shape that slipped in a few times tends to stay. Words, the opening and ending of each
+    line, the opening of its last clause and two-piece templates are counted; ``heard`` is what
+    others said recently, and words they use belong to the topic and are not named. Pictures sent
+    with text are part of the persona's voice and are not counted.
+    """
+    expressions = _expressions(entries)
     if len(expressions) < 5:
         return None
     texts = [arguments["content"] for name, arguments in expressions
              if name == "say" and isinstance(arguments.get("content"), str)]
     habits = []
+    others = "\n".join(heard)
     if texts:
         enough = max(4, math.ceil(len(texts) * 0.6))
         frequency = Counter()
@@ -251,7 +320,6 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
                     grams.update(run[start:start + size] for start in range(len(run) - size + 1)
                                  if size > 1 or run[start] in HABIT_CHARACTERS)
             frequency.update(grams)
-        others = "\n".join(heard)
         chosen = []
         for gram, count in sorted(frequency.items(), key=lambda item: (-item[1], -len(item[0]), item[0])):
             if count < enough or len(chosen) == 3:
@@ -260,6 +328,7 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
                 continue
             chosen.append((gram, count))
         habits.extend(f"{count} 条用了「{gram}」" for gram, count in chosen)
+        habits.extend(_shapes(texts, [gram for gram, _ in chosen], others))
     files = Counter()
     for name, arguments in expressions:
         choice = arguments.get("sticker") if name == "say" else arguments
@@ -271,6 +340,37 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
         return None
     return Template(read_prompt("next_recent_habits.md")).substitute(
         count=len(expressions), habits="，".join(habits))
+
+
+def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str]:
+    """Sentence shapes shared by half of the texts: how they open, end and close, and templates."""
+    enough = max(4, math.ceil(len(texts) / 2))
+    taken = list(words)
+    shapes = []
+    openings = [{prefix for prefix in _prefixes(text.lstrip(), 2, TEMPLATE_GRAM) if prefix not in others} for text in texts]
+    if (opening := _common(openings, enough)) is not None and not any(
+            opening[0] in word or word in opening[0] for word in taken):
+        shapes.append(f"{opening[1]} 条开头都是「{opening[0]}」")
+        taken.append(opening[0])
+    tails = []
+    for text in texts:
+        squeezed = re.sub(r"\s", "", text)
+        last = None
+        for last in HAN.finditer(squeezed):
+            pass
+        tail = squeezed if last is None else squeezed[last.end():]
+        tails.append({tail[-size:] for size in range(1, min(6, len(tail)) + 1)})
+    if (ending := _common(tails, enough)) is not None:
+        shapes.append(f"{ending[1]} 条结尾都是「{ending[0]}」")
+    closings = []
+    for text in texts:
+        clauses = [clause for clause in CLAUSE_BREAK.split(text) if HAN.search(clause)]
+        closings.append(_prefixes(clauses[-1], 1, 3) if len(clauses) > 1 else set())
+    if (closing := _common(closings, enough)) is not None:
+        shapes.append(f"{closing[1]} 条最后一句都用「{closing[0]}」起头")
+        taken.append(closing[0])
+    shapes.extend(f"{count} 条用了「{template}」这样的句式" for template, count in _templates(texts, enough, taken, others))
+    return shapes
 
 
 RECENT_SECONDS = 600

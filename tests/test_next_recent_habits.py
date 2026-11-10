@@ -52,9 +52,48 @@ def test_common_sentence_particles_are_not_habits():
     assert "8 条用了「喵」" in text and "「吧」" not in text
 
 
-def test_punctuation_and_pictures_with_text_are_left_to_the_persona():
-    lines = [line + "！~" for line in VARIED]
+def test_pictures_with_text_and_mixed_endings_are_left_to_the_persona():
+    endings = ["！", "~", "。", "", "？", "…", "！！", "~"]
+    lines = [line + ending for line, ending in zip(VARIED, endings, strict=True)]
     assert recent_habits(_history(*(_say(line, f"{index}.webp") for index, line in enumerate(lines)))) is None
+
+
+# Fictional lines, each sharing one sentence shape in half of the last eight and varied otherwise.
+SHAPES = {
+    "ending": (["今天吃面=v=", "那我先走了=v=", "被发现了=v=", "也不是不行=v="], "4 条结尾都是「=v=」"),
+    "opening": (["好家伙这么快", "好家伙你也在", "好家伙又是你", "好家伙原来如此"], "4 条开头都是「好家伙」"),
+    "closing": (["下雨了，记得带伞", "要出门吗，记得锁门", "今天好冷，记得穿厚点", "考完了，记得对答案"],
+                "4 条最后一句都用「记得」起头"),
+    "template": (["我一边吃面一边看你们吵", "一边听歌一边写作业", "他一边跑一边喊", "就一边追剧一边叠衣服"],
+                 "4 条用了「一边……一边」这样的句式"),
+    "association": (["突然想起来这雨像泼水一样", "突然想起来他跑得像风一样", "突然想起来这面硬得像砖一样",
+                     "突然想起来你说话像念经一样"], "4 条开头都是「突然想起来」，4 条用了「像……一样」这样的句式"),
+}
+PLAIN = ["好的", "收到", "明天见", "那家店关门了"]
+
+
+@pytest.mark.parametrize("name", SHAPES)
+def test_a_shape_in_half_of_the_lines_is_named(name):
+    lines, expected = SHAPES[name]
+    text = recent_habits(_history(*(_say(line) for line in [*lines, *PLAIN])))
+    assert text is not None and expected in text
+
+
+@pytest.mark.parametrize("name", SHAPES)
+def test_a_shape_in_fewer_than_half_is_not(name):
+    lines, _ = SHAPES[name]
+    assert recent_habits(_history(*(_say(line) for line in [*lines[:3], *PLAIN, "随便吧"]))) is None
+
+
+def test_a_fixed_phrase_is_not_split_into_a_template():
+    lines = ["快去吃饭", "快去吃饭吧", "那就快去吃饭", "饿了就快去吃饭", "你们聊", "我看看", "那个呢", "明天"]
+    assert recent_habits(_history(*(_say(line) for line in lines))) is None
+
+
+def test_template_words_others_are_using_belong_to_the_topic():
+    lines, _ = SHAPES["template"]
+    history = _history(*(_say(line) for line in [*lines, *PLAIN]))
+    assert recent_habits(history, ["我一边上课一边摸鱼"]) is None
 
 
 def test_only_the_latest_expressions_count():
