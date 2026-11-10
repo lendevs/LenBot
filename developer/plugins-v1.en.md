@@ -327,7 +327,7 @@ Override synchronous `unavailable_tools(self, scene: str) -> dict[str, str]` to 
 | Wait for the next message | `await ctx.wait_message(timeout_seconds=60, sender="same")`; see [Multi-turn conversations](#multi-turn-conversations) |
 | Message words | `message_text(message, names=None)`; see [Messages](#messages) |
 
-`self.ctx` (`PluginContext`) is used in `start()`, `stop()`, and `@background`, where scene-bound methods take an explicit `scene` argument. `self.ctx.scenes` lists the scenes that enable the plugin. Switching a scene to plugins mode (chat off) only stops waking the chat model; commands, rules, notices, schedules and sending keep working there. `Sent.status` is one of `sent`, `failed`, `unconfirmed`, `simulated`, or `partial`.
+`self.ctx` (`PluginContext`) is used in `start()`, `stop()`, and `@background`, where scene-bound methods take an explicit `scene` argument. `self.ctx.scenes` lists the scenes that enable the plugin. Switching a scene to plugins mode (chat off) only stops waking the chat model; commands, rules, notices, schedules and sending keep working there. `Sent.status` is one of `sent`, `failed`, `unconfirmed`, `simulated`, or `partial`. `unconfirmed` means the outcome is unknown and the message may already be in the conversation; resend in another form (for example without mentioning everyone) only after `failed`.
 
 Card and image helpers are described in [Cards and images](#cards-and-images).
 

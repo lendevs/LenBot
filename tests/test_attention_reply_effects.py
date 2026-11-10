@@ -1,10 +1,11 @@
-"""Reply effects of the bot's ambient interjections stretch the wait before it joins in again in that group."""
+"""Reply effects of the bot's ambient interjections stretch or, more slowly, shorten the wait before it joins in again
+in that group."""
 
 import json
 
 import pytest
 
-from len_bot.next.chat.attention import EFFECT_FLOOR, SceneRunner
+from len_bot.next.chat.attention import EFFECT_CEILING, EFFECT_FLOOR, SceneRunner
 from len_bot.next.chat.session import Chat
 from len_bot.next.storage.store import Store
 from test_attention_protocol import START, config_for, message
@@ -30,23 +31,24 @@ def runner(root, now):
 
 @pytest.mark.parametrize(('reactions', 'factor'), [
     ([], 1.0),
-    ([(0, 'continue')] * 4 + [(0, 'agree')] * 4, 1.0),
+    ([(0, 'continue')] * 4 + [(0, 'agree')] * 4, 1 + 0.25 * 8 / 10),
     ([(0, 'negative')] * 4, 1 - 0.5 * 4 / 6),
     ([(0, 'unrelated')] * 10, 1 - 0.5 * 10 / 12),
     # A day old counts half; three days old is out of the window.
     ([(86400, 'negative')], 1 - 0.5 * 0.5 / 2.5),
     ([(3 * 86400 + 1, 'negative')] * 4, 1.0),
     ([(0, 'negative'), (0, 'continue')], 1.0),
+    ([(0, 'continue')] * 2, 1 + 0.25 * 2 / 4),
     ([(0, 'correct'), (0, 'uncertain')], 1.0),
 ])
-def test_factor_weighs_recent_ambient_reactions_between_the_floor_and_one(tmp_path, reactions, factor):
+def test_factor_weighs_recent_ambient_reactions_between_the_floor_and_the_ceiling(tmp_path, reactions, factor):
     now = [START + 10 * 86400]
     store, live = runner(tmp_path, now)
     with store:
         for age, reaction in reactions:
             judged(store, live.config.scene, now[0] - age, reaction)
         assert live.effect_factor() == pytest.approx(factor)
-        assert EFFECT_FLOOR <= live.effect_factor() <= 1
+        assert EFFECT_FLOOR <= live.effect_factor() <= EFFECT_CEILING
 
 
 def test_factor_ignores_direct_turns_other_groups_and_more_than_ten_samples(tmp_path):
@@ -80,11 +82,14 @@ def waits(root, reactions) -> tuple[float, float]:
         return ambient, live.deadline() - START
 
 
-def test_disliked_interjections_lengthen_the_wait_to_join_in_but_not_direct_replies(tmp_path):
+def test_reactions_move_the_wait_to_join_in_both_ways_but_not_direct_replies(tmp_path):
     minimum = runner(tmp_path / 'config', [START])[1].settings.ambient_min_interval_seconds
     baseline = waits(tmp_path / 'none', [])
     welcomed = waits(tmp_path / 'welcomed', ['continue'] * 6)
     disliked = waits(tmp_path / 'disliked', ['negative', 'unrelated'] * 3)
-    assert baseline[0] == minimum and welcomed == baseline
+    assert baseline[0] == minimum
+    assert welcomed[0] == pytest.approx(minimum / (1 + 0.25 * 6 / 8), rel=1e-2)
     assert disliked[0] == pytest.approx(minimum / (1 - 0.5 * 6 / 8), rel=1e-2)
-    assert disliked[1] == baseline[1]
+    # The same number of reactions holds the bot back further than it lets it in.
+    assert disliked[0] - baseline[0] > baseline[0] - welcomed[0]
+    assert disliked[1] == welcomed[1] == baseline[1]
