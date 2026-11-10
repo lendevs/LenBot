@@ -53,7 +53,7 @@ const parts = computed(() => {
             </span>
           </dd>
         </template>
-        <template v-if="verdict.effect_factor != null && verdict.effect_factor < 1">
+        <template v-if="verdict.effect_factor != null && verdict.effect_factor !== 1">
           <dt class="text-muted">{{ t('groups.live.verdict.effect') }}</dt>
           <dd class="tabular">{{ number(verdict.effect_factor) }}</dd>
         </template>

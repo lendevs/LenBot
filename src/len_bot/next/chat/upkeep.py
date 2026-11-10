@@ -25,7 +25,7 @@ from ..learning.expression_match import overlap
 from ..learning.jargon_store import JargonStore, contains
 from ..learning.reply_effect_store import REACTIONS, ReplyEffectStore
 from ..learning.store import LearningStore
-from ..models.client import ChatModel, ModelReply
+from ..models.client import ChatModel, ModelConnectionError, ModelHTTPError, ModelReply
 from ..models.request import request_model
 from ..models.slots import ModelSlots
 from ..platform.messages import ChatMessage, plain_text, render_text
@@ -117,6 +117,8 @@ class SessionUpkeep:
         self._effect_retry: dict[str, int] = {}
         self._failures: dict[str, int] = {}
         self._failed_at: dict[str, float] = {}
+        # Scenes whose automatic retries ran out on provider failures; the chat model's recovery gives them back once.
+        self._model_stuck: set[str] = set()
         self._workers: dict[str, asyncio.Task[None]] = {}
         self.started = False
         self.errors: dict[str, BaseException] = {}
@@ -177,6 +179,7 @@ class SessionUpkeep:
         self._effect_retry.pop(scene, None)
         self._failures.pop(scene, None)
         self._failed_at.pop(scene, None)
+        self._model_stuck.discard(scene)
 
     def _start_scene(self, scene: str) -> None:
         with log_context(scene=scene, job="session_upkeep"):
@@ -229,6 +232,19 @@ class SessionUpkeep:
             raise ValueError(f"{scene} 没有失败或中断的整理")
         self._retry.add(scene)
         self._wake[scene].set()
+
+    def model_recovered(self) -> None:
+        """The chat model answered again after failing: passes stopped only by provider failures start over.
+
+        This adds no attempts of its own; it resets the usual automatic retries once per recovery, so a backlog
+        left by an outage does not wait for a retry from the panel.
+        """
+        for scene in list(self._model_stuck):
+            self._model_stuck.discard(scene)
+            self._failures.pop(scene, None)
+            self._failed_at.pop(scene, None)
+            if scene in self._wake:
+                self._wake[scene].set()
 
     def compacted(self, scene: str) -> None:
         """Older history just left the session: take its range now, below the usual thresholds."""
@@ -626,9 +642,15 @@ class SessionUpkeep:
         except Exception as error:
             self._fail(begun, "failed", _error_text(error))
             self._failed(scene)
+            if isinstance(error, ModelHTTPError | ModelConnectionError | TimeoutError):
+                if self._failures[scene] >= AUTO_RETRIES:
+                    self._model_stuck.add(scene)
+            else:
+                self._model_stuck.discard(scene)
             LOG.exception("session upkeep failed for %s", scene)
         else:
             self._failures.pop(scene, None)
+            self._model_stuck.discard(scene)
         if self.on_update is not None:
             self.on_update()
 

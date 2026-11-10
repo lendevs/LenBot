@@ -108,7 +108,7 @@ uv run --no-sync ruff check src/len_bot scripts deploy/package tests
 | 编号项 | 当前值 | 定义位置 |
 |---|---|---|
 | 插件接口版本 | `1` | `src/len_bot/plugin.py` 的 `INTERFACE` |
-| 根配置格式 | `5` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
+| 根配置格式 | `6` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
 | 业务数据库 | `2` | `src/len_bot/next/storage/store.py` 的 `FORMAT_VERSION` |
 | 记忆处理库 | `1` | `src/len_bot/next/memory/jobs.py` 的 `FORMAT_VERSION` |
 | 本地记忆索引 | `1` | `src/len_bot/next/memory/local.py` 的 `FORMAT_VERSION` |

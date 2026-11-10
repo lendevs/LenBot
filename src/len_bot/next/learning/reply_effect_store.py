@@ -246,6 +246,13 @@ class ReplyEffectStore:
             "WHERE value IN (SELECT value FROM json_each(?))) ORDER BY id DESC LIMIT ?",
             (scene, since, encode(list(channels)), limit))]
 
+    def judged_lines(self, scene: str, reactions: Sequence[str], since: float, limit: int) -> list[dict]:
+        """The newest judged expressions with one of ``reactions``: first part's seq, reaction and reason."""
+        return [{"seq": json.loads(row[0])[0], "reaction": row[1], "reason": row[2]} for row in self.db.execute(
+            "SELECT message_seqs,reaction,reason FROM reply_effects WHERE scene=? AND first_sent_at>=? "
+            "AND reaction IN (SELECT value FROM json_each(?)) ORDER BY id DESC LIMIT ?",
+            (scene, since, encode(list(reactions)), limit))]
+
     def effect(self, scene: str, id: int) -> dict | None:
         row = self.db.execute(
             f"SELECT e.*,{STATE_SQL} AS state FROM reply_effects e LEFT JOIN reply_effect_calls c ON c.id=e.call_id "

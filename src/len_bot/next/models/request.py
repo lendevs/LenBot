@@ -94,8 +94,10 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
         raise ContextBudgetError(
             f"{role} {scope}含预留输出估算 {estimated} token，超过配置窗口 {binding.context_window_tokens}，请调大窗口或调小输出上限")
     effective = model.settings
-    if quick and getattr(binding, "quick_reasoning_effort", None) is not None:
-        effective = effective.with_effort(binding.quick_reasoning_effort)
+    effort = (config.recap_reasoning_effort if role == "recap"
+              else getattr(binding, "quick_reasoning_effort", None) if quick else None)
+    if effort is not None:
+        effective = effective.with_effort(effort)
     settings = {**effective.model_dump(exclude={"api_key"}), "max_output_tokens": tokens}
     async with (slots.slot(direct=direct, scene=scene) if slots is not None else nullcontext()):
         request = {"settings": settings, "messages": messages, "tools": tools, "provider": binding.provider,

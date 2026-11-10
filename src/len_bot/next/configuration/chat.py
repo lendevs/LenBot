@@ -21,6 +21,9 @@ class Compaction(BaseModel):
     input_tokens: int = Field(default=60000, gt=0, strict=True)
     keep_recent_tokens: int = Field(default=20000, gt=0, strict=True)
     max_output_tokens: int | None = Field(default=None, gt=0)
+    # Recap requests think at this effort instead of the mind's quick effort, so the thinking a model spends
+    # on folding history cannot use up the recap's output allowance; null keeps the quick effort.
+    reasoning_effort: str | None = Field(default=None, min_length=1, pattern=r"\S")
 
 
 class TextDelivery(BaseModel):
@@ -205,7 +208,8 @@ class Attention(BaseModel):
     explore_probability: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
     max_extensions: int = Field(default=4, ge=0)
     quiet_hours: QuietHours | None = None
-    declarations: AttentionDeclarations | None = None
+    # On by default: the model may declare whom or what to keep following; null turns it off.
+    declarations: AttentionDeclarations | None = Field(default_factory=AttentionDeclarations)
     disposition: TurnDisposition | None = None
 
     @field_validator("keywords")
