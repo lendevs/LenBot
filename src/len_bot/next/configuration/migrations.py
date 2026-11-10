@@ -68,7 +68,13 @@ def _format_4_to_5(source: dict) -> dict:
     return source
 
 
-STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4, 4: _format_4_to_5}
+def _format_5_to_6(source: dict) -> dict:
+    # Format 6 adds the recap's own reasoning effort; leaving it out keeps the mind's quick effort.
+    source["config_version"] = 6
+    return source
+
+
+STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4, 4: _format_4_to_5, 5: _format_5_to_6}
 
 
 def migrate_source(source: dict, target: int) -> dict:

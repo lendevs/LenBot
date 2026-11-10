@@ -23,6 +23,7 @@ from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
 from .logs import credentials, log_context, log_event
 from .lifecycle import HostLifecycle
+from .model_alerts import ModelAlerts
 from ..platform.messages import ChatMessage, Notice, SendResult, UploadResult
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
@@ -119,6 +120,7 @@ class NetworkRuntime:
         self.background: set[asyncio.Task] = set()
         self.personas: PersonaService | None = None
         self.scene_titles = SceneTitles(self)
+        self.model_alerts = ModelAlerts(self)
         self.reference = open_library(config._instance_root, memory, store, slots)
         self.accepting = not config.platform_names
         self.storage_error: sqlite3.Error | None = None
@@ -285,6 +287,8 @@ class NetworkRuntime:
         failed = error if error is not None else result.get('error')
         log_event(logger, result['type'], level=logging.ERROR if failed else logging.INFO, error=failed, **fields)
         self.events.publish(result['type'], **fields, error=None if failed is None else str(failed))
+        if result['type'] == 'turn':
+            self.model_alerts.observe(result['scene'], result)
         if result['type'] == 'turn' and self.upkeep is not None:
             # Upkeep skips a scene while it is in a turn; the turn's end lets it look again.
             self.upkeep.wake(result['scene'])

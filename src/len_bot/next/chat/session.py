@@ -43,7 +43,7 @@ from ..memory.service import MemoryService, MemorySettings, recall_cues
 from ..reference.library import ReferenceLibrary
 from ..reference.tool import changes_notice
 from ..platform.messages import UploadResult
-from ..models.client import ChatModel, ModelReply
+from ..models.client import ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError, ModelReply
 from ..models.request import request_estimate, request_model
 from ..models.slots import ModelSlots
 from ..persona.profile import Persona, select_style
@@ -85,6 +85,12 @@ def with_images(messages: list[dict], looked: list[tuple[str, bytes]]) -> list[d
     for label, jpeg in looked:
         parts += [{"type": "text", "text": f"<{label}>"}, image_block(jpeg)]
     return [*messages[:-1], {**state, "content": parts}]
+
+
+def model_failure(error: ModelHTTPError | ModelConnectionError, at: float) -> dict:
+    """The kind of provider failure a turn ended on, for the owner's alert: an HTTP status or no connection."""
+    kind = f"HTTP {error.status}" if isinstance(error, ModelHTTPError) else "连接失败"
+    return {"kind": kind, "at": at, "error": f"{type(error).__name__}: {error}"}
 
 
 def final_step(messages: list[dict], tools: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -151,6 +157,13 @@ class Chat:
         self.turn_stopped = False
         self.on_update = on_update
         self.on_compaction = on_compaction
+        # The input estimate at which an automatic recap last ran out of its allowance; until the history
+        # has grown by another keep_recent_tokens, turns go on with the existing recap instead of paying
+        # for the same failing recap again.
+        self.compaction_held_at: int | None = None
+        # Successful mind replies in the running turn, and the provider failure that ended it.
+        self.turn_model_replies = 0
+        self.turn_model_failure: dict | None = None
         if config.models.roles.vision is not None and vision is None:
             raise ValueError("vision 客户端必须与根配置的视觉模型绑定一起提供")
         self.skills = () if tasks is None else tasks.skills[config.scene]
@@ -229,14 +242,22 @@ class Chat:
                         f"新回想正文估算 {content_tokens} token，超过本步回想预算 "
                         f"{recap_target.summary_budget_tokens}")
 
-        return await request_model(
-            self.config, self.store, model, messages, tools, scene=self.config.scene, role=role,
-            turn_id=turn_id, slots=self.slots, direct=self.direct_request,
-            output_tokens=self.config.recap_output_tokens if role == "recap" else None,
-            validate=validate, append_to_scene=role == "mind",
-            expression_ids=self.expression_ids if role == "mind" else expression_ids,
-            input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
-            trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
+        try:
+            reply = await request_model(
+                self.config, self.store, model, messages, tools, scene=self.config.scene, role=role,
+                turn_id=turn_id, slots=self.slots, direct=self.direct_request,
+                output_tokens=self.config.recap_output_tokens if role == "recap" else None,
+                validate=validate, append_to_scene=role == "mind",
+                expression_ids=self.expression_ids if role == "mind" else expression_ids,
+                input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
+                trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
+        except (ModelHTTPError, ModelConnectionError) as error:
+            if model_role == "mind":
+                self.turn_model_failure = model_failure(error, self.now())
+            raise
+        if role == "mind":
+            self.turn_model_replies += 1
+        return reply
 
     async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True,
                       chat: list[dict] | None = None) -> str:
@@ -302,6 +323,7 @@ class Chat:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
             raise
+        self.compaction_held_at = None
         self.store.end_turn(turn_id, "manual_compaction")
         if self.on_compaction is not None:
             self.on_compaction()
@@ -406,6 +428,10 @@ class Chat:
                 method = "usage_scaled_after_recap" if token_scale != 1.0 else method
             if estimated <= trigger:
                 return PreparedContext(messages, estimated, method)
+            hold = self.compaction_held_at
+            fits = estimated + binding.max_output_tokens <= binding.context_window_tokens
+            if hold is not None and fits and estimated < hold + self.config.compaction.keep_recent_tokens:
+                return PreparedContext(messages, estimated, method)
             scale = token_scale
             plan = plan_compaction(
                 self.context.project_entries(entries), system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
@@ -417,7 +443,18 @@ class Chat:
                 window_tokens=binding.context_window_tokens,
                 source_entries=self.context.conversation_entries(entries), token_scale=scale,
             )
-            await self.compact(turn_id, plan, chat=messages)
+            try:
+                await self.compact(turn_id, plan, chat=messages)
+            except (ModelOutputLimitError, ContextBudgetError) as error:
+                # A recap that ran out of its allowance or budget keeps the existing recap and history; the
+                # turn goes on uncompacted while the request still fits the window.
+                if self.config.recap_plugin is not None or not fits:
+                    raise
+                self.compaction_held_at = estimated
+                log_event(logger, 'compaction_held', level=logging.WARNING, error=error, input_tokens=estimated,
+                          trigger_tokens=trigger, window_tokens=binding.context_window_tokens)
+                return PreparedContext(messages, estimated, method)
+            self.compaction_held_at = None
             compacted = True
             if self.on_compaction is not None:
                 self.on_compaction()
@@ -477,6 +514,8 @@ class Chat:
         self.reserve_request = False
         self.turn_expressions = 0
         self.turn_messages = 0
+        self.turn_model_replies = 0
+        self.turn_model_failure = None
         observed_at = self.now()
         self.turn_channels = set() if channels is None else set(channels)
         scene = self.config.scene
@@ -730,4 +769,6 @@ class Chat:
         return {"turn_id": turn_id, "status": status, "error": error_text,
                 "delivery": "simulated" if self.expression.send_message is None else "live",
                 "expressions": expressions, "extensions": extensions,
-                "failed_tools": failed_tools, "limit_until": limit_until, "limit_kind": limit_kind}
+                "failed_tools": failed_tools, "limit_until": limit_until, "limit_kind": limit_kind,
+                "model_replies": self.turn_model_replies,
+                "model_failure": self.turn_model_failure if status == "error" else None}

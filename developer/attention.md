@@ -59,6 +59,18 @@ min(ambient_max_interval_seconds, ambient_min_interval_seconds × 2^silence_leve
 
 `uv run --no-sync python scripts/first_reply_latency.py batches` 用固定 OneBot 到达序列核对图片后补文字、同一人续发、换人、隔着别人续发、旁人发图和上限；`report <数据库>` 读取实际回合的首句等待与合批、模型、工具、发送耗时。
 
+## 恢复后的追赶
+
+宿主启动时还有上一个进程留下的未读消息，或一个回合因聊天模型的服务商错误失败后，场景进入追赶状态，直到某个回合拿到模型回复。追赶期间：
+
+- 环境插话和随机探索只在最近 5 分钟（`CATCH_UP_SECONDS`）内有可以接的话时开轮；只有旧消息时撤下这次唤醒，消息留给下一轮，日志 `attention_catch_up`。
+- 开轮时 5 分钟以前的消息单独成段，标题写明追赶开始时间、这些消息当时没有回应、按原时间理解且不逐条补回；@ Bot 的旧消息照常唤醒，按原时间交给模型。失败回合已经读入会话的批次不再重发，恢复回合的批次标题同样带这段说明。
+- 恢复未结束对话（`resume`）的回合不受影响。
+
+## 模型故障提醒
+
+`runtime/model_alerts.py` 按聊天绑定（服务商和模型）统计所有场景连续以服务商错误结束的回合（`ModelHTTPError` 或 `ModelConnectionError`，回合结果的 `model_failure`）。连续 3 个时私聊每位主人一次：错误类别、最早失败时间、涉及场景数和最近一次错误；之后第一个拿到模型回复的回合（`model_replies` 大于 0）再发一次恢复。主人的私聊场景已接入时经该场景的发送出口并入库，否则直接经平台发送；非真实发送时只写 `model_alert` 日志。宿主不切换模型，不重试。
+
 ## 唤醒判定记录
 
 每条收到的消息在 `messages.wake_verdict` 里保存一次判定：`woke`、`channel`、`reason` 和 `effect_factor`。`effect_factor` 只在消息可以接话时计算，其余为 `null`。
