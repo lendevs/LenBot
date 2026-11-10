@@ -128,4 +128,3 @@ class ModelAlerts:
                            platform_message_id=None, sender=Sender(bot, None, None, None),
                            time=self.runtime.store.now(), segments=[Segment("text", {"text": text})],
                            reply_to=None, mentions_bot=False, is_self=True, send_status="simulated")
-

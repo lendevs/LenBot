@@ -86,4 +86,3 @@ async def test_without_an_upkeep_pass_there_is_no_reference(tmp_path):
         context.configure_tools(build_tools(config, persona, platform=False), [], skills=())
         projected = await context.project(None, [], {"role": "user", "content": "本轮开始时间：2026-10-21T00:00:00+00:00"})
     assert "<本群发言形态>" not in projected[-1]["content"]
-
