@@ -17,6 +17,7 @@ from ..config import LabConfig
 from .declarations import Declared
 from .group_voice import describe as describe_group_voice
 from .persona_avoid import avoidance_text
+from .reply_feedback import reply_feedback
 from .recap import project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
@@ -480,13 +481,15 @@ class ChatContext:
 
     def references(self, entries: list[tuple[int, dict]]) -> list[str]:
         """The turn's closing reference material, in order: how members here write, what the own
-        latest lines keep repeating, then the persona's own prohibitions, which always stay last,
-        closest to what the model writes next. Material about the scene goes before them."""
+        latest lines keep repeating, how members reacted to the own recent lines, then the persona's own
+        prohibitions, which always stay last, closest to what the model writes next. Material about the scene
+        goes before them."""
         references = []
         if self.group_voice is not None:
             references.append(describe_group_voice(self.group_voice))
         heard = [plain_text(message) for message in self.store.recent_context_messages(self.config.scene, limit=50)
                  if not message.is_self]
         references.append(recent_habits(entries, heard))
+        references.append(reply_feedback(self.config, self.store))
         references.append(avoidance_text(self.persona))
         return [text for text in references if text is not None]
