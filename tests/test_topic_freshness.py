@@ -44,5 +44,10 @@ def test_the_waking_message_is_the_one_received_at_the_wake():
     assert '10 秒前' in text and '之后没有新消息' in text
 
 
+def test_a_timer_wake_after_older_messages_gives_nothing():
+    pending = _pending(('onebot:70001', '有人玩过那个钓鱼游戏吗', START), ('onebot:70002', '晚饭吃啥', START + 60))
+    assert _facts(pending, START + 1800, START + 1800) is None
+
+
 def test_only_own_messages_give_nothing():
     assert _facts(_pending(('onebot:90001', '我在', START)), START, START + 1) is None

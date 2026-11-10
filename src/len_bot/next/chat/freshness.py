@@ -42,12 +42,15 @@ def _age(seconds: float) -> str:
 
 def topic_freshness(pending: Sequence[tuple[int, ChatMessage, float]], *, woke_at: float, now: float,
                     timezone: str, excluded: Sequence[str]) -> str | None:
-    """Facts about the batch around the message received at ``woke_at``; None without member messages."""
+    """Facts about the batch around the first member message received at or after ``woke_at``.
+
+    None when there is no such message, as for a wake from a timer the model set.
+    """
     members = [(message, at) for _, message, at in pending
                if not message.is_self and message.sender.uid not in excluded]
-    if not members:
+    index = next((number for number, (_, at) in enumerate(members) if at >= woke_at), None)
+    if index is None:
         return None
-    index = next((number for number, (_, at) in enumerate(members) if at >= woke_at), 0)
     trigger = members[index][0]
     after = [message for message, _ in members[index + 1:]]
     clock = datetime.fromtimestamp(trigger.time, ZoneInfo(timezone)).strftime("%H:%M:%S")

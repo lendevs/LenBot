@@ -611,6 +611,7 @@ class SceneRunner:
         if matches and self.enforcing:
             if any(state.declared.may_wake(match, at) for match in matches):
                 return offered(PendingWake('attention', at), '持续关注条件命中')
+            # Held until the intent's rewake window ends; attention_tick then wakes on it.
             log_event(logger, 'attention_candidate_held', intents=[match['intent'] for match in matches],
                       message_id=message.platform_message_id)
         local_blocked = False
@@ -1047,7 +1048,12 @@ class SceneRunner:
     def with_freshness(self, batch: tuple[int, list[str]],
                        pending: list[tuple[int, ChatMessage, float]]) -> tuple[int, list[str]]:
         """An unprompted wake's batch, ending with how fresh the talk that woke it is."""
-        freshness = topic_freshness(pending, woke_at=self.state.pending.first_at, now=self.now(),
+        woke_at = self.state.pending.first_at
+        if self.state.pending.channel == 'attention' and self.state.declared is not None:
+            # A held message match wakes at the end of its rewake window, after it was received.
+            woke_at = min([woke_at, *(match['at'] for match in self.state.declared.matches
+                                      if match['message_id'] is not None)])
+        freshness = topic_freshness(pending, woke_at=woke_at, now=self.now(),
                                     timezone=self.config.timezone,
                                     excluded=(self.config.bot_id, *self.settings.other_bot_ids))
         through, contents = batch
