@@ -50,8 +50,11 @@ class ModelAlerts:
         mind = self.runtime.config.models.roles.mind
         return mind.provider, mind.model
 
-    def observe(self, scene: str, result: dict) -> None:
-        """One finished chat turn: a provider failure extends the run, a turn the model answered ends it."""
+    def observe(self, scene: str, result: dict) -> bool:
+        """One finished chat turn: a provider failure extends the run, a turn the model answered ends it.
+
+        Returns whether this turn ended a run of failures.
+        """
         failure, replies = result.get("model_failure"), result.get("model_replies", 0)
         binding = self.binding()
         if failure is not None:
@@ -68,6 +71,8 @@ class ModelAlerts:
             run, self.run = self.run, None
             if run.alerted:
                 self._deliver("recovered", self.recovery_text(run))
+            return True
+        return False
 
     def _time(self, at: float) -> str:
         return datetime.fromtimestamp(at, ZoneInfo(self.runtime.config.timezone)).isoformat(timespec="seconds")

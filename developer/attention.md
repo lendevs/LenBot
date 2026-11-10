@@ -71,6 +71,8 @@ min(ambient_max_interval_seconds, ambient_min_interval_seconds × 2^silence_leve
 
 `runtime/model_alerts.py` 按聊天绑定（服务商和模型）统计所有场景连续以服务商错误结束的回合（`ModelHTTPError` 或 `ModelConnectionError`，回合结果的 `model_failure`）。连续 3 个时私聊每位主人一次：错误类别、最早失败时间、涉及场景数和最近一次错误；之后第一个拿到模型回复的回合（`model_replies` 大于 0）再发一次恢复。主人的私聊场景已接入时经该场景的发送出口并入库，否则直接经平台发送；非真实发送时只写 `model_alert` 日志。宿主不切换模型，不重试。
 
+一段失败结束时（不论是否已提醒），`SessionUpkeep.model_recovered()` 让因服务商错误用完 3 次自动重试的后台整理清零一次失败次数，积压的整理不必等面板重试；它不增加请求，也不对其他原因的失败生效。
+
 ## 唤醒判定记录
 
 每条收到的消息在 `messages.wake_verdict` 里保存一次判定：`woke`、`channel`、`reason` 和 `effect_factor`。`effect_factor` 只在消息可以接话时计算，其余为 `null`。

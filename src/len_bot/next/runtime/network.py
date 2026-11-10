@@ -287,8 +287,9 @@ class NetworkRuntime:
         failed = error if error is not None else result.get('error')
         log_event(logger, result['type'], level=logging.ERROR if failed else logging.INFO, error=failed, **fields)
         self.events.publish(result['type'], **fields, error=None if failed is None else str(failed))
-        if result['type'] == 'turn':
-            self.model_alerts.observe(result['scene'], result)
+        if result['type'] == 'turn' and self.model_alerts.observe(result['scene'], result) and self.upkeep is not None:
+            # Upkeep that ran out of automatic retries during the outage starts over instead of waiting for the panel.
+            self.upkeep.model_recovered()
         if result['type'] == 'turn' and self.upkeep is not None:
             # Upkeep skips a scene while it is in a turn; the turn's end lets it look again.
             self.upkeep.wake(result['scene'])
