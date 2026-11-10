@@ -97,8 +97,8 @@ async def test_reactions_to_own_lines_reach_the_model_before_the_persona_prohibi
     for absent in ('三天前', '挤掉', '说不准', '别的群'):
         assert absent not in block
     # The persona's own prohibitions still close the material.
-    assert content.index(TAIL) < content.index('<角色材料里写明不做的>')
-    assert content.rstrip().endswith('</角色材料里写明不做的>')
+    assert content.index(TAIL) < content.index('<角色材料里带否定的原句>')
+    assert content.rstrip().endswith('</角色材料里带否定的原句>')
 
 
 @pytest.mark.asyncio
