@@ -487,7 +487,7 @@ def unavailable_tools(self, scene: str) -> dict[str, str]:
 
 `data_dir` 是这个插件独立的数据目录。KV 只按插件隔离，需要按群区分时，请把 `scene` 放进 key 中。
 
-发送后返回 `Sent`，状态分为 sent、failed、unconfirmed、simulated 和 partial。只有 sent 表示平台已确认，客户端上的实际效果仍需要观察。unconfirmed 表示结果未知，消息可能已经在群里，换一种写法重发（例如去掉提及全体成员）只在 failed 时做。用原生 JSON 返回回执时，可以把 message_ids 转为 list。
+发送后返回 `Sent`，状态分为 sent、failed、unconfirmed、simulated 和 partial。只有 sent 表示平台已确认，客户端上的实际效果仍需要观察。用原生 JSON 返回回执时，可以把 message_ids 转为 list。
 
 `PluginContext.fetch_image` 和 `Invocation.fetch_image` 使用宿主的公网地址检查和重定向规则，以及实例的 fake-ip 配置和图片的字节数、像素上限。它们返回完整的、已经验证的图片。
 
