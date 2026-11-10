@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from ..media.audio_store import AudioStore
 from ..config import LabConfig
 from .declarations import Declared
+from .group_voice import describe as describe_group_voice
 from .recap import project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
@@ -409,6 +410,8 @@ class ChatContext:
         self.config, self.persona, self.store = config, persona, store
         self.platform, self.memory = platform, memory
         self.host_state: str | None = None
+        # How members here write, measured by the latest upkeep pass; None until one ran.
+        self.group_voice: dict | None = None
         self.system: str
 
     def configure_tools(self, allowed: list[dict], external: list[dict], *, skills: tuple[Skill, ...],
@@ -471,9 +474,11 @@ class ChatContext:
             state = {**state, "content": state["content"] + "\n" + Template(
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
         state = {**state, 'content': state['content'] + '\n' + current_attention(self.config, self.store)}
+        references = []
+        if self.group_voice is not None:
+            references.append(describe_group_voice(self.group_voice))
         heard = [plain_text(message) for message in self.store.recent_context_messages(self.config.scene, limit=50)
                  if not message.is_self]
-        habits = recent_habits(entries, heard)
-        if habits is not None:
-            state = {**state, 'content': state['content'] + '\n' + habits}
+        references.append(recent_habits(entries, heard))
+        state = {**state, 'content': '\n'.join([state['content'], *(text for text in references if text is not None)])}
         return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]
