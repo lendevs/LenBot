@@ -208,7 +208,8 @@ class Attention(BaseModel):
     explore_probability: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
     max_extensions: int = Field(default=4, ge=0)
     quiet_hours: QuietHours | None = None
-    declarations: AttentionDeclarations | None = None
+    # On by default: the model may declare whom or what to keep following; null turns it off.
+    declarations: AttentionDeclarations | None = Field(default_factory=AttentionDeclarations)
     disposition: TurnDisposition | None = None
 
     @field_validator("keywords")

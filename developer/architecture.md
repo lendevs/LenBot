@@ -62,7 +62,7 @@ OneBot ────────────> 平台适配器 ──> 消息入�
 
 ### 持续关注与局部收尾
 
-`attention.declarations` 开启后，允许 `attention` 工具的角色可以创建跨回合意图；`attention.disposition` 独立控制本轮收尾的 `open/closed`。两项均默认关闭。意图跨回合保留，条件命中后由模型判断是否完成。配置、工具和调度语义见[持续关注](attention.md)。
+`attention.declarations` 开启后，允许 `attention` 工具的角色可以创建跨回合意图；`attention.disposition` 独立控制本轮收尾的 `open/closed`。前者默认开启（写 `null` 关闭），后者默认关闭。意图跨回合保留，条件命中后由模型判断是否完成。配置、工具和调度语义见[持续关注](attention.md)。
 
 ### 请求顺序
 

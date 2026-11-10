@@ -88,6 +88,12 @@ class Intent:
     until: float
     source_turn: str | None
     source_call: str | None
+    # When a match of this intent last opened a turn; another message match waits REWAKE_SECONDS.
+    woke_at: float | None = None
+
+
+# One intent opens at most one turn from messages in this long; later matches still show on the next turn.
+REWAKE_SECONDS = 120.0
 
 
 @dataclass
@@ -125,6 +131,16 @@ class Declared:
         match = {'intent': intent.id, 'reason': intent.reason, 'message_id': message_id, 'at': at}
         self.matches = [item for item in self.matches if item['intent'] != intent.id] + [match]
         return match
+
+    def may_wake(self, match: dict, at: float) -> bool:
+        """A timer always may; a message match only once the intent's last wake is REWAKE_SECONDS old."""
+        intent = self.find(match['intent'])
+        return match['message_id'] is None or intent.woke_at is None or at - intent.woke_at >= REWAKE_SECONDS
+
+    def woke(self, at: float) -> None:
+        """The pending candidates open a turn now."""
+        for match in self.matches:
+            self.find(match['intent']).woke_at = at
 
     def consume(self, *, new_turn: bool) -> None:
         previous = [] if new_turn else self.turn_matches

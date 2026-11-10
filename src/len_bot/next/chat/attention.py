@@ -608,7 +608,10 @@ class SceneRunner:
             state.answered()
             return offered(PendingWake('named', at, words, people=[message.sender.uid]), '点名：' + '、'.join(words))
         if matches and self.enforcing:
-            return offered(PendingWake('attention', at), '持续关注条件命中')
+            if any(state.declared.may_wake(match, at) for match in matches):
+                return offered(PendingWake('attention', at), '持续关注条件命中')
+            log_event(logger, 'attention_candidate_held', intents=[match['intent'] for match in matches],
+                      message_id=message.platform_message_id)
         local_blocked = False
         followup = self.followup_of(state, message, at)
         if followup is not None:
@@ -1043,11 +1046,15 @@ class SceneRunner:
     def consumed_state(self, *, new_turn: bool = False) -> AttentionState:
         state = copy.deepcopy(self.state)
         if state.declared is not None:
+            if state.pending is not None and state.pending.channel == 'attention':
+                state.declared.woke(self.now())
             state.declared.consume(new_turn=new_turn)
         if state.pending is not None:
             if state.pending.keywords:
                 state.keyword_last.update(dict.fromkeys(state.pending.keywords, self.now()))
-            if state.pending.channel == "ambient":
+            # A turn the model asked for by an intent is a look at the chat too: the interjection
+            # interval, the fallback when nothing is declared, starts again from it.
+            if state.pending.channel in {"ambient", "attention"}:
                 state.ambient_last_at = self.now()
             state.pending = None
         if new_turn:
