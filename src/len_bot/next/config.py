@@ -48,12 +48,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 5
+CONFIG_VERSION = 6
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[5] = 5
+    config_version: Literal[6] = 6
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -171,11 +171,16 @@ class SharedConfig(BaseModel):
         return self.compaction.max_output_tokens or self.models.roles.mind.max_output_tokens
 
     @property
+    def recap_reasoning_effort(self) -> str | None:
+        """The effort recap requests think at: the compaction setting, else the mind's quick effort."""
+        return self.compaction.reasoning_effort or self.models.roles.mind.quick_reasoning_effort
+
+    @property
     def recap_reasoning_reserve(self) -> int:
-        binding = self.models.roles.mind
         settings = self.model_settings('mind')
-        if binding.quick_reasoning_effort is not None:
-            settings = settings.with_effort(binding.quick_reasoning_effort)
+        effort = self.recap_reasoning_effort
+        if effort is not None:
+            settings = settings.with_effort(effort)
         if settings.thinking == 'disabled' or settings.reasoning_effort in {'none', 'off'}:
             return 0
         if settings.thinking_budget_tokens is not None:
