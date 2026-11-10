@@ -88,9 +88,10 @@ def with_images(messages: list[dict], looked: list[tuple[str, bytes]]) -> list[d
     return [*messages[:-1], {**state, "content": parts}]
 
 
-def model_failure(error: ModelHTTPError | ModelConnectionError, at: float) -> dict:
-    """The kind of provider failure a turn ended on, for the owner's alert: an HTTP status or no connection."""
-    kind = f"HTTP {error.status}" if isinstance(error, ModelHTTPError) else "连接失败"
+def model_failure(error: ModelHTTPError | ModelConnectionError | TimeoutError, at: float) -> dict:
+    """The kind of provider failure a turn ended on, for the owner's alert: an HTTP status, no connection or a timeout."""
+    kind = (f"HTTP {error.status}" if isinstance(error, ModelHTTPError) else
+            "请求超时" if isinstance(error, TimeoutError) else "连接失败")
     return {"kind": kind, "at": at, "error": f"{type(error).__name__}: {error}"}
 
 
@@ -252,7 +253,8 @@ class Chat:
                 expression_ids=self.expression_ids if role == "mind" else expression_ids,
                 input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
                 trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
-        except (ModelHTTPError, ModelConnectionError) as error:
+        except (ModelHTTPError, ModelConnectionError, TimeoutError) as error:
+            # A TimeoutError raised here is the request's own limit; the turn's deadline cancels from outside.
             if model_role == "mind":
                 self.turn_model_failure = model_failure(error, self.now())
             raise
@@ -776,4 +778,4 @@ class Chat:
                 "expressions": expressions, "extensions": extensions,
                 "failed_tools": failed_tools, "limit_until": limit_until, "limit_kind": limit_kind,
                 "model_replies": self.turn_model_replies,
-                "model_failure": self.turn_model_failure if status == "error" else None}
+                "model_failure": self.turn_model_failure if status in {"error", "timeout"} else None}

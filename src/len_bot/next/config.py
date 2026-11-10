@@ -75,6 +75,9 @@ class SharedConfig(BaseModel):
     delivery: Literal["simulated", "live"] = "simulated"
     max_steps: int = Field(default=16, gt=0)
     turn_timeout_seconds: float = Field(default=90.0, gt=0, allow_inf_nan=False)
+    # Chat turns in a row ending on a provider failure (HTTP error, no connection or request timeout)
+    # before the owners get one private alert.
+    model_alert_failed_turns: int = Field(default=3, gt=0, le=1000, strict=True)
     compaction: Compaction = Field(default_factory=Compaction)
     text_delivery: TextDelivery = Field(default_factory=TextDelivery)
     network: NetworkSettings = Field(default_factory=NetworkSettings)

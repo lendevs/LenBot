@@ -70,6 +70,7 @@ def _format_4_to_5(source: dict) -> dict:
 
 def _format_5_to_6(source: dict) -> dict:
     # Format 6 adds the recap's own reasoning effort; leaving it out keeps the mind's quick effort.
+    # It adds model_alert_failed_turns; leaving it out keeps 3.
     # It also turns persistent intents on by default. Before, null was how the panel saved the default
     # off, so it becomes the new default; from format 6 on, null is a choice to turn them off.
     blocks = [source.get("attention"), *(scene.get("attention") for scene in source.get("scenes", {}).values()

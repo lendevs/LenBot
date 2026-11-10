@@ -22,8 +22,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Chat turns in a row that end on a provider failure (HTTP error or no connection) before the owners hear of it.
-FAILED_TURNS = 3
 # The sender name of the host's own lines in an owner's private chat.
 ALERT_SOURCE = "模型提醒"
 
@@ -64,7 +62,7 @@ class ModelAlerts:
             run.turns += 1
             run.kind, run.error = failure["kind"], failure["error"]
             run.scenes.add(scene)
-            if not run.alerted and run.turns >= FAILED_TURNS and run.binding == binding:
+            if not run.alerted and run.turns >= self.runtime.config.model_alert_failed_turns and run.binding == binding:
                 run.alerted = True
                 self._deliver("failed", self.failure_text(run))
         elif replies and self.run is not None:

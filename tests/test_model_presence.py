@@ -150,9 +150,12 @@ async def test_input_left_from_before_a_restart_is_old_chat(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_owners_hear_once_when_turns_keep_failing_and_once_when_they_recover(tmp_path):
+@pytest.mark.parametrize(('failure', 'threshold'), [('limited', None), ('slow', 2)])
+async def test_owners_hear_once_when_turns_keep_failing_and_once_when_they_recover(tmp_path, failure, threshold):
+    # The default threshold with HTTP 429; a configured one with requests that run past the model's timeout.
     peers, requests, sent = asyncio.Queue(), [], []
-    failing = [3]
+    turns = threshold or 3
+    failing = [turns]
 
     async def model_peer(reader, writer):
         header = (await reader.readuntil(b'\r\n\r\n')).decode()
@@ -160,6 +163,8 @@ async def test_owners_hear_once_when_turns_keep_failing_and_once_when_they_recov
         requests.append(json.loads(await reader.readexactly(int(fields['content-length']))))
         if failing[0]:
             failing[0] -= 1
+            if failure == 'slow':
+                await asyncio.sleep(1)
             status, reason, content_type, body = 429, 'Too Many Requests', LIMITED[1], LIMITED[2]
         else:
             _, content_type, body = response('say', {'content': '回来了', 'end_turn': True}, f'call-{len(requests)}')
@@ -192,6 +197,10 @@ async def test_owners_hear_once_when_turns_keep_failing_and_once_when_they_recov
             source['models']['roles']['mind']['context_window_tokens'] = 64000
             source['compaction']['input_tokens'] = 30000
             source['scenes'][SCENE]['attention'] = {'direct_idle_seconds': 0, 'speech_interval_seconds': 0}
+            if threshold is not None:
+                source['model_alert_failed_turns'] = threshold
+            if failure == 'slow':
+                source['models']['roles']['mind']['timeout_seconds'] = 0.2
             path.write_text(json.dumps(source))
             path = root / 'persona/persona.yaml'
             path.write_text(path.read_text().replace('tools: [tool_search, schedule, schedule_list, schedule_cancel]', 'tools: [say]'))
@@ -206,13 +215,13 @@ async def test_owners_hear_once_when_turns_keep_failing_and_once_when_they_recov
                 async with asyncio.timeout(3):
                     while runtime.status != 'running':
                         await asyncio.sleep(.01)
-                for index in range(1, 5):
+                for index in range(1, turns + 2):
                     await wire.send(json.dumps(message(70002, index, f'第{index}次叫你', direct=True)))
                     async with asyncio.timeout(5):
                         while runtime.store.db.execute(
                                 'SELECT COUNT(*) FROM turns WHERE ended IS NOT NULL').fetchone()[0] < index:
                             await asyncio.sleep(.01)
-                    if index == 2:
+                    if index == turns - 1:
                         assert private_sends() == []
                 async with asyncio.timeout(5):
                     while len(private_sends()) < 2:
@@ -224,7 +233,8 @@ async def test_owners_hear_once_when_turns_keep_failing_and_once_when_they_recov
     alerts = private_sends()
     assert [params['user_id'] for params in alerts] == [70001, 70001]
     failed, recovered = (''.join(segment['data']['text'] for segment in params['message']) for params in alerts)
-    assert '连续 3 个回合失败' in failed and 'HTTP 429' in failed and '最早失败时间' in failed
+    assert f'连续 {turns} 个回合失败' in failed and '最早失败时间' in failed
+    assert ('HTTP 429' if failure == 'limited' else '请求超时') in failed
     assert '已恢复' in recovered
-    assert len(requests) == 4
+    assert len(requests) == turns + 1
     assert [action for action, _ in sent].count('send_group_msg') == 1

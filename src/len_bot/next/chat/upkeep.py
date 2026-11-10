@@ -642,7 +642,7 @@ class SessionUpkeep:
         except Exception as error:
             self._fail(begun, "failed", _error_text(error))
             self._failed(scene)
-            if isinstance(error, ModelHTTPError | ModelConnectionError):
+            if isinstance(error, ModelHTTPError | ModelConnectionError | TimeoutError):
                 if self._failures[scene] >= AUTO_RETRIES:
                     self._model_stuck.add(scene)
             else:
