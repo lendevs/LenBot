@@ -16,6 +16,7 @@ from ..media.audio_store import AudioStore
 from ..config import LabConfig
 from .declarations import Declared
 from .group_voice import describe as describe_group_voice
+from .persona_avoid import avoidance_text
 from .recap import project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
@@ -480,5 +481,7 @@ class ChatContext:
         heard = [plain_text(message) for message in self.store.recent_context_messages(self.config.scene, limit=50)
                  if not message.is_self]
         references.append(recent_habits(entries, heard))
+        # The persona's own prohibitions stay last, closest to what the model writes next.
+        references.append(avoidance_text(self.persona))
         state = {**state, 'content': '\n'.join([state['content'], *(text for text in references if text is not None)])}
         return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]
