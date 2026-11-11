@@ -26,6 +26,6 @@ uv run --no-sync pytest -q
 
 完整的工程约定与模块细节维护在仓库内，避免与文档站重复：
 
-- [CONTRIBUTING.md](https://github.com/lendevs/LenBot/blob/master/CONTRIBUTING.md)：源码目录结构、错误处理与配置原则、测试边界、持久化数据格式编号、打包与提交规范。
-- [developer/README.md](https://github.com/lendevs/LenBot/blob/master/developer/README.md)：内部架构总览、唤醒与合批机制、上下文与缓存分段、模型协议适配、面板前端规范及插件接口 v1 完整契约。
+- [CONTRIBUTING.md](https://github.com/lendevs/LenBot/blob/master/CONTRIBUTING.md)：源码目录结构、错误处理与配置原则、测试边界，以及持久化数据格式编号、打包与提交规范。
+- [developer/README.md](https://github.com/lendevs/LenBot/blob/master/developer/README.md)：内部架构总览、唤醒与合批机制、上下文与缓存分段，以及模型协议适配、面板前端规范和插件接口 v1 契约。
 - [问题反馈](https://github.com/lendevs/LenBot/issues)：提交缺陷报告或功能讨论；涉及安全漏洞请按 [SECURITY.md](https://github.com/lendevs/LenBot/blob/master/SECURITY.md) 私下报告。
