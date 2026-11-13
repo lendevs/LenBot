@@ -165,7 +165,8 @@ async def test_onebot_outlet_encodes_qualified_scene_and_mention_without_changin
     segments = requests[1]['params']['message']
     assert segments[:2] == [
         {'type': 'at', 'data': {'qq': '70001'}}, {'type': 'text', 'data': {'text': '合成回复'}}]
-    assert {key: value for key, value in segments[2]['data'].items() if key != 'file'} == image_data
+    assert {key: value for key, value in segments[2]['data'].items() if key != 'file'} == (
+        {} if image_type is None else {'sub_type': image_type})
     sent = base64.b64decode(segments[2]['data']['file'].removeprefix('base64://'))
     with Image.open(BytesIO(sent)) as image:
         assert image.size == ((320, 320) if image_type == 1 else (1024, 1024))
