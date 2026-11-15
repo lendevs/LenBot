@@ -122,7 +122,7 @@ def migrate_business_database(path: Path) -> bool:
         version = db.execute('PRAGMA user_version').fetchone()[0]
         if application != 0x4C424E31:
             raise ValueError(f'{path} 不是 LenBot 业务数据库（application_id={application}）')
-        if version not in {1, FORMAT_VERSION}:
+        if version not in range(1, FORMAT_VERSION + 1):
             raise ValueError(f'{path} 的格式是 {version}，升级支持从格式 1 到 {FORMAT_VERSION}')
         with closing(sqlite3.connect(':memory:')) as expected:
             expected.executescript(business_script())
@@ -136,6 +136,9 @@ def migrate_business_database(path: Path) -> bool:
             if version == 1:
                 db.execute('ALTER TABLE jargon ADD COLUMN judgment TEXT')
                 db.execute('ALTER TABLE jargon ADD COLUMN last_evaluated_seq INTEGER NOT NULL DEFAULT 0')
+            # Format 3 adds model_call_mind_usage, which the loop below creates. Its first build reads every
+            # model_calls row, and scene and plugin sit behind the large request and response columns, so on a
+            # multi-gigabyte database it reads most of the file and can take minutes inside this transaction.
             for sql in missing:
                 db.execute(sql)
             db.execute(f'PRAGMA user_version={FORMAT_VERSION}')

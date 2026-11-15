@@ -34,7 +34,8 @@ class ChatRequest(Protocol):
 
 
 def request_estimate(config: SharedConfig, store: Store, model: ChatModel, *, scene: str, role: str,
-                     messages: list[dict], tools: list[dict], output_tokens: int) -> tuple[int, str]:
+                     messages: list[dict], tools: list[dict], output_tokens: int,
+                     plugin: str | None = None) -> tuple[int, str]:
     """Actual prior input plus changed-material estimates, never cached-token discounts."""
     binding = config.binding(role)
     messages = project_messages(messages, binding.history_policy)
@@ -43,7 +44,9 @@ def request_estimate(config: SharedConfig, store: Store, model: ChatModel, *, sc
         block['type'] == 'image_url' for block in message['content']) for message in messages)
     if images:
         return estimated, 'text_estimate_images_unknown'
-    previous = store.last_mind_usage(scene) if role == 'mind' else None
+    # The usage anchor is the scene's last chat call. A plugin prompt never extends the chat session's
+    # prefix, so a plugin request, whatever role it uses, skips the lookup.
+    previous = store.last_mind_usage(scene) if role == 'mind' and plugin is None else None
     if previous is not None:
         request, usage = previous
         tokens = parse_token_usage(usage)
@@ -85,7 +88,7 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                             .encode()).hexdigest()
     if input_estimate is None:
         estimated, method = request_estimate(config, store, model, scene=scene, role=role,
-                                             messages=messages, tools=tools, output_tokens=tokens)
+                                             messages=messages, tools=tools, output_tokens=tokens, plugin=plugin)
     else:
         input_tokens, method = input_estimate
         estimated = input_tokens + tokens

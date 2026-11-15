@@ -101,6 +101,7 @@ CREATE INDEX message_failed_sends ON messages(scene,json_extract(body,'$.time'),
 CREATE INDEX message_scene_time ON messages(scene,json_extract(body,'$.time'),seq);
 CREATE INDEX message_sender_time ON messages(scene,json_extract(body,'$.sender.uid'),json_extract(body,'$.time'),seq);
 CREATE INDEX model_call_expiry ON model_calls(ended,id);
+CREATE INDEX model_call_mind_usage ON model_calls(scene,role,id) WHERE plugin IS NULL;
 CREATE INDEX turns_scene_time ON turns(scene,started);
 CREATE INDEX turns_expiry ON turns(ended,id);
 """
