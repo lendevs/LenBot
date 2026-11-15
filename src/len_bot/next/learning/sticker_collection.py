@@ -237,7 +237,8 @@ class StickerCollector:
                         mime_type, width, height, animated = await asyncio.to_thread(inspect_image, data)
                         self.records.save_original(scene, id, data=data, mime_type=mime_type,
                                                    width=width, height=height, animated=animated)
-                    jpeg, animated_first_frame_only, width, height = await prepare_pixels(data, self.config.images)
+                    jpeg, animated_first_frame_only, width, height = await prepare_pixels(
+                        data, self.config.images, frames=1)
             except TimeoutError as error:
                 if deadline.expired():
                     raise TimeoutError(f"sticker download and preparation exceeded "

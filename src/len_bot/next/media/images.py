@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..configuration.chat import ImageSettings
+from ...media.images import GRID_MAX_FRAMES
 from ..tools.http_read import fetch_public
 from ..storage.store import ImageAsset, Store
 from ..trials.replay_images import RecordedImages
@@ -55,10 +56,10 @@ def image_url(data: dict[str, object]) -> str:
     return url
 
 
-async def prepare_pixels(data: bytes, settings: ImageSettings) -> tuple[bytes, bool, int, int]:
+async def prepare_pixels(data: bytes, settings: ImageSettings, *, frames: int = GRID_MAX_FRAMES) -> tuple[bytes, bool, int, int]:
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-m", __name__, "prepare",
-        str(settings.max_bytes), str(settings.max_pixels), str(settings.max_dimension),
+        str(settings.max_bytes), str(settings.max_pixels), str(settings.max_dimension), str(frames),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -81,7 +82,7 @@ def _display(scene: str, arguments: LookArguments, asset: ImageAsset, *,
     result = {
         "scene": scene, "platform_message_id": arguments.message, "image": arguments.image,
         "jpeg_bytes": len(asset.jpeg), "width": asset.width, "height": asset.height,
-        "animated_first_frame_only": asset.animated,
+        "animated_grid": asset.animated,
         "fetched_at": datetime.fromtimestamp(asset.fetched_at, timezone.utc).isoformat(),
         "description": asset.description, "description_model": asset.description_model,
         "described_at": (None if asset.described_at is None else
@@ -89,7 +90,7 @@ def _display(scene: str, arguments: LookArguments, asset: ImageAsset, *,
         "pixels_reused": pixels_reused, "description_reused": description_reused,
         "pixels_source": pixels_source,
     }
-    return json.dumps(result, ensure_ascii=False) + "\n描述来自准备后的 JPEG；动图只分析第一帧。"
+    return json.dumps(result, ensure_ascii=False) + "\n描述来自准备后的 JPEG；动图已按时间顺序抽帧拼成网格，从左到右、从上到下读。"
 
 
 async def load_look_image(store: Store, scene: str, arguments: LookArguments, settings: ImageSettings, *,
@@ -168,28 +169,28 @@ def shown_image(scene: str, arguments: LookArguments, asset: ImageAsset, *,
     result = {
         "scene": scene, "platform_message_id": arguments.message, "image": arguments.image,
         "jpeg_bytes": len(asset.jpeg), "width": asset.width, "height": asset.height,
-        "animated_first_frame_only": asset.animated,
+        "animated_grid": asset.animated,
         "fetched_at": datetime.fromtimestamp(asset.fetched_at, timezone.utc).isoformat(),
         "pixels_reused": pixels_reused, "pixels_source": pixels_source,
     }
-    return json.dumps(result, ensure_ascii=False) + "\n图片附在本轮接下来的请求里；动图只有第一帧。"
+    return json.dumps(result, ensure_ascii=False) + "\n图片附在本轮接下来的请求里；动图已抽成多帧网格，从左到右、从上到下读。"
 
 
 def _worker() -> None:
     from len_bot.media.images import prepare_image
 
-    max_bytes, max_pixels, max_dimension = map(int, sys.argv[2:5])
+    max_bytes, max_pixels, max_dimension, frames = map(int, sys.argv[2:6])
     jpeg, animated, width, height = prepare_image(
         sys.stdin.buffer.read(max_bytes + 1),
-        max_bytes=max_bytes, max_pixels=max_pixels, max_dimension=max_dimension,
+        max_bytes=max_bytes, max_pixels=max_pixels, max_dimension=max_dimension, frames=frames,
     )
     metadata = {"animated": animated, "width": width, "height": height}
     sys.stdout.buffer.write(json.dumps(metadata).encode("ascii") + b"\n" + jpeg)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5 or sys.argv[1] != "prepare":
-        raise SystemExit("look image worker expects prepare and three limits")
+    if len(sys.argv) != 6 or sys.argv[1] != "prepare":
+        raise SystemExit("look image worker expects prepare and four limits")
     try:
         _worker()
     except Exception as error:

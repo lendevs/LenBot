@@ -49,8 +49,13 @@ def run(*, container: bool = False, deployment: Deployment | None = None) -> int
 
     def start(command: list[str], cwd: Path = root, env: dict | None = None) -> subprocess.Popen:
         nonlocal child
+        # Windows: the desktop shell starts us with CREATE_NO_WINDOW, so we have no console to hand
+        # down; a plain CREATE_NEW_PROCESS_GROUP would make the host allocate a visible console
+        # window. CREATE_NO_WINDOW gives it a console without a window, and CTRL_BREAK still works.
+        flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+                 if sys.platform == 'win32' else 0)
         child = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=sys.platform != 'win32',
-                                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0)
+                                 creationflags=flags)
         if stopping:
             child.terminate()
         return child
