@@ -458,10 +458,10 @@ class OneBot:
             image_bytes = await asyncio.to_thread(sticker_bytes, image_bytes)
         wire_image = (None if image_bytes is None else
                       "base64://" + base64.b64encode(image_bytes).decode("ascii"))
+        # 图片段的 summary 是给模型看的内部说明，不发给平台；QQ 会把它当作消息预览文字。
         wire_segments = [
             {"type": "at" if segment.type == "mention" else "record" if segment.type == "audio" else segment.type, "data": (
-                {"file": wire_image, **{key: segment.data[key] for key in ('summary', 'sub_type')
-                                        if key in segment.data}}
+                {"file": wire_image, **({"sub_type": segment.data["sub_type"]} if "sub_type" in segment.data else {})}
                 if segment.type == "image" else
                 {"qq": "all" if segment.data["user"] == "all" else segment.data["user"].split(":", 1)[1]}
                 if segment.type == "mention" else segment.data)}

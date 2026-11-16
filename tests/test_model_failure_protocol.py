@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from len_bot.next.chat.recap import estimate_text_request
 from len_bot.next.chat.session import Chat
 from len_bot.next.config import load_host_config
 from len_bot.next.models.client import (ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError,
@@ -20,12 +21,14 @@ from test_next_panel_acts_as_owner import SCENE, exercise, write_instance
 FIXTURE = Path(__file__).parent / 'fixtures/next/model/response-text.json'
 
 
-def instance(root, *, output=8192, compaction=None, thinking=None):
-    write_instance(root, ['onebot:70001'])
+def instance(root, *, output=8192, compaction=None, thinking=None, window=100000, history_policy='native'):
+    if not (root / 'lenbot.config.json').exists():
+        write_instance(root, ['onebot:70001'])
     path = root / 'lenbot.config.json'
     source = json.loads(path.read_text())
-    source['models']['roles']['mind'].update(max_output_tokens=output, context_window_tokens=100000,
-                                            reasoning_effort='high', quick_reasoning_effort='low', thinking=thinking)
+    source['models']['roles']['mind'].update(max_output_tokens=output, context_window_tokens=window,
+                                            reasoning_effort='high', quick_reasoning_effort='low', thinking=thinking,
+                                            history_policy=history_policy)
     source['compaction'] = {'input_tokens': 60000, 'keep_recent_tokens': 100, 'max_output_tokens': compaction}
     path.write_text(json.dumps(source))
     return load_host_config(root)
@@ -71,6 +74,7 @@ async def test_manual_recap_uses_effective_allowance_and_quick_effort(tmp_path, 
             chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, model)
             for content in ['明天讨论报告。' * 100, '报告主题是连接恢复。' * 100, '好的。']:
                 store.append(SCENE, {'role': 'user', 'content': content})
+            history, tools = await chat.upkeep_fork()
             result = await chat.compact_now()
             assert result['recap'] == body['choices'][0]['message']['content']
             call = store.db.execute("SELECT request FROM model_calls WHERE role='recap'").fetchone()
@@ -78,7 +82,62 @@ async def test_manual_recap_uses_effective_allowance_and_quick_effort(tmp_path, 
     assert len(captured) == 1
     assert captured[0]['max_completion_tokens'] == expected
     assert captured[0]['reasoning_effort'] == 'low'
-    assert f'{budget} token' in captured[0]['messages'][0]['content']
+    # The recap continues the chat request: same system, history and tools, then the recap rules.
+    assert captured[0]['messages'][:-1] == history and captured[0]['tools'] == tools
+    assert f'{budget} token' in captured[0]['messages'][-1]['content']
+    assert '报告主题是连接恢复。' in captured[0]['messages'][-1]['content']
+    assert '[user] 好的。' in captured[0]['messages'][-1]['content']
+
+
+@pytest.mark.asyncio
+async def test_recap_shares_the_chat_session_affinity(tmp_path):
+    config = instance(tmp_path, history_policy='omit-reasoning')
+    sessions = {}
+    body = json.loads(FIXTURE.read_text())
+    def respond(request):
+        payload = json.loads(request.content)
+        sessions['recap' if '<回想整理>' in str(payload['messages'][-1]['content']) else 'mind'] = (
+            request.headers['Session-Id'])
+        return httpx.Response(200, json=body)
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as model:
+            await model._client.aclose()
+            model._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url='https://fixture.invalid/')
+            await request_model(config, store, model, [{'role': 'user', 'content': '测试'}], [], scene=SCENE, role='mind')
+            chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, model)
+            for content in ['明天讨论报告。' * 100, '好的。']:
+                store.append(SCENE, {'role': 'user', 'content': content})
+            await chat.compact_now()
+    assert set(sessions) == {'mind', 'recap'} and sessions['recap'] == sessions['mind']
+
+
+@pytest.mark.asyncio
+async def test_recap_beyond_the_window_as_a_continuation_uses_the_standalone_request(tmp_path):
+    config = instance(tmp_path)
+    captured = []
+    body = json.loads(FIXTURE.read_text())
+    body['choices'][0]['message']['content'] = '大家约好明天讨论报告。'
+    def respond(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json=body)
+    with Store(config.database) as store:
+        for _ in range(40):
+            store.append(SCENE, {'role': 'user', 'content': '明天讨论报告。' * 300})
+        store.append(SCENE, {'role': 'user', 'content': '好的。'})
+        async with ChatModel(config.model_settings('mind')) as model:
+            chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, model)
+            history, tools = await chat.upkeep_fork()
+    # The chat request alone plus the recap allowance just fills the window; the standalone request is smaller.
+    config = instance(tmp_path, window=estimate_text_request(history, tools, config.recap_output_tokens))
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as model:
+            await model._client.aclose()
+            model._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url='https://fixture.invalid/')
+            chat = Chat(config.scene_config(SCENE), load_persona(config.scenes[SCENE].persona), store, model)
+            result = await chat.compact_now()
+    assert result['recap'] == '大家约好明天讨论报告。'
+    assert len(captured) == 1 and 'tools' not in captured[0]
+    assert captured[0]['messages'][0]['role'] == 'system' and '4096 token' in captured[0]['messages'][0]['content']
 
 
 @pytest.mark.parametrize('status,hint', [(401, 'API Key'), (429, '额度'), (502, '服务商或中转')])

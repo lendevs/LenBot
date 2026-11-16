@@ -92,7 +92,7 @@ class LiveSettings:
         await self.apply_connection(saved)
         for name in ('owners', 'owner_private_chat', 'permissions', 'timezone', 'max_steps', 'turn_timeout_seconds',
                      'text_delivery', 'compaction', 'images', 'audio', 'commands', 'network', 'web_read', 'web_search',
-                     'task_archive', 'plugin_catalog'):
+                     'task_archive', 'plugin_catalog', 'model_alert_failed_turns'):
             setattr(running, name, deepcopy(getattr(saved, name)))
         self.apply_logging(running, saved)
         runtime.log_secrets = credentials(saved)

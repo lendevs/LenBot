@@ -508,3 +508,28 @@ async def test_a_known_term_without_a_usable_judgment_waits_and_the_rest_of_the_
         assert memory.jobs.after(SCENE) > before
         assert JargonStore(store).state(SCENE)['after_seq'] == memory.jobs.after(SCENE)
         assert [item['term'] for item in JargonStore(store).pending(SCENE)] == ['手账本']
+
+
+@pytest.mark.asyncio
+async def test_upkeep_stuck_on_provider_failures_starts_over_once_the_chat_model_recovers(tmp_path, monkeypatch):
+    busy = (429, 'application/json', b'{"error": {"message": "rate limited"}}')
+    replies = [busy] * upkeep_module.AUTO_RETRIES + [_text({'expressions': [], 'terms': []})]
+    async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
+        _group_messages(store)
+        monkeypatch.setattr(upkeep_module, 'RETRY_DELAY_SECONDS', 0)
+        upkeep.request(SCENE, 'expressions')
+        # The asked-for pass and its automatic retries all meet the provider limit.
+        for _ in range(upkeep_module.AUTO_RETRIES):
+            assert await upkeep._step(SCENE)
+        # The usual automatic retries are used up; without a recovery it would wait for the panel.
+        assert not await upkeep._step(SCENE)
+        assert len(bodies()) == upkeep_module.AUTO_RETRIES
+        assert memory.jobs.latest(SCENE)['status'] == 'failed'
+
+        upkeep.model_recovered()
+        assert await upkeep._step(SCENE)
+        assert memory.jobs.latest(SCENE)['status'] == 'complete'
+        assert LearningStore(store).latest(SCENE)['status'] == 'complete'
+        # One recovery gives the attempts back once; nothing is left to run.
+        upkeep.model_recovered()
+        assert not await upkeep._step(SCENE)

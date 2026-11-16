@@ -174,6 +174,7 @@ async def test_nonexecuting_modes_keep_baseline_wakes_and_validate_tool_actions(
 @pytest.mark.asyncio
 async def test_disabled_tool_is_not_executable_and_off_state_keeps_original_shape(tmp_path):
     config, persona = _instance(tmp_path)
+    config.attention.declarations = None
     with Store(config.database) as store:
         live = SceneRunner(Chat(config, persona, store, None), lambda event: None)
         assert 'declared' not in store.load_attention(SCENE)

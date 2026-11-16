@@ -88,6 +88,13 @@ class Intent:
     until: float
     source_turn: str | None
     source_call: str | None
+    # When a match of this intent last opened a turn; another message match waits REWAKE_SECONDS.
+    # Cleared when a held match wakes at the end of that window.
+    woke_at: float | None = None
+
+
+# One intent opens at most one turn from messages in this long; matches inside it wake together once it ends.
+REWAKE_SECONDS = 120.0
 
 
 @dataclass
@@ -125,6 +132,23 @@ class Declared:
         match = {'intent': intent.id, 'reason': intent.reason, 'message_id': message_id, 'at': at}
         self.matches = [item for item in self.matches if item['intent'] != intent.id] + [match]
         return match
+
+    def may_wake(self, match: dict, at: float) -> bool:
+        """A timer always may; a message match only once the intent's last wake is REWAKE_SECONDS old."""
+        intent = self.find(match['intent'])
+        return match['message_id'] is None or intent.woke_at is None or at - intent.woke_at >= REWAKE_SECONDS
+
+    def held_until(self, match: dict) -> float | None:
+        """When a message match received inside its intent's rewake window wakes on its own; None otherwise."""
+        woke_at = self.find(match['intent']).woke_at
+        if match['message_id'] is None or woke_at is None or match['at'] - woke_at >= REWAKE_SECONDS:
+            return None
+        return woke_at + REWAKE_SECONDS
+
+    def woke(self, at: float) -> None:
+        """The pending candidates open a turn now."""
+        for match in self.matches:
+            self.find(match['intent']).woke_at = at
 
     def consume(self, *, new_turn: bool) -> None:
         previous = [] if new_turn else self.turn_matches
@@ -210,6 +234,12 @@ def tick(declared: Declared, now: float) -> list[dict]:
             for condition in due:
                 condition['fired'] = True
             matched.append(declared.candidate(intent, now, None))
+    for match in declared.matches:
+        due = declared.held_until(match)
+        if due is not None and due <= now:
+            # Fires once: the window is over, so any later message match may wake as usual.
+            declared.find(match['intent']).woke_at = None
+            matched.append(match)
     return matched
 
 
@@ -217,6 +247,7 @@ def next_due(declared: Declared) -> float | None:
     times = [intent.until for intent in declared.intents]
     times += [condition['due'] for intent in declared.intents for condition in intent.conditions
               if condition['type'] == 'at' and not condition['fired']]
+    times += [due for due in map(declared.held_until, declared.matches) if due is not None]
     return min(times, default=None)
 
 

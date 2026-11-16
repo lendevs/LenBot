@@ -5,7 +5,7 @@ import sqlite3
 from len_bot.next.maintenance.upgrade import migrate_business_database
 from len_bot.next.learning.jargon_store import JargonStore
 from len_bot.next.storage.schema import business_script
-from len_bot.next.storage.store import Store
+from len_bot.next.storage.store import FORMAT_VERSION, Store
 
 
 def test_current_format_upgrade_restores_missing_message_time_indexes(tmp_path):
@@ -27,6 +27,29 @@ def test_current_format_upgrade_restores_missing_message_time_indexes(tmp_path):
         assert any('message_scene_time' in row[3] for row in plan)
         assert all('TEMP B-TREE' not in row[3] for row in plan)
 
+
+
+def test_format_2_upgrade_builds_the_mind_usage_index(tmp_path):
+    path = tmp_path / 'business.db'
+    index = 'CREATE INDEX model_call_mind_usage ON model_calls(scene,role,id) WHERE plugin IS NULL;\n'
+    assert index in business_script()
+    with closing(sqlite3.connect(path)) as db:
+        db.executescript('PRAGMA application_id=1279413809; PRAGMA user_version=2;\n'
+                         + business_script().replace(index, ''))
+        with db:
+            for request, plugin in (('{"from": "chat"}', None), ('{"from": "plugin"}', 'group_digest')):
+                db.execute("INSERT INTO model_calls(role,started,ended,request,usage,scene,plugin) "
+                           "VALUES ('mind',1,2,?,'{}','test:group:1',?)", (request, plugin))
+    assert migrate_business_database(path)
+    assert not migrate_business_database(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == FORMAT_VERSION
+        plan = [row[3] for row in db.execute(
+            "EXPLAIN QUERY PLAN SELECT request FROM model_calls WHERE scene=? AND role='mind' "
+            "AND plugin IS NULL ORDER BY id DESC LIMIT 1", ('test:group:1',))]
+        assert any('USING INDEX model_call_mind_usage' in step for step in plan), plan
+    with Store(path) as store:
+        assert store.last_mind_usage('test:group:1') == ({'from': 'chat'}, {})
 
 def test_jargon_upgrade_preserves_manual_controls_and_queues_old_records(tmp_path):
     path = tmp_path / 'business.db'

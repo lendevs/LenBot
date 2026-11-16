@@ -68,7 +68,21 @@ def _format_4_to_5(source: dict) -> dict:
     return source
 
 
-STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4, 4: _format_4_to_5}
+def _format_5_to_6(source: dict) -> dict:
+    # Format 6 adds the recap's own reasoning effort; leaving it out keeps the mind's quick effort.
+    # It adds model_alert_failed_turns; leaving it out keeps 3.
+    # It also turns persistent intents on by default. Before, null was how the panel saved the default
+    # off, so it becomes the new default; from format 6 on, null is a choice to turn them off.
+    blocks = [source.get("attention"), *(scene.get("attention") for scene in source.get("scenes", {}).values()
+                                         if isinstance(scene, dict))]
+    for attention in blocks:
+        if isinstance(attention, dict) and "declarations" in attention and attention["declarations"] is None:
+            del attention["declarations"]
+    source["config_version"] = 6
+    return source
+
+
+STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4, 4: _format_4_to_5, 5: _format_5_to_6}
 
 
 def migrate_source(source: dict, target: int) -> dict:

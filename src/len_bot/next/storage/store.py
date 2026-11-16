@@ -29,7 +29,7 @@ from .schema import business_script, create_database, expected_tables, require_c
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 FORMAT_UPGRADE = '请停止实例后执行 uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot。'
 MAX_SEARCH_TERMS = 8
 

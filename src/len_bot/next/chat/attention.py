@@ -14,6 +14,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from .session import Chat
+from .freshness import topic_freshness
 from .declarations import AttentionArguments, Declared, declare, match_message, next_due, persisted, tick
 from .disposition import Disposition, allows
 from .recap import estimate_content, estimate_request
@@ -45,10 +46,14 @@ EFFECT_SAMPLES = 10
 EFFECT_WINDOW_SECONDS = 3 * 86400
 EFFECT_HALF_LIFE_SECONDS = 86400
 EFFECT_FLOOR = 0.5
+# Welcomed interjections shorten the interval by at most a fifth; disliked ones may double it.
+EFFECT_CEILING = 1.25
 PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
 # The follow-up an interjection that answered no one opens: the next message from anyone.
 ANYONE = "*"
+# After the host was down or chat turns failed at the model, joining in looks only at this much recent chat.
+CATCH_UP_SECONDS = 300
 
 
 def wake_channel(*, scheduled: bool, notices: bool, events: bool, audio: bool, pending: str | None) -> str:
@@ -237,6 +242,11 @@ class SceneRunner:
             self.chat.toolset.attention = self.declare
         self.chat.set_external_tools(list(self.chat.toolset.external.values()))
         self.resume = self.chat.restore()
+        # Since when the scene is behind: input left from before this start, or a turn that failed at the
+        # model. Until a turn gets a model reply, joining in looks only at the last CATCH_UP_SECONDS.
+        left = [at for _, _, at in self.store.pending_messages(self.config.scene)
+                if at is not None and at < self.started_at]
+        self.behind_since: float | None = min(left, default=None)
 
     def wake_words(self) -> tuple[str, ...]:
         persona = self.chat.persona
@@ -599,7 +609,11 @@ class SceneRunner:
             state.answered()
             return offered(PendingWake('named', at, words, people=[message.sender.uid]), '点名：' + '、'.join(words))
         if matches and self.enforcing:
-            return offered(PendingWake('attention', at), '持续关注条件命中')
+            if any(state.declared.may_wake(match, at) for match in matches):
+                return offered(PendingWake('attention', at), '持续关注条件命中')
+            # Held until the intent's rewake window ends; attention_tick then wakes on it.
+            log_event(logger, 'attention_candidate_held', intents=[match['intent'] for match in matches],
+                      message_id=message.platform_message_id)
         local_blocked = False
         followup = self.followup_of(state, message, at)
         if followup is not None:
@@ -748,8 +762,9 @@ class SceneRunner:
 
     def effect_factor(self) -> float:
         """Up to EFFECT_SAMPLES judged reactions to this group's interjections in the window, each weighted by
-        age: ignored or disliked ones lower the factor toward EFFECT_FLOOR, and the interval before the next
-        interjection grows by its inverse; welcomed ones never shorten it. With no reactions the factor is 1."""
+        age: ignored or disliked ones lower the factor toward EFFECT_FLOOR and welcomed ones raise it toward
+        EFFECT_CEILING; the interval before the next interjection is divided by it. The same balance moves the
+        factor down twice as far as up, so the bot holds back faster than it opens up. With no reactions it is 1."""
         now = self.now()
         reactions = ReplyEffectStore(self.store).reactions(
             self.config.scene, ("ambient", "explore"), now - EFFECT_WINDOW_SECONDS, EFFECT_SAMPLES)
@@ -757,7 +772,7 @@ class SceneRunner:
                    for at, reaction in reactions]
         # Two neutral samples' worth of prior keeps one bad reaction from doubling the interval.
         balance = sum(weight * value for weight, value in weights) / (sum(weight for weight, _ in weights) + 2)
-        return 1 + min(0.0, balance) * (1 - EFFECT_FLOOR)
+        return 1 + (balance * (1 - EFFECT_FLOOR) if balance < 0 else balance * (EFFECT_CEILING - 1))
 
     def ambient_interval(self) -> float:
         """How long after the bot last spoke, or last looked in unprompted, it may join in again."""
@@ -1007,14 +1022,55 @@ class SceneRunner:
             start = good
         return pending[-1][0], contents
 
+    def catch_up_batch(self, pending: list[tuple[int, ChatMessage, float]], reason: str) -> tuple[int, list[str]]:
+        """A batch while the scene is behind: older input under its own heading, the recent part under the wake's."""
+        since = datetime.fromtimestamp(self.behind_since, ZoneInfo(self.config.timezone)).isoformat(timespec="seconds")
+        note = (f"{since} 起 Bot 停机或模型请求失败，期间的消息当时没有回应；按各条原时间理解，不逐条补回，"
+                "@ 你的可以按原时间简短回应")
+        fresh_from = self.now() - CATCH_UP_SECONDS
+        split = next((index for index, (_, _, at) in enumerate(pending) if at is not None and at >= fresh_from),
+                     len(pending))
+        old, fresh = pending[:split], pending[split:]
+        if not old:
+            return self.batch(fresh, reason[:-1] + "；" + note + "]")
+        if not fresh:
+            return self.batch(old, reason[:-1] + "；较早的消息：" + note + "]")
+        _, earlier = self.batch(old, "[较早的消息：" + note + "]")
+        through, recent = self.batch(fresh, reason)
+        return through, earlier + recent
+
+    def fresh_to_join(self, pending: list[tuple[int, ChatMessage, float]]) -> bool:
+        """While behind, something from the last CATCH_UP_SECONDS that is worth joining in on."""
+        fresh_from = self.now() - CATCH_UP_SECONDS
+        return any(at is not None and at >= fresh_from and worth_joining(message, self.settings, self.config.bot_id)
+                   for _, message, at in pending)
+
+    def with_freshness(self, batch: tuple[int, list[str]],
+                       pending: list[tuple[int, ChatMessage, float]]) -> tuple[int, list[str]]:
+        """An unprompted wake's batch, ending with how fresh the talk that woke it is."""
+        woke_at = self.state.pending.first_at
+        if self.state.pending.channel == 'attention' and self.state.declared is not None:
+            # A held message match wakes at the end of its rewake window, after it was received.
+            woke_at = min([woke_at, *(match['at'] for match in self.state.declared.matches
+                                      if match['message_id'] is not None)])
+        freshness = topic_freshness(pending, woke_at=woke_at, now=self.now(),
+                                    timezone=self.config.timezone,
+                                    excluded=(self.config.bot_id, *self.settings.other_bot_ids))
+        through, contents = batch
+        return through, contents if freshness is None else [*contents[:-1], contents[-1] + "\n" + freshness]
+
     def consumed_state(self, *, new_turn: bool = False) -> AttentionState:
         state = copy.deepcopy(self.state)
         if state.declared is not None:
+            if state.pending is not None and state.pending.channel == 'attention':
+                state.declared.woke(self.now())
             state.declared.consume(new_turn=new_turn)
         if state.pending is not None:
             if state.pending.keywords:
                 state.keyword_last.update(dict.fromkeys(state.pending.keywords, self.now()))
-            if state.pending.channel == "ambient":
+            # A turn the model asked for by an intent is a look at the chat too: the interjection
+            # interval, the fallback when nothing is declared, starts again from it.
+            if state.pending.channel in {"ambient", "attention"}:
                 state.ambient_last_at = self.now()
             state.pending = None
         if new_turn:
@@ -1235,6 +1291,10 @@ class SceneRunner:
                             expressions=len(result["expressions"]), steps=self.chat.trace_step or 0)
         if result["status"] == "limited":
             self.resume = True
+        if result.get("model_failure") is not None:
+            self.behind_since = result["model_failure"]["at"] if self.behind_since is None else self.behind_since
+        elif result.get("model_replies"):
+            self.behind_since = None
         result["pending_wake"] = pending_wake
         result["channel"] = channel
         result["silence_level"] = state.silence_level
@@ -1335,10 +1395,22 @@ class SceneRunner:
                         channels.add(self.state.pending.channel)
                         if self.state.pending.explored:
                             channels.add('explore')
+                    catching_up = self.behind_since is not None and not self.resume
+                    if catching_up and channel in {"ambient", "explore"} and not self.fresh_to_join(pending):
+                        # Old chat alone does not open an interjection; it reaches the model with the next turn.
+                        state = copy.deepcopy(self.state)
+                        state.pending = None
+                        self.save_state(state)
+                        log_event(logger, 'attention_catch_up', status='skipped', channel=channel,
+                                  behind_since=self.behind_since, messages=len(pending))
+                        continue
                     reason = ("[恢复未结束的对话]" if self.resume
                               else "[此前未触发唤醒的消息]" if channel in {"schedule", "task", "plugin", "audio"} and self.state.pending is None
                               else self.wake_reason())
-                    batch = self.batch(pending, reason) if pending else None
+                    batch = (None if not pending else self.catch_up_batch(pending, reason) if catching_up
+                             else self.batch(pending, reason))
+                    if batch is not None and channel in {"ambient", "explore", "attention"}:
+                        batch = self.with_freshness(batch, pending)
                     direct = ((self.state.pending is not None and self.state.pending.channel == "direct")
                               or (self.resume and self.state.resume_reserve))
                     wake_received_at = (self.state.pending.first_at
