@@ -10,7 +10,7 @@ ssh -L 52811:127.0.0.1:52811 你的服务器
 
 ## 测试 OneBot 连接时读取不到 Bot 账号
 
-按以下顺序逐项核对：
+依次核对：
 
 1. OneBot 客户端（如 NapCat）已完成 QQ 登录，且对应的 WebSocket 服务已启用。
 2. 正向 WebSocket 模式下，地址以 `ws://` 或 `wss://` 开头；OneBot 运行在容器中时需将端口发布到宿主机，LenBot 运行在容器中连接宿主机 OneBot 时使用 `ws://host.docker.internal:<端口>`。
