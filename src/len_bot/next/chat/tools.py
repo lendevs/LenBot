@@ -424,11 +424,14 @@ class SceneTools:
         return {tool["function"]["name"] for tool in self.tools}
 
     async def describe_image(self, turn_id: str, asset: ImageAsset) -> str:
+        info = {"width": asset.width, "height": asset.height, "animated_grid": asset.animated}
+        if asset.animated:
+            info["grid_note"] = ("动图已抽取多帧按时间顺序排成网格，从左到右、从上到下；请按同一画面随时间的"
+                                 "连续变化描述动作，不要把格子本身当成画面内容。")
         messages = [
             {"role": "system", "content": read_prompt("next_vision.md")},
             {"role": "user", "content": [
-                {"type": "text", "text": encode({"width": asset.width, "height": asset.height,
-                                                "animated_first_frame_only": asset.animated})},
+                {"type": "text", "text": encode(info)},
                 image_block(asset.jpeg),
             ]},
         ]

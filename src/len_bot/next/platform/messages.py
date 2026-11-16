@@ -79,6 +79,19 @@ def plain_text(message: ChatMessage) -> str:
                    for segment in message.segments)
 
 
+# [local patch] 12-name-clip: 群名片可以是整句话，原样进上下文容易被当成发言。
+# uid 已经能唯一定位一个人，名片只需要够认，不需要完整。
+CARD_LIMIT = 16
+
+
+def _display_name(message: ChatMessage) -> str | None:
+    """The name shown in the transcript; a long free-form card is clipped."""
+    name = (message.sender.card or message.sender.nickname or '').strip()
+    if not name:
+        return None
+    return name if len(name) <= CARD_LIMIT else name[:CARD_LIMIT] + '…'
+
+
 def _speaker(message: ChatMessage) -> str:
     if message.is_self:
         if message.send_status == "failed":
@@ -88,7 +101,7 @@ def _speaker(message: ChatMessage) -> str:
         if message.send_status == "simulated":
             return "我（模拟）"
         return "我"
-    name = message.sender.card or message.sender.nickname
+    name = _display_name(message)
     return f"{name}({message.sender.uid})" if name else f"{message.sender.uid}"
 
 
@@ -184,7 +197,7 @@ def render_batch(items: Sequence[tuple[ChatMessage, ChatMessage | None, dict[int
             lines.append(f"{message.scene}｜{local.date()}｜{timezone} {local.strftime('%z')}")
             previous = header
         # Names and IDs are data on one line, not new batch headings.
-        name = '我' if message.is_self else message.sender.card or message.sender.nickname
+        name = '我' if message.is_self else _display_name(message)
         speaker = (f"{message.sender.uid}" if name is None else
                    f"{json.dumps(name, ensure_ascii=False)}({message.sender.uid})")
         labels = []
@@ -202,5 +215,8 @@ def render_batch(items: Sequence[tuple[ChatMessage, ChatMessage | None, dict[int
             excerpt = json.dumps(_body(reply.segments)[:40], ensure_ascii=False)
             who = json.dumps(_speaker(reply), ensure_ascii=False)
             lines.append(f"  引用节选 {who}{'（已撤回）' if reply.recalled else ''}：{excerpt}")
-        lines.extend('  ' + line for line in _body(message.segments, audio).split('\n'))
+        body = _body(message.segments, audio)
+        # [local patch] 12-name-clip: 没有正文时不留空行，否则像「说了句空话」。
+        if body.strip():
+            lines.extend('  ' + line for line in body.split('\n'))
     return '\n'.join(lines)

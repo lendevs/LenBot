@@ -459,8 +459,28 @@ class ChatContext:
                 if not (message['role'] == 'user' and isinstance(message['content'], str)
                         and message['content'].startswith('宿主启动状态：'))]
 
+    @staticmethod
+    def _unspoken_thought(message: dict) -> dict:
+        """A plain-text assistant entry is an inner thought, not a sent reply.
+
+        Kept as an assistant message, it becomes a few-shot example of answering without
+        the outlet tool, and later turns keep copying that shape (silent "listening").
+        Re-label it as a read-only note so the model sees what it thought without
+        imitating the format. Entries carrying tool_calls must stay untouched so
+        tool messages keep their preceding assistant call.
+        """
+        if message.get('role') != 'assistant' or message.get('tool_calls'):
+            return message
+        content = message.get('content')
+        if not isinstance(content, str) or not content.strip():
+            return message
+        return {'role': 'user',
+                'content': '[上一轮未发出的内部想法，不是发言；不要模仿这种写法，要开口必须调用 say 工具] '
+                           + content.strip()}
+
     def project_entries(self, entries: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
         entries = self.conversation_entries(entries)
+        entries = [(seq, self._unspoken_thought(message)) for seq, message in entries]
         return [(seq, projected) for seq, message in project_old_results(
             entries, self.config.compaction.keep_recent_tokens)
             for projected in project_messages([message], self.config.models.roles.mind.history_policy)]
