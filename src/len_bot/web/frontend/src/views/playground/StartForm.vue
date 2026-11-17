@@ -22,6 +22,7 @@ const props = defineProps<{ scene?: string; persona?: string }>()
 const emit = defineEmits<{ started: [trial: TrialInfo] }>()
 
 const { t } = useI18n()
+const groupId = (value: string) => value.split(':').slice(2).join(':') || value
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const roles = useQuery({
   queryKey: keys.personas.all(),
@@ -47,10 +48,14 @@ watch(
   { immediate: true },
 )
 const sceneOptions = computed(() =>
-  scenes.value.map((item) => ({
-    value: item.scene,
-    label: `${groupLabel(item.scene)} · ${item.persona.name}`,
-  })),
+  scenes.value.map((item) => {
+    const name = groupLabel(item.scene)
+    const id = groupId(item.scene)
+    return {
+      value: item.scene,
+      label: `${id !== name ? `${name} (${id})` : name} · ${item.persona.name}`,
+    }
+  }),
 )
 const role = ref(props.persona ?? '')
 const roleOptions = computed(() =>
@@ -99,10 +104,7 @@ const ready = computed(() => Boolean(scene.value) && (from.value === 'group' || 
 </script>
 
 <template>
-  <form
-    class="flex max-w-3xl flex-col gap-5 rounded-xl border border-line bg-surface p-5"
-    @submit.prevent="start.mutate()"
-  >
+  <form class="flex max-w-2xl flex-col gap-6" @submit.prevent="start.mutate()">
     <FormSection :title="t('playground.start.title')">
       <Field :label="t('playground.start.from')" wide>
         <div><SegmentedControl v-model="from" :options="froms" :label="t('playground.start.from')" /></div>

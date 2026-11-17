@@ -48,8 +48,10 @@ async function remove() {
 </script>
 
 <template>
-  <div class="flex items-center gap-4">
-    <Avatar :name="name || role.key" :src="personaAvatar(role)" :size="72" />
+  <div class="flex flex-wrap items-center gap-3">
+    <span class="inline-flex shrink-0 rounded-full ring-1 ring-line">
+      <Avatar :name="name || role.key" :src="personaAvatar(role)" :size="40" />
+    </span>
     <input
       ref="picker"
       type="file"
@@ -79,7 +81,6 @@ async function remove() {
       >
         {{ t('common.delete') }}
       </Button>
-      <span class="w-full text-xs text-subtle">PNG</span>
     </div>
   </div>
 </template>

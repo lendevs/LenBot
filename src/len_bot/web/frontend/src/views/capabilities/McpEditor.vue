@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, Plug, PlugZap, Plus, Trash2, X } from '@lucide/vue'
+import { ArrowLeft, ChevronDown, Plug, PlugZap, Plus, Trash2, X } from '@lucide/vue'
 import { capabilitiesApi, type McpService, type McpState } from '../../api/capabilities'
 import { keys } from '../../api/query'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
@@ -28,7 +28,7 @@ import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import RawRecord from '../groups/tasks/RawRecord.vue'
 import ScenePicker from '../plugins/schema/ScenePicker.vue'
-import { mcpTone } from './status'
+import { mcpTone, sceneSecondaryId } from './status'
 
 /** `name` is null while adding a service. */
 const props = defineProps<{ name: string | null; state: McpState; wide: boolean }>()
@@ -216,12 +216,17 @@ const saveError = computed(() =>
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-5">
-    <div class="flex min-w-0 items-center gap-2">
-      <Button v-if="!wide" variant="ghost" size="sm" :icon="ArrowLeft" class="-ml-2" @click="emit('back')">
-        {{ t('capabilities.mcp.all') }}
-      </Button>
-      <h2 class="min-w-0 flex-1 truncate text-base font-semibold" :class="!wide && 'sr-only'">
+  <div class="flex min-w-0 max-w-3xl flex-col gap-6">
+    <div class="flex min-w-0 items-center justify-between gap-3 border-b border-line pb-3">
+      <span v-if="!wide" class="-ml-2 inline-flex">
+        <Button variant="ghost" size="sm" :icon="ArrowLeft" @click="emit('back')">
+          {{ t('capabilities.mcp.all') }}
+        </Button>
+      </span>
+      <h2
+        class="min-w-0 flex-1 truncate font-mono text-lg font-semibold text-ink"
+        :class="!wide && 'sr-only'"
+      >
         {{ name ?? t('capabilities.mcp.add') }}
       </h2>
       <Button
@@ -236,53 +241,69 @@ const saveError = computed(() =>
       </Button>
     </div>
 
-    <section v-if="running" class="flex flex-col gap-3 rounded-xl border border-line bg-surface p-5">
-      <div class="flex flex-wrap items-center gap-2">
+    <section v-if="running" class="flex flex-col gap-3.5 border-b border-line pb-6">
+      <div class="flex flex-wrap items-center gap-2.5">
         <Badge :tone="mcpTone(running.status)" dot>
           {{ t(`capabilities.mcp.status.${running.status}`, running.status) }}
         </Badge>
-        <span class="min-w-0 flex-1 truncate text-sm text-muted">
-          {{ running.scenes.map(groupLabel).join(t('personas.separator')) || t('capabilities.mcp.noGroups') }}
-        </span>
-        <Button
-          size="sm"
-          :icon="PlugZap"
-          :disabled="running.status === 'disabled'"
-          :loading="control.isPending.value && control.variables.value === 'connect'"
-          @click="reconnect"
-        >
-          {{ t('capabilities.mcp.reconnect') }}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          :icon="Plug"
-          :disabled="!['running', 'connecting'].includes(running.status)"
-          :loading="control.isPending.value && control.variables.value === 'disconnect'"
-          @click="control.mutate('disconnect')"
-        >
-          {{ t('capabilities.mcp.disconnect') }}
-        </Button>
+        <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2.5 gap-y-1 text-sm text-muted">
+          <template v-if="running.scenes.length">
+            <span v-for="scene in running.scenes" :key="scene" class="inline-flex items-baseline gap-1">
+              <span class="text-ink-2">{{ groupLabel(scene) }}</span>
+              <span v-if="sceneSecondaryId(scene)" class="font-mono text-xs text-muted tabular">
+                {{ sceneSecondaryId(scene) }}
+              </span>
+            </span>
+          </template>
+          <span v-else>{{ t('capabilities.mcp.noGroups') }}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <Button
+            size="sm"
+            :icon="PlugZap"
+            :disabled="running.status === 'disabled'"
+            :loading="control.isPending.value && control.variables.value === 'connect'"
+            @click="reconnect"
+          >
+            {{ t('capabilities.mcp.reconnect') }}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            :icon="Plug"
+            :disabled="!['running', 'connecting'].includes(running.status)"
+            :loading="control.isPending.value && control.variables.value === 'disconnect'"
+            @click="control.mutate('disconnect')"
+          >
+            {{ t('capabilities.mcp.disconnect') }}
+          </Button>
+        </div>
       </div>
       <ErrorNote v-if="running.error" :title="t('capabilities.mcp.connectFailed')" :error="running.error" />
-      <details v-if="running.tools.length">
-        <summary class="cursor-pointer text-sm font-medium text-ink-2">
+      <details v-if="running.tools.length" class="group">
+        <summary
+          class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-sm font-medium text-ink-2 tabular transition-colors select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+        >
           {{ t('capabilities.mcp.tools', { n: running.tools.length }, running.tools.length) }}
+          <ChevronDown :size="15" class="transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
-        <ul class="mt-2 flex list-none flex-col divide-y divide-line">
+        <ul class="mt-2 flex list-none flex-col divide-y divide-line border-t border-line">
           <li
             v-for="tool in running.tools"
             :key="tool.name"
             class="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2"
           >
-            <code class="rounded-sm bg-fill px-1.5 py-0.5 font-mono text-sm">{{ tool.name }}</code>
+            <code class="rounded-sm bg-fill px-1.5 py-0.5 font-mono text-sm text-ink">{{ tool.name }}</code>
             <span class="min-w-0 text-sm text-ink-2">{{ tool.description }}</span>
           </li>
         </ul>
       </details>
-      <details v-if="running.errors.length">
-        <summary class="cursor-pointer text-sm font-medium text-error">
+      <details v-if="running.errors.length" class="group">
+        <summary
+          class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-sm font-medium text-error tabular select-none focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+        >
           {{ t('capabilities.mcp.errors', { n: running.errors.length }, running.errors.length) }}
+          <ChevronDown :size="15" class="transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
         <ul class="mt-2 flex list-none flex-col gap-2">
           <li v-for="(item, index) in running.errors" :key="index" class="flex flex-col gap-1">
@@ -296,7 +317,7 @@ const saveError = computed(() =>
       <RawRecord v-if="developerDetails" :label="t('capabilities.mcp.raw')" :code="running" />
     </section>
 
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+    <div class="flex min-w-0 flex-col gap-6">
       <FormSection>
         <Field
           v-if="name === null"
@@ -306,7 +327,7 @@ const saveError = computed(() =>
         >
           <Input v-model="draft.name" mono placeholder="search_docs" autofocus />
         </Field>
-        <Field :label="t('capabilities.mcp.enabled')" inline :class="name === null ? '' : 'sm:col-span-2'">
+        <Field :label="t('capabilities.mcp.enabled')" inline :wide="name !== null">
           <Switch v-model="draft.enabled" />
         </Field>
         <Field :label="t('capabilities.mcp.scenes')" wide :error="dirty ? errors.scenes : null">
@@ -349,11 +370,11 @@ const saveError = computed(() =>
         :title="draft.type === 'stdio' ? t('capabilities.mcp.env') : t('capabilities.mcp.headers')"
         :columns="1"
       >
-        <ul v-if="draft.pairs.length" class="flex list-none flex-col gap-2">
+        <ul v-if="draft.pairs.length" class="flex list-none flex-col gap-2.5">
           <li
             v-for="(pair, index) in draft.pairs"
             :key="index"
-            class="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-2"
+            class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 max-sm:border-b max-sm:border-line max-sm:pb-2.5 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto]"
           >
             <Input
               :model-value="pair.key"
@@ -363,15 +384,17 @@ const saveError = computed(() =>
               :placeholder="t('capabilities.mcp.pairName')"
               @update:model-value="(value: string) => setPair(index, { key: value })"
             />
-            <Input
-              :model-value="pair.value"
-              type="password"
-              mono
-              autocomplete="new-password"
-              :aria-label="t('capabilities.mcp.pairValue')"
-              :placeholder="pair.kept ? t('plugins.form.secretKept') : t('capabilities.mcp.pairValue')"
-              @update:model-value="(value: string) => setPair(index, { value })"
-            />
+            <div class="col-span-2 order-last min-w-0 sm:col-span-1 sm:order-none">
+              <Input
+                :model-value="pair.value"
+                type="password"
+                mono
+                autocomplete="new-password"
+                :aria-label="t('capabilities.mcp.pairValue')"
+                :placeholder="pair.kept ? t('plugins.form.secretKept') : t('capabilities.mcp.pairValue')"
+                @update:model-value="(value: string) => setPair(index, { value })"
+              />
+            </div>
             <IconButton
               :icon="X"
               :label="t('common.delete')"
@@ -382,12 +405,11 @@ const saveError = computed(() =>
           </li>
         </ul>
         <p v-if="errors.pairs" class="text-xs text-error">{{ errors.pairs }}</p>
-        <div>
+        <div class="-ml-2 flex">
           <Button
             size="sm"
             variant="ghost"
             :icon="Plus"
-            class="-ml-2"
             @click="draft.pairs = [...draft.pairs, { key: '', value: '', kept: false }]"
           >
             {{ t('capabilities.mcp.addPair') }}

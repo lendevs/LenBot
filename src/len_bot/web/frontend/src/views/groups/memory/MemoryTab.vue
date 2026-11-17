@@ -49,8 +49,13 @@ const view = computed<View>(() =>
 )
 
 /** A file opened from search results. */
+const browseScope = ref<MemoryScope>('scene')
+const scopes = computed(() =>
+  (['scene', 'public'] as const).map((value) => ({ value, label: t(`groups.memory.scopes.${value}`) })),
+)
 const opening = ref<{ scope: MemoryScope; path: string } | null>(null)
 function openHit(hit: { scope: MemoryScope; path: string }) {
+  browseScope.value = hit.scope
   opening.value = { scope: hit.scope, path: hit.path }
   chosen.value = 'browse'
 }
@@ -72,6 +77,13 @@ async function switchTo(value: View) {
   dirty[current] = false
   chosen.value = value
 }
+async function switchScope(value: MemoryScope) {
+  if (value === browseScope.value) return
+  if (dirty.browse && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+    return
+  dirty.browse = false
+  browseScope.value = value
+}
 </script>
 
 <template>
@@ -90,24 +102,30 @@ async function switchTo(value: View) {
         :recap="entry.recap_plugin"
         :time-zone="timeZone"
       />
-      <p v-if="!enabled" class="rounded-lg border border-line px-4 py-3 text-sm text-muted">
+      <p v-if="!enabled" class="rounded-lg bg-fill px-4 py-3 text-sm text-muted">
         {{ t('groups.memory.off') }}
       </p>
       <div
         v-if="state.data.value.index?.needs_rebuild && view !== 'index'"
         class="flex flex-wrap items-center gap-3 rounded-lg bg-warning-bg px-4 py-3 text-sm text-warning"
       >
-        <TriangleAlert :size="16" aria-hidden="true" />
+        <TriangleAlert :size="16" class="shrink-0" aria-hidden="true" />
         <span class="min-w-0 flex-1">{{ t('groups.memory.needsRebuild') }}</span>
         <Button size="sm" @click="selected = 'index'">{{ t('groups.memory.toIndex') }}</Button>
       </div>
-      <SegmentedControl
-        v-if="views.length > 1"
-        v-model="selected"
-        :options="views"
-        :label="t('groups.tabs.memory')"
-        class="self-start"
-      />
+      <div v-if="views.length > 1" class="flex flex-wrap items-center gap-2.5">
+        <SegmentedControl v-model="selected" :options="views" :label="t('groups.tabs.memory')" />
+        <template v-if="view === 'browse' && used && state.data.value.public_readable">
+          <span class="h-4 w-px bg-line max-sm:hidden" aria-hidden="true" />
+          <SegmentedControl
+            :model-value="browseScope"
+            :options="scopes"
+            size="sm"
+            :label="t('groups.memory.scope')"
+            @update:model-value="switchScope"
+          />
+        </template>
+      </div>
 
       <MemorySettingsView v-if="view === 'settings'" @dirty="(value: boolean) => (dirty.settings = value)" />
       <IndexView
@@ -119,6 +137,7 @@ async function switchTo(value: View) {
       <BrowseView
         v-else-if="view === 'browse'"
         :scene="scene"
+        :scope="browseScope"
         :state="state.data.value"
         :time-zone="timeZone"
         :opening="opening"

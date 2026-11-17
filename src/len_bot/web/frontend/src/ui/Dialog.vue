@@ -25,29 +25,29 @@ const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl
       <DialogOverlay class="ui-overlay fixed inset-0 z-(--z-dialog) bg-overlay backdrop-blur-[2px]" />
       <DialogContent
         :aria-describedby="undefined"
-        class="ui-dialog fixed top-1/2 left-1/2 z-(--z-dialog) flex max-h-[min(88dvh,860px)] w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-surface-raised text-ink shadow-dialog outline-none"
+        class="ui-dialog fixed top-1/2 left-1/2 z-(--z-dialog) flex max-h-[min(88dvh,860px)] w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-line bg-surface-raised text-ink shadow-dialog outline-none sm:w-[calc(100vw-32px)]"
         :class="widths[size]"
         @escape-key-down="(event) => busy && event.preventDefault()"
         @pointer-down-outside="(event) => busy && event.preventDefault()"
         @interact-outside="(event) => busy && event.preventDefault()"
       >
-        <header class="flex shrink-0 items-start justify-between gap-4 px-6 pt-5 pb-3">
-          <DialogTitle class="pt-0.5 text-lg font-semibold">{{ title }}</DialogTitle>
+        <header class="flex shrink-0 items-start justify-between gap-4 px-5 pt-5 pb-3 sm:px-6">
+          <DialogTitle class="min-w-0 pt-0.5 text-lg font-semibold text-ink">{{ title }}</DialogTitle>
           <slot name="header" />
           <DialogClose
             :disabled="busy"
-            class="-mr-2 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:opacity-40"
+            class="-mr-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-40"
             :aria-label="t('ui.dialog.close')"
           >
             <X :size="18" aria-hidden="true" />
           </DialogClose>
         </header>
-        <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-5 scrollbar-thin">
+        <div class="min-h-0 flex-1 overflow-y-auto px-5 pb-5 scrollbar-thin sm:px-6">
           <slot />
         </div>
         <footer
           v-if="$slots.footer"
-          class="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line px-6 py-3.5"
+          class="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-3.5 sm:px-6"
         >
           <slot name="footer" />
         </footer>

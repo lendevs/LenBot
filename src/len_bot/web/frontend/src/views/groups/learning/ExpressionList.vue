@@ -5,13 +5,13 @@ import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { BookmarkPlus, Pencil } from '@lucide/vue'
 import { learningApi, type Expression, type Review } from '../../../api/learning'
 import { keys } from '../../../api/query'
+import { formatNumber } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import Dialog from '../../../ui/Dialog.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
-import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import Textarea from '../../../ui/Textarea.vue'
@@ -22,6 +22,7 @@ import { useEdits } from './useEdits'
 import { usePagedList } from './usePagedList'
 
 const props = defineProps<{ scene: string }>()
+const filter = defineModel<Review>('filter', { default: 'pending' })
 const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
@@ -29,13 +30,7 @@ const client = useQueryClient()
 const list = usePagedList<Expression, Review>(
   (status, offset) => keys.scene.learning(props.scene, 'expressions', status, offset),
   (status, offset, signal) => learningApi.expressions(props.scene, status, offset, signal),
-  'pending',
-)
-const filters = computed(() =>
-  (['pending', 'adopted', 'rejected'] as const).map((value) => ({
-    value,
-    label: t(`groups.learning.review.${value}`),
-  })),
+  filter,
 )
 const edits = useEdits((item: Expression) => ({ situation: item.situation, style: item.style }))
 watch(edits.dirty, (value) => emit('dirty', value), { immediate: true })
@@ -91,15 +86,7 @@ const addExample = useMutation({
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <SegmentedControl
-      :model-value="list.filter.value"
-      :options="filters"
-      size="sm"
-      :label="t('groups.learning.kinds.expressions')"
-      class="self-start"
-      @update:model-value="(value: Review) => list.choose(value)"
-    />
+  <div class="flex min-w-0 flex-col gap-4">
     <Skeleton v-if="list.query.isPending.value" :lines="4" />
     <ErrorNote
       v-else-if="list.query.isError.value"
@@ -110,7 +97,7 @@ const addExample = useMutation({
     <EmptyState v-else-if="!list.page.value?.items.length" :title="t('groups.learning.empty')" compact />
     <template v-else-if="list.page.value">
       <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
-        <li v-for="item in list.page.value.items" :key="item.id" class="flex flex-col gap-3 py-3.5">
+        <li v-for="item in list.page.value.items" :key="item.id" class="flex flex-col gap-3 py-4">
           <div v-if="edits.editing(item.id)" class="grid gap-3 sm:grid-cols-2">
             <Field :label="t('groups.learning.expression.situation')">
               <Textarea v-model="edits.draft(item.id).situation" :rows="1" />
@@ -120,72 +107,75 @@ const addExample = useMutation({
             </Field>
           </div>
           <div v-else class="flex min-w-0 flex-col gap-1">
-            <p class="text-xs text-muted">{{ item.situation }}</p>
-            <p class="text-base break-words text-ink">{{ item.style }}</p>
+            <p class="text-xs font-medium text-muted">{{ item.situation }}</p>
+            <p class="text-base leading-6 break-words text-ink">{{ item.style }}</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <span class="text-xs text-subtle">
-              {{ t('groups.learning.sources', { n: item.count }) }}
+            <span class="text-xs text-subtle tabular">
+              {{ t('groups.learning.sources', { n: formatNumber(item.count) }) }}
             </span>
-            <Badge v-if="(item.disliked ?? 0) >= 2" tone="warning">
-              {{ t('groups.learning.expression.disliked', { n: item.disliked }) }}
+            <Badge v-if="(item.disliked ?? 0) >= 2" tone="warning" class="tabular">
+              {{ t('groups.learning.expression.disliked', { n: formatNumber(item.disliked ?? 0) }) }}
             </Badge>
-            <span class="mr-auto" />
-            <template v-if="edits.editing(item.id)">
-              <Button size="sm" variant="ghost" @click="edits.stop(item.id)">{{ t('common.cancel') }}</Button>
-              <Button
-                size="sm"
-                variant="primary"
-                :loading="busy(item)"
-                :disabled="invalid(item) || !edits.changed(item.id)"
-                @click="save.mutate({ item, status: item.status })"
-              >
-                {{ t('common.save') }}
-              </Button>
-            </template>
-            <template v-else>
-              <Button size="sm" variant="ghost" :icon="Pencil" @click="edits.start(item)">
-                {{ t('common.edit') }}
-              </Button>
-              <Button
-                v-if="item.status === 'adopted'"
-                size="sm"
-                variant="ghost"
-                :icon="BookmarkPlus"
-                @click="
-                  example = { expression_id: item.id, context: item.situation, line: item.style, tags: [] }
-                "
-              >
-                {{ t('groups.learning.example.action') }}
-              </Button>
-              <Button
-                v-if="item.status !== 'pending'"
-                size="sm"
-                variant="ghost"
-                :disabled="busy(item)"
-                @click="save.mutate({ item, status: 'pending' })"
-              >
-                {{ t('groups.learning.actions.restore') }}
-              </Button>
-              <Button
-                v-if="item.status !== 'rejected'"
-                size="sm"
-                variant="ghost"
-                :disabled="busy(item)"
-                @click="save.mutate({ item, status: 'rejected' })"
-              >
-                {{ t('groups.learning.actions.reject') }}
-              </Button>
-              <Button
-                v-if="item.status !== 'adopted'"
-                size="sm"
-                variant="primary"
-                :loading="busy(item)"
-                @click="save.mutate({ item, status: 'adopted' })"
-              >
-                {{ t('groups.learning.actions.adopt') }}
-              </Button>
-            </template>
+            <div class="ml-auto flex flex-wrap items-center gap-1.5">
+              <template v-if="edits.editing(item.id)">
+                <Button size="sm" variant="ghost" @click="edits.stop(item.id)">
+                  {{ t('common.cancel') }}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  :loading="busy(item)"
+                  :disabled="invalid(item) || !edits.changed(item.id)"
+                  @click="save.mutate({ item, status: item.status })"
+                >
+                  {{ t('common.save') }}
+                </Button>
+              </template>
+              <template v-else>
+                <Button size="sm" variant="ghost" :icon="Pencil" @click="edits.start(item)">
+                  {{ t('common.edit') }}
+                </Button>
+                <Button
+                  v-if="item.status === 'adopted'"
+                  size="sm"
+                  variant="ghost"
+                  :icon="BookmarkPlus"
+                  @click="
+                    example = { expression_id: item.id, context: item.situation, line: item.style, tags: [] }
+                  "
+                >
+                  {{ t('groups.learning.example.action') }}
+                </Button>
+                <Button
+                  v-if="item.status !== 'pending'"
+                  size="sm"
+                  variant="ghost"
+                  :disabled="busy(item)"
+                  @click="save.mutate({ item, status: 'pending' })"
+                >
+                  {{ t('groups.learning.actions.restore') }}
+                </Button>
+                <Button
+                  v-if="item.status !== 'rejected'"
+                  size="sm"
+                  variant="ghost"
+                  :disabled="busy(item)"
+                  @click="save.mutate({ item, status: 'rejected' })"
+                >
+                  {{ t('groups.learning.actions.reject') }}
+                </Button>
+                <Button
+                  v-if="item.status !== 'adopted'"
+                  size="sm"
+                  variant="primary"
+                  :loading="busy(item)"
+                  @click="save.mutate({ item, status: 'adopted' })"
+                >
+                  {{ t('groups.learning.actions.adopt') }}
+                </Button>
+              </template>
+            </div>
           </div>
         </li>
       </ul>

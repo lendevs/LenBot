@@ -56,19 +56,19 @@ function submit() {
       </Field>
     </form>
     <template #footer>
-      <Button
-        v-if="!adding && removable"
-        variant="danger-ghost"
-        class="mr-auto"
-        @click="
-          () => {
-            emit('remove', draft.uid)
-            open = false
-          }
-        "
-      >
-        {{ t('common.delete') }}
-      </Button>
+      <div v-if="!adding && removable" class="mr-auto">
+        <Button
+          variant="danger-ghost"
+          @click="
+            () => {
+              emit('remove', draft.uid)
+              open = false
+            }
+          "
+        >
+          {{ t('common.delete') }}
+        </Button>
+      </div>
       <Button variant="ghost" @click="open = false">{{ t('common.cancel') }}</Button>
       <Button type="submit" form="member-form" variant="primary" :disabled="!draft.nickname.trim()">
         {{ t('common.save') }}

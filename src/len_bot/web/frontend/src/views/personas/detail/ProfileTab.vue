@@ -24,19 +24,22 @@ const more = ref(
 </script>
 
 <template>
-  <form v-if="form.draft.value" class="flex max-w-3xl flex-col gap-8" @submit.prevent="form.save('identity')">
+  <form
+    v-if="form.draft.value"
+    class="flex max-w-3xl flex-col gap-8 pb-6"
+    @submit.prevent="form.save('identity')"
+  >
     <FormSection :title="t('personas.detail.profile.who')">
-      <Field wide>
-        <AvatarEditor :role="role" :name="form.draft.value.name" />
-      </Field>
       <Field
         :label="t('personas.detail.profile.name')"
         :error="form.draft.value.name.trim() ? null : t('personas.detail.problems.name')"
         required
-        wide
       >
-        <Input v-model="form.draft.value.name" class="sm:max-w-sm" />
+        <Input v-model="form.draft.value.name" />
       </Field>
+      <div class="flex min-w-0 items-start sm:pt-6">
+        <AvatarEditor :role="role" :name="form.draft.value.name" />
+      </div>
     </FormSection>
     <FormSection :title="t('personas.detail.profile.character')" :columns="1">
       <Field :label="t('personas.detail.profile.brief')">

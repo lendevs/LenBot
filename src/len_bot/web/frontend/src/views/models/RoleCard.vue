@@ -101,9 +101,17 @@ watch(retries, (text) => {
 </script>
 
 <template>
-  <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-5">
+  <section class="flex min-w-0 flex-col gap-4 py-6 first:pt-1 last:pb-0">
     <header class="flex min-h-8 items-center justify-between gap-3">
-      <h3 class="text-base font-semibold text-ink">{{ title }}</h3>
+      <div class="flex min-w-0 items-baseline gap-2.5">
+        <h3 class="text-base font-semibold text-ink">{{ title }}</h3>
+        <span
+          v-if="binding && !mindSees && binding.model"
+          class="truncate font-mono text-xs text-muted max-sm:hidden"
+        >
+          {{ binding.model }}
+        </span>
+      </div>
       <Switch v-if="role !== 'mind' && !mindSees" v-model="enabled" :aria-label="title" />
     </header>
     <p v-if="!binding || mindSees" class="text-sm text-muted">
@@ -116,7 +124,7 @@ watch(retries, (text) => {
       }}
     </p>
     <template v-if="binding && !mindSees">
-      <div class="grid gap-x-5 gap-y-5 sm:grid-cols-3">
+      <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
         <Field :label="t('models.roles.provider')">
           <Select
             :model-value="binding.provider"
@@ -153,21 +161,23 @@ watch(retries, (text) => {
             "
           />
         </Field>
-        <Field v-if="role === 'mind' || role === 'vision'" :label="t('models.roles.imageInput')">
+      </div>
+      <div v-if="role === 'mind' || role === 'vision'" class="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+        <Field :label="t('models.roles.imageInput')" inline>
           <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
         </Field>
-        <Field v-if="role === 'mind'" :label="t('models.roles.quickReply')">
+        <Field v-if="role === 'mind'" :label="t('models.roles.quickReply')" inline>
           <Switch v-model="quickReply" :aria-label="t('models.roles.quickReply')" />
         </Field>
       </div>
       <details class="group">
         <summary
-          class="flex w-fit cursor-pointer list-none items-center gap-1 text-sm text-muted hover:text-ink [&::-webkit-details-marker]:hidden"
+          class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm py-0.5 text-sm font-medium text-muted transition-colors select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
         >
           {{ t('models.roles.advanced') }}
           <ChevronDown :size="16" class="transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
-        <div class="mt-4 grid gap-x-5 gap-y-5 sm:grid-cols-3">
+        <div class="mt-4 grid gap-x-5 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
           <Field :label="t('models.roles.timeout')">
             <NumberInput
               v-model="binding.timeout_seconds"

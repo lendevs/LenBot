@@ -93,8 +93,8 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div class="flex min-w-0 max-w-3xl flex-col gap-6">
+    <div class="border-b border-line pb-6">
       <Field :label="t('system.advanced.developer')" inline>
         <Switch v-model="developerMode" />
       </Field>
@@ -107,7 +107,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
       :retry="settings.refetch"
     />
     <template v-else-if="draft">
-      <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+      <div class="flex min-w-0 flex-col gap-6">
         <FormSection
           v-for="{ group, fields } in groups"
           :key="group"

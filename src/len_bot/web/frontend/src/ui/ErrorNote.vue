@@ -8,7 +8,7 @@ import { describeError } from './errors'
 
 const props = withDefaults(
   defineProps<{
-    /** What failed, such as 设置没有保存. */
+    /** Short summary of what failed. */
     title?: string
     error: unknown
     retry?: () => unknown
@@ -27,15 +27,30 @@ const raw = computed(() => {
 </script>
 
 <template>
-  <div role="alert" class="flex animate-fade gap-3 rounded-lg bg-error-bg px-4 py-3 text-ink">
-    <CircleAlert :size="18" class="mt-px shrink-0 text-error" aria-hidden="true" />
+  <div
+    role="alert"
+    class="flex animate-fade items-start gap-3 rounded-lg border border-error-line bg-error-bg px-4 py-3 text-ink"
+  >
+    <CircleAlert :size="18" class="mt-0.5 shrink-0 text-error" aria-hidden="true" />
     <div class="min-w-0 flex-1">
-      <p class="text-sm font-semibold text-error">{{ title ?? t('ui.error.title') }}</p>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <p class="min-w-0 text-sm font-semibold text-error">{{ title ?? t('ui.error.title') }}</p>
+        <Button
+          v-if="retry"
+          size="xs"
+          variant="ghost"
+          :icon="RotateCw"
+          class="-my-1 shrink-0"
+          @click="retry()"
+        >
+          {{ t('common.retry') }}
+        </Button>
+      </div>
       <p class="mt-0.5 text-sm break-words whitespace-pre-line text-ink-2">{{ described.message }}</p>
       <button
         v-if="raw"
         type="button"
-        class="mt-1.5 inline-flex cursor-pointer items-center gap-0.5 rounded-sm text-xs font-medium text-muted hover:text-ink focus-visible:focus-ring"
+        class="mt-1.5 inline-flex cursor-pointer items-center gap-0.5 rounded-sm text-xs font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
         :aria-expanded="showRaw"
         @click="showRaw = !showRaw"
       >
@@ -51,8 +66,5 @@ const raw = computed(() => {
         <CodeBlock v-if="showRaw && raw" :code="raw" class="mt-2" :max-lines="12" />
       </Transition>
     </div>
-    <Button v-if="retry" size="sm" variant="ghost" :icon="RotateCw" class="-my-0.5 shrink-0" @click="retry()">
-      {{ t('common.retry') }}
-    </Button>
   </div>
 </template>

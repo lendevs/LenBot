@@ -29,14 +29,16 @@ function toggle(name: string, on: boolean | 'indeterminate') {
       :error="plugins.error.value"
       :retry="plugins.refetch"
     />
-    <EmptyState v-else-if="!plugins.data.value?.plugins.length" :title="t('setup.plugins.none')" />
-    <ul v-else class="flex flex-col divide-y divide-line rounded-xl border border-line bg-surface">
-      <li v-for="item in plugins.data.value.plugins" :key="item.name" class="flex gap-3 px-4 py-3.5">
-        <Checkbox
-          :model-value="draft.plugins.includes(item.name)"
-          :aria-label="item.title"
-          @update:model-value="(on) => toggle(item.name, on)"
-        />
+    <EmptyState v-else-if="!plugins.data.value?.plugins.length" :title="t('setup.plugins.none')" compact />
+    <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li v-for="item in plugins.data.value.plugins" :key="item.name" class="flex min-w-0 gap-3 py-3.5">
+        <span class="pt-0.5">
+          <Checkbox
+            :model-value="draft.plugins.includes(item.name)"
+            :aria-label="item.title"
+            @update:model-value="(on) => toggle(item.name, on)"
+          />
+        </span>
         <div class="flex min-w-0 flex-1 flex-col gap-1">
           <div class="flex min-w-0 flex-wrap items-center gap-2">
             <span class="font-medium text-ink">{{ item.title }}</span>
@@ -45,7 +47,7 @@ function toggle(name: string, on: boolean | 'indeterminate') {
               :href="item.repository"
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex items-center gap-1 rounded-sm text-xs text-muted hover:text-ink focus-visible:focus-ring"
+              class="inline-flex items-center gap-1 rounded-sm font-mono text-xs text-muted hover:text-ink focus-visible:focus-ring tabular"
             >
               {{ item.version }}
               <ExternalLink :size="12" aria-hidden="true" />

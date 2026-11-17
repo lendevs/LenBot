@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import Tabs from '../../../ui/Tabs.vue'
+import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import HealthTab from './HealthTab.vue'
 import LogsTab from './LogsTab.vue'
 
@@ -21,8 +21,10 @@ const tabs = computed(() => [
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-5">
-    <Tabs v-model="tab" :items="tabs" :label="t('shell.pages.systemLogs')" />
+  <div class="flex min-w-0 flex-col gap-5 pb-2">
+    <div class="flex">
+      <SegmentedControl v-model="tab" :options="tabs" :label="t('shell.pages.systemLogs')" />
+    </div>
     <KeepAlive>
       <HealthTab v-if="tab === 'health'" />
       <LogsTab v-else />

@@ -56,17 +56,17 @@ const open = computed({
     <ErrorNote v-if="error" :title="t('groups.tasks.space.previewFailed')" :error="error" />
     <Skeleton v-else-if="pending" :lines="6" />
     <template v-else-if="entry.preview === 'text'">
-      <CodeBlock :code="content" :max-lines="0" class="max-h-[65vh] overflow-auto" />
-      <Button
-        v-if="text.hasNextPage.value"
-        size="sm"
-        variant="ghost"
-        class="mt-2"
-        :loading="text.isFetchingNextPage.value"
-        @click="text.fetchNextPage()"
-      >
-        {{ t('groups.tasks.space.readMore') }}
-      </Button>
+      <CodeBlock :code="content" :max-lines="0" />
+      <div v-if="text.hasNextPage.value" class="mt-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          :loading="text.isFetchingNextPage.value"
+          @click="text.fetchNextPage()"
+        >
+          {{ t('groups.tasks.space.readMore') }}
+        </Button>
+      </div>
     </template>
     <img
       v-else-if="entry.preview === 'image' && url"

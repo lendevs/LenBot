@@ -10,14 +10,14 @@ defineProps<{ title: string }>()
   <section class="border-t border-line pt-5">
     <button
       type="button"
-      class="flex w-full cursor-pointer items-center justify-between gap-3 rounded-sm text-left focus-visible:focus-ring"
+      class="group flex w-full cursor-pointer items-center justify-between gap-3 rounded-md py-0.5 text-left transition-colors hover:text-ink focus-visible:focus-ring"
       :aria-expanded="open"
       @click="open = !open"
     >
-      <span class="text-sm font-semibold text-ink-2">{{ title }}</span>
+      <span class="text-sm font-semibold text-ink-2 transition-colors group-hover:text-ink">{{ title }}</span>
       <ChevronDown
-        :size="18"
-        class="text-subtle transition-transform"
+        :size="17"
+        class="shrink-0 text-subtle transition-transform duration-200 ease-out group-hover:text-ink-2"
         :class="open && 'rotate-180'"
         aria-hidden="true"
       />

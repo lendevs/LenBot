@@ -12,7 +12,7 @@ const props = withDefaults(
     error?: string | null
     /** Blocks saving, such as when a required field is empty. */
     invalid?: boolean
-    /** Text of the save button when saving also does something else, such as 保存并启用. */
+    /** Text of the save button when saving also performs another step. */
     saveLabel?: string
   }>(),
   { error: null, saveLabel: undefined },
@@ -39,29 +39,31 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   <Transition name="ui-rise">
     <div
       v-if="dirty || saving"
-      class="sticky bottom-4 z-(--z-top) mx-auto mt-6 flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-lg border border-line bg-surface-raised py-2.5 pr-2.5 pl-4 shadow-float"
+      class="sticky bottom-3 z-(--z-top) mx-auto mt-6 flex w-full max-w-3xl flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line-strong bg-surface-raised py-2.5 pr-2.5 pl-3.5 shadow-float sm:bottom-4"
       role="region"
       :aria-label="t('common.unsaved')"
     >
-      <span
-        class="size-2 shrink-0 rounded-full"
-        :class="error ? 'bg-error' : 'bg-warning'"
-        aria-hidden="true"
-      />
-      <p
-        class="min-w-0 flex-1 truncate text-sm"
-        :class="error ? 'text-error' : 'text-ink-2'"
-        :title="error ?? undefined"
-      >
-        {{ error ?? t('common.unsaved') }}
-      </p>
-      <div class="flex items-center gap-2">
+      <div class="flex min-w-36 flex-1 items-center gap-2.5">
+        <span
+          class="size-2 shrink-0 rounded-full"
+          :class="error ? 'bg-error' : 'bg-warning'"
+          aria-hidden="true"
+        />
+        <p
+          class="min-w-0 flex-1 text-sm"
+          :class="error ? 'line-clamp-2 font-medium text-error' : 'truncate text-ink-2'"
+          :title="error ?? undefined"
+        >
+          {{ error ?? t('common.unsaved') }}
+        </p>
+      </div>
+      <div class="ml-auto flex shrink-0 items-center gap-2">
         <Button variant="ghost" size="sm" :disabled="saving" @click="emit('discard')">
           {{ t('common.discard') }}
         </Button>
         <Button variant="primary" size="sm" :loading="saving" :disabled="!canSave" @click="emit('save')">
           {{ saving ? t('common.saving') : (saveLabel ?? t('common.save')) }}
-          <span v-if="!saving" class="ml-0.5 text-[11px] font-medium opacity-70 max-sm:hidden">
+          <span v-if="!saving" class="ml-0.5 text-2xs font-medium opacity-75 max-sm:hidden">
             {{ mac ? '⌘S' : 'Ctrl S' }}
           </span>
         </Button>

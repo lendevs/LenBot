@@ -8,6 +8,7 @@ import { keys } from '../../../api/query'
 import { formatDateTime } from '../../../i18n/format'
 import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
+import MarkdownText from '../../../ui/MarkdownText.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
@@ -48,9 +49,9 @@ const generate = useMutation({
   />
   <section
     v-else-if="data && (data.enabled || data.summary.abstract !== null)"
-    class="flex flex-col gap-3 rounded-lg border border-line p-4"
+    class="flex max-w-3xl flex-col gap-3"
   >
-    <header class="flex items-center gap-3">
+    <header class="flex min-h-8 flex-wrap items-center gap-3 border-b border-line pb-3">
       <h3 class="min-w-0 flex-1 text-base font-semibold text-ink">
         {{ portrait ? t('groups.memory.summary.portrait') : t('groups.memory.summary.directory') }}
       </h3>
@@ -69,9 +70,13 @@ const generate = useMutation({
       {{ t('groups.memory.summary.none') }}
     </p>
     <template v-else>
-      <p class="text-base font-medium break-words text-ink">{{ data.summary.abstract }}</p>
-      <p class="text-sm leading-6 break-words whitespace-pre-wrap text-ink-2">{{ data.summary.overview }}</p>
-      <p v-if="data.summary.generated_at" class="text-xs text-subtle">
+      <p class="text-base leading-6 font-medium break-words text-ink">{{ data.summary.abstract }}</p>
+      <MarkdownText
+        v-if="data.summary.overview"
+        :text="data.summary.overview"
+        class="text-sm leading-6 text-ink-2"
+      />
+      <p v-if="data.summary.generated_at" class="text-xs text-subtle tabular">
         {{
           t('groups.memory.summary.generated', {
             time: formatDateTime(data.summary.generated_at, { timeZone }),

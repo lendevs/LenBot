@@ -21,10 +21,11 @@ withDefaults(
       <TooltipContent
         :side="side"
         :side-offset="6"
-        class="ui-pop z-(--z-popover) flex max-w-72 items-center gap-2 rounded-sm bg-ink px-2 py-1 text-xs font-medium text-page shadow-float"
+        :collision-padding="8"
+        class="ui-pop z-(--z-popover) flex max-w-72 items-center gap-2 rounded-sm bg-ink px-2.5 py-1 text-xs font-medium text-page shadow-float"
       >
-        {{ text }}
-        <kbd v-if="shortcut" class="font-sans text-[11px] opacity-70">{{ shortcut }}</kbd>
+        <span class="min-w-0 break-words">{{ text }}</span>
+        <kbd v-if="shortcut" class="shrink-0 font-sans text-2xs tabular opacity-70">{{ shortcut }}</kbd>
       </TooltipContent>
     </TooltipPortal>
   </TooltipRoot>

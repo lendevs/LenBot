@@ -11,6 +11,7 @@ import CodeBlock from '../../../ui/CodeBlock.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import RawRecord from '../../groups/tasks/RawRecord.vue'
+import { sceneSecondaryId } from '../view'
 
 defineProps<{ name: string; running: RunningPlugin | null }>()
 
@@ -23,7 +24,7 @@ function every(seconds: number) {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
+  <div class="flex min-w-0 max-w-4xl flex-col gap-4">
     <div class="flex justify-end">
       <Button
         size="sm"
@@ -35,20 +36,17 @@ function every(seconds: number) {
       </Button>
     </div>
     <EmptyState v-if="!running" :icon="ScrollText" :title="t('plugins.logs.notRunning')" compact />
-    <template v-else>
-      <section
-        v-if="running.backgrounds.length"
-        class="flex flex-col gap-3 rounded-xl border border-line bg-surface p-5"
-      >
-        <h3 class="text-base font-semibold">{{ t('plugins.logs.backgrounds') }}</h3>
+    <div v-else class="flex min-w-0 flex-col divide-y divide-line">
+      <section v-if="running.backgrounds.length" class="flex flex-col gap-3 py-5 first:pt-0 last:pb-0">
+        <h3 class="text-base font-semibold text-ink">{{ t('plugins.logs.backgrounds') }}</h3>
         <ul class="flex list-none flex-col divide-y divide-line">
           <li
             v-for="item in running.backgrounds"
             :key="item.method"
             class="flex flex-col gap-1.5 py-2.5 first:pt-0 last:pb-0"
           >
-            <p class="flex flex-wrap items-baseline gap-x-3 text-sm">
-              <code class="rounded-sm bg-fill px-1.5 py-0.5 font-mono">{{ item.method }}</code>
+            <p class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm tabular">
+              <code class="rounded-sm bg-fill px-1.5 py-0.5 font-mono text-ink">{{ item.method }}</code>
               <span class="text-ink-2">{{ every(item.every_seconds) }}</span>
               <span class="text-xs text-muted">
                 {{
@@ -69,8 +67,8 @@ function every(seconds: number) {
         </ul>
       </section>
 
-      <section class="flex flex-col gap-3 rounded-xl border border-line bg-surface p-5">
-        <h3 class="text-base font-semibold">{{ t('plugins.logs.errors') }}</h3>
+      <section class="flex flex-col gap-3 py-5 first:pt-0 last:pb-0">
+        <h3 class="text-base font-semibold text-ink">{{ t('plugins.logs.errors') }}</h3>
         <ul v-if="running.errors.length" class="flex list-none flex-col divide-y divide-line">
           <li
             v-for="(item, index) in running.errors"
@@ -79,7 +77,9 @@ function every(seconds: number) {
           >
             <p class="flex flex-wrap items-center gap-2 text-xs text-muted">
               <span class="tabular">{{ formatDateTime(item.at, { withSeconds: true }) }}</span>
-              <Badge class="font-mono">{{ item.where }}</Badge>
+              <code class="rounded-full bg-fill px-2 py-0.5 font-mono text-xs text-muted">
+                {{ item.where }}
+              </code>
             </p>
             <CodeBlock :code="item.error" :max-lines="8" />
           </li>
@@ -87,11 +87,8 @@ function every(seconds: number) {
         <p v-else class="text-sm text-muted">{{ t('plugins.logs.noErrors') }}</p>
       </section>
 
-      <section
-        v-if="running.model_calls.length"
-        class="flex flex-col gap-3 rounded-xl border border-line bg-surface p-5"
-      >
-        <h3 class="text-base font-semibold">{{ t('plugins.logs.calls') }}</h3>
+      <section v-if="running.model_calls.length" class="flex flex-col gap-3 py-5 first:pt-0 last:pb-0">
+        <h3 class="text-base font-semibold text-ink">{{ t('plugins.logs.calls') }}</h3>
         <ul class="flex list-none flex-col divide-y divide-line">
           <li
             v-for="call in running.model_calls"
@@ -100,7 +97,10 @@ function every(seconds: number) {
           >
             <p class="flex flex-wrap items-center gap-2 text-sm">
               <span class="text-xs text-muted tabular">{{ formatDateTime(call.started) }}</span>
-              <span class="text-ink-2">{{ groupLabel(call.scene) }}</span>
+              <span class="font-medium text-ink">{{ groupLabel(call.scene) }}</span>
+              <span v-if="sceneSecondaryId(call.scene)" class="font-mono text-xs text-muted tabular">
+                {{ sceneSecondaryId(call.scene) }}
+              </span>
               <Badge :tone="call.ended === null ? 'info' : call.error ? 'error' : 'success'" dot>
                 {{
                   t(`plugins.logs.call.${call.ended === null ? 'running' : call.error ? 'failed' : 'done'}`)
@@ -116,6 +116,6 @@ function every(seconds: number) {
           </li>
         </ul>
       </section>
-    </template>
+    </div>
   </div>
 </template>

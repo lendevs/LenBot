@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useMediaQuery } from '@vueuse/core'
-import { Plus, Server } from '@lucide/vue'
+import { ChevronRight, Plus, Server } from '@lucide/vue'
 import { capabilitiesApi } from '../../api/capabilities'
 import { keys } from '../../api/query'
 import { groupLabel } from '../../layouts/shell/scenes'
@@ -73,28 +73,36 @@ const subtitle = (name: string) => {
   >
     <Button variant="primary" :icon="Plus" @click="select(null)">{{ t('capabilities.mcp.add') }}</Button>
   </EmptyState>
-  <div v-else-if="state" class="grid min-w-0 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
-    <section v-if="wide || selected === undefined" class="flex min-w-0 flex-col gap-3">
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="text-base font-semibold">{{ t('capabilities.mcp.title') }}</h2>
+  <div v-else-if="state" class="grid min-w-0 gap-6 lg:grid-cols-[17.5rem_minmax(0,1fr)] lg:gap-8">
+    <section
+      v-if="wide || selected === undefined"
+      class="flex min-w-0 flex-col gap-3 lg:border-r lg:border-line lg:pr-6"
+    >
+      <div class="flex min-h-8 items-center justify-between gap-2">
+        <h2 class="text-base font-semibold text-ink">{{ t('capabilities.mcp.title') }}</h2>
         <Button size="sm" :icon="Plus" @click="select(null)">{{ t('capabilities.mcp.add') }}</Button>
       </div>
       <ul class="flex list-none flex-col gap-1">
         <li v-for="name in names" :key="name">
           <button
             type="button"
-            class="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-md px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:focus-ring"
-            :class="selected === name && 'bg-selected'"
+            class="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:focus-ring"
+            :class="selected === name ? 'bg-selected' : 'hover:bg-hover'"
             :aria-current="selected === name || undefined"
             @click="select(name)"
           >
-            <span class="flex min-w-0 items-center gap-2">
-              <span class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-ink">{{ name }}</span>
-              <Badge v-if="running(name)" :tone="mcpTone(running(name)!.status)" dot>
-                {{ t(`capabilities.mcp.status.${running(name)!.status}`, running(name)!.status) }}
-              </Badge>
+            <span class="flex min-w-0 flex-1 flex-col gap-1">
+              <span class="flex min-w-0 items-center gap-2">
+                <span class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-ink">{{ name }}</span>
+                <Badge v-if="running(name)" :tone="mcpTone(running(name)!.status)" dot>
+                  {{ t(`capabilities.mcp.status.${running(name)!.status}`, running(name)!.status) }}
+                </Badge>
+              </span>
+              <span v-if="subtitle(name)" class="truncate text-xs text-muted tabular">
+                {{ subtitle(name) }}
+              </span>
             </span>
-            <span class="truncate text-xs text-muted">{{ subtitle(name) }}</span>
+            <ChevronRight v-if="!wide" :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           </button>
         </li>
       </ul>

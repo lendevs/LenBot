@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy } from '@lucide/vue'
+import { Check, ChevronDown, Copy } from '@lucide/vue'
 
 const props = withDefaults(
   defineProps<{
@@ -43,37 +43,59 @@ async function copy() {
 </script>
 
 <template>
-  <div class="group relative min-w-0 rounded-md border border-line bg-code text-ink-2">
-    <div v-if="label" class="border-b border-line px-3 py-1.5 text-xs font-medium text-subtle">
-      {{ label }}
-    </div>
-    <pre
-      class="overflow-x-auto px-3 py-2.5 font-mono text-xs leading-5 scrollbar-thin"
-      :class="[wrap && 'break-words whitespace-pre-wrap', collapsible && !expanded && 'overflow-hidden']"
-      :style="collapsible && !expanded ? { maxHeight: `${maxLines * 20 + 20}px` } : undefined"
-    ><code>{{ text }}</code></pre>
+  <div class="group relative min-w-0 overflow-hidden rounded-md border border-line bg-code text-ink-2">
     <div
-      v-if="collapsible && !expanded"
-      class="pointer-events-none absolute inset-x-0 bottom-0 h-14 rounded-b-md bg-linear-to-t from-code to-transparent"
-    />
+      v-if="label"
+      class="flex items-center justify-between gap-2 border-b border-line px-3 py-1.5 text-xs font-medium text-subtle"
+    >
+      <span class="min-w-0 truncate">{{ label }}</span>
+      <button
+        type="button"
+        class="-my-0.5 -mr-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+        :aria-label="copied ? t('ui.code.copied') : t('ui.code.copy')"
+        @click="copy"
+      >
+        <Check v-if="copied" :size="13" class="text-success" aria-hidden="true" />
+        <Copy v-else :size="13" aria-hidden="true" />
+      </button>
+    </div>
+    <div class="relative">
+      <pre
+        class="overflow-x-auto px-3 py-2.5 font-mono text-xs leading-5 scrollbar-thin"
+        :class="[
+          !label && 'pr-10',
+          wrap && 'break-words whitespace-pre-wrap',
+          collapsible && !expanded && 'overflow-hidden',
+        ]"
+        :style="collapsible && !expanded ? { maxHeight: `${maxLines * 20 + 20}px` } : undefined"
+      ><code>{{ text }}</code></pre>
+      <button
+        v-if="!label"
+        type="button"
+        class="absolute top-1.5 right-1.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-line bg-surface text-muted opacity-0 shadow-card transition-[opacity,color,background-color] group-hover:opacity-100 hover:bg-hover hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring pointer-coarse:opacity-100"
+        :aria-label="copied ? t('ui.code.copied') : t('ui.code.copy')"
+        @click="copy"
+      >
+        <Check v-if="copied" :size="14" class="text-success" aria-hidden="true" />
+        <Copy v-else :size="14" aria-hidden="true" />
+      </button>
+    </div>
     <button
       v-if="collapsible"
       type="button"
-      class="absolute bottom-1.5 left-1/2 -translate-x-1/2 cursor-pointer rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs font-medium text-muted shadow-card hover:text-ink focus-visible:focus-ring"
-      :class="expanded && 'relative bottom-0 left-0 mx-auto mb-2 block translate-x-0'"
+      class="flex w-full cursor-pointer items-center justify-center gap-1 border-t border-line bg-surface/50 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+      :aria-expanded="expanded"
       @click="expanded = !expanded"
     >
-      {{ expanded ? t('ui.code.collapse') : t('ui.code.expand', { n: lineCount }) }}
-    </button>
-    <button
-      type="button"
-      class="absolute top-1.5 right-1.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-line bg-surface text-muted opacity-0 shadow-card transition-opacity group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring pointer-coarse:opacity-100"
-      :class="label && 'top-9'"
-      :aria-label="copied ? t('ui.code.copied') : t('ui.code.copy')"
-      @click="copy"
-    >
-      <Check v-if="copied" :size="14" class="text-success" aria-hidden="true" />
-      <Copy v-else :size="14" aria-hidden="true" />
+      <ChevronDown
+        :size="13"
+        class="transition-transform duration-150"
+        :class="expanded && 'rotate-180'"
+        aria-hidden="true"
+      />
+      <span class="tabular">
+        {{ expanded ? t('ui.code.collapse') : t('ui.code.expand', { n: lineCount }) }}
+      </span>
     </button>
   </div>
 </template>

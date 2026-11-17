@@ -87,12 +87,12 @@ const menu = computed<MenuEntry[]>(() => [
 </script>
 
 <template>
-  <section class="flex flex-col gap-4 rounded-xl border border-line bg-surface p-5 shadow-card">
-    <div class="flex flex-wrap items-center gap-x-5 gap-y-4">
+  <section class="flex flex-col gap-4 border-b border-line pb-6">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
       <span class="relative shrink-0">
-        <img :src="markUrl" alt="" class="size-13 rounded-[14px]" />
+        <img :src="markUrl" alt="" class="size-12 rounded-xl" />
         <span
-          class="absolute -right-1 -bottom-1 size-3.5 rounded-full border-2 border-surface"
+          class="absolute -right-1 -bottom-1 size-3.5 rounded-full border-2 border-page"
           :class="
             online
               ? 'animate-pulse-dot bg-success text-success'
@@ -103,19 +103,19 @@ const menu = computed<MenuEntry[]>(() => [
           aria-hidden="true"
         />
       </span>
-      <div class="min-w-0 flex-1 basis-56">
+      <div class="min-w-0 flex-1 basis-52">
         <h2
-          class="text-xl font-semibold"
-          :class="!online && (status.tone === 'error' ? 'text-error' : 'text-warning')"
+          class="text-xl font-semibold tracking-tight"
+          :class="online ? 'text-ink' : status.tone === 'error' ? 'text-error' : 'text-warning'"
         >
           {{ online ? t('overview.status.online') : status.text }}
         </h2>
-        <p class="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">
-          {{
-            [state.bot_id, t('overview.status.groups', { n: state.scenes.length }, state.scenes.length)]
-              .filter(Boolean)
-              .join(' · ')
-          }}
+        <p
+          class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted tabular [overflow-wrap:anywhere]"
+        >
+          <span v-if="state.bot_id" class="font-mono text-xs text-muted">{{ state.bot_id }}</span>
+          <span v-if="state.bot_id" aria-hidden="true">·</span>
+          <span>{{ t('overview.status.groups', { n: state.scenes.length }, state.scenes.length) }}</span>
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">

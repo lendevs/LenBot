@@ -96,6 +96,7 @@ async function close() {
   <Sheet
     :open="open"
     :title="t('groups.learning.settings.title')"
+    :busy="save.isPending.value"
     @update:open="(value: boolean) => (value ? (open = true) : close())"
   >
     <Skeleton v-if="config.isPending.value" :lines="6" />

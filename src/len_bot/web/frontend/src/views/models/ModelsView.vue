@@ -39,7 +39,7 @@ useUnsavedChanges(
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-5">
+  <div class="flex min-w-0 flex-col gap-6 pb-2">
     <Tabs v-model="tab" :items="tabs" :label="t('models.title')" />
     <Skeleton v-if="form.settings.isPending.value" :lines="8" />
     <ErrorNote

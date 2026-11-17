@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery } from '@tanstack/vue-query'
 import { Eraser } from '@lucide/vue'
@@ -19,9 +19,10 @@ import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import RawRecord from '../groups/tasks/RawRecord.vue'
-import { copy, useSettingsDraft } from './draft'
+import { copy, sceneSecondaryId, useSettingsDraft } from './draft'
 
 const { t } = useI18n()
+const uid = useId()
 const status = useQuery({
   queryKey: keys.system.retention(),
   queryFn: ({ signal }) => systemApi.retention(signal),
@@ -110,8 +111,8 @@ async function confirmPrune() {
     :error="settings.error.value"
     :retry="settings.refetch"
   />
-  <div v-else-if="draft !== undefined" class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div v-else-if="draft !== undefined" class="flex min-w-0 max-w-3xl flex-col gap-6">
+    <div class="flex min-w-0 flex-col gap-6">
       <Field :label="t('system.retention.on')" inline>
         <Switch :model-value="draft !== null" @update:model-value="toggle" />
       </Field>
@@ -124,27 +125,43 @@ async function confirmPrune() {
             <NumberInput v-model="draft.timeline_days" :min="32" :unit="t('system.retention.days')" />
           </Field>
         </FormSection>
-        <FormSection :title="t('system.retention.messages')">
-          <Field v-for="scene in scenes" :key="scene" :label="groupLabel(scene)">
-            <NumberInput
-              :model-value="draft.message_days[scene] ?? null"
-              :min="1"
-              :placeholder="t('system.retention.forever')"
-              :unit="t('system.retention.days')"
-              @update:model-value="(days: number | null) => setDays(scene, days)"
-            />
-          </Field>
-          <p v-if="!scenes.length" class="text-sm text-muted">{{ t('system.retention.noGroups') }}</p>
+        <FormSection :title="t('system.retention.messages')" :columns="1">
+          <ul v-if="scenes.length" class="flex list-none flex-col divide-y divide-line border-y border-line">
+            <li
+              v-for="(scene, index) in scenes"
+              :key="scene"
+              class="flex items-center justify-between gap-4 py-2.5"
+            >
+              <label :for="`${uid}-${index}`" class="min-w-0 flex-1 cursor-pointer">
+                <span class="block truncate text-sm font-medium text-ink">{{ groupLabel(scene) }}</span>
+                <span
+                  v-if="sceneSecondaryId(scene)"
+                  class="block truncate font-mono text-xs text-muted tabular"
+                >
+                  {{ sceneSecondaryId(scene) }}
+                </span>
+              </label>
+              <div class="w-36 shrink-0 sm:w-44">
+                <NumberInput
+                  :id="`${uid}-${index}`"
+                  :model-value="draft.message_days[scene] ?? null"
+                  :min="1"
+                  size="sm"
+                  :placeholder="t('system.retention.forever')"
+                  :unit="t('system.retention.days')"
+                  @update:model-value="(days: number | null) => setDays(scene, days)"
+                />
+              </div>
+            </li>
+          </ul>
+          <p v-else class="text-sm text-muted">{{ t('system.retention.noGroups') }}</p>
         </FormSection>
       </template>
     </div>
 
-    <section
-      v-if="status.data.value?.enabled"
-      class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5"
-    >
+    <section v-if="status.data.value?.enabled" class="flex min-w-0 flex-col gap-3 border-t border-line pt-6">
       <header class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-base font-semibold">{{ t('system.retention.now') }}</h3>
+        <h3 class="text-base font-semibold text-ink">{{ t('system.retention.now') }}</h3>
         <Button
           size="sm"
           variant="danger"
@@ -161,7 +178,7 @@ async function confirmPrune() {
         :title="t('system.retention.stopped')"
         :error="status.data.value.error"
       />
-      <p class="text-sm text-ink-2">
+      <p class="text-sm text-ink-2 tabular">
         {{ preview ? t('system.retention.next', { items: preview }) : t('system.retention.clean') }}
       </p>
       <RawRecord v-if="developerDetails" :label="t('system.retention.raw')" :code="status.data.value" />

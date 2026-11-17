@@ -48,9 +48,9 @@ function reply() {
 </script>
 
 <template>
-  <section class="flex flex-col gap-3 rounded-lg border border-line-strong px-4 py-3">
+  <section class="flex flex-col gap-3 rounded-lg border border-line-strong bg-fill px-4 py-3.5">
     <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
-      <MessageCircleQuestion :size="16" class="text-warning" aria-hidden="true" />
+      <MessageCircleQuestion :size="16" class="shrink-0 text-warning" aria-hidden="true" />
       {{ t('groups.tasks.question.title') }}
     </h3>
     <p class="text-sm break-words whitespace-pre-wrap text-ink">{{ question.title }}</p>

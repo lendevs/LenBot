@@ -46,7 +46,11 @@ function moveUp(index: number) {
 </script>
 
 <template>
-  <form v-if="form.draft.value" class="flex max-w-3xl flex-col gap-8" @submit.prevent="form.save('speech')">
+  <form
+    v-if="form.draft.value"
+    class="flex max-w-3xl flex-col gap-8 pb-6"
+    @submit.prevent="form.save('speech')"
+  >
     <FormSection :title="t('personas.detail.speech.voice')" :columns="1">
       <Field>
         <Textarea v-model="draft.voice" :rows="5" :aria-label="t('personas.detail.speech.voice')" />
@@ -55,13 +59,13 @@ function moveUp(index: number) {
 
     <FormSection :title="t('personas.detail.speech.examples')" :columns="1">
       <EmptyState v-if="!draft.examples.length" :title="t('personas.detail.speech.noExamples')" compact />
-      <ol v-else class="flex flex-col gap-3">
+      <ol v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
         <li
           v-for="(example, index) in draft.examples"
           :key="index"
-          class="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-lg border border-line bg-surface p-4"
+          class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 py-4"
         >
-          <div class="flex min-w-0 flex-col gap-3">
+          <div class="grid min-w-0 gap-3 sm:grid-cols-2">
             <Field
               :label="t('personas.detail.speech.context')"
               :error="example.context.trim() ? null : t('common.required')"
@@ -74,11 +78,11 @@ function moveUp(index: number) {
             >
               <Textarea v-model="example.line" :rows="1" />
             </Field>
-            <Field :label="t('personas.detail.speech.tags')">
+            <Field :label="t('personas.detail.speech.tags')" wide>
               <TagInput v-model="example.tags" />
             </Field>
           </div>
-          <div class="flex flex-col gap-1">
+          <div class="flex flex-col gap-1 pt-5">
             <IconButton
               v-if="index"
               :icon="ArrowUp"
@@ -113,40 +117,50 @@ function moveUp(index: number) {
             {{ t('personas.detail.speech.total', { n: total }) }}
           </span>
         </template>
-        <ul v-if="draft.styles.length" class="flex flex-col gap-3">
+        <ul
+          v-if="draft.styles.length"
+          class="flex list-none flex-col gap-3 max-sm:gap-0 max-sm:divide-y max-sm:divide-line max-sm:border-y max-sm:border-line"
+        >
           <li
             v-for="(style, index) in draft.styles"
             :key="index"
-            class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_minmax(0,1.6fr)_auto] sm:items-start"
+            class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 max-sm:py-3 sm:grid-cols-[minmax(0,1fr)_10rem_minmax(0,1.6fr)_auto]"
           >
-            <Field
-              :label="t('personas.detail.speech.styleName')"
-              :error="style.name.trim() ? null : t('common.required')"
-            >
-              <Input v-model="style.name" />
-            </Field>
-            <Field :label="t('personas.detail.speech.share')">
-              <NumberInput
-                :model-value="percent(style.weight)"
-                :min="0"
-                :max="100"
-                :step="5"
-                unit="%"
-                @update:model-value="(value) => (style.weight = (value ?? 0) / 100)"
+            <div class="order-1 min-w-0">
+              <Field
+                :label="t('personas.detail.speech.styleName')"
+                :error="style.name.trim() ? null : t('common.required')"
+              >
+                <Input v-model="style.name" />
+              </Field>
+            </div>
+            <div class="order-2 flex justify-end pt-6.5 sm:order-4">
+              <IconButton
+                :icon="X"
+                :label="t('personas.detail.speech.removeStyle')"
+                @click="draft.styles.splice(index, 1)"
               />
-            </Field>
-            <Field :label="t('personas.detail.speech.note')">
-              <Input
-                :model-value="style.note ?? ''"
-                @update:model-value="(value) => (style.note = value || null)"
-              />
-            </Field>
-            <IconButton
-              :icon="X"
-              :label="t('personas.detail.speech.removeStyle')"
-              class="max-sm:self-end sm:mt-6.5"
-              @click="draft.styles.splice(index, 1)"
-            />
+            </div>
+            <div class="order-3 col-span-2 min-w-0 sm:order-2 sm:col-span-1">
+              <Field :label="t('personas.detail.speech.share')">
+                <NumberInput
+                  :model-value="percent(style.weight)"
+                  :min="0"
+                  :max="100"
+                  :step="5"
+                  unit="%"
+                  @update:model-value="(value) => (style.weight = (value ?? 0) / 100)"
+                />
+              </Field>
+            </div>
+            <div class="order-4 col-span-2 min-w-0 sm:order-3 sm:col-span-1">
+              <Field :label="t('personas.detail.speech.note')">
+                <Input
+                  :model-value="style.note ?? ''"
+                  @update:model-value="(value) => (style.note = value || null)"
+                />
+              </Field>
+            </div>
           </li>
         </ul>
         <div>

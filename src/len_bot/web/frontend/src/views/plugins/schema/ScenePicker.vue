@@ -9,6 +9,7 @@ import Input from '../../../ui/Input.vue'
 import Popover from '../../../ui/Popover.vue'
 import { useFieldControl } from '../../../ui/field'
 import { controlFrame, controlHeight } from '../../../ui/styles'
+import { sceneSecondaryId } from '../view'
 
 /** One group (`single`) or several, from the groups in the saved configuration. */
 const model = defineModel<string | string[] | null>({ required: true })
@@ -71,16 +72,15 @@ const clear = () => (model.value = props.single ? null : [])
         aria-haspopup="listbox"
       >
         <span v-if="picked.length" class="flex shrink-0" aria-hidden="true">
-          <Avatar
+          <span
             v-for="scene in picked.slice(0, 4)"
             :key="scene"
-            :name="groupLabel(scene)"
-            shape="square"
-            :size="20"
-            class="ring-2 ring-surface not-first:-ml-1"
-          />
+            class="inline-flex rounded-sm ring-2 ring-surface not-first:-ml-1"
+          >
+            <Avatar :name="groupLabel(scene)" shape="square" :size="20" />
+          </span>
         </span>
-        <span class="min-w-0 flex-1 truncate text-sm" :class="!picked.length && 'text-subtle'">
+        <span class="min-w-0 flex-1 truncate text-sm" :class="picked.length ? 'text-ink' : 'text-subtle'">
           {{ picked.length ? summary : single ? t('plugins.form.pickOne') : t('plugins.form.pickGroups') }}
         </span>
         <ChevronDown
@@ -102,7 +102,7 @@ const clear = () => (model.value = props.single ? null : [])
         :aria-label="t('plugins.form.searchGroups')"
       />
       <div v-if="!single" class="flex items-center gap-1 pl-2">
-        <span class="mr-auto text-xs text-muted">
+        <span class="mr-auto text-xs text-muted tabular">
           {{ t('plugins.form.pickedCount', { n: picked.length, total: all.length }) }}
         </span>
         <Button size="sm" variant="ghost" :disabled="!shown.length" @click="pickAll">
@@ -133,12 +133,15 @@ const clear = () => (model.value = props.single ? null : [])
               >
                 {{ groupLabel(scene) }}
               </span>
-              <span class="block truncate font-mono text-xs text-subtle">
-                {{ scene.split(':').slice(2).join(':') || scene }}
+              <span
+                v-if="sceneSecondaryId(scene)"
+                class="block truncate font-mono text-xs text-muted tabular"
+              >
+                {{ sceneSecondaryId(scene) }}
               </span>
             </span>
             <span
-              class="flex size-4.5 shrink-0 items-center justify-center rounded-[5px] border"
+              class="flex size-4.5 shrink-0 items-center justify-center rounded-sm border"
               :class="
                 picked.includes(scene) ? 'border-primary bg-primary text-on-primary' : 'border-line-strong'
               "

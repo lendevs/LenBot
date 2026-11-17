@@ -13,6 +13,7 @@
   /* Container widths such as max-w-lg are in rem; the panel has always been laid out on a 14px root. */
   html {
     font-size: 14px;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     min-width: 320px;
@@ -21,6 +22,7 @@
     background: var(--page);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   :focus-visible {
     outline: 2px solid var(--primary);
@@ -28,6 +30,7 @@
   }
   ::selection {
     background: var(--selected);
+    color: var(--ink);
   }
   * {
     scrollbar-width: thin;
@@ -60,12 +63,16 @@
   --color-track: var(--track);
   --color-selected: var(--selected);
   --color-overlay: var(--overlay);
+  --color-avatar-ring: var(--avatar-ring);
   --color-success: var(--success);
   --color-success-bg: var(--success-bg);
   --color-warning: var(--warning);
   --color-warning-bg: var(--warning-bg);
   --color-error: var(--error);
+  --color-error-hover: var(--error-hover);
+  --color-on-error: var(--on-error);
   --color-error-bg: var(--error-bg);
+  --color-error-line: var(--error-line);
   --color-info: var(--info);
   --color-info-bg: var(--info-bg);
   --color-idle: var(--idle);
@@ -77,6 +84,8 @@
   /* Pixel values keep the type and spacing scale independent of the root font size. */
   --spacing: 4px;
   --text-*: initial;
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
   --text-xs: 12px;
   --text-xs--line-height: 16px;
   --text-sm: 13px;
@@ -93,6 +102,7 @@
   --text-3xl--line-height: 38px;
 
   --radius-*: initial;
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -100,9 +110,13 @@
 
   --shadow-*: initial;
   --shadow-card: var(--shadow-card);
+  --shadow-control: var(--shadow-control);
+  --shadow-thumb: var(--shadow-thumb);
   --shadow-hover: var(--shadow-hover);
   --shadow-float: var(--shadow-float);
   --shadow-dialog: var(--shadow-dialog);
+  --shadow-focus: var(--shadow-focus);
+  --shadow-error-focus: var(--shadow-error-focus);
 
   --ease-*: initial;
   --ease-out: var(--ease-out);
@@ -122,6 +136,7 @@
   --animate-rise: rise var(--dur-2) var(--ease-out) both;
   --animate-fade: fade var(--dur-2) var(--ease-out) both;
   --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+  --animate-skeleton: skeleton-pulse 1.6s var(--ease-in-out) infinite;
 
   @keyframes spin {
     to {
@@ -163,18 +178,45 @@
       background-position: -100% 0;
     }
   }
+  @keyframes skeleton-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
 }
 
 @utility focus-ring {
   outline: 2px solid transparent;
   box-shadow:
     0 0 0 1.5px var(--primary),
-    0 0 0 5px var(--focus-ring);
+    0 0 0 4px var(--focus-ring);
 }
 
 @utility scrollbar-thin {
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--line-strong);
+    border-radius: 9999px;
+  }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Links styled as buttons or nav items: never underlined, also on hover (the hover: variant only applies on
@@ -354,6 +396,17 @@
   80% {
     transform: translateX(6px);
   }
+}
+
+/* Horizontal tab lists softly mask overflowing labels at the scrolling edge while keeping the bottom hairline full-width. */
+.ui-tabs-list[data-overflow-right]:not([data-overflow-left]) {
+  mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+}
+.ui-tabs-list[data-overflow-left]:not([data-overflow-right]) {
+  mask-image: linear-gradient(to right, transparent, black 28px);
+}
+.ui-tabs-list[data-overflow-left][data-overflow-right] {
+  mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
 }
 
 /* Vue <Transition name="page">: switching between pages of the shell. */

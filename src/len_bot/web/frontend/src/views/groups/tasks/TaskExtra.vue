@@ -33,7 +33,7 @@ const inspecting = computed({
 </script>
 
 <template>
-  <section class="flex flex-col gap-3 border-t border-line pt-4">
+  <section class="flex flex-col gap-3 border-t border-line pt-5">
     <h3 class="text-sm font-medium text-ink">{{ t('groups.tasks.extra.title') }}</h3>
     <div class="flex flex-wrap gap-2">
       <Button
@@ -61,15 +61,15 @@ const inspecting = computed({
       <p v-else-if="!skills.data.value?.items.length" class="text-sm text-muted">
         {{ t('groups.tasks.extra.noSkills') }}
       </p>
-      <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
+      <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
         <li
           v-for="item in skills.data.value.items"
           :key="item.name"
-          class="flex items-center gap-2.5 px-3 py-2"
+          class="flex items-center gap-2.5 px-2 py-2.5"
         >
           <Sparkles :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm text-ink">{{ item.name }}</p>
+            <p class="truncate text-sm font-medium text-ink">{{ item.name }}</p>
             <p v-if="item.description" class="line-clamp-2 text-xs text-muted">{{ item.description }}</p>
           </div>
           <Button size="sm" variant="ghost" @click="inspected = item">

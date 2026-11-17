@@ -11,7 +11,10 @@ import StatusDot from '../../ui/StatusDot.vue'
 import { groupLabel } from '../../layouts/shell/scenes'
 import { statusTones, useStatusLabel } from './status'
 
-const props = defineProps<{ scenes: HostScene[]; selected: string }>()
+const props = withDefaults(
+  defineProps<{ scenes: HostScene[]; selected: string; surface?: 'page' | 'raised' }>(),
+  { surface: 'page' },
+)
 const emit = defineEmits<{ select: [scene: string]; add: [] }>()
 
 const { t } = useI18n()
@@ -36,18 +39,19 @@ const shown = computed(() => {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-col gap-2">
+  <div class="flex min-h-0 flex-col gap-2.5">
     <div class="flex items-center gap-1.5">
-      <Input
-        v-model="query"
-        type="search"
-        size="sm"
-        :icon="Search"
-        :placeholder="t('groups.search')"
-        :aria-label="t('groups.search')"
-        clearable
-        class="min-w-0 flex-1"
-      />
+      <div class="min-w-0 flex-1">
+        <Input
+          v-model="query"
+          type="search"
+          size="sm"
+          :icon="Search"
+          :placeholder="t('groups.search')"
+          :aria-label="t('groups.search')"
+          clearable
+        />
+      </div>
       <IconButton :icon="Plus" :label="t('groups.add')" variant="secondary" @click="emit('add')" />
     </div>
     <nav
@@ -58,7 +62,7 @@ const shown = computed(() => {
         v-for="item in shown"
         :key="item.scene"
         type="button"
-        class="flex w-full cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:focus-ring aria-[current=page]:bg-selected"
+        class="group flex w-full cursor-pointer items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:focus-ring aria-[current=page]:bg-selected"
         :aria-current="item.scene === selected ? 'page' : undefined"
         @click="emit('select', item.scene)"
       >
@@ -66,26 +70,28 @@ const shown = computed(() => {
           <span class="flex" aria-hidden="true">
             <Avatar :name="groupLabel(item.scene)" shape="square" :size="36" />
           </span>
-          <span class="absolute -right-0.5 -bottom-0.5 flex rounded-full bg-page p-0.5">
+          <span
+            class="absolute -right-0.5 -bottom-0.5 flex rounded-full p-0.5 transition-colors duration-150 group-hover:bg-hover group-aria-[current=page]:bg-selected"
+            :class="surface === 'raised' ? 'bg-surface-raised' : 'bg-page'"
+          >
             <StatusDot
               :tone="statusTones[item.chat_status.status]"
               :label="statusLabel(item.chat_status, item.timezone)"
             />
           </span>
         </span>
-        <span class="grid min-w-0 flex-1 leading-snug">
-          <strong
-            class="truncate text-base font-medium"
-            :class="item.scene === selected ? 'text-primary' : 'text-ink'"
-          >
+        <span class="grid min-w-0 flex-1 gap-0.5 leading-snug">
+          <strong class="truncate text-sm font-medium text-ink group-aria-[current=page]:font-semibold">
             {{ groupLabel(item.scene) }}
           </strong>
-          <span class="truncate text-xs text-muted">
-            <template v-if="item.chat_status.status !== 'chatting'">
-              {{ t(`groups.status.${item.chat_status.status}`) }} ·
-            </template>
+          <span class="truncate text-xs text-muted tabular">
             {{
-              [platform(item.scene), titles[item.scene] ? number(item.scene) : '', item.persona.name]
+              [
+                item.chat_status.status !== 'chatting' ? t(`groups.status.${item.chat_status.status}`) : '',
+                platform(item.scene),
+                titles[item.scene] ? number(item.scene) : '',
+                item.persona.name,
+              ]
                 .filter(Boolean)
                 .join(' · ')
             }}

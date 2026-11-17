@@ -5,7 +5,7 @@ import { useMutation, useQuery } from '@tanstack/vue-query'
 import { ChevronRight, FileText, Folder, FolderOpen } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { referenceApi, type GroupFile, type GroupFolder, type ReferenceListing } from '../../../api/reference'
-import { formatBytes, formatDateTime } from '../../../i18n/format'
+import { formatBytes, formatDateTime, formatNumber } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import Dialog from '../../../ui/Dialog.vue'
@@ -60,21 +60,21 @@ function details(file: GroupFile) {
 
 <template>
   <Dialog v-model:open="open" :title="t('groups.reference.groupFiles.title')" size="lg">
-    <nav class="mb-3 flex min-w-0 flex-wrap items-center gap-1 text-sm">
+    <nav class="mb-3 flex min-w-0 flex-wrap items-center gap-0.5 text-sm">
       <button
         type="button"
-        class="cursor-pointer rounded px-1 text-muted hover:text-ink focus-visible:focus-ring"
-        :class="{ 'font-medium text-ink': !trail.length }"
+        class="cursor-pointer rounded-sm px-1 py-0.5 transition-colors hover:bg-hover focus-visible:focus-ring"
+        :class="!trail.length ? 'font-medium text-ink' : 'text-muted hover:text-ink'"
         @click="trail = []"
       >
         {{ t('groups.reference.groupFiles.root') }}
       </button>
       <template v-for="(item, position) in trail" :key="item.folder_id">
-        <ChevronRight :size="14" class="text-muted" aria-hidden="true" />
+        <ChevronRight :size="13" class="shrink-0 text-subtle" aria-hidden="true" />
         <button
           type="button"
-          class="max-w-48 cursor-pointer truncate rounded px-1 text-muted hover:text-ink focus-visible:focus-ring"
-          :class="{ 'font-medium text-ink': position === trail.length - 1 }"
+          class="max-w-48 cursor-pointer truncate rounded-sm px-1 py-0.5 transition-colors hover:bg-hover focus-visible:focus-ring"
+          :class="position === trail.length - 1 ? 'font-medium text-ink' : 'text-muted hover:text-ink'"
           @click="trail = trail.slice(0, position + 1)"
         >
           {{ item.name }}
@@ -94,36 +94,36 @@ function details(file: GroupFile) {
       :title="t('groups.reference.groupFiles.empty')"
       compact
     />
-    <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
+    <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
       <li v-for="item in listing.data.value?.folders" :key="item.folder_id">
         <button
           type="button"
-          class="flex w-full min-w-0 cursor-pointer items-center gap-3 px-3 py-2.5 text-left hover:bg-hover focus-visible:focus-ring"
+          class="flex w-full min-w-0 cursor-pointer items-center gap-3 px-2 py-2.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:focus-ring"
           @click="trail = [...trail, item]"
         >
-          <Folder :size="16" class="shrink-0 text-muted" aria-hidden="true" />
+          <Folder :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">{{ item.name }}</span>
-          <span class="shrink-0 text-xs text-muted">
-            {{ t('groups.reference.groupFiles.count', { n: item.files }) }}
+          <span class="shrink-0 text-xs text-muted tabular">
+            {{ t('groups.reference.groupFiles.count', { n: formatNumber(item.files) }) }}
           </span>
-          <ChevronRight :size="16" class="shrink-0 text-muted" aria-hidden="true" />
+          <ChevronRight :size="15" class="shrink-0 text-subtle" aria-hidden="true" />
         </button>
       </li>
       <li
         v-for="file in listing.data.value?.files"
         :key="file.file_id"
-        class="flex min-w-0 items-center gap-3 px-3 py-2.5"
+        class="flex min-w-0 items-center gap-3 px-2 py-2.5"
         :class="{ 'opacity-60': !pick && !file.supported }"
       >
-        <FileText :size="16" class="shrink-0 text-muted" aria-hidden="true" />
+        <FileText :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
         <div class="min-w-0 flex-1">
-          <div class="flex min-w-0 items-center gap-2">
+          <div class="flex min-w-0 flex-wrap items-center gap-2">
             <span class="truncate text-sm font-medium text-ink">{{ file.name }}</span>
             <Badge v-if="existing.includes(file.name)" tone="success">
               {{ t(pick ? 'groups.reference.groupFiles.picked' : 'groups.reference.groupFiles.added') }}
             </Badge>
           </div>
-          <p class="truncate text-xs text-muted">{{ details(file) }}</p>
+          <p class="mt-0.5 truncate text-xs text-muted tabular">{{ details(file) }}</p>
         </div>
         <Button v-if="pick" size="sm" :disabled="existing.includes(file.name)" @click="emit('picked', file)">
           {{ t('groups.reference.groupFiles.pick') }}

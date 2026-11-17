@@ -60,7 +60,7 @@ const update = computed(
           class="flex items-center gap-1.5 truncate text-xs text-subtle tabular"
         >
           v{{ versionOf(snapshot, name) }}
-          <span v-if="update" class="inline-flex items-center gap-1 font-semibold text-primary">
+          <span v-if="update" class="inline-flex items-center gap-1 font-medium text-info">
             <ArrowUpCircle :size="12" aria-hidden="true" />
             {{ t('plugins.card.update', { version: update.version }) }}
           </span>
@@ -69,7 +69,9 @@ const update = computed(
       <Badge :tone="statusTone(status)" dot>{{ t(`plugins.status.${status}`) }}</Badge>
     </div>
     <p class="line-clamp-2 min-h-10 text-sm text-muted">{{ descriptionOf(snapshot, name) }}</p>
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line pt-3 text-xs text-muted">
+    <div
+      class="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line pt-3 text-xs text-muted tabular"
+    >
       <span class="inline-flex items-center gap-1">
         <MessagesSquare :size="14" aria-hidden="true" />
         {{ groups ? t('plugins.card.groups', { n: groups }, groups) : t('plugins.card.noGroups') }}

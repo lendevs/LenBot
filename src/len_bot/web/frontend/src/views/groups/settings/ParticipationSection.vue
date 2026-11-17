@@ -94,20 +94,23 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; min?: number; 
     <div class="sm:col-span-2">
       <button
         type="button"
-        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-sm font-medium text-muted hover:text-ink focus-visible:focus-ring"
+        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md py-0.5 text-sm font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
         :aria-expanded="details"
         @click="details = !details"
       >
         <ChevronDown
           :size="15"
-          class="transition-transform"
+          class="transition-transform duration-150"
           :class="details && 'rotate-180'"
           aria-hidden="true"
         />
         {{ t('groups.settings.participation.details') }}
       </button>
     </div>
-    <template v-if="details">
+    <div
+      v-if="details"
+      class="grid animate-fade gap-x-5 gap-y-5 border-t border-line pt-4 sm:col-span-2 sm:grid-cols-2"
+    >
       <Field
         v-for="item in timing"
         :key="item.key"
@@ -123,6 +126,6 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; min?: number; 
           @update:model-value="(value) => (form.draft.scene.attention[item.key] = value as number)"
         />
       </Field>
-    </template>
+    </div>
   </FormSection>
 </template>

@@ -84,7 +84,9 @@ const reset = useMutation({
 <template>
   <FormSection :title="t('groups.settings.speech.section')">
     <Field :label="t('groups.settings.speech.mode')" wide>
-      <SegmentedControl v-model="mode" :options="modes" :label="t('groups.settings.speech.mode')" />
+      <div>
+        <SegmentedControl v-model="mode" :options="modes" :label="t('groups.settings.speech.mode')" />
+      </div>
     </Field>
     <Field
       v-if="form.draft.speech.mode === 'custom'"
@@ -94,7 +96,7 @@ const reset = useMutation({
       <NumberInput v-model="form.draft.speech.value" :min="1" :unit="t('groups.settings.speech.unit')" />
     </Field>
     <div v-if="state" class="flex flex-wrap items-center gap-3 text-sm sm:col-span-2">
-      <span :class="state.held_until ? 'text-warning' : 'text-muted'">{{ usage }}</span>
+      <span class="tabular" :class="state.held_until ? 'text-warning' : 'text-muted'">{{ usage }}</span>
       <Button v-if="state.held_until" size="sm" :loading="reset.isPending.value" @click="reset.mutate()">
         {{ t('groups.settings.speech.release') }}
       </Button>

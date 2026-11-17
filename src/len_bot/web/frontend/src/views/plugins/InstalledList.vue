@@ -96,20 +96,20 @@ async function removeData(name: string) {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <div class="flex flex-wrap items-center gap-2">
-      <Input
-        v-if="names.length > 3"
-        v-model="query"
-        type="search"
-        size="sm"
-        :icon="Search"
-        :placeholder="t('plugins.search')"
-        :aria-label="t('plugins.search')"
-        clearable
-        class="w-full sm:w-64"
-      />
-      <span class="text-sm text-muted">
+  <div class="flex min-w-0 flex-col gap-5">
+    <div class="flex flex-wrap items-center gap-2.5">
+      <div v-if="names.length > 3" class="w-full sm:w-64">
+        <Input
+          v-model="query"
+          type="search"
+          size="sm"
+          :icon="Search"
+          :placeholder="t('plugins.search')"
+          :aria-label="t('plugins.search')"
+          clearable
+        />
+      </div>
+      <span class="text-sm text-muted tabular">
         {{ t('plugins.count', { n: names.length }, names.length) }}
         <template v-if="names.length">· {{ t('plugins.running', { n: running }) }}</template>
       </span>
@@ -136,7 +136,7 @@ async function removeData(name: string) {
       <Button variant="primary" :icon="Store" @click="emit('discover')">{{ t('plugins.goDiscover') }}</Button>
     </EmptyState>
     <EmptyState v-else-if="!shown.length" :icon="Search" :title="t('common.noResults')" compact />
-    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-4">
+    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-4">
       <PluginCard
         v-for="name in shown"
         :key="name"
@@ -146,9 +146,9 @@ async function removeData(name: string) {
       />
     </div>
 
-    <section v-if="snapshot.retained_data.length" class="flex flex-col gap-2">
-      <h2 class="text-base font-semibold">{{ t('plugins.retained') }}</h2>
-      <ul class="flex list-none flex-col divide-y divide-line rounded-xl border border-line bg-surface px-4">
+    <section v-if="snapshot.retained_data.length" class="flex flex-col gap-2.5 pt-2">
+      <h2 class="text-base font-semibold text-ink">{{ t('plugins.retained') }}</h2>
+      <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
         <li v-for="item in snapshot.retained_data" :key="item.name" class="flex items-center gap-3 py-2.5">
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm font-medium text-ink">{{ item.name }}</p>

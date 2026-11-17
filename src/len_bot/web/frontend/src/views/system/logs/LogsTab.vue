@@ -194,52 +194,67 @@ function exportShown() {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-4">
+  <div class="flex min-w-0 flex-col gap-5">
+    <section class="flex min-w-0 flex-col gap-3.5 border-b border-line pb-5">
       <div class="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
-        <div class="col-span-2">
-          <SegmentedControl v-model="level" :options="levels" :label="t('logs.level')" />
+        <div class="col-span-2 sm:w-auto">
+          <Field :label="t('logs.level')">
+            <div class="flex min-h-9 items-center">
+              <SegmentedControl v-model="level" :options="levels" :label="t('logs.level')" />
+            </div>
+          </Field>
         </div>
-        <Field :label="t('logs.group')" class="col-span-2 sm:w-48">
-          <Select v-model="scene" :options="sceneOptions" />
-        </Field>
-        <Field :label="t('logs.source')" class="col-span-2 sm:w-64">
-          <Select v-model="source" :options="sourceOptions" />
-        </Field>
-        <Field :label="t('logs.plugin')" class="sm:w-36">
-          <Input v-model="plugin" mono clearable />
-        </Field>
-        <Field :label="t('logs.task')" class="sm:w-28">
-          <Input v-model="task" mono clearable />
-        </Field>
+        <div class="col-span-2 sm:w-48">
+          <Field :label="t('logs.group')">
+            <Select v-model="scene" :options="sceneOptions" />
+          </Field>
+        </div>
+        <div class="col-span-2 sm:w-60">
+          <Field :label="t('logs.source')">
+            <Select v-model="source" :options="sourceOptions" />
+          </Field>
+        </div>
+        <div class="min-w-0 sm:w-36">
+          <Field :label="t('logs.plugin')">
+            <Input v-model="plugin" mono clearable />
+          </Field>
+        </div>
+        <div class="min-w-0 sm:w-28">
+          <Field :label="t('logs.task')">
+            <Input v-model="task" mono clearable />
+          </Field>
+        </div>
       </div>
       <div class="flex flex-wrap items-center gap-3">
-        <Input
-          v-model="search"
-          :icon="Search"
-          clearable
-          :placeholder="t('logs.search')"
-          class="min-w-0 flex-1 basis-60"
-          :aria-label="t('logs.search')"
-        />
+        <div class="min-w-0 flex-1 basis-56">
+          <Input
+            v-model="search"
+            :icon="Search"
+            clearable
+            :placeholder="t('logs.search')"
+            :aria-label="t('logs.search')"
+          />
+        </div>
         <Field :label="t('logs.follow')" inline>
           <Switch v-model="follow" />
         </Field>
-        <Button
-          size="sm"
-          variant="ghost"
-          :icon="RefreshCw"
-          :loading="logs.isFetching.value && !follow"
-          @click="logs.refetch()"
-        >
-          {{ t('logs.refresh') }}
-        </Button>
-        <Button size="sm" variant="ghost" :icon="Download" :disabled="!shown.length" @click="exportShown">
-          {{ t('logs.export', { n: shown.length }, shown.length) }}
-        </Button>
+        <div class="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            :icon="RefreshCw"
+            :loading="logs.isFetching.value && !follow"
+            @click="logs.refetch()"
+          >
+            {{ t('logs.refresh') }}
+          </Button>
+          <Button size="sm" variant="ghost" :icon="Download" :disabled="!shown.length" @click="exportShown">
+            {{ t('logs.export', { n: shown.length }, shown.length) }}
+          </Button>
+        </div>
       </div>
       <div v-if="turn" class="flex flex-wrap items-center gap-2">
-        <Badge tone="brand">{{ t('logs.onlyTurn', { id: turn.slice(0, 8) }) }}</Badge>
+        <Badge tone="info">{{ t('logs.onlyTurn', { id: turn.slice(0, 8) }) }}</Badge>
         <Button size="sm" variant="ghost" :icon="X" @click="setQuery({ turn: undefined })">
           {{ t('logs.allTurns') }}
         </Button>
@@ -247,37 +262,39 @@ function exportShown() {
       <div v-if="kinds.length > 1" class="flex flex-wrap gap-1.5" role="group" :aria-label="t('logs.kinds')">
         <button
           type="button"
-          class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
+          class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
           :class="
-            !kind ? 'border-primary bg-primary-bg text-primary' : 'border-line text-ink-2 hover:bg-hover'
+            !kind
+              ? 'border-line-strong bg-fill font-semibold text-ink'
+              : 'border-line bg-surface text-muted hover:bg-hover hover:text-ink'
           "
           :aria-pressed="!kind"
           @click="setQuery({ event: undefined })"
         >
           {{ t('logs.allKinds') }}
-          <span class="tabular opacity-70">{{ items.length }}</span>
+          <span class="tabular opacity-75">{{ items.length }}</span>
         </button>
         <button
           v-for="[key, count] in kinds"
           :key="key"
           type="button"
-          class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
+          class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
           :class="
             kind === key
-              ? 'border-primary bg-primary-bg text-primary'
-              : 'border-line text-ink-2 hover:bg-hover'
+              ? 'border-line-strong bg-fill font-semibold text-ink'
+              : 'border-line bg-surface text-muted hover:bg-hover hover:text-ink'
           "
           :aria-pressed="kind === key"
           @click="setQuery({ event: kind === key ? undefined : key })"
         >
           {{ key === '_other' ? labels.event(undefined) : labels.event(key) }}
-          <span class="tabular opacity-70">{{ count }}</span>
+          <span class="tabular opacity-75">{{ count }}</span>
         </button>
       </div>
     </section>
 
-    <section v-if="call > 0" class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4">
-      <h3 class="text-base font-semibold">{{ t('logs.events.model_call') }} #{{ call }}</h3>
+    <section v-if="call > 0" class="flex min-w-0 flex-col gap-3 border-b border-line pb-5">
+      <h3 class="text-base font-semibold text-ink tabular">{{ t('logs.events.model_call') }} #{{ call }}</h3>
       <Skeleton v-if="callDetail.isPending.value" :lines="3" />
       <ErrorNote
         v-else-if="callDetail.isError.value"
@@ -299,12 +316,9 @@ function exportShown() {
         :max-lines="24"
       />
     </section>
-    <section
-      v-if="turn && scene !== ALL"
-      class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4"
-    >
+    <section v-if="turn && scene !== ALL" class="flex min-w-0 flex-col gap-3 border-b border-line pb-5">
       <header class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-base font-semibold">{{ t('logs.turnTitle') }}</h3>
+        <h3 class="text-base font-semibold text-ink">{{ t('logs.turnTitle') }}</h3>
         <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="groupsTarget(scene, 'live')">
           {{ t('logs.openGroup') }}
         </Button>
@@ -328,18 +342,8 @@ function exportShown() {
     />
     <EmptyState v-else-if="!shown.length" :icon="ScrollText" :title="t('logs.empty')" compact />
     <div v-else class="flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface">
-      <VirtualList
-        :items="keyed"
-        :get-key="(row) => row.key"
-        :estimate-size="76"
-        class="max-h-[min(70vh,720px)]"
-      >
-        <template #default="{ item: row }">
-          <LogRow :item="row.item" :time-zone="timeZone" :turn="turn" @filter="onFilter" />
-        </template>
-      </VirtualList>
       <div
-        class="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2 text-xs text-muted"
+        class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-fill px-4 py-2 text-xs text-muted"
       >
         <span class="tabular">{{ t('logs.count', { shown: shown.length, read: items.length }) }}</span>
         <Button
@@ -352,21 +356,28 @@ function exportShown() {
           {{ t('logs.more', { n: LIMITS[LIMITS.indexOf(limit) + 1] }) }}
         </Button>
       </div>
+      <VirtualList
+        :items="keyed"
+        :get-key="(row) => row.key"
+        :estimate-size="72"
+        class="max-h-[min(68dvh,42rem)]"
+      >
+        <template #default="{ item: row }">
+          <LogRow :item="row.item" :time-zone="timeZone" :turn="turn" @filter="onFilter" />
+        </template>
+      </VirtualList>
     </div>
 
-    <section
-      v-if="files.data.value?.items.length"
-      class="flex min-w-0 flex-col gap-2 rounded-xl border border-line bg-surface p-4"
-    >
-      <h3 class="text-base font-semibold">{{ t('logs.files') }}</h3>
-      <ul class="flex list-none flex-col divide-y divide-line">
-        <li v-for="file in files.data.value.items" :key="file.name" class="flex items-center gap-3 py-2">
+    <section v-if="files.data.value?.items.length" class="flex min-w-0 max-w-3xl flex-col gap-2.5 pt-2">
+      <h3 class="text-base font-semibold text-ink">{{ t('logs.files') }}</h3>
+      <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+        <li v-for="file in files.data.value.items" :key="file.name" class="flex items-center gap-3 py-2.5">
           <FileText :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
-          <span class="min-w-0 flex-1 truncate font-mono text-sm">{{ file.name }}</span>
+          <span class="min-w-0 flex-1 truncate font-mono text-sm text-ink">{{ file.name }}</span>
           <span class="text-xs text-muted tabular">{{ size(file.bytes) }}</span>
           <a
             :href="logsApi.fileUrl(file.name)"
-            class="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-ink hover:bg-hover focus-visible:focus-ring"
+            class="link-plain inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-ink transition-colors hover:bg-hover focus-visible:focus-ring"
           >
             <Download :size="15" aria-hidden="true" />
             {{ t('logs.download') }}

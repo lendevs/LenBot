@@ -32,7 +32,7 @@ const levels = computed(() =>
   <Field v-if="mode" :label="t('participation.chatMode')" wide>
     <RadioGroup v-model="mode" :options="modes" />
   </Field>
-  <Field v-if="mode !== 'plugins'" :label="t('participation.frequency')">
+  <Field v-if="mode !== 'plugins'" :label="t('participation.frequency')" wide>
     <div>
       <SegmentedControl v-model="level" :options="levels" :label="t('participation.frequency')" />
     </div>

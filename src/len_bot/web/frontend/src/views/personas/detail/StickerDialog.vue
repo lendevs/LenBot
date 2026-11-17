@@ -85,7 +85,9 @@ const open = computed({
   >
     <form id="sticker-form" class="flex flex-col gap-4" @submit.prevent="ready && save.mutate()">
       <div class="flex items-center gap-4">
-        <div class="grid size-28 shrink-0 place-items-center overflow-hidden rounded-lg bg-fill">
+        <div
+          class="grid size-24 shrink-0 place-items-center overflow-hidden rounded-lg border border-line bg-fill p-2 sm:size-28"
+        >
           <img v-if="image" :src="image" alt="" class="max-h-full max-w-full object-contain" />
           <ImageUp v-else :size="24" class="text-subtle" aria-hidden="true" />
         </div>
@@ -99,20 +101,15 @@ const open = computed({
             aria-hidden="true"
             @change="chosen"
           />
-          <Button
-            size="sm"
-            :icon="ImageUp"
-            :disabled="save.isPending.value"
-            class="self-start"
-            @click="picker?.click()"
-          >
-            {{ t('personas.detail.stickers.choose') }}
-          </Button>
+          <div>
+            <Button size="sm" :icon="ImageUp" :disabled="save.isPending.value" @click="picker?.click()">
+              {{ t('personas.detail.stickers.choose') }}
+            </Button>
+          </div>
           <span v-if="file" class="truncate text-sm text-ink-2">
             {{ file.name }} ·
             <span class="tabular">{{ formatBytes(file.size) }}</span>
           </span>
-          <span v-else class="text-xs text-subtle">PNG · JPG · GIF · WebP · 10 MB</span>
         </div>
       </div>
       <Field :label="t('personas.detail.stickers.description')" required>

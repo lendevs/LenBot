@@ -58,7 +58,7 @@ const passed = computed(() => {
   <div class="flex flex-col gap-5">
     <p class="text-sm text-ink-2">{{ t('setup.vectors.purpose') }}</p>
     <Field :label="t('setup.vectors.mode')">
-      <div>
+      <div class="min-w-0">
         <SegmentedControl v-model="draft.vectorMode" :options="modes" :label="t('setup.vectors.mode')" />
       </div>
     </Field>

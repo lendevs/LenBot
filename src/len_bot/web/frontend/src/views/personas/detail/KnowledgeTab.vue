@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowLeft, BookOpen, FileText, Plus, Trash2 } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { personasApi, type KnowledgeListing } from '../../../api/personas'
+import { formatNumber } from '../../../i18n/format'
 import { groupLabel } from '../../../layouts/shell/scenes'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
@@ -160,10 +161,13 @@ function discard() {
     :error="listing.error.value"
     :retry="listing.refetch"
   />
-  <div v-else class="grid min-w-0 items-start gap-5 lg:grid-cols-[16rem_minmax(0,1fr)]">
-    <aside class="flex min-w-0 flex-col gap-2" :class="open && 'max-lg:hidden'">
+  <div v-else class="grid min-w-0 items-start gap-5 lg:grid-cols-[16.5rem_minmax(0,1fr)] lg:gap-0">
+    <aside
+      class="flex min-w-0 flex-col gap-2.5 lg:border-r lg:border-line lg:pr-5"
+      :class="open && 'max-lg:hidden'"
+    >
       <div class="flex items-center justify-between gap-2">
-        <h3 class="text-base font-semibold">{{ t('personas.detail.knowledge.title') }}</h3>
+        <h3 class="text-base font-semibold text-ink">{{ t('personas.detail.knowledge.title') }}</h3>
         <Button size="sm" :icon="Plus" @click="create">{{ t('personas.detail.knowledge.create') }}</Button>
       </div>
       <EmptyState
@@ -176,21 +180,31 @@ function discard() {
         <li v-for="file in files" :key="file.filename">
           <button
             type="button"
-            class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-fill focus-visible:focus-ring"
-            :class="open?.filename === file.filename && 'bg-fill'"
+            class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors focus-visible:focus-ring"
+            :class="open?.filename === file.filename ? 'bg-selected text-ink' : 'hover:bg-hover'"
             :aria-current="open?.filename === file.filename || undefined"
             @click="pick(file.filename)"
           >
-            <FileText :size="16" class="shrink-0 text-muted" aria-hidden="true" />
+            <FileText
+              :size="16"
+              class="shrink-0"
+              :class="open?.filename === file.filename ? 'text-ink' : 'text-muted'"
+              aria-hidden="true"
+            />
             <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-medium text-ink">{{ title(file.filename) }}</span>
-              <span class="block truncate text-xs text-muted">
-                {{ t('personas.detail.knowledge.chars', { n: file.chars }) }}
+              <span
+                class="block truncate text-sm text-ink"
+                :class="open?.filename === file.filename ? 'font-semibold' : 'font-medium'"
+              >
+                {{ title(file.filename) }}
+              </span>
+              <span class="block truncate text-xs text-muted tabular">
+                {{ t('personas.detail.knowledge.chars', { n: formatNumber(file.chars) }) }}
                 <template v-if="file.index">
                   ·
                   {{
                     file.index === 'indexed'
-                      ? t('personas.detail.knowledge.indexed', { n: file.chunks ?? 0 })
+                      ? t('personas.detail.knowledge.indexed', { n: formatNumber(file.chunks ?? 0) })
                       : t(`personas.detail.knowledge.${file.index}`)
                   }}
                 </template>
@@ -208,50 +222,56 @@ function discard() {
       />
     </aside>
 
-    <section v-if="open" class="flex min-w-0 flex-col gap-4">
-      <div class="flex min-h-8 items-center gap-2">
-        <Button variant="ghost" size="sm" :icon="ArrowLeft" class="lg:hidden" @click="close">
-          {{ t('personas.detail.knowledge.title') }}
-        </Button>
-        <h3 class="min-w-0 flex-1 truncate text-base font-semibold max-lg:hidden">
-          {{ open.filename ? title(open.filename) : t('personas.detail.knowledge.new') }}
-        </h3>
-        <Button
-          v-if="open.filename"
-          size="sm"
-          variant="danger-ghost"
-          :icon="Trash2"
-          :loading="removal.isPending.value"
-          class="ml-auto"
-          @click="remove"
+    <div class="min-w-0 lg:pl-6" :class="!open && 'max-lg:hidden'">
+      <section v-if="open" class="flex min-w-0 flex-col gap-4 pb-6">
+        <div class="flex min-h-8 items-center gap-2">
+          <div class="-ml-2 lg:hidden">
+            <Button variant="ghost" size="sm" :icon="ArrowLeft" @click="close">
+              {{ t('personas.detail.knowledge.title') }}
+            </Button>
+          </div>
+          <h3 class="min-w-0 flex-1 truncate text-base font-semibold text-ink max-lg:hidden">
+            {{ open.filename ? title(open.filename) : t('personas.detail.knowledge.new') }}
+          </h3>
+          <div v-if="open.filename" class="ml-auto">
+            <Button
+              size="sm"
+              variant="danger-ghost"
+              :icon="Trash2"
+              :loading="removal.isPending.value"
+              @click="remove"
+            >
+              {{ t('common.delete') }}
+            </Button>
+          </div>
+        </div>
+        <Field
+          v-if="open.filename === null"
+          :label="t('personas.detail.knowledge.filename')"
+          :error="name ? problem : null"
         >
-          {{ t('common.delete') }}
-        </Button>
-      </div>
-      <Field
-        v-if="open.filename === null"
-        :label="t('personas.detail.knowledge.filename')"
-        :error="name ? problem : null"
-      >
-        <Input v-model="name" mono placeholder="people/xiaoming.md" />
-      </Field>
-      <Field :label="open.filename === null ? t('personas.detail.knowledge.content') : undefined">
-        <Textarea
-          v-model="text"
-          :rows="16"
-          :max-rows="40"
-          :aria-label="t('personas.detail.knowledge.content')"
+          <Input v-model="name" mono placeholder="people/xiaoming.md" />
+        </Field>
+        <Field :label="open.filename === null ? t('personas.detail.knowledge.content') : undefined">
+          <Textarea
+            v-model="text"
+            :rows="16"
+            :max-rows="40"
+            :aria-label="t('personas.detail.knowledge.content')"
+          />
+        </Field>
+        <SaveBar
+          :dirty="dirty"
+          :saving="save.isPending.value"
+          :error="
+            save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : problem
+          "
+          :invalid="Boolean(problem)"
+          @save="save.mutate()"
+          @discard="discard"
         />
-      </Field>
-      <SaveBar
-        :dirty="dirty"
-        :saving="save.isPending.value"
-        :error="save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : problem"
-        :invalid="Boolean(problem)"
-        @save="save.mutate()"
-        @discard="discard"
-      />
-    </section>
-    <EmptyState v-else :icon="FileText" :title="t('personas.detail.knowledge.pick')" class="max-lg:hidden" />
+      </section>
+      <EmptyState v-else :icon="FileText" :title="t('personas.detail.knowledge.pick')" />
+    </div>
   </div>
 </template>

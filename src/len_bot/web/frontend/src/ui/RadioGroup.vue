@@ -14,6 +14,7 @@ const props = withDefaults(
     options: RadioOption<T>[]
     orientation?: 'vertical' | 'horizontal'
     id?: string
+    invalid?: boolean
     disabled?: boolean
   }>(),
   { orientation: 'vertical', id: undefined },
@@ -28,6 +29,7 @@ const field = useFieldControl(props)
     v-model="model"
     :orientation="orientation"
     :disabled="field.disabled.value"
+    :aria-invalid="field.invalid.value || undefined"
     :aria-describedby="field.describedBy.value"
     class="flex gap-x-5 gap-y-2.5"
     :class="orientation === 'vertical' ? 'flex-col' : 'flex-wrap items-center'"
@@ -35,19 +37,20 @@ const field = useFieldControl(props)
     <label
       v-for="option in options"
       :key="option.value"
-      class="inline-flex items-center gap-2.5 text-base text-ink"
+      class="inline-flex min-w-0 items-center gap-2.5 text-base text-ink"
       :class="option.disabled || field.disabled.value ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'"
     >
       <RadioGroupItem
         :value="option.value"
         :disabled="option.disabled"
-        class="inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface transition-colors duration-150 hover:border-subtle focus-visible:focus-ring data-[state=checked]:border-primary"
+        :data-invalid="field.invalid.value || undefined"
+        class="inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface transition-colors duration-150 hover:border-subtle focus-visible:focus-ring data-invalid:border-error data-invalid:hover:border-error data-[state=checked]:border-primary"
       >
         <RadioGroupIndicator
           class="size-2.5 animate-[ui-pop-in_var(--dur-1)_var(--ease-spring)] rounded-full bg-primary"
         />
       </RadioGroupItem>
-      {{ option.label }}
+      <span class="min-w-0">{{ option.label }}</span>
     </label>
   </RadioGroupRoot>
 </template>

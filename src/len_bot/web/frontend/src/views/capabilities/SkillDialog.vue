@@ -16,6 +16,7 @@ import Skeleton from '../../ui/Skeleton.vue'
 import { confirm } from '../../ui/confirm'
 import { toast } from '../../ui/toast'
 import RawRecord from '../groups/tasks/RawRecord.vue'
+import { sceneSecondaryId } from './status'
 
 /** A skill's real files, read page by page, with moving and deleting where its source allows. */
 const props = defineProps<{ place: SkillPlace }>()
@@ -92,6 +93,10 @@ async function confirmRemove() {
   })
   if (sure) remove.mutate()
 }
+const usedGroupLabel = (scene: string) => {
+  const id = sceneSecondaryId(scene)
+  return id ? `${groupLabel(scene)} (${id})` : groupLabel(scene)
+}
 const busy = computed(() => move.isPending.value || remove.isPending.value)
 const actionError = computed(() => move.error.value ?? remove.error.value)
 </script>
@@ -114,21 +119,20 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
         <Badge v-if="!listing.data.value.skill.model_invocation" tone="warning">
           {{ t('capabilities.skills.manualOnly') }}
         </Badge>
-        <span v-if="listing.data.value.used_by_running.length">
+        <span v-if="listing.data.value.used_by_running.length" class="tabular">
           {{
             t('capabilities.skills.usedBy', {
-              groups: listing.data.value.used_by_running.map(groupLabel).join(t('personas.separator')),
+              groups: listing.data.value.used_by_running.map(usedGroupLabel).join(t('personas.separator')),
             })
           }}
         </span>
       </p>
-      <div class="flex flex-wrap gap-1.5">
+      <div class="flex flex-wrap gap-1.5 font-mono">
         <Button
           v-for="file in listing.data.value.files"
           :key="file.path"
           size="sm"
           :variant="file.path === path ? 'secondary' : 'ghost'"
-          class="font-mono"
           :aria-pressed="file.path === path"
           :title="formatBytes(file.size)"
           @click="read.mutate({ file: file.path, offset: 0 })"
@@ -148,30 +152,30 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
         wrap
         :max-lines="30"
       />
-      <Button
-        v-if="next !== null && path"
-        size="sm"
-        variant="ghost"
-        class="self-start"
-        :loading="read.isPending.value"
-        @click="read.mutate({ file: path, offset: next })"
-      >
-        {{ t('capabilities.skills.continue') }}
-      </Button>
+      <div v-if="next !== null && path" class="flex">
+        <Button
+          size="sm"
+          variant="ghost"
+          :loading="read.isPending.value"
+          @click="read.mutate({ file: path, offset: next })"
+        >
+          {{ t('capabilities.skills.continue') }}
+        </Button>
+      </div>
       <ErrorNote v-if="actionError" :title="t('capabilities.failed')" :error="actionError" />
       <RawRecord v-if="developerDetails" :label="t('capabilities.skills.raw')" :code="listing.data.value" />
     </div>
     <template v-if="movable || removable" #footer>
-      <Button
-        v-if="removable"
-        variant="danger-ghost"
-        class="mr-auto"
-        :disabled="!listing.data.value || busy"
-        :loading="remove.isPending.value"
-        @click="confirmRemove"
-      >
-        {{ t('common.delete') }}
-      </Button>
+      <span v-if="removable" class="mr-auto inline-flex">
+        <Button
+          variant="danger-ghost"
+          :disabled="!listing.data.value || busy"
+          :loading="remove.isPending.value"
+          @click="confirmRemove"
+        >
+          {{ t('common.delete') }}
+        </Button>
+      </span>
       <Button
         v-if="place.source === 'task'"
         :disabled="!listing.data.value || busy"

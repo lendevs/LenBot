@@ -105,7 +105,7 @@ watch(picked, (id) => {
           {{ t('groups.memory.settings.probe') }}
         </Button>
       </div>
-      <p v-if="list.isSuccess.value" class="text-xs text-muted">
+      <p v-if="list.isSuccess.value" class="text-xs text-muted tabular">
         {{ t('groups.memory.settings.listed', { n: list.data.value?.models.length ?? 0 }) }}
       </p>
       <ErrorNote

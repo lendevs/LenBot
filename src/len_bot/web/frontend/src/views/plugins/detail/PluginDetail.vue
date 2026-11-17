@@ -239,56 +239,62 @@ const permissions = computed(() => permissionsOf(props.snapshot, props.name))
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-5">
-    <div>
-      <Button variant="ghost" size="sm" :icon="ArrowLeft" :to="back" class="-ml-2">
+  <div class="flex min-w-0 flex-col gap-5 pb-2">
+    <div class="-ml-2 flex">
+      <Button variant="ghost" size="sm" :icon="ArrowLeft" :to="back">
         {{ t('plugins.all') }}
       </Button>
     </div>
-    <header class="flex min-w-0 flex-wrap items-start gap-4">
-      <span class="flex" :class="!enabled && 'opacity-60 grayscale'" aria-hidden="true">
-        <Avatar :name="name" shape="square" :size="56" />
-      </span>
-      <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div class="flex min-w-0 flex-wrap items-center gap-2">
-          <h1 class="truncate text-2xl font-semibold">{{ name }}</h1>
-          <Badge v-if="version" class="tabular">v{{ version }}</Badge>
-          <Badge v-if="catalogUpdate" tone="brand" class="tabular">
-            {{
-              catalogUpdate.prepared
-                ? t('plugins.updates.prepared')
-                : t('plugins.card.update', { version: catalogUpdate.version })
-            }}
-          </Badge>
-          <Badge :tone="statusTone(status)" dot>{{ t(`plugins.status.${status}`) }}</Badge>
+    <header class="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
+      <div class="flex min-w-0 flex-1 items-start gap-4">
+        <span class="flex shrink-0" :class="!enabled && 'opacity-60 grayscale'" aria-hidden="true">
+          <Avatar :name="name" shape="square" :size="52" />
+        </span>
+        <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div class="flex min-w-0 flex-wrap items-center gap-2">
+            <h1 class="truncate text-2xl font-semibold text-ink">{{ name }}</h1>
+            <span v-if="version" class="inline-flex tabular">
+              <Badge>v{{ version }}</Badge>
+            </span>
+            <span v-if="catalogUpdate" class="inline-flex tabular">
+              <Badge :tone="catalogUpdate.prepared ? 'info' : 'warning'">
+                {{
+                  catalogUpdate.prepared
+                    ? t('plugins.updates.prepared')
+                    : t('plugins.card.update', { version: catalogUpdate.version })
+                }}
+              </Badge>
+            </span>
+            <Badge :tone="statusTone(status)" dot>{{ t(`plugins.status.${status}`) }}</Badge>
+          </div>
+          <p v-if="manifest?.description || running?.description" class="max-w-3xl text-sm text-muted">
+            {{ running?.description || manifest?.description }}
+          </p>
+          <p v-if="manifest" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+            <span v-if="manifest.authors?.length">{{ manifest.authors.join(t('personas.separator')) }}</span>
+            <span v-if="manifest.license">{{ manifest.license }}</span>
+            <a
+              v-if="manifest.repository"
+              :href="manifest.repository"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-0.5 text-primary hover:underline"
+            >
+              {{ t('plugins.detail.repository') }}
+              <ArrowUpRight :size="13" aria-hidden="true" />
+            </a>
+            <a
+              v-if="manifest.homepage"
+              :href="manifest.homepage"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-0.5 text-primary hover:underline"
+            >
+              {{ t('plugins.detail.homepage') }}
+              <ArrowUpRight :size="13" aria-hidden="true" />
+            </a>
+          </p>
         </div>
-        <p v-if="manifest?.description || running?.description" class="max-w-3xl text-sm text-muted">
-          {{ running?.description || manifest?.description }}
-        </p>
-        <p v-if="manifest" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
-          <span v-if="manifest.authors?.length">{{ manifest.authors.join(t('personas.separator')) }}</span>
-          <span v-if="manifest.license">{{ manifest.license }}</span>
-          <a
-            v-if="manifest.repository"
-            :href="manifest.repository"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="inline-flex items-center gap-0.5 text-primary hover:underline"
-          >
-            {{ t('plugins.detail.repository') }}
-            <ArrowUpRight :size="13" aria-hidden="true" />
-          </a>
-          <a
-            v-if="manifest.homepage"
-            :href="manifest.homepage"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="inline-flex items-center gap-0.5 text-primary hover:underline"
-          >
-            {{ t('plugins.detail.homepage') }}
-            <ArrowUpRight :size="13" aria-hidden="true" />
-          </a>
-        </p>
       </div>
       <div class="flex shrink-0 items-center gap-2">
         <Button v-if="enabled" :disabled="busy" :loading="working && !dirty" @click="disable">

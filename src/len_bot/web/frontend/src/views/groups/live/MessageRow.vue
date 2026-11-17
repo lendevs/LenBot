@@ -43,8 +43,14 @@ const status = computed(() =>
     <span class="flex shrink-0 pt-0.5" aria-hidden="true">
       <Avatar :name="name" :size="30" />
     </span>
-    <div class="flex min-w-0 max-w-[min(640px,85%)] flex-col gap-1" :class="message.is_self && 'items-end'">
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
+    <div
+      class="flex min-w-0 max-w-[min(640px,calc(100%-40px))] flex-col gap-1 sm:max-w-[min(640px,82%)]"
+      :class="message.is_self && 'items-end'"
+    >
+      <div
+        class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted"
+        :class="message.is_self && 'justify-end'"
+      >
         <strong class="font-medium text-ink-2" :title="message.sender.uid">{{ name }}</strong>
         <time class="tabular" :datetime="new Date(message.time * 1000).toISOString()">
           {{ formatDateTime(message.time, { timeZone }) }}
@@ -57,9 +63,9 @@ const status = computed(() =>
       </div>
       <div
         v-if="text || message.reply"
-        class="min-w-0 rounded-xl px-3 py-2 text-base break-words text-ink"
+        class="min-w-0 rounded-xl px-3.5 py-2 text-base break-words text-ink"
         :class="[
-          message.is_self ? 'rounded-tr-sm bg-brand-soft' : 'rounded-tl-sm bg-fill',
+          message.is_self ? 'rounded-tr-sm border border-line-strong bg-surface' : 'rounded-tl-sm bg-fill',
           message.recalled && 'opacity-60',
         ]"
       >
@@ -71,14 +77,18 @@ const status = computed(() =>
         </p>
         <span class="whitespace-pre-wrap">{{ text }}</span>
       </div>
-      <div v-if="message.images.length" class="flex flex-wrap gap-1.5">
+      <div
+        v-if="message.images.length"
+        class="flex flex-wrap gap-1.5"
+        :class="message.is_self && 'justify-end'"
+      >
         <template v-for="image in message.images" :key="image.index">
           <a
             v-if="image.url"
             :href="image.url"
             target="_blank"
             rel="noopener noreferrer"
-            class="block overflow-hidden rounded-lg border border-line"
+            class="block overflow-hidden rounded-lg border border-line bg-fill transition-colors hover:border-line-strong focus-visible:focus-ring"
           >
             <img
               :src="image.url"
@@ -90,7 +100,7 @@ const status = computed(() =>
           </a>
           <span
             v-else
-            class="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs text-muted"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-line bg-fill px-2.5 py-1.5 text-xs text-muted"
           >
             <ImageOff :size="14" aria-hidden="true" />
             {{ image.summary || t('groups.live.image') }}

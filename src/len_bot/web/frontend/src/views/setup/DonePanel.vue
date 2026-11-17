@@ -85,31 +85,40 @@ function open() {
 </script>
 
 <template>
-  <section class="mx-auto flex w-full max-w-md animate-rise flex-col items-center gap-5 text-center">
+  <section class="mx-auto flex w-full max-w-md animate-rise flex-col items-center gap-5 py-6 text-center">
     <img
       :src="markUrl"
       alt=""
-      class="size-16 rounded-xl"
+      class="size-15 rounded-xl"
       :class="
         state === 'starting' || state === 'slow' ? 'animate-[setup-bob_1.6s_var(--ease-out)_infinite]' : ''
       "
     />
     <div class="flex flex-col gap-2" role="status">
-      <h1 class="text-xl font-semibold">{{ t(`setup.done.${state}.title`) }}</h1>
+      <h1
+        class="text-xl font-semibold tracking-tight"
+        :class="state === 'failed' ? 'text-error' : state === 'ready' ? 'text-success' : 'text-ink'"
+      >
+        {{ t(`setup.done.${state}.title`) }}
+      </h1>
       <p class="text-sm text-ink-2">{{ t(`setup.done.${state}.text`) }}</p>
-      <p v-if="installed.length && state !== 'failed'" class="text-sm text-ink-2">
+      <p v-if="installed.length && state !== 'failed'" class="text-sm text-muted">
         {{ t('setup.done.plugins', { names: installed.join(t('setup.done.separator')) }) }}
       </p>
     </div>
-    <div v-if="state === 'starting'" class="flex gap-1.5" aria-hidden="true">
+    <div v-if="state === 'starting'" class="flex gap-2 py-1" aria-hidden="true">
       <span
         v-for="n in 3"
         :key="n"
-        class="size-2 animate-pulse-dot rounded-full bg-brand"
+        class="size-2 animate-pulse-dot rounded-full bg-primary text-primary"
         :style="{ animationDelay: `${n * 160}ms` }"
       />
     </div>
-    <form class="flex w-full flex-col gap-3 text-left" novalidate @submit.prevent="open">
+    <form
+      class="flex w-full flex-col gap-3 border-t border-line pt-5 text-left"
+      novalidate
+      @submit.prevent="open"
+    >
       <Field :label="t('setup.done.address')" :error="addressError" :info="t('setup.done.addressInfo')">
         <Input v-model="address" type="url" mono />
       </Field>

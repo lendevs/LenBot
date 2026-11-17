@@ -123,7 +123,7 @@ function added() {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="flex max-w-3xl min-w-0 flex-col gap-4">
     <ErrorNote
       v-if="service.isError.value"
       :title="t('groups.tasks.schedules.readFailed')"
@@ -134,7 +134,7 @@ function added() {
       v-if="settings && (!settings.enabled || !settings.tool_allowed)"
       class="flex flex-wrap items-center gap-3 rounded-lg bg-warning-bg px-4 py-3 text-sm text-warning"
     >
-      <TriangleAlert :size="16" aria-hidden="true" />
+      <TriangleAlert :size="16" class="shrink-0" aria-hidden="true" />
       <span class="min-w-0 flex-1">
         {{ t(!settings.enabled ? 'groups.tasks.schedules.off' : 'groups.tasks.schedules.noTool') }}
       </span>
@@ -150,7 +150,7 @@ function added() {
       </Button>
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <div class="w-32"><Select v-model="filter" :options="filters" size="sm" /></div>
       <Button
         size="sm"
@@ -171,25 +171,27 @@ function added() {
       :retry="list.refetch"
     />
     <EmptyState v-else-if="!rows.length" :icon="Bell" :title="t('groups.tasks.schedules.empty')" compact />
-    <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
-      <li v-for="item in rows" :key="item.id" class="flex flex-col gap-1.5 px-4 py-3">
-        <div class="flex items-start gap-3">
+    <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li v-for="item in rows" :key="item.id" class="flex flex-col gap-1.5 px-2 py-3.5">
+        <div class="flex flex-wrap items-start gap-3">
           <div class="min-w-0 flex-1">
-            <p class="text-sm break-words whitespace-pre-wrap text-ink">{{ item.note }}</p>
-            <p class="mt-0.5 text-xs text-muted">{{ details(item) }}</p>
+            <p class="text-sm leading-6 break-words whitespace-pre-wrap text-ink">{{ item.note }}</p>
+            <p class="mt-0.5 text-xs text-muted tabular">{{ details(item) }}</p>
           </div>
-          <Badge :tone="tones[item.status]" dot size="sm">
-            {{ t(`groups.tasks.schedules.status.${item.status}`) }}
-          </Badge>
-          <Button
-            v-if="item.status === 'pending' || item.status === 'blocked'"
-            size="sm"
-            variant="danger-ghost"
-            :loading="cancel.isPending.value && cancel.variables.value?.id === item.id"
-            @click="ask(item)"
-          >
-            {{ t('groups.tasks.schedules.cancel') }}
-          </Button>
+          <div class="flex shrink-0 items-center gap-2">
+            <Badge :tone="tones[item.status]" dot size="sm">
+              {{ t(`groups.tasks.schedules.status.${item.status}`) }}
+            </Badge>
+            <Button
+              v-if="item.status === 'pending' || item.status === 'blocked'"
+              size="sm"
+              variant="danger-ghost"
+              :loading="cancel.isPending.value && cancel.variables.value?.id === item.id"
+              @click="ask(item)"
+            >
+              {{ t('groups.tasks.schedules.cancel') }}
+            </Button>
+          </div>
         </div>
         <p v-if="item.reason" class="text-xs text-warning">{{ item.reason }}</p>
         <RawRecord v-if="developerDetails" :label="t('groups.tasks.schedules.raw')" :code="item" />

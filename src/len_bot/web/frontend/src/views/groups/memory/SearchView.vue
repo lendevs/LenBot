@@ -25,15 +25,17 @@ function submit() {
 </script>
 
 <template>
-  <div class="flex max-w-3xl flex-col gap-4">
+  <div class="flex max-w-3xl min-w-0 flex-col gap-4">
     <form class="flex gap-2" @submit.prevent="submit">
-      <Input
-        v-model="text"
-        :icon="Search"
-        :placeholder="t('groups.memory.search.placeholder')"
-        :aria-label="t('groups.memory.search.placeholder')"
-        class="flex-1"
-      />
+      <div class="min-w-0 flex-1">
+        <Input
+          v-model="text"
+          :icon="Search"
+          :placeholder="t('groups.memory.search.placeholder')"
+          :aria-label="t('groups.memory.search.placeholder')"
+          clearable
+        />
+      </div>
       <Button type="submit" variant="primary" :loading="search.isPending.value" :disabled="!text.trim()">
         {{ t('common.search') }}
       </Button>
@@ -55,19 +57,24 @@ function submit() {
       <li v-for="hit in search.data.value.hits" :key="`${hit.scope}:${hit.path}`">
         <button
           type="button"
-          class="flex w-full cursor-pointer flex-col gap-1.5 px-1 py-3 text-left hover:bg-hover focus-visible:focus-ring"
+          class="flex w-full cursor-pointer flex-col gap-1.5 px-2 py-3.5 text-left transition-colors duration-150 hover:bg-hover focus-visible:focus-ring"
           @click="emit('open', { scope: hit.scope, path: hit.path })"
         >
-          <span class="flex min-w-0 items-center gap-2">
+          <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <FileText :size="15" class="shrink-0 text-subtle" aria-hidden="true" />
             <Badge v-if="hit.scope === 'public'">{{ t('groups.memory.scopes.public') }}</Badge>
-            <span class="min-w-0 truncate font-mono text-sm text-ink">{{ hit.path }}</span>
+            <span class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-ink">{{ hit.path }}</span>
             <span v-if="developerDetails" class="ml-auto shrink-0 text-xs text-subtle tabular">
               {{ hit.score === null ? '—' : formatNumber(hit.score, { maximumFractionDigits: 3 }) }}
-              · {{ hit.total_chars === null ? '—' : t('groups.memory.search.chars', { n: hit.total_chars }) }}
+              ·
+              {{
+                hit.total_chars === null
+                  ? '—'
+                  : t('groups.memory.search.chars', { n: formatNumber(hit.total_chars) })
+              }}
             </span>
           </span>
-          <span class="line-clamp-3 text-sm break-words whitespace-pre-wrap text-ink-2">
+          <span class="line-clamp-3 text-sm leading-6 break-words whitespace-pre-wrap text-ink-2">
             {{ hit.preview }}
           </span>
         </button>

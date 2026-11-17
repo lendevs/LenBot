@@ -132,8 +132,8 @@ const saveError = computed(() =>
     :error="overview.error.value"
     :retry="overview.refetch"
   />
-  <div v-else-if="overview.data.value" class="flex min-w-0 flex-col gap-4">
-    <p v-if="outdated" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
+  <div v-else-if="overview.data.value" class="flex min-w-0 max-w-4xl flex-col gap-5">
+    <p v-if="outdated" class="rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning tabular">
       {{
         t(
           'system.prompts.outdated',
@@ -142,19 +142,22 @@ const saveError = computed(() =>
         )
       }}
     </p>
-    <div class="flex min-w-0 flex-col gap-5 rounded-xl border border-line bg-surface p-5">
+    <div class="flex min-w-0 flex-col gap-5">
       <div class="flex flex-wrap items-end justify-between gap-4">
-        <Field :label="t('system.prompts.file')" class="w-full sm:w-96">
-          <Combobox v-model="name" :options="options" :placeholder="t('system.prompts.pick')" />
-        </Field>
-        <label class="flex items-center gap-2 pb-2 text-sm text-ink-2">
+        <div class="w-full sm:w-96">
+          <Field :label="t('system.prompts.file')">
+            <Combobox v-model="name" :options="options" :placeholder="t('system.prompts.pick')" />
+          </Field>
+        </div>
+        <div class="pb-1.5">
           <Checkbox
             :model-value="overview.data.value.keep_on_update"
             :disabled="keep.isPending.value"
             @update:model-value="(value) => keep.mutate(value === true)"
-          />
-          {{ t('system.prompts.keep') }}
-        </label>
+          >
+            {{ t('system.prompts.keep') }}
+          </Checkbox>
+        </div>
       </div>
       <Skeleton v-if="name && document.isPending.value" :lines="10" />
       <ErrorNote

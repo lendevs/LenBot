@@ -164,10 +164,12 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
     :error="current.error.value"
     :retry="current.refetch"
   />
-  <div v-else-if="data" class="flex min-w-0 flex-col gap-4">
+  <div v-else-if="data" class="flex min-w-0 max-w-3xl flex-col gap-6">
     <section
-      class="flex min-w-0 flex-col gap-4 rounded-xl border p-5"
-      :class="offered || busy ? 'border-brand/40 bg-brand-soft' : 'border-line bg-surface'"
+      class="flex min-w-0 flex-col gap-4"
+      :class="
+        offered || busy ? 'rounded-xl border border-line-strong bg-fill p-5' : 'border-b border-line pb-6'
+      "
     >
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex flex-col gap-0.5">
@@ -196,7 +198,9 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
             />
             {{ summary }}
           </span>
-          <span v-if="check?.checked_at" class="text-muted">{{ formatDateTime(check.checked_at) }}</span>
+          <span v-if="check?.checked_at" class="text-muted tabular">
+            {{ formatDateTime(check.checked_at) }}
+          </span>
           <Button size="sm" :icon="RefreshCw" :loading="releases.isFetching.value" @click="checkNow">
             {{ t('system.updates.check') }}
           </Button>
@@ -210,7 +214,7 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
           class="flex flex-col gap-2 text-sm"
           :class="{
             'text-ink': stepState(step) === 'done',
-            'font-semibold text-primary': stepState(step) === 'active',
+            'font-semibold text-info': stepState(step) === 'active',
             'text-muted': stepState(step) === 'waiting',
           }"
         >
@@ -233,14 +237,14 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
           </span>
           <span
             v-if="step === 'download' && stepState(step) === 'active'"
-            class="ml-6.5 h-1.5 overflow-hidden rounded-full bg-fill"
+            class="ml-6.5 h-1.5 overflow-hidden rounded-full bg-track"
             role="progressbar"
             :aria-valuenow="percent"
             aria-valuemin="0"
             aria-valuemax="100"
           >
             <span
-              class="block h-full rounded-full bg-brand transition-[width] duration-300"
+              class="block h-full rounded-full bg-info transition-[width] duration-300"
               :style="{ width: `${percent}%` }"
             />
           </span>
@@ -270,7 +274,7 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
               ? t('system.updates.restored', { version: result.to })
               : t('system.updates.updated', { from: result.from, version: result.to })
           }}
-          <span class="font-normal text-muted">{{ formatDateTime(result.finished_at) }}</span>
+          <span class="font-normal text-muted tabular">{{ formatDateTime(result.finished_at) }}</span>
           <span
             v-if="result.plugins === 'pending'"
             class="inline-flex items-center gap-1.5 font-normal text-muted"
@@ -278,7 +282,10 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
             <LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />
             {{ t('system.updates.pluginsPending') }}
           </span>
-          <span v-else-if="pluginResults.length && !pluginFailures.length" class="font-normal text-muted">
+          <span
+            v-else-if="pluginResults.length && !pluginFailures.length"
+            class="font-normal text-muted tabular"
+          >
             {{ t('system.updates.pluginsDone', { n: pluginResults.length }, pluginResults.length) }}
           </span>
         </p>
@@ -298,20 +305,18 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
         />
       </template>
 
-      <MarkdownText
-        v-if="offered && !busy && target"
-        :text="notesBody(target.notes)"
-        class="border-t border-brand/20 pt-4 text-sm text-ink-2"
-      />
+      <div v-if="offered && !busy && target" class="border-t border-line pt-4 text-sm text-ink-2">
+        <MarkdownText :text="notesBody(target.notes)" />
+      </div>
       <p v-if="!data.managed" class="text-sm text-ink-2">{{ t('system.updates.source') }}</p>
     </section>
 
     <PluginUpdatesSection :busy="busy" />
     <SnapshotsSection v-if="data.managed" :items="data.snapshots" :busy="busy" @restarting="restartingNow" />
 
-    <section class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
+    <section class="flex min-w-0 flex-col gap-3 border-t border-line pt-6">
       <header class="flex flex-wrap items-center justify-between gap-3">
-        <h3 class="text-base font-semibold">{{ t('system.updates.releases') }}</h3>
+        <h3 class="text-base font-semibold text-ink">{{ t('system.updates.releases') }}</h3>
         <Field :label="t('system.updates.prerelease')" inline>
           <Switch v-model="prerelease" />
         </Field>
@@ -321,27 +326,25 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
         :title="t('system.updates.releasesFailed')"
         :error="releases.error.value"
       />
-      <Button
-        v-if="!releases.data.value && !releases.isFetching.value"
-        class="self-start"
-        size="sm"
-        :icon="RefreshCw"
-        @click="checkNow"
-      >
-        {{ t('system.updates.showReleases') }}
-      </Button>
+      <div v-if="!releases.data.value && !releases.isFetching.value" class="flex">
+        <Button size="sm" :icon="RefreshCw" @click="checkNow">
+          {{ t('system.updates.showReleases') }}
+        </Button>
+      </div>
       <p v-if="releases.data.value && !visible.length" class="text-sm text-muted">
         {{ t('system.updates.none') }}
       </p>
       <ol v-if="visible.length" class="flex list-none flex-col divide-y divide-line">
         <li v-for="item in visible" :key="item.tag" class="flex flex-col gap-2 py-4 first:pt-1">
-          <h4 class="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
+          <h4 class="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink tabular">
             {{ item.tag }}
-            <Badge v-if="item.newer" tone="brand">{{ t('system.updates.newer') }}</Badge>
+            <Badge v-if="item.newer" tone="info">{{ t('system.updates.newer') }}</Badge>
             <Badge v-if="item.version === data.version">{{ t('system.updates.installed') }}</Badge>
             <Badge v-if="item.prerelease" tone="warning">{{ t('system.updates.pre') }}</Badge>
           </h4>
-          <MarkdownText :text="notesBody(item.notes)" class="text-sm text-ink-2" />
+          <div class="text-sm text-ink-2">
+            <MarkdownText :text="notesBody(item.notes)" />
+          </div>
         </li>
       </ol>
     </section>

@@ -65,13 +65,16 @@ useResizeObserver(() => root.value?.$el as HTMLElement | undefined, measure)
     :model-value="model"
     :disabled="disabled"
     :aria-label="label"
-    class="relative inline-flex max-w-full items-center overflow-x-auto rounded-md bg-fill p-0.5 [scrollbar-width:none]"
-    :class="block && 'flex w-full'"
+    class="relative items-center overflow-x-auto rounded-md bg-fill p-0.5 scrollbar-none"
+    :class="[block ? 'flex w-full' : 'inline-flex w-fit max-w-full', disabled && 'opacity-60']"
     @update:model-value="choose"
   >
     <span
-      class="pointer-events-none absolute top-0.5 bottom-0.5 left-0 rounded-[6px] bg-surface shadow-[0_1px_2px_rgb(20_20_30/10%),0_0_0_0.5px_rgb(20_20_30/6%)] dark:bg-hover"
-      :class="indicator.ready && 'transition-[transform,width] duration-250 ease-out'"
+      class="pointer-events-none absolute top-0.5 bottom-0.5 left-0 rounded-sm bg-surface shadow-control dark:bg-hover"
+      :class="[
+        indicator.ready && 'transition-[transform,width,opacity] duration-200 ease-out',
+        indicator.width === 0 && 'opacity-0',
+      ]"
       :style="{ width: `${indicator.width}px`, transform: `translateX(${indicator.left}px)` }"
       aria-hidden="true"
     />
@@ -80,13 +83,19 @@ useResizeObserver(() => root.value?.$el as HTMLElement | undefined, measure)
       :key="option.value"
       :value="option.value"
       :disabled="option.disabled"
-      class="relative z-1 inline-flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] px-3 font-medium whitespace-nowrap text-muted transition-colors duration-150 hover:text-ink focus-visible:focus-ring data-disabled:cursor-not-allowed data-disabled:opacity-45 data-[state=on]:text-ink"
+      class="relative z-1 inline-flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-3 font-medium whitespace-nowrap text-muted transition-colors duration-150 hover:text-ink focus-visible:focus-ring data-disabled:cursor-not-allowed data-disabled:opacity-45 data-[state=on]:text-ink"
       :class="[
         size === 'sm' ? 'h-7 text-xs' : 'h-8 text-sm pointer-coarse:h-10',
         block ? 'flex-1' : 'shrink-0',
       ]"
     >
-      <component :is="option.icon" v-if="option.icon" :size="size === 'sm' ? 14 : 15" aria-hidden="true" />
+      <component
+        :is="option.icon"
+        v-if="option.icon"
+        :size="size === 'sm' ? 14 : 15"
+        class="shrink-0"
+        aria-hidden="true"
+      />
       <span class="truncate">{{ option.label }}</span>
     </ToggleGroupItem>
   </ToggleGroupRoot>

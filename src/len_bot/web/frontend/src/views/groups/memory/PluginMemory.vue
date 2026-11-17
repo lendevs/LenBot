@@ -12,12 +12,14 @@ const labels: Record<string, string> = { failed: 'failed', stopped: 'stopped', l
 </script>
 
 <template>
-  <dl class="grid gap-x-6 gap-y-2 rounded-lg border border-line px-4 py-3 text-sm sm:grid-cols-[auto_1fr]">
+  <dl
+    class="grid items-baseline gap-x-6 gap-y-2 border-b border-line pb-4 text-sm sm:grid-cols-[auto_minmax(0,1fr)]"
+  >
     <template v-if="plugin">
       <dt class="text-muted">{{ t('groups.memory.plugin.memory') }}</dt>
-      <dd class="flex flex-wrap items-center gap-2 text-ink">
-        {{ t('groups.memory.plugin.name', { name: plugin.name }) }}
-        <Badge v-if="plugin.status !== 'running'" tone="error">
+      <dd class="flex min-w-0 flex-wrap items-center gap-2 text-ink">
+        <span class="truncate">{{ t('groups.memory.plugin.name', { name: plugin.name }) }}</span>
+        <Badge v-if="plugin.status !== 'running'" :tone="plugin.status === 'loaded' ? 'info' : 'error'">
           {{
             plugin.status && labels[plugin.status]
               ? t(`plugins.status.${labels[plugin.status]}`)
@@ -36,14 +38,14 @@ const labels: Record<string, string> = { failed: 'failed', stopped: 'stopped', l
       <template v-if="plugin.last_error">
         <dt class="text-muted">{{ t('groups.memory.plugin.lastError') }}</dt>
         <dd class="min-w-0 break-words text-error">
-          {{ formatDateTime(plugin.last_error.at, { timeZone }) }} · {{ plugin.last_error.where }} ·
-          {{ plugin.last_error.error }}
+          <span class="tabular">{{ formatDateTime(plugin.last_error.at, { timeZone }) }}</span>
+          · {{ plugin.last_error.where }} · {{ plugin.last_error.error }}
         </dd>
       </template>
     </template>
     <template v-if="recap">
       <dt class="text-muted">{{ t('groups.memory.plugin.recap') }}</dt>
-      <dd class="text-ink">{{ t('groups.memory.plugin.name', { name: recap }) }}</dd>
+      <dd class="min-w-0 truncate text-ink">{{ t('groups.memory.plugin.name', { name: recap }) }}</dd>
     </template>
   </dl>
 </template>

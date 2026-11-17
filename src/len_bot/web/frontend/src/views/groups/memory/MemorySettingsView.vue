@@ -158,7 +158,7 @@ const saveError = computed(() =>
 </script>
 
 <template>
-  <div class="max-w-3xl">
+  <div class="max-w-3xl min-w-0">
     <Skeleton v-if="settings.isPending.value" :lines="6" />
     <ErrorNote
       v-else-if="settings.isError.value"
@@ -166,7 +166,7 @@ const saveError = computed(() =>
       :error="settings.error.value"
       :retry="settings.refetch"
     />
-    <form v-else class="flex flex-col gap-8" @submit.prevent="save.mutate()">
+    <form v-else class="flex flex-col gap-8 pb-6" @submit.prevent="save.mutate()">
       <FormSection :title="t('groups.memory.settings.section')">
         <Field :label="t('groups.memory.settings.enabled')" inline wide>
           <Switch v-model="enabled" />

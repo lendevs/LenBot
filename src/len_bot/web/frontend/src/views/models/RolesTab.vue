@@ -22,11 +22,16 @@ const language = computed({
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
+  <div class="flex min-w-0 max-w-4xl flex-col divide-y divide-line">
     <RoleCard v-for="role in chatRoles" :key="role" :role="role" />
-    <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-5">
+    <section class="flex min-w-0 flex-col gap-4 py-6 last:pb-0">
       <header class="flex min-h-8 items-center justify-between gap-3">
-        <h3 class="text-base font-semibold text-ink">{{ form.roleTitle('asr') }}</h3>
+        <div class="flex min-w-0 items-baseline gap-2.5">
+          <h3 class="text-base font-semibold text-ink">{{ form.roleTitle('asr') }}</h3>
+          <span v-if="asr?.model" class="truncate font-mono text-xs text-muted max-sm:hidden">
+            {{ asr.model }}
+          </span>
+        </div>
         <Switch v-model="asrOn" :aria-label="form.roleTitle('asr')" />
       </header>
       <div v-if="asr" class="grid gap-x-5 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">

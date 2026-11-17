@@ -9,7 +9,7 @@ import EmptyState from '../../../ui/EmptyState.vue'
 import Switch from '../../../ui/Switch.vue'
 import { confirmMemorySwitch } from '../../groups/settings/memory'
 import { usePluginsState } from '../state'
-import { chatPlatformsOf, enabledIn, scenesUsing } from '../view'
+import { chatPlatformsOf, enabledIn, sceneSecondaryId, scenesUsing } from '../view'
 
 const props = defineProps<{ name: string; snapshot: PluginsSnapshot }>()
 
@@ -45,20 +45,20 @@ async function toggle(scene: string, on: boolean) {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-3">
+  <div class="flex min-w-0 max-w-3xl flex-col gap-3">
     <EmptyState v-if="!enabled" :icon="MessagesSquare" :title="t('plugins.scenes.enableFirst')" compact />
     <EmptyState v-else-if="!scenes.length" :icon="MessagesSquare" :title="t('plugins.scenes.none')" compact />
     <template v-else>
       <p class="text-sm text-muted tabular">
         {{ t('plugins.scenes.count', { n: used.length, total: scenes.length }) }}
       </p>
-      <ul class="flex list-none flex-col divide-y divide-line rounded-xl border border-line bg-surface px-4">
-        <li v-for="scene in scenes" :key="scene" class="flex items-center gap-3 py-2.5">
+      <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+        <li v-for="scene in scenes" :key="scene" class="flex items-center gap-3 py-3">
           <Avatar :name="groupLabel(scene)" shape="square" :size="32" />
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm font-medium text-ink">{{ groupLabel(scene) }}</p>
-            <p class="truncate font-mono text-xs text-subtle">
-              {{ scene.split(':').slice(2).join(':') || scene }}
+            <p v-if="sceneSecondaryId(scene)" class="truncate font-mono text-xs text-muted tabular">
+              {{ sceneSecondaryId(scene) }}
             </p>
           </div>
           <Switch

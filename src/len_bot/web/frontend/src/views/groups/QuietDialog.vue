@@ -24,7 +24,11 @@ const minutes = ref<'30' | '60' | '180' | '480'>('60')
 const direct = ref<'allow' | 'defer'>('allow')
 
 const unit = (n: number, name: 'minute' | 'hour') =>
-  new Intl.NumberFormat(currentLocale.value, { style: 'unit', unit: name, unitDisplay: 'long' }).format(n)
+  new Intl.NumberFormat(currentLocale.value, {
+    style: 'unit',
+    unit: name,
+    unitDisplay: currentLocale.value.startsWith('zh') ? 'long' : 'short',
+  }).format(n)
 const durations = computed(() => [
   { value: '30' as const, label: unit(30, 'minute') },
   { value: '60' as const, label: unit(1, 'hour') },

@@ -16,7 +16,7 @@ const { t } = useI18n()
     :class="compact ? 'px-4 py-6' : 'px-6 py-14'"
   >
     <span
-      class="inline-flex items-center justify-center rounded-xl bg-fill text-subtle"
+      class="inline-flex items-center justify-center rounded-xl border border-line bg-fill text-subtle"
       :class="compact ? 'size-9' : 'size-12'"
     >
       <component :is="icon ?? Inbox" :size="compact ? 18 : 22" aria-hidden="true" />

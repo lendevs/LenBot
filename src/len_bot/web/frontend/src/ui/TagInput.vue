@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { TagsInputInput, TagsInputItem, TagsInputItemDelete, TagsInputItemText, TagsInputRoot } from 'reka-ui'
 import { X } from '@lucide/vue'
 import { useFieldControl } from './field'
-import { controlFrame } from './styles'
+import { controlFrameBase } from './styles'
 
 const model = defineModel<string[]>({ default: () => [] })
 const props = withDefaults(
@@ -12,14 +12,15 @@ const props = withDefaults(
     /** Typed or pasted text is split here; commas (both widths) and line breaks by default. */
     delimiter?: string | RegExp
     max?: number
+    size?: 'sm' | 'md'
     id?: string
     invalid?: boolean
     disabled?: boolean
   }>(),
-  { placeholder: undefined, delimiter: undefined, max: 0, id: undefined },
+  { placeholder: undefined, delimiter: undefined, max: 0, size: 'md', id: undefined },
 )
 
-const SEPARATORS = /[,，\n]/
+const SEPARATORS = /[,\uff0c\n]/
 const { t } = useI18n()
 const field = useFieldControl(props)
 </script>
@@ -32,7 +33,11 @@ const field = useFieldControl(props)
     :disabled="field.disabled.value"
     add-on-paste
     add-on-blur
-    :class="[controlFrame, 'min-h-9 flex-wrap gap-1.5 py-1 pl-1.5 pointer-coarse:min-h-11']"
+    :class="[
+      controlFrameBase,
+      size === 'sm' ? 'min-h-8 text-sm pointer-coarse:min-h-10' : 'min-h-9 text-base pointer-coarse:min-h-11',
+      'flex-wrap gap-1.5 py-1 pr-3 pl-1.5',
+    ]"
     :data-invalid="field.invalid.value || undefined"
     :data-disabled="field.disabled.value || undefined"
   >
@@ -40,11 +45,11 @@ const field = useFieldControl(props)
       v-for="item in model"
       :key="item"
       :value="item"
-      class="inline-flex h-6 max-w-full animate-fade items-center gap-1 rounded-sm bg-fill pr-0.5 pl-2 text-sm text-ink-2 data-[state=active]:bg-selected data-[state=active]:text-primary"
+      class="inline-flex h-6 max-w-full animate-fade items-center gap-1 rounded-sm border border-line bg-fill pr-0.5 pl-2 text-xs font-medium text-ink-2 transition-colors data-[state=active]:border-line-strong data-[state=active]:bg-hover data-[state=active]:text-ink"
     >
       <TagsInputItemText class="truncate" />
       <TagsInputItemDelete
-        class="inline-flex size-5 cursor-pointer items-center justify-center rounded-sm text-subtle hover:bg-hover hover:text-ink"
+        class="inline-flex size-5 cursor-pointer items-center justify-center rounded-xs text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
         :aria-label="t('ui.tags.remove', { name: item })"
       >
         <X :size="12" aria-hidden="true" />
@@ -55,7 +60,7 @@ const field = useFieldControl(props)
       :placeholder="model.length ? undefined : (placeholder ?? t('ui.tags.placeholder'))"
       :aria-invalid="field.invalid.value || undefined"
       :aria-describedby="field.describedBy.value"
-      class="h-7 min-w-24 flex-1 bg-transparent px-1 outline-none placeholder:text-subtle focus-visible:outline-none"
+      class="h-6 min-w-20 flex-1 bg-transparent px-1 outline-none placeholder:text-subtle focus-visible:outline-none disabled:cursor-not-allowed"
     />
   </TagsInputRoot>
 </template>

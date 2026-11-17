@@ -202,17 +202,18 @@ function actions(entry: ResourceEntry): MenuEntry[] {
     >
       <button
         type="button"
-        class="rounded px-1 py-0.5 text-muted hover:bg-hover hover:text-ink"
+        class="cursor-pointer rounded-sm px-1 py-0.5 transition-colors hover:bg-hover focus-visible:focus-ring"
+        :class="!path ? 'font-semibold text-ink' : 'text-muted hover:text-ink'"
         @click="path = ''"
       >
         /
       </button>
       <template v-for="crumb in crumbs" :key="crumb.path">
-        <ChevronRight :size="12" class="text-subtle" aria-hidden="true" />
+        <ChevronRight :size="12" class="shrink-0 text-subtle" aria-hidden="true" />
         <button
           type="button"
-          class="rounded px-1 py-0.5 break-all hover:bg-hover"
-          :class="crumb.path === path ? 'text-ink' : 'text-muted hover:text-ink'"
+          class="cursor-pointer rounded-sm px-1 py-0.5 break-all transition-colors hover:bg-hover focus-visible:focus-ring"
+          :class="crumb.path === path ? 'font-semibold text-ink' : 'text-muted hover:text-ink'"
           :aria-current="crumb.path === path ? 'location' : undefined"
           @click="path = crumb.path"
         >
@@ -236,11 +237,11 @@ function actions(entry: ResourceEntry): MenuEntry[] {
       "
       compact
     />
-    <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
+    <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
       <li
         v-for="entry in rows"
         :key="entry.reference.file_id ?? entry.reference.path"
-        class="flex items-start gap-2.5 px-3 py-2"
+        class="flex min-w-0 items-start gap-2.5 px-2 py-2.5"
       >
         <component
           :is="entry.kind === 'directory' ? Folder : File"
@@ -252,13 +253,13 @@ function actions(entry: ResourceEntry): MenuEntry[] {
           <button
             v-if="openable(entry)"
             type="button"
-            class="max-w-full cursor-pointer truncate text-left text-sm text-ink hover:text-primary hover:underline"
+            class="max-w-full cursor-pointer truncate rounded-sm text-left text-sm font-medium text-ink transition-colors hover:text-primary hover:underline focus-visible:focus-ring"
             @click="open(entry)"
           >
             {{ entry.name }}
           </button>
           <p v-else class="truncate text-sm text-ink-2">{{ entry.name }}</p>
-          <p class="text-xs text-muted">{{ details(entry) }}</p>
+          <p class="text-xs text-muted tabular">{{ details(entry) }}</p>
           <p v-if="source(entry)" class="text-xs break-all text-muted">
             {{ t('groups.tasks.space.source', { where: source(entry) }) }}
           </p>
@@ -269,12 +270,12 @@ function actions(entry: ResourceEntry): MenuEntry[] {
             </template>
             <template v-if="entry.browser_source.page_url">· {{ entry.browser_source.page_url }}</template>
           </p>
-          <p v-if="entry.registrations.length" class="text-xs text-muted">
+          <p v-if="entry.registrations.length" class="text-xs text-muted tabular">
             {{
               t('groups.tasks.space.registered', { ids: entry.registrations.map((id) => `#${id}`).join(' ') })
             }}
           </p>
-          <p v-if="entry.deletion" class="text-xs text-muted">
+          <p v-if="entry.deletion" class="text-xs text-muted tabular">
             {{
               t('groups.tasks.space.deleted', {
                 time: at(entry.deletion.created),

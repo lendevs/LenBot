@@ -104,7 +104,11 @@ const recap = computed({
         />
       </li>
     </ul>
-    <div v-if="memoryOptions.length > 1 || recapOptions.length > 1" class="grid gap-4 sm:grid-cols-2">
+    <div
+      v-if="memoryOptions.length > 1 || recapOptions.length > 1"
+      class="grid gap-4 sm:grid-cols-2"
+      :class="items.length > 0 && 'border-t border-line pt-4'"
+    >
       <Field v-if="memoryOptions.length > 1" :label="t('groups.settings.plugins.memory')">
         <Select v-model="memory" :options="memoryOptions" />
       </Field>

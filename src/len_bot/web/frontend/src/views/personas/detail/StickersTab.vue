@@ -106,37 +106,48 @@ const describe = (file: string) => (editing.value = { file, description: '', emo
         </Button>
       </template>
       <EmptyState v-if="!entries.length" :icon="Smile" :title="t('personas.detail.stickers.empty')" compact />
-      <ul v-else class="grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] gap-3">
+      <ul v-else class="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))]">
         <li
           v-for="entry in entries"
           :key="entry.file"
-          class="flex min-w-0 flex-col gap-2 rounded-lg border border-line bg-surface p-3"
+          class="group flex min-w-0 flex-col gap-2 rounded-lg border border-line bg-surface p-2.5 transition-colors hover:border-line-strong"
         >
-          <div class="relative grid h-32 place-items-center overflow-hidden rounded-md bg-fill">
-            <ImageOff v-if="broken.has(entry.file)" :size="20" class="text-subtle" aria-hidden="true" />
-            <img
-              v-else
-              :src="image(entry.file)"
-              :alt="entry.description"
-              loading="lazy"
-              class="max-h-full max-w-full object-contain"
-              @error="broken.add(entry.file)"
-            />
-            <DropdownMenu :items="menu(entry)">
-              <IconButton
-                :icon="MoreHorizontal"
-                :label="t('common.more')"
-                size="sm"
-                variant="secondary"
-                :tooltip="false"
-                :loading="removal.isPending.value && removal.variables.value === entry.file"
-                class="absolute top-1.5 right-1.5"
+          <div class="relative grid h-28 place-items-center overflow-hidden rounded-md bg-fill sm:h-32">
+            <button
+              type="button"
+              class="grid size-full cursor-pointer place-items-center p-2 focus-visible:focus-ring"
+              :aria-label="`${t('common.edit')}: ${entry.description}`"
+              @click="editing = entry"
+            >
+              <ImageOff v-if="broken.has(entry.file)" :size="20" class="text-subtle" aria-hidden="true" />
+              <img
+                v-else
+                :src="image(entry.file)"
+                :alt="entry.description"
+                loading="lazy"
+                class="max-h-full max-w-full object-contain"
+                @error="broken.add(entry.file)"
               />
-            </DropdownMenu>
+            </button>
+            <div
+              class="absolute top-1.5 right-1.5 z-10 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100"
+              :class="removal.isPending.value && removal.variables.value === entry.file && 'opacity-100'"
+            >
+              <DropdownMenu :items="menu(entry)" align="end">
+                <IconButton
+                  :icon="MoreHorizontal"
+                  :label="t('common.more')"
+                  size="sm"
+                  variant="secondary"
+                  :tooltip="false"
+                  :loading="removal.isPending.value && removal.variables.value === entry.file"
+                />
+              </DropdownMenu>
+            </div>
           </div>
           <p class="line-clamp-2 text-sm text-ink-2">{{ entry.description }}</p>
           <div v-if="entry.emotions.length || entry.tags.length" class="flex flex-wrap gap-1">
-            <Badge v-for="item in entry.emotions" :key="`e${item}`" tone="brand">{{ item }}</Badge>
+            <Badge v-for="item in entry.emotions" :key="`e${item}`" tone="info">{{ item }}</Badge>
             <Badge
               v-for="item in entry.tags.filter((tag) => !entry.emotions.includes(tag))"
               :key="`t${item}`"
@@ -149,13 +160,13 @@ const describe = (file: string) => (editing.value = { file, description: '', emo
     </FormSection>
 
     <FormSection v-if="loose.length" :title="t('personas.detail.stickers.loose')" :columns="1">
-      <ul class="grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] gap-3">
+      <ul class="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))]">
         <li
           v-for="item in loose"
           :key="item.file"
-          class="flex min-w-0 flex-col gap-2 rounded-lg border border-line bg-surface p-3"
+          class="flex min-w-0 flex-col gap-2 rounded-lg border border-line bg-surface p-2.5"
         >
-          <div class="grid h-32 place-items-center overflow-hidden rounded-md bg-fill">
+          <div class="grid h-28 place-items-center overflow-hidden rounded-md bg-fill p-2 sm:h-32">
             <img
               :src="image(item.file)"
               :alt="item.file"
@@ -164,7 +175,7 @@ const describe = (file: string) => (editing.value = { file, description: '', emo
             />
           </div>
           <p class="truncate font-mono text-xs text-muted" :title="item.file">{{ item.file }}</p>
-          <div class="flex gap-1">
+          <div class="flex min-w-0 items-center justify-between gap-1.5">
             <Button size="sm" :icon="Pencil" @click="describe(item.file)">
               {{ t('personas.detail.stickers.describe') }}
             </Button>

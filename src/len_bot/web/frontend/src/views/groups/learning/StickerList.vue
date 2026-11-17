@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { Pencil } from '@lucide/vue'
 import { learningApi, type Review, type Sticker } from '../../../api/learning'
 import { keys } from '../../../api/query'
+import { formatNumber } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
-import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import { describeError } from '../../../ui/errors'
@@ -21,6 +21,7 @@ import { useEdits } from './useEdits'
 import { usePagedList } from './usePagedList'
 
 const props = defineProps<{ scene: string }>()
+const filter = defineModel<Review>('filter', { default: 'pending' })
 const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
@@ -28,13 +29,7 @@ const client = useQueryClient()
 const list = usePagedList<Sticker, Review>(
   (review, offset) => keys.scene.learning(props.scene, 'stickers', review, offset),
   (review, offset, signal) => learningApi.stickers(props.scene, review, offset, signal),
-  'pending',
-)
-const filters = computed(() =>
-  (['pending', 'adopted', 'rejected'] as const).map((value) => ({
-    value,
-    label: t(`groups.learning.review.${value}`),
-  })),
+  filter,
 )
 const fresh = (item: Sticker) => ({
   description: item.description ?? '',
@@ -67,15 +62,7 @@ const busy = (item: Sticker) => save.isPending.value && save.variables.value?.it
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
-    <SegmentedControl
-      :model-value="list.filter.value"
-      :options="filters"
-      size="sm"
-      :label="t('groups.learning.kinds.stickers')"
-      class="self-start"
-      @update:model-value="(value: Review) => list.choose(value)"
-    />
+  <div class="flex min-w-0 flex-col gap-4">
     <Skeleton v-if="list.query.isPending.value" :lines="4" />
     <ErrorNote
       v-else-if="list.query.isError.value"
@@ -89,27 +76,33 @@ const busy = (item: Sticker) => save.isPending.value && save.variables.value?.it
         <li
           v-for="item in list.page.value.items"
           :key="item.id"
-          class="flex flex-col gap-3 rounded-lg border border-line bg-surface p-3"
+          class="flex min-w-0 flex-col gap-3 rounded-lg border border-line bg-surface p-3.5"
         >
-          <div class="flex gap-3">
+          <div class="flex min-w-0 gap-3">
             <img
               :src="learningApi.stickerImage(scene, item.id)"
               :alt="item.description || t('groups.learning.sticker.image')"
               loading="lazy"
-              class="size-24 shrink-0 rounded-md border border-line bg-fill object-contain"
+              class="size-20 shrink-0 rounded-md bg-fill p-1.5 object-contain sm:size-24"
             />
             <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-              <p class="text-sm break-words text-ink">
+              <p class="text-sm leading-5 break-words text-ink">
                 {{ item.description || t('groups.learning.sticker.noDescription') }}
               </p>
-              <p v-if="item.text" class="text-xs break-words text-muted">
-                {{ t('groups.learning.sticker.text') }}：{{ item.text }}
+              <p v-if="item.text" class="text-xs break-words text-ink-2">
+                <span class="text-muted">{{ t('groups.learning.sticker.text') }}</span>
+                · {{ item.text }}
               </p>
-              <p v-if="item.posts && item.posts > 1" class="text-xs text-muted tabular">
-                {{ t('groups.learning.sticker.posts', { n: item.posts, people: item.posters }) }}
+              <p v-if="item.posts && item.posts > 1" class="text-xs text-subtle tabular">
+                {{
+                  t('groups.learning.sticker.posts', {
+                    n: formatNumber(item.posts),
+                    people: formatNumber(item.posters ?? 0),
+                  })
+                }}
               </p>
               <div v-if="item.emotions.length || item.tags.length" class="flex flex-wrap gap-1">
-                <Badge v-for="emotion in item.emotions" :key="`e${emotion}`" tone="brand">
+                <Badge v-for="emotion in item.emotions" :key="`e${emotion}`" tone="info">
                   {{ emotion }}
                 </Badge>
                 <Badge v-for="tag in item.tags" :key="`t${tag}`">{{ tag }}</Badge>
@@ -119,7 +112,7 @@ const busy = (item: Sticker) => save.isPending.value && save.variables.value?.it
               </Badge>
             </div>
           </div>
-          <div v-if="edits.editing(item.id)" class="flex flex-col gap-3">
+          <div v-if="edits.editing(item.id)" class="flex flex-col gap-3 border-t border-line pt-3">
             <Field :label="t('groups.learning.sticker.description')">
               <Input v-model="edits.draft(item.id).description" />
             </Field>
@@ -133,7 +126,7 @@ const busy = (item: Sticker) => save.isPending.value && save.variables.value?.it
               <TagInput v-model="edits.draft(item.id).tags" />
             </Field>
           </div>
-          <div class="mt-auto flex flex-wrap items-center justify-end gap-2">
+          <div class="mt-auto flex flex-wrap items-center justify-end gap-1.5 border-t border-line pt-2.5">
             <template v-if="edits.editing(item.id)">
               <Button size="sm" variant="ghost" @click="edits.stop(item.id)">{{ t('common.cancel') }}</Button>
               <Button

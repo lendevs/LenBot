@@ -73,14 +73,14 @@ const keep = useMutation({
 </script>
 
 <template>
-  <section class="flex flex-col gap-2">
+  <section class="flex flex-col gap-2 border-t border-line pt-5">
     <h3 class="text-sm font-medium text-ink">{{ t('groups.tasks.files.title') }}</h3>
-    <ul class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
-      <li v-for="file in files" :key="file.id" class="flex flex-col gap-1.5 px-3 py-2">
-        <div class="flex items-center gap-2.5">
+    <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li v-for="file in files" :key="file.id" class="flex flex-col gap-1.5 px-2 py-2.5">
+        <div class="flex min-w-0 items-center gap-2.5">
           <FileText :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm text-ink">{{ file.name }}</p>
+            <p class="truncate text-sm font-medium text-ink">{{ file.name }}</p>
             <p class="text-xs text-muted">
               <span class="tabular">{{ formatBytes(file.size) }}</span>
               <template v-if="file.note">· {{ file.note }}</template>

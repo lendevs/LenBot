@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Brain, Ear, Inbox, Settings2, Wrench } from '@lucide/vue'
+import { Brain, ChevronRight, Ear, Inbox, Settings2, Wrench } from '@lucide/vue'
 import type { EntryToolCall, SessionEntry } from '../../../api/session'
 import { formatDateTime } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
@@ -25,8 +25,8 @@ const labels = useLiveLabels()
 const message = computed(() => props.entry.message)
 const roles: Record<string, { icon: typeof Brain; tone: Tone }> = {
   user: { icon: Inbox, tone: 'neutral' },
-  assistant: { icon: Brain, tone: 'brand' },
-  tool: { icon: Wrench, tone: 'info' },
+  assistant: { icon: Brain, tone: 'info' },
+  tool: { icon: Wrench, tone: 'neutral' },
   system: { icon: Settings2, tone: 'neutral' },
 }
 const calls = computed(() => message.value.tool_calls ?? [])
@@ -107,11 +107,20 @@ const resultOf = (call: EntryToolCall) => props.results.get(call.id)?.message.co
           :label="t('groups.live.step.result')"
         />
       </div>
-      <details v-if="raw">
-        <summary class="cursor-pointer text-xs font-medium text-muted hover:text-ink">
+      <details v-if="raw" class="group">
+        <summary
+          class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs font-medium text-muted select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+        >
+          <ChevronRight
+            :size="13"
+            class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
+            aria-hidden="true"
+          />
           {{ t('groups.session.raw') }}
         </summary>
-        <CodeBlock :code="entry" :max-lines="12" class="mt-1.5" />
+        <div class="mt-1.5">
+          <CodeBlock :code="entry" :max-lines="12" />
+        </div>
       </details>
     </div>
   </TimelineItem>

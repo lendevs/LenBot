@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError } from '../../api/client'
@@ -15,6 +15,7 @@ import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
+import { sceneSecondaryId } from './form'
 
 interface Limits {
   daily_tokens: number | null
@@ -25,6 +26,7 @@ const props = defineProps<{ snapshot: SettingsSnapshot }>()
 const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
+const uid = useId()
 const client = useQueryClient()
 const pick = (snapshot: SettingsSnapshot): Limits => {
   const value = snapshot.saved.limits as unknown as Limits
@@ -98,8 +100,8 @@ const saveError = computed(
 </script>
 
 <template>
-  <section class="flex min-w-0 flex-col gap-4">
-    <h2 class="text-base font-semibold">{{ t('models.limits.title') }}</h2>
+  <section class="flex min-w-0 flex-col gap-5 border-t border-line pt-6">
+    <h2 class="text-base font-semibold text-ink">{{ t('models.limits.title') }}</h2>
     <ErrorNote
       v-if="state.isError.value"
       :title="t('models.limits.stateFailed')"
@@ -109,7 +111,7 @@ const saveError = computed(
     <p
       v-for="item in blocked"
       :key="item.scene"
-      class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning"
+      class="rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning tabular"
     >
       {{
         item.until
@@ -120,33 +122,47 @@ const saveError = computed(
           : t('models.limits.blocked', { name: groupLabel(item.scene) })
       }}
     </p>
-    <div class="flex min-w-0 flex-col gap-5 rounded-xl border border-line bg-surface p-5">
-      <Field :label="t('models.limits.daily')" class="max-w-xs">
-        <NumberInput
-          v-model="draft.daily_tokens"
-          :min="1"
-          :steppers="false"
-          unit="tokens"
-          :placeholder="t('models.limits.unlimited')"
-        />
-      </Field>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-semibold">{{ t('models.limits.perGroup') }}</h3>
-        <ul class="flex list-none flex-col divide-y divide-line">
-          <li v-for="scene in scenes" :key="scene" class="py-2">
-            <Field :label="groupLabel(scene)" inline>
-              <div class="w-44">
-                <NumberInput
-                  :model-value="sceneLimit(scene)"
-                  :min="1"
-                  :steppers="false"
-                  unit="tokens"
-                  size="sm"
-                  :placeholder="t('models.limits.followAll')"
-                  @update:model-value="(value) => setSceneLimit(scene, value)"
-                />
-              </div>
-            </Field>
+    <div class="flex min-w-0 max-w-3xl flex-col gap-6">
+      <div class="max-w-xs">
+        <Field :label="t('models.limits.daily')">
+          <NumberInput
+            v-model="draft.daily_tokens"
+            :min="1"
+            :steppers="false"
+            unit="tokens"
+            :placeholder="t('models.limits.unlimited')"
+          />
+        </Field>
+      </div>
+      <div v-if="scenes.length" class="flex flex-col gap-2.5">
+        <h3 class="text-sm font-semibold text-ink">{{ t('models.limits.perGroup') }}</h3>
+        <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+          <li
+            v-for="(scene, index) in scenes"
+            :key="scene"
+            class="flex items-center justify-between gap-4 py-2.5"
+          >
+            <label :for="`${uid}-${index}`" class="min-w-0 flex-1 cursor-pointer">
+              <span class="block truncate text-sm font-medium text-ink">{{ groupLabel(scene) }}</span>
+              <span
+                v-if="sceneSecondaryId(scene)"
+                class="block truncate font-mono text-xs text-muted tabular"
+              >
+                {{ sceneSecondaryId(scene) }}
+              </span>
+            </label>
+            <div class="w-36 shrink-0 sm:w-44">
+              <NumberInput
+                :id="`${uid}-${index}`"
+                :model-value="sceneLimit(scene)"
+                :min="1"
+                :steppers="false"
+                unit="tokens"
+                size="sm"
+                :placeholder="t('models.limits.followAll')"
+                @update:model-value="(value) => setSceneLimit(scene, value)"
+              />
+            </div>
           </li>
         </ul>
       </div>

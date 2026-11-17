@@ -33,10 +33,11 @@ const egress = ['egress_max_task_bytes', 'egress_max_daily_bytes', 'egress_bytes
     >
       <NumberInput v-model="form.draft.scene.schedules.max_pending" :min="1" />
     </Field>
-    <div class="max-sm:hidden" />
-    <Field :label="t('groups.settings.tasks.tasks')" inline wide>
-      <Switch v-model="form.draft.tasks.enabled" />
-    </Field>
+    <div class="border-t border-line pt-5 sm:col-span-2">
+      <Field :label="t('groups.settings.tasks.tasks')" inline>
+        <Switch v-model="form.draft.tasks.enabled" />
+      </Field>
+    </div>
     <template v-if="form.draft.tasks.enabled">
       <Field :label="t('groups.settings.tasks.maxRunning')" :error="form.errors['tasks.max_running']">
         <NumberInput v-model="form.draft.tasks.max_running" :min="1" />
@@ -47,20 +48,23 @@ const egress = ['egress_max_task_bytes', 'egress_max_daily_bytes', 'egress_bytes
       <div class="sm:col-span-2">
         <button
           type="button"
-          class="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-sm font-medium text-muted hover:text-ink focus-visible:focus-ring"
+          class="inline-flex cursor-pointer items-center gap-1.5 rounded-md py-0.5 text-sm font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
           :aria-expanded="traffic"
           @click="traffic = !traffic"
         >
           <ChevronDown
             :size="15"
-            class="transition-transform"
+            class="transition-transform duration-150"
             :class="traffic && 'rotate-180'"
             aria-hidden="true"
           />
           {{ t('groups.settings.tasks.traffic') }}
         </button>
       </div>
-      <template v-if="traffic">
+      <div
+        v-if="traffic"
+        class="grid animate-fade gap-x-5 gap-y-5 border-t border-line pt-4 sm:col-span-2 sm:grid-cols-2"
+      >
         <Field v-for="key in egress" :key="key" :label="t(`groups.settings.tasks.egress.${key}`)">
           <NumberInput
             v-model="form.draft.tasks[key]"
@@ -70,7 +74,7 @@ const egress = ['egress_max_task_bytes', 'egress_max_daily_bytes', 'egress_bytes
             :unit="key === 'egress_bytes_per_second' ? 'B/s' : 'B'"
           />
         </Field>
-      </template>
+      </div>
     </template>
   </FormSection>
 </template>

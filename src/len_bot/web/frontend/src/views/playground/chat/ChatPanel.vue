@@ -48,7 +48,7 @@ async function showTurnOf(message: ChatMessage) {
       />
       <div
         class="grid min-w-0 items-start gap-4"
-        :class="showTurns && 'lg:grid-cols-[minmax(0,3fr)_minmax(280px,2fr)]'"
+        :class="showTurns && 'lg:grid-cols-[minmax(0,3fr)_minmax(300px,2fr)]'"
       >
         <ChatWindow
           :source="source"

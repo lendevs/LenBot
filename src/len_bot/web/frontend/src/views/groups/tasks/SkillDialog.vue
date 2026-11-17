@@ -84,17 +84,18 @@ async function moveTo(target: 'scene' | 'shared') {
       <p v-if="listing.data.value.used_by_running.length" class="text-xs text-muted">
         {{
           t('groups.tasks.skill.usedBy', {
-            groups: listing.data.value.used_by_running.map((item) => groupLabel(item)).join('、'),
+            groups: listing.data.value.used_by_running
+              .map((item) => groupLabel(item))
+              .join(t('groups.tasks.schedules.cadence.separator')),
           })
         }}
       </p>
-      <div class="flex flex-wrap gap-1.5">
+      <div class="flex flex-wrap gap-1.5 font-mono">
         <Button
           v-for="file in listing.data.value.files"
           :key="file.path"
           size="sm"
           :variant="file.path === path ? 'secondary' : 'ghost'"
-          class="font-mono"
           :aria-pressed="file.path === path"
           @click="read.mutate({ file: file.path, offset: 0 })"
         >

@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowUpRight, MessageCirclePlus, Square } from '@lucide/vue'
+import { ArrowUpRight, ChevronRight, MessageCirclePlus, Square } from '@lucide/vue'
 import { keys } from '../../api/query'
 import { trialSource, trialsApi, type TrialInfo } from '../../api/trials'
 import { developerDetails } from '../../composables/useDeveloperMode'
@@ -98,8 +98,8 @@ async function end() {
       :retry="trials.refetch"
     />
     <template v-else>
-      <div v-if="items.length" class="flex flex-wrap items-center gap-3">
-        <div class="w-full sm:w-80">
+      <div v-if="items.length" class="flex flex-wrap items-center gap-3 border-b border-line pb-4">
+        <div class="w-full tabular sm:w-96">
           <Select
             :model-value="selected?.id"
             :options="records"
@@ -119,29 +119,40 @@ async function end() {
       <StartForm v-if="showForm" :scene="text('scene')" :persona="text('persona')" @started="started" />
       <template v-if="selected && !(showForm && !selected.active)">
         <div class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
-          <span>{{ t('playground.persona', { name: selected.persona }) }}</span>
+          <span class="font-medium text-ink">{{ t('playground.persona', { name: selected.persona }) }}</span>
           <Badge v-if="selected.persona_source === 'draft'" tone="info">{{ t('playground.draft') }}</Badge>
           <Badge v-if="selected.memory_plugin">
             {{ t('playground.nativeMemory', { name: selected.memory_plugin }) }}
           </Badge>
           <Badge v-if="selected.scene.split(':')[1] === 'group'">{{ participationLabel(selected) }}</Badge>
           <Badge v-if="!selected.active">{{ t('playground.ended') }}</Badge>
-          <Button
-            v-if="selected.scene.split(':')[1] === 'group'"
-            class="ml-auto"
-            size="sm"
-            variant="ghost"
-            :icon-right="ArrowUpRight"
-            :to="groupsTarget(selected.scene, 'settings')"
-          >
-            {{ t('playground.participationSettings') }}
-          </Button>
+          <div v-if="selected.scene.split(':')[1] === 'group'" class="sm:ml-auto">
+            <Button
+              size="sm"
+              variant="ghost"
+              :icon-right="ArrowUpRight"
+              :to="groupsTarget(selected.scene, 'settings')"
+            >
+              {{ t('playground.participationSettings') }}
+            </Button>
+          </div>
         </div>
-        <details v-if="selected.context.length" class="text-sm">
-          <summary class="cursor-pointer text-muted hover:text-ink">
-            {{ t('playground.context', { n: selected.context.length }, selected.context.length) }}
+        <details v-if="selected.context.length" class="group text-sm">
+          <summary
+            class="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted select-none hover:text-ink [&::-webkit-details-marker]:hidden"
+          >
+            <ChevronRight
+              :size="14"
+              class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
+              aria-hidden="true"
+            />
+            <span class="tabular">
+              {{ t('playground.context', { n: selected.context.length }, selected.context.length) }}
+            </span>
           </summary>
-          <CodeBlock :code="selected.context.join('\n\n')" :max-lines="12" class="mt-2" />
+          <div class="mt-2">
+            <CodeBlock :code="selected.context.join('\n\n')" :max-lines="12" />
+          </div>
         </details>
         <ChatPanel :key="selected.id" :source="trialSource(selected.id)" />
         <RawRecord

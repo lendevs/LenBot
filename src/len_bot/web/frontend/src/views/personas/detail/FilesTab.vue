@@ -95,14 +95,16 @@ const save = useMutation({
     :error="files.error.value"
     :retry="files.refetch"
   />
-  <form v-else class="flex max-w-4xl flex-col gap-4" @submit.prevent="save.mutate()">
-    <div class="flex flex-wrap items-center gap-3">
-      <SegmentedControl
-        v-model="selected"
-        :options="options"
-        size="sm"
-        :label="t('personas.detail.files.label')"
-      />
+  <form v-else class="flex max-w-4xl flex-col gap-4 pb-6" @submit.prevent="save.mutate()">
+    <div class="flex min-w-0 flex-wrap items-center gap-3">
+      <div class="min-w-0 max-w-full">
+        <SegmentedControl
+          v-model="selected"
+          :options="options"
+          size="sm"
+          :label="t('personas.detail.files.label')"
+        />
+      </div>
       <code class="font-mono text-xs text-subtle">{{ file }}</code>
     </div>
     <Textarea

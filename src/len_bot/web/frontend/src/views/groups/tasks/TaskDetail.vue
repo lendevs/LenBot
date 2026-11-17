@@ -117,7 +117,7 @@ const facts = computed(() => {
     [
       ['deliverable', value.deliverable],
       ['context', value.context],
-      ['materials', value.materials.join('、')],
+      ['materials', value.materials.join(t('groups.tasks.schedules.cadence.separator'))],
       ['summary', value.summary],
     ] as const
   ).filter(([, text]) => text)
@@ -132,19 +132,21 @@ const facts = computed(() => {
     :error="detail.error.value"
     :retry="detail.refetch"
   />
-  <article v-else-if="task && first" class="flex min-w-0 flex-col gap-6">
+  <article v-else-if="task && first" class="flex min-w-0 flex-col gap-5">
     <header class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
-        <h2 class="min-w-0 flex-1 text-lg font-semibold break-words whitespace-pre-wrap text-ink">
+        <h2
+          class="min-w-0 flex-1 text-lg leading-snug font-semibold break-words whitespace-pre-wrap text-ink"
+        >
           {{ task.goal }}
         </h2>
-        <Badge :tone="statusTone[task.status]" dot class="mt-1">
+        <Badge :tone="statusTone[task.status]" dot :pulse="task.status === 'running'" class="mt-0.5">
           {{ t(`groups.tasks.status.${task.status}`) }}
         </Badge>
       </div>
-      <p class="flex flex-wrap items-center gap-x-2 text-sm text-muted">
+      <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
         <span class="tabular">#{{ task.id }}</span>
-        <span>
+        <span class="tabular">
           {{ t('groups.tasks.meta', { who: task.requester, time: at(task.created) })
           }}{{ task.ended ? ` · ${t('groups.tasks.ended', { time: at(task.ended) })}` : '' }}
         </span>
@@ -159,11 +161,14 @@ const facts = computed(() => {
           {{ t('groups.tasks.cancel.action') }}
         </Button>
       </p>
-      <dl v-if="facts.length" class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
+      <dl
+        v-if="facts.length"
+        class="grid items-baseline gap-x-6 gap-y-2 border-t border-line pt-3 text-sm sm:grid-cols-[auto_minmax(0,1fr)]"
+      >
         <template v-for="[key, text] in facts" :key="key">
           <dt class="text-muted">{{ t(`groups.tasks.facts.${key}`) }}</dt>
-          <dd v-if="key === 'summary'" class="text-ink"><MarkdownText :text="text ?? ''" /></dd>
-          <dd v-else class="break-words whitespace-pre-wrap text-ink">{{ text }}</dd>
+          <dd v-if="key === 'summary'" class="min-w-0 text-ink"><MarkdownText :text="text ?? ''" /></dd>
+          <dd v-else class="min-w-0 break-words whitespace-pre-wrap text-ink">{{ text }}</dd>
         </template>
       </dl>
       <ErrorNote v-if="task.error" :title="t('groups.tasks.failed')" :error="task.error" />
@@ -185,7 +190,7 @@ const facts = computed(() => {
       @dirty="(value: boolean) => (answerDirty = value)"
     />
 
-    <section v-if="canAppend || canContinue" class="flex flex-col gap-2">
+    <section v-if="canAppend || canContinue" class="flex flex-col gap-2 border-t border-line pt-5">
       <template v-if="canAppend">
         <label class="text-sm font-medium text-ink" :for="`append-${id}`">
           {{ t('groups.tasks.append.label') }}
@@ -238,10 +243,12 @@ const facts = computed(() => {
       @files="showFiles('out/browser')"
     />
     <template v-if="service.configured">
-      <TaskSpace :scene="scene" :task-id="id" :time-zone="timeZone" @changed="changed" />
-      <section class="flex flex-col gap-2">
+      <div class="border-t border-line pt-5">
+        <TaskSpace :scene="scene" :task-id="id" :time-zone="timeZone" @changed="changed" />
+      </div>
+      <section class="flex flex-col gap-2 border-t border-line pt-5">
         <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
-          <FolderOpen :size="16" class="text-subtle" aria-hidden="true" />
+          <FolderOpen :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           {{ t('groups.tasks.space.files') }}
           <Button size="sm" variant="ghost" class="ml-auto" @click="filesAt = filesAt === null ? '' : null">
             {{ t(filesAt === null ? 'common.expand' : 'common.collapse') }}

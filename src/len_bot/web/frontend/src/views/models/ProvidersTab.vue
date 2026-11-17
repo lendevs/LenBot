@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMediaQuery } from '@vueuse/core'
-import { Plus, Server } from '@lucide/vue'
+import { ChevronRight, Plus, Server } from '@lucide/vue'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import EmptyState from '../../ui/EmptyState.vue'
@@ -61,10 +61,10 @@ async function remove(id: string) {
 </script>
 
 <template>
-  <div class="grid min-w-0 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
-    <section v-if="wide || !selected" class="flex min-w-0 flex-col gap-3">
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="text-base font-semibold">{{ t('models.providers.title') }}</h2>
+  <div class="grid min-w-0 gap-6 lg:grid-cols-[17.5rem_minmax(0,1fr)] lg:gap-8">
+    <section v-if="wide || !selected" class="flex min-w-0 flex-col gap-3 lg:border-r lg:border-line lg:pr-6">
+      <div class="flex min-h-8 items-center justify-between gap-2">
+        <h2 class="text-base font-semibold text-ink">{{ t('models.providers.title') }}</h2>
         <Button size="sm" :icon="Plus" @click="add">{{ t('models.providers.add') }}</Button>
       </div>
       <EmptyState v-if="!rows.length" :icon="Server" :title="t('models.providers.empty')" compact />
@@ -72,22 +72,25 @@ async function remove(id: string) {
         <li v-for="row in rows" :key="row.id">
           <button
             type="button"
-            class="flex w-full min-w-0 cursor-pointer flex-col gap-1 rounded-md px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:focus-ring"
-            :class="selected?.id === row.id && 'bg-selected'"
+            class="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:focus-ring"
+            :class="selected?.id === row.id ? 'bg-selected' : 'hover:bg-hover'"
             :aria-current="selected?.id === row.id || undefined"
             @click="select(row.id)"
           >
-            <span class="flex min-w-0 items-center gap-2">
-              <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-                {{ row.alias || t('models.providers.unnamed') }}
+            <span class="flex min-w-0 flex-1 flex-col gap-1">
+              <span class="flex min-w-0 items-center gap-2">
+                <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+                  {{ row.alias || t('models.providers.unnamed') }}
+                </span>
+                <Badge v-if="problemsOf(row.id).length" tone="warning" dot>
+                  {{ t('models.providers.needsFix') }}
+                </Badge>
               </span>
-              <Badge v-if="problemsOf(row.id).length" tone="warning" dot>
-                {{ t('models.providers.needsFix') }}
-              </Badge>
+              <span class="truncate text-xs text-muted">
+                {{ [apiTitle(row.api), ...form.usedBy(row.id)].join(' · ') }}
+              </span>
             </span>
-            <span class="truncate text-xs text-muted">
-              {{ [apiTitle(row.api), ...form.usedBy(row.id)].join(' · ') }}
-            </span>
+            <ChevronRight v-if="!wide" :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           </button>
         </li>
       </ul>

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, toRef, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/vue-query'
 import { useResizeObserver } from '@vueuse/core'
-import { RefreshCcw, Sparkles } from '@lucide/vue'
+import { ChevronDown, RefreshCcw, Sparkles } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { sessionApi, type SessionEntry } from '../../../api/session'
 import { developerDetails } from '../../../composables/useDeveloperMode'
@@ -80,7 +80,7 @@ useResizeObserver(recapText, () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-8">
+  <div class="flex min-w-0 flex-col gap-8">
     <Skeleton v-if="query.isPending.value" :lines="8" />
     <ErrorNote
       v-else-if="query.isError.value && !newest"
@@ -95,7 +95,10 @@ useResizeObserver(recapText, () => {
             {{ t('groups.session.compact') }}
           </Button>
         </template>
-        <div v-if="newest.recap !== null" class="rounded-lg bg-fill px-4 py-3">
+        <div
+          v-if="newest.recap !== null"
+          class="rounded-r-md border-l-2 border-line-strong bg-fill px-4 py-3"
+        >
           <p
             ref="recapText"
             class="text-sm leading-6 break-words whitespace-pre-wrap text-ink"
@@ -106,9 +109,16 @@ useResizeObserver(recapText, () => {
           <button
             v-if="recapCut || recapExpanded"
             type="button"
-            class="mt-1.5 cursor-pointer text-xs font-medium text-muted hover:text-ink focus-visible:focus-ring"
+            class="mt-2 inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-muted hover:text-ink focus-visible:focus-ring"
+            :aria-expanded="recapExpanded"
             @click="recapExpanded = !recapExpanded"
           >
+            <ChevronDown
+              :size="14"
+              class="transition-transform duration-150"
+              :class="recapExpanded && 'rotate-180'"
+              aria-hidden="true"
+            />
             {{ recapExpanded ? t('common.collapse') : t('common.expand') }}
           </button>
         </div>
@@ -117,19 +127,14 @@ useResizeObserver(recapText, () => {
 
       <FormSection :title="t('groups.session.entries')" :columns="1">
         <template #actions>
-          <Switch v-model="everything" size="sm">{{ t('groups.session.everything') }}</Switch>
           <Button size="sm" :icon="RefreshCcw" :loading="starting" @click="startSession">
             {{ t('groups.newSession.action') }}
           </Button>
         </template>
-        <ErrorNote
-          v-if="query.isError.value"
-          :title="t('groups.session.readFailed')"
-          :error="query.error.value"
-          :retry="query.refetch"
-        />
-        <div v-if="query.hasNextPage.value" class="flex justify-center">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <Switch v-model="everything" size="sm">{{ t('groups.session.everything') }}</Switch>
           <Button
+            v-if="query.hasNextPage.value"
             size="sm"
             variant="ghost"
             :loading="query.isFetchingNextPage.value"
@@ -138,12 +143,18 @@ useResizeObserver(recapText, () => {
             {{ t('groups.session.older') }}
           </Button>
         </div>
+        <ErrorNote
+          v-if="query.isError.value"
+          :title="t('groups.session.readFailed')"
+          :error="query.error.value"
+          :retry="query.refetch"
+        />
         <p v-if="!shown.length" class="text-sm text-muted">{{ t('groups.session.empty') }}</p>
         <Timeline v-else>
           <template v-for="(entry, index) in shown" :key="entry.seq">
             <li
               v-if="everything && index === firstActive && index > 0"
-              class="mb-4 flex items-center gap-3 text-xs text-subtle"
+              class="mb-4 flex items-center gap-3 pt-1 text-xs font-medium text-muted"
             >
               <span class="h-px flex-1 bg-line" />
               {{ t('groups.session.current') }}

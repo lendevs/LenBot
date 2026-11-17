@@ -9,7 +9,7 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { sectionKey } from '../nav'
 import { confirmRestart, newPanelUrl, panelChanged, restartFlow as flow, waitForRestart } from './restart'
-import { groupLabel } from './scenes'
+import { groupLabel, groupSecondaryId } from './scenes'
 
 const { t } = useI18n()
 const list = computed(() => new Intl.ListFormat(currentLocale.value, { type: 'conjunction' }))
@@ -60,37 +60,54 @@ const connectionError = computed(() => {
         <p v-if="preview.chats.length">
           {{ t('shell.restart.dialog.chats', { names: list.format(preview.chats.map(groupLabel)) }) }}
         </p>
-        <div v-if="preview.tasks.length">
-          <p>{{ t('shell.restart.dialog.tasks') }}</p>
-          <ul class="mt-1 list-disc pl-5">
-            <li v-for="task in preview.tasks" :key="task.id">
-              #{{ task.id }} · {{ groupLabel(task.scene) }} · {{ task.goal }}
+        <div v-if="preview.tasks.length" class="border-t border-line pt-3">
+          <p class="font-medium text-ink">{{ t('shell.restart.dialog.tasks') }}</p>
+          <ul class="mt-1.5 flex list-none flex-col gap-1">
+            <li v-for="task in preview.tasks" :key="task.id" class="text-sm text-ink-2">
+              <span class="font-mono text-xs text-muted tabular">#{{ task.id }}</span>
+              <span class="mx-1.5 text-subtle" aria-hidden="true">·</span>
+              <span>{{ groupLabel(task.scene) }}</span>
+              <span v-if="groupSecondaryId(task.scene)" class="ml-1.5 font-mono text-xs text-muted tabular">
+                {{ groupSecondaryId(task.scene) }}
+              </span>
+              <span class="mx-1.5 text-subtle" aria-hidden="true">·</span>
+              <span>{{ task.goal }}</span>
             </li>
           </ul>
         </div>
-        <p v-if="preview.queued_tasks">{{ t('shell.restart.dialog.queued', { n: preview.queued_tasks }) }}</p>
-        <p v-if="preview.trials.length">
+        <p v-if="preview.queued_tasks" class="tabular">
+          {{ t('shell.restart.dialog.queued', { n: preview.queued_tasks }) }}
+        </p>
+        <p v-if="preview.trials.length" class="tabular">
           {{ t('shell.restart.dialog.trials', { n: preview.trials.length }) }}
         </p>
         <p v-if="moved">
           {{ t('shell.restart.dialog.newAddress') }}
-          <a v-if="link" :href="link" class="text-primary underline-offset-2 hover:underline">{{ link }}</a>
+          <a v-if="link" :href="link" class="font-mono text-primary underline-offset-2 hover:underline">
+            {{ link }}
+          </a>
           <span v-else>{{ t('shell.restart.dialog.addressInLog') }}</span>
           {{ t('shell.restart.dialog.proxy') }}
         </p>
-        <p v-if="!preview.restartable" class="rounded-lg bg-warning-bg px-4 py-3 text-ink" role="alert">
+        <p
+          v-if="!preview.restartable"
+          class="rounded-lg border border-line bg-warning-bg px-4 py-3 text-ink"
+          role="alert"
+        >
           {{ t('shell.restart.dialog.notRestartable') }}
         </p>
       </template>
-      <p v-if="flow.phase === 'waiting'" class="flex items-center gap-2" role="status">
-        <RotateCw :size="16" class="animate-spin text-primary" aria-hidden="true" />
+      <p v-if="flow.phase === 'waiting'" class="flex items-center gap-2.5 py-1 text-ink" role="status">
+        <RotateCw :size="16" class="shrink-0 animate-spin text-primary" aria-hidden="true" />
         {{ t('shell.restart.dialog.waiting') }}
       </p>
-      <p v-if="flow.phase === 'ready'" role="status">{{ t('shell.restart.dialog.ready') }}</p>
+      <p v-if="flow.phase === 'ready'" class="py-1 font-medium text-success" role="status">
+        {{ t('shell.restart.dialog.ready') }}
+      </p>
       <p v-if="flow.phase === 'address-changed'">
         <template v-if="link">
           {{ t('shell.restart.dialog.moved') }}
-          <a :href="link" class="text-primary underline-offset-2 hover:underline">{{ link }}</a>
+          <a :href="link" class="font-mono text-primary underline-offset-2 hover:underline">{{ link }}</a>
         </template>
         <template v-else>{{ t('shell.restart.dialog.movedInLog') }}</template>
       </p>

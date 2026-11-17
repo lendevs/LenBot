@@ -30,18 +30,18 @@ const source = (item: Candidate) =>
 </script>
 
 <template>
-  <section v-if="candidates.length" class="flex flex-col gap-1">
+  <section v-if="candidates.length" class="flex flex-col gap-1.5">
     <p class="text-xs font-medium text-muted">{{ t('groups.live.step.candidates') }}</p>
-    <ol class="flex list-none flex-col gap-1">
+    <ol class="flex list-none flex-col divide-y divide-line border-y border-line">
       <li
         v-for="item in candidates"
         :key="item.number"
-        class="flex flex-wrap items-baseline gap-x-2 text-sm"
+        class="flex flex-wrap items-baseline gap-x-2 gap-y-1 py-1.5 text-sm"
         :class="item.number === chosen ? 'text-ink' : 'text-ink-2'"
       >
-        <span class="font-mono text-xs text-subtle tabular">{{ item.number }}</span>
-        <span class="font-mono text-xs">{{ source(item) }}</span>
-        <span class="break-words">{{ item.description }}</span>
+        <span class="font-mono text-xs font-medium text-subtle tabular">#{{ item.number }}</span>
+        <span class="font-mono text-xs text-muted tabular">{{ source(item) }}</span>
+        <span class="min-w-0 flex-1 break-words">{{ item.description }}</span>
         <Badge v-if="item.number === chosen" tone="success">{{ t('groups.live.step.candidateSent') }}</Badge>
       </li>
     </ol>

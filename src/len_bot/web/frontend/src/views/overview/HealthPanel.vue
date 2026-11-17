@@ -41,8 +41,16 @@ const models = computed(() =>
 
 <template>
   <section class="flex min-w-0 flex-col gap-3">
-    <h2 class="text-base font-semibold">{{ t('overview.health.title') }}</h2>
-    <Skeleton v-if="loop.isPending.value" :lines="2" />
+    <h2 class="text-base font-semibold text-ink">{{ t('overview.health.title') }}</h2>
+    <div v-if="loop.isPending.value" class="border-y border-line py-3" aria-hidden="true">
+      <div class="flex items-center justify-between gap-2">
+        <Skeleton width="96px" height="15px" />
+        <Skeleton width="52px" height="20px" rounded="rounded-full" />
+      </div>
+      <div class="mt-2">
+        <Skeleton width="150px" height="12px" />
+      </div>
+    </div>
     <ErrorNote
       v-else-if="loop.isError.value"
       :title="t('overview.health.readFailed')"
@@ -50,75 +58,85 @@ const models = computed(() =>
       :retry="loop.refetch"
     />
     <div
-      v-else-if="loop.data.value"
-      class="flex flex-col gap-2 rounded-lg border border-line bg-surface px-4 py-3"
+      v-else-if="loop.data.value || models.length"
+      class="flex flex-col divide-y divide-line border-y border-line"
     >
-      <div class="flex items-center gap-2">
-        <span class="text-sm font-medium text-ink">{{ t('overview.health.loop') }}</span>
-        <Badge :tone="verdict.tone" dot>{{ verdict.text }}</Badge>
-      </div>
-      <p class="text-xs text-muted tabular">
-        {{
-          [
-            t('overview.health.stalls', { n: formatNumber(loop.data.value.stalls) }, loop.data.value.stalls),
-            loop.data.value.pauses
-              ? t(
-                  'overview.health.pauses',
-                  { n: formatNumber(loop.data.value.pauses) },
-                  loop.data.value.pauses,
-                )
-              : '',
-            t('overview.health.longest', { n: formatNumber(loop.data.value.max_lag_ms) }),
-          ]
-            .filter(Boolean)
-            .join(' · ')
-        }}
-      </p>
-      <details v-if="latest">
-        <summary class="cursor-pointer text-xs text-muted hover:text-ink">
+      <div v-if="loop.data.value" class="flex flex-col gap-1.5 py-3">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-medium text-ink">{{ t('overview.health.loop') }}</span>
+          <Badge :tone="verdict.tone" dot>{{ verdict.text }}</Badge>
+        </div>
+        <p class="text-xs text-muted tabular">
           {{
-            t('overview.health.latest', {
-              task: latest.task ?? t('common.unknown'),
-              n: formatNumber(latest.lag_ms),
-              ago: formatRelative(latest.at),
-            })
+            [
+              t(
+                'overview.health.stalls',
+                { n: formatNumber(loop.data.value.stalls) },
+                loop.data.value.stalls,
+              ),
+              loop.data.value.pauses
+                ? t(
+                    'overview.health.pauses',
+                    { n: formatNumber(loop.data.value.pauses) },
+                    loop.data.value.pauses,
+                  )
+                : '',
+              t('overview.health.longest', { n: formatNumber(loop.data.value.max_lag_ms) }),
+            ]
+              .filter(Boolean)
+              .join(' · ')
           }}
-        </summary>
-        <CodeBlock :code="latest.stack ?? t('overview.health.noStack')" :max-lines="12" class="mt-1.5" />
-      </details>
-    </div>
-    <div v-if="models.length" class="flex flex-col gap-2 rounded-lg border border-line bg-surface px-4 py-3">
-      <span class="text-sm font-medium text-ink">{{ t('overview.health.models') }}</span>
-      <ul class="flex list-none flex-col gap-2">
-        <li v-for="item in models" :key="item.purpose" class="flex flex-col gap-0.5">
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-ink-2">{{ labels.role(item.purpose) }}</span>
-            <Badge :tone="item.failing ? 'error' : 'success'" dot>
-              {{ item.failing ? t('overview.health.failing') : t('overview.health.working') }}
-            </Badge>
+        </p>
+        <details v-if="latest">
+          <summary
+            class="cursor-pointer rounded-sm text-xs text-muted hover:text-ink focus-visible:focus-ring tabular"
+          >
+            {{
+              t('overview.health.latest', {
+                task: latest.task ?? t('common.unknown'),
+                n: formatNumber(latest.lag_ms),
+                ago: formatRelative(latest.at),
+              })
+            }}
+          </summary>
+          <div class="mt-1.5">
+            <CodeBlock :code="latest.stack ?? t('overview.health.noStack')" :max-lines="12" />
           </div>
-          <p class="flex flex-wrap gap-x-3 text-xs text-muted tabular">
-            <span v-if="item.success">
-              {{ t('overview.health.lastSuccess', { ago: formatRelative(item.success.started) }) }}
-            </span>
-            <RouterLink
-              v-if="item.failure"
-              :to="{
-                name: 'host-logs',
-                query: {
-                  scene: item.failure.scene,
-                  call: item.failure.id,
-                  turn: item.failure.turn_id ?? undefined,
-                },
-              }"
-              class="text-error hover:underline"
-              :title="item.failure.error"
-            >
-              {{ t('overview.health.lastFailure', { ago: formatRelative(item.failure.started) }) }}
-            </RouterLink>
-          </p>
-        </li>
-      </ul>
+        </details>
+      </div>
+      <div v-if="models.length" class="flex flex-col gap-2.5 py-3">
+        <span class="text-xs font-medium text-muted">{{ t('overview.health.models') }}</span>
+        <ul class="flex list-none flex-col gap-2.5">
+          <li v-for="item in models" :key="item.purpose" class="flex flex-col gap-1">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-ink">{{ labels.role(item.purpose) }}</span>
+              <Badge :tone="item.failing ? 'error' : 'success'" dot>
+                {{ item.failing ? t('overview.health.failing') : t('overview.health.working') }}
+              </Badge>
+            </div>
+            <p class="flex flex-wrap gap-x-3 text-xs text-muted tabular">
+              <span v-if="item.success">
+                {{ t('overview.health.lastSuccess', { ago: formatRelative(item.success.started) }) }}
+              </span>
+              <RouterLink
+                v-if="item.failure"
+                :to="{
+                  name: 'host-logs',
+                  query: {
+                    scene: item.failure.scene,
+                    call: item.failure.id,
+                    turn: item.failure.turn_id ?? undefined,
+                  },
+                }"
+                class="text-error hover:underline"
+                :title="item.failure.error"
+              >
+                {{ t('overview.health.lastFailure', { ago: formatRelative(item.failure.started) }) }}
+              </RouterLink>
+            </p>
+          </li>
+        </ul>
+      </div>
     </div>
   </section>
 </template>

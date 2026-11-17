@@ -67,9 +67,14 @@ const wrapLimits = ['max_minutes', 'max_people'] as const
     <Field :label="t('groups.settings.focus.intents')" inline wide>
       <Switch v-model="intents" />
     </Field>
-    <div v-if="blocked" class="flex flex-wrap items-center gap-2 text-sm text-error sm:col-span-2">
-      <X :size="16" class="shrink-0" aria-hidden="true" />
-      {{ t('groups.settings.focus.blocked') }}
+    <div
+      v-if="blocked"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-error-bg px-3 py-2 text-sm text-error sm:col-span-2"
+    >
+      <span class="flex min-w-0 items-center gap-2">
+        <X :size="16" class="shrink-0" aria-hidden="true" />
+        <span>{{ t('groups.settings.focus.blocked') }}</span>
+      </span>
       <Button
         size="sm"
         variant="ghost"
@@ -86,20 +91,23 @@ const wrapLimits = ['max_minutes', 'max_people'] as const
     <div v-if="attention.declarations || attention.disposition" class="sm:col-span-2">
       <button
         type="button"
-        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-sm font-medium text-muted hover:text-ink focus-visible:focus-ring"
+        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md py-0.5 text-sm font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
         :aria-expanded="details"
         @click="details = !details"
       >
         <ChevronDown
           :size="15"
-          class="transition-transform"
+          class="transition-transform duration-150"
           :class="details && 'rotate-180'"
           aria-hidden="true"
         />
         {{ t('groups.settings.focus.details') }}
       </button>
     </div>
-    <template v-if="details && attention.declarations">
+    <div
+      v-if="details && attention.declarations"
+      class="grid animate-fade gap-x-5 gap-y-5 border-t border-line pt-4 sm:col-span-2 sm:grid-cols-2"
+    >
       <Field :label="t('groups.settings.focus.intentMode')">
         <Select v-model="attention.declarations.mode" :options="intentModes" />
       </Field>
@@ -115,8 +123,11 @@ const wrapLimits = ['max_minutes', 'max_people'] as const
           :unit="key === 'max_minutes' ? t('groups.settings.minutes') : undefined"
         />
       </Field>
-    </template>
-    <template v-if="details && attention.disposition">
+    </div>
+    <div
+      v-if="details && attention.disposition"
+      class="grid animate-fade gap-x-5 gap-y-5 border-t border-line pt-4 sm:col-span-2 sm:grid-cols-2"
+    >
       <Field :label="t('groups.settings.focus.wrapMode')">
         <Select v-model="attention.disposition.mode" :options="wrapModes" />
       </Field>
@@ -132,6 +143,6 @@ const wrapLimits = ['max_minutes', 'max_people'] as const
           :unit="key === 'max_minutes' ? t('groups.settings.minutes') : undefined"
         />
       </Field>
-    </template>
+    </div>
   </FormSection>
 </template>

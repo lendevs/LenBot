@@ -10,7 +10,10 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div v-if="offset > 0 || total > limit" class="flex items-center justify-center gap-2 text-sm text-muted">
+  <div
+    v-if="offset > 0 || total > limit"
+    class="flex min-w-0 items-center justify-center gap-2 pt-1 text-sm text-muted"
+  >
     <IconButton
       :icon="ChevronLeft"
       :label="t('groups.learning.previous')"

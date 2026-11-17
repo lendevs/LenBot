@@ -96,10 +96,10 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
 </script>
 
 <template>
-  <section class="flex flex-col gap-3" :aria-label="t('groups.live.label')">
-    <div class="flex flex-wrap items-center gap-2">
+  <section class="flex min-w-0 flex-col gap-3" :aria-label="t('groups.live.label')">
+    <div class="flex flex-wrap items-center justify-between gap-2">
       <SegmentedControl v-model="filter" :options="filters" size="sm" :label="t('groups.live.label')" />
-      <Button size="sm" variant="ghost" :icon="AudioLines" class="ml-auto" @click="voice = true">
+      <Button size="sm" variant="ghost" :icon="AudioLines" @click="voice = true">
         {{ t('groups.live.voice') }}
       </Button>
     </div>
@@ -113,20 +113,20 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
       :retry="query.refetch"
     />
     <EmptyState v-else-if="!items.length" :title="t('groups.live.empty')" />
-    <div v-else ref="frame" class="relative" :style="{ height: `${height}px` }">
+    <div v-else ref="frame" class="relative border-t border-line" :style="{ height: `${height}px` }">
       <VirtualList
         ref="list"
         :items="rows"
         :get-key="rowKey"
         :estimate-size="72"
         follow-end
-        class="h-full pr-1"
+        class="h-full py-2 pr-1.5"
         @reach-start="older"
       >
         <template #default="{ item }">
           <div
             v-if="item.type === 'edge'"
-            class="flex min-h-10 items-center justify-center text-xs text-subtle"
+            class="flex min-h-9 items-center justify-center py-1 text-xs text-subtle"
           >
             <span v-if="query.isFetchingNextPage.value" class="inline-flex items-center gap-2">
               <Spinner :size="13" />
@@ -159,15 +159,16 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
         </template>
       </VirtualList>
       <Transition name="ui-rise">
-        <Button
+        <div
           v-if="list && !list.atEnd"
-          size="sm"
-          :icon="ArrowDown"
-          class="absolute bottom-3 left-1/2 -translate-x-1/2 shadow-float"
-          @click="list.scrollToEnd('smooth')"
+          class="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center"
         >
-          {{ t('groups.live.latest') }}
-        </Button>
+          <span class="pointer-events-auto rounded-md shadow-float">
+            <Button size="sm" :icon="ArrowDown" @click="list.scrollToEnd('smooth')">
+              {{ t('groups.live.latest') }}
+            </Button>
+          </span>
+        </div>
       </Transition>
     </div>
 

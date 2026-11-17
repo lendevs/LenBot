@@ -39,7 +39,7 @@ async function save() {
 </script>
 
 <template>
-  <div class="max-w-3xl">
+  <div class="min-w-0 max-w-3xl">
     <Skeleton v-if="form.settings.isPending" :lines="10" />
     <ErrorNote
       v-else-if="form.settings.isError"
@@ -48,7 +48,7 @@ async function save() {
       :retry="form.settings.refetch"
     />
     <p v-else-if="!form.saved" class="text-sm text-muted">{{ t('groups.settings.removed') }}</p>
-    <form v-else-if="form.draft" class="flex flex-col gap-8" @submit.prevent="save">
+    <form v-else-if="form.draft" class="flex min-w-0 flex-col gap-8 pb-8" @submit.prevent="save">
       <RoleSection :scene="scene" />
       <ParticipationSection />
       <FocusSection :scene="scene" />

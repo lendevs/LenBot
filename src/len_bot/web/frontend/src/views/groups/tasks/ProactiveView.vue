@@ -41,7 +41,7 @@ function outcome(item: ProactiveWake): string {
 </script>
 
 <template>
-  <div class="flex max-w-3xl flex-col gap-4">
+  <div class="flex max-w-3xl min-w-0 flex-col gap-4">
     <Skeleton v-if="page.isPending.value" :lines="4" />
     <ErrorNote
       v-else-if="page.isError.value"
@@ -52,13 +52,13 @@ function outcome(item: ProactiveWake): string {
     <template v-else-if="first">
       <div
         v-if="!first.settings"
-        class="flex flex-wrap items-center gap-3 rounded-lg border border-line px-4 py-3 text-sm text-muted"
+        class="flex flex-wrap items-center gap-3 rounded-lg bg-fill px-4 py-3 text-sm text-muted"
       >
         <span class="min-w-0 flex-1">{{ t('groups.tasks.proactive.off') }}</span>
         <Button size="sm" :to="groupsTarget(scene, 'settings')">{{ t('groups.tasks.toSettings') }}</Button>
       </div>
-      <div v-else class="flex flex-col gap-1">
-        <p class="text-sm text-ink">
+      <div v-else class="flex flex-col gap-1 border-b border-line pb-4">
+        <p class="text-sm text-ink tabular">
           {{
             t('groups.tasks.proactive.rule', {
               idle: idle(first.settings.idle_seconds),
@@ -67,21 +67,21 @@ function outcome(item: ProactiveWake): string {
             })
           }}
         </p>
-        <p class="text-xs text-muted">
+        <p class="text-xs text-muted tabular">
           {{
             first.next_at === null
               ? t('groups.tasks.proactive.nextUnknown')
               : t('groups.tasks.proactive.next', { time: at(first.next_at) })
           }}
-          <template v-if="first.next_reason">（{{ first.next_reason }}）</template>
+          <template v-if="first.next_reason">· {{ first.next_reason }}</template>
         </p>
       </div>
       <div
         v-if="first.pause"
         class="flex items-center gap-2 rounded-lg bg-info-bg px-4 py-3 text-sm text-info"
       >
-        <PauseCircle :size="16" aria-hidden="true" />
-        {{ t('groups.tasks.proactive.paused', { time: at(first.pause.until) }) }}
+        <PauseCircle :size="16" class="shrink-0" aria-hidden="true" />
+        <span class="tabular">{{ t('groups.tasks.proactive.paused', { time: at(first.pause.until) }) }}</span>
       </div>
 
       <EmptyState
@@ -90,11 +90,11 @@ function outcome(item: ProactiveWake): string {
         :title="t('groups.tasks.proactive.empty')"
         compact
       />
-      <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
-        <li v-for="item in rows" :key="item.id" class="flex items-center gap-3 px-4 py-2.5">
+      <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
+        <li v-for="item in rows" :key="item.id" class="flex items-center gap-3 px-2 py-3">
           <div class="min-w-0 flex-1">
             <p class="text-sm text-ink">{{ outcome(item) }}</p>
-            <p class="text-xs text-muted tabular">{{ at(item.woke_at) }}</p>
+            <p class="mt-0.5 text-xs text-muted tabular">{{ at(item.woke_at) }}</p>
           </div>
           <Button size="sm" variant="ghost" :to="{ name: 'host-logs', query: { scene, turn: item.turn_id } }">
             {{ t('groups.tasks.proactive.turn') }}

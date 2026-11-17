@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { BookOpen, Brain, CircleAlert } from '@lucide/vue'
+import { BookOpen, Brain, ChevronRight, CircleAlert } from '@lucide/vue'
 import type { ModelStep, Step, ToolDetail, TurnDetail } from '../../../api/timeline'
 import { formatCompact, formatDuration } from '../../../i18n/format'
 import Badge, { type Tone } from '../../../ui/Badge.vue'
@@ -84,10 +84,19 @@ const stepFailed = (step: Step) =>
         <ul v-else class="flex flex-col gap-1">
           <li v-for="item in detail.recall" :key="`${item.scope}:${item.path}:${item.content.length}`">
             <details class="group">
-              <summary class="cursor-pointer truncate font-mono text-xs text-ink-2 hover:text-ink">
-                {{ item.scope }} · {{ item.path }}
+              <summary
+                class="flex cursor-pointer list-none items-center gap-1 rounded-sm font-mono text-xs text-ink-2 select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+              >
+                <ChevronRight
+                  :size="13"
+                  class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
+                  aria-hidden="true"
+                />
+                <span class="truncate">{{ item.scope }} · {{ item.path }}</span>
               </summary>
-              <CodeBlock :code="item.content" :max-lines="8" class="mt-1" />
+              <div class="mt-1.5">
+                <CodeBlock :code="item.content" :max-lines="8" />
+              </div>
             </details>
           </li>
         </ul>
@@ -97,22 +106,34 @@ const stepFailed = (step: Step) =>
         :key="step.step"
         :title="t('groups.live.step.title', { n: step.step })"
         :icon="stepFailed(step) ? CircleAlert : Brain"
-        :tone="stepFailed(step) ? 'error' : 'brand'"
+        :tone="stepFailed(step) ? 'error' : stepRunning(step) ? 'info' : 'neutral'"
         :running="stepRunning(step)"
         :last="index === detail.steps.length - 1"
       >
+        <template v-if="step.models.length === 1" #meta>
+          <span class="min-w-0 truncate text-xs text-subtle tabular">{{ modelMeta(step.models[0]!) }}</span>
+        </template>
         <div class="flex flex-col gap-2.5">
-          <p v-for="model in step.models" :key="model.id" class="text-xs text-subtle tabular">
-            {{ modelMeta(model) }}
-          </p>
+          <template v-if="step.models.length > 1">
+            <p v-for="model in step.models" :key="model.id" class="text-xs text-subtle tabular">
+              {{ modelMeta(model) }}
+            </p>
+          </template>
           <template v-for="model in step.models" :key="`e${model.id}`">
             <ErrorNote v-if="model.error" :title="t('groups.live.step.failed')" :error="model.error" />
             <p v-if="model.snapshot_expired_at" class="text-xs text-muted">
               {{ t('groups.live.step.expired') }}
             </p>
           </template>
-          <details v-if="step.thoughts.length" class="rounded-md bg-fill px-3 py-2">
-            <summary class="cursor-pointer text-xs font-medium text-muted">
+          <details v-if="step.thoughts.length" class="group rounded-md bg-fill px-3 py-2">
+            <summary
+              class="flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs font-medium text-muted select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+            >
+              <ChevronRight
+                :size="13"
+                class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
+                aria-hidden="true"
+              />
               {{ t('groups.live.step.thoughts') }}
             </summary>
             <p
@@ -127,7 +148,14 @@ const stepFailed = (step: Step) =>
           <div
             v-for="tool in step.tools"
             :key="tool.call_id"
-            class="flex flex-col gap-1.5 border-l-2 border-line-strong pl-3"
+            class="flex flex-col gap-1.5 border-l-2 pl-3"
+            :class="
+              tool.status === 'error'
+                ? 'border-error/50'
+                : tool.status === 'pending'
+                  ? 'border-info/50'
+                  : 'border-line-strong'
+            "
           >
             <div class="flex flex-wrap items-center gap-2">
               <strong class="text-sm font-medium text-ink">{{ labels.tool(tool.name) }}</strong>

@@ -50,10 +50,13 @@ function remove(index: number) {
         v-for="(row, index) in model"
         :key="index"
         class="rounded-md border bg-surface transition-[border-color,box-shadow] duration-150"
-        :class="[
-          opened.has(index) ? 'border-line-strong shadow-card' : 'border-line hover:border-line-strong',
-          problemsIn(index) && !opened.has(index) && 'border-error',
-        ]"
+        :class="
+          opened.has(index)
+            ? 'border-line-strong shadow-card'
+            : problemsIn(index)
+              ? 'border-error'
+              : 'border-line hover:border-line-strong'
+        "
       >
         <button
           type="button"
@@ -62,7 +65,7 @@ function remove(index: number) {
           @click="toggle(index)"
         >
           <span class="flex min-w-0 flex-1 flex-col">
-            <strong class="truncate text-sm font-medium text-ink">
+            <strong class="truncate text-sm font-medium text-ink tabular">
               {{ summaries[index].title || t('plugins.form.row', { n: index + 1 }) }}
             </strong>
             <span v-if="summaries[index].meta" class="truncate text-xs text-muted">
@@ -100,8 +103,8 @@ function remove(index: number) {
       </li>
     </ul>
     <p v-else class="text-sm text-muted">{{ t('plugins.form.noRows') }}</p>
-    <div>
-      <Button size="sm" variant="ghost" :icon="Plus" class="-ml-2" @click="add">
+    <div class="-ml-2 flex">
+      <Button size="sm" variant="ghost" :icon="Plus" @click="add">
         {{ t('plugins.form.addRow', { name: fieldLabel(field) }) }}
       </Button>
     </div>

@@ -5,11 +5,18 @@ import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { readPendingRestart } from '../../api/hostStore'
+import { groupLabel } from '../../layouts/shell/scenes'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
 export const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 export const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
+/** Group ID without the platform prefix, omitted when `groupLabel` already falls back to it. */
+export function sceneSecondaryId(scene: string): string {
+  const id = scene.split(':').slice(2).join(':') || scene
+  return groupLabel(scene) === id ? '' : id
+}
 
 /**
  * One section of GET /api/host/settings edited on its own: a draft copied from the saved value, kept while the

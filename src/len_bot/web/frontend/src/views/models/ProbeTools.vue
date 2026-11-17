@@ -119,7 +119,7 @@ watch(
         size="sm"
         :label="t('models.probe.kind')"
       />
-      <span v-if="list.isSuccess.value" class="text-xs text-muted">
+      <span v-if="list.isSuccess.value" class="text-xs text-muted tabular">
         {{ t('models.probe.listed', { n: models.length }, models.length) }}
       </span>
     </div>
@@ -128,12 +128,12 @@ watch(
     <div
       v-if="probe.data.value"
       role="status"
-      class="flex flex-col gap-1 rounded-md bg-success-bg px-3 py-2 text-sm text-success"
+      class="flex animate-fade flex-col gap-1 rounded-lg bg-success-bg px-3.5 py-2.5 text-sm text-success"
     >
       <span class="font-medium">
         {{ t(`models.probe.passed.${probe.data.value.kind}`, { model: probe.data.value.model ?? model }) }}
       </span>
-      <span class="whitespace-pre-wrap text-ink-2">{{ probe.data.value.text }}</span>
+      <span class="min-w-0 break-words whitespace-pre-wrap text-ink-2">{{ probe.data.value.text }}</span>
     </div>
     <RawRecord
       v-if="developerDetails && probe.data.value?.usage"

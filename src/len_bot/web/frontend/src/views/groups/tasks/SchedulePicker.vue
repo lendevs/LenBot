@@ -99,14 +99,16 @@ function toggle(day: number, on: boolean) {
       :label="t('groups.tasks.schedules.dialog.repeat')"
       class="self-start"
     />
-    <div v-if="mode === 'once'" class="grid grid-cols-2 gap-3">
+    <div v-if="mode === 'once'" class="grid gap-3 sm:grid-cols-2">
       <Field :label="t('groups.tasks.schedules.dialog.date')"><Input v-model="date" type="date" /></Field>
       <Field :label="t('groups.tasks.schedules.dialog.time')"><Input v-model="time" type="time" /></Field>
     </div>
     <template v-else-if="mode === 'weekly'">
-      <Field :label="t('groups.tasks.schedules.dialog.time')" class="max-w-48">
-        <Input v-model="time" type="time" />
-      </Field>
+      <div class="max-w-48">
+        <Field :label="t('groups.tasks.schedules.dialog.time')">
+          <Input v-model="time" type="time" />
+        </Field>
+      </div>
       <fieldset class="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0">
         <legend class="mb-1.5 text-sm font-medium text-ink">
           {{ t('groups.tasks.schedules.dialog.days') }}
@@ -123,8 +125,8 @@ function toggle(day: number, on: boolean) {
       </fieldset>
     </template>
     <Field v-else-if="mode === 'every'" :label="t('groups.tasks.schedules.dialog.every')">
-      <div class="flex gap-2">
-        <NumberInput v-model="every" :min="1" class="w-36" />
+      <div class="flex flex-wrap gap-2">
+        <div class="w-36"><NumberInput v-model="every" :min="1" /></div>
         <div class="w-28"><Select v-model="unit" :options="units" /></div>
       </div>
     </Field>

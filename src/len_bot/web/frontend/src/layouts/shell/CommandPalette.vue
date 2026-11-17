@@ -6,7 +6,6 @@ import { useEventListener } from '@vueuse/core'
 import { DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
 import {
   CornerDownLeft,
-  FileText,
   Languages,
   MessagesSquare,
   Palette,
@@ -27,7 +26,7 @@ import Kbd from '../../ui/Kbd.vue'
 import { areaTarget, navAreas } from '../nav'
 import { groupsTarget } from '../../views/groups/route'
 import { roleLabel, useRoleSwitch, useRoles } from '../../views/groups/roleSwitch'
-import { groupLabel } from './scenes'
+import { groupLabel, groupSecondaryId } from './scenes'
 
 interface Command {
   id: string
@@ -71,7 +70,7 @@ const commands = computed<Command[]>(() => {
       kind: 'page' as const,
       title: area.pages.length ? `${t(area.label)} · ${t(page.label)}` : t(page.label),
       keywords: `${page.route} ${area.id}`,
-      icon: FileText,
+      icon: area.icon,
       to: area.pages.length ? { name: page.route } : areaTarget(area, props.scene),
     }))
   })
@@ -86,7 +85,7 @@ const commands = computed<Command[]>(() => {
     id: `group:${item.scene}`,
     kind: 'group' as const,
     title: groupLabel(item.scene),
-    detail: item.persona?.name,
+    detail: [groupSecondaryId(item.scene), item.persona?.name].filter(Boolean).join(' · ') || undefined,
     keywords: item.scene,
     icon: MessagesSquare,
     to: groupsTarget(item.scene),
@@ -177,6 +176,12 @@ function onKey(event: KeyboardEvent) {
   } else if (event.key === 'ArrowUp') {
     event.preventDefault()
     cursor.value = count ? (cursor.value - 1 + count) % count : 0
+  } else if (event.key === 'Home' && count) {
+    event.preventDefault()
+    cursor.value = 0
+  } else if (event.key === 'End' && count) {
+    event.preventDefault()
+    cursor.value = count - 1
   } else if (event.key === 'Enter' && !event.isComposing) {
     event.preventDefault()
     choose(results.value[cursor.value])
@@ -199,14 +204,14 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
 <template>
   <DialogRoot v-model:open="open">
     <DialogPortal>
-      <DialogOverlay class="ui-overlay fixed inset-0 z-(--z-dialog) bg-overlay" />
+      <DialogOverlay class="ui-overlay fixed inset-0 z-(--z-dialog) bg-overlay backdrop-blur-[2px]" />
       <DialogContent
         :aria-describedby="undefined"
-        class="ui-dialog fixed top-[12vh] left-1/2 z-(--z-dialog) flex max-h-[70dvh] w-[calc(100vw-24px)] max-w-xl -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-line bg-surface-raised text-ink shadow-dialog outline-none"
+        class="ui-dialog fixed top-[10vh] left-1/2 z-(--z-dialog) flex max-h-[72dvh] w-[calc(100vw-24px)] max-w-xl -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-line bg-surface-raised text-ink shadow-dialog outline-none sm:top-[12vh]"
       >
         <DialogTitle class="sr-only">{{ t('palette.label') }}</DialogTitle>
         <label class="flex shrink-0 items-center gap-3 border-b border-line px-4">
-          <Search :size="18" class="shrink-0 text-subtle" aria-hidden="true" />
+          <Search :size="17" class="shrink-0 text-subtle" aria-hidden="true" />
           <input
             ref="input"
             v-model="query"
@@ -216,10 +221,10 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
             aria-expanded="true"
             aria-controls="palette-list"
             :aria-activedescendant="results[cursor] ? `palette-${cursor}` : undefined"
-            class="h-13 min-w-0 flex-1 bg-transparent text-lg outline-none placeholder:text-subtle focus-visible:outline-none"
+            class="h-12 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-subtle focus-visible:outline-none max-sm:text-lg"
             @keydown="onKey"
           />
-          <Kbd class="max-sm:hidden">Esc</Kbd>
+          <span class="max-sm:hidden"><Kbd>Esc</Kbd></span>
         </label>
         <ul
           id="palette-list"
@@ -227,29 +232,48 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
           role="listbox"
           class="min-h-0 flex-1 overflow-y-auto p-1.5 scrollbar-thin"
         >
-          <li
-            v-for="(item, index) in results"
-            :id="`palette-${index}`"
-            :key="item.id"
-            :data-index="index"
-            role="option"
-            :aria-selected="index === cursor"
-            class="flex h-10 cursor-pointer items-center gap-3 rounded-md px-3 text-base text-ink-2 aria-selected:bg-hover aria-selected:text-ink"
-            @mousemove="cursor = index"
-            @click="choose(item)"
-          >
-            <component :is="item.icon" :size="16" class="shrink-0 text-muted" aria-hidden="true" />
-            <span class="truncate">{{ item.title }}</span>
-            <span v-if="item.detail" class="min-w-0 truncate text-sm text-subtle">{{ item.detail }}</span>
-            <span class="ml-auto shrink-0 text-xs text-subtle">{{ t(`palette.kinds.${item.kind}`) }}</span>
-            <CornerDownLeft
-              v-if="index === cursor"
-              :size="14"
-              class="shrink-0 text-subtle"
+          <template v-for="(item, index) in results" :key="item.id">
+            <li
+              v-if="!query.trim() && (index === 0 || results[index - 1]?.kind !== item.kind)"
+              role="presentation"
               aria-hidden="true"
-            />
-          </li>
-          <li v-if="!results.length" class="px-3 py-8 text-center text-sm text-subtle">
+              class="px-2.5 pt-2 pb-1 text-xs font-medium text-subtle select-none first:pt-1"
+            >
+              {{ t(`palette.kinds.${item.kind}`) }}
+            </li>
+            <li
+              :id="`palette-${index}`"
+              :data-index="index"
+              role="option"
+              :aria-selected="index === cursor"
+              class="flex min-h-9.5 cursor-pointer items-center gap-3 rounded-md px-2.5 py-1.5 text-sm text-ink-2 transition-colors aria-selected:bg-hover aria-selected:text-ink"
+              @mousemove="cursor = index"
+              @click="choose(item)"
+            >
+              <component
+                :is="item.icon"
+                :size="16"
+                class="shrink-0 transition-colors"
+                :class="index === cursor ? 'text-primary' : 'text-muted'"
+                aria-hidden="true"
+              />
+              <span class="min-w-0 truncate font-medium">{{ item.title }}</span>
+              <span v-if="item.detail" class="min-w-0 truncate text-xs text-muted tabular">
+                {{ item.detail }}
+              </span>
+              <span v-if="query.trim()" class="ml-auto shrink-0 text-xs text-subtle">
+                {{ t(`palette.kinds.${item.kind}`) }}
+              </span>
+              <CornerDownLeft
+                v-if="index === cursor"
+                :size="14"
+                class="shrink-0 text-subtle"
+                :class="!query.trim() && 'ml-auto'"
+                aria-hidden="true"
+              />
+            </li>
+          </template>
+          <li v-if="!results.length" class="px-3 py-8 text-center text-sm text-muted">
             {{ t('palette.empty') }}
           </li>
         </ul>

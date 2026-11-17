@@ -131,17 +131,14 @@ const save = useMutation({
     :error="abilities.error.value"
     :retry="abilities.refetch"
   />
-  <form v-else class="flex max-w-3xl flex-col gap-8" @submit.prevent="save.mutate()">
+  <form v-else class="flex max-w-3xl flex-col gap-8 pb-6" @submit.prevent="save.mutate()">
     <FormSection :title="t('personas.detail.abilities.tools')" :columns="1">
       <Field :label="t('personas.detail.abilities.allTools')" inline>
         <Switch :model-value="tools === 'all'" @update:model-value="allTools" />
       </Field>
       <template v-for="group in [builtIn, extra]" :key="group === builtIn ? 'built-in' : 'extra'">
-        <ul
-          v-if="group.length"
-          class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface"
-        >
-          <li v-for="tool in group" :key="tool.name" class="flex flex-col gap-1.5 px-4 py-3">
+        <ul v-if="group.length" class="flex list-none flex-col divide-y divide-line border-y border-line">
+          <li v-for="tool in group" :key="tool.name" class="flex flex-col gap-1.5 py-3">
             <Checkbox
               :model-value="allowed(tools, tool.name)"
               :disabled="tools === 'all' || (tool.reasons.length > 0 && !allowed(tools, tool.name))"
@@ -158,16 +155,16 @@ const save = useMutation({
               <TriangleAlert :size="13" class="mt-0.5 shrink-0" aria-hidden="true" />
               {{ tool.reasons.join(t('personas.detail.abilities.reasonSeparator')) }}
             </p>
-            <RawRecord
-              v-if="developerDetails"
-              :label="t('personas.detail.abilities.forModel')"
-              :code="{
-                description: tool.description,
-                parameters: tool.parameters,
-                instructions: tool.instructions,
-              }"
-              class="pl-7"
-            />
+            <div v-if="developerDetails" class="pl-7">
+              <RawRecord
+                :label="t('personas.detail.abilities.forModel')"
+                :code="{
+                  description: tool.description,
+                  parameters: tool.parameters,
+                  instructions: tool.instructions,
+                }"
+              />
+            </div>
           </li>
         </ul>
       </template>
@@ -184,11 +181,11 @@ const save = useMutation({
         <Field :label="t('personas.detail.abilities.allSkills')" inline>
           <Switch :model-value="skills === 'all'" @update:model-value="allSkills" />
         </Field>
-        <ul class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface">
+        <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
           <li
             v-for="skill in skillCatalog"
             :key="`${skill.source}:${skill.name}`"
-            class="flex items-start gap-3 px-4 py-3"
+            class="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 py-3"
           >
             <div class="flex min-w-0 flex-1 flex-col gap-1">
               <Checkbox

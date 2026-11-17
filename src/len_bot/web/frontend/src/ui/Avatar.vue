@@ -20,11 +20,11 @@ const initial = computed(() => {
 })
 /** Without an image the initial is drawn directly; Reka's fallback only appears after an image fails. */
 const frame = computed(() => [
-  'relative inline-flex shrink-0 items-center justify-center overflow-hidden align-middle select-none',
-  props.shape === 'circle' ? 'rounded-full' : 'rounded-[28%]',
+  'relative inline-flex shrink-0 items-center justify-center overflow-hidden align-middle ring-1 ring-inset ring-avatar-ring select-none',
+  props.shape === 'circle' ? 'rounded-full' : 'rounded-[26%]',
 ])
 const fallback =
-  'flex size-full items-center justify-center bg-[hsl(var(--avatar-h)_62%_92%)] font-semibold text-[hsl(var(--avatar-h)_42%_34%)] dark:bg-[hsl(var(--avatar-h)_24%_24%)] dark:text-[hsl(var(--avatar-h)_62%_80%)]'
+  'flex size-full items-center justify-center bg-[hsl(var(--avatar-h)_60%_92%)] font-semibold text-[hsl(var(--avatar-h)_42%_32%)] dark:bg-[hsl(var(--avatar-h)_24%_24%)] dark:text-[hsl(var(--avatar-h)_62%_82%)]'
 const hue = computed(() => {
   let hash = 0
   for (const char of props.name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 360

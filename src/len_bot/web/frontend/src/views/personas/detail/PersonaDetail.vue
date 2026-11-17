@@ -102,38 +102,49 @@ const menu = computed<MenuEntry[]>(() => [
 
 <template>
   <div class="flex min-w-0 flex-col gap-5">
-    <div>
-      <Button variant="ghost" size="sm" :icon="ArrowLeft" :to="{ name: 'host-persona' }" class="-ml-2">
+    <div class="-ml-2 self-start">
+      <Button variant="ghost" size="sm" :icon="ArrowLeft" :to="{ name: 'host-persona' }">
         {{ t('personas.all') }}
       </Button>
     </div>
-    <header class="flex min-w-0 flex-wrap items-start gap-4">
-      <Avatar :name="name" :src="personaAvatar(role)" :size="56" />
-      <div class="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div class="flex min-w-0 flex-wrap items-center gap-2">
-          <h1 class="truncate text-2xl font-semibold">{{ name }}</h1>
-          <Badge v-if="role.id" class="font-mono">{{ role.id }}</Badge>
+    <header class="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div class="flex min-w-0 flex-1 items-start gap-3.5 sm:gap-4">
+        <span class="inline-flex shrink-0 rounded-full ring-1 ring-line">
+          <Avatar :name="name" :src="personaAvatar(role)" :size="56" />
+        </span>
+        <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div class="flex min-w-0 flex-wrap items-center gap-2">
+            <h1 class="min-w-0 truncate text-xl font-semibold text-ink sm:text-2xl">{{ name }}</h1>
+            <Badge v-if="role.id">
+              <span class="font-mono">{{ role.id }}</span>
+            </Badge>
+          </div>
+          <p v-if="role.brief" class="line-clamp-2 max-w-3xl text-sm text-muted">{{ role.brief }}</p>
+          <p class="flex min-w-0 items-center gap-1.5 text-sm text-muted">
+            <span v-if="role.scenes.length" class="flex shrink-0" aria-hidden="true">
+              <span
+                v-for="scene in role.scenes.slice(0, 4)"
+                :key="scene"
+                class="inline-flex rounded-[28%] ring-2 ring-page not-first:-ml-1"
+              >
+                <Avatar :name="groupLabel(scene)" shape="square" :size="20" />
+              </span>
+            </span>
+            <span class="truncate tabular">{{ usage }}</span>
+          </p>
         </div>
-        <p v-if="role.brief" class="line-clamp-2 max-w-3xl text-sm text-muted">{{ role.brief }}</p>
-        <p class="flex min-w-0 items-center gap-1.5 text-sm text-muted">
-          <span v-if="role.scenes.length" class="flex shrink-0" aria-hidden="true">
-            <Avatar
-              v-for="scene in role.scenes.slice(0, 4)"
-              :key="scene"
-              :name="groupLabel(scene)"
-              shape="square"
-              :size="20"
-              class="ring-2 ring-page not-first:-ml-1"
-            />
-          </span>
-          <span class="truncate">{{ usage }}</span>
-        </p>
       </div>
       <div class="flex shrink-0 items-center gap-2">
-        <Button variant="primary" :icon="Repeat" :disabled="Boolean(blocked)" @click="tab = 'scenes'">
+        <Button
+          variant="primary"
+          size="sm"
+          :icon="Repeat"
+          :disabled="Boolean(blocked)"
+          @click="tab = 'scenes'"
+        >
           {{ t('personas.detail.useIn') }}
         </Button>
-        <DropdownMenu :items="menu">
+        <DropdownMenu :items="menu" align="end">
           <IconButton
             :icon="MoreHorizontal"
             :label="t('common.more')"
@@ -147,7 +158,10 @@ const menu = computed<MenuEntry[]>(() => [
 
     <ErrorNote v-if="role.error" :title="t('personas.broken')" :error="role.error" />
     <template v-else>
-      <p v-if="role.duplicate_id" class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
+      <p
+        v-if="role.duplicate_id"
+        class="rounded-md border border-warning/25 bg-warning-bg px-3.5 py-2 text-sm text-warning"
+      >
         {{ blocked }}
       </p>
       <Tabs v-model="tab" :items="tabs" :label="name" />

@@ -122,9 +122,9 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
       >
         <div class="flex items-center gap-3">
           <img :src="markUrl" alt="" class="size-10 rounded-lg" />
-          <div class="leading-tight">
-            <p class="font-semibold text-ink">LenBot</p>
-            <p class="text-sm text-muted">{{ t('setup.title') }}</p>
+          <div class="min-w-0 leading-tight">
+            <p class="truncate font-semibold tracking-tight text-ink">LenBot</p>
+            <p class="truncate text-xs text-muted">{{ t('setup.title') }}</p>
           </div>
         </div>
         <ol class="m-0 flex list-none flex-col gap-1 p-0" :aria-label="t('setup.stepsLabel')">
@@ -133,7 +133,9 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
               type="button"
               class="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm transition-colors focus-visible:focus-ring"
               :class="[
-                index === current && !saved ? 'bg-selected font-medium text-ink' : 'text-muted',
+                index === current && !saved
+                  ? 'bg-surface-raised font-semibold text-ink shadow-card ring-1 ring-line'
+                  : 'text-muted',
                 index <= reached && !saved
                   ? 'cursor-pointer hover:bg-hover hover:text-ink'
                   : 'cursor-default',
@@ -143,28 +145,30 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
               @click="go(index)"
             >
               <span
-                class="inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs transition-colors"
+                class="inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium transition-colors tabular"
                 :class="
                   saved || index < current
-                    ? 'border-brand bg-brand text-white'
+                    ? 'border-success/30 bg-success-bg text-success'
                     : index === current
-                      ? 'border-brand text-primary'
-                      : 'border-line-strong'
+                      ? 'border-primary bg-primary font-semibold text-on-primary'
+                      : index <= reached
+                        ? 'border-line-strong bg-surface text-ink-2'
+                        : 'border-line text-subtle'
                 "
               >
-                <Check v-if="saved || index < current" :size="13" :stroke-width="3" aria-hidden="true" />
+                <Check v-if="saved || index < current" :size="13" :stroke-width="2.75" aria-hidden="true" />
                 <template v-else>{{ index + 1 }}</template>
               </span>
               <span class="min-w-0 truncate">{{ t(`setup.steps.${name}`) }}</span>
             </button>
           </li>
         </ol>
-        <div class="mt-auto">
+        <div class="mt-auto flex">
           <SegmentedControl
             :model-value="locale"
             :options="localeOptions"
             size="sm"
-            label="Language"
+            :label="t('shell.account.language')"
             @update:model-value="chooseLocale"
           />
         </div>
@@ -173,25 +177,60 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
       <div class="flex min-w-0 flex-col">
         <div class="h-0.5 bg-track" aria-hidden="true">
           <div
-            class="h-full bg-brand transition-[width] duration-300 ease-out"
+            class="h-full bg-primary transition-[width] duration-300 ease-out"
             :style="{ width: `${progress}%` }"
           />
         </div>
-        <header class="flex items-center justify-between gap-3 px-4 pt-4 lg:hidden">
-          <div class="flex min-w-0 items-center gap-2.5">
-            <img :src="markUrl" alt="" class="size-8 rounded-md" />
-            <span class="truncate text-sm font-semibold">{{ t('setup.title') }}</span>
+        <header class="flex flex-col gap-3 border-b border-line bg-sidebar px-4 py-3 lg:hidden">
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex min-w-0 items-center gap-2.5">
+              <img :src="markUrl" alt="" class="size-7 shrink-0 rounded-md" />
+              <span class="truncate text-sm font-semibold text-ink">{{ t('setup.title') }}</span>
+            </div>
+            <SegmentedControl
+              :model-value="locale"
+              :options="localeOptions"
+              size="sm"
+              :label="t('shell.account.language')"
+              @update:model-value="chooseLocale"
+            />
           </div>
-          <SegmentedControl
-            :model-value="locale"
-            :options="localeOptions"
-            size="sm"
-            label="Language"
-            @update:model-value="chooseLocale"
-          />
+          <ol
+            v-if="!saved && token"
+            class="m-0 flex list-none items-center gap-1.5 overflow-x-auto p-0 [scrollbar-width:none]"
+            :aria-label="t('setup.stepsLabel')"
+          >
+            <li v-for="(name, index) in steps" :key="name" class="shrink-0">
+              <button
+                type="button"
+                class="inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium whitespace-nowrap transition-colors focus-visible:focus-ring tabular"
+                :class="[
+                  index === current
+                    ? 'border-primary bg-surface-raised font-semibold text-ink shadow-card'
+                    : index < current
+                      ? 'border-line bg-surface text-ink-2'
+                      : 'border-transparent text-subtle',
+                  index <= reached ? 'cursor-pointer hover:text-ink' : 'cursor-default opacity-60',
+                ]"
+                :aria-current="index === current ? 'step' : undefined"
+                :disabled="index > reached || save.isPending.value"
+                @click="go(index)"
+              >
+                <Check
+                  v-if="index < current"
+                  :size="12"
+                  :stroke-width="2.75"
+                  class="text-success"
+                  aria-hidden="true"
+                />
+                <span v-else>{{ index + 1 }}.</span>
+                <span>{{ t(`setup.steps.${name}`) }}</span>
+              </button>
+            </li>
+          </ol>
         </header>
 
-        <div class="flex-1 px-4 py-8 sm:px-8 lg:px-14 lg:py-14">
+        <div class="flex-1 px-4 py-7 sm:px-8 lg:px-14 lg:py-14">
           <DonePanel v-if="saved" :result="saved" :username="username" />
           <div v-else-if="!token" class="mx-auto w-full max-w-2xl">
             <ErrorNote :title="t('setup.noToken')" :error="t('setup.noTokenText')" />
@@ -203,11 +242,11 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
               :error="setup.error.value"
               :retry="setup.refetch"
             />
-            <div class="flex flex-col gap-1">
-              <p class="text-sm text-muted" role="status">
+            <div class="flex flex-col gap-1 border-b border-line pb-4">
+              <p class="text-xs font-medium text-muted tabular" role="status">
                 {{ t('setup.stepOf', { n: current + 1, total: steps.length }) }}
               </p>
-              <h1 class="text-2xl font-semibold text-ink">{{ t(`setup.steps.${step}`) }}</h1>
+              <h1 class="text-2xl font-semibold tracking-tight text-ink">{{ t(`setup.steps.${step}`) }}</h1>
             </div>
             <Skeleton v-if="setup.isPending.value" :lines="6" />
             <form v-else :key="step" class="animate-rise" novalidate @submit.prevent>

@@ -61,32 +61,43 @@ function setOwner(scope: ScopedIdentities, text: string) {
     <template v-else-if="value">
       <p class="text-sm text-ink-2">
         {{ t('groups.settings.permissions.owners') }}
-        <strong class="font-medium text-ink">
+        <strong
+          class="font-medium text-ink tabular"
+          :class="(form.permissions.data?.owners.length ?? 0) > 0 && 'font-mono text-xs'"
+        >
           {{
             form.permissions.data?.owners.length ? form.permissions.data.owners.join(', ') : t('common.none')
           }}
         </strong>
       </p>
 
-      <div class="overflow-x-auto scrollbar-thin">
-        <table class="w-full min-w-[520px] text-sm">
+      <div class="-mx-1 min-w-0 overflow-x-auto px-1 scrollbar-thin">
+        <table class="w-full border-collapse text-sm">
           <caption class="sr-only">{{ t('groups.settings.permissions.matrix') }}</caption>
           <thead>
             <tr class="text-xs text-muted">
-              <th scope="col" class="py-2 pr-3 text-left font-medium">
+              <th scope="col" class="sticky left-0 z-1 bg-page py-2 pr-2 text-left font-medium sm:pr-3">
                 {{ t('groups.settings.permissions.matrix') }}
               </th>
-              <th v-for="role in roles" :key="role" scope="col" class="px-2 py-2 text-center font-medium">
+              <th
+                v-for="role in roles"
+                :key="role"
+                scope="col"
+                class="px-1.5 py-2 text-center font-medium whitespace-nowrap sm:px-2.5"
+              >
                 {{ t(`groups.settings.permissions.roles.${role}`) }}
               </th>
             </tr>
           </thead>
           <tbody class="divide-y divide-line border-t border-line">
-            <tr v-for="ability in abilities" :key="ability">
-              <th scope="row" class="py-2 pr-3 text-left font-normal text-ink">
+            <tr v-for="ability in abilities" :key="ability" class="group transition-colors hover:bg-hover">
+              <th
+                scope="row"
+                class="sticky left-0 z-1 min-w-28 bg-page py-2 pr-2 text-left font-normal text-ink transition-colors group-hover:bg-hover sm:pr-3"
+              >
                 {{ t(`groups.settings.permissions.abilities.${ability}`) }}
               </th>
-              <td v-for="role in roles" :key="role" class="px-2 py-2 text-center">
+              <td v-for="role in roles" :key="role" class="px-1.5 py-2 text-center sm:px-2.5">
                 <span class="inline-flex">
                   <Checkbox
                     :model-value="value.matrix[ability].includes(role)"
@@ -103,7 +114,7 @@ function setOwner(scope: ScopedIdentities, text: string) {
       <Field :label="t('groups.settings.permissions.ownLists')" inline>
         <Switch v-model="ownLists" />
       </Field>
-      <div v-if="value.scene_identities" class="grid gap-4">
+      <div v-if="value.scene_identities" class="grid animate-fade gap-4 border-t border-line pt-4">
         <Field v-for="list in lists" :key="list" :label="t(`groups.settings.permissions.lists.${list}`)">
           <TagInput v-model="value.scene_identities[list]" placeholder="onebot:10001" />
         </Field>
@@ -112,20 +123,20 @@ function setOwner(scope: ScopedIdentities, text: string) {
       <div>
         <button
           type="button"
-          class="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-sm font-medium text-muted hover:text-ink focus-visible:focus-ring"
+          class="inline-flex cursor-pointer items-center gap-1.5 rounded-md py-0.5 text-sm font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
           :aria-expanded="scoped"
           @click="scoped = !scoped"
         >
           <ChevronDown
             :size="15"
-            class="transition-transform"
+            class="transition-transform duration-150"
             :class="scoped && 'rotate-180'"
             aria-hidden="true"
           />
           {{ t('groups.settings.permissions.scoped') }}
         </button>
       </div>
-      <div v-if="scoped" class="grid gap-6 sm:grid-cols-2">
+      <div v-if="scoped" class="grid animate-fade gap-6 border-t border-line pt-4 sm:grid-cols-2">
         <div v-for="scope in scopes" :key="scope" class="grid content-start gap-4">
           <h4 class="text-sm font-semibold text-ink">
             {{ t(`groups.settings.permissions.scopes.${scope}`) }}

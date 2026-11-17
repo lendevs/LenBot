@@ -33,15 +33,16 @@ const WEB_ONLY = Object.values(SERVICE_PROVIDER).map((item) => item.api)
 </script>
 
 <template>
-  <section class="flex min-w-0 flex-col gap-5 rounded-xl border border-line bg-surface p-5">
-    <div class="flex min-w-0 items-center gap-2">
-      <Button v-if="!wide" variant="ghost" size="sm" :icon="ArrowLeft" class="-ml-2" @click="emit('back')">
-        {{ t('models.providers.title') }}
-      </Button>
-      <h3 v-else class="min-w-0 flex-1 truncate text-base font-semibold">
+  <section class="flex min-w-0 max-w-3xl flex-col gap-6">
+    <div class="flex min-w-0 items-center justify-between gap-3 border-b border-line pb-3">
+      <span v-if="!wide" class="-ml-2 inline-flex">
+        <Button variant="ghost" size="sm" :icon="ArrowLeft" @click="emit('back')">
+          {{ t('models.providers.title') }}
+        </Button>
+      </span>
+      <h3 v-else class="min-w-0 flex-1 truncate text-lg font-semibold text-ink">
         {{ row.alias || t('models.providers.unnamed') }}
       </h3>
-      <span v-if="!wide" class="flex-1" />
       <Button variant="danger-ghost" size="sm" :icon="Trash2" @click="emit('remove')">
         {{ t('common.delete') }}
       </Button>
@@ -83,8 +84,8 @@ const WEB_ONLY = Object.values(SERVICE_PROVIDER).map((item) => item.api)
       :error="form.protocols.error.value"
       :retry="form.protocols.refetch"
     />
-    <div v-if="!WEB_ONLY.includes(row.api)" class="flex flex-col gap-3 border-t border-line pt-5">
-      <h4 class="text-sm font-semibold">{{ t('models.probe.title') }}</h4>
+    <div v-if="!WEB_ONLY.includes(row.api)" class="flex flex-col gap-3.5 border-t border-line pt-6">
+      <h4 class="text-sm font-semibold text-ink">{{ t('models.probe.title') }}</h4>
       <ProbeTools :row="row" />
     </div>
   </section>

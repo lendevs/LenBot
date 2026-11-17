@@ -22,7 +22,7 @@ const tabs = computed(() => tabNames.map((value) => ({ value, label: t(`capabili
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-5">
+  <div class="flex min-w-0 flex-col gap-6 pb-2">
     <Tabs v-model="tab" :items="tabs" :label="t('shell.pages.capabilities')" />
     <KeepAlive>
       <McpTab v-if="tab === 'mcp'" />

@@ -164,8 +164,8 @@ async function save() {
     :error="settings.error.value"
     :retry="settings.refetch"
   />
-  <div v-else-if="draft" class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div v-else-if="draft" class="flex min-w-0 max-w-3xl flex-col gap-4">
+    <div class="flex min-w-0 flex-col gap-6">
       <FormSection :title="t('capabilities.web.read')">
         <Field :label="t('capabilities.web.readOn')" inline wide>
           <Switch
@@ -180,8 +180,8 @@ async function save() {
           <Select v-model="draft.read.provider" :options="readers" />
         </Field>
         <Field v-if="draft.read && readKeyed" :label="t('capabilities.web.readConnection')" required>
-          <div class="flex items-center gap-2">
-            <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+            <div class="min-w-44 flex-1">
               <Select
                 :model-value="draft.read.connection ?? undefined"
                 :options="readConnections"
@@ -224,8 +224,8 @@ async function save() {
             <Select v-model="draft.search.provider" :options="providers" />
           </Field>
           <Field v-if="searchKeyed" :label="t('capabilities.web.connection')" required>
-            <div class="flex items-center gap-2">
-              <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+              <div class="min-w-44 flex-1">
                 <Select
                   :model-value="draft.search.connection ?? undefined"
                   :options="searchConnections"

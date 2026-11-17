@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { Eye, LogOut, X } from '@lucide/vue'
 import { hostApi, type IntentCondition, type SceneFocus } from '../../../api/host'
 import { keys } from '../../../api/query'
+import { currentLocale } from '../../../i18n'
 import { formatDateTime } from '../../../i18n/format'
 import IconButton from '../../../ui/IconButton.vue'
 import { describeError } from '../../../ui/errors'
@@ -33,16 +34,21 @@ const drop = useMutation({
     }),
 })
 
+const unitList = computed(() => new Intl.ListFormat(currentLocale.value, { type: 'unit', style: 'short' }))
 const account = (uid: string) => uid.split(':').slice(1).join(':')
 function condition(item: IntentCondition) {
   if (item.type === 'person')
-    return t('groups.live.focus.when.person', { who: item.people.map(account).join('、') })
+    return t('groups.live.focus.when.person', { who: unitList.value.format(item.people.map(account)) })
   if (item.type === 'thread') return t('groups.live.focus.when.thread', { id: item.message_id })
   if (item.type === 'open_question')
     return item.keywords?.length
-      ? t('groups.live.focus.when.openKeywords', { id: item.message_id, words: item.keywords.join('、') })
+      ? t('groups.live.focus.when.openKeywords', {
+          id: item.message_id,
+          words: unitList.value.format(item.keywords),
+        })
       : t('groups.live.focus.when.thread', { id: item.message_id })
-  if (item.type === 'topic') return t('groups.live.focus.when.topic', { words: item.keywords.join('、') })
+  if (item.type === 'topic')
+    return t('groups.live.focus.when.topic', { words: unitList.value.format(item.keywords) })
   return t('groups.live.focus.when.at', { n: item.minutes })
 }
 const conditions = (when: IntentCondition[], match: 'any' | 'all') =>
@@ -57,10 +63,10 @@ const time = (at: number) => formatDateTime(at, { timeZone: props.timeZone })
     :aria-label="t('groups.live.focus.label')"
   >
     <li v-for="intent in intents" :key="intent.id" class="flex min-w-0 items-start gap-3 px-3 py-2">
-      <Eye :size="16" class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+      <Eye :size="16" class="mt-0.5 shrink-0 text-info" aria-hidden="true" />
       <div class="min-w-0 flex-1">
         <p class="truncate text-sm font-medium text-ink">{{ intent.reason }}</p>
-        <p class="text-xs text-muted">
+        <p class="text-xs text-muted tabular">
           {{ conditions(intent.when, intent.match) }} ·
           {{ t('groups.live.focus.until', { time: time(intent.until) }) }}
         </p>
@@ -75,12 +81,12 @@ const time = (at: number) => formatDateTime(at, { timeZone: props.timeZone })
     </li>
     <li v-if="wrapUp" class="flex min-w-0 items-center gap-3 px-3 py-2">
       <LogOut :size="16" class="shrink-0 text-muted" aria-hidden="true" />
-      <p class="min-w-0 flex-1 truncate text-sm text-ink-2">
+      <p class="min-w-0 flex-1 truncate text-sm text-ink-2 tabular">
         {{
           wrapUp.state === 'closed'
             ? t('groups.live.focus.closed')
             : wrapUp.people.length
-              ? t('groups.live.focus.openPeople', { who: wrapUp.people.map(account).join('、') })
+              ? t('groups.live.focus.openPeople', { who: unitList.format(wrapUp.people.map(account)) })
               : t('groups.live.focus.open')
         }}
         · {{ t('groups.live.focus.until', { time: time(wrapUp.until) }) }}

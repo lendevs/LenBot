@@ -81,12 +81,12 @@ watch(
     </div>
     <div class="grid gap-x-5 gap-y-5 border-t border-line pt-6 sm:grid-cols-2">
       <Field :label="t('setup.persona.where')">
-        <div>
+        <div class="min-w-0">
           <SegmentedControl v-model="draft.sceneKind" :options="kinds" :label="t('setup.persona.where')" />
         </div>
       </Field>
       <Field v-if="groups.length" :label="t('setup.persona.groupSource')">
-        <div>
+        <div class="min-w-0">
           <SegmentedControl
             v-model="draft.groupSource"
             :options="sources"

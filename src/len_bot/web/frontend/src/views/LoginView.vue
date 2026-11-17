@@ -56,24 +56,23 @@ async function submit() {
 </script>
 
 <template>
-  <main class="relative grid min-h-dvh place-items-center overflow-hidden bg-sidebar px-4 py-10">
-    <div
-      class="pointer-events-none absolute -top-40 left-1/2 size-[640px] -translate-x-1/2 rounded-full bg-brand opacity-[0.07] blur-3xl"
-      aria-hidden="true"
-    />
+  <main class="flex min-h-dvh flex-col justify-between bg-sidebar px-4 py-6 sm:px-6 sm:py-8">
+    <div aria-hidden="true" />
     <form
       :key="shake"
-      class="relative flex w-full max-w-sm animate-rise flex-col gap-5 rounded-xl bg-surface p-7 shadow-dialog sm:p-8"
+      class="mx-auto my-8 flex w-full max-w-sm animate-rise flex-col gap-5 rounded-xl border border-line bg-surface p-6 shadow-card sm:p-8"
       :class="shake ? 'animate-[ui-shake_360ms_var(--ease-out)]' : ''"
       novalidate
       @submit.prevent="submit"
     >
-      <img
-        :src="markUrl"
-        alt=""
-        class="size-11 rounded-lg transition-transform duration-300 ease-out hover:-rotate-8"
-      />
-      <h1 class="text-xl font-semibold">{{ t('login.title') }}</h1>
+      <div class="flex flex-col gap-3">
+        <img
+          :src="markUrl"
+          alt=""
+          class="size-11 rounded-lg transition-transform duration-300 ease-out hover:-rotate-8"
+        />
+        <h1 class="text-xl font-semibold tracking-tight text-ink">{{ t('login.title') }}</h1>
+      </div>
       <Field :label="t('login.username')">
         <Input v-model="username" autocomplete="username" :disabled="busy" :autofocus="!prefilled" />
       </Field>
@@ -98,12 +97,12 @@ async function submit() {
         {{ t('login.submit') }}
       </Button>
     </form>
-    <div class="absolute right-4 bottom-4">
+    <div class="flex justify-end">
       <SegmentedControl
         :model-value="locale"
         :options="localeOptions"
         size="sm"
-        label="Language"
+        :label="t('shell.account.language')"
         @update:model-value="chooseLocale"
       />
     </div>

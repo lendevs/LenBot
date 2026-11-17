@@ -4,7 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery } from '@tanstack/vue-query'
 import { memoryApi, type MemoryScope } from '../../../api/memory'
 import { keys } from '../../../api/query'
-import { formatDateTime } from '../../../i18n/format'
+import { formatDateTime, formatNumber } from '../../../i18n/format'
+import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
@@ -53,19 +54,22 @@ const purpose = (value: string) =>
     <p v-if="reading && calls.isSuccess.value && !rows.length" class="text-sm text-muted">
       {{ t('groups.memory.embedding.none') }}
     </p>
-    <ul class="flex list-none flex-col divide-y divide-line">
-      <li v-for="call in rows" :key="call.id" class="flex flex-col gap-2 py-3">
+    <ul v-if="rows.length" class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li v-for="call in rows" :key="call.id" class="flex flex-col gap-2 py-3.5">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <strong class="font-medium text-ink">#{{ call.id }} {{ purpose(call.purpose) }}</strong>
+          <strong class="font-medium text-ink">
+            <span class="tabular">#{{ call.id }}</span>
+            {{ purpose(call.purpose) }}
+          </strong>
           <span class="text-xs text-subtle tabular">{{ formatDateTime(call.started, { timeZone }) }}</span>
-          <span class="text-xs text-subtle">
+          <span class="text-xs text-subtle tabular">
             {{
               call.tokens
-                ? t('groups.memory.embedding.tokens', { n: call.tokens.input })
+                ? t('groups.memory.embedding.tokens', { n: formatNumber(call.tokens.input) })
                 : t('groups.memory.embedding.noTokens')
             }}
           </span>
-          <span v-if="call.error" class="text-xs text-error">{{ t('groups.memory.embedding.error') }}</span>
+          <Badge v-if="call.error" tone="error">{{ t('groups.memory.embedding.error') }}</Badge>
           <Button v-if="!opened[call.id]" size="sm" variant="ghost" class="ml-auto" @click="detail(call.id)">
             {{ t('groups.memory.embedding.detail') }}
           </Button>

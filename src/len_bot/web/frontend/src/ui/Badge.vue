@@ -8,7 +8,7 @@ withDefaults(defineProps<{ tone?: Tone; dot?: boolean; pulse?: boolean; size?: '
 
 const tones: Record<Tone, string> = {
   neutral: 'bg-fill text-muted',
-  brand: 'bg-brand-soft text-primary',
+  brand: 'bg-hover text-ink-2',
   success: 'bg-success-bg text-success',
   warning: 'bg-warning-bg text-warning',
   error: 'bg-error-bg text-error',

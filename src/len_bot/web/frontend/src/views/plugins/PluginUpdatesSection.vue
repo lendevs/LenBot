@@ -31,9 +31,12 @@ const apply = useMutation({
     const results = (snapshot.operation?.updates ?? []) as PluginUpdateResult[]
     const failed = results.filter((item) => item.error)
     if (failed.length)
-      toast.error(t('plugins.updates.failed', { names: failed.map((item) => item.name).join('、') }), {
-        detail: failed.map((item) => `${item.name}: ${item.error}`).join('\n'),
-      })
+      toast.error(
+        t('plugins.updates.failed', { names: failed.map((item) => item.name).join(t('personas.separator')) }),
+        {
+          detail: failed.map((item) => `${item.name}: ${item.error}`).join('\n'),
+        },
+      )
     else if (results.some((item) => item.restart_required)) toast.success(t('plugins.updates.restart'))
     else toast.success(t('plugins.updates.done', { n: results.length }, results.length))
     if (results.some((item) => item.restart_required)) void readPendingRestart()
@@ -54,11 +57,11 @@ const running = (name: string) => apply.isPending.value && Boolean(apply.variabl
 <template>
   <section
     v-if="items.length"
-    class="flex min-w-0 animate-rise flex-col gap-3 rounded-xl border border-brand/40 bg-brand-soft p-4 sm:p-5"
+    class="flex min-w-0 animate-rise flex-col gap-3 rounded-xl border border-line-strong bg-fill px-4 py-3.5 sm:px-5 sm:py-4"
   >
     <header class="flex flex-wrap items-center justify-between gap-3">
-      <h3 class="flex items-center gap-2 text-base font-semibold text-ink">
-        <Puzzle class="size-4 text-primary" aria-hidden="true" />
+      <h3 class="flex items-center gap-2 text-base font-semibold text-ink tabular">
+        <Puzzle class="size-4 text-info" aria-hidden="true" />
         {{ t('plugins.updates.title', { n: items.length }, items.length) }}
       </h3>
       <Button
@@ -73,7 +76,7 @@ const running = (name: string) => apply.isPending.value && Boolean(apply.variabl
         {{ t('plugins.updates.all') }}
       </Button>
     </header>
-    <ul class="flex list-none flex-col divide-y divide-brand/20">
+    <ul class="flex list-none flex-col divide-y divide-line">
       <li
         v-for="item in items"
         :key="item.name"

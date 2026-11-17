@@ -7,6 +7,7 @@ import { keys } from '../api/query'
 import type { PersonaExample } from '../api/personas'
 import { chatTestApi, type ScenePersonaValues } from '../api/trials'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges'
+import { formatNumber } from '../i18n/format'
 import Badge from '../ui/Badge.vue'
 import Button from '../ui/Button.vue'
 import ErrorNote from '../ui/ErrorNote.vue'
@@ -121,7 +122,7 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
       :error="stored.error.value"
       :retry="stored.refetch"
     />
-    <form v-else-if="draft" class="flex flex-col gap-5" @submit.prevent="save.mutate()">
+    <form v-else-if="draft" class="flex flex-col gap-5 pb-6" @submit.prevent="save.mutate()">
       <FormSection :title="t('chatTest.settings.additions')" :columns="1">
         <template v-if="stored.data.value?.restart_required" #actions>
           <Badge tone="warning">{{ t('chatTest.settings.restart') }}</Badge>
@@ -132,27 +133,38 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
         <Field :label="t('groups.settings.persona.relationships')">
           <div class="flex flex-col gap-2">
             <div
-              v-for="(row, index) in draft.relationships"
-              :key="index"
-              class="grid items-start gap-2 sm:grid-cols-[180px_minmax(0,1fr)_auto]"
+              v-if="draft.relationships.length"
+              class="flex flex-col gap-2 max-sm:gap-0 max-sm:divide-y max-sm:divide-line max-sm:border-y max-sm:border-line"
             >
-              <Field :error="errors[`${index}.account`]">
-                <Input
-                  v-model="row.account"
-                  placeholder="onebot:10001"
-                  mono
-                  :aria-label="t('groups.settings.persona.account')"
-                />
-              </Field>
-              <Field :error="errors[`${index}.text`]">
-                <Input v-model="row.text" :aria-label="t('groups.settings.persona.relationship')" />
-              </Field>
-              <IconButton
-                :icon="Trash2"
-                :label="t('common.delete')"
-                variant="ghost"
-                @click="draft.relationships.splice(index, 1)"
-              />
+              <div
+                v-for="(row, index) in draft.relationships"
+                :key="index"
+                class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 max-sm:py-2.5 sm:grid-cols-[180px_minmax(0,1fr)_auto]"
+              >
+                <div class="order-1 min-w-0">
+                  <Field :error="errors[`${index}.account`]">
+                    <Input
+                      v-model="row.account"
+                      placeholder="onebot:10001"
+                      mono
+                      :aria-label="t('groups.settings.persona.account')"
+                    />
+                  </Field>
+                </div>
+                <div class="order-2 pt-0.5 sm:order-3">
+                  <IconButton
+                    :icon="Trash2"
+                    :label="t('common.delete')"
+                    variant="ghost"
+                    @click="draft.relationships.splice(index, 1)"
+                  />
+                </div>
+                <div class="order-3 col-span-2 min-w-0 sm:order-2 sm:col-span-1">
+                  <Field :error="errors[`${index}.text`]">
+                    <Input v-model="row.text" :aria-label="t('groups.settings.persona.relationship')" />
+                  </Field>
+                </div>
+              </div>
             </div>
             <div>
               <Button
@@ -226,7 +238,10 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
             <dt class="text-xs text-muted">{{ t('chatTest.settings.fields.styles') }}</dt>
             <dd v-if="settings.data.value.persona.styles.length" class="flex flex-wrap gap-1.5">
               <Badge v-for="style in settings.data.value.persona.styles" :key="style.name">
-                {{ style.name }} · {{ Math.round(style.weight * 100) }}%
+                <span class="tabular">
+                  {{ style.name }} ·
+                  {{ formatNumber(style.weight, { style: 'percent', maximumFractionDigits: 1 }) }}
+                </span>
               </Badge>
             </dd>
             <dd v-else class="text-ink-2">{{ t('chatTest.settings.baseVoice') }}</dd>
@@ -251,11 +266,14 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
               : t('chatTest.settings.noExampleTags')
           }}
         </p>
-        <ol v-if="settings.data.value.selected_examples.length" class="flex list-none flex-col gap-2">
+        <ol
+          v-if="settings.data.value.selected_examples.length"
+          class="flex list-none flex-col divide-y divide-line border-y border-line"
+        >
           <li
             v-for="(example, index) in settings.data.value.selected_examples"
             :key="exampleKey(example, index)"
-            class="flex flex-col gap-1 rounded-lg border border-line px-3 py-2 text-sm"
+            class="flex flex-col gap-1.5 py-3 text-sm"
           >
             <p class="whitespace-pre-wrap text-muted">{{ example.context }}</p>
             <p class="whitespace-pre-wrap text-ink">{{ example.line }}</p>
@@ -269,17 +287,17 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
       <FormSection :title="t('chatTest.settings.knowledge')" :columns="1">
         <ul
           v-if="settings.data.value.knowledge.length"
-          class="flex list-none flex-col divide-y divide-line rounded-lg border border-line"
+          class="flex list-none flex-col divide-y divide-line border-y border-line"
         >
           <li
             v-for="file in settings.data.value.knowledge"
             :key="file.filename"
-            class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm"
+            class="flex flex-wrap items-center gap-2 py-2.5 text-sm"
           >
             <span class="min-w-0 flex-1 truncate font-mono">{{ file.filename }}</span>
             <Badge v-for="tag in file.tags" :key="tag">{{ tag }}</Badge>
             <span class="text-xs text-muted tabular">
-              {{ t('chatTest.settings.characters', { n: file.characters }) }}
+              {{ t('chatTest.settings.characters', { n: formatNumber(file.characters) }) }}
             </span>
           </li>
         </ul>

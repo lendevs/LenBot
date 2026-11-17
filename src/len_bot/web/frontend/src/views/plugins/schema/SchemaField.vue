@@ -71,7 +71,9 @@ const scenes = computed({
     :inline="field.type === 'boolean'"
   >
     <template #label-end>
-      <Badge v-if="kept" tone="success" class="ml-auto">{{ t('plugins.form.saved') }}</Badge>
+      <span v-if="kept" class="ml-auto inline-flex">
+        <Badge tone="success">{{ t('plugins.form.saved') }}</Badge>
+      </span>
     </template>
     <Switch v-if="field.type === 'boolean'" v-model="flag" />
     <div v-else-if="field.options && asSegments">
@@ -112,14 +114,15 @@ const scenes = computed({
       :placeholder="placeholder"
     >
       <template #suffix>
-        <IconButton
-          :icon="reveal ? EyeOff : Eye"
-          :label="reveal ? t('plugins.form.hide') : t('plugins.form.show')"
-          variant="ghost"
-          size="sm"
-          class="-mr-2"
-          @click="reveal = !reveal"
-        />
+        <span class="-mr-2 inline-flex">
+          <IconButton
+            :icon="reveal ? EyeOff : Eye"
+            :label="reveal ? t('plugins.form.hide') : t('plugins.form.show')"
+            variant="ghost"
+            size="sm"
+            @click="reveal = !reveal"
+          />
+        </span>
       </template>
     </Input>
     <Input

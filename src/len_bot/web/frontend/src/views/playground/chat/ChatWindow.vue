@@ -23,6 +23,7 @@ const props = defineProps<{ source: ChatSource; chat: Chat; turnsOpen: boolean }
 const emit = defineEmits<{ toggleTurns: []; openTurn: [message: ChatMessage] }>()
 
 const { t } = useI18n()
+const groupId = (value: string) => value.split(':').slice(2).join(':') || value
 const view = computed(() => props.chat.data.value!)
 const scene = computed(() => props.chat.data.value?.scene)
 const { members, current, speaker, nextUid, save, remove } = useMembers(scene, props.chat.isPrivate)
@@ -214,14 +215,25 @@ const liveTone = computed(() =>
 
 <template>
   <section
-    class="flex h-[min(calc(100dvh-240px),820px)] min-h-[420px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface"
+    class="flex h-[clamp(380px,calc(100dvh-260px),680px)] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface lg:h-[min(calc(100dvh-230px),780px)]"
   >
-    <header class="flex items-center gap-3 border-b border-line px-4 py-2.5">
+    <header class="flex items-center gap-3 border-b border-line bg-surface px-4 py-2.5">
       <div class="flex min-w-0 flex-1 flex-col">
-        <strong class="truncate text-sm font-semibold text-ink">
-          {{ chat.isPrivate.value ? chat.botName.value : groupLabel(view.scene) }}
-        </strong>
-        <span class="text-xs text-muted">
+        <div class="flex min-w-0 items-baseline gap-2">
+          <strong
+            class="truncate text-sm font-semibold text-ink"
+            :class="!chat.isPrivate.value && groupId(view.scene) === groupLabel(view.scene) && 'tabular'"
+          >
+            {{ chat.isPrivate.value ? chat.botName.value : groupLabel(view.scene) }}
+          </strong>
+          <span
+            v-if="!chat.isPrivate.value && groupId(view.scene) !== groupLabel(view.scene)"
+            class="shrink-0 font-mono text-xs text-subtle tabular"
+          >
+            {{ groupId(view.scene) }}
+          </span>
+        </div>
+        <span class="text-xs text-muted tabular">
           {{
             chat.isPrivate.value
               ? t('playground.private')
@@ -256,26 +268,28 @@ const liveTone = computed(() =>
 
     <ol
       ref="list"
-      class="flex min-h-0 flex-1 list-none flex-col gap-3 overflow-y-auto bg-hover px-4 py-4 scrollbar-thin"
+      class="flex min-h-0 flex-1 list-none flex-col gap-3 overflow-y-auto bg-sidebar px-3.5 py-4 scrollbar-thin sm:px-4"
     >
-      <li v-if="!chat.messages.value.length" class="self-center py-8 text-sm text-muted">
+      <li v-if="!chat.messages.value.length" class="my-auto self-center py-8 text-sm text-muted">
         {{ t('playground.noMessages') }}
       </li>
       <li
         v-for="message in chat.messages.value"
         :key="message.seq"
         :data-seq="message.seq"
-        class="group flex max-w-[85%] items-start gap-2 rounded-lg"
+        class="group flex max-w-[88%] items-start gap-2.5 rounded-lg sm:max-w-[82%]"
         :class="message.is_self ? 'self-start' : 'flex-row-reverse self-end'"
       >
-        <Avatar
-          :name="senderName(message)"
-          :src="message.is_self ? chatApi.avatar(source) : null"
-          :size="34"
-        />
+        <span class="flex shrink-0 pt-0.5">
+          <Avatar
+            :name="senderName(message)"
+            :src="message.is_self ? chatApi.avatar(source) : null"
+            :size="32"
+          />
+        </span>
         <div class="flex min-w-0 flex-col gap-1" :class="!message.is_self && 'items-end'">
           <div
-            class="flex min-h-5 items-center gap-1.5 text-xs text-muted"
+            class="flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted"
             :class="!message.is_self && 'flex-row-reverse'"
           >
             <Badge
@@ -284,10 +298,10 @@ const liveTone = computed(() =>
             >
               {{ t(`playground.roles.${message.sender.role}`) }}
             </Badge>
-            <span>{{ senderName(message) }}</span>
-            <span class="opacity-70 tabular">
+            <span class="font-medium text-ink-2">{{ senderName(message) }}</span>
+            <time class="text-subtle tabular" :datetime="new Date(message.time * 1000).toISOString()">
               {{ formatDateTime(message.time, { timeZone: view.timezone }) }}
-            </span>
+            </time>
             <VerdictMark v-if="message.verdict && !message.is_self" :verdict="message.verdict" />
             <Badge
               v-if="message.is_self && ['failed', 'unconfirmed'].includes(message.send_status)"
@@ -298,7 +312,7 @@ const liveTone = computed(() =>
             <button
               v-if="view.running && message.platform_message_id"
               type="button"
-              class="inline-flex cursor-pointer items-center gap-1 rounded-sm px-1 text-muted opacity-0 group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring"
+              class="inline-flex cursor-pointer items-center gap-1 rounded-sm px-1 text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring pointer-coarse:opacity-100"
               @click="reply(message)"
             >
               <Reply :size="12" aria-hidden="true" />
@@ -308,11 +322,11 @@ const liveTone = computed(() =>
           <component
             :is="message.is_self ? 'button' : 'div'"
             :type="message.is_self ? 'button' : undefined"
-            class="max-w-full rounded-xl px-3 py-2 text-left text-sm break-words whitespace-pre-wrap text-ink"
+            class="max-w-full px-3.5 py-2 text-left text-sm break-words whitespace-pre-wrap text-ink"
             :class="[
               message.is_self
-                ? 'cursor-pointer bg-surface hover:ring-1 hover:ring-line-strong focus-visible:focus-ring'
-                : 'bg-primary-bg',
+                ? 'cursor-pointer rounded-2xl rounded-tl-sm border border-line bg-surface shadow-card transition-colors hover:border-line-strong focus-visible:focus-ring'
+                : 'rounded-2xl rounded-tr-sm border border-line-strong bg-fill',
               message.recalled && 'opacity-60 line-through',
             ]"
             :title="message.is_self ? t('playground.showTurn') : undefined"
@@ -322,21 +336,25 @@ const liveTone = computed(() =>
               v-if="quoted(message)"
               role="button"
               tabindex="0"
-              class="mb-1.5 block truncate rounded-sm border-l-[3px] border-line-strong bg-hover px-2 py-1 text-xs text-muted"
+              class="mb-1.5 block truncate rounded-sm border-l-2 border-line-strong bg-hover/70 px-2.5 py-1 text-xs text-muted"
               @click.stop="quoted(message)!.message && jump(quoted(message)!.message!)"
               @keydown.enter.stop="quoted(message)!.message && jump(quoted(message)!.message!)"
             >
               <template v-if="quoted(message)!.message">
-                <strong class="font-medium">{{ senderName(quoted(message)!.message!) }}：</strong>
+                <strong class="font-medium text-ink-2">
+                  {{ t('playground.replyTo', { name: senderName(quoted(message)!.message!) }) }}
+                </strong>
                 {{ excerpt(quoted(message)!.message!) }}
               </template>
               <template v-else>{{ t('playground.quoteMissing') }}</template>
             </span>
             <template v-for="(piece, index) in pieces(message)" :key="index">
-              <span v-if="piece.kind === 'mention'" class="font-semibold text-primary">{{ piece.text }}</span>
+              <span v-if="piece.kind === 'mention'" class="rounded-xs bg-hover px-1 font-medium text-ink">
+                {{ piece.text }}
+              </span>
               <img
                 v-else-if="piece.kind === 'image'"
-                class="my-1 block max-h-36 max-w-36 rounded-md"
+                class="my-1 block max-h-36 max-w-36 rounded-md border border-line"
                 :src="piece.src"
                 :alt="piece.alt"
                 :title="piece.alt"
@@ -348,14 +366,15 @@ const liveTone = computed(() =>
           </component>
         </div>
       </li>
-      <li v-if="chat.thinking.value" class="pl-11 text-xs text-muted">
+      <li v-if="chat.thinking.value" class="flex items-center gap-2 pl-10.5 text-xs text-muted">
+        <span class="size-1.5 animate-pulse-dot rounded-full bg-info" aria-hidden="true" />
         {{ t('playground.typing', { name: chat.botName.value }) }}
       </li>
     </ol>
 
     <form
       v-if="view.running"
-      class="flex flex-col gap-2 border-t border-line px-4 py-3"
+      class="flex flex-col gap-2 border-t border-line bg-surface px-3.5 py-3 sm:px-4"
       @submit.prevent="submit"
     >
       <div
@@ -373,14 +392,14 @@ const liveTone = computed(() =>
           class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-0.5 text-sm transition-colors focus-visible:focus-ring"
           :class="
             member.uid === speaker?.uid
-              ? 'border-primary bg-primary-bg text-ink'
-              : 'border-line bg-surface text-ink-2 hover:bg-hover'
+              ? 'border-line-strong bg-fill font-semibold text-ink shadow-card'
+              : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:bg-hover'
           "
           @click="current = member.uid"
         >
           <Avatar :name="member.nickname" :size="22" />
           {{ member.nickname }}
-          <span v-if="member.role !== 'member'" class="text-xs text-muted">
+          <span v-if="member.role !== 'member'" class="text-xs font-normal text-muted">
             {{ t(`playground.roles.${member.role}`) }}
           </span>
         </button>
@@ -395,10 +414,12 @@ const liveTone = computed(() =>
       </div>
       <div
         v-if="replyTo"
-        class="flex items-center gap-2 rounded-md bg-hover py-1 pr-1 pl-2.5 text-sm text-muted"
+        class="flex items-center gap-2 rounded-md border border-line bg-fill py-1 pr-1 pl-2.5 text-sm text-muted"
       >
         <span class="min-w-0 flex-1 truncate">
-          <strong class="font-medium">{{ t('playground.replyTo', { name: senderName(replyTo) }) }}</strong>
+          <strong class="font-medium text-ink-2">
+            {{ t('playground.replyTo', { name: senderName(replyTo) }) }}
+          </strong>
           {{ excerpt(replyTo) }}
         </span>
         <IconButton :icon="X" :label="t('playground.cancelReply')" size="sm" @click="replyTo = null" />
@@ -407,12 +428,12 @@ const liveTone = computed(() =>
         <span
           v-for="uid in mentions"
           :key="uid"
-          class="inline-flex h-6 items-center gap-1 rounded-full bg-primary-bg pr-0.5 pl-2 text-xs text-primary"
+          class="inline-flex h-6 items-center gap-1 rounded-full border border-line bg-fill pr-0.5 pl-2.5 text-xs font-medium text-ink-2"
         >
           @{{ nameOf(uid) }}
           <button
             type="button"
-            class="inline-flex size-5 cursor-pointer items-center justify-center rounded-full hover:bg-hover focus-visible:focus-ring"
+            class="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-subtle hover:bg-hover hover:text-ink focus-visible:focus-ring"
             :aria-label="t('playground.removeMention', { name: nameOf(uid) })"
             @click="mentions = mentions.filter((item) => item !== uid)"
           >
@@ -430,16 +451,17 @@ const liveTone = computed(() =>
         >
           <IconButton :icon="AtSign" :label="t('playground.mention')" :disabled="!mentionItems.length" />
         </DropdownMenu>
-        <Textarea
-          ref="input"
-          v-model="text"
-          :rows="1"
-          :max-rows="6"
-          class="min-w-0 flex-1"
-          :placeholder="speaker ? t('playground.speakAsName', { name: speaker.nickname }) : ''"
-          :aria-label="t('playground.message')"
-          @keydown="keydown"
-        />
+        <div class="min-w-0 flex-1">
+          <Textarea
+            ref="input"
+            v-model="text"
+            :rows="1"
+            :max-rows="6"
+            :placeholder="speaker ? t('playground.speakAsName', { name: speaker.nickname }) : ''"
+            :aria-label="t('playground.message')"
+            @keydown="keydown"
+          />
+        </div>
         <Button
           type="submit"
           variant="primary"

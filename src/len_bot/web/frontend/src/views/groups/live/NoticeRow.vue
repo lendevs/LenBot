@@ -43,7 +43,7 @@ const text = computed(() => {
 
 <template>
   <div class="flex flex-col items-center gap-1 px-4 py-1.5 text-center">
-    <p class="max-w-full rounded-full bg-fill px-3 py-1 text-xs break-words text-muted">
+    <p class="max-w-full rounded-xl border border-line bg-fill px-3 py-1 text-xs break-words text-muted">
       {{ text }} ·
       <span class="tabular">{{ formatDateTime(notice.time, { timeZone }) }}</span>
     </p>

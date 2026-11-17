@@ -9,6 +9,7 @@ import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
+import MarkdownText from '../../../ui/MarkdownText.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import { confirm } from '../../../ui/confirm'
@@ -94,8 +95,12 @@ function removed() {
 </script>
 
 <template>
-  <form v-if="editing" class="flex flex-col gap-4" @submit.prevent="canSave && save.mutate()">
-    <h3 class="truncate font-mono text-sm font-medium text-ink">{{ path ?? t('groups.memory.create') }}</h3>
+  <form v-if="editing" class="flex max-w-3xl flex-col gap-4" @submit.prevent="canSave && save.mutate()">
+    <header class="flex min-h-8 items-center border-b border-line pb-3">
+      <h3 class="min-w-0 truncate font-mono text-sm font-medium text-ink">
+        {{ path ?? t('groups.memory.create') }}
+      </h3>
+    </header>
     <Field v-if="path === null" :label="t('groups.memory.file.path')">
       <Input v-model="newPath" placeholder="people/name.md" mono />
     </Field>
@@ -120,31 +125,33 @@ function removed() {
     </div>
   </form>
   <article v-else class="flex min-w-0 flex-col gap-4">
-    <header class="flex flex-wrap items-center gap-2">
+    <header class="flex min-h-8 flex-wrap items-center gap-2 border-b border-line pb-3">
       <h3 class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-ink" :title="path ?? ''">
         {{ path }}
       </h3>
-      <Button v-if="writable && doc.data.value" size="sm" :icon="Pencil" @click="editing = true">
-        {{ t('common.edit') }}
-      </Button>
-      <Button
-        v-if="inScene && can('history')"
-        size="sm"
-        variant="ghost"
-        :icon="History"
-        @click="historyOpen = true"
-      >
-        {{ t('groups.memory.history.action') }}
-      </Button>
-      <Button
-        v-if="inScene && (can('delete') || can('forget')) && doc.data.value"
-        size="sm"
-        variant="danger-ghost"
-        :icon="Trash2"
-        @click="removing = true"
-      >
-        {{ t('common.delete') }}
-      </Button>
+      <div class="flex flex-wrap items-center gap-1.5">
+        <Button v-if="writable && doc.data.value" size="sm" :icon="Pencil" @click="editing = true">
+          {{ t('common.edit') }}
+        </Button>
+        <Button
+          v-if="inScene && can('history')"
+          size="sm"
+          variant="ghost"
+          :icon="History"
+          @click="historyOpen = true"
+        >
+          {{ t('groups.memory.history.action') }}
+        </Button>
+        <Button
+          v-if="inScene && (can('delete') || can('forget')) && doc.data.value"
+          size="sm"
+          variant="danger-ghost"
+          :icon="Trash2"
+          @click="removing = true"
+        >
+          {{ t('common.delete') }}
+        </Button>
+      </div>
     </header>
     <Skeleton v-if="doc.isPending.value" :lines="8" />
     <ErrorNote
@@ -153,9 +160,7 @@ function removed() {
       :error="doc.error.value"
       :retry="doc.refetch"
     />
-    <template v-else>
-      <p class="text-base leading-7 break-words whitespace-pre-wrap text-ink">{{ original }}</p>
-    </template>
+    <MarkdownText v-else :text="original" class="max-w-3xl text-base leading-7 text-ink" />
 
     <DeleteDialog
       v-if="path"

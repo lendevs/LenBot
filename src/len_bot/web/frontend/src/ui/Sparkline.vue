@@ -9,7 +9,7 @@ const props = withDefaults(
     tone?: Tone
     /** Fill the area under the line. */
     area?: boolean
-    /** Accessible description, such as 最近 24 小时消息数. */
+    /** Accessible description of the series. */
     label?: string
   }>(),
   { height: 32, tone: 'brand', area: true, label: undefined },
@@ -27,8 +27,10 @@ const colors: Record<Tone, string> = {
 const width = 100
 const points = computed(() => {
   const values = props.values.length > 1 ? props.values : [props.values[0] ?? 0, props.values[0] ?? 0]
-  const max = Math.max(...values)
+  const rawMax = Math.max(...values)
   const min = Math.min(0, ...values)
+  const constantPositive = rawMax > 0 && values.every((item) => item === rawMax)
+  const max = constantPositive ? rawMax * 1.75 : rawMax
   const span = max - min || 1
   const pad = 2
   return values.map((value, index) => [
@@ -53,7 +55,7 @@ const fill = computed(() => `${line.value} L${width},${props.height} L0,${props.
   >
     <defs>
       <linearGradient :id="gradient" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0" stop-color="currentColor" stop-opacity="0.22" />
+        <stop offset="0" stop-color="currentColor" stop-opacity="0.2" />
         <stop offset="1" stop-color="currentColor" stop-opacity="0" />
       </linearGradient>
     </defs>
@@ -62,7 +64,7 @@ const fill = computed(() => `${line.value} L${width},${props.height} L0,${props.
       :d="line"
       fill="none"
       stroke="currentColor"
-      stroke-width="1.5"
+      stroke-width="1.75"
       stroke-linejoin="round"
       stroke-linecap="round"
       vector-effect="non-scaling-stroke"

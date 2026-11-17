@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { GraduationCap, Settings2, TriangleAlert } from '@lucide/vue'
-import { learningApi } from '../../../api/learning'
+import { learningApi, type JargonView, type Review } from '../../../api/learning'
 import { keys } from '../../../api/query'
 import { useHostEvent } from '../../../realtime/stream'
 import Button from '../../../ui/Button.vue'
@@ -25,6 +25,21 @@ const { t } = useI18n()
 const client = useQueryClient()
 const shownKind = ref<Kind>('expressions')
 const settingsOpen = ref(false)
+const expressionFilter = ref<Review>('pending')
+const jargonFilter = ref<JargonView>('learned')
+const stickerFilter = ref<Review>('pending')
+const reviewFilters = computed(() =>
+  (['pending', 'adopted', 'rejected'] as const).map((value) => ({
+    value,
+    label: t(`groups.learning.review.${value}`),
+  })),
+)
+const jargonFilters = computed(() =>
+  (['learned', 'adopted'] as const).map((value) => ({
+    value,
+    label: t(`groups.learning.jargon.${value}`),
+  })),
+)
 
 const state = useQuery({
   queryKey: computed(() => keys.scene.learning(props.scene, 'state')),
@@ -88,12 +103,12 @@ watch(
 </script>
 
 <template>
-  <div class="flex flex-col gap-5">
+  <div class="flex min-w-0 flex-col gap-5">
     <div
       v-if="state.data.value?.index?.needs_rebuild"
       class="flex flex-wrap items-center gap-3 rounded-lg bg-warning-bg px-4 py-3 text-sm text-warning"
     >
-      <TriangleAlert :size="16" aria-hidden="true" />
+      <TriangleAlert :size="16" class="shrink-0" aria-hidden="true" />
       <span class="min-w-0 flex-1">{{ t('groups.learning.needsRebuild') }}</span>
       <Button
         size="sm"
@@ -105,7 +120,7 @@ watch(
     </div>
     <div
       v-if="config.data.value && config.data.value.saved === null"
-      class="flex flex-wrap items-center gap-3 rounded-lg border border-line px-4 py-3 text-sm"
+      class="flex flex-wrap items-center gap-3 rounded-lg bg-fill px-4 py-3 text-sm"
     >
       <span class="min-w-0 flex-1 text-muted">{{ t('groups.learning.off') }}</span>
       <Button size="sm" variant="primary" @click="settingsOpen = true">
@@ -113,9 +128,34 @@ watch(
       </Button>
     </div>
 
-    <div class="flex flex-wrap items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2.5">
       <SegmentedControl v-model="kind" :options="kinds" :label="t('groups.tabs.learning')" />
-      <div class="ml-auto flex items-center gap-2">
+      <template v-if="kind !== 'effects'">
+        <span class="h-4 w-px bg-line max-sm:hidden" aria-hidden="true" />
+        <SegmentedControl
+          v-if="kind === 'expressions'"
+          v-model="expressionFilter"
+          :options="reviewFilters"
+          size="sm"
+          :label="t('groups.learning.kinds.expressions')"
+        />
+        <SegmentedControl
+          v-else-if="kind === 'jargon'"
+          :model-value="jargonFilter"
+          :options="jargonFilters"
+          size="sm"
+          :label="t('groups.learning.kinds.jargon')"
+          @update:model-value="(value: JargonView) => (jargonFilter = value)"
+        />
+        <SegmentedControl
+          v-else
+          v-model="stickerFilter"
+          :options="reviewFilters"
+          size="sm"
+          :label="t('groups.learning.kinds.stickers')"
+        />
+      </template>
+      <div class="ml-auto flex flex-wrap items-center gap-2">
         <Button
           v-if="state.data.value?.enabled"
           size="sm"
@@ -133,16 +173,19 @@ watch(
 
     <ExpressionList
       v-if="kind === 'expressions'"
+      v-model:filter="expressionFilter"
       :scene="scene"
       @dirty="(value: boolean) => (dirty.expressions = value)"
     />
     <JargonList
       v-else-if="kind === 'jargon'"
+      v-model:filter="jargonFilter"
       :scene="scene"
       @dirty="(value: boolean) => (dirty.jargon = value)"
     />
     <StickerList
       v-else-if="kind === 'stickers'"
+      v-model:filter="stickerFilter"
       :scene="scene"
       @dirty="(value: boolean) => (dirty.stickers = value)"
     />

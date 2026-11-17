@@ -24,6 +24,7 @@ const props = defineProps<{ role: PersonaRole; blocked: string | null }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
+const groupId = (scene: string) => scene.split(':').slice(2).join(':') || scene
 const name = computed(() => props.role.name || props.role.key)
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const rows = computed(() =>
@@ -110,25 +111,26 @@ async function apply() {
       >
         <span class="text-sm text-ink-2">{{ t('personas.detail.scenes.selectAll') }}</span>
       </Checkbox>
-      <Button
-        variant="primary"
-        size="sm"
-        :icon="Repeat"
-        :loading="use.isPending.value"
-        :disabled="!chosen.length || Boolean(blocked)"
-        class="ml-auto"
-        @click="apply"
-      >
-        {{
-          chosen.length
-            ? t('personas.detail.scenes.applyCount', { n: chosen.length })
-            : t('personas.detail.scenes.apply')
-        }}
-      </Button>
+      <div class="ml-auto tabular">
+        <Button
+          variant="primary"
+          size="sm"
+          :icon="Repeat"
+          :loading="use.isPending.value"
+          :disabled="!chosen.length || Boolean(blocked)"
+          @click="apply"
+        >
+          {{
+            chosen.length
+              ? t('personas.detail.scenes.applyCount', { n: chosen.length })
+              : t('personas.detail.scenes.apply')
+          }}
+        </Button>
+      </div>
     </div>
     <p v-if="blocked" class="text-sm text-warning">{{ blocked }}</p>
-    <ul class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface">
-      <li v-for="row in rows" :key="row.scene" class="flex min-h-14 items-center gap-3 px-4 py-2.5">
+    <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li v-for="row in rows" :key="row.scene" class="flex min-h-14 items-center gap-3 py-2.5">
         <Checkbox
           v-if="!row.using && !row.waiting"
           :model-value="chosen.includes(row.scene)"
@@ -139,10 +141,35 @@ async function apply() {
         <span v-else-if="choosable.length" class="size-4.5 shrink-0" aria-hidden="true" />
         <Avatar :name="groupLabel(row.scene)" shape="square" :size="32" />
         <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-medium text-ink">{{ groupLabel(row.scene) }}</span>
-          <span v-if="!row.using" class="block truncate text-xs text-muted">{{ row.current }}</span>
+          <span
+            class="block truncate text-sm font-medium text-ink"
+            :class="groupId(row.scene) === groupLabel(row.scene) && 'tabular'"
+          >
+            {{ groupLabel(row.scene) }}
+          </span>
+          <span
+            v-if="groupId(row.scene) !== groupLabel(row.scene) || (!row.using && row.current)"
+            class="flex min-w-0 items-center gap-1.5 text-xs text-muted"
+          >
+            <span
+              v-if="groupId(row.scene) !== groupLabel(row.scene)"
+              class="shrink-0 font-mono text-subtle tabular"
+            >
+              {{ groupId(row.scene) }}
+            </span>
+            <template v-if="!row.using && row.current">
+              <span
+                v-if="groupId(row.scene) !== groupLabel(row.scene)"
+                class="text-subtle"
+                aria-hidden="true"
+              >
+                ·
+              </span>
+              <span class="truncate">{{ row.current }}</span>
+            </template>
+          </span>
         </span>
-        <Badge v-if="row.using" tone="brand">{{ t('personas.detail.scenes.using') }}</Badge>
+        <Badge v-if="row.using" tone="success" dot>{{ t('personas.detail.scenes.using') }}</Badge>
         <Badge v-else-if="row.waiting" tone="warning" dot pulse>
           {{ t('personas.detail.scenes.waiting') }}
         </Badge>

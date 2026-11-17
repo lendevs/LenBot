@@ -361,8 +361,8 @@ watch(invalid, () => {
     :error="settings.error.value"
     :retry="settings.refetch"
   />
-  <div v-else-if="draft && connection" class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div v-else-if="draft && connection" class="flex min-w-0 max-w-3xl flex-col gap-4">
+    <div class="flex min-w-0 flex-col gap-6">
       <FormSection :title="t('system.connection.qq')">
         <template #actions>
           <Badge v-if="status('onebot')" :tone="status('onebot')!.tone" dot>

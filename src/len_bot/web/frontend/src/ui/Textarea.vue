@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
 import { useFieldControl } from './field'
 
 const model = defineModel<string>({ default: '' })
@@ -38,6 +39,7 @@ function fit() {
 
 watch(model, () => nextTick(fit))
 onMounted(fit)
+useResizeObserver(area, fit)
 defineExpose({ focus: () => area.value?.focus() })
 </script>
 
@@ -53,7 +55,7 @@ defineExpose({ focus: () => area.value?.focus() })
     :aria-invalid="field.invalid.value || undefined"
     :aria-describedby="field.describedBy.value"
     :data-invalid="field.invalid.value || undefined"
-    class="block w-full min-w-0 resize-none rounded-md border border-line-strong bg-surface px-3 py-2 text-base text-ink transition-[border-color,box-shadow] duration-150 ease-out placeholder:text-subtle scrollbar-thin hover:border-subtle focus:border-primary focus:shadow-[0_0_0_3px_var(--focus-ring)] focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-fill disabled:opacity-60 data-invalid:border-error pointer-coarse:text-lg"
-    :class="mono && 'font-mono text-sm leading-5'"
+    class="block w-full min-w-0 resize-none rounded-md border border-line-strong bg-surface px-3 py-2 text-ink transition-[border-color,box-shadow,background-color] duration-150 ease-out placeholder:text-subtle scrollbar-thin hover:border-subtle focus:border-primary focus:shadow-focus focus-visible:outline-none read-only:bg-fill/55 disabled:cursor-not-allowed disabled:bg-fill disabled:opacity-60 disabled:hover:border-line-strong data-invalid:border-error data-invalid:hover:border-error data-invalid:focus:border-error data-invalid:focus:shadow-error-focus pointer-coarse:text-lg"
+    :class="mono ? 'font-mono text-sm leading-5' : 'text-base'"
   />
 </template>

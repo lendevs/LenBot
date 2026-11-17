@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useMediaQuery } from '@vueuse/core'
-import { ArrowLeft, FolderOpen, Plus, X } from '@lucide/vue'
+import { ArrowLeft, ChevronRight, FolderOpen, Plus, X } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import {
   storageApi,
@@ -182,31 +182,34 @@ async function toTask(id: number, done = false) {
   emit('dirty', false)
   void router.replace({ query: { id: String(id) } })
 }
+const poolPercent = computed(() => {
+  const value = pool.data.value?.usage
+  return value ? Math.min(100, (100 * value.used_bytes) / Math.max(1, value.limit_bytes)) : 0
+})
+const poolBarTone = computed(() =>
+  poolPercent.value >= 90 ? 'bg-error' : poolPercent.value >= 75 ? 'bg-warning' : 'bg-info',
+)
 </script>
 
 <template>
-  <div
+  <EmptyState
     v-if="service.data.value && !service.data.value.configured"
-    class="flex flex-wrap items-center gap-3 rounded-lg border border-line px-4 py-3 text-sm text-muted"
+    :title="t('groups.tasks.notConfigured')"
   >
-    <span class="min-w-0 flex-1">{{ t('groups.tasks.notConfigured') }}</span>
-    <Button size="sm" :to="{ name: 'host-capabilities', query: { tab: 'tasks' } }">
+    <Button variant="primary" :to="{ name: 'host-capabilities', query: { tab: 'tasks' } }">
       {{ t('groups.tasks.toCapabilities') }}
     </Button>
-  </div>
-  <div v-else class="flex flex-col gap-4">
+  </EmptyState>
+  <div v-else class="flex min-w-0 flex-col gap-5">
     <ErrorNote
       v-if="pool.isError.value"
       :title="t('groups.tasks.space.poolFailed')"
       :error="pool.error.value"
     />
-    <div
-      v-else-if="pool.data.value?.usage"
-      class="flex flex-col gap-1.5 rounded-lg border border-line px-4 py-3"
-    >
-      <div class="flex flex-wrap items-baseline gap-x-3 text-sm">
+    <div v-else-if="pool.data.value?.usage" class="flex flex-col gap-2 border-b border-line pb-4">
+      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
         <span class="font-medium text-ink">{{ t('groups.tasks.space.pool') }}</span>
-        <span class="tabular text-ink-2">
+        <span class="text-ink-2 tabular">
           {{
             t('groups.tasks.space.poolUsed', {
               used: formatBytes(pool.data.value.usage.used_bytes),
@@ -216,21 +219,20 @@ async function toTask(id: number, done = false) {
           }}
         </span>
       </div>
-      <div class="h-1.5 overflow-hidden rounded-full bg-code" role="presentation">
+      <div class="h-1.5 overflow-hidden rounded-full bg-track" role="presentation">
         <div
-          class="h-full rounded-full bg-primary"
-          :style="{
-            width: `${Math.min(100, (100 * pool.data.value.usage.used_bytes) / Math.max(1, pool.data.value.usage.limit_bytes))}%`,
-          }"
+          class="h-full rounded-full transition-[width] duration-200 ease-out"
+          :class="poolBarTone"
+          :style="{ width: `${poolPercent}%` }"
         />
       </div>
     </div>
     <div
       v-else-if="pool.data.value?.disk"
-      class="flex flex-wrap items-baseline gap-x-3 rounded-lg border border-line px-4 py-3 text-sm"
+      class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line pb-4 text-sm"
     >
       <span class="font-medium text-ink">{{ t('groups.tasks.space.disk') }}</span>
-      <span class="tabular text-ink-2">
+      <span class="text-ink-2 tabular">
         {{ t('groups.tasks.space.diskFree', { free: formatBytes(pool.data.value.disk.free_bytes) }) }}
       </span>
       <span v-if="pool.data.value.disk.free_bytes < pool.data.value.disk.stop_bytes" class="text-error">
@@ -244,34 +246,49 @@ async function toTask(id: number, done = false) {
       </span>
     </div>
 
-    <div class="grid min-w-0 items-start gap-5" :class="wide && 'grid-cols-[340px_minmax(0,1fr)]'">
+    <div class="grid min-w-0 items-start gap-6" :class="wide && 'grid-cols-[340px_minmax(0,1fr)]'">
       <section
         v-if="wide || !opened"
         class="flex min-w-0 flex-col gap-3"
+        :class="wide && 'border-r border-line pr-5'"
         :aria-label="t('groups.tasks.views.resources')"
       >
         <button
           type="button"
-          class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm hover:bg-hover focus-visible:focus-ring"
+          class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors duration-150 focus-visible:focus-ring"
           :class="
             route.query.id === 'shared' || (wide && selected === null)
-              ? 'bg-brand-soft text-primary'
-              : 'text-ink'
+              ? 'bg-selected font-semibold text-ink'
+              : 'text-ink hover:bg-hover'
           "
           @click="open('shared')"
         >
-          <FolderOpen :size="16" aria-hidden="true" />
-          {{ t('groups.tasks.space.shared') }}
+          <FolderOpen
+            :size="16"
+            class="shrink-0"
+            :class="
+              route.query.id === 'shared' || (wide && selected === null) ? 'text-primary' : 'text-subtle'
+            "
+            aria-hidden="true"
+          />
+          <span class="truncate">{{ t('groups.tasks.space.shared') }}</span>
         </button>
         <div class="grid grid-cols-2 gap-2">
           <Select v-model="status" :options="statuses" size="sm" />
           <Select v-model="environment" :options="environments" size="sm" />
         </div>
-        <details class="text-sm">
-          <summary class="cursor-pointer text-xs font-medium text-muted hover:text-ink">
+        <details class="group text-sm">
+          <summary
+            class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs font-medium text-muted select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+          >
+            <ChevronRight
+              :size="13"
+              class="shrink-0 transition-transform duration-150 group-open:rotate-90"
+              aria-hidden="true"
+            />
             {{ t('groups.tasks.space.range') }}
           </summary>
-          <div class="mt-2 grid grid-cols-2 gap-2">
+          <div class="mt-2 grid gap-2 sm:grid-cols-2">
             <Field :label="t('groups.tasks.space.since')">
               <Input v-model="since" type="date" size="sm" />
             </Field>
@@ -286,12 +303,12 @@ async function toTask(id: number, done = false) {
             class="flex min-w-0 cursor-pointer items-center gap-2 pl-3 text-xs text-muted"
           >
             <Checkbox :model-value="allChecked" @update:model-value="(on) => checkAll(on === true)" />
-            {{ t('groups.tasks.space.checkAll') }}
+            <span class="truncate">{{ t('groups.tasks.space.checkAll') }}</span>
           </label>
           <Button
             size="sm"
             variant="ghost"
-            class="ml-auto shrink-0"
+            class="ml-auto"
             :loading="list.isFetching.value && measure"
             @click="remeasure"
           >
@@ -319,25 +336,34 @@ async function toTask(id: number, done = false) {
             </span>
             <button
               type="button"
-              class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 rounded-md px-2 py-2 text-left hover:bg-hover focus-visible:focus-ring"
-              :class="item.id === selected && 'bg-brand-soft'"
+              class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 rounded-md px-2.5 py-2 text-left transition-colors duration-150 focus-visible:focus-ring"
+              :class="item.id === selected ? 'bg-selected' : 'hover:bg-hover'"
               :aria-current="item.id === selected ? 'true' : undefined"
               @click="open(item.id)"
             >
-              <span class="line-clamp-2 text-sm" :class="item.id === selected ? 'text-primary' : 'text-ink'">
+              <span
+                class="line-clamp-2 text-sm leading-5"
+                :class="item.id === selected ? 'font-semibold text-ink' : 'text-ink'"
+              >
                 {{ item.goal }}
               </span>
               <span class="flex items-center gap-2 text-xs text-muted">
                 <span class="tabular">#{{ item.id }}</span>
                 <span class="tabular">{{ formatDateTime(item.created, { timeZone }) }}</span>
-                <Badge :tone="statusTone[item.status]" dot size="sm" class="ml-auto">
+                <Badge
+                  :tone="statusTone[item.status]"
+                  dot
+                  :pulse="item.status === 'running'"
+                  size="sm"
+                  class="ml-auto"
+                >
                   {{ t(`groups.tasks.status.${item.status}`) }}
                 </Badge>
               </span>
               <span class="text-xs text-muted">
                 {{ t(`groups.tasks.space.continuation.${item.continuation}`) }}
               </span>
-              <span v-if="usage(item)" class="tabular text-xs text-muted">{{ usage(item) }}</span>
+              <span v-if="usage(item)" class="text-xs text-muted tabular">{{ usage(item) }}</span>
               <span v-if="item.usage_error" class="text-xs break-all text-error">{{ item.usage_error }}</span>
             </button>
           </li>
@@ -355,13 +381,13 @@ async function toTask(id: number, done = false) {
           v-if="checked.length"
           class="sticky bottom-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-raised px-3 py-2 shadow-float"
         >
-          <span class="text-sm text-ink">
+          <span class="text-sm text-ink tabular">
             {{ t('groups.tasks.space.checked', { n: checked.length }) }}
             <span v-if="checked.length > 100" class="text-warning">
               · {{ t('groups.tasks.space.tooManyChecked') }}
             </span>
           </span>
-          <div class="ml-auto flex gap-1">
+          <div class="ml-auto flex flex-wrap gap-1">
             <Button size="sm" :disabled="checked.length > 100" @click="cleaning = 'temporary'">
               {{ t('groups.tasks.space.cleanup.temporary') }}
             </Button>
@@ -388,15 +414,12 @@ async function toTask(id: number, done = false) {
         >
           {{ t('common.back') }}
         </Button>
-        <div
-          v-if="picks.length"
-          class="flex flex-col gap-2 rounded-lg border border-line bg-brand-soft px-4 py-3"
-        >
+        <div v-if="picks.length" class="flex flex-col gap-2.5 rounded-lg bg-fill px-4 py-3">
           <div class="flex flex-wrap items-center gap-2">
-            <span class="text-sm font-medium text-ink">
+            <span class="text-sm font-medium text-ink tabular">
               {{ t('groups.tasks.space.picks', { n: picks.length }) }}
             </span>
-            <div class="ml-auto flex gap-1">
+            <div class="ml-auto flex flex-wrap gap-1.5">
               <Button size="sm" variant="ghost" @click="clearPicks">
                 {{ t('groups.tasks.space.clear') }}
               </Button>
@@ -415,12 +438,12 @@ async function toTask(id: number, done = false) {
             <li
               v-for="(item, index) in picks"
               :key="index"
-              class="flex max-w-full items-center gap-1 rounded-md bg-surface px-2 py-1 text-xs text-ink-2"
+              class="flex max-w-full items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink-2"
             >
               <span class="truncate">{{ item.name }}</span>
               <button
                 type="button"
-                class="shrink-0 cursor-pointer rounded text-subtle hover:text-ink"
+                class="shrink-0 cursor-pointer rounded-sm text-subtle transition-colors hover:text-ink focus-visible:focus-ring"
                 :aria-label="t('ui.combobox.remove', { name: item.name })"
                 @click="picks.splice(index, 1)"
               >
@@ -431,8 +454,8 @@ async function toTask(id: number, done = false) {
         </div>
 
         <template v-if="selected !== null">
-          <div class="flex items-start gap-3">
-            <h2 class="min-w-0 flex-1 text-lg font-semibold break-words text-ink">
+          <div class="flex items-start gap-3 border-b border-line pb-3">
+            <h2 class="min-w-0 flex-1 text-lg leading-snug font-semibold break-words text-ink">
               {{ selectedRow?.goal ?? `#${selected}` }}
             </h2>
             <Button size="sm" variant="ghost" @click="toTask(selected)">
@@ -440,17 +463,21 @@ async function toTask(id: number, done = false) {
             </Button>
           </div>
           <TaskSpace :key="`space-${selected}`" :scene="scene" :task-id="selected" :time-zone="timeZone" />
-          <FileBrowser
-            :key="`files-${selected}`"
-            :scene="scene"
-            :task-id="selected"
-            :time-zone="timeZone"
-            pickable
-            @pick="pick"
-          />
+          <div class="border-t border-line pt-4">
+            <FileBrowser
+              :key="`files-${selected}`"
+              :scene="scene"
+              :task-id="selected"
+              :time-zone="timeZone"
+              pickable
+              @pick="pick"
+            />
+          </div>
         </template>
         <template v-else-if="wide || route.query.id === 'shared'">
-          <h2 class="text-lg font-semibold text-ink">{{ t('groups.tasks.space.shared') }}</h2>
+          <h2 class="border-b border-line pb-3 text-lg font-semibold text-ink">
+            {{ t('groups.tasks.space.shared') }}
+          </h2>
           <FileBrowser :scene="scene" :task-id="null" :time-zone="timeZone" pickable @pick="pick" />
         </template>
       </section>

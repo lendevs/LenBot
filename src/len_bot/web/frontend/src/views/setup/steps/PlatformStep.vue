@@ -58,7 +58,7 @@ function test() {
 <template>
   <div class="flex flex-col gap-5">
     <Field :label="t('setup.platform.connect')">
-      <div>
+      <div class="min-w-0">
         <SegmentedControl
           v-model="draft.chatPlatform"
           :options="platforms"

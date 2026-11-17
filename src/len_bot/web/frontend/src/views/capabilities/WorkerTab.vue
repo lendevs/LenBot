@@ -341,8 +341,8 @@ function addPackageHosts() {
     :error="settings.error.value"
     :retry="settings.refetch"
   />
-  <div v-else-if="saved !== undefined" class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div v-else-if="saved !== undefined" class="flex min-w-0 max-w-4xl flex-col gap-4">
+    <div class="flex min-w-0 flex-col gap-6">
       <Field :label="t('capabilities.worker.on')" inline>
         <Switch :model-value="draft !== null" @update:model-value="toggle" />
       </Field>
@@ -392,15 +392,13 @@ function addPackageHosts() {
             :error="errors.allowed_hosts"
             wide
           >
-            <div class="flex min-w-0 flex-col items-start gap-2">
-              <TagInput
-                v-model="form.egress.allowed_hosts"
-                placeholder="example.com、*.example.org"
-                class="w-full"
-              />
-              <Button size="sm" variant="ghost" @click="addPackageHosts">
-                {{ t('capabilities.worker.packageHosts') }}
-              </Button>
+            <div class="flex min-w-0 flex-col gap-2">
+              <TagInput v-model="form.egress.allowed_hosts" placeholder="example.com, *.example.org" />
+              <div class="-ml-2 flex">
+                <Button size="sm" variant="ghost" @click="addPackageHosts">
+                  {{ t('capabilities.worker.packageHosts') }}
+                </Button>
+              </div>
             </div>
           </Field>
         </FormSection>

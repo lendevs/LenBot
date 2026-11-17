@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { keepPreviousData, useQuery } from '@tanstack/vue-query'
 import type { Page } from '../../../api/learning'
 
@@ -6,10 +6,13 @@ import type { Page } from '../../../api/learning'
 export function usePagedList<T, F extends string>(
   key: (filter: F, offset: number) => readonly unknown[],
   read: (filter: F, offset: number, signal: AbortSignal) => Promise<Page<T>>,
-  initial: F,
+  initial: F | Ref<F>,
 ) {
-  const filter = ref(initial) as Ref<F>
+  const filter = (typeof initial === 'string' ? ref(initial) : initial) as Ref<F>
   const offset = ref(0)
+  watch(filter, () => {
+    offset.value = 0
+  })
   const query = useQuery({
     queryKey: computed(() => key(filter.value, offset.value)),
     queryFn: ({ signal }) => read(filter.value, offset.value, signal),

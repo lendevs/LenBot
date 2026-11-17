@@ -24,12 +24,16 @@ async function retry() {
 
 <template>
   <router-view v-if="route.meta.bare" />
-  <div v-else-if="auth.status === 'loading'" class="grid min-h-dvh place-items-center" role="status">
-    <Spinner :size="24" :label="t('login.checking')" />
+  <div
+    v-else-if="auth.status === 'loading'"
+    class="grid min-h-dvh place-items-center bg-page text-muted"
+    role="status"
+  >
+    <Spinner :size="22" :label="t('login.checking')" />
   </div>
   <div
     v-else-if="auth.status === 'error'"
-    class="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4"
+    class="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-8"
   >
     <ErrorNote :title="t('login.checkFailed')" :error="auth.error" :retry="retry" />
   </div>

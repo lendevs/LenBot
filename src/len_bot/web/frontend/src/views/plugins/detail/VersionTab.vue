@@ -8,7 +8,7 @@ import { groupLabel } from '../../../layouts/shell/scenes'
 import Button from '../../../ui/Button.vue'
 import RawRecord from '../../groups/tasks/RawRecord.vue'
 import { usePluginsState } from '../state'
-import { manifestOf, runningOf } from '../view'
+import { manifestOf, runningOf, sceneSecondaryId } from '../view'
 
 const props = defineProps<{ name: string; snapshot: PluginsSnapshot }>()
 const emit = defineEmits<{ update: []; rollback: [] }>()
@@ -22,6 +22,7 @@ const entries = computed(() => props.snapshot.available[props.name] ?? [])
 const origin = (item: Source) =>
   [item.kind, item.location, item.ref || item.branch || item.revision.slice(0, 12)].join(' · ')
 
+const runningScenes = computed(() => running.value?.scenes ?? [])
 const facts = computed(() => {
   const value = source.value
   const rows: [string, string][] = [
@@ -40,10 +41,7 @@ const facts = computed(() => {
       t('plugins.version.running'),
       running.value?.version ? `v${running.value.version}` : t('plugins.version.notLoaded'),
     ],
-    [
-      t('plugins.version.groups'),
-      running.value?.scenes.map(groupLabel).join(t('personas.separator')) || t('plugins.version.noGroups'),
-    ],
+    [t('plugins.version.groups'), runningScenes.value.length ? '_scenes' : t('plugins.version.noGroups')],
     [t('plugins.version.installedFrom'), value?.installed ? origin(value.installed) : ''],
     [t('plugins.version.candidateFrom'), value?.candidate ? origin(value.candidate) : ''],
     [
@@ -78,22 +76,38 @@ const facts = computed(() => {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <section class="flex flex-col gap-4 rounded-xl border border-line bg-surface p-5">
-      <dl class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[max-content_minmax(0,1fr)]">
-        <template v-for="[label, value] in facts" :key="label">
+  <div class="flex min-w-0 max-w-3xl flex-col gap-5">
+    <section class="flex flex-col gap-4">
+      <dl class="divide-y divide-line border-y border-line text-sm">
+        <div
+          v-for="[label, value] in facts"
+          :key="label"
+          class="grid gap-x-6 gap-y-1 py-2.5 sm:grid-cols-[9.5rem_minmax(0,1fr)]"
+        >
           <dt class="text-muted">{{ label }}</dt>
           <dd
-            class="min-w-0 break-words whitespace-pre-line text-ink-2"
+            v-if="value === '_scenes'"
+            class="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-ink-2"
+          >
+            <span v-for="scene in runningScenes" :key="scene" class="inline-flex items-baseline gap-1">
+              <span class="font-medium text-ink">{{ groupLabel(scene) }}</span>
+              <span v-if="sceneSecondaryId(scene)" class="font-mono text-xs text-muted tabular">
+                {{ sceneSecondaryId(scene) }}
+              </span>
+            </span>
+          </dd>
+          <dd
+            v-else
+            class="min-w-0 break-words whitespace-pre-line text-ink-2 tabular"
             :class="label === t('plugins.version.directory') && 'font-mono text-xs'"
           >
             {{ value }}
           </dd>
-        </template>
+        </div>
       </dl>
       <div
         v-if="source?.installed?.kind === 'git' || (source?.previous && !source.candidate)"
-        class="flex flex-wrap gap-2 border-t border-line pt-4"
+        class="flex flex-wrap gap-2"
       >
         <Button
           v-if="source?.installed?.kind === 'git'"

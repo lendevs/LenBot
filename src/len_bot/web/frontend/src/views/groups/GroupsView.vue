@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMediaQuery } from '@vueuse/core'
 import { ChevronsUpDown, Plus } from '@lucide/vue'
 import type { HostScene } from '../../api/host'
+import { sceneTitles } from '../../api/scenes'
 import { useCurrentScene } from '../../composables/useCurrentScene'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { useHostEvents } from '../../realtime/hostEvents'
@@ -16,13 +17,11 @@ import EmptyState from '../../ui/EmptyState.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Sheet from '../../ui/Sheet.vue'
 import Skeleton from '../../ui/Skeleton.vue'
-import StatusDot from '../../ui/StatusDot.vue'
 import Tabs from '../../ui/Tabs.vue'
 import AddGroupDialog from './AddGroupDialog.vue'
 import GroupHeader from './GroupHeader.vue'
 import GroupList from './GroupList.vue'
 import { groupTabs, isGroupTab, lastGroupTab, type GroupTab } from './route'
-import { statusTones } from './status'
 import LiveTab from './live/LiveTab.vue'
 import SessionTab from './session/SessionTab.vue'
 import SettingsTab from './settings/SettingsTab.vue'
@@ -43,6 +42,8 @@ provide('embedded-page', true)
 
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const { scene, current } = useCurrentScene()
+const titles = sceneTitles as Record<string, string>
+const secondaryId = (value: string) => (titles[value] ? value.split(':').slice(2).join(':') : '')
 // Learning runs in group chats only.
 const available = computed(() =>
   groupTabs.filter((value) => value !== 'learning' || scene.value?.split(':')[1] !== 'private'),
@@ -126,7 +127,7 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
         <GroupList :scenes="scenes" :selected="scene" @select="select" @add="adding = true" />
       </aside>
       <button
-        v-else
+        v-else-if="!current"
         type="button"
         class="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2 text-left transition-colors hover:border-line-strong focus-visible:focus-ring"
         :aria-label="t('groups.pick')"
@@ -135,13 +136,15 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
         <span class="flex" aria-hidden="true">
           <Avatar :name="groupLabel(scene)" shape="square" :size="28" />
         </span>
-        <span class="min-w-0 flex-1 truncate text-base font-medium">{{ groupLabel(scene) }}</span>
-        <StatusDot v-if="current" :tone="statusTones[current.chat_status.status]" />
+        <span class="min-w-0 flex-1 truncate text-base font-medium text-ink">{{ groupLabel(scene) }}</span>
+        <span v-if="secondaryId(scene)" class="shrink-0 font-mono text-xs text-muted tabular">
+          {{ secondaryId(scene) }}
+        </span>
         <ChevronsUpDown :size="16" class="shrink-0 text-muted" aria-hidden="true" />
       </button>
 
       <section v-if="current" class="flex min-w-0 flex-col gap-4">
-        <GroupHeader :item="current" />
+        <GroupHeader :item="current" :switchable="!wide" @switch="picking = true" />
         <Tabs v-model="selectedTab" :items="tabs" :label="groupLabel(scene)">
           <template #[tab]>
             <div :key="`${scene}:${tab}`" class="grid min-w-0 gap-4">
@@ -184,7 +187,14 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
     </div>
 
     <Sheet v-model:open="picking" :title="t('groups.pick')" side="bottom">
-      <GroupList :scenes="scenes" :selected="scene" class="pb-2" @select="select" @add="addFromSheet" />
+      <GroupList
+        :scenes="scenes"
+        :selected="scene"
+        surface="raised"
+        class="pb-2"
+        @select="select"
+        @add="addFromSheet"
+      />
     </Sheet>
     <AddGroupDialog v-model:open="adding" @added="select" />
   </div>

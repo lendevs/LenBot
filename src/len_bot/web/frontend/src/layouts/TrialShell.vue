@@ -49,25 +49,30 @@ async function exit() {
   <TooltipProvider :delay-duration="400">
     <div class="flex min-h-dvh flex-col bg-page text-ink">
       <header
-        class="sticky top-0 z-(--z-top) flex h-14 shrink-0 items-center gap-3 border-b border-line bg-page/85 px-3 backdrop-blur-md sm:px-6"
+        class="sticky top-0 z-(--z-top) flex h-14 shrink-0 items-center gap-3 border-b border-line bg-page px-3 sm:px-6"
       >
         <span class="flex shrink-0 items-center gap-2.5">
           <img :src="markUrl" alt="" class="size-7" />
-          <strong class="text-lg font-semibold max-sm:hidden">LenBot</strong>
+          <strong class="text-base font-semibold tracking-tight max-sm:hidden">LenBot</strong>
         </span>
-        <nav class="flex min-w-0 items-center gap-1" :aria-label="t('shell.nav.label')">
+        <nav
+          class="flex min-w-0 items-center gap-0.5 rounded-lg bg-fill p-0.5"
+          :aria-label="t('shell.nav.label')"
+        >
           <RouterLink
             v-for="page in pages"
             :key="page.name"
             :to="{ name: page.name }"
-            class="link-plain inline-flex h-8 items-center rounded-md px-2.5 text-sm whitespace-nowrap text-ink-2 transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring aria-[current=page]:bg-surface aria-[current=page]:font-semibold aria-[current=page]:text-ink aria-[current=page]:shadow-card"
+            class="link-plain inline-flex h-7 items-center rounded-md px-3 text-sm font-medium whitespace-nowrap text-muted transition-colors hover:text-ink focus-visible:focus-ring aria-[current=page]:bg-surface-raised aria-[current=page]:font-semibold aria-[current=page]:text-ink aria-[current=page]:shadow-card"
             :aria-current="route.name === page.name ? 'page' : undefined"
           >
             {{ page.label }}
           </RouterLink>
         </nav>
-        <div class="ml-auto flex items-center gap-2">
-          <Badge tone="info" class="max-sm:hidden">{{ t('chatTest.mode') }}</Badge>
+        <div class="ml-auto flex shrink-0 items-center gap-2">
+          <span class="flex max-sm:hidden">
+            <Badge tone="info">{{ t('chatTest.mode') }}</Badge>
+          </span>
           <AccountMenu
             :username="auth.user?.username ?? ''"
             :restartable="false"

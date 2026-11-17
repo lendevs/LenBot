@@ -8,12 +8,13 @@ import { ArrowUpRight, Check, Circle, X } from '@lucide/vue'
 import { capabilitiesApi } from '../../api/capabilities'
 import { tasksApi } from '../../api/tasks'
 import { keys } from '../../api/query'
-import { sceneTitles } from '../../api/scenes'
+import { groupLabel } from '../../layouts/shell/scenes'
 import { groupsTarget } from '../groups/route'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
+import { sceneSecondaryId } from './status'
 
 const props = defineProps<{
   /** Whether the worker model role is bound; tasks use the chat model otherwise. */
@@ -29,6 +30,7 @@ type State = 'ok' | 'missing' | 'neutral'
 interface Item {
   key: string
   label: string
+  meta?: string
   state: State
   value: string
   to?: RouteLocationRaw
@@ -37,7 +39,6 @@ interface Item {
   sample?: string
 }
 
-const titles = sceneTitles as Record<string, string>
 const items = computed<Item[]>(() => {
   const value = readiness.data.value
   if (!value) return []
@@ -72,11 +73,13 @@ const items = computed<Item[]>(() => {
       action: t('capabilities.worker.ready.toGroup'),
     })
   for (const scene of enabled) {
-    const name = titles[scene.scene] ?? scene.scene
+    const name = groupLabel(scene.scene)
+    const meta = sceneSecondaryId(scene.scene) || undefined
     if (!scene.delegate_roles.length)
       result.push({
         key: `${scene.scene}:roles`,
         label: name,
+        meta,
         state: 'missing',
         value: t('capabilities.worker.ready.noRoles'),
         to: groupsTarget(scene.scene, 'settings'),
@@ -86,8 +89,11 @@ const items = computed<Item[]>(() => {
       result.push({
         key: `${scene.scene}:tools`,
         label: name,
+        meta,
         state: 'missing',
-        value: t('capabilities.worker.ready.tools', { tools: scene.missing_tools.join('、') }),
+        value: t('capabilities.worker.ready.tools', {
+          tools: scene.missing_tools.join(t('personas.separator')),
+        }),
         to: { name: 'host-persona', query: scene.persona ? { persona: scene.persona } : {} },
         action: t('capabilities.worker.ready.toPersona'),
       })
@@ -95,6 +101,7 @@ const items = computed<Item[]>(() => {
       result.push({
         key: scene.scene,
         label: name,
+        meta,
         state: 'ok',
         value: t('capabilities.worker.ready.groupReady'),
         sample: value.running ? scene.scene : undefined,
@@ -140,12 +147,12 @@ const tones = { ok: 'text-success', missing: 'text-error', neutral: 'text-subtle
   />
   <ul
     v-else-if="items.length"
-    class="flex min-w-0 flex-col divide-y divide-line rounded-lg border border-line"
+    class="flex min-w-0 list-none flex-col divide-y divide-line border-y border-line"
   >
     <li
       v-for="item in items"
       :key="item.key"
-      class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5"
+      class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5"
     >
       <component
         :is="icons[item.state]"
@@ -154,30 +161,30 @@ const tones = { ok: 'text-success', missing: 'text-error', neutral: 'text-subtle
         :class="tones[item.state]"
         aria-hidden="true"
       />
-      <span class="min-w-0 truncate text-sm font-medium text-ink">{{ item.label }}</span>
-      <span class="min-w-0 truncate text-sm text-ink-2" :class="item.state === 'missing' && 'text-error'">
+      <span class="inline-flex min-w-0 items-baseline gap-1.5">
+        <span class="truncate text-sm font-medium text-ink">{{ item.label }}</span>
+        <span v-if="item.meta" class="shrink-0 font-mono text-xs text-muted tabular">{{ item.meta }}</span>
+      </span>
+      <span
+        class="min-w-0 flex-1 text-sm break-words"
+        :class="item.state === 'missing' ? 'text-error' : 'text-muted'"
+      >
         {{ item.value }}
       </span>
-      <Button
-        v-if="item.to"
-        class="ml-auto"
-        size="sm"
-        variant="ghost"
-        :icon-right="ArrowUpRight"
-        :to="item.to"
-      >
-        {{ item.action }}
-      </Button>
-      <Button
-        v-if="item.sample"
-        class="ml-auto"
-        size="sm"
-        variant="secondary"
-        :loading="sample.isPending.value && sample.variables.value === item.sample"
-        @click="sample.mutate(item.sample)"
-      >
-        {{ t('capabilities.worker.ready.sample') }}
-      </Button>
+      <div v-if="item.to || item.sample" class="ml-auto flex shrink-0 items-center gap-2">
+        <Button v-if="item.to" size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="item.to">
+          {{ item.action }}
+        </Button>
+        <Button
+          v-if="item.sample"
+          size="sm"
+          variant="secondary"
+          :loading="sample.isPending.value && sample.variables.value === item.sample"
+          @click="sample.mutate(item.sample)"
+        >
+          {{ t('capabilities.worker.ready.sample') }}
+        </Button>
+      </div>
     </li>
   </ul>
 </template>

@@ -43,7 +43,12 @@ function parts(record: TaskEvent): Part[] {
     .filter((key) => typeof body[key] === 'string')
     .map((key) => ({ type: 'text', text: body[key] as string }))
   if (Array.isArray(body.options))
-    found.push({ type: 'text', text: t('groups.tasks.events.options', { options: body.options.join('、') }) })
+    found.push({
+      type: 'text',
+      text: t('groups.tasks.events.options', {
+        options: body.options.join(t('groups.tasks.schedules.cadence.separator')),
+      }),
+    })
   if (typeof body.confirmed === 'boolean')
     found.push({
       type: 'text',
@@ -73,31 +78,31 @@ const error = computed(() => {
 </script>
 
 <template>
-  <li>
+  <li class="min-w-0">
     <button
       type="button"
-      class="flex w-full cursor-pointer items-baseline gap-3 rounded-sm px-1 py-2 text-left text-sm hover:bg-hover focus-visible:focus-ring"
+      class="flex w-full min-w-0 cursor-pointer items-baseline gap-2.5 px-2 py-2.5 text-left text-sm transition-colors duration-150 hover:bg-hover focus-visible:focus-ring"
       :aria-expanded="open"
       @click="emit('toggle')"
     >
       <ChevronRight
         :size="14"
-        class="shrink-0 self-center text-subtle transition-transform"
+        class="shrink-0 self-center text-subtle transition-transform duration-150"
         :class="open && 'rotate-90'"
         aria-hidden="true"
       />
-      <span class="w-24 shrink-0 text-xs text-muted tabular">
+      <span class="shrink-0 text-xs text-muted tabular">
         {{ formatDateTime(event.created, { timeZone, withSeconds: true }) }}
       </span>
-      <span class="shrink-0 text-ink">
+      <span class="min-w-0 flex-1 break-words text-ink">
         {{ label }}
         <template v-if="event.tool_name">
           ·
-          <span class="font-mono text-xs">{{ event.tool_name }}</span>
+          <span class="font-mono text-xs text-ink-2">{{ event.tool_name }}</span>
         </template>
       </span>
     </button>
-    <div v-if="open" class="flex flex-col gap-2 pb-3 pl-6 sm:pl-[8.75rem]">
+    <div v-if="open" class="flex min-w-0 flex-col gap-2 px-2 pb-3 pl-7">
       <Skeleton v-if="full.isPending.value" :lines="2" />
       <ErrorNote
         v-else-if="full.isError.value"

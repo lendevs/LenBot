@@ -60,7 +60,7 @@ const sourceOptions = computed(() => [
   { value: ALL, label: t('plugins.discover.allSources') },
   ...sources.value.map((item) => ({ value: item.kind, label: t(`plugins.discover.sources.${item.kind}`) })),
 ])
-const sourceTone = { official: 'brand', community: 'info', custom: 'neutral' } as const
+const sourceTone = { official: 'info', community: 'neutral', custom: 'neutral' } as const
 const loadedText = computed(() => {
   const loaded = sources.value.filter((item) => item.loaded_at !== null)
   if (!loaded.length) return ''
@@ -170,18 +170,21 @@ watch(sources, (value) => {
 <template>
   <div class="flex min-w-0 flex-col gap-4">
     <div class="flex flex-wrap items-center gap-2">
-      <Input
-        v-model="search"
-        type="search"
-        size="sm"
-        :icon="Search"
-        :placeholder="t('plugins.discover.search')"
-        :aria-label="t('plugins.discover.search')"
-        clearable
-        class="w-full sm:w-72"
-      />
-      <div class="w-full sm:w-36"><Select v-model="source" :options="sourceOptions" size="sm" /></div>
-      <div class="w-full sm:w-40"><Select v-model="category" :options="categories" size="sm" /></div>
+      <div class="w-full sm:w-72">
+        <Input
+          v-model="search"
+          type="search"
+          size="sm"
+          :icon="Search"
+          :placeholder="t('plugins.discover.search')"
+          :aria-label="t('plugins.discover.search')"
+          clearable
+        />
+      </div>
+      <div class="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+        <div class="min-w-0 sm:w-36"><Select v-model="source" :options="sourceOptions" size="sm" /></div>
+        <div class="min-w-0 sm:w-40"><Select v-model="category" :options="categories" size="sm" /></div>
+      </div>
       <div class="ml-auto flex items-center gap-1">
         <Button
           size="sm"
@@ -197,7 +200,7 @@ watch(sources, (value) => {
         </Button>
       </div>
     </div>
-    <p v-if="loadedText" class="text-xs text-muted">{{ loadedText }}</p>
+    <p v-if="loadedText" class="text-xs text-muted tabular">{{ loadedText }}</p>
 
     <ErrorNote
       v-if="readError"
@@ -214,7 +217,7 @@ watch(sources, (value) => {
     />
     <Skeleton v-if="market.isPending.value || (refresh.isPending.value && !entries.length)" :lines="6" />
     <EmptyState v-else-if="!entries.length" :icon="Search" :title="t('common.noResults')" compact />
-    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
+    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
       <article
         v-for="entry in entries"
         :key="entry.name"
@@ -230,7 +233,7 @@ watch(sources, (value) => {
                 {{ t(`plugins.discover.sources.${entry.source}`) }}
               </Badge>
             </div>
-            <p class="truncate text-xs text-subtle">
+            <p class="truncate text-xs text-subtle tabular">
               {{ entry.authors.join(t('personas.separator')) }} · v{{ entry.version }}
             </p>
           </div>
@@ -241,7 +244,7 @@ watch(sources, (value) => {
         <p class="line-clamp-3 text-sm text-muted">{{ entry.description }}</p>
         <p
           v-if="entry.update_available"
-          class="self-start rounded-sm bg-warning-bg px-2 py-0.5 text-xs text-warning"
+          class="self-start rounded-sm bg-warning-bg px-2 py-0.5 text-xs text-warning tabular"
         >
           {{ t('plugins.discover.updatable', { now: entry.installed_version ?? '?', next: entry.version }) }}
         </p>
@@ -254,27 +257,28 @@ watch(sources, (value) => {
         <div v-if="entry.capabilities.length" class="flex flex-wrap gap-1.5">
           <Badge v-for="item in entry.capabilities" :key="item">{{ item }}</Badge>
         </div>
-        <div class="mt-auto flex items-center gap-1 border-t border-line pt-3">
-          <Button size="sm" variant="ghost" class="-ml-2" @click="selected = entry">
-            {{ t('plugins.discover.details') }}
-          </Button>
-          <Button
-            v-if="entry.update_available && updatable(entry.name)"
-            size="sm"
-            variant="ghost"
-            :disabled="state.busy.value !== null"
-            @click="update(entry)"
-          >
-            {{ t('plugins.discover.updateTo', { version: entry.version }) }}
-          </Button>
-          <Button v-if="entry.installed" size="sm" class="ml-auto" @click="configure(entry)">
+        <div class="mt-auto flex items-center justify-between gap-2 border-t border-line pt-3">
+          <div class="-ml-2 flex flex-wrap items-center gap-1">
+            <Button size="sm" variant="ghost" @click="selected = entry">
+              {{ t('plugins.discover.details') }}
+            </Button>
+            <Button
+              v-if="entry.update_available && updatable(entry.name)"
+              size="sm"
+              variant="ghost"
+              :disabled="state.busy.value !== null"
+              @click="update(entry)"
+            >
+              {{ t('plugins.discover.updateTo', { version: entry.version }) }}
+            </Button>
+          </div>
+          <Button v-if="entry.installed" size="sm" @click="configure(entry)">
             {{ t('plugins.discover.configure') }}
           </Button>
           <Button
             v-else
             size="sm"
             variant="primary"
-            class="ml-auto"
             :disabled="state.busy.value !== null || !entry.compatible"
             :loading="state.busy.value === 'install'"
             @click="install(entry)"
@@ -304,13 +308,15 @@ watch(sources, (value) => {
         >
           {{ permissionText(selected) }}
         </p>
-        <dl class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
+        <dl
+          class="grid gap-x-6 gap-y-2 border-y border-line py-3 text-sm sm:grid-cols-[max-content_minmax(0,1fr)]"
+        >
           <dt class="text-muted">{{ t('plugins.discover.name') }}</dt>
-          <dd class="font-mono">{{ selected.name }}</dd>
+          <dd class="font-mono break-all text-ink">{{ selected.name }}</dd>
           <dt class="text-muted">{{ t('plugins.discover.source') }}</dt>
-          <dd>{{ t(`plugins.discover.sources.${selected.source}`) }}</dd>
+          <dd class="text-ink">{{ t(`plugins.discover.sources.${selected.source}`) }}</dd>
           <dt class="text-muted">{{ t('plugins.discover.version') }}</dt>
-          <dd>
+          <dd class="text-ink tabular">
             v{{ selected.version }}
             <template v-if="selected.ref">
               ·
@@ -318,14 +324,14 @@ watch(sources, (value) => {
             </template>
           </dd>
           <dt class="text-muted">{{ t('plugins.discover.license') }}</dt>
-          <dd>{{ selected.license }}</dd>
+          <dd class="text-ink">{{ selected.license }}</dd>
           <template v-if="selected.requires_lenbot">
             <dt class="text-muted">{{ t('plugins.discover.host') }}</dt>
-            <dd class="font-mono">{{ hostRange(selected.requires_lenbot) }}</dd>
+            <dd class="font-mono text-ink tabular">{{ hostRange(selected.requires_lenbot) }}</dd>
           </template>
           <template v-if="selected.chat_platforms">
             <dt class="text-muted">{{ t('plugins.version.chatPlatforms') }}</dt>
-            <dd>
+            <dd class="text-ink">
               {{
                 selected.chat_platforms
                   .map((platform) => t(`plugins.chatPlatforms.${platform}`))
@@ -335,7 +341,7 @@ watch(sources, (value) => {
           </template>
           <template v-if="selected.installed">
             <dt class="text-muted">{{ t('plugins.discover.here') }}</dt>
-            <dd>v{{ selected.installed_version ?? '?' }}</dd>
+            <dd class="text-ink tabular">v{{ selected.installed_version ?? '?' }}</dd>
           </template>
         </dl>
         <p v-if="!selected.compatible" class="rounded-md bg-error-bg px-3 py-2 text-sm text-error">

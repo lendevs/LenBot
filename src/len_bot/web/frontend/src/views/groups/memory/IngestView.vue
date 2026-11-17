@@ -52,7 +52,7 @@ const act = useMutation({
 </script>
 
 <template>
-  <div class="flex max-w-3xl flex-col gap-6">
+  <div class="flex max-w-3xl min-w-0 flex-col gap-6">
     <Skeleton v-if="ingest.isPending.value" :lines="3" />
     <ErrorNote
       v-else-if="ingest.isError.value"
@@ -72,7 +72,9 @@ const act = useMutation({
       />
       <div v-if="latest" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         <span class="text-ink-2">{{ t('groups.memory.ingest.latest') }}</span>
-        <Badge :tone="tones[latest.status] ?? 'neutral'">{{ status(latest.status) }}</Badge>
+        <Badge :tone="tones[latest.status] ?? 'neutral'" dot :pulse="latest.status === 'running'">
+          {{ status(latest.status) }}
+        </Badge>
         <span class="text-xs text-subtle tabular">
           {{ formatDateTime(latest.started, { timeZone }) }}
           <template v-if="latest.ended">– {{ formatDateTime(latest.ended, { timeZone }) }}</template>

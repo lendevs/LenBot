@@ -124,12 +124,12 @@ const actionLabel = computed(() =>
         <p v-if="page && !rows.length" class="text-sm text-muted">{{ t('common.noResults') }}</p>
         <ul
           v-if="rows.length"
-          class="flex max-h-80 list-none flex-col divide-y divide-line overflow-y-auto scrollbar-thin"
+          class="flex max-h-80 list-none flex-col divide-y divide-line overflow-y-auto border-y border-line scrollbar-thin"
         >
           <li v-for="item in rows" :key="item.record">
             <label
-              class="flex cursor-pointer items-start gap-2.5 py-2"
-              :class="item.excluded && 'cursor-default opacity-60'"
+              class="flex items-start gap-2.5 px-1 py-2.5 transition-colors"
+              :class="item.excluded ? 'cursor-default opacity-60' : 'cursor-pointer hover:bg-hover'"
             >
               <span class="pt-0.5">
                 <Checkbox
@@ -159,7 +159,7 @@ const actionLabel = computed(() =>
         >
           {{ t('groups.memory.more') }}
         </Button>
-        <p v-if="chosen.size" class="text-xs text-muted">
+        <p v-if="chosen.size" class="text-xs text-muted tabular">
           {{ t('groups.memory.remove.chosen', { n: chosen.size }) }}
           <template v-if="chosen.size >= LIMIT">{{ t('groups.memory.remove.limit') }}</template>
         </p>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   Check,
   ChevronDown,
+  ChevronsUpDown,
   Ellipsis,
   FlaskConical,
   Moon,
@@ -36,23 +37,27 @@ import { roleLabel, useRoleSwitch, useRoles } from './roleSwitch'
 import { useSessionActions } from './session/useSessionActions'
 import { statusTones, useStatusLabel } from './status'
 
-const props = defineProps<{ item: HostScene }>()
+const props = defineProps<{ item: HostScene; switchable?: boolean }>()
+const emit = defineEmits<{ switch: [] }>()
 
 const { t } = useI18n()
 const router = useRouter()
 const client = useQueryClient()
 const statusLabel = useStatusLabel()
+const openId = useId()
 const quieting = ref(false)
 
 const scene = computed(() => props.item.scene)
 const name = computed(() => groupLabel(scene.value))
+const groupId = computed(() =>
+  (sceneTitles as Record<string, string>)[scene.value] ? scene.value.split(':').slice(2).join(':') : '',
+)
+const platform = computed(() =>
+  scene.value.startsWith('onebot:') ? '' : t(`chatPlatforms.${scene.value.split(':', 1)[0]}`),
+)
 const members = computed(() => (host.members as Record<string, number>)[scene.value])
-const details = computed(() =>
-  [
-    scene.value.startsWith('onebot:') ? '' : t(`chatPlatforms.${scene.value.split(':', 1)[0]}`),
-    (sceneTitles as Record<string, string>)[scene.value] ? scene.value.split(':').slice(2).join(':') : '',
-    members.value === undefined ? '' : t('groups.members', { n: formatNumber(members.value) }),
-  ].filter(Boolean),
+const memberText = computed(() =>
+  members.value === undefined ? '' : t('groups.members', { n: formatNumber(members.value) }),
 )
 
 const control = useQuery({
@@ -173,46 +178,85 @@ const actions = computed<MenuEntry[]>(() => [
 </script>
 
 <template>
-  <header class="flex flex-wrap items-center gap-x-4 gap-y-3">
-    <span class="flex max-sm:hidden" aria-hidden="true">
-      <Avatar :name="name" shape="square" :size="44" />
-    </span>
-    <div class="min-w-0 flex-1">
-      <h1 class="truncate text-xl font-semibold">{{ name }}</h1>
-      <p class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-        <span class="inline-flex items-center gap-1.5">
-          <StatusDot :tone="statusTones[item.chat_status.status]" />
-          {{ statusLabel(item.chat_status, item.timezone) }}
-        </span>
-        <span v-for="detail in details" :key="detail" class="tabular">{{ detail }}</span>
-        <DropdownMenu :items="roleItems" align="start">
+  <header class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4">
+    <div class="flex min-w-0 flex-1 items-center gap-3.5 sm:min-w-64">
+      <span class="flex max-sm:hidden" aria-hidden="true">
+        <Avatar :name="name" shape="square" :size="42" />
+      </span>
+      <div class="min-w-0 flex-1">
+        <h1 class="min-w-0 text-lg font-semibold text-ink sm:text-xl">
           <button
+            v-if="switchable"
             type="button"
-            class="-mx-1 inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md px-1 transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
-            :aria-label="t('groups.role.label', { name: item.persona.name })"
+            class="group -mx-1.5 -my-0.5 inline-flex max-w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 text-left transition-colors hover:bg-hover focus-visible:focus-ring"
+            :aria-label="t('groups.pick')"
+            @click="emit('switch')"
           >
-            <UserRound :size="14" aria-hidden="true" />
-            <span class="truncate">{{ item.persona.name }}</span>
-            <ChevronDown :size="13" aria-hidden="true" />
+            <span class="flex shrink-0 sm:hidden" aria-hidden="true">
+              <Avatar :name="name" shape="square" :size="26" />
+            </span>
+            <span class="truncate">{{ name }}</span>
+            <ChevronsUpDown
+              :size="16"
+              class="shrink-0 text-muted transition-colors group-hover:text-ink"
+              aria-hidden="true"
+            />
           </button>
-        </DropdownMenu>
-        <Badge v-if="item.persona_switch" tone="warning" dot pulse>
-          {{ t('groups.settings.role.waiting', { name: item.persona_switch.name }) }}
-        </Badge>
-      </p>
+          <span v-else class="block truncate">{{ name }}</span>
+        </h1>
+        <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted sm:text-sm">
+          <span class="inline-flex items-center gap-1.5 text-ink-2">
+            <StatusDot :tone="statusTones[item.chat_status.status]" />
+            {{ statusLabel(item.chat_status, item.timezone) }}
+          </span>
+          <span v-if="platform" class="inline-flex items-center gap-2 whitespace-nowrap">
+            <span class="text-subtle" aria-hidden="true">·</span>
+            <span>{{ platform }}</span>
+          </span>
+          <span v-if="groupId" class="inline-flex items-center gap-2 whitespace-nowrap">
+            <span class="text-subtle" aria-hidden="true">·</span>
+            <span class="font-mono text-xs tabular">{{ groupId }}</span>
+          </span>
+          <span v-if="memberText" class="inline-flex items-center gap-2 whitespace-nowrap">
+            <span class="text-subtle" aria-hidden="true">·</span>
+            <span class="tabular">{{ memberText }}</span>
+          </span>
+          <span class="inline-flex min-w-0 items-center gap-2">
+            <span class="shrink-0 text-subtle" aria-hidden="true">·</span>
+            <DropdownMenu :items="roleItems" align="start">
+              <button
+                type="button"
+                class="-mx-1 inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+                :aria-label="t('groups.role.label', { name: item.persona.name })"
+              >
+                <UserRound :size="13" aria-hidden="true" />
+                <span class="truncate">{{ item.persona.name }}</span>
+                <ChevronDown :size="13" aria-hidden="true" />
+              </button>
+            </DropdownMenu>
+          </span>
+          <Badge v-if="item.persona_switch" tone="warning" dot pulse>
+            {{ t('groups.settings.role.waiting', { name: item.persona_switch.name }) }}
+          </Badge>
+        </div>
+      </div>
     </div>
-    <div class="flex items-center gap-2">
-      <SegmentedControl
-        v-model="mode"
-        :options="modes"
-        size="sm"
-        :disabled="chat.isPending.value || !opened"
-        :label="t('overview.groups.chat', { name })"
-      />
-      <label class="inline-flex cursor-pointer items-center gap-2.5 text-sm font-medium text-ink-2">
-        {{ t('groups.open') }}
-        <Switch v-model="opened" :loading="open.isPending.value" />
-      </label>
+    <div class="flex flex-wrap items-center gap-2.5 max-sm:justify-between">
+      <div class="flex flex-wrap items-center gap-2.5">
+        <SegmentedControl
+          v-model="mode"
+          :options="modes"
+          size="sm"
+          :disabled="chat.isPending.value || !opened"
+          :label="t('overview.groups.chat', { name })"
+        />
+        <div class="inline-flex items-center gap-2">
+          <label :for="openId" class="cursor-pointer text-sm font-medium text-ink-2 select-none">
+            {{ t('groups.open') }}
+          </label>
+          <Switch :id="openId" v-model="opened" :loading="open.isPending.value" />
+        </div>
+      </div>
       <DropdownMenu :items="actions">
         <IconButton :icon="Ellipsis" :label="t('groups.actions')" variant="secondary" />
       </DropdownMenu>

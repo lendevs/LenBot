@@ -21,6 +21,7 @@ import { useProfile } from './profileForm'
 defineProps<{ role: PersonaRole; scene: string }>()
 
 const { t } = useI18n()
+const groupId = (value: string) => value.split(':').slice(2).join(':') || value
 const form = useProfile()
 const context = ref('0')
 const contextOptions = computed(() =>
@@ -91,39 +92,49 @@ async function end() {
 
 <template>
   <div v-if="trial" class="flex min-w-0 flex-col gap-4">
-    <div class="flex flex-wrap items-center gap-2">
-      <h3 class="min-w-0 flex-1 truncate text-base font-semibold">
-        {{ t('personas.detail.trial.running', { name: trial.persona, group: groupLabel(trial.scene) }) }}
-      </h3>
+    <div class="flex flex-wrap items-center gap-2 border-b border-line pb-3">
+      <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-2">
+        <h3 class="min-w-0 truncate text-base font-semibold text-ink">
+          {{ t('personas.detail.trial.running', { name: trial.persona, group: groupLabel(trial.scene) }) }}
+        </h3>
+        <span
+          v-if="groupId(trial.scene) !== groupLabel(trial.scene)"
+          class="shrink-0 font-mono text-xs text-subtle tabular"
+        >
+          {{ groupId(trial.scene) }}
+        </span>
+      </div>
       <Badge v-if="trial.memory_plugin">
         {{ t('playground.nativeMemory', { name: trial.memory_plugin }) }}
       </Badge>
       <Badge v-if="changed" tone="warning">{{ t('personas.detail.trial.changed') }}</Badge>
-      <Button
-        v-if="changed"
-        size="sm"
-        :icon="RotateCcw"
-        :loading="restart.isPending.value"
-        :disabled="!scene || Boolean(problem)"
-        @click="restart.mutate({ id: trial.id, scene })"
-      >
-        {{ t('personas.detail.trial.restart') }}
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        :icon-right="ArrowUpRight"
-        :to="{ name: 'host-trials', query: { trial: trial.id } }"
-      >
-        {{ t('personas.detail.trial.openPlayground') }}
-      </Button>
-      <Button size="sm" :icon="Square" :loading="stop.isPending.value" @click="end">
-        {{ t('personas.detail.trial.stop') }}
-      </Button>
+      <div class="flex flex-wrap items-center gap-2">
+        <Button
+          v-if="changed"
+          size="sm"
+          :icon="RotateCcw"
+          :loading="restart.isPending.value"
+          :disabled="!scene || Boolean(problem)"
+          @click="restart.mutate({ id: trial.id, scene })"
+        >
+          {{ t('personas.detail.trial.restart') }}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          :icon-right="ArrowUpRight"
+          :to="{ name: 'host-trials', query: { trial: trial.id } }"
+        >
+          {{ t('personas.detail.trial.openPlayground') }}
+        </Button>
+        <Button size="sm" :icon="Square" :loading="stop.isPending.value" @click="end">
+          {{ t('personas.detail.trial.stop') }}
+        </Button>
+      </div>
     </div>
     <ChatPanel :key="trial.id" :source="trialSource(trial.id)" />
   </div>
-  <form v-else class="flex max-w-3xl flex-col gap-6" @submit.prevent="start.mutate(scene)">
+  <form v-else class="flex max-w-2xl flex-col gap-6" @submit.prevent="start.mutate(scene)">
     <FormSection :title="t('personas.detail.trial.title')">
       <Field :label="t('personas.detail.trial.context')">
         <Select v-model="context" :options="contextOptions" />

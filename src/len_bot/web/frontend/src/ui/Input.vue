@@ -48,8 +48,15 @@ defineExpose({ focus: () => input.value?.focus(), select: () => input.value?.sel
     :class="[controlFrame, controlHeight[size]]"
     :data-invalid="field.invalid.value || undefined"
     :data-disabled="field.disabled.value || undefined"
+    :data-readonly="readonly || undefined"
   >
-    <component :is="icon" v-if="icon" :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
+    <component
+      :is="icon"
+      v-if="icon"
+      :size="size === 'sm' ? 15 : 16"
+      class="shrink-0 text-subtle"
+      aria-hidden="true"
+    />
     <slot name="prefix" />
     <input
       :id="field.id.value"

@@ -6,7 +6,7 @@ import { ArrowRight, MessagesSquare, Plus, Search } from '@lucide/vue'
 import { hostApi, type HostState, type WakeLevel } from '../../api/host'
 import { host, readHostState } from '../../api/hostStore'
 import { formatNumber } from '../../i18n/format'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, groupSecondaryId } from '../../layouts/shell/scenes'
 import Avatar from '../../ui/Avatar.vue'
 import Button from '../../ui/Button.vue'
 import EmptyState from '../../ui/EmptyState.vue'
@@ -77,14 +77,21 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
 <template>
   <section class="flex min-w-0 flex-col gap-3">
     <div class="flex items-center justify-between gap-2">
-      <h2 class="text-base font-semibold">{{ t('overview.groups.title') }}</h2>
+      <h2 class="flex items-center gap-2 text-base font-semibold text-ink">
+        {{ t('overview.groups.title') }}
+        <span v-if="state.scenes.length" class="text-xs font-normal text-muted tabular">
+          {{ formatNumber(state.scenes.length) }}
+        </span>
+      </h2>
       <Button size="sm" variant="ghost" :icon-right="ArrowRight" :to="groupsTarget()">
         {{ t('overview.groups.manage') }}
       </Button>
     </div>
-    <EmptyState v-if="!state.scenes.length" :icon="MessagesSquare" :title="t('groups.empty')" compact>
-      <Button variant="primary" size="sm" :icon="Plus" :to="groupsTarget()">{{ t('groups.add') }}</Button>
-    </EmptyState>
+    <div v-if="!state.scenes.length" class="border-y border-line">
+      <EmptyState :icon="MessagesSquare" :title="t('groups.empty')" compact>
+        <Button variant="primary" size="sm" :icon="Plus" :to="groupsTarget()">{{ t('groups.add') }}</Button>
+      </EmptyState>
+    </div>
     <template v-else>
       <Input
         v-if="state.scenes.length > 4"
@@ -96,74 +103,85 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
         :placeholder="t('groups.search')"
         :aria-label="t('groups.search')"
       />
-      <ul class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface">
-        <li v-for="item in shown" :key="item.scene" class="flex min-w-0 items-center gap-3 px-4 py-2.5">
-          <RouterLink
-            :to="groupsTarget(item.scene)"
-            class="group flex min-w-0 flex-1 items-center gap-3 rounded-md focus-visible:focus-ring"
-          >
-            <Avatar :name="groupLabel(item.scene)" shape="square" :size="32" />
-            <span class="min-w-0 flex-1">
-              <span
-                class="block truncate text-sm font-medium text-ink group-hover:underline"
-                :class="(!item.chat_enabled || !isOpen(item)) && 'text-muted'"
-              >
-                {{ groupLabel(item.scene) }}
-              </span>
-              <span class="flex min-w-0 items-center gap-1.5 text-xs text-muted">
-                <StatusDot :tone="statusTones[item.chat_status.status]" />
-                <span class="truncate">
-                  {{
-                    [
-                      statusLabel(item.chat_status, item.timezone),
-                      members(item.scene) === undefined
-                        ? ''
-                        : t('groups.members', { n: formatNumber(members(item.scene)!) }),
-                      item.persona.name,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')
-                  }}
+      <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+        <li v-for="item in shown" :key="item.scene" class="flex min-w-0 flex-col gap-2.5 py-3">
+          <div class="flex min-w-0 items-center gap-3">
+            <RouterLink
+              :to="groupsTarget(item.scene)"
+              class="group link-plain flex min-w-0 flex-1 items-center gap-3 rounded-md focus-visible:focus-ring"
+            >
+              <Avatar :name="groupLabel(item.scene)" shape="square" :size="32" />
+              <span class="min-w-0 flex-1">
+                <span class="flex min-w-0 items-baseline gap-2">
+                  <span
+                    class="truncate text-sm font-medium transition-colors group-hover:text-primary"
+                    :class="!item.chat_enabled || !isOpen(item) ? 'text-muted' : 'text-ink'"
+                  >
+                    {{ groupLabel(item.scene) }}
+                  </span>
+                  <span
+                    v-if="groupSecondaryId(item.scene)"
+                    class="shrink-0 font-mono text-xs text-subtle tabular"
+                  >
+                    {{ groupSecondaryId(item.scene) }}
+                  </span>
+                </span>
+                <span class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted tabular">
+                  <StatusDot :tone="statusTones[item.chat_status.status]" />
+                  <span class="truncate">
+                    {{
+                      [
+                        statusLabel(item.chat_status, item.timezone),
+                        members(item.scene) === undefined
+                          ? ''
+                          : t('groups.members', { n: formatNumber(members(item.scene)!) }),
+                        item.persona.name,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                    }}
+                  </span>
                 </span>
               </span>
-            </span>
-          </RouterLink>
-          <SegmentedControl
-            :model-value="levelOf(item)"
-            :options="levels"
-            size="sm"
-            class="max-sm:hidden"
-            :disabled="level.isPending.value || !isOpen(item)"
-            :label="t('overview.groups.level', { name: groupLabel(item.scene) })"
-            @update:model-value="
-              (value) => value && level.mutate({ scene: item.scene, value: value as WakeLevel })
-            "
-          />
-          <button
-            type="button"
-            class="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md border px-3 text-xs font-medium transition-colors focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50"
-            :class="
-              chatOn(item)
-                ? 'border-primary bg-primary text-on-primary hover:brightness-95'
-                : 'border-line-strong bg-fill text-ink-2 hover:bg-hover'
-            "
-            :aria-pressed="chatOn(item)"
-            :disabled="!state.connection.accepting || switching(item.scene) || !isOpen(item)"
-            :title="t(chatOn(item) ? 'overview.groups.chatHint' : 'overview.groups.pluginsHint')"
-            :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
-            @click="chat.mutate({ scene: item.scene, enabled: !item.chat_enabled })"
-          >
-            {{ t(chatOn(item) ? 'overview.groups.modeChat' : 'overview.groups.modePlugins') }}
-          </button>
-          <Switch
-            :model-value="isOpen(item)"
-            :loading="opening(item.scene)"
-            :disabled="!state.connection.accepting"
-            :aria-label="t('overview.groups.open', { name: groupLabel(item.scene) })"
-            @update:model-value="(enabled: boolean) => open.mutate({ scene: item.scene, enabled })"
-          />
+            </RouterLink>
+            <Switch
+              :model-value="isOpen(item)"
+              :loading="opening(item.scene)"
+              :disabled="!state.connection.accepting"
+              :aria-label="t('overview.groups.open', { name: groupLabel(item.scene) })"
+              @update:model-value="(enabled: boolean) => open.mutate({ scene: item.scene, enabled })"
+            />
+          </div>
+          <div class="flex min-w-0 flex-wrap items-center gap-2 pl-11">
+            <SegmentedControl
+              :model-value="levelOf(item)"
+              :options="levels"
+              size="sm"
+              :disabled="level.isPending.value || !isOpen(item)"
+              :label="t('overview.groups.level', { name: groupLabel(item.scene) })"
+              @update:model-value="
+                (value) => value && level.mutate({ scene: item.scene, value: value as WakeLevel })
+              "
+            />
+            <button
+              type="button"
+              class="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-10"
+              :class="
+                chatOn(item)
+                  ? 'border-line-strong bg-surface-raised text-ink shadow-card hover:bg-hover'
+                  : 'border-line bg-fill text-muted hover:bg-hover hover:text-ink'
+              "
+              :aria-pressed="chatOn(item)"
+              :disabled="!state.connection.accepting || switching(item.scene) || !isOpen(item)"
+              :title="t(chatOn(item) ? 'overview.groups.chatHint' : 'overview.groups.pluginsHint')"
+              :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
+              @click="chat.mutate({ scene: item.scene, enabled: !item.chat_enabled })"
+            >
+              {{ t(chatOn(item) ? 'overview.groups.modeChat' : 'overview.groups.modePlugins') }}
+            </button>
+          </div>
         </li>
-        <li v-if="!shown.length" class="px-4 py-6 text-center text-sm text-muted">
+        <li v-if="!shown.length" class="py-6 text-center text-sm text-muted">
           {{ t('common.noResults') }}
         </li>
       </ul>

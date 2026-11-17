@@ -46,6 +46,12 @@ export interface ModelsDraft {
 
 export const chatRoles: ChatRole[] = ['mind', 'vision', 'memory', 'learner', 'worker']
 
+/** Group ID without the platform prefix, omitted when `groupLabel` already falls back to it. */
+export function sceneSecondaryId(scene: string): string {
+  const id = scene.split(':').slice(2).join(':') || scene
+  return groupLabel(scene) === id ? '' : id
+}
+
 /** The saved key is only reused for the same protocol, address and proxy. */
 const credentials = (row: { api: string; base_url: string; proxy: string | null }) =>
   JSON.stringify([row.api, trimUrl(row.base_url), trimUrl(row.proxy)])
