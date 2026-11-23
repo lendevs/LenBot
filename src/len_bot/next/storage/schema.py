@@ -27,6 +27,8 @@ CREATE TABLE notices (
     platform_id TEXT, time REAL NOT NULL, received_at REAL NOT NULL, raw TEXT NOT NULL, body TEXT NOT NULL
 );
 CREATE INDEX scene_notices ON notices(scene,id);
+CREATE INDEX notices_scene_received ON notices(scene,received_at,id);
+CREATE INDEX scene_group_bans ON notices(scene,time,id) WHERE kind='group_ban';
 CREATE INDEX recalled_messages ON notices(scene,platform_id)
     WHERE kind IN ('group_recall','friend_recall');
 CREATE TABLE mind_entries (
@@ -98,11 +100,16 @@ CREATE INDEX message_overview ON messages(scene,
     json_extract(body,'$.send_status'),raw IS NULL);
 CREATE INDEX message_failed_sends ON messages(scene,json_extract(body,'$.time'),json_extract(body,'$.send_status'))
     WHERE raw IS NULL AND json_extract(body,'$.send_status') IN ('failed','unconfirmed');
+CREATE INDEX message_scene_seq ON messages(scene,seq);
+CREATE INDEX message_scene_received ON messages(scene,received_at,seq)
+    WHERE raw IS NOT NULL AND received_at IS NOT NULL;
 CREATE INDEX message_scene_time ON messages(scene,json_extract(body,'$.time'),seq);
 CREATE INDEX message_sender_time ON messages(scene,json_extract(body,'$.sender.uid'),json_extract(body,'$.time'),seq);
 CREATE INDEX model_call_expiry ON model_calls(ended,id);
 CREATE INDEX model_call_mind_usage ON model_calls(scene,role,id) WHERE plugin IS NULL;
+CREATE INDEX model_call_plugin ON model_calls(plugin,id) WHERE plugin IS NOT NULL;
 CREATE INDEX turns_scene_time ON turns(scene,started);
+CREATE INDEX turns_started ON turns(started,scene,id);
 CREATE INDEX turns_expiry ON turns(ended,id);
 """
 

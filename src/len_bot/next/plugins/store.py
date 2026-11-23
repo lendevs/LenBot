@@ -18,6 +18,7 @@ CREATE TABLE plugin_events (
     content TEXT NOT NULL, created REAL NOT NULL, delivered_at REAL
 );
 CREATE INDEX plugin_events_pending ON plugin_events(scene,id) WHERE delivered_at IS NULL;
+CREATE INDEX plugin_events_scene ON plugin_events(scene,id);
 CREATE TABLE plugin_memory_progress (
     scene TEXT NOT NULL, plugin TEXT NOT NULL, through_seq INTEGER NOT NULL, updated REAL NOT NULL,
     PRIMARY KEY(scene, plugin)

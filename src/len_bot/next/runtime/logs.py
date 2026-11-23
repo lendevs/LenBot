@@ -68,7 +68,11 @@ def current_context() -> dict[str, object]:
 
 def error_text(error: BaseException) -> str:
     """The one-line form stored in database error columns and shown to models."""
-    return f'{type(error).__name__}: {error}'
+    detail = str(error)
+    if not detail and error.__cause__ is not None:
+        cause = f'{type(error.__cause__).__name__}: {error.__cause__}'.rstrip(': ')
+        detail = cause
+    return f'{type(error).__name__}: {detail}'
 
 
 def error_fields(error: BaseException) -> dict[str, str]:
@@ -199,14 +203,48 @@ def log_files(directory: Path) -> list[Path]:
     return ([current] if current.exists() else []) + rotated
 
 
+def _reverse_lines(path: Path, *, chunk_bytes: int = 65536) -> Iterator[bytes]:
+    """Yield raw UTF-8 lines from the end of ``path`` without loading the whole file into memory."""
+    with path.open('rb') as handle:
+        handle.seek(0, 2)
+        position = handle.tell()
+        tail = b''
+        while position > 0:
+            read_size = min(chunk_bytes, position)
+            position -= read_size
+            handle.seek(position)
+            block = handle.read(read_size) + tail
+            parts = block.split(b'\n')
+            tail = parts[0]
+            for raw in reversed(parts[1:]):
+                line = raw.rstrip(b'\r')
+                if line:
+                    yield line
+        line = tail.rstrip(b'\r')
+        if line:
+            yield line
+
+
 def read_records(directory: Path, *, limit: int, match: dict[str, str] | None = None,
-                 level: str | None = None) -> list[dict]:
+                 level: str | None = None, files: list[Path] | None = None) -> list[dict]:
     """Newest matching records; ``match`` compares string forms of top-level fields."""
     levels = {'INFO': 20, 'WARNING': 30, 'ERROR': 40}
+    level_needles: tuple[bytes, ...] = ()
+    if level == 'ERROR':
+        level_needles = (b'"ERROR"', b'"CRITICAL"')
+    elif level == 'WARNING':
+        level_needles = (b'"WARNING"', b'"ERROR"', b'"CRITICAL"')
+    key_needles = [f'"{key}"'.encode('utf-8') for key in (match or ())]
     found: list[dict] = []
-    for path in log_files(directory):
-        for line in reversed(path.read_text(encoding='utf-8').splitlines()):
-            entry = json.loads(line)
+    for path in (log_files(directory) if files is None else files):
+        if not path.is_file():
+            continue
+        for raw in _reverse_lines(path):
+            if level_needles and not any(needle in raw for needle in level_needles):
+                continue
+            if key_needles and not all(needle in raw for needle in key_needles):
+                continue
+            entry = json.loads(raw)
             if level is not None and logging.getLevelName(entry['level']) < levels[level]:
                 continue
             if match and any(str(entry.get(key)) != value for key, value in match.items()):
@@ -217,13 +255,15 @@ def read_records(directory: Path, *, limit: int, match: dict[str, str] | None = 
     return found
 
 
-def recorded_errors(directory: Path, event: str, owner: str, *, limit: int = 20) -> dict[str, list[dict]]:
+def recorded_errors(directory: Path, event: str, owner: str, *, limit: int = 20,
+                    max_files: int = 4) -> dict[str, list[dict]]:
     """Errors logged under ``event`` before this process, per ``owner`` field value, oldest first.
 
     Seeds the in-memory error lists of plugins and MCP services so a restart keeps their history.
     """
     found: dict[str, list[dict]] = {}
-    for entry in read_records(directory, limit=1000, match={'event': event}):
+    recent_files = log_files(directory)[:max_files]
+    for entry in read_records(directory, limit=1000, match={'event': event}, files=recent_files):
         name = entry.get(owner)
         items = found.setdefault(str(name), [])
         if name is None or len(items) >= limit:

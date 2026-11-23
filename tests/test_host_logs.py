@@ -8,8 +8,8 @@ import logging
 
 import pytest
 
-from len_bot.next.runtime.logs import (REDACTED, SECRETS, LoggingSettings, add_context, configure_logging, log_context,
-                                       log_event, read_records, recorded_errors)
+from len_bot.next.runtime.logs import (REDACTED, SECRETS, LoggingSettings, add_context, configure_logging, error_text,
+                                       log_context, log_event, read_records, recorded_errors)
 
 
 def _lines(directory):
@@ -99,3 +99,26 @@ def test_console_line_shows_recorded_error_text_without_a_type(capsys, tmp_path)
     err = capsys.readouterr().err
     assert 'Logging error' not in err
     assert 'platform_error OSError: 地址已被占用' in err and 'tool_failed ValueError: synthetic' in err
+
+
+def test_reverse_chunked_read_preserves_multibyte_lines_and_error_cause(tmp_path):
+    settings = LoggingSettings(directory=tmp_path / 'logs')
+    logger = logging.getLogger('len_bot.next.synthetic')
+    padding = '中文多字节边界测试' * 80
+    with configure_logging(settings, (), console=False):
+        for index in range(160):
+            with log_context(turn_id=f'turn-{index}'):
+                log_event(logger, 'filler' if index != 7 else 'target_event',
+                          level=logging.ERROR if index == 7 else logging.INFO, detail=f'{index}:{padding}')
+    assert (settings.directory / 'lenbot.jsonl').stat().st_size > 131072
+    found = read_records(settings.directory, limit=5, match={'event': 'target_event'}, level='ERROR')
+    assert [item['turn_id'] for item in found] == ['turn-7']
+    assert found[0]['detail'].startswith('7:中文多字节边界测试')
+
+    try:
+        try:
+            raise OSError('peer reset')
+        except OSError as cause:
+            raise TimeoutError() from cause
+    except TimeoutError as wrapped:
+        assert error_text(wrapped) == 'TimeoutError: OSError: peer reset'

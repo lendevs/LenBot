@@ -29,7 +29,7 @@ from .schema import business_script, create_database, expected_tables, require_c
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 FORMAT_UPGRADE = '请停止实例后执行 uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot。'
 MAX_SEARCH_TERMS = 8
 
@@ -105,8 +105,10 @@ class Store:
             connect(path, readonly=readonly, threaded=True),
             reader=None if readonly else (lambda: connect(path, readonly=True, threaded=True)))
         self.db.row_factory = sqlite3.Row
-        # The database thread: chat-path writes fsync there instead of on the event loop.
+        # The database write thread: chat-path writes fsync there instead of on the event loop.
+        # Read snapshots run on their own pool so a multi-row read never queues behind a write fsync or another read.
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
+        self._read_worker = ThreadPoolExecutor(max_workers=4, thread_name_prefix='lenbot-db-read')
         try:
             if state is not None and state[2]:
                 require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION,
@@ -116,6 +118,8 @@ class Store:
                     raise ValueError(f'Existing business database is not initialized: {path}')
                 create_database(self.db, FORMAT_VERSION)
         except BaseException:
+            self._worker.shutdown(wait=True)
+            self._read_worker.shutdown(wait=True)
             self.db.close()
             raise
 
@@ -124,6 +128,7 @@ class Store:
 
     def __exit__(self, *_: object) -> None:
         self._worker.shutdown(wait=True)
+        self._read_worker.shutdown(wait=True)
         self.db.close()
 
     def _held(self, function: Callable, args: tuple, kwargs: dict):
@@ -135,12 +140,12 @@ class Store:
             return function(*args, **kwargs)
 
     async def read[T](self, function: Callable[..., T], /, *args, **kwargs) -> T:
-        """Run one read-only store call on the database thread without the write connection.
+        """Run one read-only store call on the read pool without the write connection.
 
         It reads one consistent snapshot on a read connection, so a long scan does not hold up
         writes from the event loop; a write inside it fails.
         """
-        return await self._run(self._read, function, args, kwargs)
+        return await self._run(self._read, function, args, kwargs, executor=self._read_worker)
 
     async def call[T](self, function: Callable[..., T], /, *args, **kwargs) -> T:
         """Run one store call (a ``Store`` method or a sub-store's) on the database thread.
@@ -149,13 +154,14 @@ class Store:
         awaiting task is cancelled, the write still commits and the cancellation is delivered right
         after, the same state a synchronous call followed by the next await would leave.
         """
-        return await self._run(self._held, function, args, kwargs)
+        return await self._run(self._held, function, args, kwargs, executor=self._worker)
 
-    async def _run(self, runner: Callable, function: Callable, args: tuple, kwargs: dict):
+    async def _run(self, runner: Callable, function: Callable, args: tuple, kwargs: dict, *,
+                   executor: ThreadPoolExecutor):
         # The caller's log context (scene, turn) follows the call onto the database thread.
         context = contextvars.copy_context()
         future = asyncio.get_running_loop().run_in_executor(
-            self._worker, partial(context.run, runner, function, args, kwargs))
+            executor, partial(context.run, runner, function, args, kwargs))
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:

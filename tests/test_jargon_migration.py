@@ -51,6 +51,32 @@ def test_format_2_upgrade_builds_the_mind_usage_index(tmp_path):
     with Store(path) as store:
         assert store.last_mind_usage('test:group:1') == ({'from': 'chat'}, {})
 
+
+def test_format_3_upgrade_builds_format_4_indexes(tmp_path):
+    path = tmp_path / 'business.db'
+    new_indexes = (
+        'CREATE INDEX notices_scene_received ON notices(scene,received_at,id);\n',
+        "CREATE INDEX scene_group_bans ON notices(scene,time,id) WHERE kind='group_ban';\n",
+        'CREATE INDEX message_scene_seq ON messages(scene,seq);\n',
+        'CREATE INDEX message_scene_received ON messages(scene,received_at,seq)\n    WHERE raw IS NOT NULL AND received_at IS NOT NULL;\n',
+        'CREATE INDEX model_call_plugin ON model_calls(plugin,id) WHERE plugin IS NOT NULL;\n',
+        'CREATE INDEX turns_started ON turns(started,scene,id);\n',
+        'CREATE INDEX plugin_events_scene ON plugin_events(scene,id);\n',
+    )
+    script = business_script()
+    for statement in new_indexes:
+        assert statement in script, statement
+        script = script.replace(statement, '')
+    with closing(sqlite3.connect(path)) as db:
+        db.executescript('PRAGMA application_id=1279413809; PRAGMA user_version=3;\n' + script)
+    assert migrate_business_database(path)
+    assert not migrate_business_database(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == FORMAT_VERSION
+        indexes = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert {'notices_scene_received', 'scene_group_bans', 'message_scene_seq',
+                'message_scene_received', 'model_call_plugin', 'turns_started', 'plugin_events_scene'} <= indexes
+
 def test_jargon_upgrade_preserves_manual_controls_and_queues_old_records(tmp_path):
     path = tmp_path / 'business.db'
     old = business_script().replace('    judgment TEXT, last_evaluated_seq INTEGER NOT NULL DEFAULT 0,\n', '')
