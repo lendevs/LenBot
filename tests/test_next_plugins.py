@@ -834,3 +834,53 @@ async def test_plugin_test_enforces_declared_permissions(tmp_path):
             await ctx.memory(scene, {"action": "search", "query": "x"})
         with pytest.raises(PermissionError, match="声明 delegate"):
             await bot.host.delegate("strictperm", scene, "onebot:70001", "g", "d", "c", [])
+
+
+@pytest.mark.asyncio
+async def test_paused_and_reopened_scenes_clear_backlog_plugin_events(tmp_path):
+    from len_bot.next.chat.attention import SceneRunner
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.plugins.store import PluginStore
+    from len_bot.next.storage.store import Store
+
+    root = _root(tmp_path, {"paths": ["plugins"], "sample": {}}, ["sample"])
+    host_config = load_host_config(root)
+    scene = "onebot:group:80001"
+    scene_config = host_config.scene_config(scene)
+    scene_config.persona.mkdir(parents=True, exist_ok=True)
+    (scene_config.persona / "persona.yaml").write_text(json.dumps({
+        "id": "synthetic", "name": "合成角色", "brief": "测试。", "behavior": "正常。",
+        "self_reference": ["我"], "aliases": [], "tools": ["say"], "skills": [], "styles": [],
+    }, ensure_ascii=False), encoding="utf-8")
+    for name, body in [("voice.md", "简短。"), ("boundaries.md", "无。"), ("examples.yaml", "[]\n")]:
+        (scene_config.persona / name).write_text(body, encoding="utf-8")
+    persona = load_persona(scene_config.persona)
+    with Store(host_config.database) as store:
+        plugin_store = PluginStore(store)
+        async with ChatModel(scene_config.model_settings("mind")) as mind:
+            runner = SceneRunner(Chat(scene_config, persona, store, mind), lambda _: None)
+            plugin_store.add_plugin_event(scene, "sample", "reply", "暂停前遗留事件 1")
+            plugin_store.add_plugin_event(scene, "sample", "event", "暂停前遗留事件 2")
+            assert len(plugin_store.pending_plugin_events(scene)) == 2
+
+            await runner.set_paused(True)
+            assert plugin_store.pending_plugin_events(scene) == []
+
+            # Pre-upgrade backlog while paused is drained both on startup and when chat resumes.
+            with store.db:
+                store.db.execute(
+                    "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,'reply',?,?)",
+                    (scene, "sample", "启动前历史堆积事件", store.now()),
+                )
+            restarted = SceneRunner(Chat(scene_config, persona, store, mind), lambda _: None)
+            assert restarted.state.paused and plugin_store.pending_plugin_events(scene) == []
+
+            with store.db:
+                store.db.execute(
+                    "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,'reply',?,?)",
+                    (scene, "sample", "恢复前堆积事件", store.now()),
+                )
+            await restarted.set_paused(False)
+            assert plugin_store.pending_plugin_events(scene) == []

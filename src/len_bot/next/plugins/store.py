@@ -44,6 +44,14 @@ class PluginStore:
             "SELECT id,content FROM plugin_events WHERE scene=? AND delivered_at IS NULL "
             "AND (? OR kind='reply') ORDER BY id", (scene, include_events))]
 
+    def clear_pending_events(self, scene: str) -> int:
+        """Mark undelivered plugin events of ``scene`` delivered across a paused or closed period."""
+        with self.db:
+            return self.db.execute(
+                "UPDATE plugin_events SET delivered_at=? WHERE scene=? AND delivered_at IS NULL",
+                (self.now(), scene),
+            ).rowcount
+
     def plugin_wake_pending(self, scene: str) -> bool:
         """Only ``event`` rows wake the mind; ``reply`` rows wait for the next turn."""
         return self.db.execute(

@@ -252,6 +252,8 @@ class SceneRunner:
             self.state = restored
         else:
             self.save_state(restored)
+        if self.state.paused or self.state.closed:
+            PluginStore(self.store).clear_pending_events(self.config.scene)
 
         self.chat.toolset.scene_control = self.control
         self.chat.quiet_state = self.quiet_state
@@ -437,6 +439,11 @@ class SceneRunner:
             return self.control_state()
         return self.set_temporary_quiet(seconds, direct, requester)
 
+    def _save_control_state(self, state: dict | None) -> None:
+        if state is not None:
+            self.store.save_attention(self.config.scene, state)
+        PluginStore(self.store).clear_pending_events(self.config.scene)
+
     async def set_closed(self, closed: bool) -> dict:
         """Close or reopen this scene; the chat switch keeps its value for when it reopens.
         Closing ends a running turn at the step it is in."""
@@ -451,8 +458,7 @@ class SceneRunner:
         if closed:
             self.chat.stop_turn()
         try:
-            if changed:
-                await self.store.call(self.store.save_attention, self.config.scene, persisted(state))
+            await self.store.call(self._save_control_state, persisted(state) if changed else None)
         finally:
             self.changed.set()
             self.chat.notify()
@@ -472,8 +478,7 @@ class SceneRunner:
         if paused:
             self.chat.stop_turn()
         try:
-            if changed:
-                await self.store.call(self.store.save_attention, self.config.scene, persisted(state))
+            await self.store.call(self._save_control_state, persisted(state) if changed else None)
         finally:
             self.changed.set()
             self.chat.notify()
