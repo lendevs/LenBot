@@ -93,6 +93,43 @@ _Result = TypeVar("_Result")
 _FILE_LOCK = threading.RLock()
 _PENDING_FILE = '.memory-pending.json'
 logger = logging.getLogger(__name__)
+# High-frequency filler/polite/discourse trigrams that appear across unrelated memories
+# and add noise in text-only automatic recall without carrying topic identity.
+_AUTOMATIC_STOP_TRIGRAMS = frozenset({
+    "哈哈哈", "呵呵呵", "嘿嘿嘿", "嘻嘻嘻", "呜呜呜", "啊啊啊", "嗯嗯嗯", "哦哦哦",
+    "好好好", "对对对", "是是是", "行行行", "来来来",
+    "不知道", "为什么", "怎么办", "什么意", "么意思", "没问题", "没关系", "不好意",
+    "好意思", "对不起", "谢谢你", "感谢你", "不客气", "辛苦了", "太好了", "真的吗",
+    "是不是", "有没有", "可不可", "不可以", "能不能", "行不行", "好不好", "对不对",
+    "怎么样", "怎么说", "怎么回", "么回事", "干什么", "做什么", "说什么", "是什么",
+    "就是说", "也就是", "其实是", "好像是", "应该是", "可能是", "我觉得", "我感觉",
+    "我认为", "我以为", "你觉得", "确实是", "的确是", "差不多", "一会儿", "等一下",
+    "看一下", "问一下", "试一下", "说一下", "帮一下", "大家好", "早上好", "中午好",
+    "下午好", "晚上好", "谢谢大", "谢大家", "那没事", "没事了", "可以的", "好的呀",
+    "好家伙", "笑死我", "确实啊", "那好吧", "知道了", "明白了", "收到啦",
+    "the", "and", "for", "are", "but", "not", "you", "was", "has", "lol", "hhh",
+})
+_AUTOMATIC_STOP_BIGRAMS = frozenset({
+    "不知", "知道", "为什", "什么", "怎么", "么办", "没问", "问题", "意思", "没关", "关系",
+    "不好", "好意", "对不", "不起", "谢谢", "客气", "辛苦", "真的", "是不", "不是", "有没",
+    "没有", "可以", "不能", "就是", "其实", "好像", "应该", "可能", "觉得", "感觉", "确实",
+    "一下", "大家",
+})
+_FILLER_CHARS = frozenset("的了呢吧啊呀哦嗯嘛哈呵嘿嘻呜哇唉哎哟噢呃额吗呐呗喽咯啦")
+
+
+def _distinctive_trigram(term: str) -> bool:
+    if term in _AUTOMATIC_STOP_TRIGRAMS or len(set(term)) < 2:
+        return False
+    if not all(ch.isalnum() for ch in term):
+        return False
+    return not all(ch in _FILLER_CHARS for ch in term)
+
+
+def _distinctive_bigram(pair: str) -> bool:
+    if pair in _AUTOMATIC_STOP_BIGRAMS or len(set(pair)) < 2:
+        return False
+    return not all(ch in _FILLER_CHARS for ch in pair)
 
 
 class VectorIndexNeedsRebuild(ValueError):
@@ -440,15 +477,22 @@ class LocalMemory:
             return "public"
         raise ValueError(f"unknown memory read scope: {scope!r}")
 
-    def _target(self, scope: str, path: str, *, file: bool) -> Path:
+    def _target(self, scope: str, path: str, *, file: bool,
+                _dir_names: dict[Path, list[str]] | None = None) -> Path:
         parts = _parts(path, file=file)
         base = self._base(scope)
         target = base.joinpath(*(quote(part, safe='') for part in parts)) if sys.platform == 'win32' else base.joinpath(*parts)
         parent = base
         for part in target.relative_to(base).parts:
             if parent.exists() and (parent / part).exists():
-                differently_cased = next((child.name for child in parent.iterdir()
-                                         if child.name != part and child.name.casefold() == part.casefold()), None)
+                if _dir_names is None:
+                    names = [child.name for child in parent.iterdir()]
+                else:
+                    names = _dir_names.get(parent)
+                    if names is None:
+                        names = _dir_names[parent] = [child.name for child in parent.iterdir()]
+                differently_cased = next((name for name in names
+                                         if name != part and name.casefold() == part.casefold()), None)
                 if differently_cased is not None:
                     raise ValueError(f'Memory path casing differs from existing {differently_cased!r}: {path!r}')
             parent /= part
@@ -681,14 +725,17 @@ class LocalMemory:
 
     def _browse_sync(self, scope: str, path: str, offset: int, limit: int,
                      bot_persona: str | None = None) -> MemoryPage:
-        directory = self._target(scope, path, file=False)
+        dir_names: dict[Path, list[str]] = {}
+        directory = self._target(scope, path, file=False, _dir_names=dir_names)
         if not directory.exists() and not path:
             return MemoryPage(nodes=(), has_more=False)
         if not directory.exists():
             raise FileNotFoundError(directory)
         if not directory.is_dir():
             raise NotADirectoryError(directory)
-        entries = sorted((entry for entry in directory.iterdir()
+        all_entries = list(directory.iterdir())
+        dir_names[directory] = [entry.name for entry in all_entries]
+        entries = sorted((entry for entry in all_entries
                           if entry.is_dir() or (entry.suffix == ".md" and entry.name not in SUMMARY_FILES)),
                          key=lambda entry: (not entry.is_dir(), entry.name))
         if bot_persona is not None and path.strip('/') == 'bot':
@@ -698,7 +745,7 @@ class LocalMemory:
                                  name=entry.name, is_dir=entry.is_dir())
                       for entry in shown)
         for node in nodes:
-            self._target(scope, node.path, file=not node.is_dir)
+            self._target(scope, node.path, file=not node.is_dir, _dir_names=dir_names)
         return MemoryPage(nodes=nodes, has_more=offset + limit < len(entries))
 
     async def browse(self, scene: str, path: str = "", *, scope: Literal["scene", "public"] = "scene",
@@ -857,7 +904,8 @@ class LocalMemory:
         if len(folded) < 3:
             return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, bot_persona)
         # A short message remains searchable when a following reply adds another line.
-        terms, short = query_terms(folded)
+        raw_terms, short = query_terms(folded)
+        terms = [term for term in raw_terms if _distinctive_trigram(term)]
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
         eligible = _eligible(bot_persona)
@@ -872,7 +920,7 @@ class LocalMemory:
             selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
                 WHERE scope IN ({placeholders}) AND ({matches}) {eligible}""")
             parameters += [*scopes, *short]
-        pairs = query_bigrams(folded)
+        pairs = [pair for pair in query_bigrams(folded) if _distinctive_bigram(pair)]
         if len(pairs) >= 3:
             selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
                 WHERE scope IN ({placeholders}) {eligible}

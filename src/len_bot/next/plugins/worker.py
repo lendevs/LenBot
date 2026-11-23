@@ -72,6 +72,7 @@ class Channel:
         self.lock = threading.Lock()
         self.ids = itertools.count(1)
         self.waiting: dict[int, tuple[threading.Event | asyncio.Future, list]] = {}
+        self._closed_error: dict | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
 
     def write(self, value: dict) -> None:
@@ -83,21 +84,41 @@ class Channel:
     def call_sync(self, method: str, *args):
         number = next(self.ids)
         event, box = threading.Event(), []
-        self.waiting[number] = (event, box)
-        self.write({"type": "call", "id": number, "method": method, "args": list(args)})
+        with self.lock:
+            if self._closed_error is not None:
+                raise_error(self._closed_error)
+            self.waiting[number] = (event, box)
+        try:
+            self.write({"type": "call", "id": number, "method": method, "args": list(args)})
+        except BaseException:
+            with self.lock:
+                self.waiting.pop(number, None)
+            raise
         event.wait()
         return self._value(box[0])
 
     async def call(self, method: str, *args):
         number = next(self.ids)
         future = self.loop.create_future()
-        self.waiting[number] = (future, [])
-        self.write({"type": "call", "id": number, "method": method, "args": list(args)})
+        with self.lock:
+            if self._closed_error is not None:
+                raise_error(self._closed_error)
+            self.waiting[number] = (future, [])
+        try:
+            self.write({"type": "call", "id": number, "method": method, "args": list(args)})
+        except BaseException:
+            with self.lock:
+                self.waiting.pop(number, None)
+            raise
         try:
             return self._value(await future)
         except asyncio.CancelledError:
-            self.waiting.pop(number, None)
-            self.write({"type": "cancel", "id": number})
+            with self.lock:
+                self.waiting.pop(number, None)
+            try:
+                self.write({"type": "cancel", "id": number})
+            except OSError:
+                pass
             raise
 
     @staticmethod
@@ -107,7 +128,8 @@ class Channel:
         return reply.get("value")
 
     def answered(self, reply: dict) -> None:
-        pending = self.waiting.pop(reply["id"], None)
+        with self.lock:
+            pending = self.waiting.pop(reply["id"], None)
         if pending is None:
             # A cancelled call can still have a reply in transit.
             return
@@ -115,8 +137,23 @@ class Channel:
         if isinstance(waiter, threading.Event):
             box.append(reply)
             waiter.set()
-        else:
-            self.loop.call_soon_threadsafe(lambda: waiter.done() or waiter.set_result(reply))
+        elif self.loop is not None and not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(lambda w=waiter, r=reply: w.done() or w.set_result(r))
+
+    def fail(self, message: str) -> None:
+        error = {"type": "RuntimeError", "message": message}
+        with self.lock:
+            if self._closed_error is None:
+                self._closed_error = error
+            pending = list(self.waiting.values())
+            self.waiting.clear()
+        reply = {"error": error}
+        for waiter, box in pending:
+            if isinstance(waiter, threading.Event):
+                box.append(reply)
+                waiter.set()
+            elif self.loop is not None and not self.loop.is_closed():
+                self.loop.call_soon_threadsafe(lambda w=waiter, r=reply: w.done() or w.set_result(r))
 
 
 class RemoteHost:
@@ -266,13 +303,20 @@ async def serve(channel: Channel, init: dict) -> None:
         task.add_done_callback(tasks.discard)
 
     def read() -> None:
-        for line in sys.stdin:
-            message = json.loads(line)
-            if message["type"] == "reply":
-                channel.answered(message)
-            else:
-                channel.loop.call_soon_threadsafe(receive, message)
-        channel.loop.call_soon_threadsafe(finished.set)
+        reason = "宿主连接已关闭（stdin EOF），挂起中的 RPC 调用已中止"
+        try:
+            for line in sys.stdin:
+                message = json.loads(line)
+                if message["type"] == "reply":
+                    channel.answered(message)
+                else:
+                    channel.loop.call_soon_threadsafe(receive, message)
+        except Exception as error:
+            reason = f"宿主协议读取失败：{type(error).__name__}: {error}"
+        finally:
+            channel.fail(reason)
+            if channel.loop is not None and not channel.loop.is_closed():
+                channel.loop.call_soon_threadsafe(finished.set)
 
     threading.Thread(target=read, daemon=True).start()
     # Constructors may synchronously ask for the clock, enabled scenes or a timezone.

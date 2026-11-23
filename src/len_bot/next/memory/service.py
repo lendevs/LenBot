@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import asdict
+import re
 from typing import Annotated, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
@@ -14,7 +15,7 @@ from .local import LocalMemory, LocalMemorySettings
 from .jobs import MemoryJobs
 from .summary import MemorySummarizer
 from .role_paths import require_bot_path
-from .sections import evidence, excerpt, split_sections
+from .sections import Section, evidence, excerpt, split_sections
 from ..platform.messages import ChatMessage, plain_text, render_message
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
@@ -149,6 +150,54 @@ EVIDENCE_CHARS = 200
 CUE_SECTIONS = ("我答应的事", "没回答的问题")
 CUE_CHARS = 400
 CUE_HITS = 2
+_PREFERENCE_HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+相处偏好')
+_SETEXT_UNDERLINE = re.compile(r'^(?:=+|-+)$')
+_PLACEHOLDER_PREFERENCES = frozenset({
+    "暂无明确记录",
+    "暂无记录",
+    "暂无",
+    "无",
+    "无明确记录",
+    "暂无偏好",
+    "暂无明确偏好",
+    "暂无特别记录",
+    "暂无明确偏好或雷点",
+    "暂无明显偏好",
+    "暂无明显雷点",
+    "暂未发现",
+    "暂未记录",
+    "没有明确记录",
+    "没有记录",
+    "none",
+    "n/a",
+})
+
+
+def _is_placeholder_text(text: str) -> bool:
+    for line in text.splitlines():
+        normalized = line.strip().lstrip("-*•·").strip().rstrip("。.;；，,!！:：").strip()
+        if normalized and normalized.casefold() not in _PLACEHOLDER_PREFERENCES:
+            return False
+    return True
+
+
+def _section_body(content: str, section: Section) -> str:
+    lines = section.text(content).splitlines()
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped or stripped.startswith('#'):
+            index += 1
+            continue
+        if index + 1 < len(lines) and _SETEXT_UNDERLINE.fullmatch(lines[index + 1].strip()):
+            index += 2
+            continue
+        break
+    return '\n'.join(lines[index:]).strip()
+
+
+def _is_placeholder_preference(content: str, section: Section) -> bool:
+    return _is_placeholder_text(_section_body(content, section))
 
 
 def recall_cues(recap: str | None) -> str:
@@ -318,13 +367,20 @@ class MemoryService:
         # Keep room for the latest topic; source and dates remain in the real file text.
         per_profile = min(900, budget // 2 // len(profiles)) if profiles else 0
         for profile in profiles:
+            if profile.path.endswith('/preferences.md') and _is_placeholder_text(profile.content):
+                continue
             sections = split_sections(profile.content)
-            preferences = [section for section in sections if section.heading
-                           and section.heading[-1].startswith('相处偏好')]
-            if not preferences:
+            all_preferences = [section for section in sections if section.heading
+                               and section.heading[-1].startswith('相处偏好')]
+            has_empty_pref_heading = any(_PREFERENCE_HEADING.match(line) for line in profile.content.splitlines())
+            if not all_preferences and not has_empty_pref_heading:
                 append("scene", profile.path, profile.content, per_profile)
                 continue
-            ordered = preferences + [section for section in sections if section not in preferences]
+            preferences = [section for section in all_preferences
+                           if not _is_placeholder_preference(profile.content, section)]
+            ordered = preferences + [section for section in sections if section not in all_preferences]
+            if not ordered:
+                continue
             remaining, parts = per_profile, []
             for index, section in enumerate(ordered):
                 if remaining <= 0:
@@ -334,10 +390,12 @@ class MemoryService:
                 share = (remaining if index == len(ordered) - 1 else remaining // 2
                          if index < len(preferences) else remaining // (len(ordered) - index))
                 part = section.text(profile.content)[:share].rstrip()
-                parts.append(part)
-                remaining -= len(part) + 2
-            append("scene", profile.path, '\n\n'.join(parts), per_profile, kind='excerpt',
-                   source_chars=len(profile.content))
+                if part:
+                    parts.append(part)
+                    remaining -= len(part) + 2
+            if parts:
+                append("scene", profile.path, '\n\n'.join(parts), per_profile, kind='excerpt',
+                       source_chars=len(profile.content))
         query = "\n".join(queries)[-1200:]
         text_query = "\n".join(plain_text(message) for message in messages
                                if plain_text(message).strip() and message.send_status in {"received", "sent", "simulated"})[-1200:]

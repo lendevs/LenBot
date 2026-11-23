@@ -23,6 +23,9 @@ _SIX_TO_FOUR_PREFIX = ipaddress.ip_network('2002::/16')
 _PUBLIC_V6 = ipaddress.ip_network('2000::/3')
 
 
+_CGNAT_NETWORK = ipaddress.ip_network('100.64.0.0/10')
+
+
 class EgressBlocked(ValueError):
     """A destination or a transfer this policy does not allow.
 
@@ -104,7 +107,7 @@ def blocked_address_reason(address: str) -> str | None:
         return '组播地址'
     if ip.is_unspecified:
         return '未指定地址'
-    if ip.is_private or ip.is_reserved:
+    if ip.is_private or ip.is_reserved or ip in _CGNAT_NETWORK:
         return '私有或保留地址'
     if not ip.is_global:
         return '不是公网可路由的单播地址'
@@ -115,7 +118,7 @@ def blocked_address_reason(address: str) -> str | None:
 # Real local networks a stand-in range must not cover; otherwise a domain name
 # could reach them through the exemption below.
 _LOCAL_NETWORKS = tuple(ipaddress.ip_network(text) for text in (
-    '0.0.0.0/8', '10.0.0.0/8', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16',
+    '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16',
     '::1/128', 'fc00::/7', 'fe80::/10',
 ))
 

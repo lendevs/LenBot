@@ -26,7 +26,6 @@ import re
 import shutil
 import signal
 import socket
-import subprocess
 import sys
 import tempfile
 import uuid
@@ -280,11 +279,22 @@ class BwrapSandbox:
         self.python = str(base / "bin" / f"python{sys.version_info.major}.{sys.version_info.minor}")
         self._python_binds = [] if base == Path("/usr") else ["--ro-bind", str(base), str(base)]
 
-    def _tmpfs_size(self) -> list[str]:
+    async def _tmpfs_size(self) -> list[str]:
         """bwrap 0.8.0 added ``--size``; older releases get an unsized /tmp."""
         if self._version is None:
-            output = subprocess.run([str(self.settings.bwrap_binary), "--version"], capture_output=True,
-                                    text=True, timeout=self.settings.command_timeout_seconds).stdout
+            process = await asyncio.create_subprocess_exec(
+                str(self.settings.bwrap_binary), "--version",
+                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(process.communicate(), self.settings.command_timeout_seconds)
+            except BaseException:
+                if process.returncode is None:
+                    with suppress(ProcessLookupError):
+                        process.kill()
+                    await process.communicate()
+                raise
+            output = stdout.decode("utf-8", errors="replace")
             self._version = tuple(int(part) for part in re.findall(r"\d+", output)[:3])
         return ["--size", str(self.settings.tmpfs_bytes)] if self._version >= (0, 8, 0) else []
 
@@ -302,6 +312,7 @@ class BwrapSandbox:
         if browser is not None:
             (system / "lenbot-render").write_text(_RENDER, encoding="utf-8")
             (system / "lenbot-render").chmod(0o755)
+        tmpfs_size = await self._tmpfs_size()
         arguments = [
             str(self.settings.bwrap_binary), "--unshare-all", "--die-with-parent", "--new-session",
             "--cap-drop", "ALL", "--uid", str(_AGENT), "--gid", str(_AGENT), "--hostname", "lenbot-task",
@@ -310,8 +321,10 @@ class BwrapSandbox:
             "--proc", "/proc", "--dev", "/dev",
             # --dev mounts a tmpfs sized at half the host's RAM that --remount-ro / does not reach: give /dev/shm
             # its own bounded tmpfs and make the rest of /dev read-only so only /tmp and /dev/shm hold task data.
-            *self._tmpfs_size(), "--tmpfs", "/dev/shm", "--remount-ro", "/dev",
-            *self._tmpfs_size(), "--tmpfs", "/tmp",
+            # bubblewrap always mounts --tmpfs with MS_NOSUID | MS_NODEV and does not accept Docker-style
+            # mount-option suffixes (such as :nosuid,nodev or noexec) on --tmpfs.
+            *tmpfs_size, "--tmpfs", "/dev/shm", "--remount-ro", "/dev",
+            *tmpfs_size, "--tmpfs", "/tmp",
             "--tmpfs", "/opt", "--ro-bind", str(self.settings.task_runtime), "/opt/lenbot",
             *itertools.chain.from_iterable(("--ro-bind", str(_WORK / name), f"{_HOST_PROGRAMS}/{name}")
                                            for name in _PROGRAMS),
