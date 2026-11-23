@@ -617,7 +617,7 @@ class SceneTools:
         if call.name == "react":
             arguments = ReactArguments.model_validate(call.arguments)
             if arguments.preview:
-                entries, sheet, matched = self.expression.preview_stickers(arguments)
+                entries, sheet, matched = await self.expression.preview_stickers(arguments)
                 result = {"candidates": entries, **({} if matched is None else {"matched": matched})}
                 if not self.config.models.roles.mind.image_input:
                     return tool_result(result) + "\n按编号用 candidate 发送。", None, None

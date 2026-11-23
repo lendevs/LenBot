@@ -1,0 +1,310 @@
+"""Neutral projection of unspoken plain-text thoughts, recap failure cooldown, and direct send interruption."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+import httpx
+import pytest
+
+from len_bot.next.chat.attention import SceneRunner
+from len_bot.next.chat.context import ChatContext
+from len_bot.next.chat.expression import ChatExpression
+from len_bot.next.chat.session import Chat
+from len_bot.next.chat.tools import SayArguments, build_tools
+from len_bot.next.config import load_config
+from len_bot.next.models.client import ChatModel, ModelHTTPError, ModelSettings
+from len_bot.next.models.protocols import build_request
+from len_bot.next.persona.profile import load_persona
+from len_bot.next.platform.messages import SendResult
+from len_bot.next.platform.onebot_messages import parse_message
+from len_bot.next.storage.store import Store
+from test_attention_protocol import START, message as onebot_message, response as tool_response
+from test_next_native_models import peer_server
+from test_next_persona_permissions import _config, _package
+
+SCENE = "onebot:group:80001"
+
+
+def _make_context(tmp_path: Path, *, history_policy: str = "native"):
+    package = _package(tmp_path, "plain", tools=["say"], documents={})
+    config = _config(tmp_path / "instance", package)
+    config.models.roles.mind.history_policy = history_policy
+    persona = load_persona(package)
+    return config, persona
+
+
+def test_unspoken_plain_text_assistant_projects_neutrally_and_keeps_db_untouched(tmp_path):
+    config, persona = _make_context(tmp_path)
+    with Store(config.database) as store:
+        context = ChatContext(config, persona, store, platform=False, memory=None)
+        raw_unspoken = {
+            "role": "assistant",
+            "content": "  先看看大家怎么聊，暂时不插话  ",
+            "tool_calls": None,
+            "reasoning_content": "internal reasoning",
+            "_continuation": {"binding": {"api": "anthropic", "model": "m", "base_url": "u"}, "data": []},
+            "_binding": {"api": "openai-chat", "model": "m", "base_url": "u"},
+        }
+        with_call = {
+            "role": "assistant",
+            "content": "我来看看",
+            "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "say", "arguments": '{"content":"来了"}'}}],
+        }
+        empty_assistant = {"role": "assistant", "content": "   ", "tool_calls": None}
+        store.append(SCENE, {"role": "user", "content": "大家晚饭吃什么"})
+        store.append(SCENE, raw_unspoken)
+        store.append(SCENE, {"role": "user", "content": "有人在吗"})
+        store.append(SCENE, with_call)
+        store.append(SCENE, {"role": "tool", "tool_call_id": "c1", "content": "来了"})
+        store.append(SCENE, empty_assistant)
+
+        _, stored_entries = store.active_history(SCENE)
+        assert stored_entries[1][1]["role"] == "assistant"
+        assert stored_entries[1][1]["content"] == "  先看看大家怎么聊，暂时不插话  "
+
+        projected = context.project_entries(stored_entries)
+        messages = [entry for _, entry in projected]
+
+        assert messages[1] == {"role": "user", "content": "[上一轮未发出的内部想法：先看看大家怎么聊，暂时不插话]"}
+        assert "不要模仿" not in messages[1]["content"]
+        assert "必须调用" not in messages[1]["content"]
+        assert "_continuation" not in messages[1] and "_binding" not in messages[1]
+        assert messages[3]["role"] == "assistant" and messages[3]["tool_calls"] is not None
+        assert messages[5]["role"] == "assistant"
+
+        # Adjacent user entries convert cleanly across Anthropic, Gemini and OpenAI protocols.
+        wire_messages = [{"role": "system", "content": "system"}, *messages[:3]]
+        for api in ("openai-chat", "openai-responses", "anthropic", "gemini"):
+            settings = ModelSettings(api=api, base_url="https://example.invalid/v1", api_key="k", model="m")
+            _, payload = build_request(settings, wire_messages, [])
+            if api == "anthropic":
+                assert len(payload["messages"]) == 1
+                assert payload["messages"][0]["role"] == "user"
+                assert len(payload["messages"][0]["content"]) == 3
+            elif api == "gemini":
+                assert len(payload["contents"]) == 1
+                assert payload["contents"][0]["role"] == "user"
+                assert len(payload["contents"][0]["parts"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_context_project_reads_off_the_event_loop(tmp_path, monkeypatch):
+    import threading
+
+    config, persona = _make_context(tmp_path)
+    main_thread = threading.get_ident()
+    read_threads: list[int] = []
+    with Store(config.database) as store:
+        real_read = store.load_discovered_tools
+
+        def tracked_read(scene: str):
+            read_threads.append(threading.get_ident())
+            return real_read(scene)
+
+        monkeypatch.setattr(store, "load_discovered_tools", tracked_read)
+        context = ChatContext(config, persona, store, platform=False, memory=None)
+        context.configure_tools(build_tools(config, persona, platform=False), [], skills=())
+        read_threads.clear()
+        state = {"role": "user", "content": "本轮开始时间：2026-10-21T00:00:00+00:00"}
+        # Even while the write connection holds an open transaction, project() finishes via the read pool.
+        store.db.execute("BEGIN IMMEDIATE")
+        try:
+            projected = await asyncio.wait_for(context.project(None, [], state), 2)
+        finally:
+            store.db.commit()
+        assert projected[0]["role"] == "system"
+        assert "<当前关注>" in projected[-1]["content"]
+        assert read_threads and all(tid != main_thread for tid in read_threads)
+
+
+def _chat_config(root: Path, *, trigger: int, window: int, max_output: int = 512):
+    role = root / "role"
+    role.mkdir(parents=True)
+    (role / "persona.yaml").write_text(json.dumps({
+        "id": "synthetic", "name": "合成角色", "brief": "合成。", "behavior": "正常对话。",
+        "self_reference": ["我"], "aliases": [], "tools": "all", "skills": [], "styles": []}, ensure_ascii=False))
+    for name, body in [("voice.md", "简短。"), ("boundaries.md", "合成。"), ("examples.yaml", "[]\n")]:
+        (role / name).write_text(body, encoding="utf-8")
+    (root / "lenbot.config.json").write_text(json.dumps({
+        "compaction": {"input_tokens": trigger, "keep_recent_tokens": 50, "max_output_tokens": max_output},
+        "mode": "isolated", "scene": SCENE, "bot_id": "onebot:90001",
+        "owners": ["onebot:70001"], "timezone": "UTC", "database": "state.sqlite3", "persona": str(role),
+        "voice_mode": "direct", "max_steps": 3,
+        "models": {
+            "providers": {"synthetic": {"api": "openai-chat", "base_url": "http://127.0.0.1:9/v1",
+                                        "api_key": "synthetic-unused-key"}},
+            "roles": {"mind": {"provider": "synthetic", "model": "synthetic-mind",
+                               "context_window_tokens": window, "max_output_tokens": max_output}},
+        },
+    }, ensure_ascii=False), encoding="utf-8")
+    return load_config(root), load_persona(role)
+
+
+@pytest.mark.asyncio
+async def test_recap_transient_failure_enters_300s_cooldown_and_hard_overflow_still_raises(tmp_path):
+    now = [START]
+    config, persona = _chat_config(tmp_path / "soft", trigger=6500, window=64000, max_output=512)
+    recap_calls = 0
+
+    def respond(request):
+        nonlocal recap_calls
+        recap_calls += 1
+        return httpx.Response(502, json={"error": {"message": "bad gateway"}})
+
+    with Store(config.database, now=lambda: now[0]) as store:
+        for index in range(10):
+            store.append(SCENE, {"role": "user", "content": f"聊天记录 {index}：" + ("测试内容" * 120)})
+        store.append(SCENE, {"role": "user", "content": "最新一条短消息"})
+        async with ChatModel(config.model_settings("mind")) as mind:
+            await mind._client.aclose()
+            mind._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url="https://fixture.invalid/")
+            chat = Chat(config, persona, store, mind, now=lambda: now[0])
+            turn_id = store.start_turn(SCENE)
+
+            # First failure records 300s cooldown and continues uncompacted while fitting in window.
+            prepared1 = await chat.prepare_context(turn_id, observed_at=now[0])
+            assert prepared1.messages and recap_calls == 1
+            assert chat._recap_cooldown_until == START + 300.0
+            assert chat.turn_model_failure is None
+
+            # Within 300s cooldown, automatic recap is skipped completely.
+            now[0] += 120.0
+            prepared2 = await chat.prepare_context(turn_id, observed_at=now[0])
+            assert prepared2.messages and recap_calls == 1
+
+            # After 300s cooldown expires, automatic recap is attempted again.
+            now[0] = START + 301.0
+            prepared3 = await chat.prepare_context(turn_id, observed_at=now[0])
+            assert prepared3.messages and recap_calls == 2
+            assert chat._recap_cooldown_until == START + 601.0
+
+    # When the uncompacted request reaches the context window hard limit, failure is NOT swallowed.
+    hard_config, hard_persona = _chat_config(tmp_path / "hard", trigger=6500, window=8500, max_output=512)
+    with Store(hard_config.database, now=lambda: now[0]) as store:
+        for index in range(10):
+            store.append(SCENE, {"role": "user", "content": f"超窗记录 {index}：" + ("长文本内容" * 120)})
+        store.append(SCENE, {"role": "user", "content": "最新一条短消息"})
+        async with ChatModel(hard_config.model_settings("mind")) as mind:
+            await mind._client.aclose()
+            mind._client = httpx.AsyncClient(transport=httpx.MockTransport(respond), base_url="https://fixture.invalid/")
+            chat = Chat(hard_config, hard_persona, store, mind, now=lambda: now[0])
+            turn_id = store.start_turn(SCENE)
+            with pytest.raises(ModelHTTPError):
+                await chat.prepare_context(turn_id, observed_at=now[0])
+
+
+@pytest.mark.asyncio
+async def test_non_direct_multipart_send_interrupts_on_new_direct_message(tmp_path):
+    config, persona = _chat_config(tmp_path, trigger=20000, window=64000)
+    config.text_delivery.max_chars = 7
+    config.text_delivery.min_interval_seconds = 0.05
+    config.text_delivery.max_interval_seconds = 0.05
+    config.attention.direct_idle_seconds = 0
+    config.attention.focus_seconds = 0
+    config.permissions.blacklist = ["onebot:70005"]
+
+    sent_parts: list[str] = []
+    requests: list = []
+    replies = [
+        tool_response("say", {"content": "第一段旧话题。第二段旧话题。", "end_turn": True}, "old1"),
+        tool_response("say", {"content": "收到直接提问", "end_turn": True}, "new1"),
+    ]
+    now = [START]
+    server = await peer_server(replies, requests)
+    async with server:
+        config.models.providers["synthetic"].base_url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1"
+        with Store(config.database, now=lambda: now[0]) as store:
+            runner_holder: list[SceneRunner] = []
+
+            async def send_message(part, *, image_bytes=None):
+                text = "".join(seg.data["text"] for seg in part.segments if seg.type == "text")
+                sent_parts.append(text)
+                if len(sent_parts) == 1:
+                    # Blacklisted @Bot must not interrupt; real member @Bot interrupts before part 2.
+                    runner_holder[0].receive(onebot_message(70005, 901, "黑名单打断", direct=True))
+                    runner_holder[0].receive(onebot_message(70002, 902, "先问你个事", direct=True))
+                return SendResult(status="sent", platform_message_id=f"sent-{len(sent_parts)}", error=None)
+
+            async with ChatModel(config.model_settings("mind")) as mind:
+                chat = Chat(config, persona, store, mind, send_message=send_message, now=lambda: now[0])
+                events: list[dict] = []
+                runner = SceneRunner(chat, events.append)
+                runner_holder.append(runner)
+                runner.closing = True
+                runner.receive(onebot_message(70001, 100, "大家聊聊今天天气怎么样"))
+                assert runner.state.pending.channel == "ambient"
+                await asyncio.wait_for(runner.run(), 5)
+
+            assert sent_parts == ["第一段旧话题。", "收到直接提问"]
+            assert len(requests) == 2
+            turns = [event for event in events if "turn_id" in event]
+            assert len(turns) == 1 and turns[0]["status"] == "settled" and turns[0]["failed_tools"] == 0
+            # Only actually sent parts are stored as own chat messages (no phantom second part).
+            own_rows = store.db.execute(
+                "SELECT json_extract(body,'$.send_status') FROM messages WHERE json_extract(body,'$.is_self')=1"
+            ).fetchall()
+            assert [row[0] for row in own_rows] == ["sent", "sent"]
+            tool_entries = [entry for entry in store.entries(SCENE) if entry["role"] == "tool"]
+            assert "第二段旧话题" in tool_entries[0]["content"]
+            assert "停止发送" in tool_entries[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_non_direct_send_interrupts_before_first_part_and_direct_send_is_not_interrupted(tmp_path):
+    config, persona = _make_context(tmp_path)
+    config.text_delivery.max_chars = 6
+    config.text_delivery.min_interval_seconds = 0
+    config.text_delivery.max_interval_seconds = 0
+    with Store(config.database) as store:
+        sent: list[str] = []
+
+        async def send_message(part, *, image_bytes=None):
+            sent.append("".join(seg.data["text"] for seg in part.segments if seg.type == "text"))
+            return SendResult(status="sent", platform_message_id=f"m-{len(sent)}", error=None)
+
+        context = ChatContext(config, persona, store, platform=True, memory=None)
+        expression = ChatExpression(config, persona, store, context=context, send_message=send_message,
+                                    notify=lambda: None, on_reply_sample=None, now=store.now)
+        raw_direct = onebot_message(70002, 501, "急事问你", direct=True)
+        store.enqueue(parse_message(raw_direct, own_message_ids=set()), raw_direct, START)
+
+        turn_id = store.start_turn(SCENE)
+        said = await expression.express(turn_id, SayArguments(content="第一段内容。第二段内容。"))
+        content, status = await expression.deliver_expression("c-ambient", said, turn_id=turn_id, channels={"ambient"})
+        assert status == "interrupted" and sent == [] and "停止发送" in content
+        assert store.db.execute("SELECT COUNT(*) FROM messages WHERE json_extract(body,'$.is_self')=1").fetchone()[0] == 0
+
+        # A direct expression is NOT interrupted by pending messages.
+        said_direct = await expression.express(turn_id, SayArguments(content="直接回复"))
+        _, direct_status = await expression.deliver_expression("c-direct", said_direct, turn_id=turn_id, channels={"direct"})
+        assert direct_status == "sent" and sent == ["直接回复"]
+
+
+@pytest.mark.asyncio
+async def test_preview_stickers_runs_sheet_rendering_in_worker_thread(tmp_path, monkeypatch):
+    import threading
+    from test_next_sticker_preview import _role
+    from len_bot.next.chat import expression as expression_module
+    from len_bot.next.chat.tools import ReactArguments
+
+    config, persona = _role(tmp_path, 3)
+    threads: list[int] = []
+    real_sheet = expression_module.sticker_sheet
+
+    def tracked(images):
+        threads.append(threading.get_ident())
+        return real_sheet(images)
+
+    monkeypatch.setattr(expression_module, "sticker_sheet", tracked)
+    main_thread = threading.get_ident()
+    with Store(config.database) as store:
+        context = ChatContext(config, persona, store, platform=False, memory=None)
+        expression = ChatExpression(config, persona, store, context=context, send_message=None,
+                                    notify=lambda: None, on_reply_sample=None, now=store.now)
+        entries, sheet, _ = await expression.preview_stickers(ReactArguments(preview=True))
+    assert len(entries) == 3 and sheet
+    assert threads and threads[0] != main_thread

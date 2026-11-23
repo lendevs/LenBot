@@ -40,6 +40,8 @@ PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "kn
 # Consecutive sends not confirmed as delivered after which the turn ends; rewriting the message again would
 # meet the same platform, and an unconfirmed send may already be in the group.
 SEND_FAILURE_LIMIT = 2
+# Automatic recap backoff after transient provider failures when the uncompacted request still fits the window.
+RECAP_COOLDOWN_SECONDS = 300.0
 from ..memory.service import MemoryService, MemorySettings, recall_cues
 from ..reference.library import ReferenceLibrary
 from ..reference.tool import changes_notice
@@ -163,6 +165,10 @@ class Chat:
         # has grown by another keep_recent_tokens, turns go on with the existing recap instead of paying
         # for the same failing recap again.
         self.compaction_held_at: int | None = None
+        # Cooldown timestamp after a transient provider/network error in automatic recap.
+        self._recap_cooldown_until: float = 0.0
+        # Live quiet state callback supplied by the scene runner when attached.
+        self.quiet_state: Callable[[], dict | None] | None = None
         # Successful mind replies in the running turn, and the provider failure that ended it.
         self.turn_model_replies = 0
         self.turn_model_failure: dict | None = None
@@ -170,6 +176,7 @@ class Chat:
             raise ValueError("vision 客户端必须与根配置的视觉模型绑定一起提供")
         self.skills = () if tasks is None else tasks.skills[config.scene]
         self.context = ChatContext(config, persona, store, platform=send_message is not None, memory=memory)
+        self.context.quiet_state = lambda: None if self.quiet_state is None else self.quiet_state()
         self.expression = ChatExpression(
             config, persona, store, context=self.context,
             send_message=send_message,
@@ -177,6 +184,7 @@ class Chat:
             notify=self.notify, on_reply_sample=on_reply_sample, now=now,
             exclude_from_memory=None if memory is None else lambda seq: memory.jobs.exclude_records(config.scene, [seq]))
         self.expression.reserve = lambda: self.speech_reserve
+        self.expression.should_interrupt = self.direct_interrupt_pending
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
@@ -331,6 +339,7 @@ class Chat:
             self.notify()
             raise
         self.compaction_held_at = None
+        self._recap_cooldown_until = 0.0
         self.store.end_turn(turn_id, "manual_compaction")
         if self.on_compaction is not None:
             self.on_compaction()
@@ -437,7 +446,10 @@ class Chat:
                 return PreparedContext(messages, estimated, method)
             hold = self.compaction_held_at
             fits = estimated + binding.max_output_tokens <= binding.context_window_tokens
+            fits_cooldown = estimated + binding.max_output_tokens < binding.context_window_tokens
             if hold is not None and fits and estimated < hold + self.config.compaction.keep_recent_tokens:
+                return PreparedContext(messages, estimated, method)
+            if fits_cooldown and self.store.now() < self._recap_cooldown_until:
                 return PreparedContext(messages, estimated, method)
             scale = token_scale
             plan = plan_compaction(
@@ -461,7 +473,17 @@ class Chat:
                 log_event(logger, 'compaction_held', level=logging.WARNING, error=error, input_tokens=estimated,
                           trigger_tokens=trigger, window_tokens=binding.context_window_tokens)
                 return PreparedContext(messages, estimated, method)
+            except (ModelHTTPError, ModelConnectionError, TimeoutError) as error:
+                if self.turn_stopped or not fits_cooldown:
+                    raise
+                self.turn_model_failure = None
+                self._recap_cooldown_until = self.store.now() + RECAP_COOLDOWN_SECONDS
+                log_event(logger, 'compaction_cooldown', level=logging.WARNING, error=error, input_tokens=estimated,
+                          trigger_tokens=trigger, window_tokens=binding.context_window_tokens,
+                          cooldown_until=self._recap_cooldown_until)
+                return PreparedContext(messages, estimated, method)
             self.compaction_held_at = None
+            self._recap_cooldown_until = 0.0
             compacted = True
             if self.on_compaction is not None:
                 self.on_compaction()
@@ -474,6 +496,18 @@ class Chat:
         if self.reserve_revoked:
             return False
         return self.direct_request or self.reserve_request or self.turn_channel in RESERVE_CHANNELS
+
+    def direct_interrupt_pending(self) -> bool:
+        """A non-blacklisted direct message arrived while this non-direct turn was running."""
+        if self.direct_request:
+            return False
+        private = self.config.scene.split(":", 2)[1] == "private"
+        blacklist = self.config.permissions.blacklist
+        return any(
+            not message.is_self and message.sender.uid not in blacklist
+            and (private or message.mentions_bot)
+            for _, message, _ in self.store.pending_messages(self.config.scene)
+        )
 
     def followup_arrived(self, talking: set[str]) -> bool:
         """A new message from someone this turn answers, or one that addresses the bot."""
@@ -657,7 +691,7 @@ class Chat:
                     self._check_stopped()
                     stepped_lookup = any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
                     looked_up = looked_up or stepped_lookup
-                    end_turn, group_failed = False, False
+                    end_turn, group_failed, interrupted = False, False, False
                     # Several read-only calls in one reply run together; results are stored in call order.
                     parallel = [call for call in reply.tool_calls if call.name in PARALLEL_TOOLS]
                     prefetched = {call.id: asyncio.create_task(self.toolset.execute(
@@ -715,6 +749,9 @@ class Chat:
                                         if delivery_status in {"sent", "simulated"}:
                                             end_turn = end_turn or expression.end_turn
                                             failed_sends = 0
+                                        elif delivery_status == "interrupted":
+                                            interrupted = True
+                                            failed_sends = 0
                                         else:
                                             group_failed = True
                                             tool_status = 'error'
@@ -738,6 +775,13 @@ class Chat:
                             started.cancel()
                     if failed_sends >= SEND_FAILURE_LIMIT:
                         status, error_text = "send_failed", f"连续 {failed_sends} 次发送没有确认送达"
+                        break
+                    if interrupted:
+                        if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
+                                and await append_new(True, turn_id)):
+                            extensions += 1
+                            continue
+                        status = "settled"
                         break
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the

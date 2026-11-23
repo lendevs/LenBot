@@ -74,6 +74,8 @@ class ChatExpression:
         self.outlet = asyncio.Lock()
         # Whether the current turn may use the direct reserve of the hourly speech limit.
         self.reserve: Callable[[], bool] = lambda: False
+        # Whether a non-direct delivery should stop before sending because a new direct message arrived.
+        self.should_interrupt: Callable[[], bool] | None = None
         # The current turn's numbered react preview: role stickers, or ids of this group's adopted ones.
         self.sticker_candidates: list[PersonaSticker | int] = []
         self._sheets: dict[tuple, bytes] = {}
@@ -121,7 +123,7 @@ class ChatExpression:
         return Expression(self.simulated_message(segments, reply_to=platform_reply), sticker,
                           end_turn=arguments.end_turn)
 
-    def preview_stickers(self, arguments: ReactArguments) -> tuple[list[dict], bytes, bool | None]:
+    async def preview_stickers(self, arguments: ReactArguments) -> tuple[list[dict], bytes, bool | None]:
         """Number up to STICKER_CANDIDATES of the role's stickers and this group's adopted ones as this
         turn's candidates: those matching ``emotion`` or ``query`` first, then the less used. Returns
         their entries, a numbered sheet of first frames and whether anything matched the filter."""
@@ -160,7 +162,7 @@ class ChatExpression:
         self.sticker_candidates = [candidate for _, candidate in chosen]
         sheet = self._sheets.get(tuple(key))
         if sheet is None:
-            sheet = sticker_sheet(images)
+            sheet = await asyncio.to_thread(sticker_sheet, images)
             # A few recent candidate sets; previews in a turn usually repeat the same one.
             self._sheets = {**dict(list(self._sheets.items())[-7:]), tuple(key): sheet}
         filtered = arguments.emotion is not None or arguments.query is not None
@@ -239,6 +241,21 @@ class ChatExpression:
             return await self._send_prepared(entry_seq, parts, prefix=prefix, turn_id=turn_id,
                                              sticker=sticker, channels=channels, fixed_notice=fixed_notice)
 
+    def _direct_interrupted(self, channels: set[str], fixed_notice: bool) -> bool:
+        if fixed_notice:
+            return False
+        if self.should_interrupt is not None:
+            return self.should_interrupt()
+        if "direct" in channels:
+            return False
+        private = self.config.scene.split(":", 2)[1] == "private"
+        blacklist = self.config.permissions.blacklist
+        return any(
+            not message.is_self and message.sender.uid not in blacklist
+            and (private or message.mentions_bot)
+            for _, message, _ in self.store.pending_messages(self.config.scene)
+        )
+
     async def _send_prepared(self, entry_seq: int, parts: list[ChatMessage], *, prefix: str,
                              turn_id: str | None, sticker: PersonaSticker | CollectedSticker | None,
                              channels: set[str], fixed_notice: bool) -> tuple[str, str]:
@@ -253,6 +270,10 @@ class ChatExpression:
                     delay = min(settings.max_interval_seconds,
                                 max(settings.min_interval_seconds, part_length(part) / settings.chars_per_second))
                     await asyncio.sleep(delay)
+                if await self.store.read(self._direct_interrupted, seen, fixed_notice):
+                    content = await self.store.call(
+                        self.store.expression_error, entry_seq, "收到新的直接消息，已停止发送剩余内容。")
+                    return content, "interrupted"
                 self.check_send_available()
                 if index == 0 and not fixed_notice:
                     try:
