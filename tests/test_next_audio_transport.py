@@ -136,3 +136,56 @@ def test_saved_capacity_remains_explicit_when_audio_limit_changes():
     saved['audio']['max_bytes'] = 25 * 1024 * 1024
     with pytest.raises(ValidationError, match='onebot.max_frame_bytes'):
         HostConfig.model_validate_json(json.dumps(saved))
+
+
+@pytest.mark.asyncio
+async def test_fetch_record_reads_segment_url_when_file_missing_or_unreachable(monkeypatch):
+    from len_bot.next.models.asr import AudioSettings
+    from len_bot.next.platform import onebot_audio
+    from len_bot.next.platform.onebot_audio import fetch_record
+
+    output = BytesIO()
+    with wave.open(output, 'wb') as stream:
+        stream.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+        stream.writeframes(b'\0\0' * 16000)
+    wav = output.getvalue()
+
+    fetched = []
+
+    async def fake_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+        fetched.append((url, byte_limit('audio/wav', b'')))
+        if url.endswith('.wav'):
+            return url, 'audio/wav', wav
+        return url, 'audio/ogg', b'OggS-audio-bytes'
+
+    monkeypatch.setattr(onebot_audio, 'fetch_public', fake_fetch_public)
+    settings = AudioSettings(max_bytes=64 * 1024, max_seconds=30, timeout_seconds=5)
+
+    async def unused_call(action, params):
+        raise AssertionError(f'unexpected call {action} {params}')
+
+    # No file locator, segment carries http(s) url directly.
+    audio, duration = await fetch_record(unused_call, {'url': 'https://cdn.example/a.wav'}, settings)
+    assert audio == wav and duration == 1.0
+
+    # Unreachable NapCat host path in remote deployment falls onto segment url without calling get_record.
+    audio, duration = await fetch_record(
+        unused_call,
+        {'file': '/napcat-host/nonexistent/voice.amr', 'url': 'https://cdn.example/b.ogg', 'duration': 3.5},
+        settings,
+    )
+    assert audio == b'OggS-audio-bytes' and duration == 3.5
+
+    # get_record returns host path without base64 -> reads refreshed url.
+    async def host_path_call(action, params):
+        assert action == 'get_record'
+        return {'status': 'ok', 'retcode': 0, 'data': {
+            'file': '/napcat-host/nonexistent/out.wav', 'url': 'https://cdn.example/c.wav',
+        }}
+
+    audio, duration = await fetch_record(host_path_call, {'file': 'voice.amr'}, settings)
+    assert audio == wav and duration == 1.0
+    assert [item[0] for item in fetched] == [
+        'https://cdn.example/a.wav', 'https://cdn.example/b.ogg', 'https://cdn.example/c.wav',
+    ]
+    assert all(limit == settings.max_bytes for _, limit in fetched)

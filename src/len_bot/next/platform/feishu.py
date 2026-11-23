@@ -32,6 +32,8 @@ TOKEN_MARGIN_SECONDS = 300
 MEMBER_LIST_SECONDS = 600
 # The long connection may deliver an event again; this many recent event IDs are remembered.
 SEEN_EVENTS = 1024
+# Recent bot message IDs kept so replies quoting the bot mark mentions_bot=True.
+OWN_MESSAGE_IDS = 1024
 # Payloads split over several frames wait for their remaining parts; at most this many are held.
 PENDING_PARTS = 64
 FILE_LIMIT_BYTES = 30 * 1024 * 1024
@@ -193,7 +195,8 @@ def _content_segments(kind: str, content: dict, mentions: dict[str, str], bot: s
     return [Segment(kind, {})], False
 
 
-def parse_event(raw: dict, *, bot: str, names: dict[str, str], scenes: dict[str, str]) -> ChatMessage | Notice | None:
+def parse_event(raw: dict, *, bot: str, names: dict[str, str], scenes: dict[str, str],
+                own_message_ids: set[str] | OrderedDict[str, None] | None = None) -> ChatMessage | Notice | None:
     """The message or notice of one event callback; ``bot`` is the bot's open_id."""
     try:
         header, event = raw["header"], raw["event"]
@@ -211,6 +214,8 @@ def parse_event(raw: dict, *, bot: str, names: dict[str, str], scenes: dict[str,
             reply_to = message.get("parent_id") or None
             if reply_to is not None:
                 segments.insert(0, Segment("reply", {"id": reply_to}))
+                if own_message_ids and reply_to in own_message_ids:
+                    mentioned = True
             return ChatMessage(
                 id=str(uuid4()), platform="feishu", bot_id="feishu:" + bot, scene=scene,
                 platform_message_id=message["message_id"],
@@ -266,12 +271,20 @@ class Feishu:
         self._service = 0
         self._ping_seconds = PING_INTERVAL_SECONDS
         self._seen: OrderedDict[str, None] = OrderedDict()
+        self._own_message_ids: OrderedDict[str, None] = OrderedDict()
         self._parts: dict[str, list[bytes | None]] = {}
         # Display names by open_id, from mentions and member lists; private chats by chat_id for recalls.
         self.names: dict[str, str] = {}
         self.scenes: dict[str, str] = {}
         self._listed: dict[str, float] = {}
         self._list_failed: set[str] = set()
+        self._member_tasks: dict[str, asyncio.Task] = {}
+
+    def _remember_own_message(self, message_id: str) -> None:
+        self._own_message_ids[message_id] = None
+        self._own_message_ids.move_to_end(message_id)
+        while len(self._own_message_ids) > OWN_MESSAGE_IDS:
+            self._own_message_ids.popitem(last=False)
 
     def _safe(self, text: str) -> str:
         text = text.replace(self.settings.app_secret, REDACTED)
@@ -288,7 +301,8 @@ class Feishu:
         return []
 
     def parse(self, raw: dict) -> ChatMessage | Notice | None:
-        return parse_event(raw, bot=self.bot, names=self.names, scenes=self.scenes)
+        return parse_event(raw, bot=self.bot, names=self.names, scenes=self.scenes,
+                           own_message_ids=self._own_message_ids)
 
     async def start(self) -> None:
         if self._running:
@@ -323,6 +337,13 @@ class Feishu:
             if self._receiver is not None and not self._receiver.done():
                 self._receiver.cancel()
                 await asyncio.gather(self._receiver, return_exceptions=True)
+            member_tasks = list(self._member_tasks.values())
+            for task in member_tasks:
+                if not task.done():
+                    task.cancel()
+            if member_tasks:
+                await asyncio.gather(*member_tasks, return_exceptions=True)
+            self._member_tasks.clear()
         finally:
             self._detach()
             if self._client is not None:
@@ -471,14 +492,14 @@ class Feishu:
             self._seen[event_id] = None
             while len(self._seen) > SEEN_EVENTS:
                 self._seen.popitem(last=False)
-        await self._learn(raw)
+        self._learn(raw)
         try:
             self.on_event(raw)
         except Exception as error:
             self.on_error(self._safe(f"{type(error).__name__}: {error}; raw={json.dumps(raw, ensure_ascii=False)[:1500]}"))
 
-    async def _learn(self, raw: dict) -> None:
-        """Record names and private chats an event reveals, listing a chat's members for an unknown sender."""
+    def _learn(self, raw: dict) -> None:
+        """Record names and private chats an event reveals; refresh group member lists asynchronously."""
         event = raw.get("event") or {}
         message = event.get("message")
         for user in event.get("users") or []:
@@ -490,25 +511,37 @@ class Feishu:
             if isinstance(item.get("name"), str) and isinstance(item.get("id"), dict) and item["id"].get("open_id"):
                 self.names[item["id"]["open_id"]] = item["name"]
         author = ((event.get("sender") or {}).get("sender_id") or {}).get("open_id")
+        message_id = message.get("message_id")
+        if author == self.bot and isinstance(message_id, str) and message_id:
+            self._remember_own_message(message_id)
         chat = message.get("chat_id")
         if message.get("chat_type") == "p2p" and author:
             self.scenes[chat] = f"feishu:private:{author}"
         if (author and chat and author not in self.names and message.get("chat_type") != "p2p"
+                and chat not in self._member_tasks
                 and time.monotonic() - self._listed.get(chat, -MEMBER_LIST_SECONDS) >= MEMBER_LIST_SECONDS):
             self._listed[chat] = time.monotonic()
-            try:
-                await self._list_members(chat)
-            except FeishuCallError as error:
-                if chat not in self._list_failed:
-                    self._list_failed.add(chat)
-                    self.on_error(f"Feishu member list of {chat} failed; senders show as open_id: {error}")
+            self._member_tasks[chat] = asyncio.create_task(self._refresh_members(chat))
+
+    async def _refresh_members(self, chat: str) -> None:
+        try:
+            await self._list_members(chat)
+        except asyncio.CancelledError:
+            raise
+        except FeishuCallError as error:
+            if chat not in self._list_failed:
+                self._list_failed.add(chat)
+                self.on_error(f"Feishu member list of {chat} failed; senders show as open_id: {error}")
+        finally:
+            self._member_tasks.pop(chat, None)
 
     async def _list_members(self, chat: str) -> None:
         token = ""
         while True:
             data = await self._api("GET", f"/open-apis/im/v1/chats/{chat}/members",
                                    params={"member_id_type": "open_id", "page_size": 100,
-                                           **({"page_token": token} if token else {})})
+                                           **({"page_token": token} if token else {})},
+                                   mark_submitted=False)
             for item in data.get("items") or []:
                 if isinstance(item.get("member_id"), str) and isinstance(item.get("name"), str):
                     self.names[item["member_id"]] = item["name"]
@@ -535,16 +568,14 @@ class Feishu:
         try:
             response = await self._client.post(path, json=payload)
             body = response.json()
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as error:
-            raise FeishuCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=False) from None
         except (httpx.HTTPError, ValueError) as error:
-            raise FeishuCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=True) from None
+            raise FeishuCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=False) from None
         if not isinstance(body, dict):
-            raise FeishuCallError(self._safe(f"{path} answered {repr(body)[:300]}"), submitted=True)
+            raise FeishuCallError(self._safe(f"{path} answered {repr(body)[:300]}"), submitted=False)
         return body
 
     async def _api(self, method: str, path: str, *, params: dict | None = None, json_body: dict | None = None,
-                   files: dict | None = None, data: dict | None = None) -> dict:
+                   files: dict | None = None, data: dict | None = None, mark_submitted: bool = True) -> dict:
         """The ``data`` of one Open API call; a stale token is renewed and a rate limit waited out once."""
         if self._client is None:
             raise FeishuCallError("Feishu transport has not been started", submitted=False)
@@ -558,7 +589,7 @@ class Feishu:
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as error:
                 raise FeishuCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=False) from None
             except (httpx.HTTPError, ValueError) as error:
-                raise FeishuCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=True) from None
+                raise FeishuCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=mark_submitted) from None
             code = body.get("code") if isinstance(body, dict) else None
             if code == 0:
                 return body.get("data") or {}
@@ -630,7 +661,7 @@ class Feishu:
         try:
             if image_count:
                 uploaded = await self._api("POST", "/open-apis/im/v1/images", data={"image_type": "message"},
-                                           files={"image": ("image", image_bytes)})
+                                           files={"image": ("image", image_bytes)}, mark_submitted=False)
                 image_key = uploaded["image_key"]
                 if text:
                     msg_type, content = "post", {"zh_cn": {"content": [[*self._post_items(message.segments),
@@ -643,10 +674,11 @@ class Feishu:
                          message.reply_to)
             body = {"msg_type": msg_type, "content": json.dumps(content, ensure_ascii=False)}
             if reply is not None and reply.startswith("om_"):
-                sent = await self._api("POST", f"/open-apis/im/v1/messages/{reply}/reply", json_body=body)
+                sent = await self._api("POST", f"/open-apis/im/v1/messages/{reply}/reply", json_body=body,
+                                       mark_submitted=True)
             else:
                 sent = await self._api("POST", "/open-apis/im/v1/messages", params={"receive_id_type": target[0]},
-                                       json_body={"receive_id": target[1], **body})
+                                       json_body={"receive_id": target[1], **body}, mark_submitted=True)
         except FeishuCallError as error:
             return SendResult("unconfirmed" if error.submitted else "failed", None, str(error))
         except (KeyError, TypeError) as error:
@@ -654,6 +686,7 @@ class Feishu:
             return SendResult("failed", None, f"image upload: {type(error).__name__}: {error}")
         message_id = sent.get("message_id")
         if isinstance(message_id, str) and message_id:
+            self._remember_own_message(message_id)
             return SendResult("sent", message_id, None)
         return SendResult("unconfirmed", None, self._safe(repr(sent)[:500]))
 
@@ -683,15 +716,19 @@ class Feishu:
             return UploadResult("failed", None, f"Feishu files must be 1 to {FILE_LIMIT_BYTES} bytes", None)
         try:
             uploaded = await self._api("POST", "/open-apis/im/v1/files", data={"file_type": "stream", "file_name": name},
-                                       files={"file": (name, data)})
+                                       files={"file": (name, data)}, mark_submitted=False)
             sent = await self._api("POST", "/open-apis/im/v1/messages", params={"receive_id_type": target[0]},
                                    json_body={"receive_id": target[1], "msg_type": "file",
-                                              "content": json.dumps({"file_key": uploaded["file_key"]})})
+                                              "content": json.dumps({"file_key": uploaded["file_key"]})},
+                                   mark_submitted=True)
         except FeishuCallError as error:
             return UploadResult("unconfirmed" if error.submitted else "failed", None, str(error), None)
         except (KeyError, TypeError) as error:
             # The file upload answered without a key, so no message was sent.
             return UploadResult("failed", None, f"file upload: {type(error).__name__}: {error}", None)
+        message_id = sent.get("message_id")
+        if isinstance(message_id, str) and message_id:
+            self._remember_own_message(message_id)
         return UploadResult("uploaded", uploaded["file_key"], None, sent)
 
     async def scene_title(self, scene: str) -> tuple[str, int | None]:

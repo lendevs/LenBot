@@ -523,18 +523,41 @@ class Telegram:
         if not self._running or self._client is None:
             return SendResult("failed", None, "Telegram transport is not running; message was not sent")
         chunks = self._chunks(message.segments, CAPTION_LIMIT if image_count else TEXT_LIMIT)
+        total = len(chunks)
         # Every part goes to the first part's topic, even if another topic becomes active meanwhile.
         planned = None if reply is not None and reply.isdecimal() else self._threads.get(chat)
         first, landed = await self._send_one(chat, chunks[0], reply, image_bytes if image_count else None, planned)
+        if first.status != "sent":
+            if total == 1:
+                return first
+            if first.status == "failed":
+                return SendResult("failed", None,
+                                  f"part 1 of {total} failed (unsent parts 1..{total}): {first.error}")
+            return SendResult("unconfirmed", None,
+                              f"part 1 of {total} unconfirmed (unsent parts 2..{total}): {first.error}")
         thread = planned if landed is None else landed
+        sent_ids = [first.platform_message_id] if first.platform_message_id else []
         for number, chunk in enumerate(chunks[1:], 2):
-            if first.status != "sent":
-                break
             later, _ = await self._send_one(chat, chunk, None, None, thread)
-            if later.status != "sent":
-                # The first part is in the chat; what follows it may be missing.
-                return SendResult("unconfirmed", first.platform_message_id,
-                                  f"part {number} of {len(chunks)}: {later.error}")
+            if later.status == "sent":
+                if later.platform_message_id:
+                    sent_ids.append(later.platform_message_id)
+                continue
+            sent_range = "1" if number == 2 else f"1..{number - 1}"
+            sent_note = f"sent parts {sent_range}"
+            if sent_ids:
+                sent_note += f" (message_ids={','.join(sent_ids)})"
+            if later.status == "failed":
+                unsent = str(number) if number == total else f"{number}..{total}"
+                detail = f"{sent_note}; part {number} of {total} failed (unsent parts {unsent}): {later.error}"
+            elif number < total:
+                unsent = str(total) if number + 1 == total else f"{number + 1}..{total}"
+                detail = (f"{sent_note}; part {number} of {total} unconfirmed "
+                          f"(unsent parts {unsent}): {later.error}")
+            else:
+                detail = f"{sent_note}; part {number} of {total} unconfirmed: {later.error}"
+            # Earlier parts are already in the chat; what follows them failed or is unconfirmed.
+            return SendResult("unconfirmed", first.platform_message_id, detail)
         return first
 
     async def _send_one(self, chat: int, segments: list[Segment], reply: str | None, image_bytes: bytes | None,
@@ -543,7 +566,10 @@ class Telegram:
         text, entities = self._compose(segments)
         params = self._target(chat, reply, thread)
         if image_bytes is not None:
-            method, files = "sendPhoto", {"photo": ("image", image_bytes)}
+            if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+                method, files = "sendAnimation", {"animation": ("animation.gif", image_bytes, "image/gif")}
+            else:
+                method, files = "sendPhoto", {"photo": ("image", image_bytes)}
             params.update({"caption": text} if text else {})
             params.update({"caption_entities": entities} if entities else {})
         else:

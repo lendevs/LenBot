@@ -39,13 +39,27 @@ LOOK_TOOL = {"type": "function", "function": {
 }}
 
 
-# Downloads an inbound file named by a platform reference (Telegram file_id, Feishu file key) up to a byte limit.
+# Downloads an inbound file named by a platform reference (Telegram file_id, Feishu file key, OneBot file) up to a byte limit.
 MediaFetch = Callable[[dict, int], Awaitable[bytes]]
+ONEBOT_URL_TTL_SECONDS = 1800
+LOOK_MAX_FRAMES = 6
 
 
 def platform_reference(data: dict[str, object]) -> bool:
     """Whether a segment names its file by a platform reference rather than a public URL."""
-    return not isinstance(data.get("url"), str) and any(key in data for key in ("file_id", "image_key", "file_key"))
+    url = data.get("url")
+    has_url = isinstance(url, str) and bool(url.strip())
+    return not has_url and any(
+        isinstance(data.get(key), str) and bool(data[key].strip())
+        for key in ("file_id", "image_key", "file_key", "file")
+    )
+
+
+def _needs_platform_fetch(data: dict[str, object], *, message_time: float, now: float) -> bool:
+    if platform_reference(data):
+        return True
+    file = data.get("file")
+    return isinstance(file, str) and bool(file.strip()) and (now - message_time) > ONEBOT_URL_TTL_SECONDS
 
 
 def image_url(data: dict[str, object]) -> str:
@@ -55,10 +69,10 @@ def image_url(data: dict[str, object]) -> str:
     return url
 
 
-async def prepare_pixels(data: bytes, settings: ImageSettings) -> tuple[bytes, bool, int, int]:
+async def _prepare_pixels(data: bytes, settings: ImageSettings, *, max_frames: int) -> tuple[bytes, bool, int, int, int]:
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-m", __name__, "prepare",
-        str(settings.max_bytes), str(settings.max_pixels), str(settings.max_dimension),
+        str(settings.max_bytes), str(settings.max_pixels), str(settings.max_dimension), str(max_frames),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -73,7 +87,18 @@ async def prepare_pixels(data: bytes, settings: ImageSettings) -> tuple[bytes, b
         raise ValueError(f"image preparation failed: {stderr.decode(errors='replace')[-500:]}")
     header, jpeg = stdout.split(b"\n", 1)
     metadata = json.loads(header)
-    return jpeg, metadata["animated"], metadata["width"], metadata["height"]
+    return jpeg, metadata["animated"], metadata["width"], metadata["height"], metadata.get("frames", 1)
+
+
+async def prepare_pixels(data: bytes, settings: ImageSettings) -> tuple[bytes, bool, int, int]:
+    jpeg, animated, width, height, _ = await _prepare_pixels(data, settings, max_frames=1)
+    return jpeg, animated, width, height
+
+
+def _animated_fields(asset: ImageAsset) -> dict[str, object]:
+    if asset.animated and asset.frames > 1:
+        return {"animated_first_frame_only": False, "animated_frames": asset.frames}
+    return {"animated_first_frame_only": asset.animated}
 
 
 def _display(scene: str, arguments: LookArguments, asset: ImageAsset, *,
@@ -81,7 +106,7 @@ def _display(scene: str, arguments: LookArguments, asset: ImageAsset, *,
     result = {
         "scene": scene, "platform_message_id": arguments.message, "image": arguments.image,
         "jpeg_bytes": len(asset.jpeg), "width": asset.width, "height": asset.height,
-        "animated_first_frame_only": asset.animated,
+        **_animated_fields(asset),
         "fetched_at": datetime.fromtimestamp(asset.fetched_at, timezone.utc).isoformat(),
         "description": asset.description, "description_model": asset.description_model,
         "described_at": (None if asset.described_at is None else
@@ -89,7 +114,13 @@ def _display(scene: str, arguments: LookArguments, asset: ImageAsset, *,
         "pixels_reused": pixels_reused, "description_reused": description_reused,
         "pixels_source": pixels_source,
     }
-    return json.dumps(result, ensure_ascii=False) + "\n描述来自准备后的 JPEG；动图只分析第一帧。"
+    if asset.animated and asset.frames > 1:
+        note = f"\n描述来自准备后的 JPEG；动图已提取 {asset.frames} 个关键帧拼图。"
+    elif asset.animated:
+        note = "\n描述来自准备后的 JPEG；动图只有第一帧。"
+    else:
+        note = "\n描述来自准备后的 JPEG。"
+    return json.dumps(result, ensure_ascii=False) + note
 
 
 async def load_look_image(store: Store, scene: str, arguments: LookArguments, settings: ImageSettings, *,
@@ -110,6 +141,7 @@ async def load_look_image(store: Store, scene: str, arguments: LookArguments, se
         if arguments.refresh:
             raise ValueError("该图片尚未保存像素；先用 refresh=false 读取，再重新描述")
         original = store.platform_image(scene, arguments.message, arguments.image)
+        picture_data = pictures[arguments.image - 1].data
         deadline = asyncio.timeout(settings.timeout_seconds)
         try:
             async with deadline:
@@ -120,21 +152,25 @@ async def load_look_image(store: Store, scene: str, arguments: LookArguments, se
                 elif recording is not None:
                     body, fetched_at = recording.image(arguments.message, arguments.image)
                     pixels_source = 'frozen_original'
-                elif fetch_media is not None and platform_reference(pictures[arguments.image - 1].data):
-                    body = await fetch_media(pictures[arguments.image - 1].data, settings.max_bytes)
+                elif fetch_media is not None and _needs_platform_fetch(
+                    picture_data, message_time=message.time, now=store.now()
+                ):
+                    body = await fetch_media(picture_data, settings.max_bytes)
                     fetched_at = store.now()
                     pixels_source = 'platform_download'
                 else:
-                    url = image_url(pictures[arguments.image - 1].data)
+                    url = image_url(picture_data)
                     _, _, body = await fetch_public(
                         url, settings.timeout_seconds, lambda _type, _prefix: settings.max_bytes,
                         fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
                     )
                     fetched_at = store.now()
                     pixels_source = 'http_response'
-                jpeg, animated, width, height = await prepare_pixels(body, settings)
+                jpeg, animated, width, height, frames = await _prepare_pixels(
+                    body, settings, max_frames=LOOK_MAX_FRAMES
+                )
                 asset = ImageAsset(jpeg=jpeg, width=width, height=height, animated=animated,
-                                   fetched_at=fetched_at)
+                                   fetched_at=fetched_at, frames=frames)
                 store.save_image(scene, arguments.message, arguments.image, asset)
         except TimeoutError as error:
             if deadline.expired():
@@ -168,28 +204,35 @@ def shown_image(scene: str, arguments: LookArguments, asset: ImageAsset, *,
     result = {
         "scene": scene, "platform_message_id": arguments.message, "image": arguments.image,
         "jpeg_bytes": len(asset.jpeg), "width": asset.width, "height": asset.height,
-        "animated_first_frame_only": asset.animated,
+        **_animated_fields(asset),
         "fetched_at": datetime.fromtimestamp(asset.fetched_at, timezone.utc).isoformat(),
         "pixels_reused": pixels_reused, "pixels_source": pixels_source,
     }
-    return json.dumps(result, ensure_ascii=False) + "\n图片附在本轮接下来的请求里；动图只有第一帧。"
+    if asset.animated and asset.frames > 1:
+        note = f"\n图片附在本轮接下来的请求里；动图已提取 {asset.frames} 个关键帧拼图。"
+    elif asset.animated:
+        note = "\n图片附在本轮接下来的请求里；动图只有第一帧。"
+    else:
+        note = "\n图片附在本轮接下来的请求里。"
+    return json.dumps(result, ensure_ascii=False) + note
 
 
 def _worker() -> None:
-    from len_bot.media.images import prepare_image
+    from len_bot.media.images import prepare_image_frames
 
     max_bytes, max_pixels, max_dimension = map(int, sys.argv[2:5])
-    jpeg, animated, width, height = prepare_image(
+    max_frames = int(sys.argv[5]) if len(sys.argv) == 6 else 1
+    jpeg, animated, width, height, frames = prepare_image_frames(
         sys.stdin.buffer.read(max_bytes + 1),
-        max_bytes=max_bytes, max_pixels=max_pixels, max_dimension=max_dimension,
+        max_bytes=max_bytes, max_pixels=max_pixels, max_dimension=max_dimension, max_frames=max_frames,
     )
-    metadata = {"animated": animated, "width": width, "height": height}
+    metadata = {"animated": animated, "width": width, "height": height, "frames": frames}
     sys.stdout.buffer.write(json.dumps(metadata).encode("ascii") + b"\n" + jpeg)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5 or sys.argv[1] != "prepare":
-        raise SystemExit("look image worker expects prepare and three limits")
+    if len(sys.argv) not in {5, 6} or sys.argv[1] != "prepare":
+        raise SystemExit("look image worker expects prepare and three or four limits")
     try:
         _worker()
     except Exception as error:
