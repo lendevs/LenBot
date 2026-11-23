@@ -9,6 +9,7 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 
 from ..chat.proactive import ProactiveStore
+from ..chat.upkeep import UpkeepPart
 from ..models.limits import apply_speech_limits
 from ..platform.adapter import PlatformCallError, platform_changes
 from .logs import SECRETS, credentials
@@ -35,6 +36,8 @@ class LiveSettings:
         await runtime.mind.rebind(running.model_settings('mind'))
         if runtime.vision is not None:
             await runtime.vision.rebind(running.model_settings('vision'))
+        if runtime.memory is not None and runtime.memory.summarizer is not None:
+            await runtime.memory.summarizer.model.rebind(running.model_settings('memory'))
         embeddings = [] if runtime.expression_service is None else list(runtime.expression_service.clients.values())
         if runtime.memory is not None and runtime.memory.backend.embedding is not None:
             embeddings.append(runtime.memory.backend.embedding)
@@ -118,7 +121,12 @@ class LiveSettings:
         if running.memory is not None and saved.memory is not None:
             for name in ('auto_recall', 'recall_budget_chars', 'recall_limit'):
                 setattr(running.memory, name, getattr(saved.memory, name))
-            if running.memory.ingest is not None and saved.memory.ingest is not None:
+            if runtime.upkeep is not None and runtime.memory is not None:
+                running.memory.ingest = deepcopy(saved.memory.ingest)
+                enabled = saved.memory.ingest is not None
+                await runtime.upkeep.set_memory_ingest(enabled)
+                runtime.ingestor = UpkeepPart(runtime.upkeep, 'memory') if enabled else None
+            elif running.memory.ingest is not None and saved.memory.ingest is not None:
                 running.memory.ingest = deepcopy(saved.memory.ingest)
         for scene, current in running.scenes.items():
             if scene not in saved.scenes:

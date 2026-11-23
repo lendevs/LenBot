@@ -224,31 +224,69 @@ class LearningStore:
                                (*values, limit, offset))
         total = self.db.execute("SELECT COUNT(*) FROM expressions WHERE " + clause, values).fetchone()[0]
         items = [self._expression(row) for row in rows]
-        disliked = self.disliked(scene, self.store.now() - DISLIKED_DAYS * 86400)
+        disliked = (self.disliked(scene, self.store.now() - DISLIKED_DAYS * 86400,
+                                  expression_ids=[item["id"] for item in items])
+                    if items else {})
         for item in items:
             item["disliked"] = disliked.get(item["id"], 0)
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
-    def disliked(self, scene: str, since: float) -> dict[int, int]:
+    def disliked(self, scene: str, since: float, *, expression_ids: Sequence[int] | None = None) -> dict[int, int]:
         """How often each expression offered to a turn, and used word for word in its sent text, drew a
         correction or a negative reaction to that text since ``since``."""
-        rows = self.db.execute(
-            "SELECT e.message_seqs,(SELECT json_group_array(DISTINCT offered.value) FROM model_calls c,"
-            "json_each(json_extract(c.request,'$.expression_ids')) offered WHERE c.turn_id=e.turn_id) "
-            "FROM reply_effects e WHERE e.scene=? AND e.reaction IN ('correct','negative') "
-            "AND e.first_sent_at>=? AND e.turn_id IS NOT NULL", (scene, since),
-        ).fetchall()
-        offered = {id for _, ids in rows for id in json.loads(ids or "[]")}
-        styles = {row[0]: row[1].strip() for row in self.db.execute(
-            "SELECT id,style FROM expressions WHERE scene=? AND id IN (SELECT value FROM json_each(?))",
-            (scene, encode(sorted(offered))))}
-        counts: dict[int, int] = {}
-        for seqs, ids in rows:
-            text = "\n".join(plain_text(decode_message(row[0])) for row in self.db.execute(
-                "SELECT body FROM messages WHERE scene=? AND seq IN (SELECT value FROM json_each(?))", (scene, seqs)))
+        styles: dict[int, str]
+        if expression_ids is not None:
+            requested = sorted(set(expression_ids))
+            if not requested:
+                return {}
             # A one-character style would match almost any reply.
-            for id in json.loads(ids or "[]"):
-                if len(styles.get(id, "")) >= 2 and styles[id] in text:
+            styles = {row[0]: style for row in self.db.execute(
+                "SELECT id,style FROM expressions WHERE scene=? AND id IN (SELECT value FROM json_each(?))",
+                (scene, encode(requested))) if len(style := row[1].strip()) >= 2}
+            if not styles:
+                return {}
+            rows = self.db.execute(
+                "SELECT e.message_seqs,(SELECT json_group_array(DISTINCT offered.value) FROM model_calls c,"
+                "json_each(json_extract(c.request,'$.expression_ids')) offered "
+                "WHERE c.turn_id=e.turn_id AND offered.value IN (SELECT value FROM json_each(?))) "
+                "FROM reply_effects e WHERE e.scene=? AND e.reaction IN ('correct','negative') "
+                "AND e.first_sent_at>=? AND e.turn_id IS NOT NULL",
+                (encode(sorted(styles)), scene, since),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                "SELECT e.message_seqs,(SELECT json_group_array(DISTINCT offered.value) FROM model_calls c,"
+                "json_each(json_extract(c.request,'$.expression_ids')) offered WHERE c.turn_id=e.turn_id) "
+                "FROM reply_effects e WHERE e.scene=? AND e.reaction IN ('correct','negative') "
+                "AND e.first_sent_at>=? AND e.turn_id IS NOT NULL", (scene, since),
+            ).fetchall()
+            offered = {id for _, ids in rows for id in json.loads(ids or "[]")}
+            if not offered:
+                return {}
+            styles = {row[0]: style for row in self.db.execute(
+                "SELECT id,style FROM expressions WHERE scene=? AND id IN (SELECT value FROM json_each(?))",
+                (scene, encode(sorted(offered)))) if len(style := row[1].strip()) >= 2}
+            if not styles:
+                return {}
+        matched_rows: list[tuple[list[int], list[int]]] = []
+        needed_seqs: set[int] = set()
+        for seqs_json, ids_json in rows:
+            candidate_ids = [id for id in json.loads(ids_json or "[]") if id in styles]
+            if not candidate_ids:
+                continue
+            seqs = json.loads(seqs_json)
+            matched_rows.append((seqs, candidate_ids))
+            needed_seqs.update(seqs)
+        if not needed_seqs:
+            return {}
+        texts = {row[0]: plain_text(decode_message(row[1])) for row in self.db.execute(
+            "SELECT seq,body FROM messages WHERE scene=? AND seq IN (SELECT value FROM json_each(?))",
+            (scene, encode(sorted(needed_seqs))))}
+        counts: dict[int, int] = {}
+        for seqs, candidate_ids in matched_rows:
+            text = "\n".join(texts[seq] for seq in seqs if seq in texts)
+            for id in candidate_ids:
+                if styles[id] in text:
                     counts[id] = counts.get(id, 0) + 1
         return counts
 

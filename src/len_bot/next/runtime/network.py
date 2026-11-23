@@ -21,7 +21,7 @@ from ..chat.commands import Commands
 from ..chat.tools import task_data_tools, tool_catalog
 from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
-from .logs import credentials, log_context, log_event
+from .logs import SECRETS, credentials, log_context, log_event
 from .lifecycle import HostLifecycle
 from .model_alerts import ModelAlerts
 from ..platform.messages import ChatMessage, Notice, SendResult, UploadResult
@@ -69,6 +69,7 @@ class NetworkRuntime:
         self.mind, self.vision = mind, vision
         self.events = EventHub()
         self.log_secrets = credentials(config)
+        SECRETS.add(self.log_secrets)
         self.memory = memory
         self.budget = ModelBudget(config, store, root=config._instance_root) if budget is None else budget
         if slots is None and (config.limits.daily_tokens is not None or config.limits.scene_daily_tokens):
@@ -276,7 +277,7 @@ class NetworkRuntime:
             self.events.publish("host.state")
             self.notify()
 
-    def _emit(self, result: dict, *, error: BaseException | None = None) -> None:
+    def _emit(self, result: dict, *, error: BaseException | None = None, notify: bool = True) -> None:
         """One runtime event in the host log; the panel reads it back from the log file.
 
         ``error`` text in the result and a passed exception both become the record's ``error`` object.
@@ -293,7 +294,8 @@ class NetworkRuntime:
         if result['type'] == 'turn' and self.upkeep is not None:
             # Upkeep skips a scene while it is in a turn; the turn's end lets it look again.
             self.upkeep.wake(result['scene'])
-        self.notify()
+        if notify:
+            self.notify()
 
     def _platform_error(self, error: str) -> None:
         self.last_platform_error = error
@@ -315,7 +317,7 @@ class NetworkRuntime:
             return
         if isinstance(message, Notice):
             if not self.accepting:
-                self._emit({"type": "receipt", "status": "not_accepted", "reason": self.status})
+                self._emit({"type": "receipt", "status": "not_accepted", "reason": self.status}, notify=False)
                 return
             if message.scene not in self.runners:
                 return
@@ -327,7 +329,7 @@ class NetworkRuntime:
                 self.stop()
                 raise
             self._emit({"type": "platform_event", "notice_type": message.notice_type,
-                        "plugin_handlers": handled})
+                        "plugin_handlers": handled}, notify=False)
             self.events.publish('notice.received', scene=message.scene, kind=message.notice_type)
             return
         with log_context(scene=message.scene, platform_message_id=message.platform_message_id):
@@ -355,7 +357,7 @@ class NetworkRuntime:
     def _receive_message(self, message, raw: dict) -> None:
         if not self.accepting:
             self._emit({"type": "receipt", "scene": message.scene,
-                        "status": "not_accepted", "reason": self.status})
+                        "status": "not_accepted", "reason": self.status}, notify=False)
             return
         runner = self.runners.get(message.scene)
         if runner is None and self._owner_private(message):
@@ -370,7 +372,7 @@ class NetworkRuntime:
             return
         if runner is None or message.scene in self.scene_service.retiring:
             self._emit({"type": "receipt", "scene": message.scene, "status": "ignored",
-                        "platform_message_id": message.platform_message_id})
+                        "platform_message_id": message.platform_message_id}, notify=False)
             return
         blocked = message.sender.uid in runner.config.permissions.blacklist
         # A paused chat only stops waking the model; plugin rules and commands keep answering.
@@ -406,7 +408,8 @@ class NetworkRuntime:
             self.audio.request(message.scene)
             self.events.publish('message.received', scene=message.scene, message_seq=receipt['message_seq'],
                                 verdict=receipt['wake_verdict'])
-        self._emit({"type": "receipt", **receipt, "scene": message.scene})
+        self._emit({"type": "receipt", **receipt, "scene": message.scene},
+                   notify=bool(receipt.get("wake_verdict", {}).get("woke")))
 
     async def _ready(self, wait: bool, scene: str | None = None) -> bool:
         if self.stopped.is_set():

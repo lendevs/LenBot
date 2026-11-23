@@ -139,3 +139,37 @@ async def test_stream_coalesces_changes_and_reports_controls(tmp_path):
                 pass
             assert event['scene'] == SCENE
             assert runtime.runners[SCENE].state.paused
+
+
+@pytest.mark.asyncio
+async def test_idle_group_message_does_not_broadcast_host_changed_and_flush_keeps_followup(tmp_path):
+    from len_bot.next.platform.onebot_messages import parse_message
+    from test_attention_protocol import message
+
+    def configure(root):
+        path = root / 'lenbot.config.json'
+        source = json.loads(path.read_text())
+        source['scenes'][SCENE]['attention'] = {'only_direct': True}
+        path.write_text(json.dumps(source))
+
+    async with panel(tmp_path, configure) as (runtime, client, url):
+        runtime.accepting = True
+        async with connect(url, additional_headers=await login(client), proxy=None) as ws:
+            await receive(ws)
+            raw = message(70001, 501, '普通闲聊不唤醒')
+            runtime._receive_message(parse_message(raw, own_message_ids=set()), raw)
+            seen = []
+            while len(seen) < 2:
+                seen.append((await receive(ws))['type'])
+            assert 'message.received' in seen
+            assert 'host.changed' not in seen
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(ws.recv(), .35)
+
+            # A change arriving right after a flush must still schedule and deliver the next host.changed.
+            runtime.notify()
+            assert (await receive(ws))['type'] == 'host.changed'
+            runtime.notify()
+            assert (await receive(ws))['type'] == 'host.changed'
+            runtime.notify()
+            assert (await receive(ws))['type'] == 'host.changed'

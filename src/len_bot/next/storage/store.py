@@ -32,6 +32,7 @@ from ..chat.schedule_store import ScheduleStore
 FORMAT_VERSION = 4
 FORMAT_UPGRADE = '请停止实例后执行 uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot。'
 MAX_SEARCH_TERMS = 8
+SHORT_QUERY_SCAN_LIMIT = 5000
 
 
 def search_terms(query: str) -> list[str]:
@@ -1057,38 +1058,60 @@ class Store:
                         after: float | None, before: float | None, snapshot: int,
                         offset: int, limit: int,
                         order: Literal["newest", "oldest"] = "oldest") -> list[tuple[int, ChatMessage]]:
-        # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.
-        cte, join = "", ""
-        conditions = ["m.scene=?", "+m.seq<=?"]
-        params: list[object] = [scene, snapshot]
+        direction = " DESC" if order == "newest" else ""
+        filters: list[str] = []
+        filter_params: list[object] = []
+        if who is not None:
+            filters.append("json_extract(m.body,'$.sender.uid')=?")
+            filter_params.append(who)
+        if after is not None:
+            filters.append("json_extract(m.body,'$.time')>=?")
+            filter_params.append(after)
+        if before is not None:
+            filters.append("json_extract(m.body,'$.time')<?")
+            filter_params.append(before)
         if query is not None:
             phrases, shorts = [], []
             for term in search_terms(query):
                 (phrases if len(term) >= 3 else shorts).append(term)
             if phrases:
-                # The full-text hits are computed once; probing the virtual table per message is far slower.
-                cte = "WITH hit(seq) AS MATERIALIZED (SELECT rowid FROM message_search WHERE search_text MATCH ?) "
-                join = " JOIN hit ON hit.seq=m.seq"
-                params.insert(0, " AND ".join('"' + term.replace('"', '""') + '"' for term in phrases))
-            if shorts:
-                join += " JOIN message_search s ON s.rowid=m.seq"
+                # Filter FTS5 hits first, then probe messages by INTEGER PRIMARY KEY instead of scanning the scene.
+                hit_conditions = ["search_text MATCH ?", "rowid<=?"]
+                hit_params: list[object] = [
+                    " AND ".join('"' + term.replace('"', '""') + '"' for term in phrases),
+                    snapshot,
+                ]
                 for term in shorts:
-                    conditions.append("instr(s.search_text,?)>0")
-                    params.append(term)
-        if who is not None:
-            conditions.append("json_extract(m.body,'$.sender.uid')=?")
-            params.append(who)
-        if after is not None:
-            conditions.append("json_extract(m.body,'$.time')>=?")
-            params.append(after)
-        if before is not None:
-            conditions.append("json_extract(m.body,'$.time')<?")
-            params.append(before)
-        direction = " DESC" if order == "newest" else ""
+                    hit_conditions.append("instr(search_text,?)>0")
+                    hit_params.append(term)
+                conditions = ["m.scene=?", *filters]
+                rows = self.db.execute(
+                    "WITH hit(seq) AS MATERIALIZED (SELECT rowid FROM message_search WHERE "
+                    + " AND ".join(hit_conditions)
+                    + ") SELECT m.seq,m.body FROM hit CROSS JOIN messages m ON m.seq=hit.seq WHERE "
+                    + " AND ".join(conditions)
+                    + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
+                    (*hit_params, scene, *filter_params, limit, offset),
+                ).fetchall()
+                return [(row[0], decode_message(row[1])) for row in rows]
+            if shorts:
+                # Trigram FTS5 cannot index <3-char terms; bound the reverse scan via message_scene_seq.
+                conditions = [*("instr(s.search_text,?)>0" for _ in shorts), *filters]
+                rows = self.db.execute(
+                    "WITH recent(seq,body) AS MATERIALIZED ("
+                    "SELECT seq,body FROM messages WHERE scene=? AND seq<=? ORDER BY seq DESC LIMIT ?"
+                    ") SELECT m.seq,m.body FROM recent m CROSS JOIN message_search s ON s.rowid=m.seq WHERE "
+                    + " AND ".join(conditions)
+                    + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
+                    (scene, snapshot, SHORT_QUERY_SCAN_LIMIT, *shorts, *filter_params, limit, offset),
+                ).fetchall()
+                return [(row[0], decode_message(row[1])) for row in rows]
+        # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.
+        conditions = ["m.scene=?", "+m.seq<=?", *filters]
         rows = self.db.execute(
-            cte + "SELECT m.seq,m.body FROM messages m" + join + " WHERE " + " AND ".join(conditions)
+            "SELECT m.seq,m.body FROM messages m WHERE " + " AND ".join(conditions)
             + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
-            (*params, limit, offset),
+            (scene, snapshot, *filter_params, limit, offset),
         ).fetchall()
         return [(row[0], decode_message(row[1])) for row in rows]
 
@@ -1129,6 +1152,18 @@ class Store:
             "AND json_extract(body,'$.is_self')=1", (scene,)
         )}
 
+
+    def known_name(self, scene: str, uid: str | None) -> str | None:
+        """The group card or nickname this account last spoke with here."""
+        if uid is None:
+            return None
+        row = self.db.execute(
+            "SELECT COALESCE(NULLIF(json_extract(body,'$.sender.card'),''),json_extract(body,'$.sender.nickname')) "
+            "FROM messages WHERE scene=? AND json_extract(body,'$.sender.uid')=? "
+            "ORDER BY json_extract(body,'$.time') DESC, seq DESC LIMIT 1",
+            (scene, uid),
+        ).fetchone()
+        return None if row is None else row[0]
 
     def latest_sender_role(self, scene: str, uid: str) -> str | None:
         row = self.db.execute(
@@ -1359,8 +1394,9 @@ class Store:
 
     def last_mind_request(self, scene: str) -> dict | None:
         row = self.db.execute(
-            "SELECT request FROM model_calls JOIN turns ON turns.id=model_calls.turn_id "
-            "WHERE turns.scene=? AND model_calls.role='mind' ORDER BY model_calls.id DESC LIMIT 1",
+            "SELECT request FROM model_calls "
+            "WHERE scene=? AND role='mind' AND plugin IS NULL AND turn_id IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1",
             (scene,),
         ).fetchone()
         return None if row is None else json.loads(row[0])

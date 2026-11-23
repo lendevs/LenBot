@@ -219,8 +219,13 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
     async def snapshot() -> dict:
         plugin_state = ({"plugins": [], "discovery_errors": []} if runtime.plugins is None
                         else runtime.plugins.state())
-        for item in plugin_state["plugins"]:
-            item["model_calls"] = PluginStore(runtime.store).plugin_calls(item["name"])
+        if plugin_state["plugins"]:
+            def read_calls():
+                store = PluginStore(runtime.store)
+                return {item["name"]: store.plugin_calls(item["name"]) for item in plugin_state["plugins"]}
+            calls = await runtime.store.read(read_calls)
+            for item in plugin_state["plugins"]:
+                item["model_calls"] = calls[item["name"]]
         result = await asyncio.to_thread(state, plugin_state)
         for name, entries in result['available'].items():
             for entry in entries:

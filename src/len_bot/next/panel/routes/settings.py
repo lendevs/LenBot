@@ -451,8 +451,8 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
-                for name in ("bot_id", "owners", "onebot", "telegram", "feishu", "timezone", "delivery", "max_steps",
-                             "turn_timeout_seconds", "max_model_requests", "text_delivery")
+                for name in ("bot_id", "owners", "owner_private_chat", "onebot", "telegram", "feishu", "timezone",
+                             "delivery", "max_steps", "turn_timeout_seconds", "max_model_requests", "text_delivery")
             ),
             "limits": running.limits != saved.limits,
             "retention": running.retention != saved.retention,
