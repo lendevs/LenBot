@@ -735,6 +735,7 @@ class SceneRunner:
         seq = self.store.enqueue(
             message, raw, now, attention_state=snapshot, wake_verdict=asdict(verdict),
             plugin_claim=plugin_claim,
+            plugin_claim_delivered=state.paused or state.closed,
             collect_stickers=(not blocked and self.config.learning is not None and self.config.learning.collect_stickers
                               and not message.is_self and message.sender.uid != self.config.bot_id
                               and message.sender.uid not in self.settings.other_bot_ids),
