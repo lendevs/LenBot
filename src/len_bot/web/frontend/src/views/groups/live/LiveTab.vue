@@ -3,8 +3,9 @@ import FocusBar from './FocusBar.vue'
 import { computed, nextTick, ref, toRef, watch } from 'vue'
 import { useEventListener, useResizeObserver } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, AudioLines } from '@lucide/vue'
-import { failedMessage, failedTurn, itemKey, type TimelineItem } from '../../../api/timeline'
+import { failedMessage, failedTurn, itemKey } from '../../../api/timeline'
 import { host } from '../../../api/hostStore'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
@@ -23,14 +24,26 @@ import { useTimeline } from './useTimeline'
 const props = defineProps<{ scene: string; timeZone: string; persona: string }>()
 
 type Filter = 'all' | 'turns' | 'errors'
-type Row = TimelineItem | { type: 'edge' }
+const isFilter = (value: unknown): value is Filter =>
+  value === 'all' || value === 'turns' || value === 'errors'
 
 const { t } = useI18n()
-const { query, items } = useTimeline(toRef(props, 'scene'))
-const filter = ref<Filter>('all')
-const voice = ref(false)
+const route = useRoute()
+const router = useRouter()
 /** What VirtualList exposes; refs are unwrapped on the component instance. */
 const list = ref<{ scrollToEnd: (behavior?: ScrollBehavior) => void; atEnd: boolean }>()
+const pinnedToEnd = computed(() => list.value?.atEnd ?? true)
+const { query, items } = useTimeline(toRef(props, 'scene'), { pinnedToEnd })
+const filter = computed<Filter>({
+  get: () => (isFilter(route.query.filter) ? route.query.filter : 'all'),
+  set: (value) => {
+    const next = { ...route.query }
+    if (value === 'all') delete next.filter
+    else next.filter = value
+    void router.replace({ query: next })
+  },
+})
+const voice = ref(false)
 const expanded = ref(new Set<string>())
 
 const filters = computed(() =>
@@ -46,7 +59,6 @@ const shown = computed(() =>
     return true
   }),
 )
-const rows = computed<Row[]>(() => [{ type: 'edge' }, ...shown.value])
 /** Names seen in the loaded messages; the Bot's own account is the persona. */
 const names = computed(() => {
   const found = new Map<string, string>()
@@ -62,7 +74,6 @@ function nameOf(uid: string) {
   if (uid === host.state?.bot_id) return props.persona
   return names.value.get(uid) ?? uid.split(':').pop() ?? uid
 }
-const rowKey = (row: Row) => (row.type === 'edge' ? 'edge' : itemKey(row))
 
 function older() {
   if (query.hasNextPage.value && !query.isFetchingNextPage.value) void query.fetchNextPage()
@@ -116,18 +127,15 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
     <div v-else ref="frame" class="relative border-t border-line" :style="{ height: `${height}px` }">
       <VirtualList
         ref="list"
-        :items="rows"
-        :get-key="rowKey"
+        :items="shown"
+        :get-key="itemKey"
         :estimate-size="72"
         follow-end
         class="h-full py-2 pr-1.5"
         @reach-start="older"
       >
-        <template #default="{ item }">
-          <div
-            v-if="item.type === 'edge'"
-            class="flex min-h-9 items-center justify-center py-1 text-xs text-subtle"
-          >
+        <template #header>
+          <div class="flex min-h-9 items-center justify-center py-1 text-xs text-subtle">
             <span v-if="query.isFetchingNextPage.value" class="inline-flex items-center gap-2">
               <Spinner :size="13" />
               {{ t('groups.live.older') }}
@@ -135,8 +143,10 @@ watch(filter, () => nextTick(() => list.value?.scrollToEnd()))
             <span v-else-if="!query.hasNextPage.value">{{ t('groups.live.start') }}</span>
             <span v-else-if="!shown.length">{{ t('groups.live.noMatch') }}</span>
           </div>
+        </template>
+        <template #default="{ item }">
           <MessageRow
-            v-else-if="item.type === 'message'"
+            v-if="item.type === 'message'"
             :message="item"
             :time-zone="timeZone"
             :persona="persona"

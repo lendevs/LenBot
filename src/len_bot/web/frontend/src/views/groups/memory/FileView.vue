@@ -42,16 +42,58 @@ const doc = useQuery({
 const original = computed(() => doc.data.value?.content ?? '')
 const editing = ref(props.path === null)
 const content = ref('')
+const baseContent = ref<string | null>(props.path === null ? '' : null)
+const remoteUpdated = ref(false)
 const reason = ref('')
 const initialPath = props.directory ? `${props.directory}/` : ''
 const newPath = ref(initialPath)
-watch(original, (value) => (content.value = value), { immediate: true })
 const dirty = computed(
   () =>
     editing.value &&
-    (content.value !== original.value ||
+    (content.value !== (baseContent.value ?? original.value) ||
       reason.value !== '' ||
       (props.path === null && newPath.value !== initialPath)),
+)
+function reloadRemote() {
+  content.value = original.value
+  baseContent.value = doc.data.value ? original.value : props.path === null ? '' : null
+  remoteUpdated.value = false
+}
+function startEdit() {
+  reloadRemote()
+  editing.value = true
+}
+watch(
+  () => [props.scene, props.scope, props.path] as const,
+  () => {
+    baseContent.value = props.path === null ? '' : doc.data.value ? original.value : null
+    content.value = props.path === null ? '' : original.value
+    remoteUpdated.value = false
+  },
+)
+watch(
+  () => doc.data.value,
+  (next) => {
+    if (!next) return
+    if (baseContent.value === null) {
+      baseContent.value = next.content
+      content.value = next.content
+      remoteUpdated.value = false
+      return
+    }
+    if (next.content === baseContent.value) {
+      remoteUpdated.value = false
+      return
+    }
+    if (!dirty.value) {
+      baseContent.value = next.content
+      content.value = next.content
+      remoteUpdated.value = false
+      return
+    }
+    remoteUpdated.value = true
+  },
+  { immediate: true },
 )
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
@@ -67,6 +109,9 @@ const save = useMutation({
   onSuccess: (result) => {
     const path = props.path ?? newPath.value.trim()
     client.setQueryData(keys.memory.file(props.scene, props.scope, path), { path, content: result.after })
+    baseContent.value = result.after
+    content.value = result.after
+    remoteUpdated.value = false
     reason.value = ''
     editing.value = false
     toast.success(t('common.saved'))
@@ -77,7 +122,7 @@ async function cancel() {
   if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
     return
   if (props.path === null) return emit('close')
-  content.value = original.value
+  reloadRemote()
   reason.value = ''
   editing.value = false
 }
@@ -101,6 +146,16 @@ function removed() {
         {{ path ?? t('groups.memory.create') }}
       </h3>
     </header>
+    <div
+      v-if="remoteUpdated"
+      role="status"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+    >
+      <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+      <Button size="sm" variant="ghost" @click="reloadRemote">
+        {{ t('ui.draft.reloadRemote') }}
+      </Button>
+    </div>
     <Field v-if="path === null" :label="t('groups.memory.file.path')">
       <Input v-model="newPath" placeholder="people/name.md" mono />
     </Field>
@@ -130,7 +185,7 @@ function removed() {
         {{ path }}
       </h3>
       <div class="flex flex-wrap items-center gap-1.5">
-        <Button v-if="writable && doc.data.value" size="sm" :icon="Pencil" @click="editing = true">
+        <Button v-if="writable && doc.data.value" size="sm" :icon="Pencil" @click="startEdit">
           {{ t('common.edit') }}
         </Button>
         <Button

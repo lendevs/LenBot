@@ -3,6 +3,8 @@ import { nextTick, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import { useFieldControl } from './field'
 
+const LARGE_TEXT_LENGTH = 20_000
+
 const model = defineModel<string>({ default: '' })
 const props = withDefaults(
   defineProps<{
@@ -21,25 +23,63 @@ const props = withDefaults(
 
 const field = useFieldControl(props)
 const area = ref<HTMLTextAreaElement>()
+let atMax = false
+let cachedMaxHeight = 0
+let lastLength = 0
+let lastWidth = 0
 
-function fit() {
-  const element = area.value
-  if (!element) return
+function measureMetrics(element: HTMLTextAreaElement) {
   const style = getComputedStyle(element)
   const line = parseFloat(style.lineHeight) || 22
   const borders = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)
   const frame = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + borders
-  element.style.height = 'auto'
-  const height = Math.min(
-    Math.max(element.scrollHeight + borders, line * props.rows + frame),
-    line * props.maxRows + frame,
-  )
-  element.style.height = `${height}px`
+  const minHeight = line * props.rows + frame
+  const maxHeight = line * props.maxRows + frame
+  cachedMaxHeight = maxHeight
+  return { borders, minHeight, maxHeight }
 }
 
-watch(model, () => nextTick(fit))
-onMounted(fit)
-useResizeObserver(area, fit)
+function fit(force = false) {
+  const element = area.value
+  if (!element) return
+  const length = model.value.length
+  if (length > LARGE_TEXT_LENGTH) {
+    if (!atMax || force || !cachedMaxHeight) {
+      const { maxHeight } = measureMetrics(element)
+      element.style.height = `${maxHeight}px`
+      atMax = true
+    }
+    lastLength = length
+    return
+  }
+  if (atMax && !force) {
+    if (length >= lastLength || element.scrollHeight > element.clientHeight + 2) {
+      lastLength = length
+      return
+    }
+  }
+  const { borders, minHeight, maxHeight } = measureMetrics(element)
+  element.style.height = 'auto'
+  const rawHeight = Math.max(element.scrollHeight + borders, minHeight)
+  const clamped = Math.min(rawHeight, maxHeight)
+  atMax = rawHeight >= maxHeight
+  lastLength = length
+  element.style.height = `${clamped}px`
+}
+
+watch(model, () => nextTick(() => fit()))
+watch([() => props.rows, () => props.maxRows], () => nextTick(() => fit(true)))
+onMounted(() => {
+  lastWidth = area.value?.clientWidth ?? 0
+  fit(true)
+})
+useResizeObserver(area, (entries) => {
+  const width = Math.round(entries[0]?.contentRect.width ?? area.value?.clientWidth ?? 0)
+  if (width && width !== lastWidth) {
+    lastWidth = width
+    fit(true)
+  }
+})
 defineExpose({ focus: () => area.value?.focus() })
 </script>
 
@@ -55,7 +95,7 @@ defineExpose({ focus: () => area.value?.focus() })
     :aria-invalid="field.invalid.value || undefined"
     :aria-describedby="field.describedBy.value"
     :data-invalid="field.invalid.value || undefined"
-    class="block w-full min-w-0 resize-none rounded-md border border-line-strong bg-surface px-3 py-2 text-ink transition-[border-color,box-shadow,background-color] duration-150 ease-out placeholder:text-subtle scrollbar-thin hover:border-subtle focus:border-primary focus:shadow-focus focus-visible:outline-none read-only:bg-fill/55 disabled:cursor-not-allowed disabled:bg-fill disabled:opacity-60 disabled:hover:border-line-strong data-invalid:border-error data-invalid:hover:border-error data-invalid:focus:border-error data-invalid:focus:shadow-error-focus pointer-coarse:text-lg"
+    class="block w-full min-w-0 resize-none overflow-y-auto rounded-md border border-line-strong bg-surface px-3 py-2 text-ink transition-[border-color,box-shadow,background-color] duration-150 ease-out placeholder:text-subtle scrollbar-thin hover:border-subtle focus:border-primary focus:shadow-focus focus-visible:outline-none read-only:bg-fill/55 disabled:cursor-not-allowed disabled:bg-fill disabled:opacity-60 disabled:hover:border-line-strong data-invalid:border-error data-invalid:hover:border-error data-invalid:focus:border-error data-invalid:focus:shadow-error-focus pointer-coarse:text-lg"
     :class="mono ? 'font-mono text-sm leading-5' : 'text-base'"
   />
 </template>

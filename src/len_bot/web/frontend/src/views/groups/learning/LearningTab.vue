@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { GraduationCap, Settings2, TriangleAlert } from '@lucide/vue'
 import { learningApi, type JargonView, type Review } from '../../../api/learning'
@@ -20,10 +21,16 @@ import StickerList from './StickerList.vue'
 const props = defineProps<{ scene: string; timeZone: string }>()
 const emit = defineEmits<{ dirty: [value: boolean] }>()
 
-type Kind = 'expressions' | 'jargon' | 'stickers' | 'effects'
+const VALID_KINDS = ['expressions', 'jargon', 'stickers', 'effects'] as const
+type Kind = (typeof VALID_KINDS)[number]
+const isKind = (value: unknown): value is Kind =>
+  typeof value === 'string' && (VALID_KINDS as readonly string[]).includes(value)
+
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const client = useQueryClient()
-const shownKind = ref<Kind>('expressions')
+const shownKind = ref<Kind>(isKind(route.query.kind) ? route.query.kind : 'expressions')
 const settingsOpen = ref(false)
 const expressionFilter = ref<Review>('pending')
 const jargonFilter = ref<JargonView>('learned')
@@ -66,6 +73,7 @@ useHostEvent('host.changed', () => {
     void client.invalidateQueries({ queryKey: keys.scene.learningAll(props.scene) })
   }, 2000)
 })
+onBeforeUnmount(() => clearTimeout(timer))
 
 const failed = (title: string) => (error: unknown) =>
   toast.error(title, { detail: describeError(error, t('ui.error.network')).message })
@@ -88,13 +96,33 @@ const kind = computed({
   get: () => shownKind.value,
   set: (value: Kind) => void switchTo(value),
 })
-async function switchTo(value: Kind) {
+async function switchTo(value: Kind, updateRoute = true) {
   const current = shownKind.value
-  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+  if (value === current) return
+  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) {
+    if (!updateRoute) {
+      const next = { ...route.query }
+      if (current === 'expressions') delete next.kind
+      else next.kind = current
+      void router.replace({ query: next })
+    }
     return
+  }
   dirty[current] = false
   shownKind.value = value
+  if (updateRoute) {
+    const next = { ...route.query }
+    if (value === 'expressions') delete next.kind
+    else next.kind = value
+    void router.replace({ query: next })
+  }
 }
+watch(
+  () => route.query.kind,
+  (value) => {
+    if (isKind(value) && value !== shownKind.value) void switchTo(value, false)
+  },
+)
 watch(
   () => Object.values(dirty).some(Boolean),
   (value) => emit('dirty', value),

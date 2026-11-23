@@ -28,12 +28,44 @@ const config = useQuery({
 
 const draft = ref<LearningSettings | null>(null)
 const saved = computed(() => config.data.value?.saved ?? null)
-const reset = () => (draft.value = saved.value && JSON.parse(JSON.stringify(saved.value)))
-watch(saved, reset, { immediate: true })
-watch(open, (value) => value && reset())
-const dirty = computed(
-  () => Boolean(config.data.value) && JSON.stringify(draft.value) !== JSON.stringify(saved.value),
+const baseJson = ref<string | null>(null)
+const remoteUpdated = ref(false)
+const cloneSaved = (value: LearningSettings | null): LearningSettings | null =>
+  value ? (JSON.parse(JSON.stringify(value)) as LearningSettings) : null
+const reset = () => {
+  draft.value = cloneSaved(saved.value)
+  baseJson.value = config.data.value ? JSON.stringify(saved.value) : null
+  remoteUpdated.value = false
+}
+const dirty = computed(() => baseJson.value !== null && JSON.stringify(draft.value) !== baseJson.value)
+watch(
+  () => props.scene,
+  () => reset(),
 )
+watch(
+  () => config.data.value,
+  (next) => {
+    if (!next) return
+    const nextJson = JSON.stringify(next.saved ?? null)
+    if (baseJson.value === null) {
+      reset()
+      return
+    }
+    if (nextJson === baseJson.value) {
+      remoteUpdated.value = false
+      return
+    }
+    if (!dirty.value) {
+      reset()
+      return
+    }
+    remoteUpdated.value = true
+  },
+  { immediate: true },
+)
+watch(open, (value) => {
+  if (value && !dirty.value) reset()
+})
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
 const enabled = computed({
@@ -77,6 +109,7 @@ const save = useMutation({
   mutationFn: () => learningApi.putConfig(props.scene, draft.value),
   onSuccess: (value) => {
     client.setQueryData(keys.scene.learning(props.scene, 'config'), value)
+    reset()
     void client.invalidateQueries({ queryKey: keys.scene.learningAll(props.scene) })
     void client.invalidateQueries({ queryKey: keys.host.settings() })
     void readPendingRestart()
@@ -107,6 +140,16 @@ async function close() {
       :retry="config.refetch"
     />
     <div v-else class="flex flex-col gap-5">
+      <div
+        v-if="remoteUpdated"
+        role="status"
+        class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+      >
+        <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+        <Button size="sm" variant="ghost" @click="reset">
+          {{ t('ui.draft.reloadRemote') }}
+        </Button>
+      </div>
       <Field :label="t('groups.learning.settings.enabled')" inline>
         <Switch v-model="enabled" />
       </Field>

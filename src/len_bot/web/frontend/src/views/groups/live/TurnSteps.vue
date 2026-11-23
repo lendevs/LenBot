@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, Brain, ChevronRight, CircleAlert } from '@lucide/vue'
 import type { ModelStep, Step, ToolDetail, TurnDetail } from '../../../api/timeline'
@@ -11,11 +12,60 @@ import TimelineItem from '../../../ui/TimelineItem.vue'
 import { useLiveLabels } from './labels'
 import StickerCandidates from './StickerCandidates.vue'
 
+const LARGE_CHAR_THRESHOLD = 1024
+const LARGE_LINE_THRESHOLD = 12
+
 const props = defineProps<{ detail: TurnDetail }>()
 
 const { t } = useI18n()
 const labels = useLiveLabels()
 const running = () => props.detail.turn.ended === null
+const openBlocks = ref(new Set<string>())
+
+function onToggle(key: string, event: Event) {
+  const isOpen = (event.currentTarget as HTMLDetailsElement).open
+  const next = new Set(openBlocks.value)
+  if (isOpen) next.add(key)
+  else next.delete(key)
+  openBlocks.value = next
+}
+
+function hasManyLines(text: string, limit: number): boolean {
+  let count = 1
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10 && ++count > limit) return true
+  }
+  return false
+}
+
+/** Fast early-exit size check so huge objects are not JSON-stringified just to decide whether to fold. */
+function isLargePayload(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return value.length > LARGE_CHAR_THRESHOLD || hasManyLines(value, LARGE_LINE_THRESHOLD)
+  }
+  let budget = LARGE_CHAR_THRESHOLD
+  const stack: unknown[] = [value]
+  while (stack.length > 0 && budget > 0) {
+    const current = stack.pop()
+    if (typeof current === 'string') {
+      if (hasManyLines(current, LARGE_LINE_THRESHOLD)) return true
+      budget -= current.length + 2
+    } else if (Array.isArray(current)) {
+      budget -= current.length * 4
+      for (const item of current) stack.push(item)
+    } else if (current && typeof current === 'object') {
+      const entries = Object.entries(current as Record<string, unknown>)
+      budget -= entries.length * 6
+      for (const [k, v] of entries) {
+        budget -= k.length
+        stack.push(v)
+      }
+    } else {
+      budget -= 8
+    }
+  }
+  return budget <= 0
+}
 
 const toolTones: Record<ToolDetail['status'], Tone> = {
   pending: 'info',
@@ -83,7 +133,10 @@ const stepFailed = (step: Step) =>
         <p v-if="!detail.recall.length" class="text-muted">{{ t('groups.live.step.recallNone') }}</p>
         <ul v-else class="flex flex-col gap-1">
           <li v-for="item in detail.recall" :key="`${item.scope}:${item.path}:${item.content.length}`">
-            <details class="group">
+            <details
+              class="group"
+              @toggle="onToggle(`recall:${item.scope}:${item.path}:${item.content.length}`, $event)"
+            >
               <summary
                 class="flex cursor-pointer list-none items-center gap-1 rounded-sm font-mono text-xs text-ink-2 select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
               >
@@ -94,7 +147,10 @@ const stepFailed = (step: Step) =>
                 />
                 <span class="truncate">{{ item.scope }} · {{ item.path }}</span>
               </summary>
-              <div class="mt-1.5">
+              <div
+                v-if="openBlocks.has(`recall:${item.scope}:${item.path}:${item.content.length}`)"
+                class="mt-1.5"
+              >
                 <CodeBlock :code="item.content" :max-lines="8" />
               </div>
             </details>
@@ -163,23 +219,66 @@ const stepFailed = (step: Step) =>
                 {{ t(`groups.live.step.toolStatus.${tool.status}`) }}
               </Badge>
             </div>
-            <CodeBlock
-              v-if="Object.keys(tool.arguments).length"
-              :code="tool.arguments"
-              :max-lines="8"
-              :label="t('groups.live.step.arguments')"
-            />
+            <template v-if="Object.keys(tool.arguments).length">
+              <details
+                v-if="isLargePayload(tool.arguments)"
+                class="group"
+                @toggle="onToggle(`arg:${step.step}:${tool.call_id}`, $event)"
+              >
+                <summary
+                  class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs font-medium text-muted select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+                >
+                  <ChevronRight
+                    :size="13"
+                    class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
+                    aria-hidden="true"
+                  />
+                  {{ t('groups.live.step.arguments') }}
+                </summary>
+                <CodeBlock
+                  v-if="openBlocks.has(`arg:${step.step}:${tool.call_id}`)"
+                  :code="tool.arguments"
+                  :max-lines="8"
+                  class="mt-1.5"
+                />
+              </details>
+              <CodeBlock
+                v-else
+                :code="tool.arguments"
+                :max-lines="8"
+                :label="t('groups.live.step.arguments')"
+              />
+            </template>
             <StickerCandidates
               v-if="tool.name === 'react' && tool.arguments.preview === true && tool.result"
               :result="tool.result"
               :chosen="chosenCandidate(tool)"
             />
-            <CodeBlock
-              v-if="tool.result"
-              :code="tool.result"
-              :max-lines="8"
-              :label="t('groups.live.step.result')"
-            />
+            <template v-if="tool.result">
+              <details
+                v-if="isLargePayload(tool.result)"
+                class="group"
+                @toggle="onToggle(`res:${step.step}:${tool.call_id}`, $event)"
+              >
+                <summary
+                  class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs font-medium text-muted select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+                >
+                  <ChevronRight
+                    :size="13"
+                    class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
+                    aria-hidden="true"
+                  />
+                  {{ t('groups.live.step.result') }}
+                </summary>
+                <CodeBlock
+                  v-if="openBlocks.has(`res:${step.step}:${tool.call_id}`)"
+                  :code="tool.result"
+                  :max-lines="8"
+                  class="mt-1.5"
+                />
+              </details>
+              <CodeBlock v-else :code="tool.result" :max-lines="8" :label="t('groups.live.step.result')" />
+            </template>
           </div>
         </div>
       </TimelineItem>

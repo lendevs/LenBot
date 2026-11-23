@@ -9,6 +9,7 @@ import { logsApi, type LogFilter, type LogRecord } from '../../../api/logs'
 import { keys } from '../../../api/query'
 import { timelineApi } from '../../../api/timeline'
 import { host } from '../../../api/hostStore'
+import { formatBytes } from '../../../i18n/format'
 import { groupLabel } from '../../../layouts/shell/scenes'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import Badge from '../../../ui/Badge.vue'
@@ -34,7 +35,9 @@ const labels = useLogLabels()
 const text = (key: string) => (typeof route.query[key] === 'string' ? (route.query[key] as string) : '')
 function setQuery(change: LocationQueryRaw) {
   const next: LocationQueryRaw = { ...route.query, ...change }
-  for (const [key, value] of Object.entries(next)) if (value === '' || value === null) delete next[key]
+  for (const [key, value] of Object.entries(next)) {
+    if (value === '' || value === null || value === undefined) delete next[key]
+  }
   void router.replace({ query: next })
 }
 
@@ -125,37 +128,85 @@ watch(items, (list) => {
 })
 
 const eventKey = (item: LogRecord) => item.event ?? '_other'
+
+interface IndexedLog {
+  item: LogRecord
+  key: string
+  kind: string
+  haystack: string
+}
+
+function fingerprint(item: LogRecord): string {
+  const digest = (item.message ?? '').slice(0, 64)
+  return `${item.ts}|${item.source}|${item.event ?? ''}|${item.turn_id ?? ''}|${item.task_id ?? ''}|${item.message_seq ?? ''}|${digest}`
+}
+
+/** Precompute stable content-fingerprint keys (oldest-first for collision stability) and lowercase search text. */
+const indexed = computed<IndexedLog[]>(() => {
+  const list = items.value
+  const seen = new Map<string, number>()
+  const rows = new Array<IndexedLog>(list.length)
+  for (let i = list.length - 1; i >= 0; i--) {
+    const item = list[i]!
+    const base = fingerprint(item)
+    const count = seen.get(base) ?? 0
+    seen.set(base, count + 1)
+    rows[i] = {
+      item,
+      key: count === 0 ? base : `${base}#${count}`,
+      kind: eventKey(item),
+      haystack: [
+        item.event,
+        item.event && labels.event(item.event),
+        item.message,
+        item.source,
+        item.scene,
+        item.plugin,
+        item.tool,
+        item.task_id,
+        item.turn_id,
+        item.error?.type,
+        item.error?.message,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase(),
+    }
+  }
+  return rows
+})
+
 const kinds = computed(() => {
   const counts = new Map<string, number>()
-  for (const item of items.value) counts.set(eventKey(item), (counts.get(eventKey(item)) ?? 0) + 1)
+  for (const row of indexed.value) counts.set(row.kind, (counts.get(row.kind) ?? 0) + 1)
   return [...counts].sort((a, b) => b[1] - a[1])
 })
-const haystack = (item: LogRecord) =>
-  [
-    item.event,
-    item.event && labels.event(item.event),
-    item.message,
-    item.source,
-    item.scene,
-    item.plugin,
-    item.tool,
-    item.task_id,
-    item.turn_id,
-    item.error?.type,
-    item.error?.message,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
 const shown = computed(() => {
   const words = text('q').toLowerCase().split(/\s+/).filter(Boolean)
-  return items.value.filter(
-    (item) =>
-      (!kind.value || eventKey(item) === kind.value) &&
-      (!words.length || words.every((word) => haystack(item).includes(word))),
+  return indexed.value.filter(
+    (row) =>
+      (!kind.value || row.kind === kind.value) &&
+      (!words.length || words.every((word) => row.haystack.includes(word))),
   )
 })
-const keyed = computed(() => shown.value.map((item, index) => ({ item, key: `${item.ts}#${index}` })))
+const expanded = ref(new Set<string>())
+function toggleExpanded(key: string, value: boolean) {
+  const next = new Set(expanded.value)
+  if (value) next.add(key)
+  else next.delete(key)
+  expanded.value = next
+}
+watch(indexed, (rows) => {
+  if (!expanded.value.size) return
+  const present = new Set(rows.map((row) => row.key))
+  let changed = false
+  const next = new Set<string>()
+  for (const key of expanded.value) {
+    if (present.has(key)) next.add(key)
+    else changed = true
+  }
+  if (changed) expanded.value = next
+})
 const more = computed(() => items.value.length >= limit.value && limit.value < LIMITS[LIMITS.length - 1]!)
 const timeZone = computed(() => host.state?.timezone as string | undefined)
 
@@ -178,10 +229,9 @@ const detail = useQuery({
 })
 
 const files = useQuery({ queryKey: keys.system.logFiles(), queryFn: ({ signal }) => logsApi.files(signal) })
-const size = (bytes: number) => `${Math.max(1, Math.ceil(bytes / 1024))} KB`
 
 function exportShown() {
-  const blob = new Blob([shown.value.map((item) => JSON.stringify(item)).join('\n') + '\n'], {
+  const blob = new Blob([shown.value.map((row) => JSON.stringify(row.item)).join('\n') + '\n'], {
     type: 'application/x-ndjson',
   })
   const link = Object.assign(document.createElement('a'), {
@@ -294,7 +344,14 @@ function exportShown() {
     </section>
 
     <section v-if="call > 0" class="flex min-w-0 flex-col gap-3 border-b border-line pb-5">
-      <h3 class="text-base font-semibold text-ink tabular">{{ t('logs.events.model_call') }} #{{ call }}</h3>
+      <header class="flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-base font-semibold text-ink tabular">
+          {{ t('logs.events.model_call') }} #{{ call }}
+        </h3>
+        <Button size="sm" variant="ghost" :icon="X" @click="setQuery({ call: undefined })">
+          {{ t('logs.closeCall') }}
+        </Button>
+      </header>
       <Skeleton v-if="callDetail.isPending.value" :lines="3" />
       <ErrorNote
         v-else-if="callDetail.isError.value"
@@ -310,11 +367,7 @@ function exportShown() {
           detail: { message: callDetail.data.value.error, data: callDetail.data.value },
         }"
       />
-      <CodeBlock
-        v-else-if="callDetail.data.value"
-        :code="JSON.stringify(callDetail.data.value, null, 2)"
-        :max-lines="24"
-      />
+      <CodeBlock v-else-if="callDetail.data.value" :code="callDetail.data.value" :max-lines="24" />
     </section>
     <section v-if="turn && scene !== ALL" class="flex min-w-0 flex-col gap-3 border-b border-line pb-5">
       <header class="flex flex-wrap items-center justify-between gap-2">
@@ -357,13 +410,20 @@ function exportShown() {
         </Button>
       </div>
       <VirtualList
-        :items="keyed"
+        :items="shown"
         :get-key="(row) => row.key"
         :estimate-size="72"
         class="max-h-[min(68dvh,42rem)]"
       >
         <template #default="{ item: row }">
-          <LogRow :item="row.item" :time-zone="timeZone" :turn="turn" @filter="onFilter" />
+          <LogRow
+            :item="row.item"
+            :time-zone="timeZone"
+            :turn="turn"
+            :open="expanded.has(row.key)"
+            @update:open="(value: boolean) => toggleExpanded(row.key, value)"
+            @filter="onFilter"
+          />
         </template>
       </VirtualList>
     </div>
@@ -374,7 +434,7 @@ function exportShown() {
         <li v-for="file in files.data.value.items" :key="file.name" class="flex items-center gap-3 py-2.5">
           <FileText :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           <span class="min-w-0 flex-1 truncate font-mono text-sm text-ink">{{ file.name }}</span>
-          <span class="text-xs text-muted tabular">{{ size(file.bytes) }}</span>
+          <span class="text-xs text-muted tabular">{{ formatBytes(file.bytes) }}</span>
           <a
             :href="logsApi.fileUrl(file.name)"
             class="link-plain inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-ink transition-colors hover:bg-hover focus-visible:focus-ring"

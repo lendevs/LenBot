@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, toRef, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useInfiniteQuery, useQueryClient } from '@tanstack/vue-query'
+import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/vue-query'
 import { useResizeObserver } from '@vueuse/core'
 import { ChevronDown, RefreshCcw, Sparkles } from '@lucide/vue'
 import { keys } from '../../../api/query'
-import { sessionApi, type SessionEntry } from '../../../api/session'
+import { sessionApi, type SessionEntry, type SessionPage } from '../../../api/session'
 import { developerDetails } from '../../../composables/useDeveloperMode'
 import { useHostEvent } from '../../../realtime/stream'
 import Button from '../../../ui/Button.vue'
@@ -58,13 +58,84 @@ const shown = computed(() => {
 })
 const firstActive = computed(() => shown.value.findIndex((entry) => entry.active))
 
+type SessionData = InfiniteData<SessionPage, number | undefined>
+
+/**
+ * Merge a freshly fetched newest page into the loaded session pages without dropping older pages that the
+ * user already scrolled back to load.
+ */
+function mergeNewestSession(data: SessionData, fresh: SessionPage): SessionData {
+  if (!data.pages.length) return { pages: [fresh], pageParams: [undefined] }
+  const updates = new Map(fresh.entries.map((entry) => [entry.seq, entry]))
+  const updatedPages: SessionPage[] = []
+  const updatedParams: (number | undefined)[] = []
+
+  data.pages.forEach((page, index) => {
+    let entries = page.entries.map((entry) => {
+      const next = updates.get(entry.seq)
+      if (next) {
+        updates.delete(entry.seq)
+        return next
+      }
+      const active = entry.seq > fresh.compact_through
+      return entry.active === active ? entry : { ...entry, active }
+    })
+    if (fresh.active_only) {
+      entries = entries.filter((entry) => entry.seq > fresh.compact_through)
+    }
+    if (index === 0) {
+      entries = [...entries, ...updates.values()].sort((a, b) => a.seq - b.seq)
+      updatedPages.push({
+        ...page,
+        timezone: fresh.timezone,
+        recap: fresh.recap,
+        compact_through: fresh.compact_through,
+        last_message_seq: fresh.last_message_seq,
+        next_before: page.next_before ?? fresh.next_before,
+        entries,
+      })
+      updatedParams.push(data.pageParams[index])
+    } else if (entries.length > 0) {
+      updatedPages.push({ ...page, entries })
+      updatedParams.push(data.pageParams[index])
+    }
+  })
+
+  return { pages: updatedPages, pageParams: updatedParams }
+}
+
 // A turn adds entries as it goes and may compact at the end; steps come in bursts.
+let reading = false
+let again = false
 let timer: ReturnType<typeof setTimeout> | undefined
+async function readNewest() {
+  if (reading) {
+    again = true
+    return
+  }
+  reading = true
+  try {
+    do {
+      again = false
+      const key = queryKey.value
+      const activeOnly = !everything.value
+      if (!client.getQueryData<SessionData>(key)) return
+      const fresh = await sessionApi.page(props.scene, { activeOnly })
+      if (key !== queryKey.value) return
+      client.setQueryData<SessionData>(key, (data) => (data ? mergeNewestSession(data, fresh) : data))
+    } while (again)
+  } catch {
+    // Keep already-loaded pages intact; the next turn event or manual retry refreshes again.
+  } finally {
+    reading = false
+  }
+}
+
 useHostEvent('*', (event) => {
   if (event.scene !== props.scene || !event.type.startsWith('turn.') || timer) return
   timer = setTimeout(() => {
     timer = undefined
-    void client.invalidateQueries({ queryKey: keys.scene.sessionAll(props.scene) })
+    void readNewest()
   }, 1000)
 })
 onBeforeUnmount(() => clearTimeout(timer))

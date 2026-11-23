@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, Copy } from '@lucide/vue'
+import { Check, ChevronDown, Copy, Download } from '@lucide/vue'
+import { formatBytes } from '../i18n/format'
+
+const LARGE_BYTES = 150 * 1024
+const LARGE_LINES = 2000
+const CHUNK_LINES = 200
+const INITIAL_LARGE_CHARS = 32_768
+const CHUNK_CHARS = 65_536
 
 const props = withDefaults(
   defineProps<{
@@ -16,7 +23,6 @@ const props = withDefaults(
 )
 
 const { t } = useI18n()
-const expanded = ref(false)
 const copied = ref(false)
 const text = computed(() => {
   if (typeof props.code === 'string') return props.code
@@ -26,9 +32,52 @@ const text = computed(() => {
     return String(props.code)
   }
 })
-const lineCount = computed(() => text.value.split('\n').length)
-const collapsible = computed(() => props.maxLines > 0 && lineCount.value > props.maxLines)
+const byteSize = computed(() => new Blob([text.value]).size)
+const lines = computed(() => text.value.split('\n'))
+const lineCount = computed(() => lines.value.length)
+const isLarge = computed(() => byteSize.value > LARGE_BYTES || lineCount.value > LARGE_LINES)
+const baseLines = computed(() =>
+  props.maxLines > 0 ? props.maxLines : isLarge.value ? CHUNK_LINES : lineCount.value,
+)
+
+const shownLines = ref(baseLines.value)
+const charLimit = ref(INITIAL_LARGE_CHARS)
+watch([() => props.code, () => props.maxLines], () => {
+  shownLines.value = baseLines.value
+  charLimit.value = INITIAL_LARGE_CHARS
+})
+
+const collapsible = computed(() => !isLarge.value && props.maxLines > 0 && lineCount.value > props.maxLines)
+const expanded = computed(() => shownLines.value >= lineCount.value)
+const sliced = computed(() => {
+  if (!isLarge.value && (!collapsible.value || expanded.value)) return text.value
+  return lines.value.slice(0, shownLines.value).join('\n')
+})
+const charsTruncated = computed(() => isLarge.value && sliced.value.length > charLimit.value)
+const displayed = computed(() =>
+  charsTruncated.value ? `${sliced.value.slice(0, charLimit.value)}…` : sliced.value,
+)
+const remainingLines = computed(() => Math.max(0, lineCount.value - shownLines.value))
+const hasMore = computed(() => remainingLines.value > 0 || charsTruncated.value)
+const canCollapseLarge = computed(
+  () => isLarge.value && (shownLines.value > baseLines.value || charLimit.value > INITIAL_LARGE_CHARS),
+)
+const nextLoadCount = computed(() => Math.min(CHUNK_LINES, remainingLines.value || CHUNK_LINES))
+
 let timer: ReturnType<typeof setTimeout> | undefined
+onBeforeUnmount(() => clearTimeout(timer))
+
+function toggle() {
+  shownLines.value = expanded.value ? baseLines.value : lineCount.value
+}
+function loadMore() {
+  if (charsTruncated.value) charLimit.value += CHUNK_CHARS
+  if (remainingLines.value > 0) shownLines.value = Math.min(lineCount.value, shownLines.value + CHUNK_LINES)
+}
+function collapseLarge() {
+  shownLines.value = baseLines.value
+  charLimit.value = INITIAL_LARGE_CHARS
+}
 
 async function copy() {
   try {
@@ -39,6 +88,19 @@ async function copy() {
   copied.value = true
   clearTimeout(timer)
   timer = setTimeout(() => (copied.value = false), 1600)
+}
+
+function download() {
+  const isJson = typeof props.code !== 'string' || /^\s*[{[]/.test(text.value)
+  const mime = isJson ? 'application/json;charset=utf-8' : 'text/plain;charset=utf-8'
+  const ext = isJson ? 'json' : 'txt'
+  const base = (props.label ?? 'payload').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-|-$/g, '') || 'payload'
+  const filename = base.includes('.') ? base : `${base}.${ext}`
+  const blob = new Blob([text.value], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const link = Object.assign(document.createElement('a'), { href: url, download: filename })
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 </script>
 
@@ -59,16 +121,27 @@ async function copy() {
         <Copy v-else :size="13" aria-hidden="true" />
       </button>
     </div>
+    <div
+      v-if="isLarge"
+      class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-warning-bg/60 px-3 py-1.5 text-xs text-warning"
+    >
+      <span class="min-w-0 flex-1 tabular">
+        {{ t('ui.code.largeNotice', { size: formatBytes(byteSize), n: Math.min(shownLines, lineCount) }) }}
+      </span>
+      <button
+        type="button"
+        class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 font-medium text-ink transition-colors hover:bg-hover focus-visible:focus-ring"
+        @click="download"
+      >
+        <Download :size="13" aria-hidden="true" />
+        {{ t('ui.code.download') }}
+      </button>
+    </div>
     <div class="relative">
       <pre
         class="overflow-x-auto px-3 py-2.5 font-mono text-xs leading-5 scrollbar-thin"
-        :class="[
-          !label && 'pr-10',
-          wrap && 'break-words whitespace-pre-wrap',
-          collapsible && !expanded && 'overflow-hidden',
-        ]"
-        :style="collapsible && !expanded ? { maxHeight: `${maxLines * 20 + 20}px` } : undefined"
-      ><code>{{ text }}</code></pre>
+        :class="[!label && 'pr-10', wrap && 'break-words whitespace-pre-wrap']"
+      ><code>{{ displayed }}</code></pre>
       <button
         v-if="!label"
         type="button"
@@ -80,12 +153,35 @@ async function copy() {
         <Copy v-else :size="14" aria-hidden="true" />
       </button>
     </div>
+    <div
+      v-if="isLarge && (hasMore || canCollapseLarge)"
+      class="flex flex-wrap items-center justify-center divide-x divide-line border-t border-line bg-surface/50"
+    >
+      <button
+        v-if="hasMore"
+        type="button"
+        class="flex flex-1 cursor-pointer items-center justify-center gap-1 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+        @click="loadMore"
+      >
+        <ChevronDown :size="13" aria-hidden="true" />
+        <span class="tabular">{{ t('ui.code.loadMore', { n: nextLoadCount }) }}</span>
+      </button>
+      <button
+        v-if="canCollapseLarge"
+        type="button"
+        class="flex flex-1 cursor-pointer items-center justify-center gap-1 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+        @click="collapseLarge"
+      >
+        <ChevronDown :size="13" class="rotate-180" aria-hidden="true" />
+        <span>{{ t('ui.code.collapse') }}</span>
+      </button>
+    </div>
     <button
-      v-if="collapsible"
+      v-else-if="collapsible"
       type="button"
       class="flex w-full cursor-pointer items-center justify-center gap-1 border-t border-line bg-surface/50 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
       :aria-expanded="expanded"
-      @click="expanded = !expanded"
+      @click="toggle"
     >
       <ChevronDown
         :size="13"
