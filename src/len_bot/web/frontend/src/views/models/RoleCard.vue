@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown } from '@lucide/vue'
 import type { ChatRole } from '../../api/models'
+import Button from '../../ui/Button.vue'
 import Field from '../../ui/Field.vue'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
@@ -10,7 +11,7 @@ import Select from '../../ui/Select.vue'
 import Switch from '../../ui/Switch.vue'
 import ModelName from './ModelName.vue'
 import ProbeTools from './ProbeTools.vue'
-import { useForm } from './form'
+import { hasKey, useForm } from './form'
 
 const props = defineProps<{ role: ChatRole }>()
 
@@ -22,12 +23,40 @@ const api = computed(() => row.value?.api)
 const title = computed(() => form.roleTitle(props.role))
 const errors = computed(() => form.problems.value.filter((item) => item.place === `roles.${props.role}`))
 /**
- * A chat model that accepts images looks at them itself; a saved vision binding is kept for a chat
- * model without image input and shown again while it has a problem to fix.
+ * A chat model that accepts images looks at them itself; the vision card starts collapsed while still
+ * allowing pre-configuring a standalone vision model and switching back to following the chat model.
  */
-const mindSees = computed(
-  () => props.role === 'vision' && form.draft.value!.roles.mind.image_input && !errors.value.length,
+const mindSees = computed(() => props.role === 'vision' && form.draft.value!.roles.mind.image_input)
+const visionExpanded = ref(false)
+watch(
+  () => errors.value.length,
+  (count) => {
+    if (count > 0) visionExpanded.value = true
+  },
+  { immediate: true },
 )
+const visionCollapsed = computed(() => mindSees.value && !visionExpanded.value)
+function followMindVision() {
+  if (props.role !== 'vision') return
+  form.toggleRole('vision', false)
+  visionExpanded.value = false
+}
+const bothThinking = computed(() =>
+  Boolean(
+    binding.value && binding.value.reasoning_effort !== null && binding.value.thinking_budget_tokens !== null,
+  ),
+)
+const advancedOpen = ref(false)
+watch(
+  bothThinking,
+  (conflict) => {
+    if (conflict) advancedOpen.value = true
+  },
+  { immediate: true },
+)
+const canRefreshModels = computed(() => Boolean(row.value))
+const refreshModelsDisabled = computed(() => !row.value || !hasKey(row.value) || !row.value.base_url.trim())
+const refreshingModels = computed(() => Boolean(row.value && form.catalogLoading.value[row.value.id]))
 /** Marked once the provider's list was read and the model typed here is not in it, e.g. after a retirement. */
 const unlisted = computed(() => {
   const listed = binding.value && form.catalog.value[binding.value.provider]
@@ -105,25 +134,35 @@ watch(retries, (text) => {
     <header class="flex min-h-8 items-center justify-between gap-3">
       <div class="flex min-w-0 items-baseline gap-2.5">
         <h3 class="text-base font-semibold text-ink">{{ title }}</h3>
-        <span
-          v-if="binding && !mindSees && binding.model"
-          class="truncate font-mono text-xs text-muted max-sm:hidden"
-        >
+        <span v-if="binding && binding.model" class="truncate font-mono text-xs text-muted max-sm:hidden">
           {{ binding.model }}
         </span>
       </div>
-      <Switch v-if="role !== 'mind' && !mindSees" v-model="enabled" :aria-label="title" />
+      <div class="flex shrink-0 items-center gap-2">
+        <Button v-if="visionCollapsed" size="sm" variant="ghost" @click="visionExpanded = true">
+          {{ binding ? t('models.roles.editVision') : t('models.roles.configureVision') }}
+        </Button>
+        <template v-else-if="mindSees">
+          <Button size="sm" variant="ghost" @click="followMindVision">
+            {{ t('models.roles.followsMind') }}
+          </Button>
+          <Switch v-model="enabled" :aria-label="title" />
+        </template>
+        <Switch v-else-if="role !== 'mind'" v-model="enabled" :aria-label="title" />
+      </div>
     </header>
     <p v-if="!binding || mindSees" class="text-sm text-muted">
       {{
         mindSees
-          ? t('models.roles.mindSees')
+          ? binding
+            ? t('models.roles.visionBackupActive')
+            : t('models.roles.mindSees')
           : role === 'vision'
             ? t('models.roles.noVision')
             : t('models.roles.followsMind')
       }}
     </p>
-    <template v-if="binding && !mindSees">
+    <template v-if="binding && !visionCollapsed">
       <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
         <Field :label="t('models.roles.provider')">
           <Select
@@ -135,7 +174,14 @@ watch(retries, (text) => {
           />
         </Field>
         <Field :label="t('models.roles.model')" :error="unlisted ? t('models.roles.notListed') : null">
-          <ModelName v-model="binding.model" :models="form.catalog.value[binding.provider]" />
+          <ModelName
+            v-model="binding.model"
+            :models="form.catalog.value[binding.provider]"
+            :can-refresh="canRefreshModels"
+            :refresh-disabled="refreshModelsDisabled"
+            :refreshing="refreshingModels"
+            @refresh="row && form.loadCatalog(row.id)"
+          />
         </Field>
         <Field :label="t('models.roles.context')">
           <NumberInput v-model="binding.context_window_tokens" :min="1" :steppers="false" unit="tokens" />
@@ -162,15 +208,19 @@ watch(retries, (text) => {
           />
         </Field>
       </div>
-      <div v-if="role === 'mind' || role === 'vision'" class="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+      <div v-if="role === 'mind'" class="grid gap-x-8 gap-y-3 sm:grid-cols-2">
         <Field :label="t('models.roles.imageInput')" inline>
           <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
         </Field>
-        <Field v-if="role === 'mind'" :label="t('models.roles.quickReply')" inline>
+        <Field :label="t('models.roles.quickReply')" inline>
           <Switch v-model="quickReply" :aria-label="t('models.roles.quickReply')" />
         </Field>
       </div>
-      <details class="group">
+      <details
+        class="group"
+        :open="advancedOpen"
+        @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
+      >
         <summary
           class="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm py-0.5 text-sm font-medium text-muted transition-colors select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
         >
@@ -195,7 +245,11 @@ watch(retries, (text) => {
               "
             />
           </Field>
-          <Field v-if="api === 'anthropic' || api === 'gemini'" :label="t('models.roles.thinking')">
+          <Field
+            v-if="api === 'anthropic' || api === 'gemini'"
+            :label="t('models.roles.thinking')"
+            :error="bothThinking ? t('models.problems.bothThinking', { title }) : null"
+          >
             <NumberInput
               v-model="binding.thinking_budget_tokens"
               :min="0"

@@ -196,9 +196,12 @@ export function useModelsForm() {
   const draft = ref<ModelsDraft | null>(null)
   /** Models read from each provider, by row id; dropped when the provider's address or key changes. */
   const catalog = ref<Record<string, ListedModel[]>>({})
+  const catalogLoading = ref<Record<string, boolean>>({})
+  let resetSaving = () => {}
   const adopt = () => {
     draft.value = saved.value && copy(saved.value)
     catalog.value = {}
+    resetSaving()
   }
   const changeOf = (value: ModelsDraft | null) =>
     value ? JSON.stringify(toChange(value, memoryOn.value)) : ''
@@ -222,6 +225,27 @@ export function useModelsForm() {
   const providerFor = (id: string | undefined) => draft.value?.providers.find((row) => row.id === id)
   const nameOf = (id: string) => providerFor(id)?.alias || t('models.providers.unnamed')
   const roleTitle = (role: string) => t(`models.roles.names.${role}`)
+  async function loadCatalog(id: string): Promise<void> {
+    const row = providerFor(id)
+    if (!row || !hasKey(row) || !row.base_url.trim() || catalogLoading.value[id]) return
+    const snapshot = JSON.stringify(candidateOf(row))
+    catalogLoading.value = { ...catalogLoading.value, [id]: true }
+    try {
+      const value = await modelsApi.list(candidateOf(row))
+      const current = providerFor(id)
+      if (!current || JSON.stringify(candidateOf(current)) !== snapshot) return
+      catalog.value[id] = value.models
+      toast.success(t('models.probe.listed', { n: value.models.length }, value.models.length))
+    } catch (error) {
+      toast.error(t('models.probe.listFailed'), {
+        detail: describeError(error, t('ui.error.network')).message,
+      })
+    } finally {
+      const next = { ...catalogLoading.value }
+      delete next[id]
+      catalogLoading.value = next
+    }
+  }
   /** Everything bound to a provider, for the list and the delete confirmation. */
   function usedBy(id: string): string[] {
     const value = draft.value
@@ -394,6 +418,10 @@ export function useModelsForm() {
       toast.success(t('common.saved'))
     },
   })
+  resetSaving = () => {
+    if (saving.isError.value) saving.reset()
+  }
+  watch(draft, () => resetSaving(), { deep: true })
   const saveError = computed(() =>
     saving.isError.value
       ? describeError(saving.error.value, t('ui.error.network')).message
@@ -408,6 +436,8 @@ export function useModelsForm() {
     memoryOn,
     draft,
     catalog,
+    catalogLoading,
+    loadCatalog,
     dirty,
     adopt,
     providerFor,

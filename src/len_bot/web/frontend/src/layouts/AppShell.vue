@@ -75,11 +75,22 @@ watch(collapsed, (value) => {
   }
 })
 
-const events = useHostEvents(readHostState, { types: ['host.state', 'host.changed'] })
+const events = useHostEvents(() => readHostState({ maxAge: 1000 }), {
+  types: ['host.state', 'host.changed', 'resync'],
+  minInterval: 1000,
+})
 // Today's totals change with every message; the server caches them for five seconds, so reading more often is waste.
-useHostEvents(readOverview, {
-  types: ['host.changed', 'message.received', 'message.sent', 'turn.ended'],
+useHostEvents(() => readOverview({ maxAge: 5000 }), {
+  types: ['host.changed', 'resync', 'message.received', 'message.sent', 'turn.ended'],
   minInterval: 10000,
+})
+useHostEvents(() => readPendingRestart({ maxAge: 2000 }), {
+  types: ['host.changed', 'resync'],
+  minInterval: 2000,
+})
+useHostEvents(() => readPluginUpdates({ maxAge: 60000 }), {
+  types: ['host.changed', 'resync'],
+  minInterval: 60000,
 })
 provide('host-events', events)
 
@@ -123,23 +134,39 @@ const flagged = computed(() => {
   return new Set(overview?.memory_index?.needs_rebuild ? ['groups'] : [])
 })
 
-function refresh() {
-  readPluginUpdates()
-  readHostState()
-  readPendingRestart()
-  readOverview()
-}
 onMounted(() => {
-  refresh()
-  readUpdates()
-  readSceneTitles()
+  void readUpdates({ maxAge: 300_000 })
+  void readSceneTitles({ maxAge: 30_000 })
 })
-watch(() => route.name, refresh)
+// When live events are offline, fall back to stale-aware refreshes on navigation; otherwise SSE keeps state fresh.
+watch(
+  () => route.name,
+  () => {
+    if (streamStatus.value === 'open') return
+    void readHostState({ maxAge: 15_000 })
+    void readPendingRestart({ maxAge: 15_000 })
+    void readOverview({ maxAge: 15_000 })
+    void readPluginUpdates({ maxAge: 60_000 })
+  },
+)
+let streamDisconnected = false
+watch(streamStatus, (next) => {
+  if (next === 'closed') {
+    streamDisconnected = true
+  } else if (next === 'open' && streamDisconnected) {
+    streamDisconnected = false
+    void readHostState()
+    void readPendingRestart()
+    void readOverview()
+    void readPluginUpdates({ maxAge: 30_000 })
+    void readSceneTitles({ maxAge: 30_000 })
+  }
+})
 // Cached names arrive at once; each new connection reads the names again.
 watch(
   () => host.state?.connection.connected,
   (connected) => {
-    if (connected) readSceneTitles()
+    if (connected) void readSceneTitles()
   },
 )
 watch(

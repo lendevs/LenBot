@@ -400,6 +400,7 @@ export default {
         changed: '草稿已变更',
         restart: '用当前草稿重新开始',
         restartFailed: '重新开始失败',
+        readFailed: '读取进行中的试聊失败',
       },
       more: '更多设置',
       preview: {
@@ -1711,6 +1712,7 @@ export default {
       url: '接口地址',
       key: '密钥',
       keyKept: '已设置，留空保持不变',
+      keyReenter: '协议、地址或代理已修改，请重新填写密钥',
       proxy: '网络代理',
     },
     probe: {
@@ -1767,6 +1769,9 @@ export default {
       outputField: '输出额度字段',
       language: '语言',
       autoLanguage: '自动识别',
+      configureVision: '预配独立看图模型',
+      editVision: '展开预配看图模型',
+      visionBackupActive: '已预配备用模型，当前由聊天模型直接看图',
     },
     vectors: {
       memory: '记忆和资料向量',
@@ -2009,6 +2014,8 @@ export default {
       integer: '{name}必须是整数',
       badJson: '{name}不是合法的 JSON：{error}',
       notObjects: '{name}必须是 JSON 对象列表',
+      sceneNotEnabled: '未启用插件',
+      sceneNotEnabledHint: '{names} 尚未在“使用的群”中开启此插件，请同步开启',
     },
     scenes: {
       count: '{n} / {total} 个群在用',

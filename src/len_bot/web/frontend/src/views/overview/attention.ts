@@ -113,7 +113,7 @@ export function useAttention() {
         revision: n,
         text: t('overview.todo.undelivered', { group: groupLabel(scene), n }, n),
         tone: 'error',
-        to: groupsTarget(scene, 'live'),
+        to: groupsTarget(scene, 'live', { filter: 'errors' }),
         action: view,
       })),
       (groups) => t('overview.todo.undeliveredMany', { groups }),
@@ -127,7 +127,7 @@ export function useAttention() {
         tone: 'error',
         to: {
           name: 'host-logs',
-          query: { scene: call.scene, call: call.id, turn: call.turn_id ?? undefined },
+          query: { level: 'ERROR', scene: call.scene, call: call.id, turn: call.turn_id ?? undefined },
         },
         action: view,
       })
@@ -145,7 +145,7 @@ export function useAttention() {
         revision: n,
         text: t('overview.todo.turnErrors', { group: groupLabel(scene), n }, n),
         tone: 'error',
-        to: { name: 'host-logs', query: { scene } },
+        to: groupsTarget(scene, 'live', { filter: 'errors' }),
         action: view,
       })),
       (groups) => t('overview.todo.turnErrorsMany', { groups }),
@@ -221,7 +221,9 @@ export function useAttention() {
             .join(t('personas.separator')),
         }),
         tone: 'info',
-        to: groupsTarget(scene, 'learning'),
+        to: groupsTarget(scene, 'learning', {
+          kind: reviews.expressions ? 'expressions' : 'stickers',
+        }),
         action: t('overview.todo.toReview'),
       })),
       (groups) => t('overview.todo.reviewMany', { groups }),

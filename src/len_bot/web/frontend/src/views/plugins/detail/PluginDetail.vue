@@ -236,6 +236,7 @@ const tab = computed({
 })
 const back = computed(() => ({ query: {} }))
 const permissions = computed(() => permissionsOf(props.snapshot, props.name))
+const enabledScenes = computed(() => scenesUsing(props.snapshot, props.name))
 </script>
 
 <template>
@@ -382,6 +383,7 @@ const permissions = computed(() => permissionsOf(props.snapshot, props.name))
         :fields="fields"
         :readable="Boolean(manifest)"
         :scene-choices="snapshot.scene_choices"
+        :enabled-scenes="enabledScenes"
         :configured="configured"
         :problems="shownProblems"
       />

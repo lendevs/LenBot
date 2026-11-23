@@ -105,6 +105,21 @@ function pieces(message: ChatMessage): Piece[] {
 }
 
 const list = ref<HTMLElement>()
+const BOTTOM_THRESHOLD = 48
+const atBottom = ref(true)
+function onScroll() {
+  const element = list.value
+  if (!element) return
+  atBottom.value = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_THRESHOLD
+}
+async function scrollToBottom(force = false) {
+  if (!force && !atBottom.value) return
+  await nextTick()
+  if (list.value) {
+    list.value.scrollTop = list.value.scrollHeight
+    atBottom.value = true
+  }
+}
 function jump(message: ChatMessage) {
   const element = list.value?.querySelector<HTMLElement>(`[data-seq="${message.seq}"]`)
   element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -113,10 +128,10 @@ function jump(message: ChatMessage) {
   })
 }
 watch(
-  () => props.chat.messages.value.length,
-  async () => {
-    await nextTick()
-    if (list.value) list.value.scrollTop = list.value.scrollHeight
+  [() => props.chat.messages.value.length, () => props.chat.thinking.value],
+  ([,], prev) => {
+    const initial = prev === undefined || prev[0] === 0
+    void scrollToBottom(initial)
   },
   { immediate: true },
 )
@@ -163,6 +178,7 @@ const send = useMutation({
       text.value = ''
       mentions.value = []
       replyTo.value = null
+      void scrollToBottom(true)
     }
     void props.chat.state.refetch()
   },
@@ -269,6 +285,7 @@ const liveTone = computed(() =>
     <ol
       ref="list"
       class="flex min-h-0 flex-1 list-none flex-col gap-3 overflow-y-auto bg-sidebar px-3.5 py-4 scrollbar-thin sm:px-4"
+      @scroll="onScroll"
     >
       <li v-if="!chat.messages.value.length" class="my-auto self-center py-8 text-sm text-muted">
         {{ t('playground.noMessages') }}
@@ -319,51 +336,59 @@ const liveTone = computed(() =>
               {{ t('playground.reply') }}
             </button>
           </div>
-          <component
-            :is="message.is_self ? 'button' : 'div'"
-            :type="message.is_self ? 'button' : undefined"
+          <div
             class="max-w-full px-3.5 py-2 text-left text-sm break-words whitespace-pre-wrap text-ink"
             :class="[
               message.is_self
-                ? 'cursor-pointer rounded-2xl rounded-tl-sm border border-line bg-surface shadow-card transition-colors hover:border-line-strong focus-visible:focus-ring'
+                ? 'rounded-2xl rounded-tl-sm border border-line bg-surface shadow-card transition-colors hover:border-line-strong'
                 : 'rounded-2xl rounded-tr-sm border border-line-strong bg-fill',
               message.recalled && 'opacity-60 line-through',
             ]"
-            :title="message.is_self ? t('playground.showTurn') : undefined"
-            @click="message.is_self && emit('openTurn', message)"
           >
-            <span
-              v-if="quoted(message)"
-              role="button"
-              tabindex="0"
-              class="mb-1.5 block truncate rounded-sm border-l-2 border-line-strong bg-hover/70 px-2.5 py-1 text-xs text-muted"
-              @click.stop="quoted(message)!.message && jump(quoted(message)!.message!)"
-              @keydown.enter.stop="quoted(message)!.message && jump(quoted(message)!.message!)"
-            >
-              <template v-if="quoted(message)!.message">
+            <template v-if="quoted(message)">
+              <button
+                v-if="quoted(message)!.message"
+                type="button"
+                class="mb-1.5 block w-full cursor-pointer truncate rounded-sm border-l-2 border-line-strong bg-hover/70 px-2.5 py-1 text-left text-xs text-muted hover:bg-hover focus-visible:focus-ring"
+                @click="jump(quoted(message)!.message!)"
+              >
                 <strong class="font-medium text-ink-2">
                   {{ t('playground.replyTo', { name: senderName(quoted(message)!.message!) }) }}
                 </strong>
                 {{ excerpt(quoted(message)!.message!) }}
-              </template>
-              <template v-else>{{ t('playground.quoteMissing') }}</template>
-            </span>
-            <template v-for="(piece, index) in pieces(message)" :key="index">
-              <span v-if="piece.kind === 'mention'" class="rounded-xs bg-hover px-1 font-medium text-ink">
-                {{ piece.text }}
+              </button>
+              <span
+                v-else
+                class="mb-1.5 block truncate rounded-sm border-l-2 border-line-strong bg-hover/70 px-2.5 py-1 text-xs text-muted"
+              >
+                {{ t('playground.quoteMissing') }}
               </span>
-              <img
-                v-else-if="piece.kind === 'image'"
-                class="my-1 block max-h-36 max-w-36 rounded-md border border-line"
-                :src="piece.src"
-                :alt="piece.alt"
-                :title="piece.alt"
-                loading="lazy"
-              />
-              <span v-else-if="piece.kind === 'other'" class="text-muted">{{ piece.text }}</span>
-              <span v-else>{{ piece.text }}</span>
             </template>
-          </component>
+            <component
+              :is="message.is_self ? 'button' : 'div'"
+              :type="message.is_self ? 'button' : undefined"
+              class="block w-full text-left"
+              :class="message.is_self && 'cursor-pointer rounded-sm focus-visible:focus-ring'"
+              :title="message.is_self ? t('playground.showTurn') : undefined"
+              @click="message.is_self && emit('openTurn', message)"
+            >
+              <template v-for="(piece, index) in pieces(message)" :key="index">
+                <span v-if="piece.kind === 'mention'" class="rounded-xs bg-hover px-1 font-medium text-ink">
+                  {{ piece.text }}
+                </span>
+                <img
+                  v-else-if="piece.kind === 'image'"
+                  class="my-1 block max-h-36 max-w-36 rounded-md border border-line"
+                  :src="piece.src"
+                  :alt="piece.alt"
+                  :title="piece.alt"
+                  loading="lazy"
+                />
+                <span v-else-if="piece.kind === 'other'" class="text-muted">{{ piece.text }}</span>
+                <span v-else>{{ piece.text }}</span>
+              </template>
+            </component>
+          </div>
         </div>
       </li>
       <li v-if="chat.thinking.value" class="flex items-center gap-2 pl-10.5 text-xs text-muted">

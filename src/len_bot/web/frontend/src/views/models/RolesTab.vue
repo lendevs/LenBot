@@ -8,11 +8,12 @@ import Select from '../../ui/Select.vue'
 import Switch from '../../ui/Switch.vue'
 import ModelName from './ModelName.vue'
 import RoleCard from './RoleCard.vue'
-import { chatRoles, useForm } from './form'
+import { chatRoles, hasKey, useForm } from './form'
 
 const { t } = useI18n()
 const form = useForm()
 const asr = computed(() => form.draft.value!.roles.asr)
+const asrRow = computed(() => form.providerFor(asr.value?.provider))
 const asrErrors = computed(() => form.problems.value.filter((item) => item.place === 'roles.asr'))
 const asrOn = computed({ get: () => asr.value !== null, set: (on: boolean) => form.toggleAsr(on) })
 const language = computed({
@@ -43,7 +44,15 @@ const language = computed({
           />
         </Field>
         <Field :label="t('models.roles.model')">
-          <ModelName v-model="asr.model" :models="form.catalog.value[asr.provider]" placeholder="whisper-1" />
+          <ModelName
+            v-model="asr.model"
+            :models="form.catalog.value[asr.provider]"
+            :can-refresh="Boolean(asrRow)"
+            :refresh-disabled="!asrRow || !hasKey(asrRow) || !asrRow.base_url.trim()"
+            :refreshing="Boolean(asrRow && form.catalogLoading.value[asrRow.id])"
+            placeholder="whisper-1"
+            @refresh="asrRow && form.loadCatalog(asrRow.id)"
+          />
         </Field>
         <Field :label="t('models.roles.language')">
           <Input v-model="language" mono :placeholder="t('models.roles.autoLanguage')" />

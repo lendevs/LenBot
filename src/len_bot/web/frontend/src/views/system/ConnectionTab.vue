@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
-import { ChevronDown, PlugZap } from '@lucide/vue'
+import { ChevronDown, Eye, EyeOff, PlugZap } from '@lucide/vue'
 import type { SettingsSnapshot } from '../../api/settings'
 import {
   systemApi,
@@ -21,6 +21,7 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 import Combobox from '../../ui/Combobox.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
+import IconButton from '../../ui/IconButton.vue'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
@@ -51,6 +52,9 @@ const { t } = useI18n()
 const token = ref('')
 const telegramToken = ref('')
 const feishuSecret = ref('')
+const showToken = ref(false)
+const showTelegramToken = ref(false)
+const showFeishuSecret = ref(false)
 const pick = (snapshot: SettingsSnapshot): Draft => {
   const { owners: _owners, bot_id: _bot, onebot, telegram, ...rest } = systemOf(snapshot).connection
   const { bot_id: _telegramBot, ...telegramLink } = telegram ?? { bot_id: '' }
@@ -67,6 +71,9 @@ const form = useSettingsDraft<Draft>({
     token.value = ''
     telegramToken.value = ''
     feishuSecret.value = ''
+    showToken.value = false
+    showTelegramToken.value = false
+    showFeishuSecret.value = false
     telegramTest.reset()
     feishuTest.reset()
   },
@@ -404,12 +411,24 @@ watch(invalid, () => {
           <Field :label="t('system.connection.token')" :error="errors.token" wide>
             <Input
               v-model="token"
-              type="password"
+              :type="showToken ? 'text' : 'password'"
               autocomplete="new-password"
               :placeholder="
                 tokenConfigured ? t('system.connection.tokenKept') : t('system.connection.tokenNone')
               "
-            />
+            >
+              <template #suffix>
+                <span class="-mr-2 inline-flex">
+                  <IconButton
+                    :icon="showToken ? EyeOff : Eye"
+                    :label="showToken ? t('ui.secret.hide') : t('ui.secret.show')"
+                    variant="ghost"
+                    size="sm"
+                    @click="showToken = !showToken"
+                  />
+                </span>
+              </template>
+            </Input>
           </Field>
         </template>
       </FormSection>
@@ -428,11 +447,23 @@ watch(invalid, () => {
           <Field :label="t('system.connection.telegram.token')" :error="errors.telegramToken" required wide>
             <Input
               v-model="telegramToken"
-              type="password"
+              :type="showTelegramToken ? 'text' : 'password'"
               autocomplete="new-password"
               mono
               :placeholder="telegramSaved ? t('system.connection.tokenKept') : undefined"
-            />
+            >
+              <template #suffix>
+                <span class="-mr-2 inline-flex">
+                  <IconButton
+                    :icon="showTelegramToken ? EyeOff : Eye"
+                    :label="showTelegramToken ? t('ui.secret.hide') : t('ui.secret.show')"
+                    variant="ghost"
+                    size="sm"
+                    @click="showTelegramToken = !showTelegramToken"
+                  />
+                </span>
+              </template>
+            </Input>
           </Field>
           <Field :label="t('system.connection.telegram.proxy')" :error="errors.telegramProxy" wide>
             <Input
@@ -481,11 +512,23 @@ watch(invalid, () => {
           <Field :label="t('system.connection.feishu.secret')" :error="errors.feishuSecret" required>
             <Input
               v-model="feishuSecret"
-              type="password"
+              :type="showFeishuSecret ? 'text' : 'password'"
               autocomplete="new-password"
               mono
               :placeholder="feishuSaved && !feishuMoved ? t('system.connection.tokenKept') : undefined"
-            />
+            >
+              <template #suffix>
+                <span class="-mr-2 inline-flex">
+                  <IconButton
+                    :icon="showFeishuSecret ? EyeOff : Eye"
+                    :label="showFeishuSecret ? t('ui.secret.hide') : t('ui.secret.show')"
+                    variant="ghost"
+                    size="sm"
+                    @click="showFeishuSecret = !showFeishuSecret"
+                  />
+                </span>
+              </template>
+            </Input>
           </Field>
           <Field :label="t('system.connection.feishu.domain')">
             <Select v-model="feishu.domain" :options="domains" />

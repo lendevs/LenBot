@@ -17,6 +17,7 @@ const values = defineModel<Draft>({ required: true })
 const props = defineProps<{
   fields: ConfigField[]
   sceneChoices: string[]
+  enabledScenes?: string[]
   /** Secrets that already have a saved value. */
   configured: Record<string, boolean>
   problems: Record<string, string>
@@ -130,6 +131,7 @@ function jump(id: string) {
           :model-value="rows(section.list.key)"
           :field="section.list"
           :scene-choices="sceneChoices"
+          :enabled-scenes="enabledScenes"
           :problems="problems"
           @update:model-value="(value) => set(section.list!.key, value)"
         />
@@ -152,6 +154,7 @@ function jump(id: string) {
                 :model-value="rows(field.key)"
                 :field="field"
                 :scene-choices="sceneChoices"
+                :enabled-scenes="enabledScenes"
                 :problems="problems"
                 @update:model-value="(value) => set(field.key, value)"
               />
@@ -161,6 +164,7 @@ function jump(id: string) {
               :model-value="values[field.key]"
               :field="field"
               :scene-choices="sceneChoices"
+              :enabled-scenes="enabledScenes"
               :configured="Boolean(configured[field.key])"
               :error="problems[field.key]"
               @update:model-value="(value) => set(field.key, value)"

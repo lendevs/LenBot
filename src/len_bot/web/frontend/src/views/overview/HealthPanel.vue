@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery } from '@tanstack/vue-query'
+import { useIntervalFn } from '@vueuse/core'
 import { host } from '../../api/hostStore'
 import { overviewApi, type Overview } from '../../api/overview'
 import { keys } from '../../api/query'
@@ -13,6 +14,8 @@ import Skeleton from '../../ui/Skeleton.vue'
 import { useLiveLabels } from '../groups/live/labels'
 
 const { t } = useI18n()
+const now = ref(Date.now() / 1000)
+useIntervalFn(() => (now.value = Date.now() / 1000), 30_000)
 // Stalls are not events; the probe's counters are read every ten seconds while the page is visible.
 const loop = useQuery({
   queryKey: keys.host.eventLoop(),
@@ -24,7 +27,7 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
   const value = loop.data.value
   if (!value) return { text: t('common.loading'), tone: 'neutral' }
   if (!value.running) return { text: t('overview.health.idle'), tone: 'neutral' }
-  if (latest.value && Date.now() / 1000 - latest.value.at < 600)
+  if (latest.value && now.value - latest.value.at < 600)
     return { text: t('overview.health.stalled'), tone: 'warning' }
   return { text: t('overview.health.smooth'), tone: 'success' }
 })
@@ -95,7 +98,7 @@ const models = computed(() =>
               t('overview.health.latest', {
                 task: latest.task ?? t('common.unknown'),
                 n: formatNumber(latest.lag_ms),
-                ago: formatRelative(latest.at),
+                ago: formatRelative(latest.at, now),
               })
             }}
           </summary>
@@ -116,13 +119,14 @@ const models = computed(() =>
             </div>
             <p class="flex flex-wrap gap-x-3 text-xs text-muted tabular">
               <span v-if="item.success">
-                {{ t('overview.health.lastSuccess', { ago: formatRelative(item.success.started) }) }}
+                {{ t('overview.health.lastSuccess', { ago: formatRelative(item.success.started, now) }) }}
               </span>
               <RouterLink
                 v-if="item.failure"
                 :to="{
                   name: 'host-logs',
                   query: {
+                    level: 'ERROR',
                     scene: item.failure.scene,
                     call: item.failure.id,
                     turn: item.failure.turn_id ?? undefined,
@@ -131,7 +135,7 @@ const models = computed(() =>
                 class="text-error hover:underline"
                 :title="item.failure.error"
               >
-                {{ t('overview.health.lastFailure', { ago: formatRelative(item.failure.started) }) }}
+                {{ t('overview.health.lastFailure', { ago: formatRelative(item.failure.started, now) }) }}
               </RouterLink>
             </p>
           </li>
