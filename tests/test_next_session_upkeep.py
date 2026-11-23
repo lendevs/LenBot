@@ -17,6 +17,7 @@ from len_bot.next.learning.store import LearningStore
 from len_bot.next.memory.service import open_memory
 from len_bot.next.models.client import ChatModel, ModelReply
 from len_bot.next.persona.profile import load_persona
+from len_bot.next.platform.messages import render_message
 from len_bot.next.storage.store import Store
 
 from test_next_native_models import peer_server
@@ -88,6 +89,8 @@ def _group_messages(store: Store) -> None:
     for index, (user, text) in enumerate([(70002, '周末打游戏冲冲冲 yyds'), (70003, 'yyds 今天也是'),
                                           (70002, 'yyds yyds'), (70003, '真的 yyds')]):
         _receive(store, text, user, 40001 + index)
+    # The latest message is in the current chat prefix. The other three still need their full text.
+    store.append(SCENE, {"role": "user", "content": render_message(store.find_message(SCENE, "40004"), timezone="UTC")})
 
 
 @pytest.mark.asyncio
@@ -533,3 +536,135 @@ async def test_upkeep_stuck_on_provider_failures_starts_over_once_the_chat_model
         # One recovery gives the attempts back once; nothing is left to run.
         upkeep.model_recovered()
         assert not await upkeep._step(SCENE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('over_budget', [False, True])
+@pytest.mark.parametrize('memory_enabled', [True, False])
+async def test_archived_or_over_budget_batch_uses_its_own_prefix(tmp_path, over_budget, memory_enabled):
+    async with _upkeep(tmp_path, [_text({})]) as (upkeep, store, memory, forks, bodies):
+        if not memory_enabled:
+            await upkeep.set_memory_ingest(False)
+        _receive(store, '这一条需要整理', 70002, 50001)
+        if not over_budget:
+            with store.db:
+                store.db.execute("INSERT INTO mind_sessions(scene,last_message_seq) VALUES (?,?)",
+                                 (SCENE, store.max_message_seq(SCENE)))
+        prefix = '当前对话里的内容 ' + ('冷' * 31000 + ' id="50001"' if over_budget else 'id="60001"')
+        store.append(SCENE, {'role': 'user', 'content': prefix})
+        upkeep.request(SCENE, 'expressions')
+        assert await upkeep._step(SCENE)
+        [request] = bodies()
+        system, instruction = request['messages']
+        assert system['role'] == 'system' and instruction['role'] == 'user'
+        assert '当前对话里的内容' not in str(request['messages'])
+        assert '这一条需要整理' in instruction['content']
+        assert [tool['function']['name'] for tool in request.get('tools', [])] == (['memory'] if memory_enabled else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('accepted', [True, False])
+async def test_memory_tools_share_draft_and_publish_only_after_valid_json(tmp_path, accepted):
+    path, old = 'events/新事件.md', 'events/旧事件.md'
+    body = '周末去看海。' * 400
+    write = {'action': 'write', 'path': path, 'content': body, 'reason': '群友约定'}
+    calls = [write, {'action': 'read', 'path': path}, {'action': 'delete', 'path': old, 'reason': '已结束'},
+             {'action': 'read', 'path': old}, {'action': 'browse', 'path': 'events'},
+             {'action': 'search', 'query': '看海'}, {**write, 'path': '../bad.md'}]
+    replies = [turns._calls(*(('memory', call) for call in calls))]
+    replies.extend([_text({})] if accepted else [_text('无 JSON'), _text('仍无 JSON')])
+    async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
+        await memory.write(SCENE, old, '曾经约了去看海。', '之前的约定')
+        _group_messages(store)
+        upkeep.request(SCENE, 'memory')
+        assert await upkeep._step(SCENE)
+        feedback = [m['content'] for m in bodies()[1]['messages'] if m['role'] == 'tool']
+        assert json.loads(feedback[1])['content'] == body
+        assert 'FileNotFoundError' in feedback[3]
+        assert [node['path'] for node in json.loads(feedback[4])['nodes']] == [path]
+        assert [hit['path'] for hit in json.loads(feedback[5])['hits']] == [path]
+        assert 'unsupported segment' in feedback[6]
+        job = memory.jobs.latest(SCENE)
+        assert job['details']['tools'][0]['arguments'] == {k: v for k, v in write.items() if k != 'content'} | {
+            'content_chars': len(body)}
+        assert all(len(tool['result']) <= 500 for tool in job['details']['tools'])
+        if accepted:
+            assert job['status'] == 'complete'
+            assert (await memory.backend.read(SCENE, path)).content == body
+            assert [change['action'] for change in await memory.history(SCENE, old)] == ['write', 'delete']
+        else:
+            assert job['status'] == 'failed' and memory.jobs.after(SCENE) == 0
+            assert await memory.history(SCENE, path) == []
+            assert [change['action'] for change in await memory.history(SCENE, old)] == ['write']
+            assert (await memory.backend.read(SCENE, old)).content == '曾经约了去看海。'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cancel', [True, False])
+async def test_interruption_before_final_reply_discards_memory_edits(tmp_path, monkeypatch, cancel):
+    write = {'action': 'write', 'path': 'events/new.md', 'content': '尚未确认', 'reason': '整理'}
+    async with _upkeep(tmp_path, [turns._calls(('memory', write))]) as (upkeep, store, memory, forks, bodies):
+        waiting = asyncio.Event()
+        complete = upkeep.mind.complete
+
+        async def wait_for_final(messages, *args, **kwargs):
+            if messages[-1]['role'] == 'tool':
+                waiting.set()
+                await asyncio.Future()
+            return await complete(messages, *args, **kwargs)
+
+        monkeypatch.setattr(upkeep.mind, 'complete', wait_for_final)
+        upkeep.config.memory.ingest.timeout_seconds = 5 if cancel else .4
+        _group_messages(store)
+        upkeep.request(SCENE, 'memory')
+        task = asyncio.create_task(upkeep._step(SCENE))
+        await asyncio.wait_for(waiting.wait(), 2)
+        assert await memory.history(SCENE, write['path']) == []
+        if cancel:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            assert await asyncio.wait_for(task, 2)
+        assert memory.jobs.latest(SCENE)['status'] == ('interrupted' if cancel else 'failed')
+        assert memory.jobs.after(SCENE) == 0
+        assert await memory.backend.tree(SCENE) == []
+
+
+@pytest.mark.asyncio
+async def test_wait_for_model_slot_preserves_the_pass_budget(tmp_path):
+    from len_bot.next.models.slots import ModelSlots
+
+    async with _upkeep(tmp_path, [_text({})]) as (upkeep, store, memory, forks, bodies):
+        upkeep.config.memory.ingest.timeout_seconds = .4
+        upkeep.slots = ModelSlots(1)
+        begun = asyncio.Event()
+        upkeep.on_update = begun.set
+        _group_messages(store)
+        upkeep.request(SCENE, 'memory')
+        async with upkeep.slots.slot():
+            task = asyncio.create_task(upkeep._step(SCENE))
+            await asyncio.wait_for(begun.wait(), 2)
+            await asyncio.sleep(.5)
+            assert not task.done() and not bodies()
+        assert await task
+        assert memory.jobs.latest(SCENE)['status'] == 'complete'
+
+
+@pytest.mark.asyncio
+async def test_ordinary_term_needs_five_new_message_samples(tmp_path):
+    term = _judgment('早餐', 'ordinary')
+    async with _upkeep(tmp_path, [_text({'terms': [term]}), _text({}), _text({'terms': [term]})]) as (
+        upkeep, store, memory, forks, bodies,
+    ):
+        for start, count in [(0, 1), (1, 4), (5, 1)]:
+            for offset in range(count):
+                _receive(store, '今天的早餐', 70002, 61000 + start + offset)
+            upkeep.request(SCENE, 'jargon')
+            assert await upkeep._step(SCENE)
+        instructions = [body['messages'][-1]['content'] for body in bodies()]
+        assert len(instructions) == 3
+        assert '上次评估位置' not in instructions[1]
+        assert '上次评估位置' in instructions[2]
+        item = upkeep.jargon.items(SCENE, 'ordinary', 10, 0)['items'][0]
+        assert item['count'] == 6 and item['last_evaluated_seq'] == store.max_message_seq(SCENE)
