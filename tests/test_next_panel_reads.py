@@ -111,13 +111,26 @@ def test_slow_queries_use_indexes_without_full_table_scans():
         assert not any(step.startswith('SCAN messages') for step in search_long), search_long
 
         search_short = plan(
-            "WITH recent(seq,body) AS MATERIALIZED (SELECT seq,body FROM messages WHERE scene=? AND seq<=? ORDER BY seq DESC LIMIT ?) "
-            "SELECT m.seq,m.body FROM recent m CROSS JOIN message_search s ON s.rowid=m.seq WHERE instr(s.search_text,?)>0 "
+            "WITH recent(seq,body) AS MATERIALIZED ("
+            "SELECT m.seq,m.body FROM messages m WHERE m.scene=? AND +m.seq<=? "
+            "ORDER BY json_extract(m.body,'$.time') DESC,m.seq DESC LIMIT ?"
+            ") SELECT m.seq,m.body FROM recent m CROSS JOIN message_search s ON s.rowid=m.seq WHERE instr(s.search_text,?)>0 "
             "ORDER BY json_extract(m.body,'$.time') DESC,m.seq DESC LIMIT ? OFFSET ?",
             (SCENE, 1000, 5000, 'hi', 10, 0),
         )
-        assert any('USING INDEX message_scene_seq' in step for step in search_short), search_short
+        assert any('USING INDEX message_scene_time' in step for step in search_short), search_short
         assert not any(step.startswith('SCAN messages') for step in search_short), search_short
+
+        search_short_who = plan(
+            "WITH recent(seq,body) AS MATERIALIZED ("
+            "SELECT m.seq,m.body FROM messages m WHERE m.scene=? AND +m.seq<=? AND json_extract(m.body,'$.sender.uid')=? "
+            "ORDER BY json_extract(m.body,'$.time'),m.seq LIMIT ?"
+            ") SELECT m.seq,m.body FROM recent m CROSS JOIN message_search s ON s.rowid=m.seq WHERE instr(s.search_text,?)>0 "
+            "ORDER BY json_extract(m.body,'$.time'),m.seq LIMIT ? OFFSET ?",
+            (SCENE, 1000, 'onebot:70001', 5000, '过敏', 10, 0),
+        )
+        assert any('USING INDEX message_sender_time' in step for step in search_short_who), search_short_who
+        assert not any(step.startswith('SCAN messages') for step in search_short_who), search_short_who
 
         activity = plan(
             "SELECT received_at FROM messages WHERE scene=? AND raw IS NOT NULL AND received_at IS NOT NULL "
@@ -193,3 +206,64 @@ async def test_updater_prechecks_disk_space_before_downloading(tmp_path, monkeyp
     assert updater.state()['stage'] == 'failed'
     assert '磁盘空间' in updater.state()['error']
     assert not deployment.installed('0.2.0')
+
+
+def test_short_query_search_pushes_down_filters_and_direction(tmp_path, monkeypatch):
+    from len_bot.next.platform.messages import ChatMessage, Segment, Sender
+    from len_bot.next.storage import store as store_module
+
+    monkeypatch.setattr(store_module, 'SHORT_QUERY_SCAN_LIMIT', 3)
+    with Store(tmp_path / 'host.sqlite3') as store:
+        for index in range(1, 8):
+            uid = 'onebot:rare' if index == 1 else 'onebot:chatty'
+            text = '花生过敏记录' if index in (1, 7) else f'普通闲聊消息 {index}'
+            msg = ChatMessage(
+                id=f'm-{index}', platform='onebot', bot_id='onebot:90001', scene=SCENE,
+                platform_message_id=f'm-{index}', sender=Sender(uid, '群友', None, None),
+                time=float(index * 10), segments=[Segment('text', {'text': text})],
+                reply_to=None, mentions_bot=False, is_self=False, send_status='received',
+            )
+            store.enqueue(msg, {}, float(index * 10))
+        snap = store.max_message_seq(SCENE)
+        # Sender filter finds seq=1 despite 6 newer messages exceeding SHORT_QUERY_SCAN_LIMIT=3.
+        by_who = store.search_messages(
+            SCENE, query='过敏', who='onebot:rare', after=None, before=None,
+            snapshot=snap, offset=0, limit=10, order='newest',
+        )
+        assert [seq for seq, _ in by_who] == [1]
+        # Time window filter finds seq=1 in [5, 25).
+        by_window = store.search_messages(
+            SCENE, query='过敏', who=None, after=5.0, before=25.0,
+            snapshot=snap, offset=0, limit=10, order='newest',
+        )
+        assert [seq for seq, _ in by_window] == [1]
+        # Oldest ordering scans from earliest messages first.
+        oldest = store.search_messages(
+            SCENE, query='过敏', who=None, after=None, before=None,
+            snapshot=snap, offset=0, limit=1, order='oldest',
+        )
+        assert [seq for seq, _ in oldest] == [1]
+
+
+def test_egress_status_does_not_mutate_in_memory_day_cache(tmp_path):
+    from types import SimpleNamespace
+    from len_bot.next.work.egress_usage import EgressUsage
+    from len_bot.next.work.store import TaskStore
+
+    with Store(tmp_path / 'host.sqlite3') as store:
+        cfg = SimpleNamespace(
+            scene_timezone=lambda _scene: 'UTC',
+            worker=SimpleNamespace(egress=SimpleNamespace(
+                max_task_bytes=10_000, max_scene_daily_bytes=50_000,
+                max_task_upload_bytes=5_000, enabled=True, mode='allowlist',
+            )),
+            scenes={SCENE: SimpleNamespace(tasks=SimpleNamespace(
+                egress_max_task_bytes=None, egress_max_daily_bytes=None,
+            ))},
+        )
+        usage = EgressUsage(cfg, TaskStore(store), lambda _scene: None)
+        usage._scene_days[(SCENE, '1999-01-01')] = [12, 34]
+        state = usage.status(SCENE)
+        assert state['up'] == 0 and state['down'] == 0
+        # Read-only status query must neither insert the new day key nor delete older keys in _scene_days.
+        assert list(usage._scene_days.keys()) == [(SCENE, '1999-01-01')]

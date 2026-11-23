@@ -1095,15 +1095,18 @@ class Store:
                 ).fetchall()
                 return [(row[0], decode_message(row[1])) for row in rows]
             if shorts:
-                # Trigram FTS5 cannot index <3-char terms; bound the reverse scan via message_scene_seq.
-                conditions = [*("instr(s.search_text,?)>0" for _ in shorts), *filters]
+                # Trigram FTS5 cannot index <3-char terms; bound the time-ordered index scan before probing FTS rowids.
+                recent_conditions = ["m.scene=?", "+m.seq<=?", *filters]
+                short_conditions = " AND ".join("instr(s.search_text,?)>0" for _ in shorts)
+                scan_limit = max(SHORT_QUERY_SCAN_LIMIT, limit + offset)
                 rows = self.db.execute(
                     "WITH recent(seq,body) AS MATERIALIZED ("
-                    "SELECT seq,body FROM messages WHERE scene=? AND seq<=? ORDER BY seq DESC LIMIT ?"
+                    "SELECT m.seq,m.body FROM messages m WHERE " + " AND ".join(recent_conditions)
+                    + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ?"
                     ") SELECT m.seq,m.body FROM recent m CROSS JOIN message_search s ON s.rowid=m.seq WHERE "
-                    + " AND ".join(conditions)
+                    + short_conditions
                     + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
-                    (scene, snapshot, SHORT_QUERY_SCAN_LIMIT, *shorts, *filter_params, limit, offset),
+                    (scene, snapshot, *filter_params, scan_limit, *shorts, limit, offset),
                 ).fetchall()
                 return [(row[0], decode_message(row[1])) for row in rows]
         # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.

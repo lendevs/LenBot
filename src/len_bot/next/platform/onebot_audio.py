@@ -80,7 +80,9 @@ async def _fetch_url_audio(url: str, source: dict, settings: AudioSettings, *,
         raise ValueError(f"record exceeds {settings.max_bytes} bytes")
     if audio[:4] == b"RIFF" and audio[8:12] == b"WAVE":
         return _parse_wav(audio, settings)
-    return audio, _source_duration(source, settings)
+    if audio[:4] == b"OggS":
+        return audio, _source_duration(source, settings)
+    raise ValueError("audio url is neither WAV nor OGG")
 
 
 def parse_record(raw: object, settings: AudioSettings) -> tuple[bytes, float]:
@@ -115,14 +117,6 @@ async def fetch_record(call: PlatformCall, source: dict, settings: AudioSettings
                 )
         raise ValueError(f"Audio segment lacks its actual file locator: {source!r}")
 
-    local = _local_path(file.strip())
-    if local is not None and not local.is_file() and segment_url is not None:
-        async with asyncio.timeout(settings.timeout_seconds):
-            return await _fetch_url_audio(
-                segment_url, source, settings,
-                fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
-            )
-
     async with asyncio.timeout(settings.timeout_seconds):
         raw = await call("get_record", {"file": file, "out_format": "wav"})
         if isinstance(raw, dict) and raw.get("status") == "ok" and raw.get("retcode") == 0:
@@ -134,7 +128,7 @@ async def fetch_record(call: PlatformCall, source: dict, settings: AudioSettings
                     if returned_local.is_file():
                         wav = await asyncio.to_thread(_read_local_capped, returned_local, settings.max_bytes)
                         return _parse_wav(wav, settings)
-                remote_url = _http_url(data.get("url")) or _http_url(returned_file) or segment_url
+                remote_url = _http_url(data.get("url")) or _http_url(returned_file)
                 if remote_url is not None:
                     return await _fetch_url_audio(
                         remote_url, source, settings,

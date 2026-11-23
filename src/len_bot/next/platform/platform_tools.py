@@ -419,8 +419,12 @@ async def download_group_file(call: PlatformCall, group_id: str, file_id: str, b
     raise AssertionError("redirect loop exhausted without returning")
 
 
-def group_file_fetch(call: PlatformCall, group_id: str):
+def group_file_fetch(call: PlatformCall, group_id: str, *,
+                     fake_ip_networks: tuple = (), public_dns_url: str | None = None):
     """The delegate fetcher for one group's files: download by file_id and busid."""
     async def fetch(item, max_bytes: int) -> bytes:
-        return await download_group_file(call, group_id, item.file_id, item.busid, max_bytes)
+        return await download_group_file(
+            call, group_id, item.file_id, item.busid, max_bytes,
+            fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
+        )
     return fetch

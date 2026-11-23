@@ -165,3 +165,31 @@ def test_retention_uses_active_entry_time_after_compaction(tmp_path):
             db.execute('UPDATE mind_sessions SET compact_through=100 WHERE scene=?', (GROUP,))
         assert work.batch()['messages'] == 2
         assert [row[0] for row in store.db.execute('SELECT seq FROM messages ORDER BY seq')] == [3, 4, 5]
+
+
+def test_retention_preserves_quiet_held_message_batched_after_compaction(tmp_path):
+    from len_bot.next.platform.messages import render_batch
+    from len_bot.next.storage.store import Store
+    from len_bot.next.runtime.retention import RetentionSettings
+    from test_plugin_memory_boundary import GROUP, receive
+
+    now = 5 * 86400
+    config = SimpleNamespace(database=tmp_path / 'test.db', retention=RetentionSettings(message_days={GROUP: 1}), scenes={})
+    with Store(config.database, now=lambda: now) as store:
+        work = Retention(SimpleNamespace(store=store, config=config))
+        m1 = receive(store, GROUP, 1, 10)
+        m2 = receive(store, GROUP, 2, 20)
+        # m3 arrives during quiet/paused window at T1=25 (< now - 86400), before compaction at t=30,
+        # and is only batched into active mind_entries (seq=200 > compact_through=100) at T2=now.
+        m3 = receive(store, GROUP, 3, 25)
+        m4 = receive(store, GROUP, 4, now)
+        with store.db as db:
+            db.execute('INSERT INTO mind_sessions(scene,compact_through,last_message_seq) VALUES (?,100,4)', (GROUP,))
+            first_batch = render_batch([(m1, None, {}), (m2, None, {})], timezone='UTC')
+            second_batch = render_batch([(m3, None, {}), (m4, None, {})], timezone='UTC')
+            db.execute("INSERT INTO mind_entries(seq,scene,created,message) VALUES (100,?,30,?)",
+                       (GROUP, retention.encode({'role': 'user', 'content': first_batch})))
+            db.execute("INSERT INTO mind_entries(seq,scene,created,message) VALUES (200,?,?,?)",
+                       (GROUP, now, retention.encode({'role': 'user', 'content': second_batch})))
+        assert work.batch()['messages'] == 2
+        assert [row[0] for row in store.db.execute('SELECT seq FROM messages ORDER BY seq')] == [3, 4]

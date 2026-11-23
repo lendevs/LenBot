@@ -97,6 +97,9 @@ class LiveSettings:
                      'text_delivery', 'compaction', 'images', 'audio', 'commands', 'network', 'web_read', 'web_search',
                      'task_archive', 'plugin_catalog', 'model_alert_failed_turns'):
             setattr(running, name, deepcopy(getattr(saved, name)))
+        if runtime.platform is not None and (onebot := runtime.platform.member('onebot')) is not None:
+            onebot._fake_ip_networks = running.network.networks()
+            onebot._public_dns_url = running.network.public_dns_url
         self.apply_logging(running, saved)
         runtime.log_secrets = credentials(saved)
         SECRETS.add(runtime.log_secrets)

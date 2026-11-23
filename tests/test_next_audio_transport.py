@@ -140,8 +140,10 @@ def test_saved_capacity_remains_explicit_when_audio_limit_changes():
 
 @pytest.mark.asyncio
 async def test_fetch_record_reads_segment_url_when_file_missing_or_unreachable(monkeypatch):
+    from types import SimpleNamespace
     from len_bot.next.models.asr import AudioSettings
-    from len_bot.next.platform import onebot_audio
+    from len_bot.next.platform import onebot_audio, platform_tools
+    from len_bot.next.platform.adapter import _open_onebot
     from len_bot.next.platform.onebot_audio import fetch_record
 
     output = BytesIO()
@@ -153,10 +155,12 @@ async def test_fetch_record_reads_segment_url_when_file_missing_or_unreachable(m
     fetched = []
 
     async def fake_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
-        fetched.append((url, byte_limit('audio/wav', b'')))
+        fetched.append((url, byte_limit('audio/wav', b''), fake_ip_networks, public_dns_url))
         if url.endswith('.wav'):
             return url, 'audio/wav', wav
-        return url, 'audio/ogg', b'OggS-audio-bytes'
+        if url.endswith('.ogg'):
+            return url, 'audio/ogg', b'OggS-audio-bytes'
+        return url, 'application/octet-stream', b'\x02#!SILK_V3-raw'
 
     monkeypatch.setattr(onebot_audio, 'fetch_public', fake_fetch_public)
     settings = AudioSettings(max_bytes=64 * 1024, max_seconds=30, timeout_seconds=5)
@@ -164,28 +168,54 @@ async def test_fetch_record_reads_segment_url_when_file_missing_or_unreachable(m
     async def unused_call(action, params):
         raise AssertionError(f'unexpected call {action} {params}')
 
-    # No file locator, segment carries http(s) url directly.
+    # No file locator: segment carries http(s) WAV/OGG url directly.
     audio, duration = await fetch_record(unused_call, {'url': 'https://cdn.example/a.wav'}, settings)
     assert audio == wav and duration == 1.0
-
-    # Unreachable NapCat host path in remote deployment falls onto segment url without calling get_record.
-    audio, duration = await fetch_record(
-        unused_call,
-        {'file': '/napcat-host/nonexistent/voice.amr', 'url': 'https://cdn.example/b.ogg', 'duration': 3.5},
-        settings,
-    )
+    audio, duration = await fetch_record(unused_call, {'url': 'https://cdn.example/b.ogg', 'duration': 3.5}, settings)
     assert audio == b'OggS-audio-bytes' and duration == 3.5
 
-    # get_record returns host path without base64 -> reads refreshed url.
+    # Raw SILK/AMR URL is rejected rather than poisoning audio_cache.wav.
+    with pytest.raises(ValueError, match='neither WAV nor OGG'):
+        await fetch_record(unused_call, {'url': 'https://cdn.example/raw.silk'}, settings)
+
+    # Remote NapCat file path MUST still call get_record(out_format="wav") instead of short-circuiting to raw SILK url.
     async def host_path_call(action, params):
-        assert action == 'get_record'
+        assert action == 'get_record' and params['out_format'] == 'wav'
         return {'status': 'ok', 'retcode': 0, 'data': {
             'file': '/napcat-host/nonexistent/out.wav', 'url': 'https://cdn.example/c.wav',
         }}
 
-    audio, duration = await fetch_record(host_path_call, {'file': 'voice.amr'}, settings)
+    audio, duration = await fetch_record(
+        host_path_call,
+        {'file': '/napcat-host/nonexistent/voice.amr', 'url': 'https://cdn.example/raw.silk'},
+        settings,
+    )
     assert audio == wav and duration == 1.0
     assert [item[0] for item in fetched] == [
-        'https://cdn.example/a.wav', 'https://cdn.example/b.ogg', 'https://cdn.example/c.wav',
+        'https://cdn.example/a.wav', 'https://cdn.example/b.ogg',
+        'https://cdn.example/raw.silk', 'https://cdn.example/c.wav',
     ]
-    assert all(limit == settings.max_bytes for _, limit in fetched)
+    assert all(limit == settings.max_bytes for _, limit, _, _ in fetched)
+
+    # Verify fake_ip_networks and public_dns_url propagate into OneBot and group_file_fetch.
+    source = host_source({'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'})
+    source['network'] = {'fake_ip_networks': ['198.18.0.0/15'], 'public_dns_url': 'https://dns.example/dns-query'}
+    cfg = HostConfig.model_validate_json(json.dumps(source))
+    bot = _open_onebot(cfg, on_event=lambda _: None, on_error=lambda _: None)
+    assert bot._fake_ip_networks == cfg.network.networks()
+    assert bot._public_dns_url == 'https://dns.example/dns-query'
+
+    forwarded = {}
+
+    async def fake_download_group_file(call, group_id, file_id, busid, max_bytes, *, fake_ip_networks=(), public_dns_url=None):
+        forwarded.update(group_id=group_id, file_id=file_id, busid=busid, max_bytes=max_bytes,
+                         fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url)
+        return b'payload'
+
+    monkeypatch.setattr(platform_tools, 'download_group_file', fake_download_group_file)
+    fetcher = platform_tools.group_file_fetch(
+        unused_call, '80001', fake_ip_networks=cfg.network.networks(), public_dns_url=cfg.network.public_dns_url,
+    )
+    assert await fetcher(SimpleNamespace(file_id='f1', busid=102), 4096) == b'payload'
+    assert forwarded['fake_ip_networks'] == cfg.network.networks()
+    assert forwarded['public_dns_url'] == 'https://dns.example/dns-query'

@@ -263,8 +263,11 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         if runtime.tasks is None:
             raise HTTPException(409, "尚未配置任务执行器")
         platform, kind, target = scene.split(":", 2)
-        fetch = (group_file_fetch(partial(runtime.platform_call, scene=scene), target)
-                 if runtime.config.onebot is not None and platform == "onebot" and kind == "group" else None)
+        fetch = (group_file_fetch(
+            partial(runtime.platform_call, scene=scene), target,
+            fake_ip_networks=runtime.config.network.networks(),
+            public_dns_url=runtime.config.network.public_dns_url,
+        ) if runtime.config.onebot is not None and platform == "onebot" and kind == "group" else None)
         try:
             downloads = await group_file_inputs(body.group_files, fetch, runtime.tasks.settings.max_file_bytes)
         except (PlatformCallError, httpx.HTTPError) as error:

@@ -105,8 +105,11 @@ async def process_audio(store, config, arguments, *, turn_id, platform, slots, d
     if not audio_reused:
         data = records[arguments.audio - 1].data
         # OneBot converts voice to WAV with get_record; other platforms serve the file as sent.
-        wav, duration = (await fetch_record(platform, data, config.audio) if scene.startswith("onebot:")
-                         else await download_voice(download, scene, data, config.audio))
+        wav, duration = (await fetch_record(
+            platform, data, config.audio,
+            fake_ip_networks=config.network.networks(),
+            public_dns_url=config.network.public_dns_url,
+        ) if scene.startswith("onebot:") else await download_voice(download, scene, data, config.audio))
         with store.db:
             store.db.execute("UPDATE audio_cache SET wav=?,duration=?,fetched_at=? "
                              "WHERE scene=? AND platform_id=? AND audio_index=?", (wav, duration, store.now(), *position))

@@ -527,7 +527,11 @@ class SceneTools:
         platform, kind, group_id = self.config.scene.split(":", 2)
         if self.platform_call is None or self.config.delivery != "live" or kind != "group" or platform != "onebot":
             return None
-        return group_file_fetch(self.platform_call, group_id)
+        return group_file_fetch(
+            self.platform_call, group_id,
+            fake_ip_networks=self.config.network.networks(),
+            public_dns_url=self.config.network.public_dns_url,
+        )
 
     def _chat_file_fetch(self):
         """Downloads a file sent in this chat for delegate; None on OneBot, whose files are group files."""

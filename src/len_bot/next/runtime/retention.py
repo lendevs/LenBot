@@ -42,6 +42,33 @@ RETRY_SECONDS = 300
 LOG = logging.getLogger(__name__)
 COUNTS = ('model_snapshots', 'auxiliary_snapshots', 'task_snapshots', 'turns', 'messages', 'notices',
           'memory_snapshots', 'extraction_jobs', 'plugin_calls', 'plugin_events')
+HEADER_MESSAGE_ID = re.compile(r'(?m)^[^\s].*\[.*\bid=("(?:\\.|[^"\\])*")')
+
+
+def _active_message_seq(db, scene: str, compact_through: int) -> int | None:
+    platform_ids: list[str] = []
+    for (raw,) in db.execute(
+        "SELECT message FROM mind_entries WHERE scene=? AND seq>? ORDER BY seq",
+        (scene, compact_through),
+    ):
+        entry = json.loads(raw)
+        if entry.get("role") == "user" and isinstance(entry.get("content"), str):
+            platform_ids.extend(json.loads(match) for match in HEADER_MESSAGE_ID.findall(entry["content"]))
+    candidates: list[int] = []
+    if platform_ids:
+        seq = db.execute(
+            "SELECT MIN(seq) FROM messages WHERE scene=? AND platform_id IN (SELECT value FROM json_each(?))",
+            (scene, encode(platform_ids)),
+        ).fetchone()[0]
+        if seq is not None:
+            candidates.append(seq)
+    expr_seq = db.execute(
+        "SELECT MIN(seq) FROM messages WHERE expression_entry_seq>? AND +scene=?",
+        (compact_through, scene),
+    ).fetchone()[0]
+    if expr_seq is not None:
+        candidates.append(expr_seq)
+    return min(candidates) if candidates else None
 
 
 def _latest_mind_calls(db) -> set[int]:
@@ -210,6 +237,9 @@ class Retention:
                 if session['compact_through'] == 0:
                     continue
                 threshold = min(threshold, active)
+                active_seq = _active_message_seq(db, scene, session['compact_through'])
+                if active_seq is not None:
+                    through = min(through, active_seq - 1)
             selected_messages.extend(db.execute(
                 "SELECT m.seq,m.scene,m.platform_id FROM messages m WHERE m.scene=? AND m.seq<=? "
                 "AND COALESCE(m.received_at,json_extract(m.body,'$.time'))<? "
