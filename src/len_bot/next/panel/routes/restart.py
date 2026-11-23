@@ -62,7 +62,7 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
     async def read_restart(_: str = Depends(user)):
         async with write_lock:
             try:
-                return preview()
+                return await runtime.store.read(preview)
             except (ValueError, OSError) as error:
                 raise HTTPException(422, str(error)) from error
 
@@ -71,7 +71,7 @@ def register_host_restart(app: FastAPI, *, root: Path, running: HostConfig,
         async with write_lock:
             try:
                 lifecycle.require_restart()
-                result = preview()
+                result = await runtime.store.read(preview)
             except RuntimeError as error:
                 raise HTTPException(409, str(error)) from error
             except (ValueError, OSError) as error:

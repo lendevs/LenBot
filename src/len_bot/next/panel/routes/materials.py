@@ -90,7 +90,7 @@ def register_host_materials(app: FastAPI, *, runtime: NetworkRuntime, user: Call
         if body.directory != str(directory):
             raise HTTPException(409, f'当前共享目录与页面读取不同，未采用：expected={str(directory)!r}, received={body.directory!r}')
         try:
-            source = records.get_file(scene, body.task_id, body.file_id)
+            source = await runtime.store.read(records.get_file, scene, body.task_id, body.file_id)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         async with changes:

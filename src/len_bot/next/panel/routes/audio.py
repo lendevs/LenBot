@@ -26,7 +26,7 @@ def register_host_audio(app: FastAPI, *, runtime, user) -> None:
     async def listing(scene: str, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=50),
                       _: str = Depends(user)):
         check(scene)
-        rows = service.records.items(scene, limit + 1, offset)
+        rows = await runtime.store.read(service.records.items, scene, limit + 1, offset)
         config = service.configs[scene]
         return {"items": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None,
                 "automatic": config.transcribe_audio, "timezone": config.timezone,
@@ -38,7 +38,7 @@ def register_host_audio(app: FastAPI, *, runtime, user) -> None:
     @app.get('/api/host/scenes/{scene}/audio/{message}/{audio_index}/wav')
     async def original(scene: str, message: str, audio_index: int = Path(ge=1), _: str = Depends(user)):
         check(scene)
-        item = service.records.item(scene, message, audio_index)
+        item = await runtime.store.read(service.records.item, scene, message, audio_index)
         if item is None or item['wav'] is None:
             raise HTTPException(404, "本场景尚未保存此语音原件")
         return Response(item['wav'], media_type=audio_type(item['wav']), headers={'Cache-Control': 'no-store'})
@@ -46,9 +46,16 @@ def register_host_audio(app: FastAPI, *, runtime, user) -> None:
     @app.get('/api/host/scenes/{scene}/audio/{message}/{audio_index}/calls', response_model=list[responses.JsonObject], response_model_exclude_unset=True)
     async def calls(scene: str, message: str, audio_index: int = Path(ge=1), _: str = Depends(user)):
         check(scene)
-        if service.records.item(scene, message, audio_index) is None:
+
+        def read_calls():
+            if service.records.item(scene, message, audio_index) is None:
+                return None
+            return service.records.calls(scene, message, audio_index)
+
+        result = await runtime.store.read(read_calls)
+        if result is None:
             raise HTTPException(404, "本场景没有此语音处理记录")
-        return service.records.calls(scene, message, audio_index)
+        return result
 
     @app.post('/api/host/scenes/{scene}/audio/{message}/{audio_index}/transcribe', response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def transcribe(scene: str, message: str, request: Request,
@@ -57,7 +64,7 @@ def register_host_audio(app: FastAPI, *, runtime, user) -> None:
         if not runtime.accepting or service.closing:
             raise HTTPException(409, "宿主正在停止")
         change = await _body(request, Refresh)
-        item = service.records.item(scene, message, audio_index)
+        item = await runtime.store.read(service.records.item, scene, message, audio_index)
         if item is not None and item['status'] in {'queued', 'running'}:
             raise HTTPException(409, "此语音正在排队或处理中，不重复提交")
         try:

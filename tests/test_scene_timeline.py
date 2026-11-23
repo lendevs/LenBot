@@ -156,3 +156,62 @@ def test_received_notice_is_announced_to_the_panel(tmp_path):
             ('group_decrease', 'onebot:70002')]
 
     run_host(tmp_path, exercise)
+
+
+def test_turn_detail_strips_large_raw_payloads_by_default_and_turn_export_filters_log_dates(tmp_path):
+    import io
+    import zipfile
+    from datetime import datetime, timezone
+
+    write_instance(tmp_path, ['onebot:70001'])
+    turn_ts = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc).timestamp()
+    with Store(tmp_path / 'host.sqlite3', now=lambda: turn_ts) as store:
+        turn_id = store.start_turn(SCENE, wake_channel='direct')
+        call_id = store.start_call(turn_id, 'mind', {
+            'provider': 'local',
+            'settings': {'api': 'openai-chat', 'model': 'fixture-model'},
+            'system': 'S' * 40000,
+            'tools': [{'type': 'function', 'function': {'name': 'say', 'description': 'T' * 40000}}],
+            'messages': [{'role': 'user', 'content': 'M' * 40000}],
+        })
+        store.end_call(
+            call_id,
+            {'message': {'role': 'assistant', 'content': '简短回复'}, 'finish_reason': 'stop', 'raw': {'blob': 'R' * 40000}},
+            {'prompt_tokens': 100, 'completion_tokens': 20},
+            tokens={'input': 100, 'output': 20, 'cached': None},
+            model=('local', 'fixture-model'),
+        )
+        store.end_turn(turn_id, 'settled')
+
+    logs_dir = tmp_path / 'logs'
+    logs_dir.mkdir(exist_ok=True)
+    record = json.dumps({'ts': '2026-09-20T12:00:01.000+00:00', 'level': 'INFO', 'source': 'test',
+                         'event': 'turn', 'message': 'turn-log-marker', 'turn_id': turn_id})
+    (logs_dir / 'lenbot.jsonl.2026-09-20').write_text(record + '\n', encoding='utf-8')
+    # Unrelated historical archive outside ±1 day must be skipped even if it contains invalid JSON.
+    (logs_dir / 'lenbot.jsonl.2026-01-01').write_text('{not-json-should-never-be-read\n', encoding='utf-8')
+
+    async def check(client):
+        compact_resp = await client.get(f'/api/host/scenes/{SCENE}/turns/{turn_id}')
+        assert compact_resp.status_code == 200, compact_resp.text
+        compact = compact_resp.json()
+        assert compact['steps'][0]['text'] == '简短回复'
+        call = compact['calls'][0]
+        assert call['id'] == call_id and call['tokens'] == {'input': 100, 'output': 20, 'cached': None}
+        assert call['request']['provider'] == 'local'
+        assert not ({'messages', 'tools', 'system'} & call['request'].keys())
+        assert 'raw' not in call['response']
+        assert len(compact_resp.content) < 4096
+
+        full_resp = await client.get(f'/api/host/scenes/{SCENE}/turns/{turn_id}', params={'include_raw': 'true'})
+        assert full_resp.status_code == 200, full_resp.text
+        full_call = full_resp.json()['calls'][0]
+        assert 'messages' in full_call['request'] and 'tools' in full_call['request'] and 'raw' in full_call['response']
+
+        exported = await client.get(f'/api/host/scenes/{SCENE}/turns/{turn_id}/export')
+        assert exported.status_code == 200, exported.text
+        with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+            text = archive.read('diagnostic.txt').decode('utf-8')
+        assert 'turn-log-marker' in text
+
+    exercise(tmp_path, check)

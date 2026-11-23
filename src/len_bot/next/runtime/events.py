@@ -35,6 +35,8 @@ class EventHub:
         self.seq = 0
         self.changed_at = 0.0
         self.pending_changed: tuple[str | None, dict] | None = None
+        self._changed_scheduled = False
+        self._changed_timer: asyncio.TimerHandle | None = None
 
     def subscribe(self) -> tuple[Subscription, dict]:
         reader = Subscription(self)
@@ -46,27 +48,41 @@ class EventHub:
     def publish(self, type: str, scene: str | None = None, **fields) -> None:
         with self.lock:
             if type == "host.changed":
-                if self.pending_changed is not None:
+                if self._changed_scheduled:
                     self.pending_changed = (scene, fields)
                     return
                 delay = self.changed_at + 0.25 - time.monotonic()
                 if delay > 0:
-                    if self.readers:
-                        if self.pending_changed is None:
-                            loop = next(iter(self.readers)).loop
-                            loop.call_soon_threadsafe(self._schedule_changed, loop, delay)
+                    loop = next((reader.loop for reader in self.readers if not reader.loop.is_closed()), None)
+                    if loop is not None:
                         self.pending_changed = (scene, fields)
+                        self._changed_scheduled = True
+                        try:
+                            loop.call_soon_threadsafe(self._schedule_changed, loop, delay)
+                        except RuntimeError:
+                            self._changed_scheduled = False
+                            self.pending_changed = None
                     return
                 self.changed_at = time.monotonic()
             self._publish(type, scene, fields)
 
     def _schedule_changed(self, loop: asyncio.AbstractEventLoop, delay: float) -> None:
-        loop.call_later(delay, self._flush_changed)
+        with self.lock:
+            if self.pending_changed is None or loop.is_closed():
+                self._changed_scheduled = False
+                return
+            remaining = max(0.0, self.changed_at + 0.25 - time.monotonic())
+            self._changed_timer = loop.call_later(min(delay, remaining), self._flush_changed)
 
     def _flush_changed(self) -> None:
         with self.lock:
-            scene, fields = self.pending_changed
+            self._changed_timer = None
+            self._changed_scheduled = False
+            pending = self.pending_changed
             self.pending_changed = None
+            if pending is None:
+                return
+            scene, fields = pending
             self.changed_at = time.monotonic()
             self._publish("host.changed", scene, fields)
 

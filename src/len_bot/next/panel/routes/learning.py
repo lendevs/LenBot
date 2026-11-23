@@ -14,7 +14,7 @@ from ...configuration.types import STRICT
 from ...learning.store import LearningStore
 from ...maintenance.commands import maintenance_command
 from ...runtime.network import NetworkRuntime
-from ...runtime.logs import credentials, redact
+from ...runtime.logs import SECRETS
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,6 @@ class ExpressionChange(BaseModel):
 def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
                            user: Callable[[Request], str], root, container: bool = False) -> None:
     learning = LearningStore(runtime.store)
-    secrets = credentials(runtime.config)
 
     def service_state(scene: str) -> dict | None:
         return runtime.learning.state(scene) if active(scene) else None
@@ -74,27 +73,31 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
     @app.get("/api/host/scenes/{scene}/learning", response_model=responses.LearningState, response_model_exclude_unset=True)
     async def state(scene: str, _: str = Depends(user)):
         chat = chat_for(scene)
-        latest = learning.latest(scene)
-        return {"scene": scene, "enabled": active(scene),
+
+        def read_state():
+            latest = learning.latest(scene)
+            return {
+                "scene": scene, "enabled": active(scene),
                 "index": None if not selection_enabled(scene) else runtime.expression_service.index_status(scene),
-                "reindex_command": maintenance_command(root,
-                    'len_bot.next.maintenance.reindex_expressions'),
+                "reindex_command": maintenance_command(root, 'len_bot.next.maintenance.reindex_expressions'),
                 "maintenance_container": container,
                 "selection_enabled": selection_enabled(scene), "voice_mode": chat.config.voice_mode,
-                "settings": None if chat.config.learning is None else
-                chat.config.learning.model_dump(mode="json"),
+                "settings": None if chat.config.learning is None else chat.config.learning.model_dump(mode="json"),
                 "cursor": learning.state(scene),
                 "latest": None if latest is None else {
                     key: latest[key] for key in ("id", "after_seq", "through_seq", "started", "ended",
                                                   "status", "model_started", "usage", "tokens", "error")},
                 "expression_counts": learning.counts(scene),
-                "service_state": service_state(scene)}
+                "service_state": service_state(scene),
+            }
+
+        return await runtime.store.read(read_state)
 
     @app.get("/api/host/scenes/{scene}/learning/batches", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def batches(scene: str, limit: int = Query(20, ge=1, le=20),
                       offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
-        return learning.batches(scene, limit=limit, offset=offset)
+        return await runtime.store.read(learning.batches, scene, limit=limit, offset=offset)
 
     @app.post('/api/host/scenes/{scene}/learning/reindex', response_model=responses.ReindexedExpressions, response_model_exclude_unset=True)
     async def reindex(scene: str, _: str = Depends(user)):
@@ -109,14 +112,14 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
         except Exception as error:
             logger.exception('说法索引重建失败，场景 %s', scene)
             raise HTTPException(409 if isinstance(error, FileExistsError) else 500,
-                                redact(f'{type(error).__name__}: {error}', secrets)) from error
+                                SECRETS.clean(f'{type(error).__name__}: {error}')) from error
         finally:
             runtime.notify()
 
     @app.get("/api/host/scenes/{scene}/learning/batches/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def batch(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        item = learning.batch(scene, id)
+        item = await runtime.store.read(learning.batch, scene, id)
         if item is None:
             raise HTTPException(404, "当前场景不存在此学习批次")
         return item
@@ -125,12 +128,12 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
     async def embedding_calls(scene: str, limit: int = Query(20, ge=1, le=20),
                               offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
-        return learning.embedding_calls(scene, limit=limit, offset=offset)
+        return await runtime.store.read(learning.embedding_calls, scene, limit=limit, offset=offset)
 
     @app.get("/api/host/scenes/{scene}/learning/embedding-calls/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def embedding_call(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        item = learning.embedding_call(scene, id)
+        item = await runtime.store.read(learning.embedding_call, scene, id)
         if item is None:
             raise HTTPException(404, "当前场景不存在此表达向量请求")
         return item
@@ -148,21 +151,28 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
                           limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
                           _: str = Depends(user)):
         chat_for(scene)
-        return learning.expressions(scene, status=status, limit=limit, offset=offset)
+        return await runtime.store.read(learning.expressions, scene, status=status, limit=limit, offset=offset)
 
     @app.get("/api/host/scenes/{scene}/learning/expressions/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def expression(scene: str, id: int, _: str = Depends(user)):
         chat = chat_for(scene)
-        item = learning.expression(scene, id)
-        if item is None:
+
+        def read_expression():
+            item = learning.expression(scene, id)
+            if item is None:
+                return None
+            sources = []
+            for record in item["sources"]:
+                message = runtime.store.read_message(scene, record)
+                sources.append({"record": record, "available": message is not None,
+                                "rendered": None if message is None else chat.context.render(message),
+                                "message": None if message is None else asdict(message)})
+            return {**item, "source_messages": sources}
+
+        result = await runtime.store.read(read_expression)
+        if result is None:
             raise HTTPException(404, "当前场景不存在此表达候选")
-        sources = []
-        for record in item["sources"]:
-            message = runtime.store.read_message(scene, record)
-            sources.append({"record": record, "available": message is not None,
-                            "rendered": None if message is None else chat.context.render(message),
-                            "message": None if message is None else asdict(message)})
-        return {**item, "source_messages": sources}
+        return result
 
     @app.put("/api/host/scenes/{scene}/learning/expressions/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def update_expression(scene: str, id: int, change: ExpressionChange,
@@ -177,16 +187,16 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
                                                style=change.style, status=change.status))
         except sqlite3.IntegrityError as error:
             logger.exception("更新表达候选冲突：scene=%s id=%s", scene, id)
-            raise HTTPException(409, f"{type(error).__name__}: {error}") from error
+            raise HTTPException(409, SECRETS.clean(f"{type(error).__name__}: {error}")) from error
         except ValueError as error:
             logger.exception("更新表达候选被拒绝：scene=%s id=%s", scene, id)
-            raise HTTPException(409 if service is not None else 422, str(error)) from error
+            raise HTTPException(409 if service is not None else 422, SECRETS.clean(str(error))) from error
         except (httpx.HTTPError, TimeoutError) as error:
             logger.exception("更新表达候选向量请求失败：scene=%s id=%s", scene, id)
-            raise HTTPException(502, f"{type(error).__name__}: {error}") from error
+            raise HTTPException(502, SECRETS.clean(f"{type(error).__name__}: {error}")) from error
         except Exception as error:
             logger.exception("更新表达候选失败：scene=%s id=%s", scene, id)
-            raise HTTPException(500, f"{type(error).__name__}: {error}") from error
+            raise HTTPException(500, SECRETS.clean(f"{type(error).__name__}: {error}")) from error
         if item is None:
             raise HTTPException(404, "当前场景不存在此表达候选")
         runtime.notify()
@@ -201,13 +211,13 @@ def register_host_learning(app: FastAPI, *, runtime: NetworkRuntime,
                        learning.delete_expression(scene, id))
         except ValueError as error:
             logger.exception("删除表达候选被拒绝：scene=%s id=%s", scene, id)
-            raise HTTPException(409 if service is not None else 422, str(error)) from error
+            raise HTTPException(409 if service is not None else 422, SECRETS.clean(str(error))) from error
         except (httpx.HTTPError, TimeoutError) as error:
             logger.exception("删除表达候选向量请求失败：scene=%s id=%s", scene, id)
-            raise HTTPException(502, f"{type(error).__name__}: {error}") from error
+            raise HTTPException(502, SECRETS.clean(f"{type(error).__name__}: {error}")) from error
         except Exception as error:
             logger.exception("删除表达候选失败：scene=%s id=%s", scene, id)
-            raise HTTPException(500, f"{type(error).__name__}: {error}") from error
+            raise HTTPException(500, SECRETS.clean(f"{type(error).__name__}: {error}")) from error
         if not deleted:
             raise HTTPException(404, "当前场景不存在此表达候选")
         runtime.notify()

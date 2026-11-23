@@ -51,28 +51,37 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
     @app.get(base, response_model=responses.JargonState, response_model_exclude_unset=True)
     async def state(scene: str, _: str = Depends(user)):
         chat = chat_for(scene)
-        return {"scene": scene, "enabled": active(scene),
-                "selection_enabled": chat.config.learning is not None,
-                "cursor": records.state(scene), "service_state": service_state(scene)}
+        return await runtime.store.read(lambda: {
+            "scene": scene, "enabled": active(scene),
+            "selection_enabled": chat.config.learning is not None,
+            "cursor": records.state(scene), "service_state": service_state(scene),
+        })
 
     @app.get(base + "/terms", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def terms(scene: str, status: Literal["pending", "adopted", "rejected", "learned", "uncertain", "ordinary"] | None = None,
                     limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
                     _: str = Depends(user)):
         chat_for(scene)
-        return records.items(scene, status=status, limit=limit, offset=offset)
+        return await runtime.store.read(records.items, scene, status=status, limit=limit, offset=offset)
 
     @app.get(base + "/terms/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def term(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        item = records.item(scene, id)
-        if item is None:
+
+        def read_term():
+            item = records.item(scene, id)
+            if item is None:
+                return None
+            sources = []
+            for seq in item["sample_seqs"]:
+                message = runtime.store.read_message(scene, seq)
+                sources.append({"seq": seq, "body": None if message is None else asdict(message)})
+            return {**item, "source_messages": sources}
+
+        result = await runtime.store.read(read_term)
+        if result is None:
             raise HTTPException(404, "当前场景不存在此黑话候选")
-        sources = []
-        for seq in item["sample_seqs"]:
-            message = runtime.store.read_message(scene, seq)
-            sources.append({"seq": seq, "body": None if message is None else asdict(message)})
-        return {**item, "source_messages": sources}
+        return result
 
     @app.put(base + "/terms/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def update(scene: str, id: int, change: JargonChange, _: str = Depends(user)):
@@ -95,12 +104,12 @@ def register_host_jargon(app: FastAPI, *, runtime: NetworkRuntime,
     async def calls(scene: str, limit: int = Query(20, ge=1, le=20),
                     offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
-        return records.calls(scene, limit=limit, offset=offset)
+        return await runtime.store.read(records.calls, scene, limit=limit, offset=offset)
 
     @app.get(base + "/calls/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def call(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        item = records.call(scene, id)
+        item = await runtime.store.read(records.call, scene, id)
         if item is None:
             raise HTTPException(404, "当前场景不存在此黑话模型调用")
         return item

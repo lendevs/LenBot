@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 from ...configuration.types import STRICT
 from ...runtime.network import NetworkRuntime
 from ...chat.recall import RecallArguments, message_page
-from ...runtime.logs import credentials, redact, redact_record
+from ...runtime.logs import SECRETS, redact_record
 from ...memory.jobs import processing_records
 from ...maintenance.commands import maintenance_command
 from ...plugins.store import PluginStore
@@ -66,10 +66,8 @@ class DeleteRequest(BaseModel):
 
 
 def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, container: bool = False) -> None:
-    secrets = credentials(runtime.config)
-
     def clean_embedding(value):
-        return redact_record(value, lambda text: redact(text, secrets))
+        return redact_record(value, SECRETS.clean)
 
     @asynccontextmanager
     async def record_operation(scene: str):
@@ -83,7 +81,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         except Exception as error:
             logger.exception('记忆调用记录读取失败，场景 %s：%s', scene, error)
             code = 404 if isinstance(error, FileNotFoundError) else 422 if isinstance(error, ValueError) else 500
-            raise HTTPException(code, redact(f'{type(error).__name__}: {error}', secrets)) from error
+            raise HTTPException(code, SECRETS.clean(f'{type(error).__name__}: {error}')) from error
 
     @asynccontextmanager
     async def operation(scene: str):
@@ -98,7 +96,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
             code = (409 if isinstance(error, FileExistsError) else
                     404 if isinstance(error, FileNotFoundError) else
                     422 if isinstance(error, ValueError) else 500)
-            raise HTTPException(code, redact(f"{type(error).__name__}: {error}", secrets)) from error
+            raise HTTPException(code, SECRETS.clean(f"{type(error).__name__}: {error}")) from error
 
     def memory_plugin(scene: str, name: str | None) -> dict | None:
         if name is None:
@@ -112,6 +110,12 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
     @app.get("/api/host/memory/state", response_model=responses.MemoryState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         memory = runtime.memory
+        scenes = await runtime.store.read(lambda: [
+            {"scene": scene, "persona": {"id": chat.persona.id, "name": chat.persona.name},
+             "plugin": memory_plugin(scene, chat.config.memory_plugin),
+             "recap_plugin": chat.config.recap_plugin}
+            for scene, chat in runtime.chats.items()
+        ])
         return {
             "enabled": memory is not None,
             "backend": None if memory is None else memory.settings.backend,
@@ -125,10 +129,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
             "index": None if memory is None else await asyncio.to_thread(memory.backend.index_status),
             "reindex_command": maintenance_command(root, 'len_bot.next.maintenance.memory_reindex'),
             "maintenance_container": container,
-            "scenes": [{"scene": scene, "persona": {"id": chat.persona.id, "name": chat.persona.name},
-                        "plugin": memory_plugin(scene, chat.config.memory_plugin),
-                        "recap_plugin": chat.config.recap_plugin}
-                       for scene, chat in runtime.chats.items()],
+            "scenes": scenes,
             'persona_ids': {} if memory is None else {scene: sorted(memory.known_persona_ids(scene))
                                                      for scene in runtime.chats},
         }
@@ -145,7 +146,7 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
         except Exception as error:
             logger.exception('记忆索引重建失败')
             raise HTTPException(409 if isinstance(error, FileExistsError) else 500,
-                                redact(f'{type(error).__name__}: {error}', secrets)) from error
+                                SECRETS.clean(f'{type(error).__name__}: {error}')) from error
         finally:
             runtime.notify()
 
@@ -227,13 +228,18 @@ def register_host_memory(app: FastAPI, *, runtime: NetworkRuntime, user, root, c
                       _: str = Depends(user)):
         async with operation(scene) as memory:
             arguments = RecallArguments(query=query, who=who, snapshot=snapshot, offset=offset)
-            current = runtime.store.max_message_seq(scene)
-            boundary = current if arguments.snapshot is None else arguments.snapshot
-            if boundary > current:
-                raise ValueError("snapshot 超过当前场景消息末尾")
-            rows = runtime.store.search_messages(scene, query=arguments.query, who=arguments.who,
-                                                after=None, before=None, snapshot=boundary,
-                                                offset=arguments.offset, limit=11)
+
+            def read_sources():
+                current = runtime.store.max_message_seq(scene)
+                boundary = current if arguments.snapshot is None else arguments.snapshot
+                if boundary > current:
+                    raise ValueError("snapshot 超过当前场景消息末尾")
+                rows = runtime.store.search_messages(scene, query=arguments.query, who=arguments.who,
+                                                     after=None, before=None, snapshot=boundary,
+                                                     offset=arguments.offset, limit=11)
+                return boundary, rows
+
+            boundary, rows = await runtime.store.read(read_sources)
             excluded = set(memory.jobs.excluded_records(scene))
             return {"snapshot": boundary, "offset": arguments.offset,
                     "next_offset": arguments.offset + 10 if len(rows) > 10 else None,

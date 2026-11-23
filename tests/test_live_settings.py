@@ -158,3 +158,50 @@ async def test_settings_apply_to_wake_learning_permissions_and_platform_connecti
                 finally:
                     runtime.stop()
                     await asyncio.wait_for(running, 3)
+
+
+@pytest.mark.asyncio
+async def test_memory_ingest_and_summarizer_model_apply_live_without_restart(tmp_path):
+    def configure(root):
+        path = root / 'lenbot.config.json'
+        source = json.loads(path.read_text())
+        source['memory'] = {'backend': 'local', 'local': {'directory': 'memory'}, 'summaries': True, 'ingest': None}
+        path.write_text(json.dumps(source))
+
+    async with panel(tmp_path, configure) as (runtime, client, _):
+        await login(client)
+        assert runtime.ingestor is None
+        assert SCENE not in runtime.upkeep.parts['memory']
+        assert runtime.memory is not None and runtime.memory.summarizer is not None
+
+        current_memory = (await client.get('/api/host/settings')).json()['saved']['memory']
+        current_memory['ingest'] = {
+            'idle_seconds': 60, 'min_messages': 10, 'max_age_seconds': 3600,
+            'batch_size': 50, 'max_steps': 5, 'timeout_seconds': 120,
+        }
+        enabled = await client.put('/api/host/settings/memory', json={'memory': current_memory})
+        assert enabled.status_code == 200, enabled.text
+        assert not enabled.json()['restart_required']['memory']
+        assert runtime.ingestor is not None
+        assert SCENE in runtime.upkeep.parts['memory']
+        assert (await client.get('/api/host/memory/ingest')).json()['enabled'] is True
+
+        current_memory['ingest'] = None
+        disabled = await client.put('/api/host/settings/memory', json={'memory': current_memory})
+        assert disabled.status_code == 200, disabled.text
+        assert not disabled.json()['restart_required']['memory']
+        assert runtime.ingestor is None
+        assert SCENE not in runtime.upkeep.parts['memory']
+        assert (await client.get('/api/host/memory/ingest')).json()['enabled'] is False
+
+        models = (await client.get('/api/host/settings')).json()['saved']['models']
+        providers = {
+            alias: {key: value for key, value in item.items() if key != 'api_key_configured'}
+            for alias, item in models['providers'].items()
+        }
+        roles = models['roles']
+        roles['memory'] = {**roles['mind'], 'model': 'summary-v2'}
+        rebound = await client.put('/api/host/settings/models', json={'providers': providers, 'roles': roles})
+        assert rebound.status_code == 200, rebound.text
+        assert not rebound.json()['restart_required']['models']
+        assert runtime.memory.summarizer.model.settings.model == 'summary-v2'

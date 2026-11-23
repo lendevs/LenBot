@@ -71,8 +71,10 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
         worker = worker_for(scene)
         if since is not None and before is not None and since >= before:
             raise HTTPException(422, '开始时间须早于结束时间')
-        tasks = records.list(scene, status=status, since=since, before=before, environment=environment,
-                             offset=offset, limit=limit + 1)
+        tasks = await runtime.store.read(
+            records.list, scene, status=status, since=since, before=before, environment=environment,
+            offset=offset, limit=limit + 1,
+        )
         items = []
         for item in tasks[:limit]:
             roots, error = None, None
@@ -81,8 +83,9 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
                     roots = await finish_file_operation(storage_usage, worker, scene, item.id)
                 except (ValueError, OSError) as problem:
                     error = ''.join(traceback.format_exception_only(problem)).strip()
-            current = records.get(scene, item.id)
-            discarded = records.workspace_discarded(scene, item.id)
+            current, discarded = await runtime.store.read(
+                lambda task_id=item.id: (records.get(scene, task_id), records.workspace_discarded(scene, task_id))
+            )
             items.append({'id': item.id, 'goal': item.goal, 'requester': item.requester, 'status': current.status,
                 'created': item.created, 'ended': current.ended,
                 'continuation': continuation_state(current, discarded), 'cleanable': cleanable(current),
@@ -95,22 +98,23 @@ def register_host_task_storage(app: FastAPI, *, runtime: NetworkRuntime,
         worker = worker_for(scene)
         started = time.time()
         try:
-            before = records.get(scene, id)
+            before = await runtime.store.read(records.get, scene, id)
             roots = await finish_file_operation(storage_usage, worker, scene, id)
             temporary = await finish_file_operation(temporary_usage, worker, scene, id)
             quota = await finish_file_operation(worker_pool_usage, worker)
-            current = records.get(scene, id)
+            current, discarded, last_cleanup = await runtime.store.read(
+                lambda: (records.get(scene, id), records.workspace_discarded(scene, id), records.latest_cleanup(scene, id))
+            )
         except (ValueError, OSError) as error:
             raise failure(error) from error
         except RuntimeError as error:
             raise HTTPException(409, str(error)) from error
-        discarded = records.workspace_discarded(scene, id)
         return {'scene': scene, 'task_id': id, 'started_at': started, 'ended_at': time.time(),
                 'status_at_start': before.status, 'status_at_end': current.status,
                 'container_at_start': before.container, 'container_at_end': current.container,
                 'task': asdict(current), 'continuation': continuation_state(current, discarded),
                 'cleanable': cleanable(current), 'roots': roots, 'temporary': temporary,
-                'last_cleanup': records.latest_cleanup(scene, id),
+                'last_cleanup': last_cleanup,
                 'hard_disk_quota': quota,
                 'notice': '显示本次读取的文件逻辑大小与文件系统分配字节；运行中目录可继续变化。配额与剩余空间在实例存储池卡片读取。'}
 

@@ -46,13 +46,21 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
         records = ProactiveStore(runtime.store)
         now = runtime.store.now()
         exclude = tuple(chat.config.attention.other_bot_ids)
-        pause = records.pause(scene)
-        items = records.page(scene, limit=limit + 1, offset=offset)
-        next_at, next_reason = (None, None) if settings is None else records.next_at(
-            scene, settings, chat.config.timezone, chat.config.attention.quiet_hours, now, exclude)
+
+        def read_proactive():
+            pause = records.pause(scene)
+            items = records.page(scene, limit=limit + 1, offset=offset)
+            idle_since = records.last_activity(scene, exclude)
+            next_at, next_reason = (None, None) if settings is None else records.next_at(
+                scene, settings, chat.config.timezone, chat.config.attention.quiet_hours, now, exclude,
+                idle_since=idle_since, pause=pause,
+            )
+            return pause, items, idle_since, next_at, next_reason
+
+        pause, items, idle_since, next_at, next_reason = await runtime.store.read(read_proactive)
         return {"scene": scene, "timezone": chat.config.timezone, "now": now,
                 "settings": None if settings is None else settings.model_dump(mode="json"),
-                "idle_since": records.last_activity(scene, exclude),
+                "idle_since": idle_since,
                 "pause": pause if pause is not None and pause["until"] > now else None,
                 "next_at": next_at, "next_reason": next_reason,
                 "items": items[:limit], "next_offset": offset + limit if len(items) > limit else None}
@@ -63,7 +71,9 @@ def register_host_schedules(app: FastAPI, *, runtime: NetworkRuntime,
                       offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=20),
                       _: str = Depends(user)):
         chat_for(scene)
-        items = ScheduleStore(runtime.store).list_schedules(scene, status=status, offset=offset, limit=limit + 1)
+        items = await runtime.store.read(
+            ScheduleStore(runtime.store).list_schedules, scene, status=status, offset=offset, limit=limit + 1,
+        )
         return {"items": [asdict(item) for item in items[:limit]],
                 "next_offset": offset + limit if len(items) > limit else None}
 
