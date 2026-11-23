@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from html import unescape
 from html.parser import HTMLParser
@@ -234,23 +235,32 @@ async def _search_bing_rss(client: httpx.AsyncClient, query: str, count: int) ->
 
 TOP_PAGE_CHARS = 2000
 TOP_PAGE_TRIES = 2
+TOP_PAGE_TIMEOUT_SECONDS = 5.0
 
 
 async def _top_page(rows: list[dict[str, str | None]],
-                    read: Callable[[str], Awaitable[tuple[int, object]]]) -> dict:
+                    read: Callable[[str], Awaitable[tuple[int, object]]],
+                    *, timeout_seconds: float = TOP_PAGE_TIMEOUT_SECONDS) -> dict | None:
     """The opening text of the first result that reads, saved as a web_read document."""
+    if timeout_seconds <= 0:
+        return None
     skipped = []
-    for row in rows[:TOP_PAGE_TRIES]:
-        try:
-            document, page = await read(row["url"])
-        except Exception as error:
-            skipped.append({"url": row["url"], "error": f"{type(error).__name__}: {error}"[:300]})
-            continue
-        end = min(len(page.content), TOP_PAGE_CHARS)
-        return {"document": document, "url": row["url"], "final_url": page.final_url,
-                "total_chars": len(page.content), "next_offset": end if end < len(page.content) else None,
-                "text": page.content[:end], **({"skipped": skipped} if skipped else {})}
-    return {"skipped": skipped}
+    deadline = asyncio.timeout(timeout_seconds)
+    try:
+        async with deadline:
+            for row in rows[:TOP_PAGE_TRIES]:
+                try:
+                    document, page = await read(row["url"])
+                except Exception as error:
+                    skipped.append({"url": row["url"], "error": f"{type(error).__name__}: {error}"[:300]})
+                    continue
+                end = min(len(page.content), TOP_PAGE_CHARS)
+                return {"document": document, "url": row["url"], "final_url": page.final_url,
+                        "total_chars": len(page.content), "next_offset": end if end < len(page.content) else None,
+                        "text": page.content[:end], **({"skipped": skipped} if skipped else {})}
+    except TimeoutError:
+        return None
+    return None
 
 
 class DeepSeekResult(BaseModel):
@@ -364,6 +374,7 @@ async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchAr
         return Template(read_prompt('next_replay_web_search.md')).substitute(
             result=json.dumps(result, ensure_ascii=False))
     fetched = datetime.now(timezone.utc)
+    started = time.monotonic()
     deadline = asyncio.timeout(settings.timeout_seconds)
     try:
         async with deadline:
@@ -403,5 +414,8 @@ async def execute_web_search(settings: WebSearchSettings, arguments: WebSearchAr
     result = {"provider": settings.provider, "query": arguments.query,
               "fetched_at": fetched.strftime("%Y-%m-%dT%H:%MZ"), "results": rows}
     if read_top is not None and rows and settings.provider != "deepseek":
-        result["top_page"] = await _top_page(rows, read_top)
+        remaining = settings.timeout_seconds - (time.monotonic() - started)
+        top = await _top_page(rows, read_top, timeout_seconds=min(TOP_PAGE_TIMEOUT_SECONDS, remaining))
+        if top is not None:
+            result["top_page"] = top
     return Template(read_prompt("next_web_search.md")).substitute(result=json.dumps(result, ensure_ascii=False))

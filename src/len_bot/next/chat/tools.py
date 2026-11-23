@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 import json
@@ -67,13 +68,64 @@ if TYPE_CHECKING:
 
 
 STICKER_CANDIDATES = 9
+STICKER_COMPACT_LIMIT = 30
+STICKER_REPRESENTATIVES = 10
+
+
+def sticker_aliases(persona: Persona) -> dict[str, str]:
+    """Deterministic short aliases (s1..sN) mapped to real PersonaSticker.file names."""
+    ordered = sorted(persona.stickers.values(), key=lambda sticker: sticker.file)
+    return {f"s{index}": sticker.file for index, sticker in enumerate(ordered, start=1)}
+
+
+def _format_sticker_entry(alias: str, description: str, emotions: tuple[str, ...]) -> str:
+    return f"{alias}: {description}（{'/'.join(emotions)}）" if emotions else f"{alias}: {description}"
+
+
+def _sticker_catalog_text(persona: Persona) -> str:
+    ordered = sorted(persona.stickers.values(), key=lambda sticker: sticker.file)
+    if not ordered:
+        return "\n当前角色暂无自带素材，可按 emotion/query 使用本群已采用表情，或用 preview 浏览候选。"
+    if len(ordered) <= STICKER_COMPACT_LIMIT:
+        lines = [_format_sticker_entry(f"s{index}", sticker.description, sticker.emotions)
+                 for index, sticker in enumerate(ordered, start=1)]
+        return "\n当前角色素材目录（file 填短编号如 s1，或原文件名）：\n" + "\n".join(lines)
+    emotion_counts = Counter(emotion for sticker in ordered for emotion in sticker.emotions)
+    tag_counts = Counter(tag for sticker in ordered for tag in sticker.tags)
+    seen_emotions: set[str] = set()
+    representatives: list[tuple[str, object]] = []
+    fallback: list[tuple[str, object]] = []
+    for index, sticker in enumerate(ordered, start=1):
+        alias = f"s{index}"
+        primary = sticker.emotions[0] if sticker.emotions else None
+        if primary is not None and primary not in seen_emotions and len(representatives) < STICKER_REPRESENTATIVES:
+            seen_emotions.add(primary)
+            representatives.append((alias, sticker))
+        else:
+            fallback.append((alias, sticker))
+    if len(representatives) < STICKER_REPRESENTATIVES:
+        representatives.extend(fallback[:STICKER_REPRESENTATIVES - len(representatives)])
+    lines = [
+        f"当前角色共有 {len(ordered)} 张素材（短编号 s1..s{len(ordered)}）。素材较多，请优先用 query 或 emotion 按语义/情绪挑选（如 sticker: {{\"query\": \"...\"}}），或用 preview 看候选；也支持 file 传短编号或原文件名。",
+    ]
+    if emotion_counts:
+        top_emotions = "、".join(f"{name}({count})" for name, count in sorted(
+            emotion_counts.items(), key=lambda item: (-item[1], item[0]))[:20])
+        lines.append(f"常见情绪：{top_emotions}")
+    if tag_counts:
+        top_tags = "、".join(f"{name}({count})" for name, count in sorted(
+            tag_counts.items(), key=lambda item: (-item[1], item[0]))[:20])
+        lines.append(f"常见标签：{top_tags}")
+    lines.append("代表素材：")
+    lines.extend(_format_sticker_entry(alias, sticker.description, sticker.emotions) for alias, sticker in representatives)
+    return "\n" + "\n".join(lines)
 
 
 class StickerChoice(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     emotion: str | None = Field(default=None, min_length=1)
     query: str | None = Field(default=None, min_length=1)
-    file: str | None = Field(default=None, min_length=1, description="从当前角色素材目录选择真实文件名，直接发送这一张。")
+    file: str | None = Field(default=None, min_length=1, description="从当前角色素材目录选择短编号（如 s1）或真实文件名，直接发送这一张。")
     candidate: int | None = Field(default=None, ge=1, le=STICKER_CANDIDATES,
                                   description="本轮 react 预览候选中的编号，发送这一张。")
 
@@ -97,7 +149,17 @@ class SayArguments(BaseModel):
     mention: str | None = Field(default=None, pattern="^(?:" + "|".join(account_pattern(name) for name in ACCOUNTS) + ")$",
         description="默认不填。要叫不在当前对话里的人，或不 @ 会让人认错对象时，才填平台账号，例如 onebot:70001。")
     sticker: StickerChoice | None = Field(default=None,
-        description="与正文一起发送在同一条消息里的表情包图片；file、emotion、query、candidate 四选一，素材目录见 react。")
+        description="与正文一起发送在同一条消息里的表情包图片；file（短编号如 s1 或真实文件名）、emotion、query、candidate 四选一，素材目录见 react。")
+
+    @field_validator("sticker", mode="before")
+    @classmethod
+    def coerce_sticker_string(cls, value: object) -> object:
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise ValueError("表情检索内容不能为空白")
+            return {"query": text}
+        return value
 
 
 class ReactArguments(StickerChoice):
@@ -277,7 +339,11 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
                 f"例如 {scene_platform}:{ACCOUNT_EXAMPLES.get(scene_platform, '70001')}。")
             description = function['description']
             if 'react' in names:
-                description += ' 一句话带一张表情包图片时设置 sticker；只发图、不说话时用 react。'
+                if len(persona.stickers) > STICKER_COMPACT_LIMIT:
+                    description += (' 一句话带一张表情包图片时设置 sticker（优先用 {"query": "..."} 或 {"emotion": "..."} 挑选，'
+                                    '也支持短编号 s1..sN 或原文件名）；只发图、不说话时用 react。')
+                else:
+                    description += ' 一句话带一张表情包图片时设置 sticker（file 可填短编号如 s1 或原文件名）；只发图、不说话时用 react。'
             else:
                 parameters['properties'].pop('sticker')
                 parameters.pop('$defs')
@@ -289,12 +355,10 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
             allowed[index] = {**tool, "function": {**function, "parameters": model_schema(parameters)}}
         elif function["name"] == "react":
             parameters = ReactArguments.model_json_schema()
-            catalog = "\n".join(f"{sticker.file}：{sticker.description}"
-                                for sticker in sorted(persona.stickers.values(), key=lambda sticker: sticker.file))
             allowed[index] = {**tool, "function": {**function, "description": function["description"]
-                              + " 先按眼前情境选择图像，使用 file 可以直接发送目录里这一张。"
+                              + " 先按眼前情境选择图像，使用 file（填短编号如 s1 或真实文件名）可以直接发送目录里这一张。"
                               + " query 是字面检索，不理解近义词；emotion 只填写已知的实际标签。"
-                              + " 素材描述说明图片内容，不预设文字态度。\n当前角色真实素材：\n" + catalog,
+                              + " 素材描述说明图片内容，不预设文字态度。" + _sticker_catalog_text(persona),
                               "parameters": model_schema(parameters)}}
     if config.attention.disposition is not None:
         allowed = [with_disposition(tool, config.attention.disposition) for tool in allowed]
@@ -484,12 +548,41 @@ class SceneTools:
         """The provider a web search or read setting names, if it uses one."""
         return None if settings.connection is None else self.config.models.providers[settings.connection]
 
+    def _resolve_sticker_file(self, value: str) -> str | None:
+        """Resolve an exact file name, short alias (s1..sN) or unique 8+ char prefix to PersonaSticker.file."""
+        text = value.strip()
+        if not text:
+            return None
+        stickers = self.persona.stickers
+        if text in stickers:
+            return text
+        alias = sticker_aliases(self.persona).get(text.casefold())
+        if alias is not None:
+            return alias
+        if len(text) >= 8:
+            matches = [name for name in stickers if name.startswith(text)]
+            if not matches:
+                folded = text.casefold()
+                matches = [name for name in stickers if name.casefold().startswith(folded)]
+            if len(matches) == 1:
+                return matches[0]
+        return None
+
+    def _unlock_deferred_tool(self, name: str) -> list[str]:
+        discovered = sorted(set(self.store.load_discovered_tools(self.config.scene)) | {name})
+        self.store.save_discovered_tools(self.config.scene, discovered)
+        return discovered
+
     async def _execute(self, turn_id: str, call: ToolCall,
                        wait_for_messages: Callable[[float], Awaitable[str]], *,
                        expression_style: str | None, direct: bool,
                        ) -> tuple[str, Expression | None, list[str] | None]:
         if call.name not in self.tool_names:
-            raise ValueError(f"当前请求未开放工具：{call.name}")
+            if call.name in self.allowed_tool_names and call.name in self.deferred_names:
+                await self.store.call(self._unlock_deferred_tool, call.name)
+                self.discovered_tools.add(call.name)
+            else:
+                raise ValueError(f"当前请求未开放工具：{call.name}")
         if call.name == "tool_search":
             arguments = ToolSearchArguments.model_validate(call.arguments)
             matched = search_tools(arguments.query, self.discovery_tools, descriptions=self.search_descriptions)
@@ -503,9 +596,21 @@ class SceneTools:
             # Permission comes from the chosen message's actual sender, never from a model-typed account.
             call = ToolCall(call.id, call.name, with_requester(self.store, self.config, call.arguments, self.source_floor))
         if call.name == "say":
-            arguments = SayArguments.model_validate(call.arguments)
+            raw_arguments = call.arguments
+            if isinstance(raw_arguments, dict) and isinstance(raw_arguments.get("sticker"), str):
+                text = raw_arguments["sticker"].strip()
+                if text:
+                    resolved = self._resolve_sticker_file(text)
+                    raw_arguments = {**raw_arguments, "sticker": {"file": resolved} if resolved is not None else {"query": text}}
+            arguments = SayArguments.model_validate(raw_arguments)
             if arguments.sticker is not None and 'react' not in self.allowed_tool_names:
                 raise ValueError('当前角色没有开放表情能力')
+            if arguments.sticker is not None and arguments.sticker.file is not None:
+                resolved = self._resolve_sticker_file(arguments.sticker.file)
+                if resolved is not None and resolved != arguments.sticker.file:
+                    arguments = arguments.model_copy(
+                        update={"sticker": arguments.sticker.model_copy(update={"file": resolved})}
+                    )
             expression = await self.expression.express(turn_id, arguments,
                                                        expression_style=expression_style, direct=direct)
             return self.expression.context.render(expression.message), expression, None
@@ -519,6 +624,10 @@ class SceneTools:
                 self.looked = [*self.looked, ("表情候选", sheet)][-LOOKED_IMAGES:]
                 return (tool_result(result) + "\n候选拼图附在本轮接下来的请求里，图中编号与 candidates 一致；"
                         "动图只有第一帧。按编号用 candidate 发送。"), None, None
+            if arguments.file is not None:
+                resolved = self._resolve_sticker_file(arguments.file)
+                if resolved is not None and resolved != arguments.file:
+                    arguments = arguments.model_copy(update={"file": resolved})
             expression = self.expression.react(arguments)
             return self.expression.context.render(expression.message), expression, None
         if call.name == "scene_control":

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import ipaddress
 import json
+import re
 import sys
 import time
 from datetime import datetime, timezone
 from email.message import Message
+from html.parser import HTMLParser
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 from string import Template
@@ -18,8 +21,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .pdf_read import read_pdf
 
 from ..configuration.chat import WebReadSettings
+from ..work.egress_policy import blocked_address_reason
 from .host_traffic import admit
-from .http_read import fetch_public
+from .http_read import _target, fetch_public
 from ..storage.store import Store, WebPage
 from ..trials.replay_web import RecordedWeb
 from ..prompt_files import read_prompt
@@ -65,16 +69,70 @@ def _web_limit(media_type: str, prefix: bytes) -> int:
     return PDF_BYTES if media_type == "application/pdf" or prefix.startswith(b"%PDF-") else TEXT_BYTES
 
 
-def _decode(body: bytes, content_type: str) -> str:
+_XML_ENCODING = re.compile(rb"""<\?xml\b[^>]{0,256}\bencoding\s*=\s*["']\s*([a-zA-Z0-9._-]+)\s*["']""", re.IGNORECASE)
+
+
+class _MetaCharsetSniffer(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.charset: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.charset is not None or tag.lower() != "meta":
+            return
+        mapping = {name.lower(): (value or "").strip() for name, value in attrs}
+        if mapping.get("charset"):
+            self.charset = mapping["charset"]
+            return
+        if mapping.get("http-equiv", "").lower() == "content-type" and mapping.get("content"):
+            header = Message()
+            header["content-type"] = mapping["content"]
+            charset = header.get_content_charset()
+            if charset:
+                self.charset = charset.strip()
+
+
+def _sniff_html_charset(body: bytes) -> str | None:
+    head = body[:4096]
+    sniffer = _MetaCharsetSniffer()
+    sniffer.feed(head.decode("latin-1"))
+    if sniffer.charset:
+        return sniffer.charset
+    xml = _XML_ENCODING.search(head)
+    return None if xml is None else xml.group(1).decode("ascii")
+
+
+def _check_remote_target(url: str) -> str:
+    """Validate URL scheme/format and reject private, loopback or reserved literal hosts before remote fetch."""
+    clean_url, host, _port, _host_header, _scheme = _target(url)
+    try:
+        address = str(ipaddress.ip_address(host))
+    except ValueError:
+        lowered = host.lower().rstrip(".")
+        if lowered == "localhost" or lowered.endswith(".localhost"):
+            raise ValueError(f"HTTP read destination {host} blocked: 环回地址")
+    else:
+        reason = blocked_address_reason(address)
+        if reason is not None:
+            raise ValueError(f"HTTP read destination {address} blocked: {reason}")
+    return clean_url
+
+
+def _decode(body: bytes, content_type: str, *, sniff_html: bool = False) -> str:
     header = Message()
     header["content-type"] = content_type
-    encoding = codecs.lookup(header.get_content_charset() or "utf-8").name
+    charset = header.get_content_charset()
+    if charset is None and sniff_html:
+        charset = _sniff_html_charset(body)
+    encoding = codecs.lookup(charset or "utf-8").name
     if (encoding not in {"utf-8", "utf-8-sig", "ascii", "gb18030", "gbk", "gb2312", "big5", "big5hkscs",
                          "shift_jis", "cp932", "euc_jp", "euc_kr", "iso2022_jp", "koi8-r", "koi8-u",
                          "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be"}
             and not encoding.startswith("iso8859-")
             and encoding not in {f"cp125{n}" for n in range(9)}):
         raise ValueError(f"web_read unsupported web charset: {encoding}")
+    if encoding in {"gb2312", "gbk"}:
+        encoding = "gb18030"
     return body.decode(encoding, errors="strict")
 
 
@@ -111,7 +169,7 @@ async def _extract(url: str, content_type: str, body: bytes) -> tuple[str, str, 
     if not media_type:
         raise ValueError("web_read response has no Content-Type")
     if media_type in {"text/html", "application/xhtml+xml"}:
-        decoded = _decode(body, content_type)
+        decoded = _decode(body, content_type, sniff_html=True)
         content = await _extract_html(decoded, url)
         if not content.strip():
             raise ValueError("web_read HTML extraction returned no body")
@@ -226,10 +284,12 @@ async def read_web_page(store: Store, scene: str, settings: WebReadSettings, url
             if settings.provider != "local":
                 if connection is None:
                     raise ValueError(f"{settings.provider} 读取连接未提供")
-                # The service fetches the page itself: the target and the address it reports back both need the
-                # task's egress mode, and a refused page is dropped before it is saved.
+                # The service fetches the page itself: validate URL safety locally before remote fetch,
+                # and both target and reported final URL need the task's egress mode.
+                _check_remote_target(url)
                 admit(url)
                 final_url, content = await KEYED_READ[settings.provider](connection, url, settings.timeout_seconds)
+                _check_remote_target(final_url)
                 admit(final_url)
                 if not content.strip():
                     raise ValueError(f"web_read {KEYED_NAMES[settings.provider]} returned no text for {url}")
