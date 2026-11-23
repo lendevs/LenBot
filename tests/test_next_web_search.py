@@ -225,3 +225,47 @@ def test_tool_schema_limits_query_for_deepseek(tmp_path, search, limit):
     tool = next(tool['function'] for tool in build_tools(config, persona, platform=True)
                 if tool['function']['name'] == 'web_search')
     assert tool['parameters']['properties']['query']['maxLength'] == limit
+
+
+@pytest.mark.asyncio
+async def test_top_page_timeout_degrades_to_search_results_without_failing(yahoo, monkeypatch):
+    import asyncio
+    import time
+
+    monkeypatch.setattr(web_search, 'TOP_PAGE_TIMEOUT_SECONDS', 0.15)
+
+    async def slow_read(url):
+        await asyncio.sleep(5)
+        raise AssertionError('should have been cancelled by top_page timeout')
+
+    started = time.monotonic()
+    text = await execute_web_search(WebSearchSettings(provider='yahoo', max_results=3, timeout_seconds=10),
+                                    WebSearchArguments(query='slow page'), read_top=slow_read)
+    elapsed = time.monotonic() - started
+    payload = _payload(text)
+    assert elapsed < 2.0
+    assert len(payload['results']) == 3
+    assert 'top_page' not in payload
+
+
+@pytest.mark.asyncio
+async def test_top_page_errors_degrade_while_main_search_timeout_propagates(yahoo, monkeypatch):
+    import asyncio
+
+    async def failing_read(url):
+        raise ValueError('site down')
+
+    text = await execute_web_search(WebSearchSettings(provider='yahoo', max_results=2),
+                                    WebSearchArguments(query='broken top'), read_top=failing_read)
+    payload = _payload(text)
+    assert len(payload['results']) == 2
+    assert 'top_page' not in payload
+
+    async def slow_search(client, query, count, fetched):
+        await asyncio.sleep(5)
+        return []
+
+    monkeypatch.setattr(web_search, '_search_yahoo', slow_search)
+    with pytest.raises(TimeoutError, match='web_search exceeded'):
+        await execute_web_search(WebSearchSettings(provider='yahoo', timeout_seconds=0.1),
+                                 WebSearchArguments(query='main timeout'))
