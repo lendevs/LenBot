@@ -18,7 +18,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-QQ%20%7C%20Telegram%20%7C%20Feishu-b4476a">
 </p>
 
-**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么、何时跟进，由 ReAct Loop 决定。接入 QQ（OneBot v11）、Telegram 和飞书，几个平台可以同时运行，需要一个聊天模型和它的 API Key。
+**LenBot 是自主决策的群聊 Agent。** 何时开口、回复谁、先查什么，以及什么时候跟进，由 ReAct Loop 决定。接入 QQ（OneBot v11）、Telegram 和飞书，几个平台可以同时运行，需要一个聊天模型和它的 API Key。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="website/public/readme/turn.dark.svg">
@@ -37,11 +37,11 @@
 </p>
 
 - **决策回合**：连发消息合批等待后唤醒，判断、查询与回复在同一个 Agent 循环中完成；没话可接就旁听，发言后等待对方下一句接话，无人接话时自动拉长插话间隔。
-- **查证回答**：按需搜索网页、读取正文、查询聊天记录与长期记忆、检索角色和本群资料、识别图片、读取合并转发。
+- **查证回答**：按需搜索网页并读取正文，查询聊天记录和长期记忆、检索角色与本群资料，还能识别图片和读取合并转发。
 - **主动跟进**：模型可以为群友创建提醒、登记持续关注的事项，或把耗时工作交给隔离容器中的后台任务。
 - **记忆学习**：记忆以 Markdown 文件按群保存在本地。学习群内的说法、黑话和回复效果。
-- **角色包**：名字和人物设定即可组成一个角色，附带说话方式、轮换风格、样例、资料与表情库。
-- **插件**：用 Python 添加命令、定时播报、模型工具或长期记忆实现，按群启用。
+- **角色包**：名字和人物设定即可组成一个角色，可配置说话方式、轮换风格，并附上样例、资料与表情库。
+- **插件**：用 Python 添加命令和定时播报，或扩展模型工具与长期记忆实现，按群启用。
 
 ## 对话测试
 
@@ -50,7 +50,7 @@
   <img src="website/public/readme/playground.svg" alt="对话测试页：依次以老周、橘子、小满的身份发言，小然在左侧回复，右侧列出每个回合" width="100%">
 </picture>
 
-来使用面板的对话测试模拟群聊吧：添加群友、选择发言身份、复制群内最近的消息作为初始上下文。[对话测试 →](https://lendevs.github.io/LenBot/start/playground)
+在面板的对话测试里可以模拟群聊：添加群友、选择发言身份，再复制群内最近的消息作为初始上下文。[对话测试 →](https://lendevs.github.io/LenBot/start/playground)
 
 ## 快速开始
 
@@ -65,7 +65,7 @@
 请阅读 https://lendevs.github.io/LenBot/start/agent ，按页面中给 Agent 的部署步骤帮我部署 LenBot：先问我选择部署方式和要接入的聊天平台，再在这台机器上安装并启动，最后把首次配置链接交给我。
 ```
 
-也可以自己部署。准备要接入的平台和聊天模型服务的 API Key：QQ 需要一个已登录的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用），Telegram 需要 BotFather 给出的 Bot 令牌，飞书需要一个企业自建应用。再选一种部署方式：
+也可以自己部署。准备要接入的平台和聊天模型服务的 API Key：QQ 需要一个已登录的 OneBot v11 实现（例如 [SnowLuma](https://github.com/SnowLuma/SnowLuma)，推荐使用），Telegram 用 BotFather 给出的 Bot 令牌，飞书则准备一个企业自建应用。
 
 | 部署方式 | 运行环境 | 文档 |
 |---|---|---|

@@ -1,7 +1,5 @@
 # 更新与备份
 
-本页说明源码、部署包与 Docker 实例的版本更新、完整备份、数据清理、隔离测试副本以及系统后台服务托管。
-
 ## 更新代码
 
 ### 从源码运行的实例
@@ -46,7 +44,7 @@ uv run --no-sync python -m len_bot.next.maintenance.plugin_dependencies
 
 ### 完整备份范围
 
-在**已停止** LenBot 的状态下复制以下内容即可获得一致性完整备份：
+先**停止** LenBot，再复制以下内容完成完整备份：
 
 - **实例运行文件**：`lenbot.config.json`、SQLite 主数据库及旁边的 `.memory.sqlite3`（若尚未完全合并还需连同 `-wal`、`-shm` 文件一并复制，正常停机后 WAL 已落盘）、`state/`、`personas/`、`plugins/` 和 `logs/`。
 - **外部引用路径**：`lenbot.config.json` 中指向实例目录以外的角色目录、插件目录或后台任务的工作区、运行目录与交付目录。
@@ -70,11 +68,11 @@ uv run --no-sync python -m len_bot.next.maintenance.test_copy . /tmp/lenbot-test
 cd /tmp/lenbot-test && uv run --project /path/to/LenBot --no-sync len-bot
 ```
 
-命令会将配置及其引用的数据库、记忆、资料、角色与任务目录复制到目标位置，自动将副本切换为**模拟发送**、断开 OneBot 连接（`onebot: null`）、绑定指定的面板端口，并把原实例内的绝对路径重写为副本路径。副本中的模型、插件和后台任务按原配置连接运行。
+命令把配置和它引用的数据库、记忆、资料，以及角色和任务目录复制到目标位置，同时把副本设为**模拟发送**、断开 OneBot 连接（`onebot: null`）、绑定指定的面板端口，并把原实例内的绝对路径改写为副本路径。副本中的模型、插件和后台任务按原配置连接运行。
 
 ## 作为系统后台服务运行
 
-`len-bot` 作为前台启动器运行，收到 `SIGINT`（`Ctrl+C`）或 `SIGTERM` 时优雅等待当前回合收尾后退出；面板内的**重启 LenBot** 由启动器进程自行拉起新子进程完成，因此外部服务管理器无需配置崩溃无限重启。部署包用目录中的 `service` 或 `service.ps1` 注册，见[部署包](../start/package#后台服务)；下面是从源码运行时的做法。
+`len-bot` 作为前台启动器运行，收到 `SIGINT`（`Ctrl+C`）或 `SIGTERM` 时等待当前回合收尾后退出；面板内的**重启 LenBot** 由启动器进程自行拉起新子进程完成，因此外部服务管理器无需配置崩溃无限重启。部署包用目录中的 `service` 或 `service.ps1` 注册，见[部署包](../start/package#后台服务)；下面是从源码运行时的做法。
 
 - **Linux（`systemd`）**：仓库提供 [`deploy/current/lenbot.service`](https://github.com/lendevs/LenBot/blob/master/deploy/current/lenbot.service) 单元模板（默认 `Restart=no` 并启用文件系统沙箱保护）。按机器实际路径修改 `User`、`Group`、`WorkingDirectory`、`ExecStart` 及 `ReadWritePaths`（必须覆盖实例目录及位于实例外的任务目录）后安装：
   ```sh

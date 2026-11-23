@@ -43,7 +43,7 @@ uv pip install ../LenBot pytest pytest-asyncio
 uv run --no-project python -m pytest -q
 ```
 
-插件在 `plugin.toml` 的 `dependencies` 中声明了依赖时，用 `uv pip install` 一并装进这个环境。插件仓库的 CI 按同样的步骤安装宿主的 `master` 并运行测试。
+插件在 `plugin.toml` 的 `dependencies` 中声明了依赖时，用 `uv pip install` 一并装进这个环境。插件仓库的 CI 按同样步骤安装宿主 `master` 分支并运行测试。
 
 ## 最小插件
 
