@@ -8,7 +8,9 @@ shapes and usage were retained.
 
 import asyncio
 import json
+from math import ceil
 from pathlib import Path
+from string import Template
 
 import pytest
 from pydantic import ValidationError
@@ -21,6 +23,9 @@ from len_bot.next.models.client import (
     ModelSettings,
     parse_chat_completion,
 )
+from len_bot.next.models.projection import project_old_results
+from len_bot.next.prompt_files import read_prompt
+from len_bot.next.storage.codec import encode
 
 
 RECORDED_RESPONSE = Path(__file__).parent / "fixtures/next/model/response-02.json"
@@ -127,6 +132,36 @@ def test_missing_usage_in_recorded_response_is_unknown_not_zero():
     reply = parse_chat_completion(body)
     assert reply.usage is None
     assert reply.token_usage is None
+
+
+@pytest.mark.parametrize('field', ['prompt_cache_hit_tokens', 'cache_read_input_tokens'])
+def test_gateway_cached_usage_falls_back_only_when_standard_count_is_unknown(field):
+    body = recorded_response()
+    body['usage'][field] = 32
+    assert parse_chat_completion(body).token_usage.cached_tokens == 0
+    del body['usage']['prompt_tokens_details']
+    assert parse_chat_completion(body).token_usage.cached_tokens == 32
+    body['usage'][field] = -1
+    with pytest.raises(ModelProtocolError, match=field):
+        parse_chat_completion(body)
+
+
+def test_old_web_results_fold_at_block_boundaries():
+    page = {'document': 'doc-1', 'text': 'original body ' * 100}
+    content = Template(read_prompt('next_web_read.md')).substitute(result=encode(page))
+    tool = {'role': 'tool', 'tool_call_id': 'read-1', 'content': content}
+    call = {'role': 'assistant', 'content': None, 'tool_calls': [
+        {'type': 'function', 'id': 'read-1', 'function': {'name': 'web_read', 'arguments': '{}'}}]}
+    history = [(1, call), (2, tool)]
+    keep = ceil(len(encode(tool).encode()) / 3)
+    short = [*history, (3, {'role': 'user', 'content': '还有呢？'})]
+    longer = [*short, (4, {'role': 'user', 'content': 'x' * (keep * 2)})]
+    assert project_old_results(history, keep) == history
+    assert project_old_results(short, keep) == short
+    folded = project_old_results(longer, keep)[1][1]['content']
+    assert page['document'] in folded and page['text'] not in folded
+    assert project_old_results(history, 0)[1][1]['content'] == folded
+    assert tool['content'] == content
 
 
 @pytest.mark.parametrize(
@@ -321,9 +356,20 @@ async def test_loopback_http_error_propagates_original_body_without_retry():
             with pytest.raises(ModelHTTPError, match="请求受限") as failure:
                 await model.complete([{"role": "user", "content": "hello"}], [])
     assert "replay rate limit" in failure.value.response["detail"]
-    assert "429" in str(failure.value)
+    assert "HTTP 429: replay rate limit" in str(failure.value)
+    assert failure.value.status == 429 and failure.value.retryable
+    assert failure.value.body == failure.value.response['detail']
     assert requests == 1
     assert "reasoning_effort" not in payloads[0]
+
+
+def test_http_error_plain_text_is_printable_and_bounded():
+    detail = 'busy\r\n\tupstream\x00' + 'x' * 300
+    error = ModelHTTPError(502, detail)
+    assert 'HTTP 502: ' + ('busy upstream ' + 'x' * 300)[:240] + '）' in str(error)
+    assert error.body == detail and error.retryable
+    empty = ModelHTTPError(400, '')
+    assert 'HTTP 400）' in str(empty) and not empty.retryable
 
 
 @pytest.mark.asyncio

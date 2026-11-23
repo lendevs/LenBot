@@ -4,13 +4,14 @@ Identifiers and signatures are synthetic. Loopback peers verify actual HTTP,
 including tool-result continuation and SSE bytes.
 """
 import asyncio
+from copy import deepcopy
 import json
 
 import httpx
 import pytest
 
 from len_bot.next.configuration.models import Binding, Provider
-from len_bot.next.models.client import ModelSettings, ModelProtocolError
+from len_bot.next.models.client import ChatModel, ModelSettings, ModelProtocolError
 from len_bot.next.models.protocols import build_request, parse_reply
 from len_bot.next.models.providers import list_models
 from len_bot.next.memory.embeddings import EmbeddingBinding
@@ -94,7 +95,8 @@ async def test_native_tool_probe_preserves_ids_signatures_and_real_usage(api):
         assert second['input'][3]['call_id'] == 'call_fixture'
         assert second['store'] is False and second['include'] == ['reasoning.encrypted_content']
     elif api == 'anthropic':
-        assert second['messages'][1]['content'] == first['content']
+        assert second['messages'][1]['content'] == [
+            first['content'][0], {**first['content'][1], 'cache_control': {'type': 'ephemeral'}}]
         assert second['messages'][2]['content'][0]['tool_use_id'] == 'call_fixture'
         assert received[0][1]['anthropic-version'] == '2023-06-01'
         assert received[0][1]['x-api-key'] == 'fixture-key'
@@ -103,6 +105,46 @@ async def test_native_tool_probe_preserves_ids_signatures_and_real_usage(api):
         assert second['contents'][2]['parts'][0]['functionResponse']['id'] == 'call_fixture'
         assert received[0][1]['x-goog-api-key'] == 'fixture-key'
     assert 'private analysis' not in result['text']
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_anthropic_breakpoints_follow_the_converted_prefix(existing):
+    settings = ModelSettings(api='anthropic', base_url='http://127.0.0.1/v1', api_key='fixture', model='fixture')
+    control = {'type': 'ephemeral', 'ttl': '1h'} if existing else {'type': 'ephemeral'}
+    overrides = {'cache_control': control} if existing else {}
+    messages = [
+        {'role': 'system', 'content': 'first'},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'last', **overrides}]},
+        {'role': 'user', 'content': 'first part'},
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'second part', **overrides}]},
+        {'role': 'assistant', 'content': 'reply'},
+    ]
+    tools = [TOOL, {'type': 'function', 'function': {**TOOL['function'], 'name': 'lookup'}, **overrides}]
+    original = deepcopy((messages, tools))
+    _, payload = build_request(settings, messages, tools)
+    for blocks in (payload['tools'], payload['system'], payload['messages'][0]['content']):
+        assert 'cache_control' not in blocks[0]
+        assert blocks[1]['cache_control'] == control
+    assert 'cache_control' not in payload['messages'][1]['content'][0]
+    assert (messages, tools) == original
+    _, single = build_request(settings, messages[-1:], [])
+    assert 'tools' not in single and 'system' not in single
+    assert 'cache_control' not in single['messages'][0]['content'][0]
+
+
+@pytest.mark.asyncio
+async def test_responses_sends_prompt_cache_key_with_session():
+    received = []
+    reply = (200, 'application/json', json.dumps(response('openai-responses')).encode())
+    server = await peer_server([reply] * 3, received)
+    async with server:
+        settings = ModelSettings(api='openai-responses', base_url=f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1',
+                                 api_key='fixture', model='fixture')
+        async with ChatModel(settings) as model:
+            for session in ['session-01', '', None]:
+                await model.complete([{'role': 'user', 'content': 'hello'}], [], session_id=session)
+    assert received[0][1]['session-id'] == received[0][2]['prompt_cache_key'] == 'session-01'
+    assert all('prompt_cache_key' not in payload for _, _, payload in received[1:])
 
 
 @pytest.mark.asyncio

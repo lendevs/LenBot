@@ -52,8 +52,11 @@ def request_estimate(config: SharedConfig, store: Store, model: ChatModel, *, sc
         tokens = parse_token_usage(usage)
         prior = project_messages(request['messages'], binding.history_policy)
         prefix = prior[:-1]
-        same_binding = (request['provider'] == config.models.roles.mind.provider
-                        and request['settings'] == model.settings.model_dump(exclude={'api_key'})
+        settings = request['settings']
+        same_binding = (request['provider'] == binding.provider
+                        and settings.get('api') == model.settings.api
+                        and settings.get('base_url') == model.settings.base_url
+                        and settings.get('model') == model.settings.model
                         and request.get('history_policy') == binding.history_policy)
         previous_images = any(isinstance(message.get('content'), list) and any(
             block['type'] == 'image_url' for block in message['content']) for message in request['messages'])
@@ -102,7 +105,9 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
     if effort is not None:
         effective = effective.with_effort(effort)
     settings = {**effective.model_dump(exclude={"api_key"}), "max_output_tokens": tokens}
-    async with (slots.slot(direct=direct, scene=scene) if slots is not None else nullcontext()):
+    admission = slots.slot(direct=direct, background=role == 'upkeep' and not direct,
+                           scene=scene) if slots is not None else nullcontext()
+    async with admission:
         request = {"settings": settings, "messages": messages, "tools": tools, "provider": binding.provider,
                    **({"recall_items": recall_items} if recall_items is not None else {}),
                    "estimate_method": method,

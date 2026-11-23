@@ -155,8 +155,19 @@ class ModelHTTPError(RuntimeError):
         else:
             direction = "服务商拒绝请求，请查看调用详情并核对模型参数"
         self.status = status
+        self.body = detail
+        self.retryable = status == 429 or status >= 500
         self.response = {"status": status, "request_id": request_id, "detail": detail}
-        super().__init__(f"{direction}（HTTP {status}）" + (f"；request id: {request_id}" if request_id else ""))
+        try:
+            decoded = json.loads(detail)
+        except ValueError:
+            decoded = None
+        error = decoded.get('error') if isinstance(decoded, dict) else None
+        message = error.get('message') if isinstance(error, dict) else None
+        summary = message if isinstance(message, str) and message.strip() else detail
+        summary = ' '.join(''.join(c if c.isprintable() else ' ' for c in summary).split())[:240]
+        http_error = f"HTTP {status}: {summary}" if summary else f"HTTP {status}"
+        super().__init__(f"{direction}（{http_error}）" + (f"；request id: {request_id}" if request_id else ""))
 
 
 class ModelConnectionError(RuntimeError):
@@ -202,10 +213,14 @@ def parse_token_usage(usage: dict[str, Any] | None) -> TokenUsage | None:
     details = usage.get("prompt_tokens_details")
     if details is not None and not isinstance(details, dict):
         raise ValueError("usage.prompt_tokens_details must be an object or null")
-    cached = token(None if details is None else details.get("cached_tokens"),
-                   "prompt_tokens_details.cached_tokens")
+    field = "prompt_tokens_details.cached_tokens"
+    cached = token(None if details is None else details.get("cached_tokens"), field)
+    for alias in ("prompt_cache_hit_tokens", "cache_read_input_tokens"):
+        if cached is None and usage.get(alias) is not None:
+            field = alias
+            cached = token(usage[alias], field)
     if prompt is not None and cached is not None and cached > prompt:
-        raise ValueError("usage.prompt_tokens_details.cached_tokens exceeds prompt_tokens")
+        raise ValueError(f"usage.{field} exceeds prompt_tokens")
     return TokenUsage(prompt, completion, cached)
 
 
@@ -345,7 +360,8 @@ class ChatModel:
                         on_retry: Callable[[], None] | None) -> ModelReply:
         from .protocols import build_request, parse_reply
         settings = bound if settings is None else settings
-        path, payload = build_request(settings, messages, tools, max_output_tokens=max_output_tokens)
+        path, payload = build_request(settings, messages, tools, max_output_tokens=max_output_tokens,
+                                      session_id=session_id)
         for delay in (*settings.retry_delays_seconds, None):
             deadline = asyncio.timeout(settings.timeout_seconds)
             try:
