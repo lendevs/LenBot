@@ -385,21 +385,36 @@ class PluginInstaller:
         record = self.read(name)
         values = self.candidate_values(name)
         destination = self.directory / name
+        candidate_dir = self.candidates / name
+        previous = self.directory / '.previous' / name
         self.directory.mkdir(exist_ok=True)
+        moved_previous = False
+        moved_candidate = False
         if destination.exists():
             from ..configuration.editing import _read_saved
             saved = _read_saved(self.root)
             self._write_values(name, CandidateValues(revision=record.installed.revision,
                 values=saved.plugins.configured[name], enabled=name not in saved.plugins.disabled), previous=True)
-            previous = self.directory / '.previous' / name
             if previous.exists():
                 shutil.rmtree(previous)
             previous.parent.mkdir(exist_ok=True)
             destination.rename(previous)
+            moved_previous = True
             record.previous = record.installed
-        (self.candidates / name).rename(destination)
-        record.installed, record.candidate, record.requested, record.error = record.candidate, None, False, None
-        self.write(record)
+        try:
+            candidate_dir.rename(destination)
+            moved_candidate = True
+            record.installed, record.candidate, record.requested, record.error = record.candidate, None, False, None
+            self.write(record)
+        except BaseException as error:
+            try:
+                if moved_candidate and destination.exists() and not candidate_dir.exists():
+                    destination.rename(candidate_dir)
+                if moved_previous and previous.exists() and not destination.exists():
+                    previous.rename(destination)
+            except OSError as rollback_error:
+                error.add_note(f'恢复上一版本插件目录失败：{rollback_error}')
+            raise
         if values is not None:
             self._publish_values(name, values)
             (self.records / '.candidate-values' / (name + '.json')).unlink()

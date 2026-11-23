@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import importlib.util
@@ -425,6 +425,11 @@ class PluginHost:
         runner = None if self.runtime is None else self.runtime.runners.get(scene)
         return runner is not None and runner.state.closed
 
+    def scene_paused(self, scene: str) -> bool:
+        """Whether chat is paused for this scene (plugins still run, mind does not consume events)."""
+        runner = None if self.runtime is None else self.runtime.runners.get(scene)
+        return runner is not None and bool(runner.state.paused)
+
     def _speaking(self, plugin: str, scene: str) -> Loaded:
         record = self._active(plugin, scene)
         if self.scene_closed(scene):
@@ -473,6 +478,7 @@ class PluginHost:
             values = parsed.model_dump(mode="json")
             await writer(plugin, values)
             record.values = values
+            SECRETS.add(secret_values(record.manifest, values))
             current = parsed.model_dump()
             record.context.config.clear()
             record.context.config.update(current)
@@ -536,8 +542,10 @@ class PluginHost:
         now = datetime.fromtimestamp(self.now(), ZoneInfo(self.scene_timezone(scene)))
         content = Template(read_prompt("next_plugin_event.md")).substitute(
             plugin=plugin, time=now.isoformat(timespec="seconds"), text=self.redact(plugin, text.strip())).strip()
-        PluginStore(self.runtime.store).add_plugin_event(scene, plugin, "event", content)
-        self.runtime.runners[scene].changed.set()
+        delivered = self.scene_paused(scene)
+        PluginStore(self.runtime.store).add_plugin_event(scene, plugin, "event", content, delivered=delivered)
+        if not delivered:
+            self.runtime.runners[scene].changed.set()
         self._notify()
 
     def quiet(self, plugin: str, scene: str, seconds: float | None, direct: Literal["allow", "defer"]) -> None:
@@ -731,12 +739,24 @@ class PluginHost:
         task.add_done_callback(finished)
         return task
 
+    def _unavailable_tools(self, record: Loaded, scene: str) -> dict[str, str]:
+        if record.instance is None or not record.tools:
+            return {}
+        try:
+            result = record.instance.unavailable_tools(scene)
+            if not isinstance(result, Mapping):
+                raise TypeError(f"unavailable_tools 须返回映射，实际为 {type(result).__name__}")
+            return {str(name): self.redact(record.name, str(reason)) for name, reason in result.items()}
+        except Exception as error:
+            reason = f"插件可用性检查失败：{self._record(record, '工具可用性检查', error)}"
+            return dict.fromkeys(record.tools, reason)
+
     def tools_for(self, scene: str, *, preparing: bool = False) -> list[ExternalTool]:
         tools = []
         for record in self.plugins.values():
             if (record.status != "running" and not (preparing and record.status == "loaded")) or scene not in record.scenes:
                 continue
-            unavailable = record.instance.unavailable_tools(scene)
+            unavailable = self._unavailable_tools(record, scene)
             for name, entry in record.tools.items():
                 if name not in unavailable:
                     tools.append(self._external_tool(record, name, entry))
@@ -751,7 +771,7 @@ class PluginHost:
         """All configured plugin tools, including reasons they cannot be discovered."""
         previews = []
         for record in self.plugins.values():
-            unavailable = {} if record.instance is None else record.instance.unavailable_tools(scene)
+            unavailable = self._unavailable_tools(record, scene)
             for name, entry in record.tools.items():
                 tool = self._external_tool(record, name, entry)
                 reasons = []
@@ -922,9 +942,18 @@ class PluginHost:
             answered = not matched.waiter.future.done()
             if answered:
                 matched.waiter.future.set_result(message)
-            PluginStore(self.runtime.store).add_plugin_event(message.scene, record.name, "reply", self.message_report(
-                message, matched, "已交给插件。" if answered else "插件的等待已结束，未处理这条消息。"))
-            self._notify()
+            report = self.message_report(
+                message, matched, "已交给插件。" if answered else "插件的等待已结束，未处理这条消息。")
+            delivered = self.scene_paused(message.scene)
+
+            async def record_reply() -> None:
+                await self.runtime.store.call(
+                    PluginStore(self.runtime.store).add_plugin_event,
+                    message.scene, record.name, "reply", report, delivered=delivered,
+                )
+                self._notify()
+
+            self._spawn(record, matched.label, record_reply())
             return
 
         async def invoke() -> None:
@@ -942,8 +971,12 @@ class PluginHost:
             except Exception as error:
                 result = "处理失败：" + self._record(record, matched.label, error)
             finally:
-                PluginStore(self.runtime.store).add_plugin_event(
-                    message.scene, record.name, "reply", self.message_report(message, matched, result))
+                report = self.message_report(message, matched, result)
+                delivered = self.scene_paused(message.scene)
+                await self.runtime.store.call(
+                    PluginStore(self.runtime.store).add_plugin_event,
+                    message.scene, record.name, "reply", report, delivered=delivered,
+                )
                 self._notify()
 
         self._spawn(record, matched.label, invoke())
@@ -1069,8 +1102,10 @@ class PluginHost:
     async def reload(self, name: str, saved: HostConfig) -> None:
         if self.closing:
             raise RuntimeError("插件宿主已结束，不能在停止后重载")
+        previous_errors: list[dict] = []
         if name in self.plugins:
             await self.stop_plugin(name)
+            previous_errors = list(self.plugins[name].errors)
         settings = saved.plugins
         if settings is None or name not in settings.configured:
             self.plugins.pop(name, None)
@@ -1081,7 +1116,9 @@ class PluginHost:
         record = Loaded(name, None, None, scenes, values=settings.configured[name])
         self.plugins[name] = record
         if name in settings.disabled:
+            record.errors.extend(previous_errors)
             record.status = "stopped"
+            self._notify()
             return
         found, self.discovery_errors = discover(settings.paths)
         reserved = set(self.core_tools)
@@ -1098,7 +1135,13 @@ class PluginHost:
                        settings.disabled_rules.get(name, []), described)
             if self.started or (self.runtime is not None and self.runtime.accepting):
                 await self.start_plugin(record)
+            if record.status == "failed" and previous_errors:
+                new_errors = list(record.errors)
+                record.errors.clear()
+                record.errors.extend(previous_errors)
+                record.errors.extend(new_errors)
         except Exception as error:
+            record.errors.extend(previous_errors)
             record.status, record.error = "failed", self._record(record, "加载", error)
             self._remove_entries(record)
             self._unload_module(record)

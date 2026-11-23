@@ -293,3 +293,118 @@ async def test_turn_detail_http_keeps_actual_recalled_section_sources(tmp_path):
         assert recalled['content'] == '## 会场\n读书会在图书馆二楼。\n'
         assert recalled['sections'][0]['headings'] == [['记录', '会场']]
         assert recalled['sections'][0]['source_version'] == hashlib.sha256(content.encode()).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_automatic_recall_filters_noise_trigrams_and_browses_parent_once(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
+    await memory.write(SCENE, 'events/chat.md', '群友说哈哈哈，不知道为什么怎么办，什么意思没问题。', '口水样本')
+    await memory.write(SCENE, 'events/camp.md', '下周末去植物园露营，记得带帐篷。', '主题样本')
+    for idx in range(5):
+        await memory.write(SCENE, f'events/note_{idx}.md', f'记录 {idx}。', '目录浏览样本')
+
+    for noise in ('哈哈哈', '不知道', '为什么', '怎么办', '什么意思', '没问题', '哈哈哈，不知道，为什么，怎么办，没问题'):
+        assert await memory.search(SCENE, noise, 5, automatic=True) == []
+    hits = await memory.search(SCENE, '哈哈哈，植物园露营，没问题', 5, automatic=True)
+    assert [hit.path for hit in hits] == ['events/camp.md']
+
+    calls: list[Path] = []
+    real_iterdir = Path.iterdir
+
+    def counted_iterdir(self):
+        calls.append(self)
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, 'iterdir', counted_iterdir)
+    page = await memory.browse(SCENE, 'events', limit=20)
+    assert len(page.nodes) == 7
+    events_dir = memory.root / 'scenes' / scene_directory(SCENE) / 'events'
+    assert calls.count(events_dir) == 1
+
+
+@pytest.mark.asyncio
+async def test_profile_recall_skips_placeholder_or_empty_preference_section(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=600)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'people/onebot:90001/profile.md',
+                       '# 林安\n\n## 相处偏好与雷点\n暂无明确记录。\n\n## 近期情况\n周五准备去爬山。\n', '档案样本')
+    await memory.write(SCENE, 'people/onebot:90001/preferences.md', '暂无明确记录\n', '占位偏好样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        recalled = await service.recall(SCENE, chat('周末天气真好'))
+    paths = [item['path'] for item in recalled['items']]
+    assert paths == ['people/onebot:90001/profile.md']
+    content = recalled['items'][0]['content']
+    assert '相处偏好与雷点' not in content and '暂无明确记录' not in content
+    assert '周五准备去爬山。' in content
+
+
+@pytest.mark.asyncio
+async def test_summary_and_sticker_strip_json_fences_and_use_background_slots(tmp_path):
+    from contextlib import asynccontextmanager
+
+    from len_bot.next.learning.sticker_collection import _annotation
+    from len_bot.next.memory.summary import MemorySummarizer, parse_summary
+    from len_bot.next.models.client import ModelReply
+
+    fenced_summary = ModelReply(
+        message={'role': 'assistant', 'content': '```json\n{"abstract": "活动摘要", "overview": "活动总览"}\n```'},
+        text='```json\n{"abstract": "活动摘要", "overview": "活动总览"}\n```',
+        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
+    )
+    assert parse_summary(fenced_summary) == ('活动摘要', '活动总览')
+
+    bad_summary = ModelReply(
+        message={'role': 'assistant', 'content': '```json\n{bad}\n```'},
+        text='```json\n{bad}\n```',
+        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
+    )
+    with pytest.raises(ValueError, match='response fragment'):
+        parse_summary(bad_summary)
+
+    fenced_sticker = ModelReply(
+        message={'role': 'assistant', 'content': '```JSON\n{"description": "大笑猫", "text": "哈哈", '
+                 '"emotions": ["开心"], "tags": ["猫"], "is_sticker": true}\n```'},
+        text='```JSON\n{"description": "大笑猫", "text": "哈哈", '
+             '"emotions": ["开心"], "tags": ["猫"], "is_sticker": true}\n```',
+        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
+    )
+    assert _annotation(fenced_sticker) == ('大笑猫', '哈哈', ['开心'], ['猫'], True)
+
+    bad_sticker = ModelReply(
+        message={'role': 'assistant', 'content': '```json\nnot-json\n```'},
+        text='```json\nnot-json\n```',
+        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
+    )
+    with pytest.raises(ValueError, match='response fragment'):
+        _annotation(bad_sticker)
+
+    slot_calls: list[dict] = []
+
+    class FakeSlots:
+        @asynccontextmanager
+        async def slot(self, *, direct=False, background=False, scene=None):
+            slot_calls.append({'direct': direct, 'background': background, 'scene': scene})
+            yield
+
+    class FakeModel:
+        settings = type('S', (), {'model_dump': lambda self, **_: {'model': 'mem'}})()
+
+        async def complete(self, messages, tools):
+            return fenced_summary
+
+    class FakeConfig:
+        def binding(self, role):
+            return type('B', (), {'provider': 'p', 'model': 'm', 'max_output_tokens': 256,
+                                  'context_window_tokens': 8192})()
+
+    memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
+    await memory.write(SCENE, 'events/a.md', '周五聚会。', '样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        summarizer = MemorySummarizer(FakeConfig(), memory, jobs, FakeModel(), store, slots=FakeSlots())
+        result = await summarizer.summarize(SCENE, 'events')
+    assert result['abstract'] == '活动摘要'
+    assert slot_calls == [{'direct': False, 'background': True, 'scene': SCENE}]

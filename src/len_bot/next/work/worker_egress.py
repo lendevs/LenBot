@@ -141,21 +141,34 @@ class EgressTransport:
     async def _dial_public(self, host: str, port: int) -> tuple[str, asyncio.StreamReader,
                                                                    asyncio.StreamWriter]:
         loop = asyncio.get_running_loop()
-        async with asyncio.timeout(self.connect_timeout_seconds):
+        async with asyncio.timeout(self.connect_timeout_seconds) as overall:
             addresses = await public_addresses(host, port, self.fake_ip_networks,
                                                self.public_dns_url, self.connect_timeout_seconds)
-            ip = addresses[0]
-            family = socket.AF_INET6 if ':' in ip else socket.AF_INET
-            address = (ip, port, 0, 0) if family == socket.AF_INET6 else (ip, port)
-            sock = socket.socket(family, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-            sock.setblocking(False)
-            try:
-                await loop.sock_connect(sock, address)
-                reader, writer = await asyncio.open_connection(sock=sock)
-            except BaseException:
-                sock.close()
-                raise
-        return ip, reader, writer
+            deadline = overall.when()
+            last_error: BaseException | None = None
+            for index, ip in enumerate(addresses):
+                family = socket.AF_INET6 if ':' in ip else socket.AF_INET
+                address = (ip, port, 0, 0) if family == socket.AF_INET6 else (ip, port)
+                sock = socket.socket(family, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+                sock.setblocking(False)
+                remaining_attempts = len(addresses) - index
+                attempt_timeout = (max(0.0, deadline - loop.time()) / remaining_attempts
+                                   if deadline is not None else self.connect_timeout_seconds)
+                try:
+                    async with asyncio.timeout(attempt_timeout):
+                        await loop.sock_connect(sock, address)
+                    reader, writer = await asyncio.open_connection(sock=sock)
+                    return ip, reader, writer
+                except (OSError, TimeoutError) as error:
+                    sock.close()
+                    if overall.expired():
+                        raise
+                    last_error = error
+                except BaseException:
+                    sock.close()
+                    raise
+            assert last_error is not None
+            raise last_error
 
     def _permit(self, channel_id: int, side: str, amount: int) -> None:
         try:

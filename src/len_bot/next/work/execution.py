@@ -46,6 +46,27 @@ if TYPE_CHECKING:
 _DATA_PATHS = {path: name for name, path in DATA_ROUTES.items()}
 
 
+def _final_failure(final: dict) -> str:
+    """Summarize an abnormal Pi final assistant message concisely via stopReason/errorMessage."""
+    stop_reason = final.get("stopReason")
+    error_message = final.get("errorMessage")
+    parts: list[str] = []
+    if isinstance(stop_reason, str) and stop_reason.strip():
+        parts.append(f"stopReason={stop_reason.strip()}")
+    if isinstance(error_message, str) and error_message.strip():
+        parts.append(error_message.strip()[:500])
+    else:
+        text = "\n".join(
+            part["text"].strip() for part in final.get("content", ())
+            if isinstance(part, dict) and part.get("type") == "text"
+            and isinstance(part.get("text"), str) and part["text"].strip()
+        ).strip()
+        if text:
+            parts.append(text[:500])
+    detail = "；".join(parts) if parts else json.dumps(final, ensure_ascii=False)[:500]
+    return f"Pi 未正常完成：{detail}"
+
+
 class TaskMCPCall(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
     name: str = Field(pattern=r"^mcp__[a-zA-Z0-9_-]{1,59}$")
@@ -316,13 +337,21 @@ class TaskExecution:
                     self._progress(entry["data"]["text"])
             elif record.type == "extension_ui_request" and body["method"] in {"input", "confirm", "select", "editor"}:
                 await self._question(body)
+            elif record.type == "agent_end":
+                if final is None:
+                    for message in reversed(body["messages"]):
+                        if isinstance(message, dict) and message.get("role") == "assistant":
+                            final = message
+                            break
             elif record.type in {"auto_retry_start", "summarization_retry_scheduled"}:
-                raise RuntimeError(f"Pi 发起了未启用的重试：{body!r}")
+                error_message = body.get("errorMessage", "").strip()
+                detail = error_message[:500] if error_message else repr(body)
+                raise RuntimeError(f"Pi 发起了未启用的重试（{record.type}）：{detail}")
             elif record.type == "agent_settled":
                 if final is None:
                     raise RuntimeError("Pi 停止但没有最终助手消息")
                 if final["stopReason"] != "stop":
-                    raise RuntimeError(f"Pi 未正常完成：{json.dumps(final, ensure_ascii=False)}")
+                    raise RuntimeError(_final_failure(final))
                 return "\n".join(part["text"] for part in final["content"] if part["type"] == "text")
 
     def _progress(self, text: str) -> None:
