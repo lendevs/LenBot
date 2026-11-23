@@ -68,7 +68,7 @@ CREATE TABLE image_cache (
     scene TEXT NOT NULL, platform_id TEXT NOT NULL,
     image_index INTEGER NOT NULL, jpeg BLOB NOT NULL,
     width INTEGER NOT NULL, height INTEGER NOT NULL,
-    animated INTEGER NOT NULL, fetched_at REAL NOT NULL,
+    animated INTEGER NOT NULL, frames INTEGER NOT NULL DEFAULT 1, fetched_at REAL NOT NULL,
     description TEXT, description_model TEXT, described_at REAL,
     PRIMARY KEY(scene, platform_id, image_index)
 );
@@ -106,6 +106,8 @@ CREATE INDEX message_scene_received ON messages(scene,received_at,seq)
 CREATE INDEX message_scene_time ON messages(scene,json_extract(body,'$.time'),seq);
 CREATE INDEX message_sender_time ON messages(scene,json_extract(body,'$.sender.uid'),json_extract(body,'$.time'),seq);
 CREATE INDEX model_call_expiry ON model_calls(ended,id);
+CREATE INDEX model_call_unexpired ON model_calls(ended,id)
+    WHERE json_extract(request,'$.snapshot_expired_at') IS NULL;
 CREATE INDEX model_call_mind_usage ON model_calls(scene,role,id) WHERE plugin IS NULL;
 CREATE INDEX model_call_plugin ON model_calls(plugin,id) WHERE plugin IS NOT NULL;
 CREATE INDEX turns_scene_time ON turns(scene,started);

@@ -181,6 +181,15 @@ class SessionUpkeep:
         self._failed_at.pop(scene, None)
         self._model_stuck.discard(scene)
 
+    async def set_memory_ingest(self, enabled: bool) -> None:
+        """Apply a live memory.ingest toggle across configured scenes without restarting."""
+        for scene, settings in self.scenes.items():
+            if enabled and self.memory_enabled and settings.memory_plugin is None:
+                if scene not in self.parts["memory"]:
+                    self.enable(scene, "memory")
+            elif scene in self.parts["memory"]:
+                await self.disable(scene, "memory")
+
     def _start_scene(self, scene: str) -> None:
         with log_context(scene=scene, job="session_upkeep"):
             self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"session-upkeep:{scene}")

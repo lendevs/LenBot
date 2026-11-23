@@ -60,10 +60,13 @@ def test_format_3_upgrade_builds_format_4_indexes(tmp_path):
         'CREATE INDEX message_scene_seq ON messages(scene,seq);\n',
         'CREATE INDEX message_scene_received ON messages(scene,received_at,seq)\n    WHERE raw IS NOT NULL AND received_at IS NOT NULL;\n',
         'CREATE INDEX model_call_plugin ON model_calls(plugin,id) WHERE plugin IS NOT NULL;\n',
+        'CREATE INDEX model_call_unexpired ON model_calls(ended,id)\n    WHERE json_extract(request,\'$.snapshot_expired_at\') IS NULL;\n',
         'CREATE INDEX turns_started ON turns(started,scene,id);\n',
         'CREATE INDEX plugin_events_scene ON plugin_events(scene,id);\n',
     )
     script = business_script()
+    assert 'frames INTEGER NOT NULL DEFAULT 1, ' in script
+    script = script.replace('frames INTEGER NOT NULL DEFAULT 1, ', '')
     for statement in new_indexes:
         assert statement in script, statement
         script = script.replace(statement, '')
@@ -75,7 +78,12 @@ def test_format_3_upgrade_builds_format_4_indexes(tmp_path):
         assert db.execute('PRAGMA user_version').fetchone()[0] == FORMAT_VERSION
         indexes = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
         assert {'notices_scene_received', 'scene_group_bans', 'message_scene_seq',
-                'message_scene_received', 'model_call_plugin', 'turns_started', 'plugin_events_scene'} <= indexes
+                'message_scene_received', 'model_call_plugin', 'model_call_unexpired',
+                'turns_started', 'plugin_events_scene'} <= indexes
+        columns = {row[1] for row in db.execute('PRAGMA table_info("image_cache")')}
+        assert 'frames' in columns
+    with Store(path):
+        pass
 
 def test_jargon_upgrade_preserves_manual_controls_and_queues_old_records(tmp_path):
     path = tmp_path / 'business.db'

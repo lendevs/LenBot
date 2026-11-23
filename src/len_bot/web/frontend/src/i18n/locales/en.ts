@@ -2688,6 +2688,7 @@ export default {
     copied: 'Copied',
     toProvider: 'Provider {name}',
     toRoles: 'Model uses',
+    closeCall: 'Close call details',
     copyFailed: 'The browser blocked copying',
     ids: {
       turn_id: 'Turn',

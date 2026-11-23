@@ -89,6 +89,7 @@ class ImageAsset:
     description: str | None = None
     description_model: str | None = None
     described_at: float | None = None
+    frames: int = 1
 
 
 class Store:
@@ -248,22 +249,22 @@ class Store:
 
     def image(self, scene: str, platform_id: str, image_index: int) -> ImageAsset | None:
         row = self.db.execute(
-            "SELECT jpeg,width,height,animated,fetched_at,description,description_model,described_at "
+            "SELECT jpeg,width,height,animated,fetched_at,description,description_model,described_at,frames "
             "FROM image_cache WHERE scene=? AND platform_id=? AND image_index=?",
             (scene, platform_id, image_index),
         ).fetchone()
         if row is None:
             return None
-        return ImageAsset(row[0], row[1], row[2], bool(row[3]), row[4], row[5], row[6], row[7])
+        return ImageAsset(row[0], row[1], row[2], bool(row[3]), row[4], row[5], row[6], row[7], row[8])
 
     def save_image(self, scene: str, platform_id: str, image_index: int, asset: ImageAsset) -> None:
         with self.db:
             self.db.execute(
                 "INSERT INTO image_cache(scene,platform_id,image_index,jpeg,width,height,animated,"
-                "fetched_at,description,description_model,described_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "fetched_at,description,description_model,described_at,frames) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (scene, platform_id, image_index, asset.jpeg, asset.width, asset.height,
                  int(asset.animated), asset.fetched_at, asset.description,
-                 asset.description_model, asset.described_at),
+                 asset.description_model, asset.described_at, asset.frames),
             )
 
     def save_image_description(self, scene: str, platform_id: str, image_index: int,
@@ -585,7 +586,8 @@ class Store:
                 *, attention_state: dict | None = None,
                 wake_verdict: dict | None = None,
                 collect_stickers: bool = False, transcribe_audio: bool = False,
-                plugin_claim: tuple[str, str] | None = None) -> int:
+                plugin_claim: tuple[str, str] | None = None,
+                plugin_claim_delivered: bool = False) -> int:
         """Store one received platform message without adding it to the mind yet."""
         with self.db:
             seq = self._save_message(message, raw, received_at)
@@ -594,8 +596,8 @@ class Store:
             if plugin_claim is not None:
                 plugin, content = plugin_claim
                 self.db.execute(
-                    "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,'reply',?,?)",
-                    (message.scene, plugin, content, received_at),
+                    "INSERT INTO plugin_events(scene,plugin,kind,content,created,delivered_at) VALUES (?,?,'reply',?,?,?)",
+                    (message.scene, plugin, content, received_at, received_at if plugin_claim_delivered else None),
                 )
             if transcribe_audio:
                 for index, _ in enumerate((part for part in message.segments if part.type == "audio"), 1):

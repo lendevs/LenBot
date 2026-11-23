@@ -2620,6 +2620,7 @@ export default {
     copied: '已复制',
     toProvider: '服务商 {name}',
     toRoles: '模型用途',
+    closeCall: '关闭调用详情',
     copyFailed: '浏览器禁止复制',
     ids: {
       turn_id: '轮',

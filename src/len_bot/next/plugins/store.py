@@ -30,11 +30,13 @@ class PluginStore:
     def __init__(self, store: Store):
         self.db, self.now = store.db, store.now
 
-    def add_plugin_event(self, scene: str, plugin: str, kind: Literal["event", "reply"], content: str) -> int:
+    def add_plugin_event(self, scene: str, plugin: str, kind: Literal["event", "reply"], content: str,
+                         *, delivered: bool = False) -> int:
+        now = self.now()
         with self.db:
             return self.db.execute(
-                "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,?,?,?)",
-                (scene, plugin, kind, content, self.now()),
+                "INSERT INTO plugin_events(scene,plugin,kind,content,created,delivered_at) VALUES (?,?,?,?,?,?)",
+                (scene, plugin, kind, content, now, now if delivered else None),
             ).lastrowid
 
     def pending_plugin_events(self, scene: str, *, include_events: bool = True) -> list[tuple[int, str]]:
