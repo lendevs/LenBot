@@ -259,3 +259,104 @@ async def test_start_fails_for_another_app_bot(monkeypatch):
     with pytest.raises(PlatformCallError, match="did not confirm") as failure:
         await adapter.start()
     assert SECRET not in str(failure.value) and not adapter.connected
+
+
+@pytest.mark.asyncio
+async def test_reply_to_bot_marks_mentions_bot_and_upload_failure_is_not_submitted(platform, monkeypatch):
+    api, _server = platform
+    adapter = Feishu(_settings(), on_event=lambda raw: None, on_error=lambda text: None)
+    await adapter.start()
+    try:
+        scene = f"feishu:group:{GROUP}"
+        msg = ChatMessage(
+            id="out", platform="feishu", bot_id="feishu:ou_bot", scene=scene,
+            platform_message_id=None, sender=Sender("feishu:ou_bot", None, None, None),
+            time=time.time(), segments=[Segment("text", {"text": "你好"})],
+            reply_to=None, mentions_bot=False, is_self=True, send_status="sent",
+        )
+        sent = await adapter.send_message(msg)
+        assert sent.status == "sent" and sent.platform_message_id is not None
+
+        # Quoting the bot's own sent message sets mentions_bot=True even without @bot.
+        reply_to_bot = _text("e-reply-bot", "om_r1", "同意", parent_id=sent.platform_message_id)
+        parsed = adapter.parse(reply_to_bot)
+        assert parsed.reply_to == sent.platform_message_id and parsed.mentions_bot is True
+
+        # Quoting someone else's message keeps mentions_bot=False.
+        reply_to_other = _text("e-reply-other", "om_r2", "同意", parent_id="om_other_user")
+        assert adapter.parse(reply_to_other).mentions_bot is False
+
+        # Media upload timeout marks submitted=False (failed), whereas message send timeout marks submitted=True (unconfirmed).
+        original_request = adapter._client.request
+
+        async def flaky_request(method, path, **kwargs):
+            if path in {"/open-apis/im/v1/images", "/open-apis/im/v1/files"}:
+                raise httpx.ReadTimeout("upload timed out")
+            return await original_request(method, path, **kwargs)
+
+        monkeypatch.setattr(adapter._client, "request", flaky_request)
+        img_msg = ChatMessage(
+            id="out-img", platform="feishu", bot_id="feishu:ou_bot", scene=scene,
+            platform_message_id=None, sender=Sender("feishu:ou_bot", None, None, None),
+            time=time.time(), segments=[Segment("image", {})],
+            reply_to=None, mentions_bot=False, is_self=True, send_status="sent",
+        )
+        img_result = await adapter.send_message(img_msg, image_bytes=b"\x89PNG-bytes")
+        assert img_result.status == "failed" and "ReadTimeout" in img_result.error
+
+        file_result = await adapter.upload_file(scene, "base64://cmVwb3J0", "报告.txt")
+        assert file_result.status == "failed" and "ReadTimeout" in file_result.error
+
+        async def send_timeout(method, path, **kwargs):
+            if path == "/open-apis/im/v1/messages":
+                raise httpx.ReadTimeout("send timed out")
+            return await original_request(method, path, **kwargs)
+
+        monkeypatch.setattr(adapter._client, "request", send_timeout)
+        send_res = await adapter.send_message(msg)
+        assert send_res.status == "unconfirmed" and "ReadTimeout" in send_res.error
+        upload_res = await adapter.upload_file(scene, "base64://cmVwb3J0", "报告.txt")
+        assert upload_res.status == "unconfirmed" and "ReadTimeout" in upload_res.error
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_member_list_loads_asynchronously_without_blocking_events_and_caches(monkeypatch):
+    api, server = OpenAPI(), LongConnection()
+    gate = asyncio.Event()
+    member_calls = 0
+
+    async def async_handle(request: httpx.Request) -> httpx.Response:
+        nonlocal member_calls
+        if request.url.path == f"/open-apis/im/v1/chats/{GROUP}/members":
+            member_calls += 1
+            await gate.wait()
+        return api.handle(request)
+
+    monkeypatch.setattr(feishu, "_transport", lambda: httpx.MockTransport(async_handle))
+    monkeypatch.setattr(feishu, "RECONNECT_INITIAL_SECONDS", 0.01)
+
+    async with serve(server.handle, "127.0.0.1", 0) as listening:
+        port = listening.sockets[0].getsockname()[1]
+        api.url = f"ws://127.0.0.1:{port}/ws?device_id=d1&service_id=33"
+        received, errors = [], []
+        adapter = Feishu(_settings(), on_event=received.append, on_error=errors.append)
+        await adapter.start()
+        try:
+            # Even while /members is blocked on gate, incoming messages are delivered immediately.
+            server.push(_text("e-async-1", "om_a1", "第一条"), message_id="f-a1")
+            await _until(lambda: len(received) == 1)
+            assert member_calls == 1 and "ou_ann" not in adapter.names
+
+            # Release /members; cache fills and subsequent unknown sender does not re-fetch within TTL.
+            gate.set()
+            await _until(lambda: adapter.names.get("ou_ann") == "Ann" and not adapter._member_tasks)
+            server.push(_event("e-async-2", {"message_id": "om_a2", "message_type": "text",
+                                             "content": json.dumps({"text": "第二条"}), "mentions": []},
+                               sender="ou_charlie"), message_id="f-a2")
+            await _until(lambda: len(received) == 2)
+            assert member_calls == 1
+        finally:
+            await adapter.close()
+        assert errors == []

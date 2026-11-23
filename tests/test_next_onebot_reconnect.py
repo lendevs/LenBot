@@ -235,3 +235,343 @@ async def test_forward_half_open_socket_recovers_after_ping_and_close_timeout(mo
             if handlers:
                 await asyncio.gather(*list(handlers))
     assert any('keepalive ping timeout' in error for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_ws_call_splits_submitted_state_and_handles_late_echo(monkeypatch, caplog):
+    import logging
+    from len_bot.next.platform.messages import ChatMessage, Segment, Sender
+    from len_bot.next.platform.onebot import OneBotCallError
+
+    errors = []
+    release_reply = asyncio.Event()
+    received_echoes = []
+
+    async def peer(websocket):
+        async for frame in websocket:
+            request = json.loads(frame)
+            if request['action'] == 'get_login_info':
+                await websocket.send(json.dumps({**LOGIN, 'echo': request['echo']}))
+                continue
+            received_echoes.append(request['echo'])
+            await release_reply.wait()
+            await websocket.send(json.dumps({
+                'status': 'ok', 'retcode': 0, 'data': {'message_id': 777}, 'echo': request['echo'],
+            }))
+
+    async with serve(peer, '127.0.0.1', 0) as server:
+        settings = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}',
+                                 request_timeout_seconds=.08)
+        async with OneBot(settings, bot_id='onebot:90001', on_event=lambda event: None,
+                          on_error=errors.append) as bot:
+            assert await bot.identify() == 'onebot:90001'
+
+            # 1. Timeout after websocket.send succeeds -> submitted=True and recorded in _late_echoes.
+            with caplog.at_level(logging.WARNING, logger='len_bot.next.platform.onebot'):
+                with pytest.raises(OneBotCallError) as failure:
+                    await bot.call('send_group_msg', {'group_id': 80001, 'message': [{'type': 'text', 'data': {'text': 'hi'}}]})
+                assert failure.value.submitted is True
+                assert received_echoes
+                release_reply.set()
+                await _until(lambda: not bot._late_echoes)
+            assert errors == []
+            assert any(getattr(record, 'event', None) == 'onebot_late_echo' and record.levelno == logging.WARNING
+                       for record in caplog.records)
+
+            # 2. Failure inside websocket.send -> submitted=False (send_message returns failed, not unconfirmed).
+            async def broken_send(_payload):
+                raise RuntimeError('socket write failed')
+
+            monkeypatch.setattr(bot._ws, 'send', broken_send)
+            msg = ChatMessage(
+                id='m1', platform='onebot', bot_id='onebot:90001', scene=SCENE,
+                platform_message_id=None, sender=Sender('onebot:90001', None, None, None),
+                time=1_700_000_000.0, segments=[Segment('text', {'text': 'hi'})],
+                reply_to=None, mentions_bot=False, is_self=True, send_status='sent',
+            )
+            result = await bot.send_message(msg)
+            assert result.status == 'failed' and 'socket write failed' in result.error
+
+
+@pytest.mark.asyncio
+async def test_heavy_onebot_media_actions_relax_timeout(monkeypatch):
+    from len_bot.next.platform.messages import ChatMessage, Segment, Sender
+
+    monkeypatch.setattr(onebot_module, 'MEDIA_ACTION_TIMEOUT_SECONDS', 0.4)
+
+    async def peer(websocket):
+        async for frame in websocket:
+            request = json.loads(frame)
+            if request['action'] == 'get_login_info':
+                await websocket.send(json.dumps({**LOGIN, 'echo': request['echo']}))
+            elif request['action'] == 'send_group_msg':
+                await asyncio.sleep(0.15)
+                await websocket.send(json.dumps({
+                    'status': 'ok', 'retcode': 0, 'data': {'message_id': 888}, 'echo': request['echo'],
+                }))
+
+    async with serve(peer, '127.0.0.1', 0) as server:
+        settings = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}',
+                                 request_timeout_seconds=0.05)
+        async with OneBot(settings, bot_id='onebot:90001', on_event=lambda event: None,
+                          on_error=lambda error: None) as bot:
+            assert bot._action_timeout('send_group_msg', {'message': [{'type': 'text', 'data': {'text': 'hi'}}]}) == 0.05
+            assert bot._action_timeout('send_group_msg', {'message': [{'type': 'image', 'data': {'file': 'base64://AA=='}}]}) == 0.4
+            assert bot._action_timeout('upload_group_file', {'file': '/a', 'name': 'a.txt'}) == 0.4
+            msg = ChatMessage(
+                id='m-img', platform='onebot', bot_id='onebot:90001', scene=SCENE,
+                platform_message_id=None, sender=Sender('onebot:90001', None, None, None),
+                time=1_700_000_000.0, segments=[Segment('image', {})],
+                reply_to=None, mentions_bot=False, is_self=True, send_status='sent',
+            )
+            result = await bot.send_message(msg, image_bytes=b'\x89PNG-payload')
+            assert result.status == 'sent' and result.platform_message_id == '888'
+
+
+@pytest.mark.asyncio
+async def test_onebot_download_supports_base64_local_file_and_refreshed_url(tmp_path, monkeypatch):
+    import base64
+
+    local_img = tmp_path / 'cached.png'
+    local_img.write_bytes(b'local-image-bytes')
+    responses = {
+        'b64.png': {'status': 'ok', 'retcode': 0, 'data': {'base64': base64.b64encode(b'b64-bytes').decode()}},
+        'local.png': {'status': 'ok', 'retcode': 0, 'data': {'file': str(local_img)}},
+        'remote.png': {'status': 'ok', 'retcode': 0, 'data': {
+            'file': '/napcat-host/not-here/remote.png', 'url': 'https://cdn.example/refreshed.png',
+        }},
+    }
+
+    async def peer(websocket):
+        async for frame in websocket:
+            request = json.loads(frame)
+            assert request['action'] == 'get_image'
+            payload = responses[request['params']['file']]
+            await websocket.send(json.dumps({**payload, 'echo': request['echo']}))
+
+    fetched_urls = []
+
+    async def fake_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+        fetched_urls.append((url, byte_limit('image/png', b'')))
+        return url, 'image/png', b'refreshed-http-bytes'
+
+    monkeypatch.setattr(onebot_module, 'fetch_public', fake_fetch_public)
+    async with serve(peer, '127.0.0.1', 0) as server:
+        settings = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}',
+                                 request_timeout_seconds=1)
+        async with OneBot(settings, bot_id='onebot:90001', on_event=lambda event: None,
+                          on_error=lambda error: None) as bot:
+            assert await bot.download({'file': 'b64.png'}, 100) == b'b64-bytes'
+            with pytest.raises(ValueError, match='exceeds'):
+                await bot.download({'file': 'b64.png'}, 4)
+            assert await bot.download({'file': 'local.png'}, 100) == b'local-image-bytes'
+            assert await bot.download({'file': 'remote.png'}, 256) == b'refreshed-http-bytes'
+            assert fetched_urls == [('https://cdn.example/refreshed.png', 256)]
+
+
+@pytest.mark.asyncio
+async def test_historical_onebot_image_routes_to_fetch_media_before_http(tmp_path, monkeypatch):
+    from io import BytesIO
+    from PIL import Image
+    from len_bot.next.configuration.chat import ImageSettings
+    from len_bot.next.media import images as next_images
+    from len_bot.next.media.images import LookArguments, load_look_image
+    from len_bot.next.platform.onebot_messages import parse_message
+
+    buf = BytesIO()
+    Image.new('RGB', (16, 16), 'blue').save(buf, format='PNG')
+    png = buf.getvalue()
+
+    now_box = [1_700_002_000.0]
+    with Store(tmp_path / 'look.sqlite3', now=lambda: now_box[0]) as store:
+        for mid, msg_time, data in (
+            ('old-1', 1_700_000_000.0, {'file': 'old.jpg', 'url': 'https://cdn.example/expired.jpg'}),
+            ('fresh-1', 1_700_001_500.0, {'file': 'fresh.jpg', 'url': 'https://cdn.example/fresh.jpg'}),
+            ('ref-only', 1_700_001_900.0, {'file': 'only-file.jpg'}),
+        ):
+            raw = {
+                'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
+                'user_id': 70001, 'message_id': mid, 'time': msg_time,
+                'sender': {'nickname': '群友'}, 'message': [{'type': 'image', 'data': data}],
+            }
+            store.enqueue(parse_message(raw, own_message_ids=set()), raw, received_at=msg_time)
+
+        platform_calls, http_calls = [], []
+
+        async def fetch_media(data: dict, max_bytes: int) -> bytes:
+            platform_calls.append(data['file'])
+            return png
+
+        async def fake_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+            http_calls.append(url)
+            return url, 'image/png', png
+
+        monkeypatch.setattr(next_images, 'fetch_public', fake_fetch_public)
+        settings = ImageSettings()
+
+        # > 1800s old: deterministically routes to fetch_media without touching HTTP.
+        _, reused, source = await load_look_image(
+            store, SCENE, LookArguments(message='old-1'), settings,
+            fake_ip_networks=(), fetch_media=fetch_media,
+        )
+        assert not reused and source == 'platform_download'
+        assert platform_calls == ['old.jpg'] and http_calls == []
+
+        # <= 1800s fresh with url: goes straight to HTTP.
+        _, reused, source = await load_look_image(
+            store, SCENE, LookArguments(message='fresh-1'), settings,
+            fake_ip_networks=(), fetch_media=fetch_media,
+        )
+        assert not reused and source == 'http_response'
+        assert http_calls == ['https://cdn.example/fresh.jpg'] and platform_calls == ['old.jpg']
+
+        # No url with OneBot file: routes to fetch_media.
+        _, reused, source = await load_look_image(
+            store, SCENE, LookArguments(message='ref-only'), settings,
+            fake_ip_networks=(), fetch_media=fetch_media,
+        )
+        assert not reused and source == 'platform_download'
+        assert platform_calls == ['old.jpg', 'only-file.jpg']
+
+
+@pytest.mark.asyncio
+async def test_animated_keyframes_and_long_screenshot_scaling(tmp_path):
+    from io import BytesIO
+    from PIL import Image
+    from len_bot.media.images import prepare_image, prepare_image_frames
+    from len_bot.next.configuration.chat import ImageSettings
+    from len_bot.next.media.images import LookArguments, execute_look, load_look_image, shown_image
+    from len_bot.next.platform.onebot_messages import parse_message
+    from len_bot.next.storage.store import ImageAsset
+
+    # 1. Animated GIF with 8 distinct frames -> extracts 6 keyframes into contact sheet and persists frames=6.
+    colors = ['red', 'green', 'blue', 'yellow', 'cyan', 'magenta', 'orange', 'purple']
+    gif_frames = [Image.new('RGB', (80, 60), color) for color in colors]
+    gif_buf = BytesIO()
+    gif_frames[0].save(gif_buf, format='GIF', save_all=True, append_images=gif_frames[1:], duration=100, loop=0)
+    gif_bytes = gif_buf.getvalue()
+
+    # Single-frame default compatibility for sticker_collection.
+    _, single_anim, sw, sh = prepare_image(gif_bytes, max_bytes=1_000_000, max_pixels=1_000_000, max_dimension=1280)
+    assert single_anim is True and (sw, sh) == (80, 60)
+
+    # Multi-frame animated WebP whose flattened RGB pixels are identical deduplicates to 1 frame.
+    same_frames = [
+        Image.new('RGBA', (64, 64), (255, 255, 255, 0)),
+        Image.new('RGBA', (64, 64), (255, 255, 255, 255)),
+    ]
+    same_buf = BytesIO()
+    same_frames[0].save(same_buf, format='WEBP', save_all=True, append_images=same_frames[1:],
+                        duration=100, loop=0, lossless=True)
+    with Image.open(BytesIO(same_buf.getvalue())) as check_same:
+        assert check_same.n_frames == 2
+    _, same_anim, _, _, same_count = prepare_image_frames(
+        same_buf.getvalue(), max_bytes=1_000_000, max_pixels=1_000_000, max_dimension=1280, max_frames=6,
+    )
+    assert same_anim is True and same_count == 1
+
+    # Adjacent duplicate flattened frames are filtered while distinct frames are kept.
+    dup_frames = [
+        Image.new('RGBA', (64, 64), (255, 0, 0, 255)),
+        Image.new('RGBA', (64, 64), (255, 255, 255, 0)),
+        Image.new('RGBA', (64, 64), (255, 255, 255, 255)),
+    ]
+    dup_buf = BytesIO()
+    dup_frames[0].save(dup_buf, format='WEBP', save_all=True, append_images=dup_frames[1:],
+                       duration=100, loop=0, lossless=True)
+    with Image.open(BytesIO(dup_buf.getvalue())) as check_dup:
+        assert check_dup.n_frames == 3
+    _, dup_anim, _, _, dup_count = prepare_image_frames(
+        dup_buf.getvalue(), max_bytes=1_000_000, max_pixels=1_000_000, max_dimension=1280, max_frames=6,
+    )
+    assert dup_anim is True and dup_count == 2
+
+    # 2. Extreme aspect ratio long screenshot keeps readable width and relaxes long edge.
+    tall_buf = BytesIO()
+    Image.new('RGB', (600, 3000), 'white').save(tall_buf, format='PNG')
+    _, tall_anim, tw, th, tframes = prepare_image_frames(
+        tall_buf.getvalue(), max_bytes=10_000_000, max_pixels=25_000_000, max_dimension=1280, max_frames=6,
+    )
+    assert tall_anim is False and tframes == 1 and th == 2560 and tw == 512
+
+    normal_buf = BytesIO()
+    Image.new('RGB', (2000, 1000), 'white').save(normal_buf, format='PNG')
+    _, _, nw, nh, _ = prepare_image_frames(
+        normal_buf.getvalue(), max_bytes=10_000_000, max_pixels=25_000_000, max_dimension=1280, max_frames=6,
+    )
+    assert (nw, nh) == (1280, 640)
+
+    # 3. Full look pipeline persists frames=6 and distinguishes old frames=1 cache.
+    with Store(tmp_path / 'anim.sqlite3', now=lambda: 1_700_000_100.0) as store:
+        for mid in ('gif-new', 'gif-old-cache'):
+            raw = {
+                'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
+                'user_id': 70001, 'message_id': mid, 'time': 1_700_000_000.0,
+                'sender': {'nickname': '群友'}, 'message': [{'type': 'image', 'data': {'file': f'{mid}.gif'}}],
+            }
+            store.enqueue(parse_message(raw, own_message_ids=set()), raw, received_at=1_700_000_001.0)
+
+        async def fetch_gif(_data: dict, _max_bytes: int) -> bytes:
+            return gif_bytes
+
+        asset, _, _ = await load_look_image(
+            store, SCENE, LookArguments(message='gif-new'), ImageSettings(),
+            fake_ip_networks=(), fetch_media=fetch_gif,
+        )
+        assert asset.animated is True and asset.frames == 6
+        assert store.image(SCENE, 'gif-new', 1).frames == 6
+        shown = shown_image(SCENE, LookArguments(message='gif-new'), asset, pixels_reused=False, pixels_source='platform_download')
+        meta = json.loads(shown.split('\n', 1)[0])
+        assert meta['animated_frames'] == 6 and meta['animated_first_frame_only'] is False
+        assert '动图已提取 6 个关键帧拼图' in shown
+
+        described = await execute_look(
+            store, SCENE, LookArguments(message='gif-new'), ImageSettings(),
+            model_name='synthetic-vision', describe=lambda _asset: asyncio.sleep(0, result='多帧描述'),
+            fake_ip_networks=(), fetch_media=fetch_gif,
+        )
+        desc_meta = json.loads(described.split('\n', 1)[0])
+        assert desc_meta['animated_frames'] == 6 and desc_meta['animated_first_frame_only'] is False
+        assert '动图已提取 6 个关键帧拼图' in described
+
+        # Legacy cached animated image with frames=1 still reports first-frame-only truthfully.
+        store.save_image(SCENE, 'gif-old-cache', 1, ImageAsset(
+            jpeg=asset.jpeg, width=80, height=60, animated=True, fetched_at=1_700_000_050.0, frames=1,
+        ))
+        old_shown = shown_image(SCENE, LookArguments(message='gif-old-cache'),
+                                store.image(SCENE, 'gif-old-cache', 1), pixels_reused=True, pixels_source='cache')
+        old_meta = json.loads(old_shown.split('\n', 1)[0])
+        assert old_meta['animated_first_frame_only'] is True and 'animated_frames' not in old_meta
+        assert '动图只有第一帧' in old_shown
+
+
+@pytest.mark.asyncio
+async def test_parse_forward_content_and_controlled_group_file_download(monkeypatch):
+    from len_bot.next.platform import platform_tools
+    from len_bot.next.platform.platform_tools import download_group_file, parse_forward
+
+    raw = {'status': 'ok', 'retcode': 0, 'data': {'messages': [{
+        'sender': {'user_id': 70001, 'nickname': '甲', 'card': ''},
+        'time': 1790000000,
+        'content': [{'type': 'text', 'data': {'text': '来自 content 字段'}}],
+    }]}}
+    nodes = parse_forward(raw)
+    assert len(nodes) == 1 and nodes[0].segments[0].data == {'text': '来自 content 字段'}
+
+    seen = []
+
+    async def fake_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+        seen.append((url, byte_limit('application/octet-stream', b'')))
+        return url, 'application/octet-stream', b'controlled-bytes'
+
+    async def call_ok(_action, _params):
+        return {'status': 'ok', 'retcode': 0, 'data': {'url': 'https://files.example/doc.bin'}}
+
+    async def call_bad_url(_action, _params):
+        return {'status': 'ok', 'retcode': 0, 'data': {'url': 'https://user:pass@files.example/doc.bin'}}
+
+    monkeypatch.setattr(platform_tools, 'fetch_public', fake_fetch_public)
+    assert await download_group_file(call_ok, '80001', '/a1', 102, 512) == b'controlled-bytes'
+    assert seen == [('https://files.example/doc.bin', 512)]
+    with pytest.raises(ValueError, match='credentials'):
+        await download_group_file(call_bad_url, '80001', '/a1', 102, 512)
