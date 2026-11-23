@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, ref } from 'vue'
+import { computed, onActivated, onDeactivated, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useEventListener } from '@vueuse/core'
+import { ChevronRight } from '@lucide/vue'
 import Button from './Button.vue'
+import CodeBlock from './CodeBlock.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -10,18 +12,25 @@ const props = withDefaults(
     saving?: boolean
     /** Error text of the last failed save, kept until the next attempt. */
     error?: string | null
+    /** Optional full error body shown when expanded. */
+    rawError?: string | null
     /** Blocks saving, such as when a required field is empty. */
     invalid?: boolean
     /** Text of the save button when saving also performs another step. */
     saveLabel?: string
   }>(),
-  { error: null, saveLabel: undefined },
+  { error: null, rawError: null, saveLabel: undefined },
 )
 const emit = defineEmits<{ save: []; discard: [] }>()
 
 const { t } = useI18n()
 const mac = /Mac|iPhone|iPad/.test(navigator.platform)
 const canSave = computed(() => props.dirty && !props.saving && !props.invalid)
+const hasRaw = computed(() =>
+  Boolean(props.error && props.rawError && props.rawError.trim() && props.rawError !== props.error),
+)
+const showRaw = ref(false)
+watch([() => props.error, () => props.rawError], () => (showRaw.value = false))
 // A bar inside a hidden KeepAlive page keeps its draft but must not answer the shortcut.
 const active = ref(true)
 onActivated(() => (active.value = true))
@@ -49,13 +58,30 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
           :class="error ? 'bg-error' : 'bg-warning'"
           aria-hidden="true"
         />
-        <p
-          class="min-w-0 flex-1 text-sm"
-          :class="error ? 'line-clamp-2 font-medium text-error' : 'truncate text-ink-2'"
-          :title="error ?? undefined"
-        >
-          {{ error ?? t('common.unsaved') }}
-        </p>
+        <div class="min-w-0 flex-1">
+          <p
+            class="min-w-0 text-sm"
+            :class="error ? 'line-clamp-2 font-medium text-error' : 'truncate text-ink-2'"
+            :title="error ?? undefined"
+          >
+            {{ error ?? t('common.unsaved') }}
+          </p>
+          <button
+            v-if="hasRaw"
+            type="button"
+            class="mt-0.5 inline-flex cursor-pointer items-center gap-0.5 rounded-sm text-xs font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
+            :aria-expanded="showRaw"
+            @click="showRaw = !showRaw"
+          >
+            <ChevronRight
+              :size="13"
+              class="transition-transform duration-150"
+              :class="showRaw && 'rotate-90'"
+              aria-hidden="true"
+            />
+            {{ t('common.rawError') }}
+          </button>
+        </div>
       </div>
       <div class="ml-auto flex shrink-0 items-center gap-2">
         <Button variant="ghost" size="sm" :disabled="saving" @click="emit('discard')">
@@ -67,6 +93,9 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
             {{ mac ? '⌘S' : 'Ctrl S' }}
           </span>
         </Button>
+      </div>
+      <div v-if="showRaw && hasRaw" class="w-full pt-1">
+        <CodeBlock :code="rawError!" :max-lines="10" />
       </div>
     </div>
   </Transition>

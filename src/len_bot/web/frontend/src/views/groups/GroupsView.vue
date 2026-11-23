@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, provide, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, provide, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMediaQuery } from '@vueuse/core'
@@ -22,13 +22,14 @@ import AddGroupDialog from './AddGroupDialog.vue'
 import GroupHeader from './GroupHeader.vue'
 import GroupList from './GroupList.vue'
 import { groupTabs, isGroupTab, lastGroupTab, type GroupTab } from './route'
-import LiveTab from './live/LiveTab.vue'
-import SessionTab from './session/SessionTab.vue'
-import SettingsTab from './settings/SettingsTab.vue'
-import LearningTab from './learning/LearningTab.vue'
-import MemoryTab from './memory/MemoryTab.vue'
-import ReferenceTab from './reference/ReferenceTab.vue'
-import TasksTab from './tasks/TasksTab.vue'
+
+const LiveTab = defineAsyncComponent(() => import('./live/LiveTab.vue'))
+const SessionTab = defineAsyncComponent(() => import('./session/SessionTab.vue'))
+const SettingsTab = defineAsyncComponent(() => import('./settings/SettingsTab.vue'))
+const LearningTab = defineAsyncComponent(() => import('./learning/LearningTab.vue'))
+const MemoryTab = defineAsyncComponent(() => import('./memory/MemoryTab.vue'))
+const ReferenceTab = defineAsyncComponent(() => import('./reference/ReferenceTab.vue'))
+const TasksTab = defineAsyncComponent(() => import('./tasks/TasksTab.vue'))
 
 const { t } = useI18n()
 const route = useRoute()
@@ -88,8 +89,8 @@ const dirty = reactive({ settings: false, learning: false, memory: false, tasks:
 useUnsavedChanges(
   computed(() => Object.values(dirty).some(Boolean)),
   {
-    // The tasks tab asks before it changes its own view (`tab`) or task (`id`).
-    keep: ['tab', 'id'],
+    // Inner tabs and filters handle their own unsaved prompts or read-only views.
+    keep: ['tab', 'id', 'kind', 'filter'],
     onDiscard: () => Object.assign(dirty, { settings: false, learning: false, memory: false, tasks: false }),
   },
 )

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpRight, ChevronDown, Copy } from '@lucide/vue'
 import type { LogRecord } from '../../../api/logs'
@@ -14,11 +14,11 @@ import { sceneSecondaryId } from '../draft'
 import { idFields, seconds, severity, useLogLabels } from './labels'
 
 const props = defineProps<{ item: LogRecord; timeZone?: string; turn?: string }>()
+const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ filter: [key: 'turn' | 'plugin' | 'task' | 'scene', value: string] }>()
 
 const { t } = useI18n()
 const labels = useLogLabels()
-const open = ref(false)
 const tone = computed(() => severity(props.item))
 const title = computed(() => labels.title(props.item))
 /** The message says more than the event name when both are present. */
@@ -91,12 +91,20 @@ async function copy() {
       >
         <IconButton :icon="Copy" :label="t('logs.copy')" size="sm" variant="ghost" @click="copy" />
       </span>
-      <ChevronDown
-        :size="15"
-        class="mt-1.5 shrink-0 text-subtle transition-transform"
-        :class="open && 'rotate-180'"
-        aria-hidden="true"
-      />
+      <button
+        type="button"
+        class="mt-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+        :aria-expanded="open"
+        :aria-label="open ? t('common.collapse') : t('common.expand')"
+        @click="open = !open"
+      >
+        <ChevronDown
+          :size="15"
+          class="transition-transform"
+          :class="open && 'rotate-180'"
+          aria-hidden="true"
+        />
+      </button>
     </div>
     <p v-if="detail" class="min-w-0 text-sm break-words text-ink-2" :class="!open && 'line-clamp-2'">
       {{ detail }}

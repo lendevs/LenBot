@@ -7,14 +7,29 @@ import MarkdownSpans from './MarkdownSpans.vue'
 const props = defineProps<{ text: string }>()
 
 const parsed = computed(() => blocks(props.text))
+const headingClass = (level: number) => {
+  if (level === 1) return 'mt-2 text-lg font-semibold tracking-tight text-ink first:mt-0'
+  if (level === 2) return 'mt-1.5 text-base font-semibold tracking-tight text-ink first:mt-0'
+  if (level === 3) return 'mt-1 text-sm font-semibold text-ink first:mt-0'
+  return 'mt-0.5 text-xs font-semibold tracking-wide text-ink-2 first:mt-0'
+}
 </script>
 
 <template>
   <div class="flex min-w-0 flex-col gap-2.5 break-words">
     <template v-for="(block, index) in parsed" :key="index">
-      <p v-if="block.kind === 'heading'" class="font-semibold text-ink">
+      <p v-if="block.kind === 'heading'" :class="headingClass(block.level)">
         <MarkdownSpans :spans="block.spans" />
       </p>
+      <blockquote
+        v-else-if="block.kind === 'quote'"
+        class="border-l-2 border-line-strong bg-fill/50 py-1.5 pr-3 pl-3.5 text-ink-2"
+      >
+        <template v-for="(line, row) in block.lines" :key="row">
+          <br v-if="row" />
+          <MarkdownSpans :spans="line" />
+        </template>
+      </blockquote>
       <hr v-else-if="block.kind === 'rule'" class="border-line" />
       <pre
         v-else-if="block.kind === 'code'"

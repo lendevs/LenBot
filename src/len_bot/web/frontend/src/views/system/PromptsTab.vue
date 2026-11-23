@@ -51,14 +51,53 @@ const document = useQuery({
   staleTime: Infinity,
 })
 const draft = ref('')
+const baseName = ref<string | undefined>(undefined)
+const baseText = ref<string | null>(null)
+const remoteUpdated = ref(false)
+const dirty = computed(
+  () => Boolean(document.data.value) && baseText.value !== null && draft.value !== baseText.value,
+)
+function reloadRemote() {
+  const next = document.data.value
+  if (!next) return
+  baseName.value = next.name
+  baseText.value = next.text
+  draft.value = next.text
+  remoteUpdated.value = false
+}
 watch(
   () => document.data.value,
   (next) => {
-    if (next) draft.value = next.text
+    if (!next) {
+      if (!name.value) {
+        baseName.value = undefined
+        baseText.value = null
+        draft.value = ''
+        remoteUpdated.value = false
+      }
+      return
+    }
+    if (baseName.value !== next.name || baseText.value === null) {
+      baseName.value = next.name
+      baseText.value = next.text
+      draft.value = next.text
+      remoteUpdated.value = false
+      return
+    }
+    if (next.text === baseText.value) {
+      remoteUpdated.value = false
+      return
+    }
+    if (!dirty.value) {
+      baseText.value = next.text
+      draft.value = next.text
+      remoteUpdated.value = false
+      return
+    }
+    remoteUpdated.value = true
   },
   { immediate: true },
 )
-const dirty = computed(() => Boolean(document.data.value) && draft.value !== document.data.value!.text)
 useUnsavedChanges(dirty, { keep: ['tab'] })
 
 const outdated = computed(() => {
@@ -81,7 +120,10 @@ function adopt(summary: PromptSummary, text: string) {
     text,
     edited: text !== current.default,
   })
+  baseName.value = current.name
+  baseText.value = text
   draft.value = text
+  remoteUpdated.value = false
   void readPendingRestart()
 }
 const save = useMutation({
@@ -119,9 +161,15 @@ const keep = useMutation({
       detail: describeError(error, t('ui.error.network')).message,
     }),
 })
-const saveError = computed(() =>
-  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+const saveDescribed = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')) : null,
 )
+const saveError = computed(() => saveDescribed.value?.message ?? null)
+const saveRawError = computed(() => {
+  const described = saveDescribed.value
+  if (!described || described.raw === null || described.raw === described.message) return null
+  return described.status === null ? described.raw : `HTTP ${described.status}\n${described.raw}`
+})
 </script>
 
 <template>
@@ -192,6 +240,16 @@ const saveError = computed(() =>
             {{ t('system.prompts.restore') }}
           </Button>
         </div>
+        <div
+          v-if="remoteUpdated"
+          role="status"
+          class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+        >
+          <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+          <Button size="sm" variant="ghost" @click="reloadRemote">
+            {{ t('ui.draft.reloadRemote') }}
+          </Button>
+        </div>
         <Textarea
           v-model="draft"
           :rows="18"
@@ -210,9 +268,10 @@ const saveError = computed(() =>
       :dirty="dirty"
       :saving="save.isPending.value"
       :error="saveError"
+      :raw-error="saveRawError"
       :invalid="missing.length > 0"
       @save="save.mutate(draft)"
-      @discard="draft = document.data.value?.text ?? ''"
+      @discard="reloadRemote"
     />
   </div>
 </template>
