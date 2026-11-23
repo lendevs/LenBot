@@ -12,6 +12,7 @@ defineProps<{
   /** False when the plugin's folder cannot be read, so its parameters are unknown. */
   readable: boolean
   sceneChoices: string[]
+  enabledScenes?: string[]
   configured: Record<string, boolean>
   problems: Record<string, string>
 }>()
@@ -26,6 +27,7 @@ const { t } = useI18n()
       v-model="draft"
       :fields="fields"
       :scene-choices="sceneChoices"
+      :enabled-scenes="enabledScenes"
       :configured="configured"
       :problems="problems"
     />

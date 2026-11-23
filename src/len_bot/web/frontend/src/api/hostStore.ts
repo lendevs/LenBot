@@ -32,78 +32,154 @@ export const host = reactive<HostStore>({
   pluginUpdates: 0,
 })
 
-const reads = { state: 0, titles: 0, overview: 0, restart: 0, updates: 0, pluginUpdates: 0 }
-
-export async function readHostState(): Promise<void> {
-  const own = ++reads.state
-  try {
-    const value = await http.get<HostState>('/api/host/state')
-    if (own !== reads.state) return
-    host.state = value
-    host.stateError = null
-  } catch (error) {
-    if (own === reads.state) host.stateError = error
-  }
+export interface ReadOptions {
+  /** Skip fetching when the last successful read is newer than `maxAge` milliseconds. */
+  maxAge?: number
 }
 
-export async function readSceneTitles(): Promise<void> {
-  const own = ++reads.titles
-  try {
-    const value = await http.get<SceneTitles>('/api/host/scene-titles')
-    if (own !== reads.titles) return
-    Object.assign(sceneTitles, value.titles)
-    host.members = value.members
-    host.titleErrors = value.errors
-  } catch (error) {
-    if (own === reads.titles)
-      host.titleErrors = { '': error instanceof Error ? error.message : String(error) }
-  }
+type ResourceKey = 'state' | 'titles' | 'overview' | 'restart' | 'updates' | 'pluginUpdates'
+
+const reads: Record<ResourceKey, number> = {
+  state: 0,
+  titles: 0,
+  overview: 0,
+  restart: 0,
+  updates: 0,
+  pluginUpdates: 0,
+}
+const fetchedAt: Record<ResourceKey, number> = {
+  state: 0,
+  titles: 0,
+  overview: 0,
+  restart: 0,
+  updates: 0,
+  pluginUpdates: 0,
+}
+const inflight: Partial<Record<ResourceKey, Promise<void>>> = {}
+
+function maxAgeOf(options?: ReadOptions | unknown): number {
+  return options && typeof options === 'object' && 'maxAge' in options && typeof options.maxAge === 'number'
+    ? options.maxAge
+    : 0
 }
 
-export async function readOverview(): Promise<void> {
-  const own = ++reads.overview
-  try {
-    const value = await http.get<Record<string, unknown>>('/api/host/overview')
-    if (own !== reads.overview) return
-    host.overview = value
-    host.overviewError = null
-  } catch (error) {
-    if (own === reads.overview) host.overviewError = error
+function runRead(
+  key: ResourceKey,
+  options: ReadOptions | unknown,
+  task: (own: number) => Promise<boolean>,
+): Promise<void> {
+  const maxAge = maxAgeOf(options)
+  if (maxAge > 0) {
+    if (inflight[key]) return inflight[key]!
+    if (fetchedAt[key] > 0 && Date.now() - fetchedAt[key] < maxAge) return Promise.resolve()
   }
+  const own = ++reads[key]
+  const promise = task(own)
+    .then((ok) => {
+      if (ok && own === reads[key]) fetchedAt[key] = Date.now()
+    })
+    .finally(() => {
+      if (inflight[key] === promise) delete inflight[key]
+    })
+  inflight[key] = promise
+  return promise
 }
 
-export async function readPendingRestart(): Promise<void> {
-  const own = ++reads.restart
-  try {
-    const value = await http.get<Record<string, unknown>>('/api/host/pending-restart')
-    if (own === reads.restart) host.restart = value
-  } catch (error) {
-    if (own === reads.restart) host.restart = { error }
-  }
+export function readHostState(options?: ReadOptions | unknown): Promise<void> {
+  return runRead('state', options, async (own) => {
+    try {
+      const value = await http.get<HostState>('/api/host/state')
+      if (own !== reads.state) return false
+      host.state = value
+      host.stateError = null
+      return true
+    } catch (error) {
+      if (own === reads.state) host.stateError = error
+      return false
+    }
+  })
 }
 
-export async function readUpdates(): Promise<void> {
-  const own = ++reads.updates
-  try {
-    const value = await http.get<Record<string, unknown>>('/api/host/updates')
-    if (own === reads.updates) host.updates = value
-  } catch {
-    if (own === reads.updates) host.updates = null
-  }
+export function readSceneTitles(options?: ReadOptions | unknown): Promise<void> {
+  return runRead('titles', options, async (own) => {
+    try {
+      const value = await http.get<SceneTitles>('/api/host/scene-titles')
+      if (own !== reads.titles) return false
+      Object.assign(sceneTitles, value.titles)
+      host.members = value.members
+      host.titleErrors = value.errors
+      return true
+    } catch (error) {
+      if (own === reads.titles)
+        host.titleErrors = { '': error instanceof Error ? error.message : String(error) }
+      return false
+    }
+  })
 }
 
-export async function readPluginUpdates(): Promise<void> {
-  const own = ++reads.pluginUpdates
-  try {
-    const value = await http.get<{ prepared: boolean }[]>('/api/host/plugin-updates')
-    if (own === reads.pluginUpdates) host.pluginUpdates = value.filter((item) => !item.prepared).length
-  } catch {
-    if (own === reads.pluginUpdates) host.pluginUpdates = 0
-  }
+export function readOverview(options?: ReadOptions | unknown): Promise<void> {
+  return runRead('overview', options, async (own) => {
+    try {
+      const value = await http.get<Record<string, unknown>>('/api/host/overview')
+      if (own !== reads.overview) return false
+      host.overview = value
+      host.overviewError = null
+      return true
+    } catch (error) {
+      if (own === reads.overview) host.overviewError = error
+      return false
+    }
+  })
+}
+
+export function readPendingRestart(options?: ReadOptions | unknown): Promise<void> {
+  return runRead('restart', options, async (own) => {
+    try {
+      const value = await http.get<Record<string, unknown>>('/api/host/pending-restart')
+      if (own !== reads.restart) return false
+      host.restart = value
+      return true
+    } catch (error) {
+      if (own === reads.restart) host.restart = { error }
+      return false
+    }
+  })
+}
+
+export function readUpdates(options?: ReadOptions | unknown): Promise<void> {
+  return runRead('updates', options, async (own) => {
+    try {
+      const value = await http.get<Record<string, unknown>>('/api/host/updates')
+      if (own !== reads.updates) return false
+      host.updates = value
+      return true
+    } catch {
+      if (own === reads.updates) host.updates = null
+      return false
+    }
+  })
+}
+
+export function readPluginUpdates(options?: ReadOptions | unknown): Promise<void> {
+  return runRead('pluginUpdates', options, async (own) => {
+    try {
+      const value = await http.get<{ prepared: boolean }[]>('/api/host/plugin-updates')
+      if (own !== reads.pluginUpdates) return false
+      host.pluginUpdates = value.filter((item) => !item.prepared).length
+      return true
+    } catch {
+      if (own === reads.pluginUpdates) host.pluginUpdates = 0
+      return false
+    }
+  })
 }
 
 export function clearHost(): void {
-  for (const key of Object.keys(reads) as (keyof typeof reads)[]) reads[key] += 1
+  for (const key of Object.keys(reads) as ResourceKey[]) {
+    reads[key] += 1
+    fetchedAt[key] = 0
+    delete inflight[key]
+  }
   Object.assign(host, {
     state: null,
     stateError: null,
@@ -111,6 +187,7 @@ export function clearHost(): void {
     titleErrors: {},
     overview: null,
     overviewError: null,
+    updates: null,
     pluginUpdates: 0,
     members: {},
   })

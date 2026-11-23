@@ -97,6 +97,16 @@ const saveError = computed(
     conflict.value ??
     (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null),
 )
+watch(
+  draft,
+  () => {
+    if (dirty.value) {
+      conflict.value = null
+      if (save.isError.value) save.reset()
+    }
+  },
+  { deep: true },
+)
 </script>
 
 <template>
@@ -171,11 +181,13 @@ const saveError = computed(
       :dirty="dirty || Boolean(conflict)"
       :saving="save.isPending.value"
       :error="saveError"
-      @save="save.mutate()"
+      :invalid="!dirty"
+      @save="dirty && save.mutate()"
       @discard="
         () => {
           adopt(snapshot)
           conflict = null
+          save.reset()
         }
       "
     />

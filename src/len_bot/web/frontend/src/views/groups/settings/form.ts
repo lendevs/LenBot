@@ -171,12 +171,12 @@ export function useSettingsForm(scene: Ref<string>) {
   // Another group starts from its own saved settings, whichever of the two watchers runs first.
   watch(scene, adopt)
 
-  const required = t('common.required')
   /** Field errors by a dotted path such as `quiet.start`. */
   const errors = computed<Record<string, string>>(() => {
     const value = draft.value
     const found: Record<string, string> = {}
     if (!value) return found
+    const required = t('common.required')
     const attention = value.scene.attention
     const clock = (key: string, text: string | undefined) => {
       if (!text) found[key] = required

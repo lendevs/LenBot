@@ -19,9 +19,32 @@ export function useChat(source: ChatSource) {
   let socket: WebSocket | null = null
   let retry = 0
   let timer = 0
+  let refreshTimer = 0
+  let lastRefresh = 0
+  const REFRESH_INTERVAL_MS = 300
 
-  function refresh() {
+  function runRefresh() {
+    lastRefresh = Date.now()
     void client.invalidateQueries({ queryKey: keys.chat.all(source.id) })
+  }
+  function refresh(immediate = false) {
+    if (immediate) {
+      window.clearTimeout(refreshTimer)
+      refreshTimer = 0
+      runRefresh()
+      return
+    }
+    const wait = lastRefresh + REFRESH_INTERVAL_MS - Date.now()
+    if (wait <= 0) {
+      window.clearTimeout(refreshTimer)
+      refreshTimer = 0
+      runRefresh()
+    } else if (!refreshTimer) {
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = 0
+        runRefresh()
+      }, wait)
+    }
   }
   function connect() {
     window.clearTimeout(timer)
@@ -32,7 +55,7 @@ export function useChat(source: ChatSource) {
       if (socket !== connection) return
       live.value = 'connected'
       retry = 0
-      refresh()
+      refresh(true)
     }
     connection.onmessage = () => {
       if (socket === connection) refresh()
@@ -54,6 +77,8 @@ export function useChat(source: ChatSource) {
   onMounted(connect)
   onBeforeUnmount(() => {
     window.clearTimeout(timer)
+    window.clearTimeout(refreshTimer)
+    refreshTimer = 0
     const old = socket
     socket = null
     old?.close()

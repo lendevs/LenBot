@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useMutation } from '@tanstack/vue-query'
 import { ArrowRight, MessagesSquare, Plus, Search } from '@lucide/vue'
 import { hostApi, type HostState, type WakeLevel } from '../../api/host'
 import { host, readHostState } from '../../api/hostStore'
@@ -31,28 +30,58 @@ const shown = computed(() => {
 })
 const members = (scene: string) => (host.members as Record<string, number>)[scene]
 
-const chat = useMutation({
-  mutationFn: ({ scene, enabled }: { scene: string; enabled: boolean }) => hostApi.setChat(scene, enabled),
-  onSuccess: (_, { scene, enabled }) =>
-    toast.success(t(enabled ? 'groups.chatOn' : 'groups.chatOff', { name: groupLabel(scene) })),
-  onError: (error) =>
-    toast.error(t('groups.chatFailed'), { detail: describeError(error, t('ui.error.network')).message }),
-  onSettled: () => void readHostState(),
-})
-const open = useMutation({
-  mutationFn: ({ scene, enabled }: { scene: string; enabled: boolean }) => hostApi.setOpen(scene, enabled),
-  onSuccess: (_, { scene, enabled }) =>
-    toast.success(t(enabled ? 'groups.opened' : 'groups.closed', { name: groupLabel(scene) })),
-  onError: (error) =>
-    toast.error(t('groups.openFailed'), { detail: describeError(error, t('ui.error.network')).message }),
-  onSettled: () => void readHostState(),
-})
-const opening = (scene: string) => open.isPending.value && open.variables.value?.scene === scene
+/** Per-scene in-flight toggles so switching one group never locks controls on other groups. */
+const pendingOpen = reactive(new Map<string, boolean>())
+const pendingChat = reactive(new Map<string, boolean>())
+const pendingLevel = reactive(new Map<string, WakeLevel>())
+
+async function toggleOpen(scene: string, enabled: boolean) {
+  if (pendingOpen.has(scene)) return
+  pendingOpen.set(scene, enabled)
+  try {
+    await hostApi.setOpen(scene, enabled)
+    toast.success(t(enabled ? 'groups.opened' : 'groups.closed', { name: groupLabel(scene) }))
+  } catch (error) {
+    toast.error(t('groups.openFailed'), { detail: describeError(error, t('ui.error.network')).message })
+  } finally {
+    await readHostState()
+    pendingOpen.delete(scene)
+  }
+}
+async function toggleChat(scene: string, enabled: boolean) {
+  if (pendingChat.has(scene)) return
+  pendingChat.set(scene, enabled)
+  try {
+    await hostApi.setChat(scene, enabled)
+    toast.success(t(enabled ? 'groups.chatOn' : 'groups.chatOff', { name: groupLabel(scene) }))
+  } catch (error) {
+    toast.error(t('groups.chatFailed'), { detail: describeError(error, t('ui.error.network')).message })
+  } finally {
+    await readHostState()
+    pendingChat.delete(scene)
+  }
+}
+async function changeLevel(scene: string, value: WakeLevel) {
+  if (pendingLevel.has(scene)) return
+  pendingLevel.set(scene, value)
+  try {
+    await hostApi.setWakeLevel(scene, value)
+  } catch (error) {
+    toast.error(t('overview.groups.levelFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    })
+  } finally {
+    await readHostState()
+    pendingLevel.delete(scene)
+  }
+}
+
+const opening = (scene: string) => pendingOpen.has(scene)
 const isOpen = (item: HostState['scenes'][number]) =>
-  opening(item.scene) ? Boolean(open.variables.value?.enabled) : item.scene_open
-const switching = (scene: string) => chat.isPending.value && chat.variables.value?.scene === scene
+  pendingOpen.has(item.scene) ? pendingOpen.get(item.scene)! : item.scene_open
+const switching = (scene: string) => pendingChat.has(scene)
 const chatOn = (item: HostState['scenes'][number]) =>
-  switching(item.scene) ? Boolean(chat.variables.value?.enabled) : item.chat_enabled
+  pendingChat.has(item.scene) ? pendingChat.get(item.scene)! : item.chat_enabled
 
 const levels = computed(() =>
   (['active', 'moderate', 'quiet'] as const).map((value) => ({
@@ -60,18 +89,9 @@ const levels = computed(() =>
     label: t(`overview.groups.levels.${value}`),
   })),
 )
-const level = useMutation({
-  mutationFn: ({ scene, value }: { scene: string; value: WakeLevel }) => hostApi.setWakeLevel(scene, value),
-  onError: (error) =>
-    toast.error(t('overview.groups.levelFailed'), {
-      detail: describeError(error, t('ui.error.network')).message,
-    }),
-  onSettled: () => void readHostState(),
-})
+const leveling = (scene: string) => pendingLevel.has(scene)
 const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
-  level.isPending.value && level.variables.value?.scene === item.scene
-    ? level.variables.value.value
-    : (item.wake_level ?? '')
+  pendingLevel.has(item.scene) ? pendingLevel.get(item.scene)! : (item.wake_level ?? '')
 </script>
 
 <template>
@@ -147,9 +167,9 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
             <Switch
               :model-value="isOpen(item)"
               :loading="opening(item.scene)"
-              :disabled="!state.connection.accepting"
+              :disabled="!state.connection.accepting || opening(item.scene)"
               :aria-label="t('overview.groups.open', { name: groupLabel(item.scene) })"
-              @update:model-value="(enabled: boolean) => open.mutate({ scene: item.scene, enabled })"
+              @update:model-value="(enabled: boolean) => void toggleOpen(item.scene, enabled)"
             />
           </div>
           <div class="flex min-w-0 flex-wrap items-center gap-2 pl-11">
@@ -157,11 +177,9 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
               :model-value="levelOf(item)"
               :options="levels"
               size="sm"
-              :disabled="level.isPending.value || !isOpen(item)"
+              :disabled="leveling(item.scene) || opening(item.scene) || !isOpen(item)"
               :label="t('overview.groups.level', { name: groupLabel(item.scene) })"
-              @update:model-value="
-                (value) => value && level.mutate({ scene: item.scene, value: value as WakeLevel })
-              "
+              @update:model-value="(value) => value && void changeLevel(item.scene, value as WakeLevel)"
             />
             <button
               type="button"
@@ -172,10 +190,12 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
                   : 'border-line bg-fill text-muted hover:bg-hover hover:text-ink'
               "
               :aria-pressed="chatOn(item)"
-              :disabled="!state.connection.accepting || switching(item.scene) || !isOpen(item)"
+              :disabled="
+                !state.connection.accepting || switching(item.scene) || opening(item.scene) || !isOpen(item)
+              "
               :title="t(chatOn(item) ? 'overview.groups.chatHint' : 'overview.groups.pluginsHint')"
               :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
-              @click="chat.mutate({ scene: item.scene, enabled: !item.chat_enabled })"
+              @click="void toggleChat(item.scene, !chatOn(item))"
             >
               {{ t(chatOn(item) ? 'overview.groups.modeChat' : 'overview.groups.modePlugins') }}
             </button>

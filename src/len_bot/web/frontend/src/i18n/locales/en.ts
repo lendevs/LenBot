@@ -406,6 +406,7 @@ export default {
         changed: 'Draft changed',
         restart: 'Restart with the current draft',
         restartFailed: 'Could not restart',
+        readFailed: 'Could not check running trial sessions',
       },
       more: 'More settings',
       preview: {
@@ -1754,6 +1755,7 @@ export default {
       url: 'API address',
       key: 'API key',
       keyKept: 'Set; leave empty to keep it',
+      keyReenter: 'Protocol, address or proxy changed; enter the API key again',
       proxy: 'Proxy',
     },
     probe: {
@@ -1810,6 +1812,9 @@ export default {
       outputField: 'Output limit field',
       language: 'Language',
       autoLanguage: 'Detect',
+      configureVision: 'Configure standalone vision',
+      editVision: 'Expand standalone vision',
+      visionBackupActive: 'Backup configured; the chat model currently reads images directly',
     },
     vectors: {
       memory: 'Memory and reference embeddings',
@@ -2066,6 +2071,8 @@ export default {
       integer: '{name} must be a whole number',
       badJson: '{name} is not valid JSON: {error}',
       notObjects: '{name} must be a JSON list of objects',
+      sceneNotEnabled: 'Plugin not enabled',
+      sceneNotEnabledHint: 'Enable this plugin in {names} under Groups for it to take effect',
     },
     scenes: {
       count: 'Used in {n} of {total} groups',

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useMutation } from '@tanstack/vue-query'
+import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { ArrowUpRight, MessageCircle, RotateCcw, Square } from '@lucide/vue'
 import { personasApi, type PersonaRole, type Trial } from '../../../api/personas'
+import { keys } from '../../../api/query'
 import { trialSource, trialsApi } from '../../../api/trials'
 import ChatPanel from '../../playground/chat/ChatPanel.vue'
 import { groupLabel } from '../../../layouts/shell/scenes'
@@ -21,6 +22,7 @@ import { useProfile } from './profileForm'
 defineProps<{ role: PersonaRole; scene: string }>()
 
 const { t } = useI18n()
+const client = useQueryClient()
 const groupId = (value: string) => value.split(':').slice(2).join(':') || value
 const form = useProfile()
 const context = ref('0')
@@ -37,18 +39,28 @@ const trial = ref<Trial | null>(null)
 /** The draft the running trial started from; later edits show as a change until it restarts. */
 const started = ref('')
 const changed = computed(() => trial.value !== null && current() !== started.value)
+const listError = ref<unknown>(null)
+let mounted = true
+onBeforeUnmount(() => (mounted = false))
 
 // The host keeps one trial running; after a reload this role's draft trial is picked up again.
-onMounted(async () => {
+async function loadRunning() {
+  listError.value = null
   const directory = form.saved.data.value?.directory
-  const running = (await trialsApi.list()).items.find(
-    (item) => item.active && item.draft_source === directory,
-  )
-  if (running && !trial.value) {
-    started.value = current()
-    trial.value = running
+  if (!directory) return
+  try {
+    const running = (await trialsApi.list()).items.find(
+      (item) => item.active && item.draft_source === directory,
+    )
+    if (mounted && running && !trial.value) {
+      started.value = current()
+      trial.value = running
+    }
+  } catch (error) {
+    if (mounted) listError.value = error
   }
-})
+}
+onMounted(() => void loadRunning())
 
 async function launch(scene: string) {
   const snapshot = current()
@@ -58,12 +70,17 @@ async function launch(scene: string) {
 }
 const start = useMutation({
   mutationFn: launch,
-  onSuccess: (value) => (trial.value = value),
+  onSuccess: (value) => {
+    listError.value = null
+    trial.value = value
+    void client.invalidateQueries({ queryKey: keys.trials() })
+  },
 })
 const restart = useMutation({
   mutationFn: async ({ id, scene }: { id: string; scene: string }) => {
     await personasApi.stopTrial(id)
     trial.value = null
+    void client.invalidateQueries({ queryKey: keys.chat.all(id) })
     return launch(scene)
   },
   onSuccess: (value) => (trial.value = value),
@@ -71,10 +88,15 @@ const restart = useMutation({
     toast.error(t('personas.detail.trial.restartFailed'), {
       detail: describeError(error, t('ui.error.network')).message,
     }),
+  onSettled: () => void client.invalidateQueries({ queryKey: keys.trials() }),
 })
 const stop = useMutation({
   mutationFn: (id: string) => personasApi.stopTrial(id),
-  onSuccess: () => (trial.value = null),
+  onSuccess: (_, id) => {
+    trial.value = null
+    void client.invalidateQueries({ queryKey: keys.chat.all(id) })
+    void client.invalidateQueries({ queryKey: keys.trials() })
+  },
   onError: (error) =>
     toast.error(t('personas.detail.trial.stopFailed'), {
       detail: describeError(error, t('ui.error.network')).message,
@@ -140,6 +162,12 @@ async function end() {
         <Select v-model="context" :options="contextOptions" />
       </Field>
     </FormSection>
+    <ErrorNote
+      v-if="listError"
+      :title="t('personas.detail.trial.readFailed')"
+      :error="listError"
+      :retry="loadRunning"
+    />
     <ErrorNote
       v-if="start.isError.value"
       :title="t('personas.detail.trial.startFailed')"

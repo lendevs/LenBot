@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, BookOpen, FileText, Plus, Trash2 } from '@lucide/vue'
+import { ArrowLeft, BookOpen, FileText, Plus, Search, Trash2 } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { personasApi, type KnowledgeListing } from '../../../api/personas'
 import { formatNumber } from '../../../i18n/format'
@@ -35,6 +35,14 @@ const listing = useQuery({
 const files = computed(() => listing.data.value?.files ?? [])
 const directory = computed(() => listing.data.value?.saved_path ?? '')
 const title = (filename: string) => filename.replace(/\.md$/, '')
+const search = ref('')
+const filteredFiles = computed(() => {
+  const words = search.value.trim().toLowerCase()
+  if (!words) return files.value
+  return files.value.filter((file) =>
+    [file.filename, title(file.filename), ...file.tags].some((part) => part.toLowerCase().includes(words)),
+  )
+})
 
 /** The document in the editor: a saved one with its saved text, or a new one (`filename` null). */
 const open = ref<{ filename: string | null; content: string } | null>(null)
@@ -69,27 +77,72 @@ const leave = async () =>
     tone: 'danger',
   })
 
-const reading = useMutation({
-  mutationFn: (filename: string) => personasApi.document(props.persona, directory.value, filename),
-  onSuccess: ({ content }, filename) => {
+let readSeq = 0
+let readController: AbortController | null = null
+const loadingFile = ref<string | null>(null)
+const readError = ref<unknown>(null)
+
+function cancelRead() {
+  readSeq += 1
+  readController?.abort()
+  readController = null
+  loadingFile.value = null
+}
+onBeforeUnmount(cancelRead)
+watch(
+  () => props.persona,
+  () => {
+    cancelRead()
+    readError.value = null
+  },
+)
+
+async function pick(filename: string) {
+  if (open.value?.filename === filename || loadingFile.value === filename) return
+  if (!(await leave())) return
+  cancelRead()
+  const seq = readSeq
+  const controller = new AbortController()
+  readController = controller
+  loadingFile.value = filename
+  readError.value = null
+  try {
+    const { content } = await personasApi.document(
+      props.persona,
+      directory.value,
+      filename,
+      controller.signal,
+    )
+    if (seq !== readSeq) return
     open.value = { filename, content }
     text.value = content
-  },
-})
-async function pick(filename: string) {
-  if (open.value?.filename === filename || !(await leave())) return
-  reading.mutate(filename)
+    save.reset()
+  } catch (error) {
+    if (seq !== readSeq || controller.signal.aborted) return
+    readError.value = error
+  } finally {
+    if (seq === readSeq) {
+      loadingFile.value = null
+      readController = null
+    }
+  }
 }
 async function create() {
   if (!(await leave())) return
+  cancelRead()
+  readError.value = null
   open.value = { filename: null, content: '' }
   name.value = ''
   text.value = ''
+  save.reset()
 }
 async function close() {
   if (!(await leave())) return
+  cancelRead()
+  readError.value = null
   open.value = null
   text.value = ''
+  save.reset()
 }
 
 function adopt(result: KnowledgeListing) {
@@ -176,50 +229,60 @@ function discard() {
         :title="t('personas.detail.knowledge.empty')"
         compact
       />
-      <ul v-else class="flex list-none flex-col gap-0.5">
-        <li v-for="file in files" :key="file.filename">
-          <button
-            type="button"
-            class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors focus-visible:focus-ring"
-            :class="open?.filename === file.filename ? 'bg-selected text-ink' : 'hover:bg-hover'"
-            :aria-current="open?.filename === file.filename || undefined"
-            @click="pick(file.filename)"
-          >
-            <FileText
-              :size="16"
-              class="shrink-0"
-              :class="open?.filename === file.filename ? 'text-ink' : 'text-muted'"
-              aria-hidden="true"
-            />
-            <span class="min-w-0 flex-1">
-              <span
-                class="block truncate text-sm text-ink"
-                :class="open?.filename === file.filename ? 'font-semibold' : 'font-medium'"
-              >
-                {{ title(file.filename) }}
+      <template v-else>
+        <Input
+          v-model="search"
+          type="search"
+          size="sm"
+          :icon="Search"
+          clearable
+          :placeholder="t('common.search')"
+          :aria-label="t('common.search')"
+        />
+        <p v-if="!filteredFiles.length" class="px-2 py-4 text-center text-sm text-muted">
+          {{ t('common.noResults') }}
+        </p>
+        <ul v-else class="flex list-none flex-col gap-0.5">
+          <li v-for="file in filteredFiles" :key="file.filename">
+            <button
+              type="button"
+              class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors focus-visible:focus-ring"
+              :class="open?.filename === file.filename ? 'bg-selected text-ink' : 'hover:bg-hover'"
+              :aria-current="open?.filename === file.filename || undefined"
+              @click="pick(file.filename)"
+            >
+              <FileText
+                :size="16"
+                class="shrink-0"
+                :class="open?.filename === file.filename ? 'text-ink' : 'text-muted'"
+                aria-hidden="true"
+              />
+              <span class="min-w-0 flex-1">
+                <span
+                  class="block truncate text-sm text-ink"
+                  :class="open?.filename === file.filename ? 'font-semibold' : 'font-medium'"
+                >
+                  {{ title(file.filename) }}
+                </span>
+                <span class="block truncate text-xs text-muted tabular">
+                  {{ t('personas.detail.knowledge.chars', { n: formatNumber(file.chars) }) }}
+                  <template v-if="file.index">
+                    ·
+                    {{
+                      file.index === 'indexed'
+                        ? t('personas.detail.knowledge.indexed', { n: formatNumber(file.chunks ?? 0) })
+                        : t(`personas.detail.knowledge.${file.index}`)
+                    }}
+                  </template>
+                  <template v-if="file.tags.length">· {{ file.tags.join(t('personas.separator')) }}</template>
+                </span>
               </span>
-              <span class="block truncate text-xs text-muted tabular">
-                {{ t('personas.detail.knowledge.chars', { n: formatNumber(file.chars) }) }}
-                <template v-if="file.index">
-                  ·
-                  {{
-                    file.index === 'indexed'
-                      ? t('personas.detail.knowledge.indexed', { n: formatNumber(file.chunks ?? 0) })
-                      : t(`personas.detail.knowledge.${file.index}`)
-                  }}
-                </template>
-                <template v-if="file.tags.length">· {{ file.tags.join(t('personas.separator')) }}</template>
-              </span>
-            </span>
-            <Spinner v-if="reading.isPending.value && reading.variables.value === file.filename" :size="14" />
-          </button>
-        </li>
-      </ul>
-      <ErrorNote
-        v-if="reading.isError.value"
-        :title="t('personas.detail.knowledge.openFailed')"
-        :error="reading.error.value"
-      />
+              <Spinner v-if="loadingFile === file.filename" :size="14" />
+            </button>
+          </li>
+        </ul>
+      </template>
+      <ErrorNote v-if="readError" :title="t('personas.detail.knowledge.openFailed')" :error="readError" />
     </aside>
 
     <div class="min-w-0 lg:pl-6" :class="!open && 'max-lg:hidden'">

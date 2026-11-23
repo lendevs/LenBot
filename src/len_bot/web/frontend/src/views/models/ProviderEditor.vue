@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Eye, EyeOff, Trash2 } from '@lucide/vue'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
+import IconButton from '../../ui/IconButton.vue'
 import Input from '../../ui/Input.vue'
 import Select from '../../ui/Select.vue'
 import ProbeTools from './ProbeTools.vue'
@@ -18,6 +19,7 @@ const emit = defineEmits<{ back: []; remove: [] }>()
 const { t } = useI18n()
 const form = useForm()
 const protocolTitle = useProtocolTitle()
+const reveal = ref(false)
 // Edited in place: the row belongs to the form's draft.
 const row = computed(() => form.providerFor(props.id) as ProviderRow)
 const apiOptions = computed(() =>
@@ -28,6 +30,17 @@ const apiOptions = computed(() =>
 )
 const errorOf = (field: 'name' | 'url' | 'key') =>
   form.problems.value.find((item) => item.provider === props.id && item.field === field)?.text
+const keyReentryNeeded = computed(
+  () => row.value.keyConfigured && !keyReusable(row.value) && !row.value.api_key.trim(),
+)
+const keyError = computed(() =>
+  keyReentryNeeded.value
+    ? (errorOf('key') ??
+      t('models.problems.keyAgain', { name: row.value.alias || t('models.providers.unnamed') }))
+    : row.value.keyConfigured
+      ? errorOf('key')
+      : undefined,
+)
 /** Search and read services have no model to test. */
 const WEB_ONLY = Object.values(SERVICE_PROVIDER).map((item) => item.api)
 </script>
@@ -61,18 +74,32 @@ const WEB_ONLY = Object.values(SERVICE_PROVIDER).map((item) => item.api)
       <Field :label="t('models.providers.url')" required wide :error="errorOf('url')">
         <Input v-model="row.base_url" type="url" mono placeholder="https://api.example.com/v1" />
       </Field>
-      <Field
-        :label="t('models.providers.key')"
-        required
-        :error="row.keyConfigured ? errorOf('key') : undefined"
-      >
+      <Field :label="t('models.providers.key')" required :error="keyError">
         <Input
           v-model="row.api_key"
-          type="password"
+          :type="reveal ? 'text' : 'password'"
           mono
           autocomplete="new-password"
-          :placeholder="keyReusable(row) ? t('models.providers.keyKept') : undefined"
-        />
+          :placeholder="
+            keyReusable(row)
+              ? t('models.providers.keyKept')
+              : keyReentryNeeded
+                ? t('models.providers.keyReenter')
+                : undefined
+          "
+        >
+          <template #suffix>
+            <span class="-mr-2 inline-flex">
+              <IconButton
+                :icon="reveal ? EyeOff : Eye"
+                :label="reveal ? t('ui.secret.hide') : t('ui.secret.show')"
+                variant="ghost"
+                size="sm"
+                @click="reveal = !reveal"
+              />
+            </span>
+          </template>
+        </Input>
       </Field>
       <Field :label="t('models.providers.proxy')">
         <Input v-model="row.proxy" type="url" mono placeholder="http://127.0.0.1:7890" />

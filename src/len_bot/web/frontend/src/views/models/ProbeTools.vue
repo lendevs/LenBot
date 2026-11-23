@@ -86,7 +86,14 @@ watch(
   <div class="flex flex-col gap-3">
     <div v-if="!binding && (chat || embedding)" class="grid gap-4 sm:grid-cols-2">
       <Field :label="t('models.probe.model')">
-        <ModelName v-model="testModel" :models="models" />
+        <ModelName
+          v-model="testModel"
+          :models="models"
+          can-refresh
+          :refresh-disabled="!ready"
+          :refreshing="list.isPending.value || Boolean(form.catalogLoading.value[row.id])"
+          @refresh="list.mutate()"
+        />
       </Field>
       <Field v-if="chat" :label="t('models.probe.kind')">
         <SegmentedControl v-model="kind" :options="kinds" block :label="t('models.probe.kind')" />

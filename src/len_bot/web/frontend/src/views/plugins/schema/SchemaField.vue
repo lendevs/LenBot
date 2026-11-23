@@ -20,20 +20,30 @@ const model = defineModel<DraftValue>({ required: true })
 const props = defineProps<{
   field: ConfigField
   sceneChoices: string[]
+  enabledScenes?: string[]
   configured?: boolean
   error?: string | null
 }>()
 
 const { t } = useI18n()
 const reveal = ref(false)
-const kept = computed(() => props.field.type === 'secret' && props.configured)
+const kept = computed(() => props.field.type === 'secret' && Boolean(props.configured))
+const cleared = computed(() => kept.value && model.value === null)
+const secretText = computed({
+  get: () => (typeof model.value === 'string' ? model.value : ''),
+  set: (value: string) => (model.value = value),
+})
 const options = computed(() => props.field.options ?? [])
 // SegmentedControl takes text values; number choices stay in a dropdown.
 const asSegments = computed(
   () => segmented(props.field) && options.value.every((option) => typeof option.value === 'string'),
 )
 const placeholder = computed(() =>
-  kept.value ? t('plugins.form.secretKept') : (props.field.placeholder ?? undefined),
+  cleared.value
+    ? t('ui.secret.willClear')
+    : kept.value
+      ? t('plugins.form.secretKept')
+      : (props.field.placeholder ?? undefined),
 )
 // Steppers help on a short integer range; for wide or decimal ranges they are noise.
 const steppers = computed(
@@ -65,14 +75,34 @@ const scenes = computed({
   <Field
     :label="fieldLabel(field)"
     :info="field.description || undefined"
-    :required="field.required && field.type !== 'boolean' && !kept"
+    :required="field.required && field.type !== 'boolean' && (!kept || cleared)"
     :error="error"
     :wide="wideField(field)"
     :inline="field.type === 'boolean'"
   >
     <template #label-end>
-      <span v-if="kept" class="ml-auto inline-flex">
-        <Badge tone="success">{{ t('plugins.form.saved') }}</Badge>
+      <span v-if="kept" class="ml-auto inline-flex items-center gap-2">
+        <template v-if="cleared">
+          <Badge tone="warning">{{ t('ui.secret.willClear') }}</Badge>
+          <button
+            type="button"
+            class="cursor-pointer rounded-sm text-xs font-medium text-primary hover:underline focus-visible:focus-ring"
+            @click="model = ''"
+          >
+            {{ t('ui.secret.keepSaved') }}
+          </button>
+        </template>
+        <template v-else>
+          <Badge tone="success">{{ t('plugins.form.saved') }}</Badge>
+          <button
+            v-if="!secretText"
+            type="button"
+            class="cursor-pointer rounded-sm text-xs font-medium text-muted transition-colors hover:text-error focus-visible:focus-ring"
+            @click="model = null"
+          >
+            {{ t('ui.secret.clearSaved') }}
+          </button>
+        </template>
       </span>
     </template>
     <Switch v-if="field.type === 'boolean'" v-model="flag" />
@@ -80,8 +110,19 @@ const scenes = computed({
       <SegmentedControl v-model="segment" :options="segments" :label="fieldLabel(field)" />
     </div>
     <Select v-else-if="field.options" v-model="choice" :options="options" />
-    <ScenePicker v-else-if="field.type === 'scene'" v-model="scenes" :choices="sceneChoices" single />
-    <ScenePicker v-else-if="field.type === 'scene_list'" v-model="scenes" :choices="sceneChoices" />
+    <ScenePicker
+      v-else-if="field.type === 'scene'"
+      v-model="scenes"
+      :choices="sceneChoices"
+      :enabled-scenes="enabledScenes"
+      single
+    />
+    <ScenePicker
+      v-else-if="field.type === 'scene_list'"
+      v-model="scenes"
+      :choices="sceneChoices"
+      :enabled-scenes="enabledScenes"
+    />
     <TagInput
       v-else-if="field.type === 'string_list'"
       v-model="list"
@@ -107,7 +148,7 @@ const scenes = computed({
     />
     <Input
       v-else-if="field.type === 'secret'"
-      v-model="text"
+      v-model="secretText"
       :type="reveal ? 'text' : 'password'"
       mono
       autocomplete="new-password"
@@ -117,7 +158,7 @@ const scenes = computed({
         <span class="-mr-2 inline-flex">
           <IconButton
             :icon="reveal ? EyeOff : Eye"
-            :label="reveal ? t('plugins.form.hide') : t('plugins.form.show')"
+            :label="reveal ? t('ui.secret.hide') : t('ui.secret.show')"
             variant="ghost"
             size="sm"
             @click="reveal = !reveal"

@@ -136,7 +136,12 @@ function fieldProblem(field: ConfigField, value: DraftValue, t: Translate): stri
     if (field.type === 'integer' && !Number.isInteger(number)) return t('plugins.form.integer', { name })
   }
   if (field.required && field.type === 'scene' && !value) return t('plugins.form.pick', { name })
-  if (field.required && (field.type === 'url' || field.type === 'path') && value === '')
+  if (
+    field.required &&
+    (field.type === 'string' || field.type === 'url' || field.type === 'path') &&
+    !(field.options && field.options.some((option) => option.value === value)) &&
+    !String(value ?? '').trim()
+  )
     return t('plugins.form.missing', { name })
   if (field.type === 'object_list' && !hasRows(field)) {
     try {
@@ -161,7 +166,10 @@ export function formProblems(
   const problems: Record<string, string> = {}
   for (const field of fields) {
     if (field.type === 'secret') {
-      if (field.required && !configured[field.key] && values[field.key] === '')
+      const value = values[field.key]
+      const cleared = value === null
+      const blank = typeof value === 'string' && value.trim() === ''
+      if (field.required && (cleared || (!configured[field.key] && blank)))
         problems[field.key] = t('plugins.form.missing', { name: fieldLabel(field) })
       continue
     }
@@ -180,7 +188,10 @@ export function formProblems(
   return problems
 }
 
-/** The body of PUT /api/host/plugins/{name}: an empty secret that was saved before is sent as null to keep it. */
+/**
+ * The body of PUT /api/host/plugins/{name}: an empty secret that was saved before is sent as null to keep it,
+ * while an explicitly cleared secret (null in draft) is sent as '' to erase the saved value.
+ */
 export function configBody(
   fields: ConfigField[],
   values: Draft,
@@ -192,7 +203,8 @@ export function configBody(
     const value = values[field.key]
     if (field.type === 'secret') {
       const kept = saved?.[field.key]
-      if (value !== '') config[field.key] = value as string
+      if (value === null) config[field.key] = ''
+      else if (value !== '') config[field.key] = value as string
       else if (kept && 'configured' in kept && kept.configured) config[field.key] = null
     } else {
       const parsed = configValue(field, value, t)
