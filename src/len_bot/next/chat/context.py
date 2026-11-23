@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 import json
 import math
@@ -17,6 +17,7 @@ from ..config import LabConfig
 from .declarations import Declared
 from .group_voice import describe as describe_group_voice
 from .persona_avoid import avoidance_text
+from .quiet import quiet_period
 from .reply_feedback import reply_feedback
 from .recap import project_history
 from ..models.limits import speech_quota
@@ -212,6 +213,8 @@ HABIT_WINDOW = 8
 # Interjections: the only single characters worth naming as a habit. Sentence-final particles such
 # as 吧、呢、啊 are ordinary grammar and stay out.
 HABIT_CHARACTERS = frozenset("草哼呜哇诶欸嘿喵捏哈噢嗷嘻")
+# Ordinary single-character sentence-final punctuation is not a habit.
+PLAIN_ENDINGS = frozenset("。！？!?")
 # Function characters too common to anchor a sentence template on their own.
 TEMPLATE_FILLER = frozenset("的了是我你他她它在有和就也都不这那个一吧呢啊呀啦嘛哦么得地着过把被给让要会能说")
 HAN_RUN = re.compile(r"[\u4e00-\u9fff]+")
@@ -235,6 +238,8 @@ def _expressions(entries: Sequence[tuple[int, dict]]) -> list[tuple[str, dict]]:
             except ValueError:
                 continue
             if isinstance(arguments, dict):
+                if call["function"]["name"] == "react" and arguments.get("preview"):
+                    continue
                 expressions.append((call["function"]["name"], arguments))
         if len(expressions) >= HABIT_WINDOW:
             break
@@ -303,8 +308,8 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
     The model reads its earlier lines as the strongest example of how it talks, so a phrase or a
     sentence shape that slipped in a few times tends to stay. Words, the opening and ending of each
     line, the opening of its last clause and two-piece templates are counted; ``heard`` is what
-    others said recently, and words they use belong to the topic and are not named. Pictures sent
-    with text are part of the persona's voice and are not counted.
+    others said recently, and words they use belong to the topic and are not named. Ordinary
+    single-character sentence-final punctuation is ignored, and high sticker frequency is gently noted.
     """
     expressions = _expressions(entries)
     if len(expressions) < 5:
@@ -333,12 +338,17 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
         habits.extend(f"{count} 条用了「{gram}」" for gram, count in chosen)
         habits.extend(_shapes(texts, [gram for gram, _ in chosen], others))
     files = Counter()
+    with_sticker = 0
     for name, arguments in expressions:
         choice = arguments.get("sticker") if name == "say" else arguments
+        if name == "react" or isinstance(choice, dict):
+            with_sticker += 1
         if isinstance(choice, dict) and isinstance(choice.get("file"), str):
             files[choice["file"]] += 1
     if files and (uses := files.most_common(1)[0][1]) >= 3:
         habits.append(f"同一张图用了 {uses} 次")
+    if with_sticker >= 6:
+        habits.append(f"{with_sticker} 次附带了表情包（可以适当纯文字回复，不必每句都配图）")
     if not habits:
         return None
     return Template(read_prompt("next_recent_habits.md")).substitute(
@@ -362,7 +372,8 @@ def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str
         for last in HAN.finditer(squeezed):
             pass
         tail = squeezed if last is None else squeezed[last.end():]
-        tails.append({tail[-size:] for size in range(1, min(6, len(tail)) + 1)})
+        tails.append({tail[-size:] for size in range(1, min(6, len(tail)) + 1)
+                      if tail[-size:] not in PLAIN_ENDINGS})
     if (ending := _common(tails, enough)) is not None:
         shapes.append(f"{ending[1]} 条结尾都是「{ending[0]}」")
     closings = []
@@ -379,7 +390,7 @@ def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str
 RECENT_SECONDS = 600
 
 
-def current_attention(config: LabConfig, store: Store) -> str:
+def current_attention(config: LabConfig, store: Store, *, quiet: dict | None = None) -> str:
     attention = store.load_attention(config.scene)
     now, zone = store.now(), ZoneInfo(config.timezone)
     window = config.attention.focus_seconds
@@ -392,14 +403,46 @@ def current_attention(config: LabConfig, store: Store) -> str:
         spoken = sum(at > now - RECENT_SECONDS for at in speech_quota(store, config).times)
         text += (f'\n最近 {RECENT_SECONDS // 60} 分钟：你说了 {spoken} 句，'
                  f'群里其他人 {store.count_received(config.scene, now - RECENT_SECONDS)} 条')
+    if quiet is None:
+        quiet = {}
+        temporary = None if attention is None else attention.get('temporary_quiet')
+        if temporary is not None and temporary['started'] <= now < temporary['until']:
+            quiet['temporary_quiet'] = {
+                'until': temporary['until'],
+                'remaining_seconds': max(0, int(temporary['until'] - now)),
+                'direct': temporary['direct'],
+            }
+        configured = quiet_period(config.attention.quiet_hours, config.timezone, now)
+        if configured is not None:
+            quiet['quiet_hours'] = {
+                'start': config.attention.quiet_hours.start.strftime('%H:%M'),
+                'end': config.attention.quiet_hours.end.strftime('%H:%M'),
+                'until': configured[1],
+                'direct': config.attention.quiet_hours.direct,
+            }
+    temporary = quiet.get('temporary_quiet')
+    if temporary is not None:
+        text += '\n临时安静：' + encode({
+            'until': datetime.fromtimestamp(temporary['until'], zone).isoformat(timespec='seconds'),
+            'remaining_seconds': temporary.get('remaining_seconds', max(0, int(temporary['until'] - now))),
+            'direct': temporary['direct'],
+        })
+    configured = quiet.get('quiet_hours')
+    if configured is not None:
+        text += '\n安静时段：' + encode({
+            'start': configured['start'],
+            'end': configured['end'],
+            'until': datetime.fromtimestamp(configured['until'], zone).isoformat(timespec='seconds'),
+            'direct': configured['direct'],
+        })
     if attention is not None:
         disposition = attention.get('disposition')
-        if disposition is not None and disposition['until'] > store.now():
+        if disposition is not None and disposition['until'] > now:
             text += '\n上次局部收尾：' + encode(disposition)
         settings = config.attention.declarations
         if settings is not None and settings.mode != 'context' and attention.get('declared') is not None:
             declared = Declared.load(attention['declared'])
-            text += '\n持续关注：' + encode(declared.view(store.now()))
+            text += '\n持续关注：' + encode(declared.view(now))
             text += '\n本轮候选：' + encode(declared.turn_matches)
     return '<当前关注>\n' + text + '\n</当前关注>'
 
@@ -414,6 +457,8 @@ class ChatContext:
         self.host_state: str | None = None
         # How members here write, measured by the latest upkeep pass; None until one ran.
         self.group_voice: dict | None = None
+        # Live quiet state from the scene runner, when attached.
+        self.quiet_state: Callable[[], dict | None] | None = None
         self.system: str
 
     def configure_tools(self, allowed: list[dict], external: list[dict], *, skills: tuple[Skill, ...],
@@ -422,10 +467,12 @@ class ChatContext:
         self.external_info = external_info
         self.refresh_tools()
 
-    def refresh_tools(self) -> None:
-        self.system = build_system(self.config, self.persona, self.allowed, platform=self.platform,
-                                   skills=self.skills, external=self.external, external_info=self.external_info,
-                                   discovered=self.store.load_discovered_tools(self.config.scene))
+    def refresh_tools(self, discovered: Sequence[str] | None = None) -> None:
+        self.system = build_system(
+            self.config, self.persona, self.allowed, platform=self.platform,
+            skills=self.skills, external=self.external, external_info=self.external_info,
+            discovered=self.store.load_discovered_tools(self.config.scene) if discovered is None else discovered,
+        )
 
     def render(self, message: ChatMessage) -> str:
         quote = (None if message.reply_to is None else
@@ -461,13 +508,30 @@ class ChatContext:
 
     def project_entries(self, entries: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
         entries = self.conversation_entries(entries)
-        return [(seq, projected) for seq, message in project_old_results(
-            entries, self.config.compaction.keep_recent_tokens)
-            for projected in project_messages([message], self.config.models.roles.mind.history_policy)]
+        thought_template = Template(read_prompt("next_unspoken_thought.md"))
+        projected_entries: list[tuple[int, dict]] = []
+        for seq, message in project_old_results(entries, self.config.compaction.keep_recent_tokens):
+            for projected in project_messages([message], self.config.models.roles.mind.history_policy):
+                if (projected["role"] == "assistant" and not projected.get("tool_calls")
+                        and isinstance(projected.get("content"), str) and projected["content"].strip()):
+                    projected = {
+                        "role": "user",
+                        "content": thought_template.substitute(thought=projected["content"].strip()).strip(),
+                    }
+                projected_entries.append((seq, projected))
+        return projected_entries
+
+    def _project_reads(self, entries: list[tuple[int, dict]], quiet: dict | None) -> tuple[list[str], str, list[str]]:
+        discovered = self.store.load_discovered_tools(self.config.scene)
+        attention = current_attention(self.config, self.store, quiet=quiet)
+        refs = self.references(entries)
+        return discovered, attention, refs
 
     async def project(self, recap: str | None, entries: list[tuple[int, dict]], state: dict) -> list[dict]:
-        self.refresh_tools()
         entries = self.project_entries(entries)
+        quiet = None if self.quiet_state is None else self.quiet_state()
+        discovered, attention, refs = await self.store.read(self._project_reads, entries, quiet)
+        self.refresh_tools(discovered)
         if self.host_state is not None:
             state = {**state, 'content': state['content'] + '\n<宿主恢复状态>\n' + self.host_state + '\n</宿主恢复状态>'}
         profile = (None if self.memory is None or self.config.memory_plugin is not None
@@ -475,8 +539,8 @@ class ChatContext:
         if profile is not None:
             state = {**state, "content": state["content"] + "\n" + Template(
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
-        state = {**state, 'content': state['content'] + '\n' + current_attention(self.config, self.store)}
-        state = {**state, 'content': '\n'.join([state['content'], *self.references(entries)])}
+        state = {**state, 'content': state['content'] + '\n' + attention}
+        state = {**state, 'content': '\n'.join([state['content'], *refs])}
         return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]
 
     def references(self, entries: list[tuple[int, dict]]) -> list[str]:

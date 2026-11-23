@@ -624,3 +624,69 @@ async def test_reopening_counts_joining_in_from_now_and_old_saved_fields_are_ign
         store.save_attention(SCENE, saved)
         restarted = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
         assert restarted.state.pending.channel == 'ambient'
+
+
+@pytest.mark.asyncio
+async def test_current_attention_exposes_live_temporary_quiet_and_quiet_hours(tmp_path):
+    from len_bot.next.configuration.chat import QuietHours
+    config, persona = config_for(tmp_path)
+    config.attention.quiet_hours = QuietHours(start='23:00', end='07:00', direct='allow')
+    now = [START]  # 14:13:20 UTC (outside 23:00-07:00)
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
+        state = {'role': 'user', 'content': '本轮开始时间：2026-10-21T14:13:20+00:00'}
+
+        initial = (await live.chat.context.project(None, [], state))[-1]['content']
+        assert '临时安静：' not in initial and '安静时段：' not in initial
+
+        live.set_temporary_quiet(600, 'allow', 'onebot:70001')
+        during_temp = (await live.chat.context.project(None, [], state))[-1]['content']
+        assert '临时安静：' in during_temp and '"direct": "allow"' in during_temp and '"remaining_seconds": 600' in during_temp
+        assert '安静时段：' not in during_temp
+
+        # Once expired, temporary quiet disappears from the live state.
+        now[0] += 601
+        after_temp = (await live.chat.context.project(None, [], state))[-1]['content']
+        assert '临时安静：' not in after_temp
+
+        # Inside daily quiet_hours, the configured window and policy are surfaced.
+        now[0] = START + 31600 + 60  # 23:01:00 UTC
+        during_hours = (await live.chat.context.project(None, [], state))[-1]['content']
+        assert '安静时段：' in during_hours and '"start": "23:00"' in during_hours and '"end": "07:00"' in during_hours
+        assert '"direct": "allow"' in during_hours
+
+
+@pytest.mark.asyncio
+async def test_focus_ignores_pure_stickers_and_trivial_fillers_without_consuming_window(tmp_path):
+    config, persona, replies = talking_instance(tmp_path, 1)
+    config.attention.focus_seconds = 600
+    now = [START]
+    with Store(config.database, now=lambda: now[0]) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
+        live.state.followups['onebot:70001'] = START
+        live.state.followups['*'] = START
+
+        def raw_event(user, ident, segments):
+            return {'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
+                    'user_id': user, 'message_id': ident, 'time': int(now[0]),
+                    'sender': {'nickname': '匿名成员', 'role': 'member'}, 'message': segments}
+
+        # Pure sticker / image, [表情] text, face segment, and trivial filler do not consume focus.
+        noise_cases = [
+            (70002, 10, [{'type': 'image', 'data': {'file': 'meme.gif', 'sub_type': 1}}]),
+            (70001, 11, [{'type': 'text', 'data': {'text': '[表情]'}}]),
+            (70002, 12, [{'type': 'face', 'data': {'id': '178'}}]),
+            (70001, 13, [{'type': 'text', 'data': {'text': '嗯'}}]),
+            (70002, 14, [{'type': 'text', 'data': {'text': '6'}}]),
+        ]
+        for user, ident, segments in noise_cases:
+            now[0] += 1
+            verdict = live.receive(raw_event(user, ident, segments))['wake_verdict']
+            assert not verdict['woke'] and verdict['channel'] is None
+            assert 'onebot:70001' in live.state.followups and '*' in live.state.followups
+
+        # A meaningful text follow-up still wakes on focus and consumes its window.
+        now[0] += 1
+        real = live.receive(message(70001, 15, '然后呢'))['wake_verdict']
+        assert real['woke'] and real['channel'] == 'focus'
+        assert 'onebot:70001' not in live.state.followups
