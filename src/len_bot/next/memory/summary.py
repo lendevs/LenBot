@@ -6,7 +6,6 @@ import asyncio
 from contextlib import nullcontext
 from dataclasses import asdict
 import json
-import re
 from typing import TYPE_CHECKING, Literal
 
 from ..chat.recap import ContextBudgetError, estimate_request
@@ -34,20 +33,12 @@ def _reject_constant(value: str) -> None:
     raise ValueError(f"non-standard JSON constant: {value}")
 
 
-_JSON_FENCE = re.compile(r"\A\s*```(?:json)?[ \t]*\r?\n(.*?)\r?\n?[ \t]*```\s*\Z", re.IGNORECASE | re.DOTALL)
-
-
-def _strip_json_fence(text: str) -> str:
-    match = _JSON_FENCE.fullmatch(text)
-    return text if match is None else match.group(1)
-
-
 def parse_summary(reply: ModelReply) -> tuple[str, str]:
     fragment = reply.text[:500]
     try:
         if reply.tool_calls:
             raise ValueError("memory summary returned tool calls without tools")
-        value = json.loads(_strip_json_fence(reply.text), parse_constant=_reject_constant)
+        value = json.loads(reply.text, parse_constant=_reject_constant)
         if not isinstance(value, dict) or set(value) != {"abstract", "overview"}:
             raise ValueError("expected an object containing only abstract and overview")
         abstract, overview = value["abstract"], value["overview"]

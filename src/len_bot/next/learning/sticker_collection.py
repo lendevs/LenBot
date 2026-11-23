@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from datetime import datetime
@@ -41,20 +40,12 @@ def _reject_constant(value: str) -> None:
     raise ValueError(f"non-standard JSON constant: {value}")
 
 
-_JSON_FENCE = re.compile(r"\A\s*```(?:json)?[ \t]*\r?\n(.*?)\r?\n?[ \t]*```\s*\Z", re.IGNORECASE | re.DOTALL)
-
-
-def _strip_json_fence(text: str) -> str:
-    match = _JSON_FENCE.fullmatch(text)
-    return text if match is None else match.group(1)
-
-
 def _annotation(reply: ModelReply) -> tuple[str, str, list[str], list[str], bool]:
     fragment = reply.text[:500]
     try:
         if reply.tool_calls:
             raise ValueError("sticker vision returned tool calls without tools")
-        value = json.loads(_strip_json_fence(reply.text), parse_constant=_reject_constant)
+        value = json.loads(reply.text, parse_constant=_reject_constant)
         if not isinstance(value, dict) or set(value) != {
             "description", "text", "emotions", "tags", "is_sticker"
         }:

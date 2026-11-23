@@ -21,6 +21,7 @@ from ...work.storage import temporary_paths
 from ...runtime.operations import diagnostic_zip
 from ...work.store import TaskStore
 from ...models.usage import summarize, usage_rows
+from ...storage.store import Store
 from ...chat.usage import wake_usage
 from ...models.limits import BUDGET_CACHE_SECONDS, LimitReached, check_speech, clear_speech, speech_quota
 from ...models.client import ModelConnectionError, ModelHTTPError, ModelProtocolError
@@ -279,7 +280,10 @@ def register_host_operations(app, *, runtime, user):
 
     async def limit_states(chats):
         # Token totals aggregate every model call of the day (and retained trials): off the event loop.
-        return await store.read(lambda: [limit_state(scene, chat, store) for scene, chat in chats])
+        def read():
+            with Store(config.database, readonly=True) as source:
+                return [limit_state(scene, chat, source) for scene, chat in chats]
+        return await asyncio.to_thread(read)
 
     @app.get('/api/host/limits', response_model=responses.Limits, response_model_exclude_unset=True)
     async def limits_state(_: str = Depends(user)):

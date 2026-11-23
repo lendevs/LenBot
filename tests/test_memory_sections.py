@@ -343,44 +343,17 @@ async def test_profile_recall_skips_placeholder_or_empty_preference_section(tmp_
 
 
 @pytest.mark.asyncio
-async def test_summary_and_sticker_strip_json_fences_and_use_background_slots(tmp_path):
+async def test_summary_uses_background_slots_and_strict_json_boundary(tmp_path):
     from contextlib import asynccontextmanager
 
-    from len_bot.next.learning.sticker_collection import _annotation
-    from len_bot.next.memory.summary import MemorySummarizer, parse_summary
+    from len_bot.next.memory.summary import MemorySummarizer
     from len_bot.next.models.client import ModelReply
 
-    fenced_summary = ModelReply(
-        message={'role': 'assistant', 'content': '```json\n{"abstract": "活动摘要", "overview": "活动总览"}\n```'},
-        text='```json\n{"abstract": "活动摘要", "overview": "活动总览"}\n```',
+    valid_summary = ModelReply(
+        message={'role': 'assistant', 'content': '{"abstract": "活动摘要", "overview": "活动总览"}'},
+        text='{"abstract": "活动摘要", "overview": "活动总览"}',
         tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
     )
-    assert parse_summary(fenced_summary) == ('活动摘要', '活动总览')
-
-    bad_summary = ModelReply(
-        message={'role': 'assistant', 'content': '```json\n{bad}\n```'},
-        text='```json\n{bad}\n```',
-        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
-    )
-    with pytest.raises(ValueError, match='response fragment'):
-        parse_summary(bad_summary)
-
-    fenced_sticker = ModelReply(
-        message={'role': 'assistant', 'content': '```JSON\n{"description": "大笑猫", "text": "哈哈", '
-                 '"emotions": ["开心"], "tags": ["猫"], "is_sticker": true}\n```'},
-        text='```JSON\n{"description": "大笑猫", "text": "哈哈", '
-             '"emotions": ["开心"], "tags": ["猫"], "is_sticker": true}\n```',
-        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
-    )
-    assert _annotation(fenced_sticker) == ('大笑猫', '哈哈', ['开心'], ['猫'], True)
-
-    bad_sticker = ModelReply(
-        message={'role': 'assistant', 'content': '```json\nnot-json\n```'},
-        text='```json\nnot-json\n```',
-        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
-    )
-    with pytest.raises(ValueError, match='response fragment'):
-        _annotation(bad_sticker)
 
     slot_calls: list[dict] = []
 
@@ -394,7 +367,7 @@ async def test_summary_and_sticker_strip_json_fences_and_use_background_slots(tm
         settings = type('S', (), {'model_dump': lambda self, **_: {'model': 'mem'}})()
 
         async def complete(self, messages, tools):
-            return fenced_summary
+            return valid_summary
 
     class FakeConfig:
         def binding(self, role):
