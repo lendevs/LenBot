@@ -190,14 +190,13 @@ def turn_state(config: LabConfig, store: Store, *, now: float,
             describe(item, preview=True) for item in schedules[:20]) + "\n</未完成安排>"
         if len(schedules) > 20:
             state["content"] += "\n这里只列前 20 条；schedule_list 可继续查看。"
-    tasks = TaskStore(store).list(config.scene, limit=21)
-    if tasks:
-        state["content"] += "\n<未完成工作>\n" + encode([
-            {"id": item.id, "requester": item.requester, "status": item.status,
-             **({"question": item.question} if item.question is not None else {})}
-            for item in tasks[:20]]) + "\n</未完成工作>"
-        if len(tasks) > 20:
+    tickets = TaskStore(store).router_tickets(config.scene, recent_since=now - 6 * 3600)
+    if tickets["active"]:
+        state["content"] += "\n<未完成工作>\n" + encode(tickets["active"]) + "\n</未完成工作>"
+        if tickets["active_overflow"]:
             state["content"] += "\n这里只列前20项；task可继续查看。"
+    if tickets["recent"] and config.worker is not None:
+        state["content"] += "\n<近期结束工作>\n" + encode(tickets["recent"]) + "\n</近期结束工作>"
     if expression_style is not None:
         state["content"] += "\n" + expression_style
     if recalled is not None:
