@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RotateCcw, Upload } from '@lucide/vue'
-import type { PluginsSnapshot, Source } from '../../../api/plugins'
+import { RotateCcw, ShieldAlert, Upload } from '@lucide/vue'
+import type { Permission, PluginsSnapshot, Source } from '../../../api/plugins'
 import { developerDetails } from '../../../composables/useDeveloperMode'
 import { groupLabel } from '../../../layouts/shell/scenes'
 import Button from '../../../ui/Button.vue'
@@ -19,10 +19,115 @@ const manifest = computed(() => manifestOf(props.snapshot, props.name))
 const running = computed(() => runningOf(props.snapshot, props.name))
 const source = computed(() => manifest.value?.source ?? null)
 const entries = computed(() => props.snapshot.available[props.name] ?? [])
+const installedManifest = computed(() => manifest.value?.installed_manifest ?? null)
 const origin = (item: Source) =>
   [item.kind, item.location, item.ref || item.branch || item.revision.slice(0, 12)].join(' · ')
 
+const permissionKey = (list: Permission[] | null | undefined) =>
+  list == null
+    ? null
+    : list
+        .map((item) => item.name)
+        .sort()
+        .join(',')
+const platformKey = (list: string[] | null | undefined) => (list == null ? null : [...list].sort().join(','))
+const formatPlatforms = (list: string[] | null | undefined) =>
+  list?.length
+    ? list.map((platform) => t(`plugins.chatPlatforms.${platform}`)).join(t('personas.separator'))
+    : t('plugins.candidate.allPlatforms')
+
+interface CandidateDiffItem {
+  text: string
+  warning: boolean
+}
+
+/**
+ * Compare candidate manifest against the installed one.
+ * Prefer `running` only when actively running; fall back to `entry.installed_manifest` so disabled or failed
+ * plugins never lose permission, platform or data_version warnings.
+ */
+const candidateDiff = computed<CandidateDiffItem[]>(() => {
+  const next = manifest.value
+  if (!source.value?.candidate || !next) return []
+  const live = running.value?.status === 'running' ? running.value : null
+  const installed = installedManifest.value
+  if (!live && !installed) return []
+
+  const items: CandidateDiffItem[] = []
+  const nowPermissions = live ? live.permissions : installed!.permissions
+  if ('permissions' in next && permissionKey(nowPermissions) !== permissionKey(next.permissions)) {
+    const nextPermissions = next.permissions ?? null
+    if (nextPermissions === null) {
+      items.push({ text: t('plugins.permissions.undeclared'), warning: true })
+    } else if (nowPermissions !== null) {
+      const existing = new Set(nowPermissions.map((item) => item.name))
+      const added = nextPermissions.filter((item) => !existing.has(item.name))
+      if (added.length) {
+        items.push({
+          text: t('plugins.version.permissionsAdded', {
+            list: added.map((item) => item.title).join(t('personas.separator')),
+          }),
+          warning: true,
+        })
+      } else {
+        items.push({
+          text: t('plugins.version.permissionsChanged', {
+            list: nextPermissions.length
+              ? nextPermissions.map((item) => item.title).join(t('personas.separator'))
+              : t('common.none'),
+          }),
+          warning: false,
+        })
+      }
+    } else {
+      items.push({
+        text: t('plugins.version.permissionsChanged', {
+          list: nextPermissions.length
+            ? nextPermissions.map((item) => item.title).join(t('personas.separator'))
+            : t('common.none'),
+        }),
+        warning: false,
+      })
+    }
+  }
+
+  const nowPlatforms = live ? live.chat_platforms : installed!.chat_platforms
+  if ('chat_platforms' in next && platformKey(nowPlatforms) !== platformKey(next.chat_platforms)) {
+    const narrowed =
+      next.chat_platforms !== null &&
+      next.chat_platforms !== undefined &&
+      (nowPlatforms === null || nowPlatforms.some((item) => !next.chat_platforms!.includes(item)))
+    items.push({
+      text: t('plugins.version.chatPlatformsChanged', {
+        from: formatPlatforms(nowPlatforms),
+        to: formatPlatforms(next.chat_platforms),
+      }),
+      warning: narrowed,
+    })
+  }
+
+  if (installed && next.data_version !== undefined && next.data_version !== installed.data_version) {
+    items.push({
+      text: t('plugins.version.dataVersionChanged', {
+        from: installed.data_version,
+        to: next.data_version,
+      }),
+      warning: next.data_version > installed.data_version,
+    })
+  }
+
+  return items
+})
+const candidateHasWarning = computed(() => candidateDiff.value.some((item) => item.warning))
+
 const runningScenes = computed(() => running.value?.scenes ?? [])
+const dataVersionText = computed(() => {
+  const next = manifest.value?.data_version
+  const prev = installedManifest.value?.data_version
+  if (prev !== undefined && next !== undefined && prev !== next) return `v${prev} → v${next}`
+  if (next && next > 1) return `v${next}`
+  return ''
+})
 const facts = computed(() => {
   const value = source.value
   const rows: [string, string][] = [
@@ -65,6 +170,7 @@ const facts = computed(() => {
         .join(t('personas.separator')),
     ],
     [t('plugins.version.dependencies'), (manifest.value?.dependencies ?? []).join(t('personas.separator'))],
+    [t('plugins.version.dataVersion'), dataVersionText.value],
     [
       t('plugins.version.reload'),
       manifest.value?.reload ? t(`plugins.version.reloadBy.${manifest.value.reload}`) : '',
@@ -77,6 +183,20 @@ const facts = computed(() => {
 
 <template>
   <div class="flex min-w-0 max-w-3xl flex-col gap-5">
+    <section
+      v-if="candidateDiff.length"
+      class="flex items-start gap-3 rounded-lg px-4 py-3 text-sm"
+      :class="candidateHasWarning ? 'bg-warning-bg text-warning' : 'bg-info-bg text-info'"
+    >
+      <ShieldAlert v-if="candidateHasWarning" :size="18" class="mt-0.5 shrink-0" aria-hidden="true" />
+      <div class="flex min-w-0 flex-1 flex-col gap-1">
+        <strong class="font-semibold">{{ t('plugins.version.candidateChanges') }}</strong>
+        <ul class="flex list-none flex-col gap-0.5 tabular">
+          <li v-for="(item, index) in candidateDiff" :key="index">{{ item.text }}</li>
+        </ul>
+      </div>
+    </section>
+
     <section class="flex flex-col gap-4">
       <dl class="divide-y divide-line border-y border-line text-sm">
         <div
