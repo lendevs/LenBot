@@ -704,6 +704,8 @@ class Overview(PanelResponse):
     hourly: JsonObject
     activity: list[JsonObject]
     failed_tasks: JsonObject
+    waiting_tasks: list[JsonObject] = []
+    active_tasks: int = 0
     memory_stuck: list[JsonObject]
     speech_held: dict[str, Number]
     memory_index: JsonObject | None

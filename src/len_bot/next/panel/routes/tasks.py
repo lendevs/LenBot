@@ -123,7 +123,9 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                     "browser": {"public_enabled": runtime.config.worker is not None and runtime.config.worker.public_browser,
                                 "output_count": len(records.browser_file_sources(scene, id))},
                     "next_after": events[-1]["id"] if events else after,
-                    "files": [file_info(file, records) for file in records.list_files(scene, id)]}
+                    "files": [file_info(file, records) for file in records.list_files(scene, id)],
+                    "budget": None,
+                    "watchdog": records.watchdog_events(scene, id)}
 
         try:
             return await runtime.store.read(read_detail)

@@ -33,6 +33,15 @@ export interface HealthCall {
   error?: string
 }
 
+export interface WaitingTask {
+  id: number
+  scene: string
+  goal: string
+  requester: string
+  created: number
+  question_title: string | null
+}
+
 export interface Overview {
   timezone: string
   sampled_at: number
@@ -62,6 +71,8 @@ export interface Overview {
   }
   activity: Activity[]
   failed_tasks: Record<string, number>
+  waiting_tasks?: WaitingTask[]
+  active_tasks?: number
   memory_stuck: {
     scene: string
     status: 'failed' | 'interrupted'

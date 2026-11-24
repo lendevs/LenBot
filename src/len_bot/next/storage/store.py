@@ -392,6 +392,27 @@ class Store:
             f"SELECT scene,COUNT(*) FROM tasks WHERE scene IN ({placeholders}) AND status='failed' AND ended>=? GROUP BY scene",
             (*scenes, since)))
 
+    def waiting_tasks(self, scenes: Sequence[str]) -> list[dict]:
+        if not scenes:
+            return []
+        placeholders = ",".join("?" for _ in scenes)
+        rows = self.db.execute(
+            f"SELECT id,scene,goal,requester,created,json_extract(question,'$.title') "
+            f"FROM tasks WHERE scene IN ({placeholders}) AND status='waiting_input' ORDER BY created,id",
+            scenes,
+        ).fetchall()
+        return [{"id": row[0], "scene": row[1], "goal": row[2], "requester": row[3],
+                 "created": row[4], "question_title": row[5]} for row in rows]
+
+    def active_tasks_count(self, scenes: Sequence[str]) -> int:
+        if not scenes:
+            return 0
+        placeholders = ",".join("?" for _ in scenes)
+        return int(self.db.execute(
+            f"SELECT COUNT(*) FROM tasks WHERE scene IN ({placeholders}) AND status IN ('queued','running','waiting_input')",
+            scenes,
+        ).fetchone()[0])
+
     def model_errors(self, scenes: Sequence[str], since: float, until: float) -> list[dict]:
         placeholders = ','.join('?' for _ in scenes)
         rows = self.db.execute(

@@ -1,4 +1,11 @@
-"""Shared admission for actual model HTTP requests in one event loop."""
+"""Shared admission for actual model HTTP requests in one event loop.
+
+Four priority tiers keep interactive chat responsive while background workers and upkeep run:
+0. ``direct=True`` — @-mentions, private chats and operator actions (up to ``limit``).
+1. Interactive router — normal scene chat, recap, vision and ASR (up to ``limit``).
+2. ``worker=True`` — isolated sandboxed task workers (up to ``worker_limit``).
+3. ``background=True`` — session upkeep, memory summaries and sticker labeling (up to ``background_limit``).
+"""
 
 from __future__ import annotations
 
@@ -6,6 +13,9 @@ import asyncio
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from typing import Literal
+
+Tier = Literal["direct", "normal", "worker", "background"]
 
 
 class ModelSlots:
@@ -15,37 +25,60 @@ class ModelSlots:
         self.limit = limit
         self.admit: Callable[[str | None], None] | None = None
         self._active = 0
+        self._worker_active = 0
         self._background_active = 0
         self._direct: deque[asyncio.Future[None]] = deque()
         self._normal: deque[asyncio.Future[None]] = deque()
-        self._background: deque[tuple[asyncio.Future[None], bool]] = deque()
+        self._worker: deque[asyncio.Future[None]] = deque()
+        self._background: deque[asyncio.Future[None]] = deque()
+
+    @property
+    def worker_limit(self) -> int:
+        """Reserve one hot slot for interactive router turns whenever ``limit >= 2``."""
+        return max(1, self.limit - 1)
 
     @property
     def background_limit(self) -> int:
         return max(1, self.limit // 2)
 
+    def _can_take(self, tier: Tier) -> bool:
+        if self._active >= self.limit:
+            return False
+        if tier == "worker":
+            return self._worker_active < self.worker_limit
+        if tier == "background":
+            return self._background_active < self.background_limit
+        return True
+
+    def _increment(self, tier: Tier) -> None:
+        self._active += 1
+        if tier == "worker":
+            self._worker_active += 1
+        elif tier == "background":
+            self._background_active += 1
+
     def _fill(self) -> None:
         while self._active < self.limit:
             if self._direct:
-                waiter = self._direct.popleft()
-                is_bg = False
+                waiter, tier = self._direct.popleft(), "direct"
             elif self._normal:
-                waiter = self._normal.popleft()
-                is_bg = False
+                waiter, tier = self._normal.popleft(), "normal"
+            elif self._worker and self._worker_active < self.worker_limit:
+                waiter, tier = self._worker.popleft(), "worker"
             elif self._background and self._background_active < self.background_limit:
-                waiter, is_bg = self._background.popleft()
+                waiter, tier = self._background.popleft(), "background"
             else:
                 break
             if waiter.cancelled():
                 continue
-            self._active += 1
-            if is_bg:
-                self._background_active += 1
+            self._increment(tier)
             waiter.set_result(None)
 
-    def _release(self, *, background: bool = False) -> None:
+    def _release(self, tier: Tier) -> None:
         self._active -= 1
-        if background:
+        if tier == "worker":
+            self._worker_active -= 1
+        elif tier == "background":
             self._background_active -= 1
         self._fill()
 
@@ -55,29 +88,30 @@ class ModelSlots:
         self._fill()
 
     @asynccontextmanager
-    async def slot(self, *, direct: bool = False, background: bool = False,
+    async def slot(self, *, direct: bool = False, worker: bool = False, background: bool = False,
                    scene: str | None = None) -> AsyncIterator[None]:
+        tier: Tier = ("direct" if direct else "background" if background
+                      else "worker" if worker else "normal")
+        higher_waiting = {
+            "direct": bool(self._direct),
+            "normal": bool(self._direct or self._normal),
+            "worker": bool(self._direct or self._normal or self._worker),
+            "background": bool(self._direct or self._normal or self._worker or self._background),
+        }[tier]
         waiter: asyncio.Future[None] | None = None
         granted = False
-        is_bg = background and not direct
-        if is_bg:
-            can_grant_now = (self._active < self.limit and self._background_active < self.background_limit
-                             and not (self._direct or self._normal or self._background))
-        else:
-            can_grant_now = self._active < self.limit and not (self._direct or self._normal)
-        if can_grant_now:
-            self._active += 1
-            if is_bg:
-                self._background_active += 1
+        if self._can_take(tier) and not higher_waiting:
+            self._increment(tier)
             granted = True
         else:
             waiter = asyncio.get_running_loop().create_future()
-            if direct:
-                self._direct.append(waiter)
-            elif is_bg:
-                self._background.append((waiter, True))
-            else:
-                self._normal.append(waiter)
+            queue = {
+                "direct": self._direct,
+                "normal": self._normal,
+                "worker": self._worker,
+                "background": self._background,
+            }[tier]
+            queue.append(waiter)
             self._fill()
         try:
             if waiter is not None:
@@ -88,11 +122,9 @@ class ModelSlots:
         finally:
             # A waiter may be granted and then cancelled before its await resumes.
             if granted or (waiter is not None and waiter.done() and not waiter.cancelled()):
-                self._release(background=is_bg)
+                self._release(tier)
             elif waiter is not None:
-                if direct and waiter in self._direct:
-                    self._direct.remove(waiter)
-                elif is_bg:
-                    self._background = deque(item for item in self._background if item[0] is not waiter)
-                elif waiter in self._normal:
-                    self._normal.remove(waiter)
+                for queue in (self._direct, self._normal, self._worker, self._background):
+                    if waiter in queue:
+                        queue.remove(waiter)
+                        break
