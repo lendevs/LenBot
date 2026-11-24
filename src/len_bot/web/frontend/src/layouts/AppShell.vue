@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
 import { useMediaQuery } from '@vueuse/core'
 import { TooltipProvider } from 'reka-ui'
 import { Bell, Menu, PanelLeftClose, PanelLeftOpen, RotateCw, Search, X } from '@lucide/vue'
@@ -16,6 +17,9 @@ import {
   readPluginUpdates,
   readUpdates,
 } from '../api/hostStore'
+import { personasApi } from '../api/personas'
+import { pluginsApi, pluginTitle } from '../api/plugins'
+import { keys } from '../api/query'
 import { openRestart, restartFlow } from './shell/restart'
 import { useHostEvents } from '../realtime/hostEvents'
 import { currentLocale } from '../i18n'
@@ -27,6 +31,7 @@ import ErrorNote from '../ui/ErrorNote.vue'
 import IconButton from '../ui/IconButton.vue'
 import Kbd from '../ui/Kbd.vue'
 import Sheet from '../ui/Sheet.vue'
+import StatusDot from '../ui/StatusDot.vue'
 import Tabs from '../ui/Tabs.vue'
 import Toaster from '../ui/Toaster.vue'
 import { confirm } from '../ui/confirm'
@@ -36,7 +41,7 @@ import RestartDialog from './shell/RestartDialog.vue'
 import Sidebar from './shell/Sidebar.vue'
 import { groupLabel, groupSecondaryId } from './shell/scenes'
 import { useConnectionStatus } from './shell/status'
-import { areaOf, groupOf, scopedRoutes, sectionKey } from './nav'
+import { areaOf, groupOf, isApplePlatform, scopedRoutes, sectionKey } from './nav'
 import { useAttention } from '../views/overview/attention'
 
 interface Restart {
@@ -56,6 +61,7 @@ const drawer = ref(false)
 const palette = ref(false)
 const leaving = ref(false)
 const logoutError = ref<unknown>(null)
+const mainContent = ref<HTMLElement>()
 const { scene } = useCurrentScene()
 
 const COLLAPSED = 'lenbot.sidebar.collapsed'
@@ -75,7 +81,7 @@ watch(collapsed, (value) => {
   }
 })
 
-const events = useHostEvents(() => readHostState({ maxAge: 1000 }), {
+useHostEvents(() => readHostState({ maxAge: 1000 }), {
   types: ['host.state', 'host.changed', 'resync'],
   minInterval: 1000,
 })
@@ -92,7 +98,6 @@ useHostEvents(() => readPluginUpdates({ maxAge: 60000 }), {
   types: ['host.changed', 'resync'],
   minInterval: 60000,
 })
-provide('host-events', events)
 
 const area = computed(() => areaOf(route.name))
 const group = computed(() => groupOf(area.value))
@@ -105,6 +110,48 @@ const tab = computed({
   set: (name: string) => {
     void router.push({ name, query: scopedRoutes.has(name) && scene.value ? { scene: scene.value } : {} })
   },
+})
+
+const activePersonaKey = computed(() =>
+  route.name === 'host-persona' && typeof route.query.persona === 'string' ? route.query.persona : '',
+)
+const personasQuery = useQuery({
+  queryKey: keys.personas.all(),
+  queryFn: ({ signal }) => personasApi.library(signal),
+  enabled: computed(() => Boolean(activePersonaKey.value)),
+})
+const activePluginName = computed(() =>
+  route.name === 'host-plugins' && typeof route.query.item === 'string' ? route.query.item : '',
+)
+const pluginsQuery = useQuery({
+  queryKey: keys.plugins.all(),
+  queryFn: ({ signal }) => pluginsApi.read(signal),
+  enabled: computed(() => Boolean(activePluginName.value)),
+})
+
+const detailCrumb = computed(() => {
+  if (subpage.value && area.value && area.value.pages[0]?.route !== subpage.value.route) {
+    return t(subpage.value.label)
+  }
+  if (activePersonaKey.value) {
+    const role = personasQuery.data.value?.roles.find((item) => item.key === activePersonaKey.value)
+    return role?.name || activePersonaKey.value
+  }
+  if (activePluginName.value) {
+    return pluginTitle(pluginsQuery.data.value, activePluginName.value)
+  }
+  return ''
+})
+const areaBackTarget = computed<RouteLocationRaw | null>(() => {
+  if (!area.value || !detailCrumb.value) return null
+  if (activePersonaKey.value) return { name: 'host-persona' }
+  if (activePluginName.value) return { name: 'host-plugins' }
+  return { name: area.value.route }
+})
+const mobileTitle = computed(() => {
+  if (detailCrumb.value) return detailCrumb.value
+  if (area.value?.id === 'groups' && route.params.scene) return groupLabel(String(route.params.scene))
+  return area.value ? t(area.value.label) : ''
 })
 
 const { status } = useConnectionStatus()
@@ -123,6 +170,11 @@ const restartItems = computed(() => {
     ]),
   ]
 })
+const restartBannerText = computed(() =>
+  restartItems.value.length
+    ? t('shell.restart.banner', { items: listFormat.value.format(restartItems.value) })
+    : '',
+)
 const { count: attention } = useAttention()
 const newer = computed(() => {
   const updates = host.updates as { check?: { update_available?: boolean; latest?: string } } | null
@@ -174,6 +226,10 @@ watch(
   () => (drawer.value = false),
 )
 
+function skipToContent() {
+  mainContent.value?.focus()
+}
+
 async function exit() {
   if (leaving.value) return
   const confirmed = await confirm({
@@ -198,9 +254,16 @@ async function exit() {
 <template>
   <TooltipProvider :delay-duration="400">
     <div class="flex min-h-dvh bg-page text-ink">
+      <button
+        type="button"
+        class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-(--z-toast) focus:inline-flex focus:h-9 focus:items-center focus:rounded-md focus:border focus:border-line-strong focus:bg-surface-raised focus:px-3 focus:text-sm focus:font-medium focus:text-ink focus:shadow-float focus:focus-ring"
+        @click="skipToContent"
+      >
+        {{ t('shell.nav.skipToContent') }}
+      </button>
       <aside
         v-if="wide"
-        class="sticky top-0 h-dvh shrink-0 border-r border-line bg-sidebar transition-[width] duration-250 ease-out"
+        class="sticky top-0 h-dvh shrink-0 overflow-x-hidden border-r border-line bg-sidebar transition-[width] duration-250 ease-out"
         :class="collapsed ? 'w-16' : 'w-58'"
       >
         <Sidebar :collapsed="collapsed" :scene="scene" :flagged="flagged" :updates="updates">
@@ -243,52 +306,54 @@ async function exit() {
             :tooltip="false"
             @click="drawer = true"
           />
-          <strong class="min-w-0 truncate text-base font-semibold text-ink sm:hidden">
-            {{
-              area?.id === 'groups' && route.params.scene
-                ? groupLabel(String(route.params.scene))
-                : subpage && area && area.pages[0]?.route !== subpage.route
-                  ? t(subpage.label)
-                  : area
-                    ? t(area.label)
-                    : ''
-            }}
+          <strong class="min-w-0 flex-1 truncate text-base font-semibold text-ink sm:hidden">
+            {{ mobileTitle }}
           </strong>
           <nav
-            class="flex min-w-0 items-center gap-2 text-base max-sm:hidden"
+            class="flex min-w-0 flex-1 items-center gap-2 text-base max-sm:hidden"
             :aria-label="t('shell.nav.sections')"
           >
             <template v-if="group && (!area || t(group.label) !== t(area.label))">
               <span class="shrink-0 text-sm text-muted">{{ t(group.label) }}</span>
               <span class="text-line-strong" aria-hidden="true">/</span>
             </template>
-            <strong class="truncate font-semibold text-ink">{{ area ? t(area.label) : '' }}</strong>
-            <template v-if="subpage && area && area.pages[0]?.route !== subpage.route">
-              <span class="text-line-strong" aria-hidden="true">/</span>
-              <span class="truncate text-ink-2">{{ t(subpage.label) }}</span>
-            </template>
-            <template v-else-if="area?.id === 'groups' && route.params.scene">
-              <span class="text-line-strong" aria-hidden="true">/</span>
-              <span class="truncate text-ink-2">{{ groupLabel(String(route.params.scene)) }}</span>
-              <span
-                v-if="groupSecondaryId(String(route.params.scene))"
-                class="shrink-0 font-mono text-xs text-muted tabular"
+            <template v-if="area && areaBackTarget">
+              <RouterLink
+                :to="areaBackTarget"
+                class="link-plain shrink-0 rounded-sm font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
               >
-                {{ groupSecondaryId(String(route.params.scene)) }}
-              </span>
+                {{ t(area.label) }}
+              </RouterLink>
+              <span class="text-line-strong" aria-hidden="true">/</span>
+              <strong class="truncate font-semibold text-ink">{{ detailCrumb }}</strong>
+            </template>
+            <template v-else>
+              <strong class="truncate font-semibold text-ink">{{ area ? t(area.label) : '' }}</strong>
+              <template v-if="area?.id === 'groups' && route.params.scene">
+                <span class="text-line-strong" aria-hidden="true">/</span>
+                <span class="truncate text-ink-2">{{ groupLabel(String(route.params.scene)) }}</span>
+                <span
+                  v-if="groupSecondaryId(String(route.params.scene))"
+                  class="shrink-0 font-mono text-xs text-muted tabular"
+                >
+                  {{ groupSecondaryId(String(route.params.scene)) }}
+                </span>
+              </template>
             </template>
           </nav>
           <div class="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <button
               type="button"
-              class="inline-flex h-8 w-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-fill text-sm text-muted transition-colors hover:border-line-strong hover:text-ink focus-visible:focus-ring md:w-auto md:px-2.5 pointer-coarse:size-9"
+              class="inline-flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-fill text-sm text-muted transition-colors hover:border-line-strong hover:text-ink focus-visible:focus-ring max-md:w-8 md:px-2.5 pointer-coarse:h-10 max-md:pointer-coarse:w-10"
               :aria-label="t('shell.search')"
               aria-keyshortcuts="Control+K Meta+K"
               @click="palette = true"
             >
               <Search :size="15" aria-hidden="true" />
               <span class="max-md:hidden">{{ t('shell.search') }}</span>
-              <span class="max-md:hidden"><Kbd>⌘K</Kbd></span>
+              <span class="max-md:hidden">
+                <Kbd>{{ isApplePlatform ? '⌘K' : 'Ctrl K' }}</Kbd>
+              </span>
             </button>
             <RouterLink
               v-if="newer"
@@ -309,7 +374,7 @@ async function exit() {
             <button
               v-if="streamStatus !== 'open' && streamStatus !== 'idle'"
               type="button"
-              class="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-warning-bg px-2.5 text-xs font-medium text-warning transition-colors hover:brightness-95 focus-visible:focus-ring max-sm:size-8 max-sm:px-0 tabular"
+              class="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-warning-bg px-2.5 text-xs font-medium text-warning transition-colors hover:brightness-95 focus-visible:focus-ring max-sm:size-8 max-sm:px-0 max-sm:pointer-coarse:size-10 tabular"
               :title="t('shell.live.reconnect')"
               :aria-label="t('shell.live.reconnect')"
               @click="reconnectStream"
@@ -326,7 +391,17 @@ async function exit() {
                 </template>
               </span>
             </button>
-            <span class="flex min-w-0 max-w-32 sm:max-w-none">
+            <span
+              v-if="streamStatus !== 'open'"
+              class="inline-flex size-6 shrink-0 items-center justify-center sm:hidden"
+              :title="status.text"
+            >
+              <StatusDot :tone="status.tone" :pulse="status.tone === 'success'" :label="status.text" />
+            </span>
+            <span
+              class="flex min-w-0 sm:max-w-none"
+              :class="streamStatus !== 'open' ? 'max-sm:hidden' : 'max-w-22'"
+            >
               <Badge :tone="status.tone" dot :pulse="status.tone === 'success'" :size="wide ? 'md' : 'sm'">
                 {{ status.text }}
               </Badge>
@@ -339,7 +414,7 @@ async function exit() {
               />
               <span
                 v-if="attention"
-                class="pointer-events-none absolute -top-1 -right-1 inline-flex h-4.5 min-w-4.5 animate-[ui-pop-in_var(--dur-2)_var(--ease-spring)] items-center justify-center rounded-full bg-error px-1 text-xs leading-none font-semibold text-page ring-2 ring-page tabular"
+                class="pointer-events-none absolute -top-1 -right-1 inline-flex h-4.5 min-w-4.5 animate-[ui-pop-in_var(--dur-2)_var(--ease-spring)] items-center justify-center rounded-full bg-error px-1 text-xs leading-none font-semibold text-on-error ring-2 ring-page tabular"
                 aria-hidden="true"
               >
                 {{ attention }}
@@ -355,30 +430,33 @@ async function exit() {
           </div>
         </header>
 
+        <Transition name="ui-rise">
+          <div
+            v-if="restartItems.length"
+            role="status"
+            class="sticky top-14 z-(--z-nav) flex shrink-0 items-center gap-2.5 border-b border-line bg-info-bg px-3 py-1.5 text-sm text-ink sm:px-6"
+          >
+            <RotateCw :size="15" class="shrink-0 text-info" aria-hidden="true" />
+            <span class="min-w-0 flex-1 truncate" :title="restartBannerText">
+              {{ restartBannerText }}
+            </span>
+            <Button size="sm" :disabled="restartFlow.waiting" @click="openRestart">
+              {{ t('shell.restart.action') }}
+            </Button>
+          </div>
+        </Transition>
+
         <div v-if="tabs.length" class="shrink-0 px-3 pt-2 sm:px-4 lg:px-8 lg:pt-4">
           <Tabs v-model="tab" :items="tabs" :label="area ? t(area.label) : undefined" />
         </div>
 
         <main
           id="main-content"
-          class="grid w-full min-w-0 content-start gap-5 px-3 pt-4 pb-10 sm:px-4 sm:pt-6 sm:pb-12 lg:px-8 lg:pt-8 lg:pb-16"
+          ref="mainContent"
+          tabindex="-1"
+          class="grid w-full min-w-0 content-start gap-5 px-3 pt-4 pb-10 outline-none sm:px-4 sm:pt-6 sm:pb-12 lg:px-8 lg:pt-8 lg:pb-16"
         >
           <ErrorNote v-if="logoutError" :title="t('shell.account.logoutFailed')" :error="logoutError" />
-          <Transition name="ui-rise">
-            <div
-              v-if="restartItems.length"
-              role="status"
-              class="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-info-bg px-4 py-2.5 text-sm text-ink"
-            >
-              <RotateCw :size="16" class="shrink-0 text-info" aria-hidden="true" />
-              <span class="min-w-0 flex-1">
-                {{ t('shell.restart.banner', { items: listFormat.format(restartItems) }) }}
-              </span>
-              <Button size="sm" :disabled="restartFlow.waiting" @click="openRestart">
-                {{ t('shell.restart.action') }}
-              </Button>
-            </div>
-          </Transition>
           <ErrorNote
             v-if="restart?.error"
             :title="t('shell.restart.unknown')"
@@ -389,7 +467,7 @@ async function exit() {
         </main>
       </div>
     </div>
-    <CommandPalette v-model:open="palette" :scene="scene" />
+    <CommandPalette v-model:open="palette" :scene="scene" @logout="exit" />
     <RestartDialog />
     <ConfirmHost />
     <Toaster />

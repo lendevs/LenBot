@@ -74,7 +74,9 @@ export default {
       collapse: '收起侧栏',
       expand: '展开侧栏',
       sections: '页面分区',
+      skipToContent: '跳至正文',
     },
+    simulated: '模拟',
     groups: { run: '运行', chats: '群聊', extend: '扩展', config: '配置' },
     pages: {
       overview: '总览',
@@ -2874,7 +2876,7 @@ export default {
   },
   palette: {
     label: '快速跳转',
-    placeholder: '跳转到页面、群聊或执行操作',
+    placeholder: '跳转到页面、群聊、角色、插件或执行操作',
     empty: '没有找到匹配的结果',
     kinds: { page: '页面', group: '群聊', plugin: '插件', persona: '角色', action: '操作' },
     keys: { select: '选择', open: '打开', toggle: '随时唤起' },
@@ -3043,6 +3045,8 @@ export default {
     checking: '正在确认登录状态',
     checkFailed: '无法读取登录状态',
     badContext: '面板环境响应无效，mode 或 home 的值无法识别：{context}',
+    switchToDark: '切换为深色外观',
+    switchToLight: '切换为浅色外观',
   },
   time: {
     justNow: '刚刚',

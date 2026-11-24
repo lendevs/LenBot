@@ -19,7 +19,7 @@ import {
   Trash,
   Wrench,
 } from '@lucide/vue'
-import { setThemeMode, themeMode } from '../composables/useThemeMode'
+import { setThemeMode, themeMode, type ThemeMode } from '../composables/useThemeMode'
 import { currentLocale, localeOptions, setLocale, type Locale } from '../i18n'
 import Avatar from '../ui/Avatar.vue'
 import Badge from '../ui/Badge.vue'
@@ -65,12 +65,12 @@ import { toast } from '../ui/toast'
 const { t } = useI18n()
 
 const themes = computed(() => [
-  { value: 'light', label: t('shell.account.themes.light'), icon: Sun },
-  { value: 'dark', label: t('shell.account.themes.dark'), icon: Moon },
+  { value: 'light' as const, label: t('shell.account.themes.light'), icon: Sun },
+  { value: 'dark' as const, label: t('shell.account.themes.dark'), icon: Moon },
 ])
-const theme = computed({
+const theme = computed<ThemeMode>({
   get: () => (themeMode.value === 'dark' ? 'dark' : 'light'),
-  set: (value: string) => setThemeMode(value),
+  set: (value) => setThemeMode(value),
 })
 const locale = computed({ get: () => currentLocale.value, set: (value: Locale) => void setLocale(value) })
 

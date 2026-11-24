@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { http, resetSession } from '../../api/client'
 import { i18n } from '../../i18n'
+import { stopStream } from '../../realtime/stream'
 
 /** The explicit host restart: preview what it applies and interrupts, request it, wait for the new process. */
 
@@ -120,6 +121,7 @@ export async function confirmRestart(): Promise<void> {
     restartFlow.waiting = true
     // Answers to requests still in flight belong to the old process.
     resetSession()
+    stopStream()
     if (panelChanged(preview)) restartFlow.phase = 'address-changed'
     else await waitForRestart()
   } catch (error) {
