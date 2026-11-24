@@ -45,14 +45,21 @@ ONEBOT_URL_TTL_SECONDS = 1800
 LOOK_MAX_FRAMES = 6
 
 
-def platform_reference(data: dict[str, object]) -> bool:
-    """Whether a segment names its file by a platform reference rather than a public URL."""
+def _has_url(data: dict[str, object]) -> bool:
     url = data.get("url")
-    has_url = isinstance(url, str) and bool(url.strip())
-    return not has_url and any(
+    return isinstance(url, str) and bool(url.strip())
+
+
+def _has_platform_id(data: dict[str, object]) -> bool:
+    return any(
         isinstance(data.get(key), str) and bool(data[key].strip())
         for key in ("file_id", "image_key", "file_key", "file")
     )
+
+
+def platform_reference(data: dict[str, object]) -> bool:
+    """Whether a segment names its file by a platform reference rather than a public URL."""
+    return not _has_url(data) and _has_platform_id(data)
 
 
 def _needs_platform_fetch(data: dict[str, object], *, message_time: float, now: float) -> bool:
@@ -155,17 +162,33 @@ async def load_look_image(store: Store, scene: str, arguments: LookArguments, se
                 elif fetch_media is not None and _needs_platform_fetch(
                     picture_data, message_time=message.time, now=store.now()
                 ):
-                    body = await fetch_media(picture_data, settings.max_bytes)
+                    try:
+                        body = await fetch_media(picture_data, settings.max_bytes)
+                        pixels_source = 'platform_download'
+                    except Exception:
+                        if deadline.expired() or not _has_url(picture_data):
+                            raise
+                        _, _, body = await fetch_public(
+                            image_url(picture_data), settings.timeout_seconds,
+                            lambda _type, _prefix: settings.max_bytes,
+                            fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
+                        )
+                        pixels_source = 'http_response'
                     fetched_at = store.now()
-                    pixels_source = 'platform_download'
                 else:
-                    url = image_url(picture_data)
-                    _, _, body = await fetch_public(
-                        url, settings.timeout_seconds, lambda _type, _prefix: settings.max_bytes,
-                        fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
-                    )
+                    try:
+                        _, _, body = await fetch_public(
+                            image_url(picture_data), settings.timeout_seconds,
+                            lambda _type, _prefix: settings.max_bytes,
+                            fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
+                        )
+                        pixels_source = 'http_response'
+                    except Exception:
+                        if deadline.expired() or fetch_media is None or not _has_platform_id(picture_data):
+                            raise
+                        body = await fetch_media(picture_data, settings.max_bytes)
+                        pixels_source = 'platform_download'
                     fetched_at = store.now()
-                    pixels_source = 'http_response'
                 jpeg, animated, width, height, frames = await _prepare_pixels(
                     body, settings, max_frames=LOOK_MAX_FRAMES
                 )

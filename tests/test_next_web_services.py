@@ -225,6 +225,79 @@ async def test_http_read_headers_bounded_gzip_deflate_and_bomb_protection(monkey
 
 
 @pytest.mark.asyncio
+async def test_http_read_multimember_gzip_and_chunk_boundaries(monkeypatch):
+    import asyncio
+    import gzip
+    import httpx
+    from len_bot.next.tools import http_read
+
+    class ChunkStream(httpx.AsyncByteStream):
+        def __init__(self, chunks: list[bytes]):
+            self._chunks = chunks
+
+        async def __aiter__(self):
+            for chunk in self._chunks:
+                yield chunk
+
+    part1 = gzip.compress(b'hello ')
+    part2 = gzip.compress(b'world')
+    bomb_part = gzip.compress(b'A' * 200_000)
+
+    chunks_box: dict[str, list[bytes]] = {'chunks': [part1 + part2]}
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, stream=ChunkStream(chunks_box['chunks']),
+            headers={'content-type': 'text/plain', 'content-encoding': 'gzip'},
+        )
+
+    async def fake_numeric(host, port, fake_ip_networks, public_dns_url, timeout_seconds):
+        return '93.184.216.34'
+
+    monkeypatch.setattr(http_read, '_numeric_address', fake_numeric)
+    monkeypatch.setattr(http_read, 'MeteredTransport', lambda transport, **kwargs: httpx.MockTransport(handle))
+
+    # Single chunk multi-member gzip with small byte_limit triggering max_length stepping must not infinite-loop.
+    async with asyncio.timeout(2):
+        _, _, body = await http_read.fetch_public(
+            'https://example.org/multi', 5.0, lambda _m, _p: 11, fake_ip_networks=(),
+        )
+    assert body == b'hello world'
+
+    # Tight byte_limit below decoded size stops before overflowing.
+    async with asyncio.timeout(2):
+        with pytest.raises(ValueError, match='exceeds 10 decoded bytes'):
+            await http_read.fetch_public(
+                'https://example.org/multi-over', 5.0, lambda _m, _p: 10, fake_ip_networks=(),
+            )
+
+    # Two gzip members arriving across separate network chunks decode completely.
+    chunks_box['chunks'] = [part1, part2]
+    async with asyncio.timeout(2):
+        _, _, body = await http_read.fetch_public(
+            'https://example.org/chunked-multi', 5.0, lambda _m, _p: 11, fake_ip_networks=(),
+        )
+    assert body == b'hello world'
+
+    # Multi-member gzip bomb (both single-chunk and cross-chunk) is still rejected at byte_limit.
+    for bomb_chunks in ([part1 + bomb_part], [part1, bomb_part]):
+        chunks_box['chunks'] = bomb_chunks
+        async with asyncio.timeout(2):
+            with pytest.raises(ValueError, match='exceeds 1024 decoded bytes'):
+                await http_read.fetch_public(
+                    'https://example.org/multi-bomb', 5.0, lambda _m, _p: 1024, fake_ip_networks=(),
+                )
+
+    # Truncated second gzip member after a complete first member still raises truncated error.
+    chunks_box['chunks'] = [part1, part2[:5]]
+    async with asyncio.timeout(2):
+        with pytest.raises(ValueError, match='truncated gzip body'):
+            await http_read.fetch_public(
+                'https://example.org/truncated-second', 5.0, lambda _m, _p: 1024, fake_ip_networks=(),
+            )
+
+
+@pytest.mark.asyncio
 async def test_web_read_sniffs_html_meta_charset_for_chinese_pages(tmp_path, monkeypatch):
     from len_bot.next.tools import web_read
 
