@@ -86,7 +86,7 @@ export function newBinding(
     reasoning_effort: null,
     quick_reasoning_effort: null,
     thinking_budget_tokens: null,
-    image_input: role === 'vision' ? true : (mind?.image_input ?? false),
+    image_input: role === 'vision',
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',
     retry_delays_seconds: [2, 5],
@@ -345,8 +345,7 @@ export function useModelsForm() {
         supports(row, role) &&
         (target.provider !== mind.provider ||
           target.model !== mind.model ||
-          target.context_window_tokens !== mind.context_window_tokens ||
-          target.image_input !== mind.image_input)
+          target.context_window_tokens !== mind.context_window_tokens)
       )
     })
   })
@@ -362,7 +361,6 @@ export function useModelsForm() {
       target.provider = mind.provider
       target.model = mind.model
       target.context_window_tokens = mind.context_window_tokens
-      target.image_input = mind.image_input
       fitProtocol(target, row?.api)
       count += 1
     }
