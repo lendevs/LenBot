@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 import json
 from string import Template
+import time
 import traceback
 from typing import Literal, TYPE_CHECKING
 
@@ -31,6 +32,7 @@ from .materials import finish_file_operation
 from ..storage.pool import worker_pool_usage
 from .store import Task, TaskStore
 from .task_routes import DATA_ROUTES
+from .watchdog import TaskWatchdog, WatchdogDecision
 from .worker_model import Limits, WorkerModelProxy
 from .worker_session import WorkerSession, worker_session
 from ..prompt_files import read_prompt
@@ -44,6 +46,11 @@ if TYPE_CHECKING:
 
 
 _DATA_PATHS = {path: name for name, path in DATA_ROUTES.items()}
+PROGRESS_NOTICE_INTERVAL = 180.0
+
+
+class WatchdogStoppedError(RuntimeError):
+    """A task worker was stopped by the deterministic task watchdog."""
 
 
 def _final_failure(final: dict) -> str:
@@ -110,7 +117,9 @@ class TaskExecution:
         self.cancelled = False
         self.stop_reason: str | None = None
         self._last_progress: str | None = None
-        self._next_progress = 300.0
+        self._last_progress_notice_at: float | None = None
+        self._last_event_at = 0.0
+        self._watchdog = TaskWatchdog(hang_timeout_seconds=max(180.0, self.settings.command_timeout_seconds * 6))
         self._live_text = TaskLiveText()
         self._skills: tuple[Skill, ...] = ()
         self._mcp_tools: dict[str, ExternalTool] = {}
@@ -134,6 +143,8 @@ class TaskExecution:
         if self._session is None:
             raise ValueError("任务容器仍在启动，请稍后追加")
         await self._session.pi.command("steer", message=text)
+        self._watchdog.reset_intervention()
+        self._last_event_at = asyncio.get_running_loop().time()
 
     @property
     def answer_received(self) -> bool:
@@ -166,6 +177,9 @@ class TaskExecution:
                 self._mcp_tools = {tool.name: tool for tool in self.mcp.tools_for(item.scene)
                                    if allowed == 'all' or tool.name in allowed}
             self.active_limit = self._active_timeout(item)
+            self._watchdog.hang_timeout_seconds = max(
+                1.0, min(self.active_limit, max(180.0, self.settings.command_timeout_seconds * 6))
+            )
             async with asyncio.timeout(self.active_limit) as timer:
                 self._timer = timer
                 self._skills = self.catalog[item.scene]
@@ -303,18 +317,25 @@ class TaskExecution:
         # Pi 0.87.1 acknowledges prompt preflight with success:true and no data.
         # Completion is reported by the event stream, not by this response.
         await session.pi.command("prompt", message=request)
+        loop = asyncio.get_running_loop()
+        self._last_event_at = loop.time()
         final: dict | None = None
         while True:
-            deadline = self._timer.when()
-            if deadline is not None:
-                elapsed = self.active_limit - max(0, deadline - asyncio.get_running_loop().time())
-                if elapsed >= self._next_progress:
-                    self._progress(self._last_progress or "任务仍在执行，尚未报告阶段说明")
-                    self._next_progress = elapsed + 600
+            decision = self._watchdog.check_idle(
+                loop.time() - self._last_event_at,
+                model_busy=session.proxy.busy,
+                waiting_input=self._timer is not None and self._timer.when() is None,
+            )
+            if decision is not None:
+                await self._handle_watchdog(decision)
             try:
-                record = await asyncio.wait_for(session.pi.next_event(), timeout=60)
+                record = await asyncio.wait_for(
+                    session.pi.next_event(),
+                    timeout=min(60.0, self._watchdog.hang_timeout_seconds),
+                )
             except TimeoutError:
                 continue
+            self._last_event_at = loop.time()
             body = record.body
             if record.type == "message_update":
                 if self._live_text.update(body["assistantMessageEvent"]):
@@ -324,7 +345,15 @@ class TaskExecution:
                 continue
             self.records.add_event(item.scene, item.id, "native", session.proxy.recorded(body))
             self.on_update(item.scene)
-            if record.type == "message_start":
+            if record.type == "tool_execution_start":
+                decision = self._watchdog.on_tool_start(body["toolCallId"], body["toolName"], body["args"])
+                if decision is not None:
+                    await self._handle_watchdog(decision)
+            elif record.type == "tool_execution_end":
+                decision = self._watchdog.on_tool_end(body["toolCallId"], body["toolName"], is_error=body["isError"])
+                if decision is not None:
+                    await self._handle_watchdog(decision)
+            elif record.type == "message_start":
                 if self._live_text.start(body["message"]):
                     self._notify_live(item.id)
             elif record.type == "message_end" and body["message"]["role"] == "assistant":
@@ -354,13 +383,33 @@ class TaskExecution:
                     raise RuntimeError(_final_failure(final))
                 return "\n".join(part["text"] for part in final["content"] if part["type"] == "text")
 
+    async def _handle_watchdog(self, decision: WatchdogDecision) -> None:
+        item = self.item
+        self.records.add_watchdog_event(item.scene, item.id, decision)
+        self.on_update(item.scene)
+        if decision.action == "steer":
+            await self._session.pi.command("steer", message=decision.steer_message)
+        elif decision.action == "stop":
+            raise WatchdogStoppedError(f"任务看门狗中止（{decision.reason}）：{decision.detail}")
+
     def _progress(self, text: str) -> None:
-        text = self._proxy.recorded(text)
+        text = self.recorded(text).strip()
+        if not text or text == self._last_progress:
+            return
         self._last_progress = text
         item = self.item
-        self.records.add_event(item.scene, item.id, "progress", {"text": text},
-                               notice=f"[任务进度] #{item.id}；{item.goal}\n{text}")
-        self._notify(item.scene)
+        now = time.monotonic()
+        if (self._last_progress_notice_at is None
+                or now - self._last_progress_notice_at >= PROGRESS_NOTICE_INTERVAL):
+            notice = f"[任务进度] #{item.id}；{item.goal}\n{text}"
+            self._last_progress_notice_at = now
+        else:
+            notice = None
+        self.records.add_event(item.scene, item.id, "progress", {"text": text}, notice=notice)
+        if notice is not None:
+            self._notify(item.scene)
+        else:
+            self.on_update(item.scene)
 
     def _pause_input(self, question: dict) -> None:
         loop = asyncio.get_running_loop()
@@ -409,6 +458,8 @@ class TaskExecution:
             self.records.add_event(item.scene, item.id, "answer_timeout", response)
         await self._resume_input()
         await self._session.pi.respond_ui(body["id"], **response)
+        self._watchdog.reset_intervention()
+        self._last_event_at = asyncio.get_running_loop().time()
         self._notify(item.scene)
 
     async def _host_tool(self, name: str, arguments: dict) -> str:
