@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+import copy
 from dataclasses import asdict, dataclass
 import hmac
 import json
@@ -27,6 +28,85 @@ from urllib.parse import quote
 from ..runtime.logs import redact, redact_record
 
 REJECTED_HTTP_STATUSES = frozenset({400, 401, 403, 404, 405, 409, 413, 415, 422, 429})
+_ANTHROPIC_CACHE_CONTROL = {"type": "ephemeral"}
+_ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
+_ANTHROPIC_NON_CACHEABLE_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+def _count_anthropic_cache_controls(payload: dict[str, Any]) -> int:
+    count = 1 if payload.get("cache_control") is not None else 0
+    system = payload.get("system")
+    if isinstance(system, list):
+        count += sum(1 for block in system if isinstance(block, dict) and "cache_control" in block)
+    tools = payload.get("tools")
+    if isinstance(tools, list):
+        count += sum(1 for tool in tools if isinstance(tool, dict) and "cache_control" in tool)
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if "cache_control" in block:
+                    count += 1
+                if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+                    count += sum(
+                        1 for item in block["content"]
+                        if isinstance(item, dict) and "cache_control" in item
+                    )
+    return count
+
+
+def _apply_anthropic_cache_breakpoints(outgoing: dict[str, Any]) -> None:
+    breakpoints = _count_anthropic_cache_controls(outgoing)
+    if breakpoints >= _ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+        return
+
+    system = outgoing.get("system")
+    if isinstance(system, str) and system:
+        outgoing["system"] = [{"type": "text", "text": system, "cache_control": dict(_ANTHROPIC_CACHE_CONTROL)}]
+        breakpoints += 1
+    elif isinstance(system, list) and system:
+        for block in reversed(system):
+            if isinstance(block, dict) and block.get("type") == "text":
+                if "cache_control" not in block:
+                    block["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
+                    breakpoints += 1
+                break
+
+    if breakpoints >= _ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+        return
+
+    tools = outgoing.get("tools")
+    if isinstance(tools, list) and tools:
+        last_tool = tools[-1]
+        if isinstance(last_tool, dict) and "cache_control" not in last_tool:
+            last_tool["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
+            breakpoints += 1
+
+    if breakpoints >= _ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+        return
+
+    messages = outgoing.get("messages")
+    if isinstance(messages, list) and len(messages) >= 2:
+        target = messages[-2]
+        if isinstance(target, dict):
+            content = target.get("content")
+            if isinstance(content, str) and content:
+                target["content"] = [{"type": "text", "text": content, "cache_control": dict(_ANTHROPIC_CACHE_CONTROL)}]
+                breakpoints += 1
+            elif isinstance(content, list) and content:
+                for block in reversed(content):
+                    if isinstance(block, dict) and block.get("type") not in _ANTHROPIC_NON_CACHEABLE_TYPES:
+                        if "cache_control" not in block:
+                            block["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
+                            breakpoints += 1
+                        break
 
 
 class WorkerModelError(RuntimeError):
@@ -79,6 +159,7 @@ class WorkerModelProxy:
         *,
         slots: ModelSlots | None = None,
         scene: str | None = None,
+        cache_key: str | None = None,
         start_call: Callable[[dict[str, Any]], int],
         finish_call: Callable[[int, dict[str, Any]], None],
     ):
@@ -92,6 +173,7 @@ class WorkerModelProxy:
         self.limits = limits
         self.slots = slots
         self.scene = scene
+        self._cache_key = cache_key
         self.start_call = start_call
         self.finish_call = finish_call
         self._token = token
@@ -135,7 +217,7 @@ class WorkerModelProxy:
         key = 'input' if api == 'openai-responses' else 'messages' if api == 'anthropic' else 'contents'
         if not isinstance(inbound.get(key), list):
             raise WorkerModelError(f'worker {key} must be an array')
-        outgoing = inbound.copy()
+        outgoing = copy.deepcopy(inbound)
         for tool in outgoing.get('tools', []):
             if api == 'openai-responses':
                 valid = isinstance(tool, dict) and tool.get('type') == 'function'
@@ -145,7 +227,7 @@ class WorkerModelProxy:
                 valid = isinstance(tool, dict) and set(tool) == {'functionDeclarations'}
             if not valid:
                 raise WorkerModelError('worker tools must be local function declarations; provider network tools are unavailable')
-        options = dict(inbound.get('generationConfig', {})) if api == 'gemini' else outgoing
+        options = dict(outgoing.get('generationConfig', {})) if api == 'gemini' else outgoing
         output_field = 'max_output_tokens' if api == 'openai-responses' else 'max_tokens' if api == 'anthropic' else 'maxOutputTokens'
         output_tokens = options.get(output_field, self.settings.max_output_tokens)
         if type(output_tokens) is not int or not 0 < output_tokens <= self.settings.max_output_tokens:
@@ -162,6 +244,8 @@ class WorkerModelProxy:
             outgoing.pop('reasoning', None)
             if self.settings.reasoning_effort is not None:
                 outgoing['reasoning'] = {'effort': self.settings.reasoning_effort}
+            if self._cache_key:
+                outgoing.setdefault('prompt_cache_key', self._cache_key)
         elif api == 'anthropic':
             outgoing.pop('thinking', None)
             outgoing.pop('output_config', None)
@@ -169,6 +253,7 @@ class WorkerModelProxy:
                 outgoing['thinking'] = {'type': 'enabled', 'budget_tokens': self.settings.thinking_budget_tokens}
             elif self.settings.reasoning_effort is not None:
                 outgoing.update(thinking={'type': 'adaptive'}, output_config={'effort': self.settings.reasoning_effort})
+            _apply_anthropic_cache_breakpoints(outgoing)
         else:
             options.pop('thinkingConfig', None)
             if self.settings.thinking_budget_tokens is not None:
@@ -215,7 +300,7 @@ class WorkerModelProxy:
         if self.slots is None:
             yield
         else:
-            async with self.slots.slot(scene=self.scene):
+            async with self.slots.slot(worker=True, scene=self.scene):
                 yield
 
     def _add_tokens(self, tokens: dict[str, int | None] | None) -> None:

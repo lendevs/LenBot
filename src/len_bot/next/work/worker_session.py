@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -183,9 +184,10 @@ async def worker_session(
     stopping every live part.
     """
     token = secrets.token_urlsafe(32)
+    cache_key = hashlib.sha256(f"{provider}\0{scene}\0worker\0{task_id}".encode("utf-8")).hexdigest()[:32]
     proxy = WorkerModelProxy(
         settings, provider, context_window_tokens, token, limits,
-        slots=slots, scene=scene, start_call=start_call, finish_call=finish_call,
+        slots=slots, scene=scene, cache_key=cache_key, start_call=start_call, finish_call=finish_call,
     )
     handle: SandboxHandle | None = None
     bridge: WorkerTransport | None = None
