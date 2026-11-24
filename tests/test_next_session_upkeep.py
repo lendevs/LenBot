@@ -14,6 +14,7 @@ from len_bot.next.chat.upkeep import Plan, SessionUpkeep, parse_results
 from len_bot.next.config import load_host_config
 from len_bot.next.learning.jargon_store import JargonStore
 from len_bot.next.learning.store import LearningStore
+from len_bot.next.memory import local as local_module
 from len_bot.next.memory.service import open_memory
 from len_bot.next.models.client import ChatModel, ModelReply
 from len_bot.next.persona.profile import load_persona
@@ -750,3 +751,43 @@ async def test_memory_draft_search_records_baseline_and_blocks_stale_write(tmp_p
         assert job['status'] == 'failed'
         assert '在整理期间已被修改' in (job['error'] or '')
         assert (await memory.backend.read(SCENE, target)).content == '人工刚补充：群友对花生过敏且喜欢草莓蛋糕。'
+
+
+@pytest.mark.asyncio
+async def test_memory_tools_share_draft_and_publish_on_win32_encoded_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_module.sys, 'platform', 'win32')
+    path, old = 'events/新事件.md', 'events/旧事件.md'
+    person = 'people/onebot:70001/profile.md'
+    body = '周末去看海。'
+    calls = [
+        {'action': 'write', 'path': path, 'content': body, 'reason': '群友约定'},
+        {'action': 'read', 'path': path},
+        {'action': 'delete', 'path': old, 'reason': '已结束'},
+        {'action': 'read', 'path': old},
+        {'action': 'browse', 'path': 'events'},
+        {'action': 'browse', 'path': 'people'},
+        {'action': 'search', 'query': '看海'},
+    ]
+    replies = [turns._calls(*(('memory', call) for call in calls)), _text({})]
+    async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
+        await memory.write(SCENE, old, '曾经约了去看海。', '之前的约定')
+        await memory.write(SCENE, person, '群友 70001 资料。', '人物建档')
+        _group_messages(store)
+        upkeep.request(SCENE, 'memory')
+        assert await upkeep._step(SCENE)
+
+        feedback = [m['content'] for m in bodies()[1]['messages'] if m['role'] == 'tool']
+        assert json.loads(feedback[1])['content'] == body
+        assert 'FileNotFoundError' in feedback[3]
+        assert [node['path'] for node in json.loads(feedback[4])['nodes']] == [path]
+        assert [node['path'] for node in json.loads(feedback[5])['nodes']] == ['people/onebot:70001']
+        assert [hit['path'] for hit in json.loads(feedback[6])['hits']] == [path]
+
+        job = memory.jobs.latest(SCENE)
+        assert job['status'] == 'complete'
+        assert (await memory.backend.read(SCENE, path)).content == body
+        assert [item['path'] for item in await memory.backend.tree(SCENE)] == [path, person]
+        assert [change['action'] for change in await memory.history(SCENE, old)] == ['write', 'delete']
+        scene_root = memory.backend.root / 'scenes' / 'onebot%3Agroup%3A80001'
+        assert (scene_root / 'events' / '%E6%96%B0%E4%BA%8B%E4%BB%B6.md').exists()
+        assert (scene_root / 'people' / 'onebot%3A70001' / 'profile.md').exists()
