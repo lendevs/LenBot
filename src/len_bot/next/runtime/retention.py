@@ -164,7 +164,10 @@ class Retention:
         plugin_calls = _expired_plugin_calls(db, timeline)
         events = _delivered_events(db, timeline)
         totals = dict.fromkeys(COUNTS, 0)
+        result = None
         while True:
+            if not preview and self.runtime.config.retention != settings:
+                break
             result = self._apply_batch(store, memory_jobs, settings, now, cutoff, timeline, latest,
                                        list(islice(snapshots, 100)), list(islice(plugin_calls, 100)),
                                        list(islice(events, 100)), preview=preview)
@@ -174,6 +177,9 @@ class Retention:
                 totals[key] += result[key]
             if not drain or not any(result[key] for key in COUNTS) or self.runtime.stopped.is_set():
                 break
+        if result is None:
+            return {'preview': preview, 'at': now, **totals, 'protected_latest_mind_requests': len(latest),
+                    'scope': '保留活跃上下文、未处理输入、显式素材来源和仍被引用的轮次。'}
         self.last_result = {**result, **totals}
         if any(totals.values()):
             log_event(LOG, 'retention_finished', **totals)

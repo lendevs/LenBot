@@ -34,6 +34,8 @@ class LiveSettings:
         if running.models == saved.models:
             return
         running.models = deepcopy(saved.models)
+        for chat in runtime.chats.values():
+            chat.config.models = deepcopy(running.models)
         await runtime.mind.rebind(running.model_settings('mind'))
         if runtime.vision is not None:
             await runtime.vision.rebind(running.model_settings('vision'))
@@ -108,10 +110,6 @@ class LiveSettings:
                      'text_delivery', 'compaction', 'images', 'audio', 'commands', 'network', 'web_read', 'web_search',
                      'task_archive', 'plugin_catalog', 'model_alert_failed_turns'):
             setattr(running, name, deepcopy(getattr(saved, name)))
-        if models_changed or compaction_changed:
-            for chat in runtime.chats.values():
-                chat.compaction_held_at = None
-                chat._recap_cooldown_until = 0.0
         if runtime.platform is not None and (onebot := runtime.platform.member('onebot')) is not None:
             onebot._fake_ip_networks = running.network.networks()
             onebot._public_dns_url = running.network.public_dns_url
@@ -195,5 +193,9 @@ class LiveSettings:
                     chat.config, chat.persona, platform=running.delivery == 'live', memory=runtime.memory,
                     plugins=runtime.plugins)
             runner.changed.set()
+        if models_changed or compaction_changed:
+            for chat in runtime.chats.values():
+                chat.compaction_held_at = None
+                chat._recap_cooldown_until = 0.0
         runtime.events.publish('host.state')
         runtime.notify()

@@ -377,3 +377,79 @@ async def test_enabling_vision_role_live_when_runtime_started_without_vision(tmp
                 if runtime._owned_vision is not None:
                     await runtime._owned_vision.__aexit__(None, None, None)
                     runtime._owned_vision = None
+
+
+@pytest.mark.asyncio
+async def test_apply_models_syncs_chat_config_before_await_and_clears_compaction_hold_after_scene_update(tmp_path):
+    async with panel(tmp_path) as (runtime, client, _):
+        await login(client)
+        chat = runtime.chats[SCENE]
+        observed_during_rebind: list[str] = []
+        original_rebind = runtime.mind.rebind
+
+        async def spy_rebind(settings):
+            observed_during_rebind.append(chat.config.models.roles.mind.model)
+            return await original_rebind(settings)
+
+        runtime.mind.rebind = spy_rebind
+        payload = _models_payload((await client.get('/api/host/settings')).json())
+        payload['roles']['mind']['model'] = 'sync-before-await-model'
+        updated = await client.put('/api/host/settings/models', json=payload)
+        assert updated.status_code == 200, updated.text
+        assert observed_during_rebind == ['sync-before-await-model']
+
+        # Simulate a turn re-setting compaction hold during an intermediate await inside apply().
+        original_set_automatic = runtime.audio.set_automatic
+
+        async def race_during_apply(scene, enabled):
+            chat.compaction_held_at = 4321
+            chat._recap_cooldown_until = 8888888888.0
+            return await original_set_automatic(scene, enabled)
+
+        runtime.audio.set_automatic = race_during_apply
+        processing = (await client.get('/api/host/settings')).json()['saved']['processing']
+        processing['compaction']['input_tokens'] += 250
+        res = await client.put('/api/host/settings/processing', json=processing)
+        assert res.status_code == 200, res.text
+        assert chat.compaction_held_at is None
+        assert chat._recap_cooldown_until == 0.0
+
+
+@pytest.mark.asyncio
+async def test_network_runtime_run_closes_owned_vision_on_stdin_and_early_stop(tmp_path):
+    class FakeOwnedVision:
+        def __init__(self):
+            self.exited = 0
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.exited += 1
+
+    write_instance(tmp_path, ['onebot:70001'])
+    config = load_host_config(tmp_path)
+    persona = load_persona(config.scenes[SCENE].persona)
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as mind:
+            # 1) platform is None (stdin branch) must still release _owned_vision on exit.
+            stdin_runtime = NetworkRuntime(config, [(config.scene_config(SCENE), persona)], store, mind, vision=None)
+            assert stdin_runtime.platform is None
+            fake_stdin_vision = FakeOwnedVision()
+            stdin_runtime._owned_vision = fake_stdin_vision
+            stdin_runtime.stopped.set()
+            await stdin_runtime.run(manage_signals=False)
+            assert stdin_runtime._owned_vision is None
+            assert fake_stdin_vision.exited == 1
+
+            # 2) stopped already set before platform start (early return branch) must release _owned_vision.
+            config_path = tmp_path / 'lenbot.config.json'
+            source = json.loads(config_path.read_text(encoding='utf-8'))
+            source['onebot'] = {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'}
+            config_path.write_text(json.dumps(source, ensure_ascii=False), encoding='utf-8')
+            platform_config = load_host_config(tmp_path)
+            early_runtime = NetworkRuntime(platform_config, [(platform_config.scene_config(SCENE), persona)], store, mind, vision=None)
+            assert early_runtime.platform is not None
+            fake_early_vision = FakeOwnedVision()
+            early_runtime._owned_vision = fake_early_vision
+            early_runtime.stopped.set()
+            await early_runtime.run(manage_signals=False)
+            assert early_runtime._owned_vision is None
+            assert fake_early_vision.exited == 1

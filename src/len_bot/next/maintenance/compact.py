@@ -208,14 +208,14 @@ def compact_sqlite_file(path: Path, *, request_days: int | None = None, now: flo
             'reclaimed_bytes': before_bytes - after_bytes, 'expired': expired}
 
 
-def _configured_databases(root: Path) -> tuple[list[Path], int]:
+def _configured_databases(root: Path) -> tuple[list[Path], int | None]:
     raw = json.loads((root / 'lenbot.config.json').read_text(encoding='utf-8'))
     db_value = raw.get('database', 'data/state.sqlite3')
     business = Path(db_value) if Path(db_value).is_absolute() else root / db_value
     memory = business.with_name(business.name + '.memory.sqlite3')
     retention = raw.get('retention')
-    days = retention.get('request_days', 7) if isinstance(retention, dict) else 7
-    return [business, memory], int(days)
+    days = int(retention.get('request_days', 7)) if isinstance(retention, dict) else None
+    return [business, memory], days
 
 
 def compact_instance(root: Path, *, request_days: int | None = None, scratch_dir: Path | None = None,
@@ -234,7 +234,7 @@ def compact_instance(root: Path, *, request_days: int | None = None, scratch_dir
             effective_days = configured_days if request_days is None else request_days
             for db_path in paths:
                 results.append(compact_sqlite_file(
-                    db_path, request_days=effective_days if effective_days > 0 else None,
+                    db_path, request_days=effective_days if effective_days is not None and effective_days > 0 else None,
                     now=now, scratch_dir=scratch_dir, dry_run=dry_run,
                 ))
         reclaimed = sum(item.get('reclaimed_bytes', item.get('reclaimable_bytes', 0)) for item in results)

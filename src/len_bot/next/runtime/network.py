@@ -528,121 +528,127 @@ class NetworkRuntime:
                     raise results[0]
         return False
 
+    async def _close_owned_vision(self) -> None:
+        if self._owned_vision is not None:
+            owned = self._owned_vision
+            self._owned_vision = None
+            await owned.__aexit__(None, None, None)
+
     async def run(self, *, manage_signals: bool = True, manual_connection: bool = False) -> None:
-        if self.platform is None:
-            from .stdin_host import run_stdin
-            await run_stdin(self, manage_signals=manage_signals)
-            return
-        if self.stopped.is_set():
-            self._status("stopped")
-            return
-        self._status("starting")
         try:
-            if manage_signals:
-                remove_signals = install_stop(self.stop)
-            if self.tasks is not None:
-                await self.tasks.recover()
-            if not await self._start_platform(manual_connection=manual_connection):
+            if self.platform is None:
+                from .stdin_host import run_stdin
+                await run_stdin(self, manage_signals=manage_signals)
                 return
-            async with asyncio.TaskGroup() as group:
-                pending: list[asyncio.Task] = []
-                try:
-                    stopping = group.create_task(self.stopped.wait())
-                    pending.append(stopping)
-                    self._status("waiting_connection")
-                    self._emit({"type": "runtime", "status": "started", "input": self.platform.name,
-                                "delivery": self.config.delivery, "addresses": self.platform.addresses})
-                    terminated = group.create_task(self.platform.wait_terminated())
-                    connected = group.create_task(self.platform.wait_connected(None))
-                    pending.extend([terminated, connected])
-                    done, _ = await asyncio.wait({connected, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
-                    if connected not in done or stopping in done or terminated in done:
-                        return
-                    await connected
-                    if self.tasks is not None:
-                        await self.tasks.start()
-                        pending.append(group.create_task(self.tasks.wait_failure()))
-                    if self.upkeep is not None:
-                        self.upkeep.start()
-                    self.audio.start()
-                    if self.sticker_collection is not None:
-                        self.sticker_collection.start()
-                    if self.plugins is not None:
-                        await self.plugins.start()
-                    self.refresh_external_tools()
-                    self.accepting = self.platform.connected
-                    self._status("running")
-                    self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
-                                "delivery": self.config.delivery})
-                    pending.append(group.create_task(self.retention.run()))
-                    self.scene_service.start(group)
-                    scenes_ended = group.create_task(self.scene_service.wait_stopped())
-                    pending.append(scenes_ended)
-                    done, _ = await asyncio.wait({scenes_ended, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
-                    self.accepting = False
-                    reason = ("storage_error" if self.storage_error is not None else
-                              "signal" if stopping in done
-                              else "panel_disconnect" if terminated in done and self.disconnect_requested
-                              else "transport_closed" if terminated in done
-                              else "scene_stopped")
-                    self._status("stopping")
-                    self._emit({"type": "runtime", "status": "stopping", "reason": reason})
-                    self.stopped.set()
-                    if self.plugins is not None:
-                        await self.plugins.close()
-                    await self.audio.close()
-                    if self.sticker_collection is not None:
-                        await self.sticker_collection.close()
-                    if self.upkeep is not None:
-                        await self.upkeep.close()
-                    if self.tasks is not None:
-                        await self.tasks.close()
-                    for runner in self.runners.values():
-                        runner.close_input()
-                    await self.scene_service.join()
-                finally:
-                    self.accepting = False
-                    self.scene_service.group = None
-                    for task in pending:
-                        task.cancel()
-        finally:
+            if self.stopped.is_set():
+                self._status("stopped")
+                return
+            self._status("starting")
             try:
-                try:
-                    if self.plugins is not None:
-                        await self.plugins.close()
-                    if self.tasks is not None:
-                        await self.tasks.close()
-                finally:
+                if manage_signals:
+                    remove_signals = install_stop(self.stop)
+                if self.tasks is not None:
+                    await self.tasks.recover()
+                if not await self._start_platform(manual_connection=manual_connection):
+                    return
+                async with asyncio.TaskGroup() as group:
+                    pending: list[asyncio.Task] = []
                     try:
+                        stopping = group.create_task(self.stopped.wait())
+                        pending.append(stopping)
+                        self._status("waiting_connection")
+                        self._emit({"type": "runtime", "status": "started", "input": self.platform.name,
+                                    "delivery": self.config.delivery, "addresses": self.platform.addresses})
+                        terminated = group.create_task(self.platform.wait_terminated())
+                        connected = group.create_task(self.platform.wait_connected(None))
+                        pending.extend([terminated, connected])
+                        done, _ = await asyncio.wait({connected, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
+                        if connected not in done or stopping in done or terminated in done:
+                            return
+                        await connected
+                        if self.tasks is not None:
+                            await self.tasks.start()
+                            pending.append(group.create_task(self.tasks.wait_failure()))
+                        if self.upkeep is not None:
+                            self.upkeep.start()
+                        self.audio.start()
+                        if self.sticker_collection is not None:
+                            self.sticker_collection.start()
+                        if self.plugins is not None:
+                            await self.plugins.start()
+                        self.refresh_external_tools()
+                        self.accepting = self.platform.connected
+                        self._status("running")
+                        self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
+                                    "delivery": self.config.delivery})
+                        pending.append(group.create_task(self.retention.run()))
+                        self.scene_service.start(group)
+                        scenes_ended = group.create_task(self.scene_service.wait_stopped())
+                        pending.append(scenes_ended)
+                        done, _ = await asyncio.wait({scenes_ended, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
+                        self.accepting = False
+                        reason = ("storage_error" if self.storage_error is not None else
+                                  "signal" if stopping in done
+                                  else "panel_disconnect" if terminated in done and self.disconnect_requested
+                                  else "transport_closed" if terminated in done
+                                  else "scene_stopped")
+                        self._status("stopping")
+                        self._emit({"type": "runtime", "status": "stopping", "reason": reason})
+                        self.stopped.set()
+                        if self.plugins is not None:
+                            await self.plugins.close()
+                        await self.audio.close()
+                        if self.sticker_collection is not None:
+                            await self.sticker_collection.close()
                         if self.upkeep is not None:
                             await self.upkeep.close()
+                        if self.tasks is not None:
+                            await self.tasks.close()
+                        for runner in self.runners.values():
+                            runner.close_input()
+                        await self.scene_service.join()
+                    finally:
+                        self.accepting = False
+                        self.scene_service.group = None
+                        for task in pending:
+                            task.cancel()
+            finally:
+                try:
+                    try:
+                        if self.plugins is not None:
+                            await self.plugins.close()
+                        if self.tasks is not None:
+                            await self.tasks.close()
                     finally:
                         try:
-                            if self.sticker_collection is not None:
-                                await self.sticker_collection.close()
+                            if self.upkeep is not None:
+                                await self.upkeep.close()
                         finally:
                             try:
-                                if self.mcp is not None:
-                                    await self.mcp.close()
+                                if self.sticker_collection is not None:
+                                    await self.sticker_collection.close()
                             finally:
                                 try:
-                                    await self.audio.close()
-                                    await self.reference.close()
+                                    if self.mcp is not None:
+                                        await self.mcp.close()
                                 finally:
                                     try:
-                                        if self._owned_vision is not None:
-                                            owned_vision = self._owned_vision
-                                            self._owned_vision = None
-                                            await owned_vision.__aexit__(None, None, None)
+                                        await self.audio.close()
+                                        await self.reference.close()
                                     finally:
-                                        await self.platform.close()
-                    self._status("stopped")
-                    self._emit({"type": "runtime", "status": "stopped"})
-            finally:
-                if manage_signals:
-                    remove_signals()
-            if self.storage_error is not None:
-                raise self.storage_error
+                                        try:
+                                            await self._close_owned_vision()
+                                        finally:
+                                            await self.platform.close()
+                        self._status("stopped")
+                        self._emit({"type": "runtime", "status": "stopped"})
+                finally:
+                    if manage_signals:
+                        remove_signals()
+                if self.storage_error is not None:
+                    raise self.storage_error
+        finally:
+            await self._close_owned_vision()
 
 
 async def run_network(config: SharedConfig, scene_configs: list[tuple[LabConfig, Persona]],
