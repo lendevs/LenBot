@@ -167,3 +167,34 @@ def test_retention_drain_stops_before_second_batch_when_policy_disabled_or_chang
             "SELECT COUNT(*) FROM model_calls WHERE json_extract(request,'$.snapshot_expired_at') IS NOT NULL"
         ).fetchone()[0]
         assert expired_count == 200
+
+
+def test_compact_dry_run_reports_estimate_when_disk_is_full(tmp_path, monkeypatch):
+    from collections import namedtuple
+    import pytest
+    from len_bot.next.maintenance import compact as compact_mod
+
+    root = tmp_path / 'instance'
+    root.mkdir()
+    db_path = root / 'data' / 'state.sqlite3'
+    db_path.parent.mkdir(parents=True)
+    (root / 'lenbot.config.json').write_text(json.dumps({
+        'database': 'data/state.sqlite3',
+        'retention': {'request_days': 7},
+    }), encoding='utf-8')
+    with Store(db_path):
+        pass
+
+    Usage = namedtuple('usage', ['total', 'used', 'free'])
+    monkeypatch.setattr(compact_mod.shutil, 'disk_usage', lambda _p: Usage(10**9, 10**9 - 1024, 1024))
+    scratch = tmp_path / 'nonexistent-scratch'
+
+    preview = compact_instance(root, scratch_dir=scratch, dry_run=True)
+    assert preview['dry_run'] is True
+    assert not scratch.exists()
+    db_preview = preview['databases'][0]
+    assert db_preview['free_bytes'] == 1024
+    assert db_preview['needed_scratch_bytes'] > 1024
+
+    with pytest.raises(OSError, match='临时空间'):
+        compact_instance(root, scratch_dir=scratch, dry_run=False)

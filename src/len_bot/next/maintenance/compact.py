@@ -161,15 +161,20 @@ def compact_sqlite_file(path: Path, *, request_days: int | None = None, now: flo
         freelist_count = db.execute('PRAGMA freelist_count').fetchone()[0]
         live_bytes = max(0, page_count - freelist_count) * page_size
         target_parent = path.parent if scratch_dir is None else scratch_dir.resolve()
-        target_parent.mkdir(parents=True, exist_ok=True)
         needed = live_bytes + HEADROOM
+        if dry_run:
+            probe = target_parent
+            while not probe.exists() and probe.parent != probe:
+                probe = probe.parent
+            free = shutil.disk_usage(probe).free
+            return {'path': str(path), 'present': True, 'dry_run': True, 'before_bytes': before_bytes,
+                    'estimated_after_bytes': live_bytes, 'reclaimable_bytes': max(0, before_bytes - live_bytes),
+                    'needed_scratch_bytes': needed, 'free_bytes': free}
+        target_parent.mkdir(parents=True, exist_ok=True)
         free = shutil.disk_usage(target_parent).free
         if free < needed:
             raise OSError(f'压缩 {path} 预计需要约 {needed / 2**30:.2f} GiB 临时空间，'
                           f'{target_parent} 所在磁盘只剩 {free / 2**30:.2f} GiB')
-        if dry_run:
-            return {'path': str(path), 'present': True, 'dry_run': True, 'before_bytes': before_bytes,
-                    'estimated_after_bytes': live_bytes, 'reclaimable_bytes': max(0, before_bytes - live_bytes)}
         if wal.is_file():
             busy, frames, moved = db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
             if busy or frames != moved:

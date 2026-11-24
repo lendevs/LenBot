@@ -6,8 +6,9 @@ import asyncio
 import base64
 import binascii
 from io import BytesIO
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PureWindowsPath
 import re
+from urllib.parse import unquote
 import wave
 
 from ..models.asr import AudioSettings
@@ -46,14 +47,25 @@ def file_uri_to_path[P: PurePath](value: str, *, path_cls: type[P] = Path) -> P 
     if not value.startswith("file://"):
         return None
     normalized = _WINDOWS_DRIVE_FILE_URI.sub(r"file:///\1", value)
-    if not normalized.startswith(("file:///", "file://localhost/")):
+    if normalized.startswith("file:///"):
+        raw_path = normalized[7:]
+    elif normalized.startswith("file://localhost/"):
+        raw_path = normalized[16:]
+    else:
         return None
-    try:
-        if hasattr(path_cls, "from_uri"):
-            return path_cls.from_uri(normalized)
-        return Path.from_uri.__func__(path_cls, normalized)
-    except ValueError:
+    decoded = unquote(raw_path)
+    if issubclass(path_cls, PureWindowsPath):
+        if not re.match(r"^/[A-Za-z]:[\\/]", decoded):
+            return None
+        candidate = decoded[1:]
+    else:
+        if re.match(r"^/[A-Za-z]:([\\/]|$)", decoded):
+            return None
+        candidate = decoded
+    result = path_cls(candidate)
+    if not result.is_absolute() or result == path_cls(result.anchor):
         return None
+    return result
 
 
 def _local_path(value: str) -> Path | None:
