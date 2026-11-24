@@ -460,7 +460,20 @@ class PluginSnapshot(PanelResponse):
     restart_required: bool
     # Newer catalog versions of installed Git plugins (PluginUpdate).
     updates: list[JsonObject] = []
+    catalog_entries: dict[str, JsonObject] = {}
     operation: JsonValue = None
+
+
+class ReferenceHitItem(PanelResponse):
+    scope: Literal["scene", "persona"]
+    path: str
+    section: str | None
+    preview: str
+    score: float | None
+
+
+class ReferenceSearch(PanelResponse):
+    hits: list[ReferenceHitItem]
 
 
 class PluginHealth(PanelResponse):

@@ -35,7 +35,7 @@ async def panel(root):
     plugin.mkdir(parents=True)
     (plugin / '__init__.py').write_text('')
     (plugin / 'plugin.toml').write_text('\n'.join([
-        'name = "linked"', 'version = "1.0.0"', 'interface = 1', 'requires_lenbot = ">=0.2,<1"',
+        'name = "linked"', 'title = "已链接示例"', 'version = "1.0.0"', 'interface = 1', 'requires_lenbot = ">=0.2,<1"',
         'requires_python = ">=3.13"', 'platforms = ["linux", "darwin", "win32"]', 'reload = "plugin"',
         'authors = ["LEN5010"]', 'license = "MIT"', 'description = "带仓库地址的样本。"',
         'repository = "https://example.com/plugins/linked"', 'homepage = "https://example.com/linked"']))
@@ -96,9 +96,14 @@ def test_host_read_responses_keep_the_unfiltered_json(tmp_path):
                                   '/api/host/plugins', '/api/host/mcp', '/api/host/memory/browse'}:
                     assert before.json() == after.json(), path
             assert len(checked) >= 50
-            linked = (await client.get('/api/host/plugins')).json()['available']['linked'][0]
+            plugins_body = (await client.get('/api/host/plugins')).json()
+            linked = plugins_body['available']['linked'][0]
+            assert (linked['title'], linked['data_version']) == ('已链接示例', 1)
             assert (linked['repository'], linked['homepage']) == ('https://example.com/plugins/linked',
                                                                   'https://example.com/linked')
+            assert 'group_digest' in plugins_body['catalog_entries']
+            assert set(plugins_body['catalog_entries']['group_digest']) == {'title', 'category', 'usage', 'capabilities'}
+            assert plugins_body['saved']['disabled_rules'] == {}
     asyncio.run(run())
 
 
@@ -120,10 +125,34 @@ def test_write_responses_keep_the_unfiltered_json(tmp_path):
                 ('PUT', f'/api/host/scenes/{SCENE}/control/open', {'enabled': False}),
                 ('PUT', f'/api/host/scenes/{SCENE}/control/open', {'enabled': True}),
                 ('POST', f'/api/host/schedules?scene={SCENE}', {'when': '2099-01-01T08:00:00+00:00', 'note': '看展', 'for': 'self'}),
+                ('POST', f'/api/host/scenes/{SCENE}/reference/search', {'query': '说明', 'scope': 'scene', 'limit': 5}),
             ]
+            # Upload a scene reference document so reference/search returns a real hit item.
+            uploaded = await client.post(f'/api/host/scenes/{SCENE}/reference', files={
+                'file': ('背景.md', '# 群规\n\n这是背景说明。\n'.encode()),
+            })
+            assert uploaded.status_code == 200, uploaded.text
+            operations.append(('POST', f'/api/host/scenes/{SCENE}/reference/search',
+                               {'query': '背景 说明', 'scope': 'all', 'limit': 5}))
+            # Enable linked plugin, toggle disabled_rules and scenes via the new plugin endpoints.
+            (tmp_path / 'plugins' / 'linked' / '__init__.py').write_text(
+                'from len_bot.plugin import Plugin, command\n'
+                'class Linked(Plugin):\n'
+                '    @command("演示", "演示命令")\n'
+                '    async def demo(self, ctx, args):\n'
+                '        return "ok"\n',
+                encoding='utf-8',
+            )
+            operations.extend([
+                ('PUT', '/api/host/plugins/linked', {'enabled': True, 'config': {}, 'disabled_rules': ['/演示']}),
+                ('PUT', '/api/host/plugins/linked/scenes', {'scenes': [SCENE]}),
+                ('PUT', '/api/host/plugins/linked/scenes', {'scenes': []}),
+            ])
             for method, path, body in operations:
                 response = await raw.request(method, path, json=body)
                 assert response.status_code == 200, (path, response.text)
+                if path.endswith('/reference/search') and body['scope'] == 'all':
+                    assert len(response.json()['hits']) == 1
                 scope = {'type': 'http', 'path': path.split('?')[0], 'method': method, 'root_path': ''}
                 route = next(route for route in app.routes if isinstance(route, APIRoute)
                              and route.matches(scope)[0].name == 'FULL')

@@ -122,8 +122,13 @@ class Loaded:
     mention_commands: set[str] = field(default_factory=set)
     fullmatches: dict[str, tuple[str, str]] = field(default_factory=dict)
     patterns: list[Pattern] = field(default_factory=list)
+    disabled_commands: dict[str, str] = field(default_factory=dict)        # name -> description
+    disabled_fullmatches: dict[str, str] = field(default_factory=dict)     # text -> description
+    disabled_patterns: list[Pattern] = field(default_factory=list)
+    disabled_rules: tuple[str, ...] = ()
     notices: dict[str, str] = field(default_factory=dict)                   # type -> method
     tools: dict[str, ToolEntry] = field(default_factory=dict)
+    unavailable_tools: dict[str, str] = field(default_factory=dict)
     recall: str | None = None                                               # method
     compact: str | None = None                                              # method
     memory_tool: ToolEntry | None = None
@@ -236,7 +241,8 @@ class PluginHost:
         previous = recorded_errors(config.logging.directory, 'plugin_error', 'plugin', limit=ERROR_LIMIT)
         for name, values in settings.configured.items():
             scenes = tuple(scene for scene, item in config.scenes.items() if name in item.plugins)
-            record = Loaded(name, None, None, scenes, values=values)
+            record = Loaded(name, None, None, scenes, values=values,
+                            disabled_rules=tuple(settings.disabled_rules.get(name, [])))
             record.errors.extend(previous.get(name, []))
             self.plugins[name] = record
             if name in settings.disabled:
@@ -276,6 +282,7 @@ class PluginHost:
             cls = proxy_class(directory, record.name, described)
         else:
             cls = self._import(directory, record.name)
+        record.disabled_rules = tuple(disabled_rules)
         unused = set(disabled_rules)
         for attribute in dir(cls):
             mark = getattr(getattr(cls, attribute), MARK, None)
@@ -287,6 +294,12 @@ class PluginHost:
                     else mark[1].pattern if mark[0] == "regex" else None)
             if rule is not None and rule in unused:
                 unused.discard(rule)
+                if mark[0] == "command":
+                    record.disabled_commands[mark[1]] = mark[2]
+                elif mark[0] == "fullmatch":
+                    record.disabled_fullmatches[mark[1]] = mark[2]
+                elif mark[0] == "regex":
+                    record.disabled_patterns.append(Pattern(mark[1], mark[2], attribute, mark[3]))
                 continue
             if mark[0] == "command":
                 if mark[1] in self.commands or mark[1] in record.commands:
@@ -1113,7 +1126,8 @@ class PluginHost:
             return
         scenes = tuple(scene for scene in self.config.scenes
                        if scene in saved.scenes and name in saved.scenes[scene].plugins)
-        record = Loaded(name, None, None, scenes, values=settings.configured[name])
+        record = Loaded(name, None, None, scenes, values=settings.configured[name],
+                        disabled_rules=tuple(settings.disabled_rules.get(name, [])))
         self.plugins[name] = record
         if name in settings.disabled:
             record.errors.extend(previous_errors)
@@ -1173,11 +1187,21 @@ class PluginHost:
         return {"level": level, "errors_last_hour": len(recent), "failing": failing,
                 "last_error_at": record.errors[-1]["at"] if record.errors else None}
 
+    def _state_unavailable_tools(self, record: Loaded) -> dict[str, str]:
+        reasons = dict(record.unavailable_tools)
+        if record.status == "running" and record.instance is not None and record.tools and record.scenes:
+            per_scene = [self._unavailable_tools(record, scene) for scene in record.scenes]
+            for name in record.tools:
+                if name not in reasons and all(name in item for item in per_scene):
+                    reasons[name] = per_scene[0][name]
+        return reasons
+
     def state(self) -> dict:
         plugins = []
         for record in self.plugins.values():
             plugins.append({
                 "name": record.name, "status": record.status, "error": record.error,
+                "title": None if record.manifest is None else record.manifest.title,
                 "health": self.health(record),
                 "directory": None if record.directory is None else str(record.directory),
                 "version": record.manifest.version if record.status == "running" else None,
@@ -1189,18 +1213,27 @@ class PluginHost:
                                 [{"name": name, "title": PERMISSION_TITLES[name]}
                                  for name in record.manifest.permissions]),
                 "scenes": list(record.scenes),
-                "commands": [{"name": name, "description": description}
-                             for name, (description, _) in record.commands.items()],
-                "rules": ([{"kind": "fullmatch", "pattern": text, "description": description}
+                "commands": ([{"name": name, "description": description, "disabled": False}
+                              for name, (description, _) in record.commands.items()]
+                             + [{"name": name, "description": description, "disabled": True}
+                                for name, description in record.disabled_commands.items()]),
+                "rules": ([{"kind": "fullmatch", "pattern": text, "description": description, "disabled": False}
                            for text, (description, _) in record.fullmatches.items()]
+                          + [{"kind": "fullmatch", "pattern": text, "description": description, "disabled": True}
+                             for text, description in record.disabled_fullmatches.items()]
                           + [{"kind": "regex", "pattern": item.expression.pattern,
-                              "description": item.description, "priority": item.priority}
-                             for item in record.patterns]),
+                              "description": item.description, "priority": item.priority, "disabled": False}
+                             for item in record.patterns]
+                          + [{"kind": "regex", "pattern": item.expression.pattern,
+                              "description": item.description, "priority": item.priority, "disabled": True}
+                             for item in record.disabled_patterns]),
+                "disabled_rules": list(record.disabled_rules),
                 "notices": sorted(record.notices),
                 "tools": [{"name": name, "description": entry.description,
                            "summary": entry.description if entry.summary is None else entry.summary,
                            "parameters": entry.model.model_json_schema(), "needs_source": entry.needs_source}
                           for name, entry in record.tools.items()],
+                "unavailable_tools": self._state_unavailable_tools(record),
                 "instructions": record.instructions,
                 # Memory entries a group may choose this plugin for: recall, memory_tool, compact.
                 "memory_entries": [name for name, present in (("recall", record.recall is not None),
