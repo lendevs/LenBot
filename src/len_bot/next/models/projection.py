@@ -60,10 +60,12 @@ def _parse_arguments(raw: object) -> dict | None:
 
 def _unwrap_template(content: str, template_name: str) -> str | None:
     template = read_prompt(template_name)
-    before, sep, after = template.partition('$result')
+    parsed_template = Template(template)
+    before, sep, after = parsed_template.safe_substitute(result='\0').partition('\0')
     if not sep:
         return None
-    if '$' not in before and '$' not in after:
+    other_ids = [ident for ident in parsed_template.get_identifiers() if ident != 'result']
+    if not other_ids:
         if content.startswith(before) and content.endswith(after):
             return content[len(before):len(content) - len(after) if after else len(content)]
         stripped = content.strip()
@@ -146,14 +148,32 @@ def _recall_labels(bracket: str) -> tuple[int | None, str | None]:
     return record, msg_id
 
 
-def _fold_recall_chat(content: str, arguments: dict | None) -> str | None:
-    prefix, sep, _ = read_prompt('next_recall.md').partition('$summary')
-    if sep and content.startswith(prefix):
-        rest = content[len(prefix):]
-        summary_line, blank, body = rest.partition('\n\n')
-        if not blank:
+def _unwrap_recall(content: str) -> tuple[str, str] | None:
+    rendered = Template(read_prompt('next_recall.md')).safe_substitute(summary='\x00', result='\x01')
+    prefix, sep, rest_tpl = rendered.partition('\x00')
+    if not sep or '\x01' in prefix:
+        return None
+    between, has_result, suffix = rest_tpl.partition('\x01')
+    if not has_result:
+        if not content.startswith(prefix):
             return None
-        summary_text = summary_line.strip()
+        summary_line, blank, body = content[len(prefix):].partition('\n\n')
+        return (summary_line.strip(), body) if blank else None
+    text = content
+    if not (text.startswith(prefix) and text.endswith(suffix)):
+        text = content.strip()
+        prefix, suffix = prefix.lstrip(), suffix.rstrip()
+        if not (text.startswith(prefix) and text.endswith(suffix)):
+            return None
+    inner = text[len(prefix):len(text) - len(suffix) if suffix else len(text)]
+    summary_part, found, body = inner.partition(between or '\n\n')
+    return (summary_part.strip(), body) if found else None
+
+
+def _fold_recall_chat(content: str, arguments: dict | None) -> str | None:
+    unwrapped = _unwrap_recall(content)
+    if unwrapped is not None:
+        summary_text, body = unwrapped
         items: list[dict[str, object]] = []
         current_date: str | None = None
         current: dict[str, object] | None = None
