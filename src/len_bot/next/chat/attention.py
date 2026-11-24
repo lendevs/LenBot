@@ -36,6 +36,7 @@ from ..prompt_files import read_prompt
 from ..persona.profile import Persona
 from ..tools.external_tools import ExternalTool
 from ..tools.skills import Skill
+from ..work.store import TaskStore
 
 
 logger = logging.getLogger(__name__)
@@ -640,7 +641,15 @@ class SceneRunner:
             return offered(PendingWake('direct', at, people=[message.sender.uid]), '直接联系')
         if message.is_self:
             return WakeVerdict(False, None, '自己的消息')
+        reply_to_own = message.reply_to is not None and message.reply_to in self.own_ids
         if self.settings.only_direct:
+            if (reply_to_own and message.sender.uid not in self.settings.other_bot_ids
+                    and not state.off and self.quiet_period(at) is None
+                    and not is_focus_noise(message)
+                    and TaskStore(self.store).has_waiting_input(self.config.scene)):
+                state.followups.pop(message.sender.uid, None)
+                state.interjected_at = None
+                return offered(PendingWake('focus', at, people=[message.sender.uid]), '回答等待中的任务提问')
             return WakeVerdict(False, None, '只回应直接联系')
         if message.sender.uid in self.settings.other_bot_ids:
             return WakeVerdict(False, None, '来自其他 Bot')
@@ -667,6 +676,14 @@ class SceneRunner:
                 state.interjected_at = None
                 return offered(PendingWake('focus', at, people=[message.sender.uid]), '接着说')
             local_blocked = True
+        if not state.off and not is_focus_noise(message):
+            tasks = TaskStore(self.store)
+            if ((reply_to_own and tasks.has_waiting_input(self.config.scene))
+                    or (not addressed_to_others(message, self.config.bot_id)
+                        and message.sender.uid in tasks.waiting_requesters(self.config.scene))):
+                state.followups.pop(message.sender.uid, None)
+                state.interjected_at = None
+                return offered(PendingWake('focus', at, people=[message.sender.uid]), '回答等待中的任务提问')
         factor = None
         if open_for_ambient(state):
             if worth_joining(message, self.settings, self.config.bot_id):
