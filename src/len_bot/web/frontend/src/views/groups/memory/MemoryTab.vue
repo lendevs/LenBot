@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { TriangleAlert } from '@lucide/vue'
 import { memoryApi, type MemoryScope } from '../../../api/memory'
@@ -22,31 +22,41 @@ import SearchView from './SearchView.vue'
 const props = defineProps<{ scene: string; timeZone: string }>()
 const emit = defineEmits<{ dirty: [value: boolean] }>()
 
-type View = 'browse' | 'search' | 'ingest' | 'index' | 'settings'
+const VALID_VIEWS = ['browse', 'search', 'ingest', 'index', 'settings'] as const
+type View = (typeof VALID_VIEWS)[number]
+const isView = (value: unknown): value is View =>
+  typeof value === 'string' && (VALID_VIEWS as readonly string[]).includes(value)
+
 const { t } = useI18n()
 const route = useRoute()
-const state = useQuery({ queryKey: keys.memory.state(), queryFn: ({ signal }) => memoryApi.state(signal) })
+const router = useRouter()
+const state = useQuery({
+  queryKey: keys.memory.state(),
+  queryFn: ({ signal }) => memoryApi.state(signal),
+  refetchInterval: (query) => (query.state.data?.reindexing ? 3000 : false),
+})
 const enabled = computed(() => state.data.value?.enabled ?? false)
 const entry = computed(() => (state.data.value?.scenes ?? []).find((item) => item.scene === props.scene))
 const used = computed(() => entry.value !== undefined)
 // A group whose memory is a plugin has no native upkeep.
 const views = computed(() =>
   (enabled.value
-    ? (['browse', 'search', 'ingest', 'index', 'settings'] as const).filter(
-        (value) => value !== 'ingest' || !entry.value?.plugin,
-      )
+    ? VALID_VIEWS.filter((value) => value !== 'ingest' || !entry.value?.plugin)
     : (['settings'] as const)
   ).map((value) => ({ value, label: t(`groups.memory.views.${value}`) })),
 )
-const initial = route.query.tab
-const chosen = ref<View>(
-  typeof initial === 'string' && ['browse', 'search', 'ingest', 'index', 'settings'].includes(initial)
-    ? (initial as View)
-    : 'browse',
-)
+const chosen = ref<View>(isView(route.query.tab) ? route.query.tab : 'browse')
 const view = computed<View>(() =>
   !enabled.value ? 'settings' : chosen.value === 'ingest' && entry.value?.plugin ? 'browse' : chosen.value,
 )
+
+function syncTabQuery(value: View) {
+  const next = { ...route.query }
+  if (value === 'browse') delete next.tab
+  else next.tab = value
+  if ((next.tab ?? undefined) === (route.query.tab ?? undefined)) return
+  void router.replace({ query: next })
+}
 
 /** A file opened from search results. */
 const browseScope = ref<MemoryScope>('scene')
@@ -58,6 +68,7 @@ function openHit(hit: { scope: MemoryScope; path: string }) {
   browseScope.value = hit.scope
   opening.value = { scope: hit.scope, path: hit.path }
   chosen.value = 'browse'
+  syncTabQuery('browse')
 }
 
 const dirty = reactive<Record<string, boolean>>({})
@@ -70,13 +81,27 @@ const selected = computed({
   get: () => view.value,
   set: (value: View) => void switchTo(value),
 })
-async function switchTo(value: View) {
+async function switchTo(value: View, updateRoute = true) {
   const current = view.value
-  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
+  if (value === current) {
+    if (updateRoute) syncTabQuery(value)
     return
+  }
+  if (dirty[current] && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') }))) {
+    if (!updateRoute) syncTabQuery(current)
+    return
+  }
   dirty[current] = false
   chosen.value = value
+  if (updateRoute) syncTabQuery(value)
 }
+watch(
+  () => route.query.tab,
+  (value) => {
+    const next: View = isView(value) ? value : 'browse'
+    if (next !== chosen.value) void switchTo(next, false)
+  },
+)
 async function switchScope(value: MemoryScope) {
   if (value === browseScope.value) return
   if (dirty.browse && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
@@ -144,8 +169,15 @@ async function switchScope(value: MemoryScope) {
         @opened="opening = null"
         @dirty="(value: boolean) => (dirty.browse = value)"
       />
-      <SearchView v-else-if="view === 'search'" :scene="scene" @open="openHit" />
       <IngestView v-else-if="view === 'ingest'" :scene="scene" :time-zone="timeZone" />
+      <KeepAlive>
+        <SearchView
+          v-if="used && view === 'search'"
+          :scene="scene"
+          :retrieval="state.data.value.index?.retrieval ?? null"
+          @open="openHit"
+        />
+      </KeepAlive>
     </template>
   </div>
 </template>

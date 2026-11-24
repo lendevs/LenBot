@@ -23,11 +23,16 @@ const summary = useQuery({
   queryFn: ({ signal }) => memoryApi.summary(props.scene, props.scope, props.path, signal),
 })
 const data = computed(() => summary.data.value)
+const latestFailedRun = computed(() => {
+  const runs = data.value?.runs ?? []
+  if (!runs.length || runs[0]?.status === 'complete') return null
+  return runs.find((run) => run.error) ?? null
+})
 const portrait = computed(() => props.path === '' && props.scope === 'scene')
 const generate = useMutation({
   mutationFn: () => memoryApi.summarize(props.scene, props.scope, props.path),
   onSuccess: (result) => {
-    if (result.skipped) toast.success(result.skipped)
+    if (result.skipped) toast.info(result.skipped)
     else if (result.complete === false) toast.error(t('groups.memory.summary.partial'))
     else toast.success(t('groups.memory.summary.done'))
   },
@@ -48,7 +53,7 @@ const generate = useMutation({
     :retry="summary.refetch"
   />
   <section
-    v-else-if="data && (data.enabled || data.summary.abstract !== null)"
+    v-else-if="data && (data.enabled || data.summary.abstract !== null || latestFailedRun)"
     class="flex max-w-3xl flex-col gap-3"
   >
     <header class="flex min-h-8 flex-wrap items-center gap-3 border-b border-line pb-3">
@@ -66,6 +71,15 @@ const generate = useMutation({
         {{ t('groups.memory.summary.regenerate') }}
       </Button>
     </header>
+    <ErrorNote
+      v-if="latestFailedRun"
+      :title="
+        t('groups.memory.summary.runFailed', {
+          time: formatDateTime(latestFailedRun.started, { timeZone }),
+        })
+      "
+      :error="latestFailedRun.error"
+    />
     <p v-if="data.summary.abstract === null" class="text-sm text-muted">
       {{ t('groups.memory.summary.none') }}
     </p>

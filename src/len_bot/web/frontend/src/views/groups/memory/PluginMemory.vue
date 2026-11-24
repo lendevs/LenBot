@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { RouterLink } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
 import type { MemoryPlugin } from '../../../api/memory'
-import { formatDateTime } from '../../../i18n/format'
+import { pluginsApi, pluginTitle } from '../../../api/plugins'
+import { keys } from '../../../api/query'
+import { formatDateTime, formatNumber } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 
 defineProps<{ plugin: MemoryPlugin | null; recap: string | null; timeZone: string }>()
 
 const { t } = useI18n()
+const plugins = useQuery({
+  queryKey: keys.plugins.all(),
+  queryFn: ({ signal }) => pluginsApi.read(signal),
+})
+const title = (name: string) => pluginTitle(plugins.data.value, name)
 /** Plugin host states and their labels; a loaded plugin has not finished starting. */
 const labels: Record<string, string> = { failed: 'failed', stopped: 'stopped', loaded: 'starting' }
 </script>
@@ -18,7 +27,12 @@ const labels: Record<string, string> = { failed: 'failed', stopped: 'stopped', l
     <template v-if="plugin">
       <dt class="text-muted">{{ t('groups.memory.plugin.memory') }}</dt>
       <dd class="flex min-w-0 flex-wrap items-center gap-2 text-ink">
-        <span class="truncate">{{ t('groups.memory.plugin.name', { name: plugin.name }) }}</span>
+        <RouterLink
+          :to="{ name: 'host-plugins', query: { item: plugin.name } }"
+          class="truncate rounded-xs font-medium text-primary hover:underline focus-visible:focus-ring"
+        >
+          {{ t('groups.memory.plugin.name', { name: title(plugin.name) }) }}
+        </RouterLink>
         <Badge v-if="plugin.status !== 'running'" :tone="plugin.status === 'loaded' ? 'info' : 'error'">
           {{
             plugin.status && labels[plugin.status]
@@ -30,9 +44,11 @@ const labels: Record<string, string> = { failed: 'failed', stopped: 'stopped', l
       <dt class="text-muted">{{ t('groups.memory.plugin.progress') }}</dt>
       <dd class="text-ink tabular">
         {{
-          plugin.progress?.message_time
+          plugin.progress?.message_time != null
             ? formatDateTime(plugin.progress.message_time, { timeZone })
-            : t('groups.memory.plugin.unreported')
+            : plugin.progress
+              ? t('groups.memory.plugin.throughSeq', { seq: formatNumber(plugin.progress.through_seq) })
+              : t('groups.memory.plugin.unreported')
         }}
       </dd>
       <template v-if="plugin.last_error">
@@ -45,7 +61,14 @@ const labels: Record<string, string> = { failed: 'failed', stopped: 'stopped', l
     </template>
     <template v-if="recap">
       <dt class="text-muted">{{ t('groups.memory.plugin.recap') }}</dt>
-      <dd class="min-w-0 truncate text-ink">{{ t('groups.memory.plugin.name', { name: recap }) }}</dd>
+      <dd class="min-w-0 truncate text-ink">
+        <RouterLink
+          :to="{ name: 'host-plugins', query: { item: recap } }"
+          class="rounded-xs font-medium text-primary hover:underline focus-visible:focus-ring"
+        >
+          {{ t('groups.memory.plugin.name', { name: title(recap) }) }}
+        </RouterLink>
+      </dd>
     </template>
   </dl>
 </template>
