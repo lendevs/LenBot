@@ -10,9 +10,12 @@ import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
 import Input from '../../../ui/Input.vue'
 import MarkdownText from '../../../ui/MarkdownText.vue'
+import SaveBar from '../../../ui/SaveBar.vue'
+import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import { confirm } from '../../../ui/confirm'
+import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
 import DeleteDialog from './DeleteDialog.vue'
 import HistoryDialog from './HistoryDialog.vue'
@@ -41,12 +44,20 @@ const doc = useQuery({
 })
 const original = computed(() => doc.data.value?.content ?? '')
 const editing = ref(props.path === null)
+const editorMode = ref<'edit' | 'preview'>('edit')
+const editorModes = computed(() => [
+  { value: 'edit' as const, label: t('groups.memory.file.modes.edit') },
+  { value: 'preview' as const, label: t('groups.memory.file.modes.preview') },
+])
 const content = ref('')
 const baseContent = ref<string | null>(props.path === null ? '' : null)
 const remoteUpdated = ref(false)
 const reason = ref('')
 const initialPath = props.directory ? `${props.directory}/` : ''
 const newPath = ref(initialPath)
+const pathTouched = ref(false)
+const reasonTouched = ref(false)
+
 const dirty = computed(
   () =>
     editing.value &&
@@ -54,6 +65,45 @@ const dirty = computed(
       reason.value !== '' ||
       (props.path === null && newPath.value !== initialPath)),
 )
+
+function normalizeNewPath() {
+  pathTouched.value = true
+  const trimmed = newPath.value.trim()
+  if (!trimmed || trimmed.endsWith('/')) {
+    newPath.value = trimmed
+    return
+  }
+  if (!trimmed.endsWith('.md')) {
+    newPath.value = `${trimmed}.md`
+    return
+  }
+  newPath.value = trimmed
+}
+
+function validatePath(raw: string, requireSuffix: boolean): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return t('common.required')
+  if (trimmed.startsWith('/') || trimmed.endsWith('/')) return t('groups.memory.file.invalidPath')
+  const segments = trimmed.split('/')
+  if (segments.some((seg) => !seg || seg === '.' || seg === '..')) return t('groups.memory.file.invalidPath')
+  const filename = segments[segments.length - 1] ?? ''
+  if (filename.endsWith('.md')) {
+    if (!filename.slice(0, -3).trim()) return t('groups.memory.file.invalidPath')
+    return null
+  }
+  return requireSuffix ? t('groups.memory.file.invalidPath') : null
+}
+
+const pathError = computed(() =>
+  props.path === null ? validatePath(newPath.value, pathTouched.value) : null,
+)
+const shownPathError = computed(() => (pathTouched.value || dirty.value ? pathError.value : null))
+const reasonError = computed(() => (reason.value.trim() ? null : t('common.required')))
+const shownReasonError = computed(() => (reasonTouched.value || dirty.value ? reasonError.value : null))
+const invalid = computed(() =>
+  Boolean((props.path === null && validatePath(newPath.value, false)) || reasonError.value),
+)
+
 function reloadRemote() {
   content.value = original.value
   baseContent.value = doc.data.value ? original.value : props.path === null ? '' : null
@@ -61,6 +111,10 @@ function reloadRemote() {
 }
 function startEdit() {
   reloadRemote()
+  editorMode.value = 'edit'
+  reasonTouched.value = false
+  pathTouched.value = false
+  save.reset()
   editing.value = true
 }
 watch(
@@ -69,6 +123,9 @@ watch(
     baseContent.value = props.path === null ? '' : doc.data.value ? original.value : null
     content.value = props.path === null ? '' : original.value
     remoteUpdated.value = false
+    editorMode.value = 'edit'
+    pathTouched.value = false
+    reasonTouched.value = false
   },
 )
 watch(
@@ -109,26 +166,68 @@ const save = useMutation({
   onSuccess: (result) => {
     const path = props.path ?? newPath.value.trim()
     client.setQueryData(keys.memory.file(props.scene, props.scope, path), { path, content: result.after })
+    const dirs = path.split('/').slice(0, -1)
+    for (let i = 0; i <= dirs.length; i++) {
+      void client.invalidateQueries({
+        queryKey: keys.memory.summary(props.scene, props.scope, dirs.slice(0, i).join('/')),
+      })
+    }
+    if (props.scope === 'scene') {
+      void client.invalidateQueries({ queryKey: keys.memory.history(props.scene, path) })
+    }
     baseContent.value = result.after
     content.value = result.after
     remoteUpdated.value = false
     reason.value = ''
+    pathTouched.value = false
+    reasonTouched.value = false
+    editorMode.value = 'edit'
     editing.value = false
     toast.success(t('common.saved'))
     emit('changed', path)
   },
 })
+
+const saveDescribed = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')) : null,
+)
+const saveError = computed(() => saveDescribed.value?.message ?? null)
+const saveRawError = computed(() => {
+  const described = saveDescribed.value
+  if (!described || described.raw === null || described.raw === described.message) return null
+  return described.status === null ? described.raw : `HTTP ${described.status}\n${described.raw}`
+})
+
+function submit() {
+  if (props.path === null) normalizeNewPath()
+  reasonTouched.value = true
+  if (props.path === null && validatePath(newPath.value, true)) return
+  if (reasonError.value) return
+  save.mutate()
+}
+
+function discard() {
+  save.reset()
+  reason.value = ''
+  pathTouched.value = false
+  reasonTouched.value = false
+  editorMode.value = 'edit'
+  if (props.path === null) {
+    newPath.value = initialPath
+    content.value = ''
+    emit('dirty', false)
+    emit('close')
+    return
+  }
+  reloadRemote()
+  editing.value = false
+}
+
 async function cancel() {
   if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
     return
-  if (props.path === null) return emit('close')
-  reloadRemote()
-  reason.value = ''
-  editing.value = false
+  discard()
 }
-const canSave = computed(
-  () => reason.value.trim() !== '' && (props.path !== null || newPath.value.trim().endsWith('.md')),
-)
 
 const removing = ref(false)
 const historyOpen = ref(false)
@@ -140,11 +239,22 @@ function removed() {
 </script>
 
 <template>
-  <form v-if="editing" class="flex max-w-3xl flex-col gap-4" @submit.prevent="canSave && save.mutate()">
-    <header class="flex min-h-8 items-center border-b border-line pb-3">
-      <h3 class="min-w-0 truncate font-mono text-sm font-medium text-ink">
+  <form v-if="editing" class="flex max-w-3xl flex-col gap-4 pb-6" @submit.prevent="submit">
+    <header class="flex min-h-8 flex-wrap items-center justify-between gap-2 border-b border-line pb-3">
+      <h3 class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-ink">
         {{ path ?? t('groups.memory.create') }}
       </h3>
+      <div class="flex shrink-0 items-center gap-2">
+        <SegmentedControl
+          v-model="editorMode"
+          :options="editorModes"
+          size="sm"
+          :label="t('groups.memory.file.mode')"
+        />
+        <Button size="sm" variant="ghost" :disabled="save.isPending.value" @click="cancel">
+          {{ t('common.cancel') }}
+        </Button>
+      </div>
     </header>
     <div
       v-if="remoteUpdated"
@@ -156,28 +266,28 @@ function removed() {
         {{ t('ui.draft.reloadRemote') }}
       </Button>
     </div>
-    <Field v-if="path === null" :label="t('groups.memory.file.path')">
-      <Input v-model="newPath" placeholder="people/name.md" mono />
+    <Field v-if="path === null" :label="t('groups.memory.file.path')" :error="shownPathError" required>
+      <Input v-model="newPath" placeholder="people/name.md" mono @blur="normalizeNewPath" />
     </Field>
     <Field :label="t('groups.memory.file.content')">
-      <Textarea v-model="content" :rows="12" :max-rows="30" mono />
+      <Textarea v-if="editorMode === 'edit'" v-model="content" :rows="12" :max-rows="30" mono />
+      <div v-else class="min-h-60 rounded-md border border-line bg-surface px-3.5 py-3">
+        <MarkdownText v-if="content.trim()" :text="content" class="text-base leading-7 text-ink" />
+        <p v-else class="text-sm text-muted">{{ t('groups.memory.file.previewEmpty') }}</p>
+      </div>
     </Field>
-    <Field :label="t('groups.memory.file.reason')">
-      <Input v-model="reason" />
+    <Field :label="t('groups.memory.file.reason')" :error="shownReasonError" required>
+      <Input v-model="reason" @blur="reasonTouched = true" />
     </Field>
-    <ErrorNote
-      v-if="save.isError.value"
-      :title="t('groups.memory.file.saveFailed')"
-      :error="save.error.value"
+    <SaveBar
+      :dirty="dirty"
+      :saving="save.isPending.value"
+      :error="saveError"
+      :raw-error="saveRawError"
+      :invalid="invalid"
+      @save="submit"
+      @discard="discard"
     />
-    <div class="flex justify-end gap-2">
-      <Button variant="ghost" :disabled="save.isPending.value" @click="cancel">
-        {{ t('common.cancel') }}
-      </Button>
-      <Button type="submit" variant="primary" :loading="save.isPending.value" :disabled="!canSave">
-        {{ t('common.save') }}
-      </Button>
-    </div>
   </form>
   <article v-else class="flex min-w-0 flex-col gap-4">
     <header class="flex min-h-8 flex-wrap items-center gap-2 border-b border-line pb-3">

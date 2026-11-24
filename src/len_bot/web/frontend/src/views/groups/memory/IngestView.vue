@@ -19,7 +19,12 @@ const props = defineProps<{ scene: string; timeZone: string }>()
 
 const { t, te } = useI18n()
 const client = useQueryClient()
-const ingest = useQuery({ queryKey: keys.memory.ingest(), queryFn: ({ signal }) => memoryApi.ingest(signal) })
+const ingest = useQuery({
+  queryKey: keys.memory.ingest(),
+  queryFn: ({ signal }) => memoryApi.ingest(signal),
+  refetchInterval: (query) =>
+    query.state.data?.scenes.some((item) => item.latest?.status === 'running') ? 3000 : false,
+})
 const current = computed(() => ingest.data.value?.scenes.find((item) => item.scene === props.scene) ?? null)
 const latest = computed(() => current.value?.latest ?? null)
 const tones: Record<string, Tone> = {

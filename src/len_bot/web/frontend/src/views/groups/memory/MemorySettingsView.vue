@@ -132,9 +132,23 @@ const errors = computed<Record<string, string>>(() => {
   if (!value.local.directory.trim()) found.directory = required
   for (const { key } of ingestFields)
     if (value.ingest && typeof value.ingest[key] !== 'number') found[key] = required
+  if (
+    value.ingest &&
+    typeof value.ingest.batch_size === 'number' &&
+    typeof value.ingest.min_messages === 'number' &&
+    value.ingest.batch_size < value.ingest.min_messages
+  )
+    found.batch_size = t('groups.memory.settings.batchTooSmall')
+  if (
+    value.ingest &&
+    typeof value.ingest.max_age_seconds === 'number' &&
+    typeof value.ingest.idle_seconds === 'number' &&
+    value.ingest.max_age_seconds < value.ingest.idle_seconds
+  )
+    found.max_age_seconds = t('groups.memory.settings.ageTooSmall')
   const embedding = value.local.embedding
-  if (embedding && !embedding.provider) found.embedding = t('groups.memory.settings.noProvider')
-  if (embedding && !embedding.model.trim()) found.embedding = required
+  if (embedding && !embedding.provider) found.embeddingProvider = t('groups.memory.settings.noProvider')
+  if (embedding && !embedding.model.trim()) found.embeddingModel = required
   return found
 })
 const problem = computed(() => {
@@ -152,9 +166,15 @@ const save = useMutation({
     toast.success(t('common.saved'))
   },
 })
-const saveError = computed(() =>
-  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : problem.value,
+const saveDescribed = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')) : null,
 )
+const saveError = computed(() => saveDescribed.value?.message ?? problem.value)
+const saveRawError = computed(() => {
+  const described = saveDescribed.value
+  if (!described || described.raw === null || described.raw === described.message) return null
+  return described.status === null ? described.raw : `HTTP ${described.status}\n${described.raw}`
+})
 </script>
 
 <template>
@@ -166,7 +186,11 @@ const saveError = computed(() =>
       :error="settings.error.value"
       :retry="settings.refetch"
     />
-    <form v-else class="flex flex-col gap-8 pb-6" @submit.prevent="save.mutate()">
+    <form
+      v-else
+      class="flex flex-col gap-8 pb-6"
+      @submit.prevent="dirty && Object.keys(errors).length === 0 && save.mutate()"
+    >
       <FormSection :title="t('groups.memory.settings.section')">
         <Field :label="t('groups.memory.settings.enabled')" inline wide>
           <Switch v-model="enabled" />
@@ -216,13 +240,18 @@ const saveError = computed(() =>
         </template>
       </FormSection>
       <FormSection v-if="draft" :title="t('groups.memory.settings.vector')" :columns="1">
-        <EmbeddingField v-model="draft.local.embedding" :providers="providers" />
-        <p v-if="errors.embedding" class="text-xs text-error">{{ errors.embedding }}</p>
+        <EmbeddingField
+          v-model="draft.local.embedding"
+          :providers="providers"
+          :provider-error="errors.embeddingProvider"
+          :model-error="errors.embeddingModel"
+        />
       </FormSection>
       <SaveBar
         :dirty="dirty"
         :saving="save.isPending.value"
         :error="saveError"
+        :raw-error="saveRawError"
         :invalid="Object.keys(errors).length > 0"
         @save="save.mutate()"
         @discard="adopt"

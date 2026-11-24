@@ -3,12 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery } from '@tanstack/vue-query'
 import { useMediaQuery } from '@vueuse/core'
-import { ArrowLeft, ChevronRight, FileText, Folder, FolderOpen, Plus } from '@lucide/vue'
-import { memoryApi, type MemoryScope, type MemoryState } from '../../../api/memory'
+import { ArrowLeft, ChevronRight, FileText, Folder, FolderOpen, Lock, Plus, Search } from '@lucide/vue'
+import { memoryApi, type MemoryNode, type MemoryScope, type MemoryState } from '../../../api/memory'
 import { keys } from '../../../api/query'
 import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
+import Input from '../../../ui/Input.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import { confirm } from '../../../ui/confirm'
 import DirectorySummary from './DirectorySummary.vue'
@@ -25,9 +26,10 @@ const props = defineProps<{
 const emit = defineEmits<{ dirty: [value: boolean]; opened: [] }>()
 
 const { t } = useI18n()
-const wide = useMediaQuery('(min-width: 1280px)')
+const wide = useMediaQuery('(min-width: 1024px)')
 const scope = computed(() => props.scope)
 const directory = ref('')
+const filter = ref('')
 const file = ref<string | null>(null)
 const creating = ref(false)
 const fileDirty = ref(false)
@@ -46,6 +48,17 @@ const listing = useInfiniteQuery({
   enabled: computed(() => can('browse')),
 })
 const nodes = computed(() => listing.data.value?.pages.flatMap((page) => page.nodes) ?? [])
+const showFilter = computed(() => nodes.value.length >= 8 || filter.value !== '')
+const filteredNodes = computed(() => {
+  const keyword = filter.value.trim().toLowerCase()
+  if (!keyword) return nodes.value
+  return nodes.value.filter(
+    (node) => node.name.toLowerCase().includes(keyword) || node.path.toLowerCase().includes(keyword),
+  )
+})
+const isReadOnly = (node: MemoryNode) =>
+  Boolean(node.access && /^(r|ro|read|read[-_]?only)$/i.test(node.access))
+
 const crumbs = computed(() => {
   const parts = directory.value ? directory.value.split('/') : []
   return [
@@ -65,6 +78,7 @@ function reset() {
 async function openDirectory(path: string) {
   if (!(await leave())) return
   directory.value = path
+  filter.value = ''
   reset()
 }
 async function openFile(path: string) {
@@ -75,6 +89,7 @@ async function openFile(path: string) {
 }
 watch(scope, () => {
   directory.value = ''
+  filter.value = ''
   reset()
 })
 async function create() {
@@ -95,8 +110,13 @@ function changed(path: string | null) {
 watch(
   () => props.opening,
   async (value) => {
-    if (!value || !(await leave())) return
+    if (!value) return
+    if (!(await leave())) {
+      emit('opened')
+      return
+    }
     directory.value = value.path.split('/').slice(0, -1).join('/')
+    filter.value = ''
     reset()
     file.value = value.path
     emit('opened')
@@ -104,13 +124,13 @@ watch(
   { immediate: true },
 )
 const detail = computed(() => Boolean(file.value || creating.value))
-const split = computed(() => wide.value && (nodes.value.length > 0 || detail.value))
+const split = computed(() => wide.value && nodes.value.length > 0)
 </script>
 
 <template>
   <div class="grid min-w-0 items-start gap-6" :class="split && 'grid-cols-[272px_minmax(0,1fr)]'">
     <section
-      v-if="wide || !detail"
+      v-if="split || !detail"
       class="flex min-w-0 flex-col gap-3"
       :class="split && 'border-r border-line pr-5'"
       :aria-label="t('groups.memory.views.browse')"
@@ -144,6 +164,15 @@ const split = computed(() => wide.value && (nodes.value.length > 0 || detail.val
           {{ t('groups.memory.create') }}
         </Button>
       </div>
+      <Input
+        v-if="showFilter"
+        v-model="filter"
+        size="sm"
+        :icon="Search"
+        :placeholder="t('groups.memory.filterPlaceholder')"
+        :aria-label="t('groups.memory.filterPlaceholder')"
+        clearable
+      />
       <p v-if="!can('browse')" class="text-sm text-muted">{{ t('groups.memory.noBrowse') }}</p>
       <Skeleton v-else-if="listing.isPending.value" :lines="5" />
       <ErrorNote
@@ -161,8 +190,11 @@ const split = computed(() => wide.value && (nodes.value.length > 0 || detail.val
           {{ t('groups.memory.create') }}
         </Button>
       </EmptyState>
-      <ul v-else-if="nodes.length" class="-mx-1 flex list-none flex-col gap-0.5 px-1">
-        <li v-for="node in nodes" :key="node.path">
+      <p v-else-if="nodes.length && !filteredNodes.length" class="px-2 py-2 text-xs text-muted">
+        {{ t('common.noResults') }}
+      </p>
+      <ul v-else-if="filteredNodes.length" class="-mx-1 flex list-none flex-col gap-0.5 px-1">
+        <li v-for="node in filteredNodes" :key="node.path">
           <button
             type="button"
             class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors duration-150 focus-visible:focus-ring"
@@ -178,6 +210,14 @@ const split = computed(() => wide.value && (nodes.value.length > 0 || detail.val
               aria-hidden="true"
             />
             <span class="min-w-0 flex-1 truncate">{{ node.name }}</span>
+            <span
+              v-if="isReadOnly(node)"
+              class="inline-flex shrink-0 text-subtle"
+              :title="t('groups.memory.readOnly')"
+            >
+              <Lock :size="13" aria-hidden="true" />
+              <span class="sr-only">{{ t('groups.memory.readOnly') }}</span>
+            </span>
           </button>
         </li>
       </ul>
@@ -192,9 +232,9 @@ const split = computed(() => wide.value && (nodes.value.length > 0 || detail.val
       </Button>
     </section>
 
-    <section v-if="detail || (split && nodes.length)" class="flex min-w-0 flex-col gap-3">
+    <section v-if="detail || split" class="flex min-w-0 flex-col gap-3">
       <Button
-        v-if="!wide && detail"
+        v-if="!split && detail"
         size="sm"
         variant="ghost"
         :icon="ArrowLeft"

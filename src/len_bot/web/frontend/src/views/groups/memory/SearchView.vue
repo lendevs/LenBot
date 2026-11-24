@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
 import { FileText, Search } from '@lucide/vue'
@@ -12,15 +12,43 @@ import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Input from '../../../ui/Input.vue'
 
-const props = defineProps<{ scene: string }>()
+defineOptions({ name: 'SearchView' })
+
+const props = defineProps<{ scene: string; retrieval?: string | null }>()
 const emit = defineEmits<{ open: [hit: { scope: MemoryScope; path: string }] }>()
 
 const { t } = useI18n()
 const text = ref('')
 const search = useMutation({ mutationFn: (query: string) => memoryApi.search(props.scene, query) })
+watch(
+  () => props.scene,
+  () => {
+    text.value = ''
+    search.reset()
+  },
+)
 function submit() {
   const query = text.value.trim()
   if (query) search.mutate(query)
+}
+
+function highlightParts(preview: string, query: string): { text: string; match: boolean }[] {
+  const terms = [...new Set(query.trim().split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length)
+  if (!terms.length || !preview) return [{ text: preview, match: false }]
+  const pattern = new RegExp(
+    `(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+    'gi',
+  )
+  const parts: { text: string; match: boolean }[] = []
+  let last = 0
+  for (const found of preview.matchAll(pattern)) {
+    const start = found.index ?? 0
+    if (start > last) parts.push({ text: preview.slice(last, start), match: false })
+    parts.push({ text: found[0], match: true })
+    last = start + found[0].length
+  }
+  if (last < preview.length) parts.push({ text: preview.slice(last), match: false })
+  return parts.length ? parts : [{ text: preview, match: false }]
 }
 </script>
 
@@ -40,6 +68,12 @@ function submit() {
         {{ t('common.search') }}
       </Button>
     </form>
+    <div v-if="retrieval" class="flex items-center gap-2 text-xs text-muted">
+      <span>{{ t('groups.memory.index.retrieval') }}</span>
+      <Badge :tone="retrieval === 'hybrid' ? 'success' : 'neutral'">
+        {{ retrieval === 'hybrid' ? t('groups.memory.index.hybrid') : t('groups.memory.index.fulltext') }}
+      </Badge>
+    </div>
     <ErrorNote
       v-if="search.isError.value"
       :title="t('groups.memory.search.failed')"
@@ -75,7 +109,13 @@ function submit() {
             </span>
           </span>
           <span class="line-clamp-3 text-sm leading-6 break-words whitespace-pre-wrap text-ink-2">
-            {{ hit.preview }}
+            <template
+              v-for="(part, idx) in highlightParts(hit.preview, search.variables.value ?? '')"
+              :key="idx"
+            >
+              <mark v-if="part.match" class="rounded-xs bg-selected px-0.5 text-ink">{{ part.text }}</mark>
+              <template v-else>{{ part.text }}</template>
+            </template>
           </span>
         </button>
       </li>

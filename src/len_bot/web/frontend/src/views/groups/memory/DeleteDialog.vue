@@ -21,22 +21,13 @@ const LIMIT = 500
 const { t } = useI18n()
 const mode = ref<'delete' | 'forget'>('delete')
 const reason = ref('')
+const reasonTouched = ref(false)
 const modes = computed(() =>
   (['delete', 'forget'] as const).map((value) => ({
     value,
     label: t(`groups.memory.remove.modes.${value}`),
   })),
 )
-watch(open, (value) => {
-  if (!value) return
-  mode.value = props.canDelete ? 'delete' : 'forget'
-  reason.value = ''
-  text.value = ''
-  who.value = ''
-  rows.value = []
-  page.value = null
-  chosen.value = new Map()
-})
 
 /** Chat messages to skip in later memory ingestion, so the forgotten content is not learned again. */
 const text = ref('')
@@ -45,25 +36,58 @@ const rows = ref<SourcePreview[]>([])
 const page = ref<SourcePage | null>(null)
 const chosen = ref(new Map<number, SourcePreview>())
 const asked = ref<{ query?: string; who?: string }>({})
-const finding = ref(false)
+const searching = ref(false)
+const loadingMore = ref(false)
 const findError = ref<unknown>(null)
+let searchSeq = 0
+
 async function find(more = false) {
+  const seq = ++searchSeq
   if (!more) asked.value = { query: text.value.trim() || undefined, who: who.value.trim() || undefined }
-  finding.value = true
+  if (more) loadingMore.value = true
+  else searching.value = true
   findError.value = null
   try {
     const result = await memoryApi.sources(props.scene, {
       ...asked.value,
       ...(more && page.value ? { offset: page.value.next_offset ?? 0, snapshot: page.value.snapshot } : {}),
     })
+    if (seq !== searchSeq) return
     rows.value = more ? [...rows.value, ...result.previews] : result.previews
     page.value = result
   } catch (error) {
+    if (seq !== searchSeq) return
     findError.value = error
   } finally {
-    finding.value = false
+    if (seq === searchSeq) {
+      searching.value = false
+      loadingMore.value = false
+    }
   }
 }
+
+watch(open, (value) => {
+  if (!value) return
+  searchSeq += 1
+  searching.value = false
+  loadingMore.value = false
+  findError.value = null
+  mode.value = props.canDelete ? 'delete' : 'forget'
+  reason.value = ''
+  reasonTouched.value = false
+  text.value = ''
+  who.value = ''
+  rows.value = []
+  page.value = null
+  chosen.value = new Map()
+  remove.reset()
+  if (mode.value === 'forget') void find(false)
+})
+watch(mode, (value) => {
+  if (open.value && value === 'forget' && page.value === null && !searching.value) {
+    void find(false)
+  }
+})
 function toggle(item: SourcePreview, on: boolean | 'indeterminate') {
   const next = new Map(chosen.value)
   if (on === true) next.set(item.record, item)
@@ -106,8 +130,12 @@ const actionLabel = computed(() =>
     <div class="flex flex-col gap-4">
       <RadioGroup v-if="canDelete && canForget" v-model="mode" :options="modes" />
       <p class="text-sm text-ink-2">{{ t(`groups.memory.remove.explain.${mode}`) }}</p>
-      <Field :label="t('groups.memory.remove.reason')">
-        <Input v-model="reason" />
+      <Field
+        :label="t('groups.memory.remove.reason')"
+        :error="reasonTouched && !reason.trim() ? t('common.required') : null"
+        required
+      >
+        <Input v-model="reason" @blur="reasonTouched = true" />
       </Field>
       <section v-if="mode === 'forget'" class="flex flex-col gap-3 border-t border-line pt-4">
         <h4 class="text-sm font-semibold text-ink">{{ t('groups.memory.remove.sources') }}</h4>
@@ -118,7 +146,9 @@ const actionLabel = computed(() =>
             :placeholder="t('groups.memory.remove.text')"
           />
           <Input v-model="who" :aria-label="t('groups.memory.remove.who')" placeholder="onebot:10001" mono />
-          <Button type="submit" :icon="Search" :loading="finding">{{ t('common.search') }}</Button>
+          <Button type="submit" :icon="Search" :loading="searching" :disabled="loadingMore">
+            {{ t('common.search') }}
+          </Button>
         </form>
         <ErrorNote v-if="findError" :title="t('groups.memory.readFailed')" :error="findError" />
         <p v-if="page && !rows.length" class="text-sm text-muted">{{ t('common.noResults') }}</p>
@@ -153,7 +183,8 @@ const actionLabel = computed(() =>
           v-if="page?.next_offset != null"
           size="sm"
           variant="ghost"
-          :loading="finding"
+          :loading="loadingMore"
+          :disabled="searching"
           class="self-center"
           @click="find(true)"
         >

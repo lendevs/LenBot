@@ -36,8 +36,35 @@ const rows = ['stored', 'configured'] as const
       </Badge>
       <Badge v-if="index.needs_rebuild" tone="warning">{{ t('groups.memory.index.mismatch') }}</Badge>
     </p>
-    <div class="overflow-x-auto scrollbar-thin">
-      <table class="w-full min-w-120 text-sm">
+    <div class="flex flex-col gap-3 sm:hidden">
+      <div
+        v-for="row in rows"
+        :key="row"
+        class="flex flex-col gap-2 rounded-lg border border-line bg-surface p-3.5 text-sm"
+      >
+        <div class="font-medium text-ink">{{ t(`groups.memory.index.rows.${row}`) }}</div>
+        <dl class="grid gap-1.5 text-xs">
+          <div class="flex flex-col gap-0.5">
+            <dt class="text-muted">{{ t('groups.memory.index.baseUrl') }}</dt>
+            <dd class="font-mono break-all text-ink-2">{{ index[row]?.base_url ?? '—' }}</dd>
+          </div>
+          <div class="flex flex-col gap-0.5">
+            <dt class="text-muted">{{ t('groups.memory.index.model') }}</dt>
+            <dd class="font-mono break-all text-ink-2">
+              {{ index[row]?.model ?? t('groups.memory.index.noVector') }}
+            </dd>
+          </div>
+          <div class="flex flex-col gap-0.5">
+            <dt class="text-muted">{{ t('groups.memory.index.dimensions') }}</dt>
+            <dd class="text-ink-2 tabular">
+              {{ index[row]?.dimensions ?? t('groups.memory.index.defaultDimensions') }}
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+    <div class="hidden overflow-x-auto scrollbar-thin sm:block">
+      <table class="w-full text-sm">
         <thead>
           <tr class="text-left text-xs text-muted">
             <th scope="col" class="py-2 pr-4 font-medium">{{ t('groups.memory.index.which') }}</th>
