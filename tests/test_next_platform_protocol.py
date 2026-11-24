@@ -264,3 +264,34 @@ async def test_manual_self_messages_enter_context_once_without_waking(tmp_path, 
             saved = store.find_message(config.scene, '12345')
             assert saved.is_self and saved.sender.uid == 'onebot:90001'
             assert store.db.execute('SELECT COUNT(*) FROM messages').fetchone()[0] == 1
+
+
+def test_display_name_clips_long_card_and_falls_back_from_blank_card():
+    from len_bot.next.platform.messages import render_batch, render_text
+    from len_bot.next.platform.onebot_messages import parse_event
+
+    def make_msg(msg_id: int, sender: dict, text: str = '你好', reply_id: int | None = None):
+        segs = ([{'type': 'reply', 'data': {'id': str(reply_id)}}] if reply_id else []) + [
+            {'type': 'text', 'data': {'text': text}}
+        ]
+        return parse_event({
+            'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'user_id': 70001,
+            'message_id': msg_id, 'time': 1790000000, 'group_id': 80001, 'sender': sender, 'message': segs,
+        })
+
+    long_card = '一二三四五六七八九十一二三四五六七八九十'
+    clipped = '一二三四五六七八九十一二三四五六…'
+    m_long = make_msg(1, {'card': f'  {long_card}  ', 'nickname': '短昵称'})
+    rendered = render_batch([(m_long, None, {})], timezone='UTC')
+    assert f'"{clipped}"(onebot:70001)' in rendered
+    assert long_card not in rendered
+
+    m_reply = make_msg(2, {'card': '   ', 'nickname': '  小明  '}, reply_id=1)
+    rendered_reply = render_batch([(m_reply, m_long, {})], timezone='UTC')
+    assert '"小明"(onebot:70001)' in rendered_reply
+    assert f'"{clipped}(onebot:70001)"' in rendered_reply
+    assert f'{clipped}(onebot:70001)' in render_text(m_reply, reply=m_long)
+
+    m_blank = make_msg(3, {'card': '   ', 'nickname': ' \t '})
+    rendered_blank = render_batch([(m_blank, None, {})], timezone='UTC')
+    assert ' onebot:70001 [' in rendered_blank
