@@ -151,3 +151,12 @@ const sectionKeys: Record<string, string> = {
 export function sectionKey(section: string): string {
   return `shell.restart.sections.${sectionKeys[section] ?? 'other'}`
 }
+
+/** Whether to display Apple-style shortcut glyphs (`⌘K`) instead of `Ctrl K`. */
+export const isApplePlatform =
+  typeof navigator !== 'undefined' &&
+  /mac|iphone|ipad|ipod/i.test(
+    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ||
+      navigator.platform ||
+      navigator.userAgent,
+  )

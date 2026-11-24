@@ -78,7 +78,9 @@ export default {
       collapse: 'Collapse sidebar',
       expand: 'Expand sidebar',
       sections: 'Sections',
+      skipToContent: 'Skip to main content',
     },
+    simulated: 'Simulated',
     groups: { run: 'Run', chats: 'Chats', extend: 'Extend', config: 'Configure' },
     pages: {
       overview: 'Overview',
@@ -2944,7 +2946,7 @@ export default {
   },
   palette: {
     label: 'Quick jump',
-    placeholder: 'Jump to a page or group, or run an action',
+    placeholder: 'Jump to a page, group, persona or plugin, or run an action',
     empty: 'No matches',
     kinds: { page: 'Page', group: 'Group', plugin: 'Plugin', persona: 'Persona', action: 'Action' },
     keys: { select: 'select', open: 'open', toggle: 'open anywhere' },
@@ -3125,6 +3127,8 @@ export default {
     checking: 'Checking the login',
     checkFailed: 'Could not read the login state',
     badContext: 'Invalid panel context; mode or home is not one this panel knows: {context}',
+    switchToDark: 'Switch to dark appearance',
+    switchToLight: 'Switch to light appearance',
   },
   time: {
     justNow: 'just now',

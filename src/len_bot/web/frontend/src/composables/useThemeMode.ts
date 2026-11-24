@@ -35,9 +35,9 @@ export function bindThemeMode(): void {
   })
 }
 
-export function setThemeMode(mode: string): void {
-  if (!MODES.includes(mode as ThemeMode)) return
-  themeMode.value = mode as ThemeMode
+export function setThemeMode(mode: ThemeMode): void {
+  if (!MODES.includes(mode)) return
+  themeMode.value = mode
   try {
     localStorage.setItem(KEY, mode)
   } catch {

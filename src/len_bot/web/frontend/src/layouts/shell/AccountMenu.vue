@@ -2,11 +2,11 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { LogOut, Monitor, Moon, RotateCw, Sun } from '@lucide/vue'
-import { setThemeMode, themeMode } from '../../composables/useThemeMode'
+import { setThemeMode, themeMode, type ThemeMode } from '../../composables/useThemeMode'
 import { currentLocale, localeOptions, setLocale, type Locale } from '../../i18n'
 import Avatar from '../../ui/Avatar.vue'
 import Popover from '../../ui/Popover.vue'
-import SegmentedControl from '../../ui/SegmentedControl.vue'
+import SegmentedControl, { type SegmentOption } from '../../ui/SegmentedControl.vue'
 
 withDefaults(
   defineProps<{ username: string; restartDisabled?: boolean; leaving: boolean; restartable?: boolean }>(),
@@ -18,9 +18,9 @@ const emit = defineEmits<{ restart: []; logout: [] }>()
 
 const { t } = useI18n()
 const open = ref(false)
-const theme = computed({ get: () => themeMode.value as string, set: (value: string) => setThemeMode(value) })
+const theme = computed<ThemeMode>({ get: () => themeMode.value, set: (value) => setThemeMode(value) })
 const locale = computed({ get: () => currentLocale.value, set: (value: Locale) => void setLocale(value) })
-const themes = computed(() => [
+const themes = computed<SegmentOption<ThemeMode>[]>(() => [
   { value: 'system', label: t('shell.account.themes.system'), icon: Monitor },
   { value: 'light', label: t('shell.account.themes.light'), icon: Sun },
   { value: 'dark', label: t('shell.account.themes.dark'), icon: Moon },
@@ -40,7 +40,7 @@ function choose(event: 'restart' | 'logout') {
     <template #trigger>
       <button
         type="button"
-        class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full ring-1 ring-line transition-shadow hover:ring-line-strong focus-visible:focus-ring"
+        class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full ring-1 ring-line transition-shadow hover:ring-line-strong focus-visible:focus-ring pointer-coarse:size-10"
         :aria-label="t('shell.account.menu')"
       >
         <Avatar :name="username || '?'" :size="30" />
