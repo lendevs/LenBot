@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, toRef, useTemplateRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, toRef, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/vue-query'
 import { useResizeObserver } from '@vueuse/core'
@@ -23,6 +23,7 @@ const { t } = useI18n()
 const client = useQueryClient()
 const scene = toRef(props, 'scene')
 const everything = ref(false)
+const turnRunning = ref(false)
 const { starting, compacting, startSession, compactRecap } = useSessionActions(scene)
 
 const queryKey = computed(() => keys.scene.session(props.scene, !everything.value))
@@ -38,6 +39,7 @@ const newest = computed(() => query.data.value?.pages[0])
 const entries = computed<SessionEntry[]>(() =>
   [...(query.data.value?.pages ?? [])].reverse().flatMap((page) => page.entries),
 )
+const hasActiveEntries = computed(() => entries.value.some((entry) => entry.active))
 const results = computed(() => {
   const found = new Map<string, SessionEntry>()
   for (const entry of entries.value) {
@@ -155,12 +157,23 @@ async function readNewest() {
   }
 }
 
-useHostEvent('*', (event) => {
-  if (event.scene !== props.scene || !event.type.startsWith('turn.') || timer) return
+function scheduleRead(delay: number) {
+  if (timer) return
   timer = setTimeout(() => {
     timer = undefined
     void readNewest()
-  }, 1000)
+  }, delay)
+}
+
+useHostEvent('*', (event) => {
+  if (event.type === 'host.changed') {
+    if (event.scene === null || event.scene === props.scene) scheduleRead(300)
+    return
+  }
+  if (event.scene !== props.scene || !event.type.startsWith('turn.')) return
+  if (event.type === 'turn.started' || event.type === 'turn.step') turnRunning.value = true
+  else if (event.type === 'turn.ended') turnRunning.value = false
+  scheduleRead(event.type === 'turn.ended' ? 200 : 1000)
 })
 onBeforeUnmount(() => clearTimeout(timer))
 
@@ -168,10 +181,33 @@ onBeforeUnmount(() => clearTimeout(timer))
 const recapExpanded = ref(false)
 const recapCut = ref(false)
 const recapText = useTemplateRef<HTMLElement>('recapText')
-useResizeObserver(recapText, () => {
+function measureRecap() {
   const element = recapText.value
-  if (element && !recapExpanded.value) recapCut.value = element.scrollHeight > element.clientHeight + 1
-})
+  if (!element) {
+    recapCut.value = false
+    return
+  }
+  if (!recapExpanded.value) recapCut.value = element.scrollHeight > element.clientHeight + 1
+}
+useResizeObserver(recapText, measureRecap)
+watch(
+  () => props.scene,
+  () => {
+    turnRunning.value = false
+    recapExpanded.value = false
+    recapCut.value = false
+    void nextTick(measureRecap)
+  },
+)
+watch(
+  () => newest.value?.recap,
+  (next, prev) => {
+    if (next === null || next === undefined || (prev && next.length < prev.length)) {
+      recapExpanded.value = false
+    }
+    void nextTick(measureRecap)
+  },
+)
 </script>
 
 <template>
@@ -186,7 +222,13 @@ useResizeObserver(recapText, () => {
     <template v-else-if="newest">
       <FormSection :title="t('groups.session.recap')" :columns="1">
         <template #actions>
-          <Button size="sm" :icon="Sparkles" :loading="compacting" @click="compactRecap">
+          <Button
+            size="sm"
+            :icon="Sparkles"
+            :loading="compacting"
+            :disabled="!hasActiveEntries || starting"
+            @click="compactRecap"
+          >
             {{ t('groups.session.compact') }}
           </Button>
         </template>
@@ -204,7 +246,7 @@ useResizeObserver(recapText, () => {
           <button
             v-if="recapCut || recapExpanded"
             type="button"
-            class="mt-2 inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-muted hover:text-ink focus-visible:focus-ring"
+            class="mt-2 inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-muted hover:text-ink focus-visible:focus-ring pointer-coarse:min-h-8"
             :aria-expanded="recapExpanded"
             @click="recapExpanded = !recapExpanded"
           >
@@ -222,7 +264,13 @@ useResizeObserver(recapText, () => {
 
       <FormSection :title="t('groups.session.entries')" :columns="1">
         <template #actions>
-          <Button size="sm" :icon="RefreshCcw" :loading="starting" @click="startSession">
+          <Button
+            size="sm"
+            :icon="RefreshCcw"
+            :loading="starting"
+            :disabled="compacting"
+            @click="startSession"
+          >
             {{ t('groups.newSession.action') }}
           </Button>
         </template>
@@ -261,8 +309,17 @@ useResizeObserver(recapText, () => {
               :time-zone="timeZone"
               :raw="developerDetails"
               :last="index === shown.length - 1"
+              :running="turnRunning"
             />
           </template>
+          <li
+            v-if="everything && firstActive === -1"
+            class="mt-4 flex items-center gap-3 pt-1 text-xs font-medium text-muted"
+          >
+            <span class="h-px flex-1 bg-line" />
+            {{ t('groups.session.current') }}
+            <span class="h-px flex-1 bg-line" />
+          </li>
         </Timeline>
       </FormSection>
     </template>

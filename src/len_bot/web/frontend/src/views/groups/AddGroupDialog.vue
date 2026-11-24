@@ -79,6 +79,7 @@ watch(personaOptions, (options) => {
 const manual = computed(() =>
   number.value.trim() ? `${platform.value}:${kind.value}:${number.value.trim()}` : '',
 )
+const manualPlaceholder = computed(() => t(`groups.join.placeholders.${platform.value}.${kind.value}`))
 const target = computed(() => picked.value ?? manual.value)
 const isGroup = computed(() => target.value.split(':')[1] !== 'private')
 const sceneId = (scene: string) => scene.split(':').slice(2).join(':')
@@ -154,13 +155,17 @@ watch(open, (value) => {
                 {{ item.name || sceneId(item.scene) }}
               </span>
               <span
-                v-if="scenePlatform(item.scene) || item.name || item.members"
+                v-if="
+                  scenePlatform(item.scene) ||
+                  (item.name && item.name !== sceneId(item.scene)) ||
+                  item.members
+                "
                 class="truncate text-xs text-muted tabular"
               >
                 {{
                   [
                     scenePlatform(item.scene),
-                    item.name ? sceneId(item.scene) : '',
+                    item.name && item.name !== sceneId(item.scene) ? sceneId(item.scene) : '',
                     item.members ? t('groups.members', { n: formatNumber(item.members) }) : '',
                   ]
                     .filter(Boolean)
@@ -193,9 +198,9 @@ watch(open, (value) => {
           <div class="min-w-40 flex-1">
             <Input
               v-model="number"
-              :inputmode="platform === 'feishu' ? 'text' : 'numeric'"
-              :placeholder="kind === 'group' ? t('groups.join.number') : t('groups.join.account')"
-              :aria-label="kind === 'group' ? t('groups.join.number') : t('groups.join.account')"
+              :inputmode="platform === 'onebot' ? 'numeric' : 'text'"
+              :placeholder="manualPlaceholder"
+              :aria-label="manualPlaceholder"
               mono
             />
           </div>

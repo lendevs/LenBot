@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { AudioLines } from '@lucide/vue'
@@ -26,6 +26,12 @@ const list = useInfiniteQuery({
   queryFn: ({ pageParam, signal }) => audioApi.list(props.scene, pageParam, signal),
   initialPageParam: 0,
   getNextPageParam: (page) => page.next_offset ?? undefined,
+  refetchInterval: (query) =>
+    query.state.data?.pages.some((page) =>
+      page.items.some((item) => item.status === 'queued' || item.status === 'running'),
+    )
+      ? 2500
+      : false,
 })
 const first = computed(() => list.data.value?.pages[0])
 const rows = computed(() => list.data.value?.pages.flatMap((page) => page.items) ?? [])
@@ -65,6 +71,24 @@ const reading = useMutation({
       detail: describeError(error, t('ui.error.network')).message,
     }),
 })
+
+const isTranscribing = (item: AudioItem) =>
+  transcribe.isPending.value &&
+  transcribe.variables.value !== undefined &&
+  id(transcribe.variables.value) === id(item)
+const isReadingCalls = (item: AudioItem) =>
+  reading.isPending.value && reading.variables.value !== undefined && id(reading.variables.value) === id(item)
+
+let activeAudio: HTMLAudioElement | null = null
+function onAudioPlay(event: Event) {
+  const current = event.currentTarget as HTMLAudioElement
+  if (activeAudio && activeAudio !== current && !activeAudio.paused) activeAudio.pause()
+  activeAudio = current
+}
+onBeforeUnmount(() => {
+  if (activeAudio && !activeAudio.paused) activeAudio.pause()
+  activeAudio = null
+})
 </script>
 
 <template>
@@ -94,7 +118,7 @@ const reading = useMutation({
         <li v-for="item in rows" :key="id(item)" class="flex flex-col gap-2.5 py-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2">
-              <Badge :tone="tones[item.status]" dot size="sm">
+              <Badge :tone="tones[item.status]" dot :pulse="item.status === 'running'" size="sm">
                 {{ t(`groups.live.audio.status.${item.status}`) }}
               </Badge>
               <span class="text-xs text-muted tabular">
@@ -113,7 +137,7 @@ const reading = useMutation({
             <Button
               size="sm"
               variant="ghost"
-              :loading="transcribe.isPending.value && transcribe.variables.value === item"
+              :loading="isTranscribing(item)"
               :disabled="
                 !first.available || first.stopping || item.status === 'queued' || item.status === 'running'
               "
@@ -128,6 +152,7 @@ const reading = useMutation({
             controls
             preload="none"
             class="h-9 w-full max-w-md"
+            @play="onAudioPlay"
           />
           <p
             v-if="item.transcript !== null"
@@ -139,12 +164,7 @@ const reading = useMutation({
           <ErrorNote v-if="item.error" :title="t('groups.live.audio.itemFailed')" :error="item.error" />
           <template v-if="developerDetails">
             <div v-if="!(id(item) in calls)">
-              <Button
-                size="sm"
-                variant="ghost"
-                :loading="reading.isPending.value && reading.variables.value === item"
-                @click="reading.mutate(item)"
-              >
+              <Button size="sm" variant="ghost" :loading="isReadingCalls(item)" @click="reading.mutate(item)">
                 {{ t('groups.live.audio.calls') }}
               </Button>
             </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { hostApi, type SceneControl } from '../../api/host'
@@ -20,6 +20,7 @@ const props = defineProps<{ scene: string; timeZone: string }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
+const durationId = useId()
 const minutes = ref<'30' | '60' | '180' | '480'>('60')
 const direct = ref<'allow' | 'defer'>('allow')
 
@@ -58,9 +59,12 @@ watch(open, (value) => {
 <template>
   <Dialog v-model:open="open" :title="t('groups.quiet.title')" size="sm" :busy="quiet.isPending.value">
     <div class="flex flex-col gap-5">
-      <Field :label="t('groups.quiet.duration')">
+      <div class="flex min-w-0 flex-col gap-1.5" role="group" :aria-labelledby="durationId">
+        <span :id="durationId" class="min-w-0 text-sm font-medium text-ink-2">
+          {{ t('groups.quiet.duration') }}
+        </span>
         <SegmentedControl v-model="minutes" :options="durations" block :label="t('groups.quiet.duration')" />
-      </Field>
+      </div>
       <Field :label="t('groups.quiet.direct')">
         <RadioGroup
           v-model="direct"

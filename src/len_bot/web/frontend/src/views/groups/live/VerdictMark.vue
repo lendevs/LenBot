@@ -31,7 +31,7 @@ const parts = computed(() => {
     <template #trigger>
       <button
         type="button"
-        class="-my-0.5 inline-flex size-5 cursor-pointer items-center justify-center rounded-sm transition-colors focus-visible:focus-ring pointer-coarse:size-6"
+        class="relative -my-0.5 inline-flex size-5 cursor-pointer items-center justify-center rounded-sm transition-colors after:pointer-coarse:absolute after:pointer-coarse:-inset-2.5 focus-visible:focus-ring"
         :class="
           verdict.woke
             ? 'text-info hover:bg-info-bg'

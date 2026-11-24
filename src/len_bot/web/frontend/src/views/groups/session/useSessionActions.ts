@@ -13,37 +13,40 @@ export function useSessionActions(scene: Ref<string>) {
   const client = useQueryClient()
   const failed = (title: string) => (error: unknown) =>
     toast.error(title, { detail: describeError(error, t('ui.error.network')).message })
-  const settled = () => client.invalidateQueries({ queryKey: keys.scene.all(scene.value) })
+  const settled = (_data: unknown, _error: unknown, target: string) =>
+    client.invalidateQueries({ queryKey: keys.scene.all(target) })
 
   const fresh = useMutation({
-    mutationFn: () => sessionApi.newContext(scene.value),
+    mutationFn: (target: string) => sessionApi.newContext(target),
     onSuccess: () => toast.success(t('groups.newSession.done')),
     onError: failed(t('groups.newSession.failed')),
     onSettled: settled,
   })
   const compact = useMutation({
-    mutationFn: () => sessionApi.compact(scene.value),
+    mutationFn: (target: string) => sessionApi.compact(target),
     onSuccess: () => toast.success(t('groups.session.compacted')),
     onError: failed(t('groups.session.compactFailed')),
     onSettled: settled,
   })
 
   async function startSession() {
+    const target = scene.value
     const confirmed = await confirm({
       title: t('groups.newSession.title'),
       message: t('groups.newSession.message'),
       confirmLabel: t('groups.newSession.action'),
     })
-    if (confirmed) fresh.mutate()
+    if (confirmed) fresh.mutate(target)
   }
   async function compactRecap() {
+    const target = scene.value
     const confirmed = await confirm({
       title: t('groups.session.compactTitle'),
       message: t('groups.session.compactMessage'),
       confirmLabel: t('groups.session.compact'),
       tone: 'primary',
     })
-    if (confirmed) compact.mutate()
+    if (confirmed) compact.mutate(target)
   }
   return {
     starting: computed(() => fresh.isPending.value),

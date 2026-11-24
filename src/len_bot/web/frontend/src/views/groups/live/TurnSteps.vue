@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, Brain, ChevronRight, CircleAlert } from '@lucide/vue'
-import type { ModelStep, Step, ToolDetail, TurnDetail } from '../../../api/timeline'
+import type { ModelStep, Step, TimelineMessage, ToolDetail, TurnDetail } from '../../../api/timeline'
 import { formatCompact, formatDuration } from '../../../i18n/format'
 import Badge, { type Tone } from '../../../ui/Badge.vue'
 import CodeBlock from '../../../ui/CodeBlock.vue'
@@ -15,11 +15,18 @@ import StickerCandidates from './StickerCandidates.vue'
 const LARGE_CHAR_THRESHOLD = 1024
 const LARGE_LINE_THRESHOLD = 12
 
-const props = defineProps<{ detail: TurnDetail }>()
+const props = defineProps<{
+  detail: TurnDetail
+  scene?: string
+  personaKey?: string
+  personaDirectory?: string
+  nameOf?: (uid: string) => string
+}>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const labels = useLiveLabels()
 const running = () => props.detail.turn.ended === null
+const effectiveScene = computed(() => props.scene ?? props.detail.turn.scene)
 const openBlocks = ref(new Set<string>())
 
 function onToggle(key: string, event: Event) {
@@ -74,16 +81,60 @@ const toolTones: Record<ToolDetail['status'], Tone> = {
   interrupted: 'warning',
 }
 
+const deliveryTones: Record<string, Tone> = {
+  sent: 'success',
+  simulated: 'info',
+  failed: 'error',
+  unconfirmed: 'warning',
+}
+
+function deliveryTone(status: string): Tone {
+  return deliveryTones[status] ?? 'neutral'
+}
+
+function deliveryLabel(status: string): string {
+  const key = `groups.live.sendStatus.${status}`
+  return te(key) ? t(key) : status
+}
+
+function messageSummary(msg: TimelineMessage): string {
+  const mentionOf = (target: string) => props.nameOf?.(target) ?? target.split(':').pop() ?? target
+  const cleaned = msg.text
+    .replace(/\[提及全体成员\]|\[提及 ([^\]]+)\]/g, (_, target: string | undefined) =>
+      target ? `@${mentionOf(target.trim())}` : `@${t('groups.live.everyone')}`,
+    )
+    .replace(/\[图片[0-9]+(?:：((?:\[[^\]]*\]|[^\]])*))?\]/g, (_, summary: string | undefined) => {
+      const text = summary?.trim()
+      return text ? `[${t('groups.live.image')}] ${text}` : `[${t('groups.live.image')}]`
+    })
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (cleaned) return cleaned
+  const firstImage = msg.images[0]
+  if (firstImage) {
+    return firstImage.summary
+      ? `[${t('groups.live.image')}] ${firstImage.summary}`
+      : `[${t('groups.live.image')}]`
+  }
+  return t('common.none')
+}
+
 function modelMeta(model: ModelStep): string {
   const parts = [labels.role(model.role)]
   if (model.ended !== null) parts.push(formatDuration((model.ended - model.started) * 1000))
   if (model.retries) parts.push(t('groups.live.step.retries', { n: model.retries }))
   if (model.tokens) {
     parts.push(
-      t('groups.live.turn.tokens', {
-        input: formatCompact(model.tokens.input),
-        output: formatCompact(model.tokens.output),
-      }),
+      model.tokens.cached && model.tokens.cached > 0
+        ? t('groups.live.turn.tokensCached', {
+            input: formatCompact(model.tokens.input),
+            output: formatCompact(model.tokens.output),
+            cached: formatCompact(model.tokens.cached),
+          })
+        : t('groups.live.turn.tokens', {
+            input: formatCompact(model.tokens.input),
+            output: formatCompact(model.tokens.output),
+          }),
     )
   }
   return parts.join(' · ')
@@ -138,14 +189,17 @@ const stepFailed = (step: Step) =>
               @toggle="onToggle(`recall:${item.scope}:${item.path}:${item.content.length}`, $event)"
             >
               <summary
-                class="flex cursor-pointer list-none items-center gap-1 rounded-sm font-mono text-xs text-ink-2 select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
+                class="flex cursor-pointer list-none items-center gap-1.5 rounded-sm font-mono text-xs text-ink-2 select-none hover:text-ink focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
               >
                 <ChevronRight
                   :size="13"
                   class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
                   aria-hidden="true"
                 />
-                <span class="truncate">{{ item.scope }} · {{ item.path }}</span>
+                <span class="min-w-0 truncate">{{ item.scope }} · {{ item.path }}</span>
+                <Badge v-if="item.truncated" tone="warning" size="sm" class="font-sans">
+                  {{ t('groups.live.step.truncated') }}
+                </Badge>
               </summary>
               <div
                 v-if="openBlocks.has(`recall:${item.scope}:${item.path}:${item.content.length}`)"
@@ -219,6 +273,26 @@ const stepFailed = (step: Step) =>
                 {{ t(`groups.live.step.toolStatus.${tool.status}`) }}
               </Badge>
             </div>
+            <ul
+              v-if="tool.messages.length"
+              class="flex list-none flex-col gap-1 rounded-md border border-line bg-fill/60 px-2.5 py-2"
+            >
+              <li
+                v-for="msg in tool.messages"
+                :key="msg.message_seq"
+                class="flex min-w-0 items-start justify-between gap-2 text-xs"
+              >
+                <span class="min-w-0 flex-1 line-clamp-2 break-words text-ink-2">
+                  {{ messageSummary(msg) }}
+                </span>
+                <span class="flex shrink-0 items-center gap-1">
+                  <Badge v-if="msg.recalled" size="sm">{{ t('groups.live.recalled') }}</Badge>
+                  <Badge :tone="deliveryTone(msg.status)" size="sm">
+                    {{ deliveryLabel(msg.status) }}
+                  </Badge>
+                </span>
+              </li>
+            </ul>
             <template v-if="Object.keys(tool.arguments).length">
               <details
                 v-if="isLargePayload(tool.arguments)"
@@ -253,6 +327,9 @@ const stepFailed = (step: Step) =>
               v-if="tool.name === 'react' && tool.arguments.preview === true && tool.result"
               :result="tool.result"
               :chosen="chosenCandidate(tool)"
+              :scene="effectiveScene"
+              :persona-key="personaKey"
+              :persona-directory="personaDirectory"
             />
             <template v-if="tool.result">
               <details
