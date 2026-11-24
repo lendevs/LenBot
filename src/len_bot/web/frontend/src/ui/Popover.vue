@@ -23,7 +23,11 @@ withDefaults(
         :align="align"
         :side-offset="6"
         :collision-padding="12"
-        :class="[floatingPanel, width, 'max-w-[calc(100vw-24px)] p-4 outline-none']"
+        :class="[
+          floatingPanel,
+          width,
+          'max-h-(--reka-popover-content-available-height) max-w-[calc(100vw-24px)] overflow-y-auto p-4 outline-none scrollbar-thin',
+        ]"
       >
         <slot />
       </PopoverContent>

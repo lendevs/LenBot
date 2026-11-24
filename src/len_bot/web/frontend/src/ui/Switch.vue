@@ -28,11 +28,11 @@ const field = useFieldControl(props)
       v-model="model"
       :disabled="field.disabled.value || loading"
       :aria-busy="loading || undefined"
-      class="group relative inline-flex shrink-0 items-center rounded-full bg-track p-0.5 transition-[background-color,opacity] duration-200 ease-out hover:bg-line-strong focus-visible:focus-ring data-[state=checked]:bg-brand data-[state=checked]:hover:bg-brand data-[state=checked]:hover:opacity-92 data-disabled:opacity-50 aria-busy:opacity-100"
+      class="group relative inline-flex shrink-0 items-center rounded-full bg-track p-0.5 transition-[background-color,opacity] duration-(--dur-2) ease-out after:pointer-coarse:absolute after:pointer-coarse:-inset-x-1 after:pointer-coarse:-inset-y-2 hover:bg-line-strong focus-visible:focus-ring data-[state=checked]:bg-brand data-[state=checked]:hover:bg-brand data-[state=checked]:hover:opacity-92 data-disabled:opacity-50 aria-busy:opacity-100"
       :class="size === 'sm' ? 'h-4.5 w-8' : 'h-5.5 w-10'"
     >
       <SwitchThumb
-        class="flex items-center justify-center rounded-full bg-white text-muted shadow-thumb transition-transform duration-200 ease-spring group-enabled:group-active:scale-x-110 group-data-[state=checked]:text-brand"
+        class="flex origin-left items-center justify-center rounded-full bg-switch-thumb text-muted shadow-thumb transition-transform duration-(--dur-2) ease-spring group-enabled:group-active:scale-x-110 group-data-[state=checked]:bg-white group-data-[state=checked]:text-primary data-[state=checked]:origin-right dark:text-on-primary/75 dark:group-data-[state=checked]:text-on-primary"
         :class="
           size === 'sm'
             ? 'size-3.5 data-[state=checked]:translate-x-3.5'

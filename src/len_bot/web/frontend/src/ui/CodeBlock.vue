@@ -63,6 +63,8 @@ const canCollapseLarge = computed(
   () => isLarge.value && (shownLines.value > baseLines.value || charLimit.value > INITIAL_LARGE_CHARS),
 )
 const nextLoadCount = computed(() => Math.min(CHUNK_LINES, remainingLines.value || CHUNK_LINES))
+const folded = computed(() => (collapsible.value && !expanded.value) || (isLarge.value && hasMore.value))
+const isJson = computed(() => typeof props.code !== 'string' || /^\s*[{[]/.test(text.value))
 
 let timer: ReturnType<typeof setTimeout> | undefined
 onBeforeUnmount(() => clearTimeout(timer))
@@ -91,9 +93,8 @@ async function copy() {
 }
 
 function download() {
-  const isJson = typeof props.code !== 'string' || /^\s*[{[]/.test(text.value)
-  const mime = isJson ? 'application/json;charset=utf-8' : 'text/plain;charset=utf-8'
-  const ext = isJson ? 'json' : 'txt'
+  const mime = isJson.value ? 'application/json;charset=utf-8' : 'text/plain;charset=utf-8'
+  const ext = isJson.value ? 'json' : 'txt'
   const base = (props.label ?? 'payload').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-|-$/g, '') || 'payload'
   const filename = base.includes('.') ? base : `${base}.${ext}`
   const blob = new Blob([text.value], { type: mime })
@@ -108,17 +109,27 @@ function download() {
   <div class="group relative min-w-0 overflow-hidden rounded-md border border-line bg-code text-ink-2">
     <div
       v-if="label"
-      class="flex items-center justify-between gap-2 border-b border-line px-3 py-1.5 text-xs font-medium text-subtle"
+      class="flex items-center justify-between gap-2 border-b border-line px-3 py-1.5 text-xs font-medium text-muted"
     >
       <span class="min-w-0 truncate">{{ label }}</span>
       <button
         type="button"
-        class="-my-0.5 -mr-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+        class="-my-0.5 -mr-1 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted transition-[background-color,color,transform] duration-(--dur-1) ease-out hover:bg-hover hover:text-ink focus-visible:focus-ring enabled:active:scale-95 pointer-coarse:size-9"
         :aria-label="copied ? t('ui.code.copied') : t('ui.code.copy')"
         @click="copy"
       >
-        <Check v-if="copied" :size="13" class="text-success" aria-hidden="true" />
-        <Copy v-else :size="13" aria-hidden="true" />
+        <span class="inline-grid place-items-center" aria-hidden="true">
+          <Copy
+            :size="13"
+            class="col-start-1 row-start-1 transition-[opacity,transform] duration-(--dur-1) ease-out"
+            :class="copied ? 'scale-75 opacity-0' : 'scale-100 opacity-100'"
+          />
+          <Check
+            :size="13"
+            class="col-start-1 row-start-1 text-success transition-[opacity,transform] duration-(--dur-1) ease-out"
+            :class="copied ? 'scale-100 opacity-100' : 'scale-75 opacity-0'"
+          />
+        </span>
       </button>
     </div>
     <div
@@ -130,27 +141,42 @@ function download() {
       </span>
       <button
         type="button"
-        class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 font-medium text-ink transition-colors hover:bg-hover focus-visible:focus-ring"
+        class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 font-medium text-ink transition-colors hover:bg-hover focus-visible:focus-ring pointer-coarse:min-h-9 pointer-coarse:px-2.5"
         @click="download"
       >
         <Download :size="13" aria-hidden="true" />
-        {{ t('ui.code.download') }}
+        {{ isJson ? t('ui.code.download') : t('common.download') }}
       </button>
     </div>
     <div class="relative">
       <pre
         class="overflow-x-auto px-3 py-2.5 font-mono text-xs leading-5 scrollbar-thin"
         :class="[!label && 'pr-10', wrap && 'break-words whitespace-pre-wrap']"
+        :style="
+          folded
+            ? { maskImage: 'linear-gradient(to bottom, black calc(100% - 36px), transparent)' }
+            : undefined
+        "
       ><code>{{ displayed }}</code></pre>
       <button
         v-if="!label"
         type="button"
-        class="absolute top-1.5 right-1.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-line bg-surface text-muted opacity-0 shadow-card transition-[opacity,color,background-color] group-hover:opacity-100 hover:bg-hover hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring pointer-coarse:opacity-100"
+        class="absolute top-1.5 right-1.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-line bg-surface text-muted opacity-0 shadow-card transition-[opacity,color,background-color,transform] duration-(--dur-1) ease-out group-hover:opacity-100 hover:bg-hover hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring enabled:active:scale-95 pointer-coarse:size-9 pointer-coarse:opacity-100"
         :aria-label="copied ? t('ui.code.copied') : t('ui.code.copy')"
         @click="copy"
       >
-        <Check v-if="copied" :size="14" class="text-success" aria-hidden="true" />
-        <Copy v-else :size="14" aria-hidden="true" />
+        <span class="inline-grid place-items-center" aria-hidden="true">
+          <Copy
+            :size="14"
+            class="col-start-1 row-start-1 transition-[opacity,transform] duration-(--dur-1) ease-out"
+            :class="copied ? 'scale-75 opacity-0' : 'scale-100 opacity-100'"
+          />
+          <Check
+            :size="14"
+            class="col-start-1 row-start-1 text-success transition-[opacity,transform] duration-(--dur-1) ease-out"
+            :class="copied ? 'scale-100 opacity-100' : 'scale-75 opacity-0'"
+          />
+        </span>
       </button>
     </div>
     <div
@@ -160,7 +186,7 @@ function download() {
       <button
         v-if="hasMore"
         type="button"
-        class="flex flex-1 cursor-pointer items-center justify-center gap-1 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+        class="flex flex-1 cursor-pointer items-center justify-center gap-1 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring pointer-coarse:min-h-9"
         @click="loadMore"
       >
         <ChevronDown :size="13" aria-hidden="true" />
@@ -169,7 +195,7 @@ function download() {
       <button
         v-if="canCollapseLarge"
         type="button"
-        class="flex flex-1 cursor-pointer items-center justify-center gap-1 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+        class="flex flex-1 cursor-pointer items-center justify-center gap-1 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring pointer-coarse:min-h-9"
         @click="collapseLarge"
       >
         <ChevronDown :size="13" class="rotate-180" aria-hidden="true" />
@@ -179,13 +205,13 @@ function download() {
     <button
       v-else-if="collapsible"
       type="button"
-      class="flex w-full cursor-pointer items-center justify-center gap-1 border-t border-line bg-surface/50 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+      class="flex w-full cursor-pointer items-center justify-center gap-1 border-t border-line bg-surface/50 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring pointer-coarse:min-h-9"
       :aria-expanded="expanded"
       @click="toggle"
     >
       <ChevronDown
         :size="13"
-        class="transition-transform duration-150"
+        class="transition-transform duration-(--dur-1) ease-out"
         :class="expanded && 'rotate-180'"
         aria-hidden="true"
       />

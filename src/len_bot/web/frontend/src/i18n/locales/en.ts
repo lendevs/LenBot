@@ -29,8 +29,10 @@ export default {
     required: 'Required',
     locateError: 'Jump to error',
     reset: 'Reset',
+    download: 'Download',
   },
   ui: {
+    field: { info: 'About {label}' },
     input: { clear: 'Clear' },
     number: { increase: 'Increase', decrease: 'Decrease' },
     select: { placeholder: 'Select' },

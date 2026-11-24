@@ -33,6 +33,7 @@ const { t } = useI18n()
     <AlertDialogPortal>
       <AlertDialogOverlay class="ui-overlay fixed inset-0 z-(--z-dialog) bg-overlay backdrop-blur-[2px]" />
       <AlertDialogContent
+        v-bind="message ? {} : { 'aria-describedby': undefined }"
         class="ui-dialog fixed top-1/2 left-1/2 z-(--z-dialog) w-[calc(100vw-24px)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-5 text-ink shadow-dialog outline-none sm:p-6"
         @escape-key-down="(event) => busy && event.preventDefault()"
       >

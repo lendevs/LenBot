@@ -19,6 +19,8 @@ import { controlFrameBase, controlHeight, floatingPanel, menuItemBase } from './
 export interface SelectOption<V> {
   value: V
   label: string
+  /** Secondary right-aligned monospaced detail, such as a model id or count. */
+  meta?: string
   icon?: Component
   disabled?: boolean
 }
@@ -51,7 +53,7 @@ const selected = computed(() => props.options.find((option) => option.value === 
       :class="[
         controlFrameBase,
         controlHeight[size],
-        'group cursor-pointer justify-between gap-2 pr-2.5 pl-3 text-left focus-visible:outline-none data-placeholder:text-subtle',
+        'group cursor-pointer justify-between gap-2 pr-2.5 pl-3 text-left focus-visible:outline-none data-placeholder:text-subtle data-[state=open]:border-primary data-[state=open]:shadow-focus data-invalid:data-[state=open]:border-error data-invalid:data-[state=open]:shadow-error-focus',
       ]"
     >
       <span class="flex min-w-0 items-center gap-2">
@@ -69,7 +71,7 @@ const selected = computed(() => props.options.find((option) => option.value === 
       </span>
       <ChevronDown
         :size="16"
-        class="shrink-0 text-subtle transition-transform duration-150 group-data-[state=open]:rotate-180"
+        class="shrink-0 text-subtle transition-transform duration-(--dur-1) ease-out group-data-[state=open]:rotate-180"
         aria-hidden="true"
       />
     </SelectTrigger>
@@ -97,7 +99,10 @@ const selected = computed(() => props.options.find((option) => option.value === 
             ]"
           >
             <component :is="option.icon" v-if="option.icon" :size="16" class="shrink-0 text-muted" />
-            <SelectItemText class="truncate">{{ option.label }}</SelectItemText>
+            <SelectItemText class="min-w-0 truncate">{{ option.label }}</SelectItemText>
+            <span v-if="option.meta" class="ml-auto shrink-0 pl-2 font-mono text-xs text-muted tabular">
+              {{ option.meta }}
+            </span>
             <SelectItemIndicator class="absolute right-2.5 inline-flex text-primary">
               <Check :size="15" aria-hidden="true" />
             </SelectItemIndicator>

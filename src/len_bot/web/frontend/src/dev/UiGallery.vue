@@ -26,6 +26,7 @@ import Badge from '../ui/Badge.vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import CodeBlock from '../ui/CodeBlock.vue'
+import Collapsible from '../ui/Collapsible.vue'
 import Combobox from '../ui/Combobox.vue'
 import ConfirmHost from '../ui/ConfirmHost.vue'
 import Dialog from '../ui/Dialog.vue'
@@ -77,6 +78,7 @@ const locale = computed({ get: () => currentLocale.value, set: (value: Locale) =
 const text = ref('LenBot')
 const empty = ref('')
 const secret = ref('sk-demo-key')
+const fixedSecret = ref('sk-hidden-only')
 const longText = ref('Line 1\nLine 2 grows automatically with content up to maxRows.')
 const number = ref<number | null>(30)
 const select = ref<string | undefined>('join')
@@ -94,15 +96,20 @@ const radio = ref('active')
 const segment = ref('live')
 const segmentSmall = ref('active')
 const tab = ref('live')
+const verticalTab = ref('live')
+const sectionOpen = ref(true)
+const alertOpen = ref(false)
+const inlineOpen = ref(false)
 const dialog = ref(false)
 const sheet = ref(false)
+const sheetBottom = ref(false)
 const dirty = ref(false)
 const saveError = ref<string | null>(null)
 const saving = ref(false)
 
 const modeOptions = computed(() => [
-  { value: 'join', label: t('participation.modes.join') },
-  { value: 'direct', label: t('participation.modes.direct') },
+  { value: 'join', label: t('participation.modes.join'), meta: 'default' },
+  { value: 'direct', label: t('participation.modes.direct'), meta: '@bot' },
   { value: 'off', label: t('groups.status.paused'), disabled: true },
 ])
 const sceneOptions = computed(() => [
@@ -127,11 +134,17 @@ const levels = computed(() => [
 ])
 const tabs = computed(() => [
   { value: 'live', label: t('groups.tabs.live'), icon: MessageSquare },
-  { value: 'session', label: t('groups.tabs.session'), icon: BrainCircuit },
-  { value: 'memory', label: t('groups.tabs.memory') },
+  { value: 'session', label: t('groups.tabs.session'), icon: BrainCircuit, dot: 'warning' as const },
+  { value: 'memory', label: t('groups.tabs.memory'), dot: 'error' as const },
   { value: 'tasks', label: t('groups.tabs.tasks'), count: 3 },
   { value: 'settings', label: t('groups.tabs.settings') },
   { value: 'learning', label: t('groups.tabs.learning'), disabled: true },
+])
+const verticalTabs = computed(() => [
+  { value: 'live', label: t('groups.tabs.live'), icon: MessageSquare },
+  { value: 'memory', label: t('groups.tabs.memory'), dot: 'warning' as const },
+  { value: 'tasks', label: t('groups.tabs.tasks'), count: 3 },
+  { value: 'settings', label: t('groups.tabs.settings'), dot: 'error' as const },
 ])
 const menu = computed<MenuEntry[]>(() => [
   { type: 'label', label: `${t('shell.pages.groups')} · 702154` },
@@ -351,7 +364,12 @@ function append() {
               <Field :label="t('common.search')">
                 <Input v-model="empty" :icon="Search" :placeholder="t('groups.search')" />
               </Field>
-              <Field label="API Key"><Input v-model="secret" type="password" mono /></Field>
+              <Field label="API Key" :info="t('ui.secret.show')">
+                <Input v-model="secret" type="password" clearable mono />
+              </Field>
+              <Field label="Password (fixed)">
+                <Input v-model="fixedSecret" type="password" :revealable="false" mono />
+              </Field>
               <Field label="URL" error="https:// required">
                 <Input model-value="ftp://example" />
               </Field>
@@ -418,7 +436,7 @@ function append() {
         </section>
 
         <section id="tabs" class="flex flex-col gap-4 border-t border-line pt-8">
-          <h2 class="text-xl font-semibold">Tabs</h2>
+          <h2 class="text-xl font-semibold">Tabs · Collapsible</h2>
           <Tabs v-model="tab" :items="tabs" :label="t('shell.pages.groups')">
             <template #live>
               <p class="text-sm text-muted">{{ t('groups.tabs.live') }}</p>
@@ -436,6 +454,43 @@ function append() {
               <p class="text-sm text-muted">{{ t('groups.tabs.settings') }}</p>
             </template>
           </Tabs>
+          <div class="max-w-2xl border-t border-line pt-4">
+            <Tabs
+              v-model="verticalTab"
+              :items="verticalTabs"
+              orientation="vertical"
+              :label="t('shell.pages.groups')"
+            >
+              <template #live>
+                <p class="text-sm text-muted">{{ t('groups.tabs.live') }}</p>
+              </template>
+              <template #memory>
+                <p class="text-sm text-muted">{{ t('groups.tabs.memory') }}</p>
+              </template>
+              <template #tasks>
+                <p class="text-sm text-muted">{{ t('groups.tabs.tasks') }}</p>
+              </template>
+              <template #settings>
+                <p class="text-sm text-muted">{{ t('groups.tabs.settings') }}</p>
+              </template>
+            </Tabs>
+          </div>
+          <div class="flex max-w-2xl flex-col gap-4 pt-2">
+            <Collapsible
+              v-model:open="sectionOpen"
+              :title="t('groups.tabs.settings')"
+              :count="3"
+              dot="warning"
+            >
+              <p class="text-sm text-muted">{{ t('personas.detail.profile.brief') }}</p>
+            </Collapsible>
+            <Collapsible v-model:open="alertOpen" :title="t('ui.error.title')" dot="error">
+              <p class="text-sm text-muted">{{ t('ui.error.network') }}</p>
+            </Collapsible>
+            <Collapsible v-model:open="inlineOpen" variant="inline" :title="t('common.more')" :count="2">
+              <p class="text-sm text-muted">{{ t('groups.tabs.memory') }}</p>
+            </Collapsible>
+          </div>
         </section>
 
         <section id="overlays" class="flex flex-col gap-4 border-t border-line pt-8">
@@ -445,6 +500,7 @@ function append() {
           <div class="flex flex-wrap items-center gap-2">
             <Button @click="dialog = true">Dialog</Button>
             <Button @click="sheet = true">Sheet</Button>
+            <Button @click="sheetBottom = true">Sheet Bottom</Button>
             <Button variant="danger-ghost" @click="ask">Confirm</Button>
             <Popover>
               <template #trigger><Button>Popover</Button></template>
@@ -480,6 +536,9 @@ function append() {
             </template>
           </Dialog>
           <Sheet v-model:open="sheet" title="JSON">
+            <CodeBlock :code="json" />
+          </Sheet>
+          <Sheet v-model:open="sheetBottom" side="bottom" title="JSON">
             <CodeBlock :code="json" />
           </Sheet>
         </section>

@@ -1,6 +1,6 @@
 <script setup lang="ts" generic="T">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
-import { useResizeObserver } from '@vueuse/core'
+import { usePreferredReducedMotion, useResizeObserver } from '@vueuse/core'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 
 const props = withDefaults(
@@ -24,6 +24,7 @@ const scroller = ref<HTMLElement>()
 const headerEl = ref<HTMLElement>()
 const headerHeight = ref(0)
 const atEnd = ref(true)
+const reducedMotion = usePreferredReducedMotion()
 
 useResizeObserver(headerEl, (entries) => {
   headerHeight.value = Math.round(entries[0]?.contentRect.height ?? headerEl.value?.offsetHeight ?? 0)
@@ -47,6 +48,7 @@ let pinFrame: number | undefined
 let pinTimer: ReturnType<typeof setTimeout> | undefined
 let anchorFrame: number | undefined
 let pinning = false
+let followResize = false
 let adjusting = false
 let lastScrollTop = 0
 let lastTouchY: number | null = null
@@ -65,6 +67,7 @@ function cancelPin() {
 
 function detachFollow() {
   cancelPin()
+  followResize = false
   atEnd.value = false
 }
 
@@ -108,13 +111,17 @@ function onScroll() {
 function scrollToEnd(behavior: ScrollBehavior = 'auto') {
   const element = scroller.value
   if (!element || !props.items.length) return
+  const effectiveBehavior: ScrollBehavior =
+    behavior === 'smooth' && reducedMotion.value === 'reduce' ? 'auto' : behavior
   cancelPin()
   atEnd.value = true
   pinning = true
+  followResize = true
   let frames = 3
   const pin = () => {
     if (!atEnd.value) {
       pinning = false
+      followResize = false
       return
     }
     element.scrollTop = element.scrollHeight
@@ -124,14 +131,18 @@ function scrollToEnd(behavior: ScrollBehavior = 'auto') {
     else {
       pinFrame = undefined
       pinning = false
+      followResize = false
     }
   }
-  if (behavior === 'smooth') {
-    element.scrollTo({ top: element.scrollHeight, behavior })
+  if (effectiveBehavior === 'smooth') {
+    element.scrollTo({ top: element.scrollHeight, behavior: effectiveBehavior })
     pinTimer = setTimeout(() => {
       pinTimer = undefined
       if (atEnd.value) pin()
-      else pinning = false
+      else {
+        pinning = false
+        followResize = false
+      }
     }, 450)
   } else pin()
 }
@@ -146,7 +157,10 @@ watch(
     const element = scroller.value
     if (!element || !next.length) return
     if (!previous?.length) {
-      if (props.followEnd && atEnd.value) nextTick(() => atEnd.value && scrollToEnd())
+      if (props.followEnd && atEnd.value) {
+        followResize = true
+        nextTick(() => atEnd.value && scrollToEnd())
+      }
       return
     }
     const wasAtEnd = atEnd.value
@@ -167,6 +181,7 @@ watch(
       const top = element.scrollTop
       const before = total.value
 
+      followResize = false
       cancelPin()
       adjusting = true
       if (anchorFrame !== undefined) cancelAnimationFrame(anchorFrame)
@@ -195,14 +210,27 @@ watch(
       const nextLastKey = props.getKey(next[next.length - 1] as T)
       const tailAppended =
         nextLastKey !== prevLastKey && !previous.some((item) => props.getKey(item) === nextLastKey)
-      if (tailAppended) nextTick(() => atEnd.value && scrollToEnd())
+      if (tailAppended || next.length > previous.length) {
+        followResize = true
+        nextTick(() => atEnd.value && scrollToEnd())
+      }
     }
   },
   { flush: 'pre' },
 )
 watch(total, (nextTotal, prevTotal) => {
-  if (props.followEnd && atEnd.value && !adjusting && nextTotal !== prevTotal) {
-    nextTick(() => atEnd.value && !adjusting && scrollToEnd())
+  if (adjusting || nextTotal === prevTotal) return
+  if (props.followEnd && atEnd.value && followResize) {
+    nextTick(() => atEnd.value && !adjusting && followResize && scrollToEnd())
+    return
+  }
+  const element = scroller.value
+  if (element && !pinning) {
+    nextTick(() => {
+      if (!pinning && !adjusting) {
+        atEnd.value = element.scrollHeight - element.scrollTop - element.clientHeight < 24
+      }
+    })
   }
 })
 

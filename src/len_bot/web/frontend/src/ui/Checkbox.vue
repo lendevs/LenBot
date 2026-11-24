@@ -13,7 +13,7 @@ const field = useFieldControl(props)
 
 <template>
   <label
-    class="inline-flex min-w-0 items-start gap-2.5"
+    class="inline-flex min-w-0 items-start gap-2.5 pointer-coarse:min-h-9 pointer-coarse:py-2"
     :class="field.disabled.value ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'"
   >
     <CheckboxRoot
@@ -21,7 +21,7 @@ const field = useFieldControl(props)
       v-model="model"
       :disabled="field.disabled.value"
       :data-invalid="field.invalid.value || undefined"
-      class="mt-0.5 inline-flex size-4.5 shrink-0 items-center justify-center rounded-xs border border-line-strong bg-surface text-on-primary transition-[background-color,border-color] duration-150 ease-out hover:border-subtle focus-visible:focus-ring data-invalid:border-error data-invalid:hover:border-error data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary"
+      class="mt-0.5 inline-flex size-4.5 shrink-0 items-center justify-center rounded-xs border border-line-strong bg-surface text-on-primary transition-[background-color,border-color,transform] duration-(--dur-1) ease-out hover:border-subtle focus-visible:focus-ring enabled:active:scale-95 data-invalid:border-error data-invalid:hover:border-error data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary"
     >
       <CheckboxIndicator class="inline-flex animate-[ui-pop-in_var(--dur-1)_var(--ease-spring)]">
         <Minus v-if="model === 'indeterminate'" :size="13" :stroke-width="3" aria-hidden="true" />

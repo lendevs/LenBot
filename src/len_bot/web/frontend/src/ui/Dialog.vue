@@ -36,7 +36,7 @@ const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl
           <slot name="header" />
           <DialogClose
             :disabled="busy"
-            class="-mr-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-40"
+            class="-mr-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted transition-[background-color,color,transform] duration-(--dur-1) ease-out hover:bg-hover hover:text-ink focus-visible:focus-ring enabled:active:scale-95 disabled:pointer-events-none disabled:opacity-40 pointer-coarse:size-10"
             :aria-label="t('ui.dialog.close')"
           >
             <X :size="18" aria-hidden="true" />

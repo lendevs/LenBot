@@ -46,19 +46,26 @@ const disabledVariants: Record<ButtonVariant, string> = {
   danger: 'bg-fill text-subtle',
   'danger-ghost': 'bg-transparent text-subtle',
 }
+const gaps: Record<ButtonSize, string> = {
+  xs: 'gap-1',
+  sm: 'gap-1.5',
+  md: 'gap-2',
+  lg: 'gap-2',
+}
 const sizes: Record<ButtonSize, string> = {
-  xs: 'h-7 gap-1 px-2.5 text-xs',
-  sm: 'h-8 gap-1.5 px-3 text-sm',
-  md: 'h-9 gap-2 px-3.5 text-sm',
-  lg: 'h-10 gap-2 px-4 text-base',
+  xs: 'h-7 gap-1 px-2.5 text-xs pointer-coarse:min-h-9',
+  sm: 'h-8 gap-1.5 px-3 text-sm pointer-coarse:min-h-10',
+  md: 'h-9 gap-2 px-3.5 text-sm pointer-coarse:min-h-11',
+  lg: 'h-10 gap-2 px-4 text-base pointer-coarse:min-h-11',
 }
 const iconSize = computed(() => ({ xs: 14, sm: 16, md: 16, lg: 18 })[props.size])
 const inactive = computed(() => props.disabled || props.loading)
+const isLink = computed(() => (props.to !== undefined || props.href !== undefined) && !inactive.value)
 const classes = computed(() => [
   'link-plain relative inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md font-semibold whitespace-nowrap select-none',
-  'transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 ease-out',
-  'focus-visible:focus-ring pointer-coarse:min-h-11',
-  !inactive.value && 'active:translate-y-px',
+  'transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-(--dur-1) ease-out',
+  'focus-visible:focus-ring',
+  isLink.value ? 'active:scale-[0.98]' : 'enabled:active:scale-[0.98]',
   props.loading && 'pointer-events-none opacity-80',
   props.disabled && !props.loading && 'pointer-events-none cursor-not-allowed',
   props.disabled && !props.loading ? disabledVariants[props.variant] : variants[props.variant],
@@ -86,10 +93,21 @@ const classes = computed(() => [
     :aria-disabled="inactive || undefined"
     :aria-busy="loading || undefined"
   >
-    <Spinner v-if="loading && (icon || !iconRight)" :size="iconSize" />
-    <component :is="icon" v-else-if="icon" :size="iconSize" class="shrink-0" aria-hidden="true" />
-    <slot />
-    <Spinner v-if="loading && !icon && iconRight" :size="iconSize" />
-    <component :is="iconRight" v-else-if="iconRight" :size="iconSize" class="shrink-0" aria-hidden="true" />
+    <span v-if="!icon && !iconRight" class="inline-grid items-center justify-items-center">
+      <span
+        class="col-start-1 row-start-1 inline-flex items-center justify-center transition-opacity duration-(--dur-1)"
+        :class="[gaps[size], loading && 'opacity-0']"
+      >
+        <slot />
+      </span>
+      <Spinner v-if="loading" :size="iconSize" class="col-start-1 row-start-1" />
+    </span>
+    <template v-else>
+      <Spinner v-if="loading && icon" :size="iconSize" />
+      <component :is="icon" v-else-if="icon" :size="iconSize" class="shrink-0" aria-hidden="true" />
+      <slot />
+      <Spinner v-if="loading && !icon && iconRight" :size="iconSize" />
+      <component :is="iconRight" v-else-if="iconRight" :size="iconSize" class="shrink-0" aria-hidden="true" />
+    </template>
   </button>
 </template>
