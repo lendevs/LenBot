@@ -36,6 +36,11 @@ watch(
   { immediate: true },
 )
 const visionCollapsed = computed(() => mindSees.value && !visionExpanded.value)
+function openVision() {
+  if (props.role !== 'vision') return
+  if (!binding.value) form.toggleRole('vision', true)
+  visionExpanded.value = true
+}
 function followMindVision() {
   if (props.role !== 'vision') return
   form.toggleRole('vision', false)
@@ -152,7 +157,7 @@ watch(retries, (text) => {
         >
           {{ t('models.roles.syncToCustomRoles') }}
         </Button>
-        <Button v-else-if="visionCollapsed" size="sm" variant="ghost" @click="visionExpanded = true">
+        <Button v-else-if="visionCollapsed" size="sm" variant="ghost" @click="openVision">
           {{ binding ? t('models.roles.editVision') : t('models.roles.configureVision') }}
         </Button>
         <template v-else-if="mindSees">

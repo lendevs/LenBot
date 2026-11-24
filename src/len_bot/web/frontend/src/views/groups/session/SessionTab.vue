@@ -66,6 +66,20 @@ type SessionData = InfiniteData<SessionPage, number | undefined>
  */
 function mergeNewestSession(data: SessionData, fresh: SessionPage): SessionData {
   if (!data.pages.length) return { pages: [fresh], pageParams: [undefined] }
+  let maxLoadedSeq: number | undefined
+  for (const page of data.pages) {
+    for (const entry of page.entries) {
+      if (maxLoadedSeq === undefined || entry.seq > maxLoadedSeq) maxLoadedSeq = entry.seq
+    }
+  }
+  if (
+    maxLoadedSeq !== undefined &&
+    fresh.next_before !== null &&
+    fresh.entries.length > 0 &&
+    fresh.entries[0]!.seq > maxLoadedSeq
+  ) {
+    return { pages: [fresh], pageParams: [undefined] }
+  }
   const updates = new Map(fresh.entries.map((entry) => [entry.seq, entry]))
   const updatedPages: SessionPage[] = []
   const updatedParams: (number | undefined)[] = []
@@ -83,20 +97,34 @@ function mergeNewestSession(data: SessionData, fresh: SessionPage): SessionData 
     if (fresh.active_only) {
       entries = entries.filter((entry) => entry.seq > fresh.compact_through)
     }
+    const oldestCompacted =
+      fresh.active_only &&
+      ((page.entries.length > 0 && page.entries[0]!.seq <= fresh.compact_through) ||
+        (page.next_before !== null && page.next_before <= fresh.compact_through + 1))
     if (index === 0) {
+      const retainedOld = entries.length > 0
       entries = [...entries, ...updates.values()].sort((a, b) => a.seq - b.seq)
+      const nextBefore = !retainedOld
+        ? fresh.next_before
+        : fresh.active_only && (fresh.next_before === null || oldestCompacted)
+          ? null
+          : page.next_before
       updatedPages.push({
         ...page,
         timezone: fresh.timezone,
         recap: fresh.recap,
         compact_through: fresh.compact_through,
         last_message_seq: fresh.last_message_seq,
-        next_before: page.next_before ?? fresh.next_before,
+        next_before: nextBefore,
         entries,
       })
       updatedParams.push(data.pageParams[index])
     } else if (entries.length > 0) {
-      updatedPages.push({ ...page, entries })
+      updatedPages.push({
+        ...page,
+        next_before: oldestCompacted ? null : page.next_before,
+        entries,
+      })
       updatedParams.push(data.pageParams[index])
     }
   })

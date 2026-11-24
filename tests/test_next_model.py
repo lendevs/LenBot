@@ -908,3 +908,108 @@ def test_plan_compaction_shrinks_oversized_source_to_earlier_boundary_and_suppor
         window_tokens=1600, source_entries=huge_first, allow_oversized_source=True,
     )
     assert allowed.through == 2
+
+
+def test_project_old_results_folds_with_braced_custom_prompt_placeholders(monkeypatch):
+    from len_bot.next import prompt_files
+
+    custom_prompts = {
+        'next_web_search.md': '自定义网页搜索结果：\n\n${result}\n\n请优先参考权威来源。\n',
+        'next_knowledge.md': (
+            '角色 ${persona_name}（${persona_id}）在 ${chat} 的检索资料：\n\n${result}\n\n请注明文件名。\n'
+        ),
+        'next_recall.md': '历史记录摘要：${summary}\n\n${result}\n\n以上记录仅供参考。\n',
+        'next_forward.md': '场景 ${scene} 的合并转发：\n\n${result}\n',
+    }
+    for name, text in custom_prompts.items():
+        prompt_files.check(name, text)
+    monkeypatch.setattr(prompt_files, '_running', custom_prompts)
+
+    search_payload = {
+        'provider': 'tavily',
+        'query': '花括号占位符测试',
+        'results': [{'title': '文档标题', 'url': 'https://example.invalid/doc', 'snippet': '搜索片段正文' * 60}],
+        'top_page': {
+            'document': 7, 'url': 'https://example.invalid/doc', 'title': '文档标题',
+            'total_chars': 2400, 'next_offset': 2000, 'text': '超长网页正文内容' * 120,
+        },
+    }
+    search_content = Template(read_prompt('next_web_search.md')).substitute(
+        result=json.dumps(search_payload, ensure_ascii=False))
+
+    knowledge_payload = {
+        'action': 'search',
+        'query': '模板',
+        'matches': [{
+            'scope': 'chat', 'filename': 'docs/template.md', 'page': 2, 'offset': 64,
+            'text': '资料检索原文详细内容' * 150,
+        }],
+    }
+    knowledge_content = Template(read_prompt('next_knowledge.md')).substitute(
+        persona_id='p1', persona_name='小然', chat='本群',
+        result=json.dumps(knowledge_payload, ensure_ascii=False))
+
+    recall_body = (
+        '2026-09-20｜UTC +0000\n'
+        '12:00:00 "小明"(onebot:1001) [id="m-201"，record=21]\n'
+        + '  ' + ('自定义花括号占位符聊天记录内容' * 120)
+    )
+    recall_content = Template(read_prompt('next_recall.md')).substitute(
+        summary='search（最新优先） 第 1 页，共 1 条。没有下一页了。', result=recall_body)
+
+    forward_text = '[1] [2026-09-20 10:00:00+08:00] 小明(onebot:1001)：\n  ' + ('转发正文' * 350)
+    forward_payload = {
+        'message': 'm-300', 'forward': 1, 'forward_id': 'fwd-2',
+        'top_level_items': 1, 'offset': 0, 'total_chars': len(forward_text),
+        'next_offset': None, 'text': forward_text,
+    }
+    forward_content = Template(read_prompt('next_forward.md')).substitute(
+        scene='onebot:group:80001', result=encode(forward_payload))
+
+    assert all(len(c) > 1200 for c in (search_content, knowledge_content, recall_content, forward_content))
+
+    history = [
+        (1, {
+            'role': 'assistant', 'content': None,
+            'tool_calls': [
+                {'type': 'function', 'id': 'b-search', 'function': {
+                    'name': 'web_search', 'arguments': json.dumps({'query': '花括号占位符测试'}, ensure_ascii=False)}},
+                {'type': 'function', 'id': 'b-know', 'function': {
+                    'name': 'knowledge', 'arguments': json.dumps({'action': 'search', 'query': '模板'}, ensure_ascii=False)}},
+                {'type': 'function', 'id': 'b-recall', 'function': {
+                    'name': 'recall_chat', 'arguments': json.dumps({'action': 'search', 'query': '占位符'}, ensure_ascii=False)}},
+                {'type': 'function', 'id': 'b-fwd', 'function': {
+                    'name': 'open_forward', 'arguments': json.dumps({'message': 'm-300'}, ensure_ascii=False)}},
+            ],
+        }),
+        (2, {'role': 'tool', 'tool_call_id': 'b-search', 'content': search_content}),
+        (3, {'role': 'tool', 'tool_call_id': 'b-know', 'content': knowledge_content}),
+        (4, {'role': 'tool', 'tool_call_id': 'b-recall', 'content': recall_content}),
+        (5, {'role': 'tool', 'tool_call_id': 'b-fwd', 'content': forward_content}),
+    ]
+    projected = project_old_results(history, 0)
+
+    folded_search = projected[1][1]['content']
+    search_json = json.loads(folded_search.splitlines()[0])
+    assert search_json['query'] == '花括号占位符测试'
+    assert search_json['top_page']['document'] == 7
+    assert 'text' not in search_json['top_page']
+    assert search_payload['top_page']['text'] not in folded_search
+
+    folded_know = projected[2][1]['content']
+    know_json = json.loads(folded_know.splitlines()[0])
+    assert know_json['count'] == 1
+    assert know_json['matches'][0]['filename'] == 'docs/template.md'
+    assert 'text' not in know_json['matches'][0]
+
+    folded_recall = projected[3][1]['content']
+    recall_json = json.loads(folded_recall.splitlines()[0])
+    assert recall_json['summary'] == 'search（最新优先） 第 1 页，共 1 条。没有下一页了。'
+    assert recall_json['count'] == 1
+    assert recall_json['messages'][0]['record'] == 21
+    assert '以上记录仅供参考' not in recall_json['messages'][0]['preview']
+
+    folded_fwd = projected[4][1]['content']
+    fwd_json = json.loads(folded_fwd.splitlines()[0])
+    assert fwd_json['item_count'] == 1
+    assert fwd_json['senders'] == ['小明(onebot:1001)']
