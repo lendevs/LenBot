@@ -10,6 +10,7 @@ from logging.handlers import TimedRotatingFileHandler
 
 from ..chat.proactive import ProactiveStore
 from ..chat.upkeep import UpkeepPart
+from ..models.client import ChatModel
 from ..models.limits import apply_speech_limits
 from ..platform.adapter import PlatformCallError, platform_changes
 from .logs import SECRETS, credentials
@@ -36,6 +37,12 @@ class LiveSettings:
         await runtime.mind.rebind(running.model_settings('mind'))
         if runtime.vision is not None:
             await runtime.vision.rebind(running.model_settings('vision'))
+        elif running.models.roles.vision is not None:
+            runtime.vision = runtime._owned_vision = ChatModel(running.model_settings('vision'))
+            for chat in runtime.chats.values():
+                chat.vision = chat.toolset.vision = runtime.vision
+            if runtime.sticker_collection is not None:
+                runtime.sticker_collection.seeing = runtime.vision
         if runtime.memory is not None and runtime.memory.summarizer is not None:
             await runtime.memory.summarizer.model.rebind(running.model_settings('memory'))
         embeddings = [] if runtime.expression_service is None else list(runtime.expression_service.clients.values())
@@ -45,6 +52,8 @@ class LiveSettings:
             provider = running.models.providers.get(client.settings.provider)
             if provider is not None and provider.base_url == client.settings.base_url:
                 await client.reconnect(provider.base_url, provider.api_key, provider.proxy)
+        if runtime.upkeep is not None:
+            runtime.upkeep.model_rebound()
 
     async def apply_connection(self, saved: HostConfig) -> None:
         """Reopen changed platforms and switch the delivery; unchanged platforms keep their connection.
@@ -91,12 +100,18 @@ class LiveSettings:
 
     async def apply(self, saved: HostConfig) -> None:
         runtime, running = self.runtime, self.runtime.config
+        models_changed = running.models != saved.models
+        compaction_changed = running.compaction != saved.compaction
         await self.apply_models(saved)
         await self.apply_connection(saved)
         for name in ('owners', 'owner_private_chat', 'permissions', 'timezone', 'max_steps', 'turn_timeout_seconds',
                      'text_delivery', 'compaction', 'images', 'audio', 'commands', 'network', 'web_read', 'web_search',
                      'task_archive', 'plugin_catalog', 'model_alert_failed_turns'):
             setattr(running, name, deepcopy(getattr(saved, name)))
+        if models_changed or compaction_changed:
+            for chat in runtime.chats.values():
+                chat.compaction_held_at = None
+                chat._recap_cooldown_until = 0.0
         if runtime.platform is not None and (onebot := runtime.platform.member('onebot')) is not None:
             onebot._fake_ip_networks = running.network.networks()
             onebot._public_dns_url = running.network.public_dns_url
