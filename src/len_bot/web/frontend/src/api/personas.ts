@@ -158,6 +158,7 @@ export interface Trial {
   active: boolean
   draft_source: string | null
   memory_plugin: string | null
+  context?: string[]
 }
 
 const base = (key: string) => `/api/host/personas/${encodeURIComponent(key)}`

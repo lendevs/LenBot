@@ -3,7 +3,7 @@ import { http, request } from './client'
 /** Types of panel/routes/schedules.py. */
 
 export type ScheduleStatus = 'pending' | 'blocked' | 'delivered' | 'cancelled'
-export type ScheduleFilter = 'active' | 'all' | 'delivered' | 'cancelled'
+export type ScheduleFilter = 'active' | 'blocked' | 'all' | 'delivered' | 'cancelled'
 
 /** `chat/schedule_store.py` Schedule. */
 export interface Schedule {
@@ -48,7 +48,9 @@ export interface ProactiveWake {
 /** GET /api/host/schedules/proactive */
 export interface ProactivePage {
   timezone: string
+  now?: number
   settings: { idle_seconds: number; start: string; end: string } | null
+  idle_since?: number | null
   pause: { until: number } | null
   next_at: number | null
   next_reason: string | null

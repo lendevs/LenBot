@@ -22,9 +22,19 @@ export interface EmbeddingProvider {
 
 /** An embedding model on one of the providers; null means full-text search only. */
 const binding = defineModel<EmbeddingBinding | null>({ required: true })
-const props = withDefaults(defineProps<{ providers: EmbeddingProvider[]; label?: string }>(), {
-  label: undefined,
-})
+const props = withDefaults(
+  defineProps<{
+    providers: EmbeddingProvider[]
+    label?: string
+    providerError?: string
+    modelError?: string
+  }>(),
+  {
+    label: undefined,
+    providerError: undefined,
+    modelError: undefined,
+  },
+)
 
 const { t } = useI18n()
 const enabled = computed({
@@ -69,14 +79,14 @@ watch(picked, (id) => {
     </Field>
     <template v-if="binding">
       <div class="grid gap-4 sm:grid-cols-2">
-        <Field :label="t('groups.memory.settings.provider')">
+        <Field :label="t('groups.memory.settings.provider')" :error="providerError">
           <Select
             v-model="binding.provider"
             :options="providerOptions"
             :placeholder="t('groups.memory.settings.noProvider')"
           />
         </Field>
-        <Field :label="t('groups.memory.settings.model')">
+        <Field :label="t('groups.memory.settings.model')" :error="modelError">
           <Input v-model="binding.model" mono />
         </Field>
         <Field :label="t('groups.memory.settings.dimensions')">
