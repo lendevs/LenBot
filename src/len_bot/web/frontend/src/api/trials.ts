@@ -1,5 +1,5 @@
 import type { Participation } from './participation'
-import { http } from './client'
+import { http, request } from './client'
 import type { PersonaExample, PersonaFiles, PersonaProfile } from './personas'
 import type { TurnDetail, Verdict } from './timeline'
 
@@ -30,6 +30,8 @@ export interface ChatTurn {
   ended: number | null
   status: string
   error: string | null
+  wake_channel?: string | null
+  first_expression_at?: number | null
   [field: string]: unknown
 }
 export interface ChatState {
@@ -74,7 +76,8 @@ export const isolatedSource: ChatSource = { id: 'isolated', base: '/api/chat-tes
 export const chatApi = {
   state: (source: ChatSource, signal?: AbortSignal) =>
     http.get<ChatState>(`${source.base}/state`, undefined, signal),
-  send: (source: ChatSource, body: ChatSend) => http.post<MessageReceipt>(`${source.base}/messages`, body),
+  send: (source: ChatSource, body: ChatSend, signal?: AbortSignal) =>
+    request<MessageReceipt>(`${source.base}/messages`, { method: 'POST', body, signal }),
   steps: (source: ChatSource, turn: string, signal?: AbortSignal) =>
     http.get<TurnDetail>(`${source.base}/turns/${encodeURIComponent(turn)}/steps`, undefined, signal),
   avatar: (source: ChatSource) => `${source.base}/avatar`,

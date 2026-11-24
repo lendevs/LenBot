@@ -4,7 +4,8 @@ import { useI18n } from 'vue-i18n'
 import type { Overview } from '../../api/overview'
 import { developerDetails } from '../../composables/useDeveloperMode'
 import { host, readHostState, readOverview } from '../../api/hostStore'
-import { formatNumber } from '../../i18n/format'
+import { currentLocale } from '../../i18n'
+import { formatCompact, formatNumber } from '../../i18n/format'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import StatTile from '../../ui/StatTile.vue'
@@ -16,7 +17,7 @@ import LiveFeed from './LiveFeed.vue'
 import StatusCard from './StatusCard.vue'
 import { useAttention } from './attention'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { items, dismiss } = useAttention()
 // The shell reads today's overview and keeps it fresh from events; this page only shows it.
 const day = computed(() => host.overview as Overview | null)
@@ -25,39 +26,64 @@ const sum = (values: Record<string, number | undefined>) =>
 
 const statKeys = ['received', 'spoke', 'turns', 'tokens', 'schedules'] as const
 
+const trendLabels = computed(() => {
+  const value = day.value
+  if (!value) return undefined
+  const { since, hours } = value.hourly
+  const locale = currentLocale.value
+  const timeZone = value.timezone
+  const dayFormat = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  const timeFormat = new Intl.DateTimeFormat(locale, {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+  const dateTimeFormat = new Intl.DateTimeFormat(locale, {
+    timeZone,
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+  const today = dayFormat.format(new Date(value.since * 1000))
+  return Array.from({ length: hours }, (_, index) => {
+    const date = new Date((since + index * 3600) * 1000)
+    return dayFormat.format(date) === today ? timeFormat.format(date) : dateTimeFormat.format(date)
+  })
+})
+
 const stats = computed(() => {
   const value = day.value
   if (!value) return null
   return [
-    {
-      key: 'received',
-      value: value.messages.received ?? 0,
-      trend: value.hourly.received,
-      tone: 'brand' as const,
-    },
+    { key: 'received', value: value.messages.received ?? 0, trend: value.hourly.received },
     {
       key: 'spoke',
       value: (value.messages.sent ?? 0) + (value.messages.simulated ?? 0),
       trend: value.hourly.spoke,
-      tone: 'success' as const,
     },
-    { key: 'turns', value: sum(value.turns), trend: value.hourly.turns, tone: 'info' as const },
-    {
-      key: 'tokens',
-      value: value.tokens.input + value.tokens.output,
-      trend: value.hourly.tokens,
-      tone: 'warning' as const,
-    },
-    { key: 'schedules', value: value.pending_schedules, trend: undefined, tone: 'neutral' as const },
+    { key: 'turns', value: sum(value.turns), trend: value.hourly.turns },
+    { key: 'tokens', value: value.tokens.input + value.tokens.output, trend: value.hourly.tokens },
+    { key: 'schedules', value: value.pending_schedules, trend: undefined },
   ]
 })
 const tokenNote = computed(() => {
   const value = day.value
   if (!value) return ''
-  return t('overview.stats.tokenSplit', {
-    input: formatNumber(value.tokens.input),
-    output: formatNumber(value.tokens.output),
+  const split = t('overview.stats.tokenSplit', {
+    input: formatCompact(value.tokens.input),
+    output: formatCompact(value.tokens.output),
   })
+  return value.tokens.cached > 0
+    ? `${split} · ${t('overview.stats.tokenCached', { cached: formatCompact(value.tokens.cached) })}`
+    : split
 })
 const activeTasksNote = computed(() => {
   const n = day.value?.active_tasks ?? 0
@@ -67,7 +93,10 @@ const effects = computed(() =>
   Object.entries(day.value?.reply_effects ?? {})
     .filter(([, n]) => n)
     .map(([key, n]) =>
-      t('overview.stats.effect', { name: t(`overview.stats.effects.${key}`), n: formatNumber(n) }),
+      t('overview.stats.effect', {
+        name: te(`overview.stats.effects.${key}`) ? t(`overview.stats.effects.${key}`) : key,
+        n: formatNumber(n),
+      }),
     ),
 )
 </script>
@@ -120,7 +149,8 @@ const effects = computed(() =>
                 :label="t(`overview.stats.${item.key}`)"
                 :value="item.value"
                 :trend="item.trend"
-                :tone="item.tone"
+                :trend-labels="item.trend ? trendLabels : undefined"
+                tone="brand"
                 :caption="
                   item.key === 'tokens' ? tokenNote : item.key === 'schedules' ? activeTasksNote : undefined
                 "

@@ -8,7 +8,7 @@ import { personasApi } from '../../api/personas'
 import { keys } from '../../api/query'
 import { trialsApi, type TrialInfo } from '../../api/trials'
 import { host } from '../../api/hostStore'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, groupSecondaryId } from '../../layouts/shell/scenes'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
@@ -22,7 +22,6 @@ const props = defineProps<{ scene?: string; persona?: string }>()
 const emit = defineEmits<{ started: [trial: TrialInfo] }>()
 
 const { t } = useI18n()
-const groupId = (value: string) => value.split(':').slice(2).join(':') || value
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const roles = useQuery({
   queryKey: keys.personas.all(),
@@ -50,10 +49,10 @@ watch(
 const sceneOptions = computed(() =>
   scenes.value.map((item) => {
     const name = groupLabel(item.scene)
-    const id = groupId(item.scene)
+    const id = groupSecondaryId(item.scene)
     return {
       value: item.scene,
-      label: `${id !== name ? `${name} (${id})` : name} · ${item.persona.name}`,
+      label: `${id ? `${name} (${id})` : name} · ${item.persona.name}`,
     }
   }),
 )

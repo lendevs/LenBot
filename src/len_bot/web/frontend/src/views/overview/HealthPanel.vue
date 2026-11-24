@@ -4,11 +4,12 @@ import { useI18n } from 'vue-i18n'
 import { useQuery } from '@tanstack/vue-query'
 import { useIntervalFn } from '@vueuse/core'
 import { host } from '../../api/hostStore'
-import { overviewApi, type Overview } from '../../api/overview'
+import { overviewApi, type HealthCall, type Overview } from '../../api/overview'
 import { keys } from '../../api/query'
 import { formatNumber, formatRelative } from '../../i18n/format'
 import Badge, { type Tone } from '../../ui/Badge.vue'
 import CodeBlock from '../../ui/CodeBlock.vue'
+import Collapsible from '../../ui/Collapsible.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { useLiveLabels } from '../groups/live/labels'
@@ -33,6 +34,7 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
 })
 
 const labels = useLiveLabels()
+const modelsPending = computed(() => !host.overview && !host.overviewError)
 /** Each purpose with its latest calls; a failure after the latest success marks it as failing now. */
 const models = computed(() =>
   ((host.overview as Overview | null)?.model_health ?? []).map((item) => ({
@@ -40,6 +42,7 @@ const models = computed(() =>
     failing: Boolean(item.failure && (!item.success || item.failure.id > item.success.id)),
   })),
 )
+const callTarget = (call: HealthCall) => [call.provider, call.model].filter(Boolean).join(' · ')
 </script>
 
 <template>
@@ -61,7 +64,7 @@ const models = computed(() =>
       :retry="loop.refetch"
     />
     <div
-      v-else-if="loop.data.value || models.length"
+      v-else-if="loop.data.value || models.length || modelsPending"
       class="flex flex-col divide-y divide-line border-y border-line"
     >
       <div v-if="loop.data.value" class="flex flex-col gap-1.5 py-3">
@@ -90,24 +93,31 @@ const models = computed(() =>
               .join(' · ')
           }}
         </p>
-        <details v-if="latest">
-          <summary
-            class="cursor-pointer rounded-sm text-xs text-muted hover:text-ink focus-visible:focus-ring tabular"
-          >
-            {{
-              t('overview.health.latest', {
-                task: latest.task ?? t('common.unknown'),
-                n: formatNumber(latest.lag_ms),
-                ago: formatRelative(latest.at, now),
-              })
-            }}
-          </summary>
-          <div class="mt-1.5">
-            <CodeBlock :code="latest.stack ?? t('overview.health.noStack')" :max-lines="12" />
-          </div>
-        </details>
+        <Collapsible
+          v-if="latest"
+          variant="inline"
+          :title="
+            t('overview.health.latest', {
+              task: latest.task ?? t('common.unknown'),
+              n: formatNumber(latest.lag_ms),
+              ago: formatRelative(latest.at, now),
+            })
+          "
+        >
+          <CodeBlock :code="latest.stack ?? t('overview.health.noStack')" :max-lines="12" />
+        </Collapsible>
       </div>
-      <div v-if="models.length" class="flex flex-col gap-2.5 py-3">
+      <div v-if="modelsPending" class="flex flex-col gap-2.5 py-3" aria-hidden="true">
+        <Skeleton width="120px" height="12px" />
+        <div v-for="n in 2" :key="n" class="flex flex-col gap-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <Skeleton width="76px" height="14px" />
+            <Skeleton width="48px" height="20px" rounded="rounded-full" />
+          </div>
+          <Skeleton width="160px" height="12px" />
+        </div>
+      </div>
+      <div v-else-if="models.length" class="flex flex-col gap-2.5 py-3">
         <span class="text-xs font-medium text-muted">{{ t('overview.health.models') }}</span>
         <ul class="flex list-none flex-col gap-2.5">
           <li v-for="item in models" :key="item.purpose" class="flex flex-col gap-1">
@@ -117,7 +127,7 @@ const models = computed(() =>
                 {{ item.failing ? t('overview.health.failing') : t('overview.health.working') }}
               </Badge>
             </div>
-            <p class="flex flex-wrap gap-x-3 text-xs text-muted tabular">
+            <p class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted tabular">
               <span v-if="item.success">
                 {{ t('overview.health.lastSuccess', { ago: formatRelative(item.success.started, now) }) }}
               </span>
@@ -132,10 +142,15 @@ const models = computed(() =>
                     turn: item.failure.turn_id ?? undefined,
                   },
                 }"
-                class="text-error hover:underline"
+                class="inline-flex min-w-0 items-center gap-1.5 text-error hover:underline"
                 :title="item.failure.error"
               >
-                {{ t('overview.health.lastFailure', { ago: formatRelative(item.failure.started, now) }) }}
+                <span class="shrink-0">
+                  {{ t('overview.health.lastFailure', { ago: formatRelative(item.failure.started, now) }) }}
+                </span>
+                <span v-if="callTarget(item.failure)" class="truncate font-mono text-2xs opacity-85">
+                  {{ callTarget(item.failure) }}
+                </span>
               </RouterLink>
             </p>
           </li>
