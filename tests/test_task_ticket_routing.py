@@ -20,7 +20,7 @@ from test_native_tool_calls import SCENE, _instance
 def _worker_settings(root: Path) -> WorkerSettings:
     return WorkerSettings(
         sandbox="bwrap",
-        bwrap_binary=Path("/usr/bin/bwrap"),
+        bwrap_binary=root / "bwrap",
         task_runtime=root / "runtime",
         workspace_root=root / "workspaces",
         runtime_root=root / "run",

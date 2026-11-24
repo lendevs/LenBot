@@ -14,7 +14,7 @@ import socket
 import time
 from collections.abc import Callable
 from http import HTTPStatus
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 from websockets.asyncio.client import ClientConnection, connect
@@ -27,6 +27,7 @@ from ..runtime.logs import REDACTED, log_event
 from ..tools.http_read import fetch_public
 from ...image_assets import sticker_bytes
 from .adapter import PlatformCallError
+from .onebot_audio import file_uri_to_path
 from .onebot_messages import parse_event
 from .messages import ChatMessage, SendResult, UploadResult
 from .onebot_messages import parse_send_result, parse_upload_result
@@ -455,8 +456,8 @@ class OneBot:
             if candidate.startswith(("http://", "https://")):
                 url = candidate
             else:
-                local_path = Path(unquote(urlsplit(candidate).path) if candidate.startswith("file://") else candidate)
-                if local_path.is_file():
+                local_path = file_uri_to_path(candidate) if candidate.startswith("file://") else Path(candidate)
+                if local_path is not None and local_path.is_file():
                     return await asyncio.to_thread(_read_local_capped, local_path, max_bytes)
         info_url = info.get("url")
         if url is None and isinstance(info_url, str) and info_url.strip().startswith(("http://", "https://")):
