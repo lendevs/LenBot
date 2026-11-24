@@ -748,3 +748,163 @@ def test_anthropic_breakpoints_skip_trailing_thinking_blank_text_and_null_cache_
         {'role': 'user', 'content': '你好'},
     ], [])
     assert 'cache_control' not in blank_system_payload['system'][0]
+
+
+def test_anthropic_strips_null_system_cache_control_and_caps_total_breakpoints_at_four():
+    settings = ModelSettings(api='anthropic', base_url='http://127.0.0.1/v1', api_key='fixture', model='fixture')
+
+    def count_breakpoints(payload: dict) -> int:
+        total = sum(1 for b in payload.get('system', []) if b.get('cache_control') is not None)
+        total += sum(1 for t in payload.get('tools', []) if t.get('cache_control') is not None)
+        for msg in payload.get('messages', []):
+            for b in msg.get('content', []):
+                if b.get('cache_control') is not None:
+                    total += 1
+                nested = b.get('content')
+                if isinstance(nested, list):
+                    total += sum(1 for sub in nested if isinstance(sub, dict) and sub.get('cache_control') is not None)
+        return total
+
+    # 1. Explicit cache_control=None in system blocks must never be emitted.
+    _, null_sys_payload = build_request(settings, [
+        {'role': 'system', 'content': [
+            {'type': 'text', 'text': '第一段', 'cache_control': None},
+            {'type': 'text', 'text': '   ', 'cache_control': None},
+        ]},
+        {'role': 'user', 'content': '你好'},
+    ], [])
+    assert null_sys_payload['system'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in null_sys_payload['system'][1]
+
+    # 2. Existing breakpoints across system, tools, and nested tool_result sub-blocks cap auto breakpoints at 4.
+    binding = {'api': 'anthropic', 'model': 'fixture', 'base_url': 'http://127.0.0.1/v1'}
+    messages = [
+        {'role': 'system', 'content': [
+            {'type': 'text', 'text': '系统一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '系统二', 'cache_control': None},
+        ]},
+        {'role': 'user', 'content': '查一下'},
+        {
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [{'id': 'call-1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+            '_continuation': {
+                'binding': binding,
+                'data': [{'type': 'tool_use', 'id': 'call-1', 'name': 'lookup', 'input': {}}],
+            },
+        },
+        {'role': 'tool', 'tool_call_id': 'call-1', 'content': [
+            {'type': 'text', 'text': '结果一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '结果二', 'cache_control': {'type': 'ephemeral'}},
+        ]},
+        {'role': 'assistant', 'content': '已整理'},
+        {'role': 'user', 'content': '继续'},
+    ]
+    tools = [
+        {'type': 'function', 'function': {'name': 'lookup', 'parameters': {'type': 'object'}}, 'cache_control': None},
+    ]
+    _, capped_payload = build_request(settings, messages, tools)
+    # 3 existing (system[0] + 2 tool_result sub-blocks) -> only 1 auto slot left, given to system[1].
+    assert count_breakpoints(capped_payload) == 4
+    assert capped_payload['system'][1]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in capped_payload['tools'][0]
+    assert 'cache_control' not in capped_payload['messages'][-2]['content'][-1]
+
+    # 3. When 4 breakpoints already exist, no additional auto breakpoints are added and null system cache_control is still stripped.
+    messages_four = [
+        {'role': 'system', 'content': [
+            {'type': 'text', 'text': '系统一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '系统二', 'cache_control': None},
+        ]},
+        {'role': 'user', 'content': [
+            {'type': 'text', 'text': '历史一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '历史二', 'cache_control': {'type': 'ephemeral'}},
+        ]},
+        {'role': 'assistant', 'content': '收到'},
+        {'role': 'user', 'content': '最新'},
+    ]
+    tools_one = [
+        {'type': 'function', 'function': {'name': 'lookup', 'parameters': {'type': 'object'}},
+         'cache_control': {'type': 'ephemeral'}},
+        {'type': 'function', 'function': {'name': 'other', 'parameters': {'type': 'object'}}},
+    ]
+    _, full_payload = build_request(settings, messages_four, tools_one)
+    assert count_breakpoints(full_payload) == 4
+    assert 'cache_control' not in full_payload['system'][1]
+    assert 'cache_control' not in full_payload['tools'][1]
+    assert 'cache_control' not in full_payload['messages'][-2]['content'][-1]
+
+
+def test_project_old_results_protects_unread_tool_seq_across_arriving_user_messages():
+    page1 = {'document': 'doc-old', 'text': 'old body ' * 120}
+    page2 = {'document': 'doc-new', 'text': 'new body ' * 120}
+    content1 = Template(read_prompt('next_web_read.md')).substitute(result=encode(page1))
+    content2 = Template(read_prompt('next_web_read.md')).substitute(result=encode(page2))
+    history = [
+        (1, {'role': 'assistant', 'content': None, 'tool_calls': [
+            {'type': 'function', 'id': 'r1', 'function': {'name': 'web_read', 'arguments': '{}'}}]}),
+        (2, {'role': 'tool', 'tool_call_id': 'r1', 'content': content1}),
+        (3, {'role': 'assistant', 'content': None, 'tool_calls': [
+            {'type': 'function', 'id': 'r2', 'function': {'name': 'web_read', 'arguments': '{}'}}]}),
+        (4, {'role': 'tool', 'tool_call_id': 'r2', 'content': content2}),
+        (5, {'role': 'user', 'content': '新群消息 ' * 600}),
+    ]
+    keep = 100
+    # Without protection, arriving user messages push both tool results behind cutoff and fold both.
+    unprotected = project_old_results(history, keep)
+    assert page1['text'] not in unprotected[1][1]['content']
+    assert page2['text'] not in unprotected[3][1]['content']
+
+    # With protect_from_seq=4, older seq 2 still folds while unread seq 4 stays intact.
+    protected = project_old_results(history, keep, protect_from_seq=4)
+    assert page1['text'] not in protected[1][1]['content']
+    assert protected[3][1]['content'] == content2
+
+
+def test_plan_compaction_shrinks_oversized_source_to_earlier_boundary_and_supports_oversized_opt_in():
+    from len_bot.next.chat.recap import ContextBudgetError, estimate_request, plan_compaction
+
+    system = {'role': 'system', 'content': '系统设定'}
+    state = {'role': 'user', 'content': '当前状态'}
+    template = '请压缩到 $summary_budget_tokens token 内。'
+    # Projected entries are compact (already folded), while raw source_entries are huge.
+    entries = [
+        (1, {'role': 'user', 'content': '段1摘要'}),
+        (2, {'role': 'user', 'content': '段2摘要'}),
+        (3, {'role': 'user', 'content': '段3摘要'}),
+        (4, {'role': 'user', 'content': '最新一条'}),
+    ]
+    source_entries = [
+        (1, {'role': 'user', 'content': 'A' * 1500}),
+        (2, {'role': 'user', 'content': 'B' * 1500}),
+        (3, {'role': 'user', 'content': 'C' * 4500}),
+        (4, {'role': 'user', 'content': '最新一条'}),
+    ]
+    # Window fits source_entries[:2] (~1100 tokens + 200 output) but NOT source_entries[:3] (~2600 tokens + 200 output).
+    plan = plan_compaction(
+        entries, system=system, state=state, tools=[], output_tokens=200, trigger_tokens=800,
+        keep_recent_tokens=20, summary_output_tokens=200, recap=None, summary_template=template,
+        window_tokens=1600, source_entries=source_entries,
+    )
+    assert plan.through == 2
+    assert estimate_request(plan.request_messages, [], 200) <= 1600
+
+    # When even the earliest single boundary exceeds window_tokens:
+    # default raises ContextBudgetError; allow_oversized_source=True returns the plan for continuation fallback.
+    huge_first = [
+        (1, {'role': 'user', 'content': 'A' * 6000}),
+        (2, {'role': 'user', 'content': 'B' * 1500}),
+        (3, {'role': 'user', 'content': '最新一条'}),
+    ]
+    with pytest.raises(ContextBudgetError):
+        plan_compaction(
+            entries[:3], system=system, state=state, tools=[], output_tokens=200, trigger_tokens=800,
+            keep_recent_tokens=20, summary_output_tokens=200, recap=None, summary_template=template,
+            window_tokens=1600, source_entries=huge_first,
+        )
+    allowed = plan_compaction(
+        entries[:3], system=system, state=state, tools=[], output_tokens=200, trigger_tokens=800,
+        keep_recent_tokens=20, summary_output_tokens=200, recap=None, summary_template=template,
+        window_tokens=1600, source_entries=huge_first, allow_oversized_source=True,
+    )
+    assert allowed.through == 2

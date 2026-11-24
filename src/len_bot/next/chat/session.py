@@ -20,7 +20,7 @@ from .expression import ChatExpression, MessageSender
 from .tools import MemoryPlugins, SceneTools
 from ..config import LabConfig
 from .recap import (CompactionPlan, ContextBudgetError, continuation_request, estimate_content,
-                    estimate_text_request, plan_compaction, recap_source)
+                    estimate_request, estimate_text_request, plan_compaction, recap_source)
 from ..learning.expression_match import select_by_words
 from ..learning.expression_selection import ExpressionService
 from ..learning.store import DISLIKED_DAYS, LearningStore
@@ -173,6 +173,8 @@ class Chat:
         # Successful mind replies in the running turn, and the provider failure that ended it.
         self.turn_model_replies = 0
         self.turn_model_failure: dict | None = None
+        # First unread non-expression tool result seq in the current turn, protected from folding across arriving chat.
+        self._unseen_tool_seq: int | None = None
         if config.models.roles.vision is not None and vision is None:
             raise ValueError("vision 客户端必须与根配置的视觉模型绑定一起提供")
         self.skills = () if tasks is None else tasks.skills[config.scene]
@@ -269,6 +271,7 @@ class Chat:
             raise
         if role == "mind":
             self.turn_model_replies += 1
+            self._unseen_tool_seq = None
         return reply
 
     async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True,
@@ -286,13 +289,22 @@ class Chat:
             log_event(logger, 'plugin_compaction', plugin=plugin, compact_through=plan.through)
         else:
             messages, tools = plan.request_messages, []
+            used_continuation = False
+            window_tokens = self.config.models.roles.mind.context_window_tokens
             if chat is not None and plan.kept_first is not None:
                 continued = continuation_request(chat[:-1], plan)
                 estimated, _ = await self.store.read(
                     request_estimate, self.config, self.store, self.mind, scene=self.config.scene, role="recap",
                     messages=continued, tools=self.toolset.tools, output_tokens=self.config.recap_output_tokens)
-                if estimated <= self.config.models.roles.mind.context_window_tokens:
+                if estimated <= window_tokens:
                     messages, tools = continued, self.toolset.tools
+                    used_continuation = True
+            if not used_continuation:
+                required = estimate_request(plan.request_messages, [], self.config.recap_output_tokens)
+                if required > window_tokens:
+                    raise ContextBudgetError(
+                        f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
+                        "请调大窗口或调小回想最大长度")
             recap = (await self.request(turn_id, "recap", messages, tools, recap_target=plan)).text
         await self.store.call(self.store.commit_recap, self.config.scene, plan.through, recap)
         return recap
@@ -333,6 +345,7 @@ class Chat:
                     summary_template=read_prompt("next_recap.md"),
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
+                    allow_oversized_source=self.config.recap_plugin is None,
                 )
                 recap = await self.compact(turn_id, plan, chat=projection)
         except BaseException as error:
@@ -434,7 +447,7 @@ class Chat:
                                                                       self.config.scene))
             state = await self.store.read(turn_state, self.config, self.store, now=observed_at,
                                           expression_style=expression_style, recalled=recalled)
-            messages = await self.context.project(recap, entries, state)
+            messages = await self.context.project(recap, entries, state, protect_from_seq=self._unseen_tool_seq)
             estimated, method = await self.store.read(
                 request_estimate, self.config, self.store, self.mind, scene=self.config.scene,
                 role='mind', messages=messages, tools=self.toolset.tools, output_tokens=0)
@@ -453,17 +466,19 @@ class Chat:
             if fits_cooldown and self.store.now() < self._recap_cooldown_until:
                 return PreparedContext(messages, estimated, method)
             scale = token_scale
-            plan = plan_compaction(
-                self.context.project_entries(entries), system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
-                output_tokens=binding.max_output_tokens, trigger_tokens=trigger,
-                keep_recent_tokens=self.config.compaction.keep_recent_tokens,
-                summary_output_tokens=self.config.recap_output_tokens,
-                reasoning_reserve_tokens=self.config.recap_reasoning_reserve,
-                recap=recap, summary_template=read_prompt("next_recap.md"),
-                window_tokens=binding.context_window_tokens,
-                source_entries=self.context.conversation_entries(entries), token_scale=scale,
-            )
             try:
+                plan = plan_compaction(
+                    self.context.project_entries(entries, protect_from_seq=self._unseen_tool_seq),
+                    system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
+                    output_tokens=binding.max_output_tokens, trigger_tokens=trigger,
+                    keep_recent_tokens=self.config.compaction.keep_recent_tokens,
+                    summary_output_tokens=self.config.recap_output_tokens,
+                    reasoning_reserve_tokens=self.config.recap_reasoning_reserve,
+                    recap=recap, summary_template=read_prompt("next_recap.md"),
+                    window_tokens=binding.context_window_tokens,
+                    source_entries=self.context.conversation_entries(entries), token_scale=scale,
+                    allow_oversized_source=self.config.recap_plugin is None,
+                )
                 await self.compact(turn_id, plan, chat=messages)
             except (ModelOutputLimitError, ContextBudgetError) as error:
                 # A recap that ran out of its allowance or budget keeps the existing recap and history; the
@@ -562,6 +577,7 @@ class Chat:
         self.turn_messages = 0
         self.turn_model_replies = 0
         self.turn_model_failure = None
+        self._unseen_tool_seq = None
         observed_at = self.now()
         self.turn_channels = set() if channels is None else set(channels)
         scene = self.config.scene
@@ -733,6 +749,12 @@ class Chat:
                                         await self.store.call(self.store.complete_tool, scene, call.id, content,
                                                               discovered_tools=discovered,
                                                               response_turn_id=turn_id if reaction else None)
+                                        if not reaction and self._unseen_tool_seq is None:
+                                            page = await self.store.read(
+                                                self.store.mind_history_page, scene, before=None, limit=1, active_only=False,
+                                            )
+                                            if page["entries"]:
+                                                self._unseen_tool_seq = page["entries"][-1]["seq"]
                                         if reaction:
                                             expressions.append(content)
                                             self.turn_expressions += 1
@@ -819,6 +841,7 @@ class Chat:
             if isinstance(error, TimeoutError) and self.turn_stopped:
                 status, error_text = "cancelled", "聊天已关闭，当前轮停止"
         finally:
+            self._unseen_tool_seq = None
             self.toolset.source_floor = None
             self.turn_deadline = None
         self.store.finish_pending_tools(scene, error_text or status)

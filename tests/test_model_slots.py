@@ -218,3 +218,55 @@ async def test_worker_plus_background_share_noninteractive_cap_preserving_hot_sl
 
     release.set()
     await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [1, 2])
+async def test_continuous_worker_stream_cannot_starve_queued_background(limit: int):
+    slots = ModelSlots(limit)
+    assert slots.worker_limit == 1
+    assert slots.background_limit == 1
+
+    order: list[str] = []
+    w0_entered = asyncio.Event()
+    w0_release = asyncio.Event()
+    bg_entered = asyncio.Event()
+
+    async def hold_w0() -> None:
+        async with slots.slot(worker=True):
+            order.append("w0")
+            w0_entered.set()
+            await w0_release.wait()
+
+    async def run_bg() -> None:
+        async with slots.slot(background=True):
+            order.append("bg1")
+            bg_entered.set()
+
+    async def run_worker(name: str, next_spawn: list[asyncio.Task[None]], remaining: list[str]) -> None:
+        async with slots.slot(worker=True):
+            order.append(name)
+            if remaining:
+                nxt = remaining.pop(0)
+                next_spawn.append(asyncio.create_task(run_worker(nxt, next_spawn, remaining)))
+            await asyncio.sleep(0)
+
+    w0_task = asyncio.create_task(hold_w0())
+    await w0_entered.wait()
+
+    bg_task = asyncio.create_task(run_bg())
+    spawned: list[asyncio.Task[None]] = []
+    remaining = ["w2", "w3", "w4"]
+    w1_task = asyncio.create_task(run_worker("w1", spawned, remaining))
+    await _yield_loop()
+
+    w0_release.set()
+    await asyncio.wait_for(bg_entered.wait(), timeout=1.0)
+    await asyncio.gather(w0_task, bg_task, w1_task, *spawned)
+
+    # At most WORKER_BURST_LIMIT (2) workers may run ahead of a waiting background task.
+    assert order == ["w0", "w1", "w2", "bg1", "w3", "w4"]
+    assert slots._active == 0
+    assert slots._worker_active == 0
+    assert slots._background_active == 0
+    assert not slots._worker and not slots._background

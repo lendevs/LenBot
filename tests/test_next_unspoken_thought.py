@@ -382,3 +382,114 @@ async def test_preview_stickers_runs_sheet_rendering_in_worker_thread(tmp_path, 
         entries, sheet, _ = await expression.preview_stickers(ReactArguments(preview=True))
     assert len(entries) == 3 and sheet
     assert threads and threads[0] != main_thread
+
+
+@pytest.mark.asyncio
+async def test_unread_tool_result_is_not_folded_when_new_group_messages_arrive_same_turn(tmp_path):
+    config, persona = _chat_config(tmp_path, trigger=50000, window=64000, max_output=512)
+    config.compaction.keep_recent_tokens = 80
+    config.max_steps = 4
+    body_marker = "重要历史聊天内容明细" * 160
+    requests: list = []
+
+    with Store(config.database, now=lambda: START) as store:
+        raw_msg = onebot_message(70001, 501, body_marker)
+        record = store.enqueue(parse_message(raw_msg, own_message_ids=set()), raw_msg, START)
+        replies = [
+            tool_response("recall_chat", {"action": "read", "record": record}, "recall1"),
+            tool_response("say", {"content": "已经查完历史消息", "end_turn": True}, "say1"),
+        ]
+        server = await peer_server(replies, requests)
+        async with server:
+            config.models.providers["synthetic"].base_url = (
+                f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1"
+            )
+            store.append(SCENE, {"role": "user", "content": "帮我查一下刚才的历史消息"})
+            async with ChatModel(config.model_settings("mind")) as mind:
+                chat = Chat(config, persona, store, mind, now=lambda: START)
+                appended = False
+
+                async def append_new(_has_tools: bool, _turn_id: str) -> bool:
+                    nonlocal appended
+                    if not appended:
+                        appended = True
+                        store.append(SCENE, {"role": "user", "content": "群里突然刷屏 " * 250})
+                        return True
+                    return False
+
+                async def wait_for_messages(_seconds: float) -> str:
+                    return "no_messages"
+
+                result = await chat.run_turn(
+                    batch=None,
+                    append_new=append_new,
+                    wait_for_messages=wait_for_messages,
+                    attention_state={},
+                )
+                assert result["status"] == "settled"
+                assert chat._unseen_tool_seq is None
+
+                # Step 2 request MUST still contain the full unread recall_chat result despite arriving user messages.
+                assert len(requests) == 2
+                step2_tools = [m for m in requests[1][2]["messages"] if m["role"] == "tool"]
+                assert len(step2_tools) == 1
+                assert body_marker in step2_tools[0]["content"]
+
+                # After mind has read it, a subsequent projection folds the old recall_chat result normally.
+                store.append(SCENE, {"role": "user", "content": "后续闲聊 " * 200})
+                turn_id = store.start_turn(SCENE)
+                later = await chat.prepare_context(turn_id, observed_at=START)
+                later_tools = [m for m in later.messages if m["role"] == "tool" and m["tool_call_id"] == "recall1"]
+                assert len(later_tools) == 1
+                assert body_marker not in later_tools[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_context_holds_compaction_on_plan_budget_error_and_uses_continuation_for_oversized_source(tmp_path):
+    from string import Template
+    from len_bot.next.prompt_files import read_prompt
+    from len_bot.next.storage.codec import encode
+
+    # Case 1: Only a single entry exceeds trigger while still fitting in window -> enters compaction_held_at.
+    config1, persona1 = _chat_config(tmp_path / "single", trigger=4000, window=64000, max_output=512)
+    with Store(config1.database, now=lambda: START) as store:
+        store.append(SCENE, {"role": "user", "content": "单条超长消息" * 1200})
+        async with ChatModel(config1.model_settings("mind")) as mind:
+            chat = Chat(config1, persona1, store, mind, now=lambda: START)
+            turn_id = store.start_turn(SCENE)
+            prepared = await chat.prepare_context(turn_id, observed_at=START)
+            assert prepared.messages
+            assert chat.compaction_held_at == prepared.input_tokens
+
+    # Case 2: Old web_read raw source exceeds window_tokens, while folded chat still fits ->
+    # prepare_context uses continuation_request on folded chat and commits recap cleanly.
+    config2, persona2 = _chat_config(tmp_path / "cont", trigger=6500, window=14000, max_output=512)
+    config2.compaction.keep_recent_tokens = 100
+    huge_web = Template(read_prompt("next_web_read.md")).substitute(
+        result=encode({"document": 7, "url": "https://example.invalid", "text": "超长原始网页内容" * 4000}),
+    )
+    requests: list = []
+    recap_reply = (200, "application/json", json.dumps({
+        "choices": [{"message": {"role": "assistant", "content": "## 近期对话\n- 读过一个长网页。", "tool_calls": None},
+                     "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1000, "completion_tokens": 40},
+    }, ensure_ascii=False).encode())
+    server = await peer_server([recap_reply], requests)
+    async with server:
+        config2.models.providers["synthetic"].base_url = (
+            f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1"
+        )
+        with Store(config2.database, now=lambda: START) as store:
+            store.append(SCENE, {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "w1", "type": "function", "function": {"name": "web_read", "arguments": "{}"}},
+            ]})
+            store.append(SCENE, {"role": "tool", "tool_call_id": "w1", "content": huge_web})
+            for index in range(10):
+                store.append(SCENE, {"role": "user", "content": f"后续对话 {index}：" + ("继续聊聊" * 120)})
+            async with ChatModel(config2.model_settings("mind")) as mind:
+                chat = Chat(config2, persona2, store, mind, now=lambda: START)
+                turn_id = store.start_turn(SCENE)
+                prepared = await chat.prepare_context(turn_id, observed_at=START)
+                assert prepared.messages
+                assert len(requests) == 1
+                assert store.recap(SCENE) == "## 近期对话\n- 读过一个长网页。"
