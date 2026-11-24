@@ -61,6 +61,7 @@
   --color-surface-raised: var(--surface-raised);
   --color-hover: var(--hover);
   --color-track: var(--track);
+  --color-switch-thumb: var(--switch-thumb);
   --color-selected: var(--selected);
   --color-overlay: var(--overlay);
   --color-avatar-ring: var(--avatar-ring);
@@ -120,8 +121,11 @@
 
   --ease-*: initial;
   --ease-out: var(--ease-out);
+  --ease-in: var(--ease-in);
   --ease-in-out: var(--ease-in-out);
   --ease-spring: var(--ease-spring);
+  --default-transition-duration: var(--dur-1);
+  --default-transition-timing-function: var(--ease-out);
 
   --breakpoint-*: initial;
   --breakpoint-sm: 640px;
@@ -135,7 +139,6 @@
   --animate-pulse-dot: pulse-dot 2s var(--ease-out) infinite;
   --animate-rise: rise var(--dur-2) var(--ease-out) both;
   --animate-fade: fade var(--dur-2) var(--ease-out) both;
-  --animate-shimmer: shimmer 1.4s ease-in-out infinite;
   --animate-skeleton: skeleton-pulse 1.6s var(--ease-in-out) infinite;
 
   @keyframes spin {
@@ -168,14 +171,6 @@
     }
     to {
       opacity: 1;
-    }
-  }
-  @keyframes shimmer {
-    0% {
-      background-position: 100% 0;
-    }
-    100% {
-      background-position: -100% 0;
     }
   }
   @keyframes skeleton-pulse {
@@ -261,7 +256,7 @@
   animation: ui-pop-in var(--dur-2) var(--ease-out);
 }
 .ui-pop[data-state='closed'] {
-  animation: ui-pop-out var(--dur-1) ease-in forwards;
+  animation: ui-pop-out var(--dur-1) var(--ease-in) forwards;
 }
 @keyframes ui-pop-in {
   from {
@@ -280,18 +275,18 @@
   animation: fade var(--dur-3) var(--ease-out);
 }
 .ui-overlay[data-state='closed'] {
-  animation: ui-fade-out var(--dur-2) ease-in forwards;
+  animation: ui-fade-out var(--dur-2) var(--ease-in) forwards;
 }
 .ui-dialog[data-state='open'] {
   animation: ui-dialog-in var(--dur-3) var(--ease-out);
 }
 .ui-dialog[data-state='closed'] {
-  animation: ui-dialog-out var(--dur-2) ease-in forwards;
+  animation: ui-dialog-out var(--dur-2) var(--ease-in) forwards;
 }
 @keyframes ui-dialog-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.97);
+    transform: translateY(8px) scale(0.985);
   }
 }
 @keyframes ui-dialog-out {
@@ -319,7 +314,7 @@
   animation: ui-sheet-in var(--dur-4) var(--ease-out);
 }
 .ui-sheet[data-state='closed'] {
-  animation: ui-sheet-out var(--dur-3) var(--ease-in-out) forwards;
+  animation: ui-sheet-out var(--dur-2) var(--ease-in) forwards;
 }
 @keyframes ui-sheet-in {
   from {
@@ -337,7 +332,7 @@
   animation: ui-toast-in var(--dur-3) var(--ease-out);
 }
 .ui-toast[data-state='closed'] {
-  animation: ui-fade-out var(--dur-2) ease-in forwards;
+  animation: ui-fade-out var(--dur-2) var(--ease-in) forwards;
 }
 .ui-toast[data-swipe='move'] {
   transform: translateX(var(--reka-toast-swipe-move-x));
@@ -412,16 +407,122 @@
 /* Vue <Transition name="page">: switching between pages of the shell. */
 .page-enter-active {
   transition:
-    opacity var(--dur-3) var(--ease-out),
-    transform var(--dur-3) var(--ease-out);
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
 }
 .page-leave-active {
-  transition: opacity var(--dur-1) ease-in;
+  transition: opacity var(--dur-1) var(--ease-in);
 }
 .page-enter-from {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(4px);
 }
 .page-leave-to {
+  opacity: 0;
+}
+
+/* Vue <Transition name="ui-tab">: switching between tab panels. */
+.ui-tab-enter-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.ui-tab-leave-active {
+  transition: opacity var(--dur-1) var(--ease-in);
+}
+.ui-tab-enter-from {
+  opacity: 0;
+  transform: translateY(3px);
+}
+.ui-tab-leave-to {
+  opacity: 0;
+}
+
+/* Reka CollapsibleContent: clip only during motion so resting open content never clips focus rings. */
+.ui-collapse[data-state='open'] {
+  animation: ui-collapse-down var(--dur-2) var(--ease-out);
+}
+.ui-collapse[data-state='closed'] {
+  overflow: hidden;
+  animation: ui-collapse-up var(--dur-1) var(--ease-out) forwards;
+}
+@keyframes ui-collapse-down {
+  from {
+    height: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+  to {
+    height: var(--reka-collapsible-content-height);
+    opacity: 1;
+    overflow: hidden;
+  }
+}
+@keyframes ui-collapse-up {
+  from {
+    height: var(--reka-collapsible-content-height);
+    opacity: 1;
+    overflow: hidden;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+}
+
+/* Generic CSS Grid height collapse driven by data-open="true". */
+.ui-grid-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--dur-2) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+}
+.ui-grid-collapse[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.ui-grid-collapse > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Vue <TransitionGroup name="ui-list">: list additions, removals and reorders. */
+.ui-list-move,
+.ui-list-enter-active,
+.ui-list-leave-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.ui-list-enter-from,
+.ui-list-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* Vue <Transition name="step-forward"> / <Transition name="step-back">: directional wizard steps. */
+.step-forward-enter-active,
+.step-back-enter-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.step-forward-leave-active,
+.step-back-leave-active {
+  transition: opacity var(--dur-1) var(--ease-in);
+}
+.step-forward-enter-from {
+  opacity: 0;
+  transform: translateX(10px);
+}
+.step-back-enter-from {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+.step-forward-leave-to,
+.step-back-leave-to {
   opacity: 0;
 }

@@ -1,7 +1,18 @@
 import { reactive } from 'vue'
 import { http } from './client'
 import type { HostState, SceneTitles } from './host'
+import type { Overview } from './overview'
 import { sceneTitles } from './scenes'
+import type { UpdateState } from './system'
+
+export interface PendingRestartSummary {
+  sections?: string[]
+  scenes?: string[]
+  plugins?: { name: string }[]
+  personas?: { name: string }[]
+  error?: unknown
+  [field: string]: unknown
+}
 
 /**
  * Host-wide state shared by the shell and the pages: read on demand and after host events. Each read keeps
@@ -10,12 +21,15 @@ import { sceneTitles } from './scenes'
 export interface HostStore {
   state: HostState | null
   stateError: unknown
-  restart: Record<string, unknown> | null
+  /** Pending restart summary from GET /api/host/pending-restart, or `{ error }` if reading failed. */
+  restart: PendingRestartSummary | null
   titleErrors: Record<string, string>
-  overview: Record<string, unknown> | null
+  /** Today's overview snapshot from GET /api/host/overview. */
+  overview: Overview | Record<string, unknown> | null
   overviewError: unknown
   members: Record<string, number>
-  updates: Record<string, unknown> | null
+  /** Version and update status from GET /api/host/updates. */
+  updates: UpdateState | Record<string, unknown> | null
   /** Installed plugins with a newer catalog version. */
   pluginUpdates: number
 }
@@ -57,15 +71,13 @@ const fetchedAt: Record<ResourceKey, number> = {
 }
 const inflight: Partial<Record<ResourceKey, Promise<void>>> = {}
 
-function maxAgeOf(options?: ReadOptions | unknown): number {
-  return options && typeof options === 'object' && 'maxAge' in options && typeof options.maxAge === 'number'
-    ? options.maxAge
-    : 0
+function maxAgeOf(options?: ReadOptions): number {
+  return options && typeof options === 'object' && typeof options.maxAge === 'number' ? options.maxAge : 0
 }
 
 function runRead(
   key: ResourceKey,
-  options: ReadOptions | unknown,
+  options: ReadOptions | undefined,
   task: (own: number) => Promise<boolean>,
 ): Promise<void> {
   const maxAge = maxAgeOf(options)
@@ -85,7 +97,7 @@ function runRead(
   return promise
 }
 
-export function readHostState(options?: ReadOptions | unknown): Promise<void> {
+export function readHostState(options?: ReadOptions): Promise<void> {
   return runRead('state', options, async (own) => {
     try {
       const value = await http.get<HostState>('/api/host/state')
@@ -100,7 +112,7 @@ export function readHostState(options?: ReadOptions | unknown): Promise<void> {
   })
 }
 
-export function readSceneTitles(options?: ReadOptions | unknown): Promise<void> {
+export function readSceneTitles(options?: ReadOptions): Promise<void> {
   return runRead('titles', options, async (own) => {
     try {
       const value = await http.get<SceneTitles>('/api/host/scene-titles')
@@ -117,10 +129,10 @@ export function readSceneTitles(options?: ReadOptions | unknown): Promise<void> 
   })
 }
 
-export function readOverview(options?: ReadOptions | unknown): Promise<void> {
+export function readOverview(options?: ReadOptions): Promise<void> {
   return runRead('overview', options, async (own) => {
     try {
-      const value = await http.get<Record<string, unknown>>('/api/host/overview')
+      const value = await http.get<Overview>('/api/host/overview')
       if (own !== reads.overview) return false
       host.overview = value
       host.overviewError = null
@@ -132,10 +144,10 @@ export function readOverview(options?: ReadOptions | unknown): Promise<void> {
   })
 }
 
-export function readPendingRestart(options?: ReadOptions | unknown): Promise<void> {
+export function readPendingRestart(options?: ReadOptions): Promise<void> {
   return runRead('restart', options, async (own) => {
     try {
-      const value = await http.get<Record<string, unknown>>('/api/host/pending-restart')
+      const value = await http.get<PendingRestartSummary>('/api/host/pending-restart')
       if (own !== reads.restart) return false
       host.restart = value
       return true
@@ -146,10 +158,10 @@ export function readPendingRestart(options?: ReadOptions | unknown): Promise<voi
   })
 }
 
-export function readUpdates(options?: ReadOptions | unknown): Promise<void> {
+export function readUpdates(options?: ReadOptions): Promise<void> {
   return runRead('updates', options, async (own) => {
     try {
-      const value = await http.get<Record<string, unknown>>('/api/host/updates')
+      const value = await http.get<UpdateState>('/api/host/updates')
       if (own !== reads.updates) return false
       host.updates = value
       return true
@@ -160,7 +172,7 @@ export function readUpdates(options?: ReadOptions | unknown): Promise<void> {
   })
 }
 
-export function readPluginUpdates(options?: ReadOptions | unknown): Promise<void> {
+export function readPluginUpdates(options?: ReadOptions): Promise<void> {
   return runRead('pluginUpdates', options, async (own) => {
     try {
       const value = await http.get<{ prepared: boolean }[]>('/api/host/plugin-updates')
