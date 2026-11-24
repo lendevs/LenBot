@@ -145,6 +145,18 @@ class _FileMutation(BaseModel):
     files: dict[str, str | None]
 
 
+def _encode_segment(part: str) -> str:
+    return quote(part, safe='') if sys.platform == 'win32' else part
+
+
+def _decode_segment(part: str) -> str:
+    return unquote(part) if sys.platform == 'win32' else part
+
+
+def _decode_parts(parts: tuple[str, ...]) -> str:
+    return '/'.join(_decode_segment(part) for part in parts)
+
+
 def _sync_directory(path: Path) -> None:
     if os.name == 'posix':
         descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
@@ -171,11 +183,14 @@ def _recover_files(root: Path, base: Path) -> None:
                                         (change.scope, change.path)).fetchone() is None
                              and db.execute('SELECT 1 FROM memory_changes WHERE scope=? AND path=?',
                                             (change.scope, change.path)).fetchone() is None)
-                summary_paths = {str(Path(relative).parent) for relative in change.files
-                                 if Path(relative).name in SUMMARY_FILES}
+                summary_paths = {
+                    '' if (parent := Path(relative).parent) == Path('.') else _decode_parts(parent.parts)
+                    for relative in change.files
+                    if Path(relative).name in SUMMARY_FILES
+                }
                 committed = committed and all(db.execute(
                     'SELECT 1 FROM memory_summaries WHERE scope=? AND path=?',
-                    (change.scope, '' if path == '.' else path)).fetchone() is None for path in summary_paths)
+                    (change.scope, path)).fetchone() is None for path in summary_paths)
             else:
                 row = db.execute('SELECT generated_at FROM memory_summaries WHERE scope=? AND path=?',
                                  (change.scope, change.path)).fetchone()
@@ -481,7 +496,7 @@ class LocalMemory:
                 _dir_names: dict[Path, list[str]] | None = None) -> Path:
         parts = _parts(path, file=file)
         base = self._base(scope)
-        target = base.joinpath(*(quote(part, safe='') for part in parts)) if sys.platform == 'win32' else base.joinpath(*parts)
+        target = base.joinpath(*(_encode_segment(part) for part in parts))
         parent = base
         for part in target.relative_to(base).parts:
             if parent.exists() and (parent / part).exists():
@@ -521,16 +536,14 @@ class LocalMemory:
                     summaries.append(path)
                     continue
                 if category == "public":
-                    scope, relative = "public", path.relative_to(directory).as_posix()
-                    if sys.platform == 'win32':
-                        relative = '/'.join(unquote(part) for part in path.relative_to(directory).parts)
+                    scope, relative = "public", _decode_parts(path.relative_to(directory).parts)
                 else:
                     position = path.relative_to(directory).parts
-                    disk_scope = unquote(position[0]) if sys.platform == 'win32' else position[0]
+                    disk_scope = _decode_segment(position[0])
                     if len(position) < 2 or _SCENE.fullmatch(disk_scope) is None:
                         raise ValueError(f"unexpected memory source path: {path}")
                     scope = disk_scope
-                    relative = '/'.join(unquote(part) for part in position[1:]) if sys.platform == 'win32' else Path(*position[1:]).as_posix()
+                    relative = _decode_parts(position[1:])
                 actual = self._target(scope, relative, file=True)
                 files[(scope, relative)] = _source_text(actual)
         return files, summaries
@@ -735,15 +748,17 @@ class LocalMemory:
             raise NotADirectoryError(directory)
         all_entries = list(directory.iterdir())
         dir_names[directory] = [entry.name for entry in all_entries]
-        entries = sorted((entry for entry in all_entries
-                          if entry.is_dir() or (entry.suffix == ".md" and entry.name not in SUMMARY_FILES)),
-                         key=lambda entry: (not entry.is_dir(), entry.name))
+        entries = sorted(
+            ((entry, _decode_segment(entry.name)) for entry in all_entries
+             if entry.is_dir() or (entry.suffix == ".md" and entry.name not in SUMMARY_FILES)),
+            key=lambda item: (not item[0].is_dir(), item[1]),
+        )
         if bot_persona is not None and path.strip('/') == 'bot':
-            entries = [entry for entry in entries if entry.name == bot_persona]
+            entries = [item for item in entries if item[1] == bot_persona]
         shown = entries[offset:offset + limit]
-        nodes = tuple(MemoryNode(path=f"{path}/{entry.name}" if path else entry.name,
-                                 name=entry.name, is_dir=entry.is_dir())
-                      for entry in shown)
+        nodes = tuple(MemoryNode(path=f"{path}/{name}" if path else name,
+                                 name=name, is_dir=entry.is_dir())
+                      for entry, name in shown)
         for node in nodes:
             self._target(scope, node.path, file=not node.is_dir, _dir_names=dir_names)
         return MemoryPage(nodes=nodes, has_more=offset + limit < len(entries))
@@ -761,11 +776,14 @@ class LocalMemory:
         root = self._target(scope, "", file=False)
         if not root.exists():
             return []
+        entries = sorted(
+            (tuple(_decode_segment(part) for part in target.relative_to(root).parts), target)
+            for target in root.rglob("*.md")
+            if target.name not in SUMMARY_FILES
+        )
         files = []
-        for target in sorted(root.rglob("*.md")):
-            if target.name in SUMMARY_FILES:
-                continue
-            path = target.relative_to(root).as_posix()
+        for parts, target in entries:
+            path = "/".join(parts)
             self._target(scope, path, file=True)
             files.append({"path": path, "chars": len(_source_text(target))})
         return files
@@ -1154,15 +1172,19 @@ class LocalMemory:
     def _summary_inputs_sync(self, scope: str, path: str) -> dict:
         directory = self._summary_directory(scope, path)
         files, directories = [], []
-        for entry in sorted(directory.iterdir(), key=lambda item: item.name):
-            relative = f"{path}/{entry.name}" if path else entry.name
+        entries = sorted(
+            ((entry, _decode_segment(entry.name)) for entry in directory.iterdir()),
+            key=lambda item: item[1],
+        )
+        for entry, name in entries:
+            relative = f"{path}/{name}" if path else name
             if entry.is_dir():
                 self._target(scope, relative, file=False)
                 summary = self._summary_sync(scope, relative)
-                directories.append({"name": entry.name,
+                directories.append({"name": name,
                                     "abstract": summary.abstract if summary.changed_after is None else None})
             elif entry.suffix == ".md" and entry.name not in SUMMARY_FILES:
-                files.append({"name": entry.name, "content": _source_text(self._target(scope, relative, file=True))})
+                files.append({"name": name, "content": _source_text(self._target(scope, relative, file=True))})
         return {"path": path, "files": files, "directories": directories}
 
     async def summary_inputs(self, scene: str, path: str, *,

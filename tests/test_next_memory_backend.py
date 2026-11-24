@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 
+from len_bot.next.memory import local as local_module
 from len_bot.next.memory.local import LocalMemory, LocalMemorySettings
 from len_bot.next.platform.identity import scene_directory
 from len_bot.next.memory.jobs import MemoryJobs
@@ -286,3 +287,121 @@ async def test_profile_recall_keeps_speaker_preferences_and_dated_context_within
         assert recalled['items'][0]['truncated']
         assert (await backend.read(scene, path)).content == original
         assert len(await backend.history(scene, path)) == 1
+
+
+@pytest.mark.asyncio
+async def test_win32_encoded_paths_round_trip_through_tree_browse_summary_inputs_and_reindex(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_module.sys, 'platform', 'win32')
+    backend = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
+    scene = 'onebot:group:80001'
+    entries = {
+        'events/旧事件.md': '旧的读书会安排。',
+        'events/新事件.md': '新的读书会安排。',
+        'people/onebot:70001/profile.md': '群友 70001 资料。',
+        'bot/companion/notes.md': '伴随角色备注。',
+        'bot/other/notes.md': '其他角色备注。',
+    }
+    for path, content in entries.items():
+        await backend.write(scene, path, content, '测试写入')
+
+    scene_root = backend.root / 'scenes' / 'onebot%3Agroup%3A80001'
+    assert (scene_root / 'events' / '%E6%97%A7%E4%BA%8B%E4%BB%B6.md').exists()
+    assert (scene_root / 'events' / '%E6%96%B0%E4%BA%8B%E4%BB%B6.md').exists()
+    assert (scene_root / 'people' / 'onebot%3A70001' / 'profile.md').exists()
+    assert (scene_root / 'bot' / 'companion' / 'notes.md').exists()
+
+    for path, content in entries.items():
+        document = await backend.read(scene, path)
+        assert document.path == path and document.content == content
+
+    tree = await backend.tree(scene)
+    assert [item['path'] for item in tree] == [
+        'bot/companion/notes.md',
+        'bot/other/notes.md',
+        'events/新事件.md',
+        'events/旧事件.md',
+        'people/onebot:70001/profile.md',
+    ]
+    assert all('%' not in item['path'] for item in tree)
+
+    events_page = await backend.browse(scene, 'events')
+    assert [(node.path, node.name, node.is_dir) for node in events_page.nodes] == [
+        ('events/新事件.md', '新事件.md', False),
+        ('events/旧事件.md', '旧事件.md', False),
+    ]
+    people_page = await backend.browse(scene, 'people')
+    assert [(node.path, node.name, node.is_dir) for node in people_page.nodes] == [
+        ('people/onebot:70001', 'onebot:70001', True),
+    ]
+    profile_page = await backend.browse(scene, 'people/onebot:70001')
+    assert [(node.path, node.name, node.is_dir) for node in profile_page.nodes] == [
+        ('people/onebot:70001/profile.md', 'profile.md', False),
+    ]
+    bot_page = await backend.browse(scene, 'bot', bot_persona='companion')
+    assert [(node.path, node.name, node.is_dir) for node in bot_page.nodes] == [
+        ('bot/companion', 'companion', True),
+    ]
+
+    await backend.write_summary(scene, 'people/onebot:70001', '成员 70001 摘要', '成员 70001 详情')
+    assert await backend.summary_inputs(scene, 'people') == {
+        'path': 'people',
+        'files': [],
+        'directories': [{'name': 'onebot:70001', 'abstract': '成员 70001 摘要'}],
+    }
+    assert await backend.summary_inputs(scene, 'events') == {
+        'path': 'events',
+        'files': [
+            {'name': '新事件.md', 'content': '新的读书会安排。'},
+            {'name': '旧事件.md', 'content': '旧的读书会安排。'},
+        ],
+        'directories': [],
+    }
+
+    assert backend.reindex() == len(entries)
+    assert (await backend.summary(scene, 'people/onebot:70001')).abstract is None
+    assert [item['path'] for item in await backend.tree(scene)] == [
+        'bot/companion/notes.md',
+        'bot/other/notes.md',
+        'events/新事件.md',
+        'events/旧事件.md',
+        'people/onebot:70001/profile.md',
+    ]
+    for path, content in entries.items():
+        assert (await backend.read(scene, path)).content == content
+
+
+@pytest.mark.asyncio
+async def test_win32_failed_forget_recovers_encoded_ancestor_summaries(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_module.sys, 'platform', 'win32')
+    memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
+    scene = 'onebot:group:80001'
+    await memory.write(scene, 'people/onebot:70001/profile.md', '成员 70001 档案。', '初始资料')
+    await memory.write_summary(scene, 'people/onebot:70001', '70001 摘要', '70001 详情')
+    await memory.write_summary(scene, 'people', '人物摘要', '人物详情')
+    await memory.write_summary(scene, '', '根摘要', '根详情')
+
+    scene_root = memory.root / 'scenes' / 'onebot%3Agroup%3A80001'
+    person_dir = scene_root / 'people' / 'onebot%3A70001'
+    assert (person_dir / '.abstract.md').exists()
+    assert (person_dir / '.overview.md').exists()
+
+    with sqlite3.connect(memory.index) as database:
+        database.execute("CREATE TRIGGER fail_forget BEFORE DELETE ON memory_summaries "
+                         "BEGIN SELECT RAISE(ABORT, 'synthetic disk transaction failure'); END")
+    # Forgetting an absent file leaves memory_files/memory_changes already empty for that path,
+    # so recovery must match memory_summaries by decoded logical path.
+    with pytest.raises(sqlite3.IntegrityError, match='transaction failure'):
+        await memory.forget(scene, 'people/onebot:70001/absent.md')
+
+    assert (scene_root / '.memory-pending.json').exists()
+    assert not (person_dir / '.abstract.md').exists()
+    assert not (person_dir / '.overview.md').exists()
+
+    restored = LocalMemory(memory.settings)
+    assert not (scene_root / '.memory-pending.json').exists()
+    assert (person_dir / '.abstract.md').read_text(encoding='utf-8') == '70001 摘要'
+    assert (person_dir / '.overview.md').read_text(encoding='utf-8') == '70001 详情'
+    assert (await restored.summary(scene, 'people/onebot:70001')).abstract == '70001 摘要'
+    assert (await restored.summary(scene, 'people/onebot:70001')).overview == '70001 详情'
+    assert (await restored.summary(scene, 'people')).overview == '人物详情'
+    assert (await restored.summary(scene)).overview == '根详情'
