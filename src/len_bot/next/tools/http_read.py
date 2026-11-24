@@ -98,6 +98,7 @@ async def _read_body(response: httpx.Response, media_type: str,
     decompressor = zlib.decompressobj(wbits)
     raw_deflate_tried = False
     produced = False
+    gzip_between_members = False
     raw_bytes = 0
 
     def append_decoded(piece: bytes) -> None:
@@ -119,6 +120,9 @@ async def _read_body(response: httpx.Response, media_type: str,
         current_limit = byte_limit(media_type, bytes(prefix))
         if raw_bytes > current_limit * 2 + 65536:
             raise ValueError(f"HTTP read compressed stream exceeds safe size for {current_limit} decoded bytes")
+        if gzip_between_members:
+            decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            gzip_between_members = False
         buf = chunk
         while buf:
             limit = byte_limit(media_type, bytes(prefix))
@@ -135,14 +139,27 @@ async def _read_body(response: httpx.Response, media_type: str,
                     continue
                 raise ValueError(f"HTTP read invalid {encoding} body: {error}") from error
             append_decoded(piece)
-            if decompressor.unconsumed_tail:
+            if decompressor.eof:
+                unused = decompressor.unused_data
+                try:
+                    tail = decompressor.flush()
+                except zlib.error as error:
+                    raise ValueError(f"HTTP read invalid {encoding} body: {error}") from error
+                append_decoded(tail)
+                if encoding == "gzip":
+                    if unused:
+                        buf = unused
+                        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                    else:
+                        gzip_between_members = True
+                        buf = b""
+                else:
+                    buf = b""
+            elif decompressor.unconsumed_tail:
                 buf = decompressor.unconsumed_tail
-            elif encoding == "gzip" and decompressor.eof and decompressor.unused_data:
-                buf = decompressor.unused_data
-                decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
             else:
                 buf = b""
-    if raw_bytes:
+    if raw_bytes and not gzip_between_members:
         try:
             tail = decompressor.flush()
         except zlib.error as error:

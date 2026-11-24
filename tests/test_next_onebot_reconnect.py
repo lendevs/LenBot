@@ -435,6 +435,94 @@ async def test_historical_onebot_image_routes_to_fetch_media_before_http(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_onebot_image_load_bidirectional_fallback(tmp_path, monkeypatch):
+    from io import BytesIO
+    from PIL import Image
+    from len_bot.next.configuration.chat import ImageSettings
+    from len_bot.next.media import images as next_images
+    from len_bot.next.media.images import LookArguments, load_look_image
+    from len_bot.next.platform.onebot_messages import parse_message
+
+    buf = BytesIO()
+    Image.new('RGB', (16, 16), 'green').save(buf, format='PNG')
+    png = buf.getvalue()
+
+    now_box = [1_700_002_000.0]
+    with Store(tmp_path / 'fallback.sqlite3', now=lambda: now_box[0]) as store:
+        for mid, msg_time, data in (
+            ('old-fallback', 1_700_000_000.0, {'file': 'old.jpg', 'url': 'https://cdn.example/still-valid.jpg'}),
+            ('fresh-fallback', 1_700_001_500.0, {'file': 'fresh.jpg', 'url': 'https://cdn.example/expired-early.jpg'}),
+            ('both-fail', 1_700_001_500.0, {'file': 'gone.jpg', 'url': 'https://cdn.example/403.jpg'}),
+            ('url-only-fail', 1_700_001_500.0, {'url': 'https://cdn.example/404-only.jpg'}),
+        ):
+            raw = {
+                'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
+                'user_id': 70001, 'message_id': mid, 'time': msg_time,
+                'sender': {'nickname': '群友'}, 'message': [{'type': 'image', 'data': data}],
+            }
+            store.enqueue(parse_message(raw, own_message_ids=set()), raw, received_at=msg_time)
+
+        calls: list[tuple[str, str]] = []
+        fail_platform: set[str] = {'old.jpg', 'gone.jpg'}
+        fail_http: set[str] = {
+            'https://cdn.example/expired-early.jpg',
+            'https://cdn.example/403.jpg',
+            'https://cdn.example/404-only.jpg',
+        }
+
+        async def fetch_media(data: dict, max_bytes: int) -> bytes:
+            file_id = str(data['file'])
+            calls.append(('platform', file_id))
+            if file_id in fail_platform:
+                raise RuntimeError(f'get_image unavailable: {file_id}')
+            return png
+
+        async def fake_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+            calls.append(('http', url))
+            if url in fail_http:
+                raise ValueError(f'HTTP read status 404: {url}')
+            return url, 'image/png', png
+
+        monkeypatch.setattr(next_images, 'fetch_public', fake_fetch_public)
+        settings = ImageSettings()
+
+        # > 1800s old image: fetch_media fails, falls back to original HTTP URL.
+        _, reused, source = await load_look_image(
+            store, SCENE, LookArguments(message='old-fallback'), settings,
+            fake_ip_networks=(), fetch_media=fetch_media,
+        )
+        assert not reused and source == 'http_response'
+        assert calls == [('platform', 'old.jpg'), ('http', 'https://cdn.example/still-valid.jpg')]
+
+        # <= 1800s fresh image: HTTP URL fails with 404, falls back to fetch_media.
+        calls.clear()
+        _, reused, source = await load_look_image(
+            store, SCENE, LookArguments(message='fresh-fallback'), settings,
+            fake_ip_networks=(), fetch_media=fetch_media,
+        )
+        assert not reused and source == 'platform_download'
+        assert calls == [('http', 'https://cdn.example/expired-early.jpg'), ('platform', 'fresh.jpg')]
+
+        # Both sources fail: raises after trying fallback.
+        calls.clear()
+        with pytest.raises(RuntimeError, match='get_image unavailable: gone.jpg'):
+            await load_look_image(
+                store, SCENE, LookArguments(message='both-fail'), settings,
+                fake_ip_networks=(), fetch_media=fetch_media,
+            )
+        assert calls == [('http', 'https://cdn.example/403.jpg'), ('platform', 'gone.jpg')]
+
+        # URL-only image with no platform identifier: does not invoke fetch_media.
+        calls.clear()
+        with pytest.raises(ValueError, match='HTTP read status 404'):
+            await load_look_image(
+                store, SCENE, LookArguments(message='url-only-fail'), settings,
+                fake_ip_networks=(), fetch_media=fetch_media,
+            )
+        assert calls == [('http', 'https://cdn.example/404-only.jpg')]
+
+
+@pytest.mark.asyncio
 async def test_animated_keyframes_and_long_screenshot_scaling(tmp_path):
     from io import BytesIO
     from PIL import Image
