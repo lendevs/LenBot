@@ -443,3 +443,231 @@ def test_recorded_summary_code_fence_is_not_silently_repaired():
     reply = parse_chat_completion({'choices': [recorded]})
     with pytest.raises(ValueError, match='Invalid memory summary response.*response fragment'):
         parse_summary(reply)
+
+
+def test_old_large_readonly_tool_results_fold_with_quantized_stability():
+    search_payload = {
+        'provider': 'tavily',
+        'query': 'LenBot 部署说明',
+        'fetched_at': '2026-10-01T08:00Z',
+        'results': [
+            {
+                'title': '部署指南',
+                'url': 'https://example.invalid/deploy',
+                'snippet': '详细部署步骤说明' * 40,
+                'published_at': '2026-09-30',
+            },
+            {
+                'title': '常见问题',
+                'url': 'https://example.invalid/faq',
+                'snippet': '常见问题排查说明' * 40,
+            },
+        ],
+        'top_page': {
+            'document': 42,
+            'url': 'https://example.invalid/deploy',
+            'title': '部署指南',
+            'total_chars': 3000,
+            'next_offset': 2000,
+            'text': '这是完整网页正文内容' * 120,
+        },
+    }
+    search_content = Template(read_prompt('next_web_search.md')).substitute(
+        result=json.dumps(search_payload, ensure_ascii=False))
+
+    recall_body = (
+        '2026-09-20｜UTC +0000\n'
+        '12:00:00 "小明"(onebot:1001) [id="m-101"，record=11]\n'
+        + '  ' + ('上周讨论过月报字段口径' * 70) + '\n'
+        '12:05:00 "小红"(onebot:1002) [id="m-102"，record=12]\n'
+        + '  ' + ('确认需要保留原始明细表' * 70)
+    )
+    recall_content = Template(read_prompt('next_recall.md')).substitute(
+        summary='search（最新优先） 第 1 页，共 2 条。没有下一页了。', result=recall_body)
+
+    knowledge_payload = {
+        'action': 'search',
+        'query': '端口 配置',
+        'offset': 0,
+        'next_offset': None,
+        'matches': [
+            {
+                'scope': 'chat',
+                'filename': 'ops/guide.md',
+                'heading': ['部署', '端口'],
+                'page': 3,
+                'offset': 512,
+                'matched': ['端口'],
+                'text': '默认面板端口与反向代理配置原文内容' * 80,
+            },
+        ],
+    }
+    knowledge_content = Template(read_prompt('next_knowledge.md')).substitute(
+        persona_id='p1', persona_name='小然', chat='本群',
+        result=json.dumps(knowledge_payload, ensure_ascii=False))
+
+    forward_text = '\n'.join([
+        '[1] [2026-09-20 10:00:00+08:00] 小明(onebot:1001)：',
+        '  ' + ('第一条转发消息正文' * 40),
+        '[2] [2026-09-20 10:02:00+08:00] 小红(onebot:1002)：',
+        '  ' + ('第二条转发消息正文' * 40),
+        '[3] [2026-09-20 10:05:00+08:00] 小明(onebot:1001)：',
+        '  ' + ('第三条转发消息正文' * 40),
+        '[4] [2026-09-20 10:08:00+08:00] 小刚(onebot:1003)：',
+        '  ' + ('第四条超长隐藏内容' * 40),
+    ])
+    forward_payload = {
+        'message': 'm-900', 'forward': 1, 'forward_id': 'fwd-1',
+        'top_level_items': 4, 'offset': 0, 'total_chars': len(forward_text),
+        'next_offset': None, 'text': forward_text,
+    }
+    forward_content = Template(read_prompt('next_forward.md')).substitute(
+        scene='onebot:group:80001', result=encode(forward_payload)).strip()
+
+    small_search = Template(read_prompt('next_web_search.md')).substitute(
+        result=json.dumps({'provider': 'tavily', 'query': '短查', 'results': [
+            {'title': '短标题', 'url': 'https://example.invalid/s', 'snippet': '短摘要'}]}, ensure_ascii=False))
+    malformed_knowledge = 'not valid json ' * 100
+
+    assert all(len(c) > 1200 for c in (search_content, recall_content, knowledge_content,
+                                       forward_content, malformed_knowledge))
+    assert len(small_search) <= 1200
+
+    assistant = {
+        'role': 'assistant', 'content': None,
+        'tool_calls': [
+            {'type': 'function', 'id': 'c-search', 'function': {
+                'name': 'web_search', 'arguments': json.dumps({'query': 'LenBot 部署说明', 'count': 2}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-recall', 'function': {
+                'name': 'recall_chat', 'arguments': json.dumps({'action': 'search', 'query': '月报'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-know', 'function': {
+                'name': 'knowledge', 'arguments': json.dumps({'action': 'search', 'query': '端口 配置'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-fwd', 'function': {
+                'name': 'open_forward', 'arguments': json.dumps({'message': 'm-900'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-small', 'function': {
+                'name': 'web_search', 'arguments': json.dumps({'query': '短查'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-bad', 'function': {
+                'name': 'knowledge', 'arguments': json.dumps({'action': 'search', 'query': '坏'}, ensure_ascii=False)}},
+        ],
+    }
+    history = [
+        (1, assistant),
+        (2, {'role': 'tool', 'tool_call_id': 'c-search', 'content': search_content}),
+        (3, {'role': 'tool', 'tool_call_id': 'c-recall', 'content': recall_content}),
+        (4, {'role': 'tool', 'tool_call_id': 'c-know', 'content': knowledge_content}),
+        (5, {'role': 'tool', 'tool_call_id': 'c-fwd', 'content': forward_content}),
+        (6, {'role': 'tool', 'tool_call_id': 'c-small', 'content': small_search}),
+        (7, {'role': 'tool', 'tool_call_id': 'c-bad', 'content': malformed_knowledge}),
+    ]
+    total_tokens = sum(ceil(len(encode(m).encode('utf-8')) / 3) for _, m in history)
+    keep = total_tokens + 200
+
+    # Within keep_recent_tokens: nothing folds.
+    assert project_old_results(history, keep) == history
+    # Small follow-up that does not cross the quantized step boundary keeps the prefix identical.
+    with_small = [*history, (8, {'role': 'user', 'content': '继续聊聊'})]
+    assert project_old_results(with_small, keep) == with_small
+
+    # Push past cutoff into the middle of a quantized step so all early entries fold cleanly.
+    step = keep // 2
+    pushed = [*with_small, (9, {'role': 'user', 'content': 'x' * ((2 * step + step // 2) * 3)})]
+    projected = project_old_results(pushed, keep)
+    # Adding another small turn inside the same step leaves the folded prefix byte-for-byte stable.
+    pushed_more = [*pushed, (10, {'role': 'user', 'content': '好的收到'})]
+    assert project_old_results(pushed_more, keep)[:len(pushed)] == projected
+
+    folded_search = projected[1][1]['content']
+    assert 'web_read(document=...)' in folded_search and 'web_search' in folded_search
+    search_json = json.loads(folded_search.splitlines()[0])
+    assert search_json['query'] == 'LenBot 部署说明'
+    assert search_json['top_page']['document'] == 42
+    assert 'text' not in search_json['top_page']
+    assert len(search_json['results']) == 2
+    assert search_payload['top_page']['text'] not in folded_search
+
+    folded_recall = projected[2][1]['content']
+    assert 'recall_chat' in folded_recall
+    recall_json = json.loads(folded_recall.splitlines()[0])
+    assert recall_json['arguments'] == {'action': 'search', 'query': '月报'}
+    assert recall_json['count'] == 2
+    assert [m['record'] for m in recall_json['messages']] == [11, 12]
+    assert [m['platform_message_id'] for m in recall_json['messages']] == ['m-101', 'm-102']
+    assert len(folded_recall) < len(recall_content)
+
+    folded_know = projected[3][1]['content']
+    assert 'knowledge' in folded_know
+    know_json = json.loads(folded_know.splitlines()[0])
+    assert know_json['count'] == 1
+    assert know_json['matches'][0]['filename'] == 'ops/guide.md'
+    assert know_json['matches'][0]['offset'] == 512
+    assert know_json['matches'][0]['page'] == 3
+    assert 'text' not in know_json['matches'][0]
+    assert len(folded_know) < len(knowledge_content)
+
+    folded_fwd = projected[4][1]['content']
+    assert 'open_forward' in folded_fwd
+    fwd_json = json.loads(folded_fwd.splitlines()[0])
+    assert fwd_json['item_count'] == 4
+    assert fwd_json['senders'] == ['小明(onebot:1001)', '小红(onebot:1002)', '小刚(onebot:1003)']
+    assert fwd_json['time_range'] == {'start': '2026-09-20 10:00:00+08:00', 'end': '2026-09-20 10:08:00+08:00'}
+    assert len(fwd_json['previews']) == 3
+    assert '第四条超长隐藏内容' not in folded_fwd
+
+    # Small result (<= 1200 chars) and unparseable result stay untouched.
+    assert projected[5][1]['content'] == small_search
+    assert projected[6][1]['content'] == malformed_knowledge
+
+
+def test_recap_source_extracts_ticket_anchors_and_preserves_plain_sessions():
+    from len_bot.next.chat.recap import extract_ticket_anchors, recap_source
+
+    plain_entries = [
+        (1, {'role': 'user', 'content': '大家好'}),
+        (2, {'role': 'assistant', 'content': '你好呀'}),
+    ]
+    expected_plain = encode({
+        '已有回想': '之前的回想',
+        '新增旧会话': [
+            {'role': 'user', 'content': '大家好'},
+            {'role': 'assistant', 'content': '你好呀'},
+        ],
+    })
+    assert extract_ticket_anchors(plain_entries) == []
+    assert recap_source('之前的回想', plain_entries) == expected_plain
+
+    done_notice = (
+        '[任务执行结束] #7；请求人 onebot:1001；导出月报\n'
+        + json.dumps({
+            'status': 'done',
+            'summary': '已生成月报',
+            'error': None,
+            'files': [{'id': 3, 'name': '月报.xlsx', 'size': 2048}],
+            'can_continue': True,
+        }, ensure_ascii=False)
+    )
+    question_notice = (
+        '[任务提问] #8；请求人 onebot:1002\n'
+        + json.dumps({'id': 'q-1', 'title': '请选择导出范围', 'method': 'select'}, ensure_ascii=False)
+    )
+    task_entries = [
+        *plain_entries,
+        (3, {'role': 'user', 'content': done_notice}),
+        (4, {'role': 'user', 'content': question_notice}),
+    ]
+    parsed = json.loads(recap_source(None, task_entries))
+    assert parsed['涉及工单与交付标识'] == [
+        {
+            'task_id': 7,
+            'requester': 'onebot:1001',
+            'goal': '导出月报',
+            'status': 'done',
+            'can_continue': True,
+            'files': [{'id': 3, 'name': '月报.xlsx'}],
+        },
+        {
+            'task_id': 8,
+            'requester': 'onebot:1002',
+            'question_id': 'q-1',
+            'question_title': '请选择导出范围',
+        },
+    ]

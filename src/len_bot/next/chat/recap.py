@@ -1,7 +1,9 @@
 """Text-context estimates and complete native tool-group compaction boundaries."""
 
 from dataclasses import dataclass
+import json
 from math import ceil
+import re
 from string import Template
 
 from ..storage.store import encode
@@ -9,6 +11,7 @@ from ..prompt_files import read_prompt
 
 
 Entry = tuple[int, dict]
+_TASK_NOTICE = re.compile(r"^\[任务(执行结束|提问|操作确认)\]\s*#(\d+)(?:；请求人\s+([^；\n]+))?(?:；(.*))?$")
 
 
 class ContextBudgetError(ValueError):
@@ -153,6 +156,61 @@ def _excerpt(message: dict, *, tail: bool) -> str:
     return f"[{message['role']}] {text}"
 
 
+def extract_ticket_anchors(entries: list[Entry]) -> list[dict]:
+    """Extract task IDs, registered delivery file IDs/names, and pending question IDs from task notices."""
+    anchors: dict[int, dict] = {}
+    for _, message in entries:
+        if message.get("role") != "user" or not isinstance(message.get("content"), str):
+            continue
+        first, _, rest = message["content"].partition("\n")
+        match = _TASK_NOTICE.match(first.strip())
+        if match is None:
+            continue
+        kind, raw_id, requester, goal = match.groups()
+        task_id = int(raw_id)
+        payload = None
+        json_line = rest.split("\n", 1)[0].strip()
+        if json_line:
+            try:
+                parsed = json.loads(json_line)
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except ValueError:
+                pass
+        anchor = anchors.setdefault(task_id, {"task_id": task_id})
+        if requester:
+            anchor["requester"] = requester.strip()
+        if goal:
+            anchor["goal"] = goal.strip()
+        if kind == "执行结束":
+            anchor.pop("question_id", None)
+            anchor.pop("question_title", None)
+            if payload is not None:
+                if payload.get("status") is not None:
+                    anchor["status"] = payload["status"]
+                if isinstance(payload.get("can_continue"), bool):
+                    anchor["can_continue"] = payload["can_continue"]
+                files_raw = payload.get("files")
+                if isinstance(files_raw, list):
+                    existing = list(anchor.get("files") or [])
+                    seen = {(item["id"], item["name"]) for item in existing}
+                    for item in files_raw:
+                        if isinstance(item, dict) and "id" in item and isinstance(item.get("name"), str):
+                            key = (item["id"], item["name"])
+                            if key not in seen:
+                                seen.add(key)
+                                existing.append({"id": item["id"], "name": item["name"]})
+                    if existing:
+                        anchor["files"] = existing
+        else:
+            if payload is not None:
+                if isinstance(payload.get("id"), str) and payload["id"]:
+                    anchor["question_id"] = payload["id"]
+                if isinstance(payload.get("title"), str) and payload["title"]:
+                    anchor["question_title"] = payload["title"]
+    return list(anchors.values())
+
+
 def recap_source(recap: str | None, entries: list[Entry]) -> str:
     """Project readable facts; opaque provider continuation fields are not facts."""
     transcript = []
@@ -167,4 +225,8 @@ def recap_source(recap: str | None, entries: list[Entry]) -> str:
         elif message["role"] == "tool":
             item["tool_call_id"] = message["tool_call_id"]
         transcript.append(item)
-    return encode({"已有回想": recap, "新增旧会话": transcript})
+    payload: dict[str, object] = {"已有回想": recap, "新增旧会话": transcript}
+    anchors = extract_ticket_anchors(entries)
+    if anchors:
+        payload["涉及工单与交付标识"] = anchors
+    return encode(payload)
