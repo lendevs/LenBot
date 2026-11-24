@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Eye, EyeOff } from '@lucide/vue'
 import type { ConfigField } from '../../../api/plugins'
 import Badge from '../../../ui/Badge.vue'
+import Combobox from '../../../ui/Combobox.vue'
 import Field from '../../../ui/Field.vue'
 import IconButton from '../../../ui/IconButton.vue'
 import Input from '../../../ui/Input.vue'
@@ -14,7 +15,15 @@ import Switch from '../../../ui/Switch.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import ScenePicker from './ScenePicker.vue'
-import { fieldLabel, rangeText, segmented, wideField, type DraftValue } from './config'
+import {
+  fieldLabel,
+  hasDefault,
+  initialField,
+  rangeText,
+  segmented,
+  wideField,
+  type DraftValue,
+} from './config'
 
 const model = defineModel<DraftValue>({ required: true })
 const props = defineProps<{
@@ -23,6 +32,8 @@ const props = defineProps<{
   enabledScenes?: string[]
   configured?: boolean
   error?: string | null
+  onEnablePicked?: (scenes: string[]) => void | Promise<void>
+  enablingPicked?: boolean
 }>()
 
 const { t } = useI18n()
@@ -34,10 +45,29 @@ const secretText = computed({
   set: (value: string) => (model.value = value),
 })
 const options = computed(() => props.field.options ?? [])
-// SegmentedControl takes text values; number choices stay in a dropdown.
-const asSegments = computed(
-  () => segmented(props.field) && options.value.every((option) => typeof option.value === 'string'),
+const stringOptions = computed(() => options.value.every((option) => typeof option.value === 'string'))
+// SegmentedControl takes <=3 short text choices; >8 text choices use searchable Combobox; 4-8 stay Select.
+const asSegments = computed(() => segmented(props.field) && stringOptions.value)
+const asCombobox = computed(() => options.value.length > 8 && stringOptions.value)
+const comboOptions = computed(() =>
+  options.value.map((option) => ({ value: String(option.value), label: option.label })),
 )
+const comboValue = computed<string | string[] | undefined>({
+  get: () => {
+    if (typeof model.value !== 'string') return undefined
+    if (model.value === '' && !options.value.some((option) => option.value === '')) return undefined
+    return model.value
+  },
+  set: (value) => {
+    model.value = typeof value === 'string' ? value : ''
+  },
+})
+const canReset = computed(
+  () =>
+    hasDefault(props.field) &&
+    JSON.stringify(model.value) !== JSON.stringify(initialField(props.field, props.field.default)),
+)
+const resetField = () => (model.value = initialField(props.field, props.field.default))
 const placeholder = computed(() =>
   cleared.value
     ? t('ui.secret.willClear')
@@ -104,17 +134,34 @@ const scenes = computed({
           </button>
         </template>
       </span>
+      <button
+        v-else-if="canReset"
+        type="button"
+        class="shrink-0 cursor-pointer rounded-sm text-xs font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
+        :class="field.type !== 'boolean' && 'ml-auto'"
+        @click="resetField"
+      >
+        {{ t('common.reset') }}
+      </button>
     </template>
     <Switch v-if="field.type === 'boolean'" v-model="flag" />
     <div v-else-if="field.options && asSegments">
       <SegmentedControl v-model="segment" :options="segments" :label="fieldLabel(field)" />
     </div>
+    <Combobox
+      v-else-if="field.options && asCombobox"
+      v-model="comboValue"
+      :options="comboOptions"
+      :placeholder="placeholder"
+    />
     <Select v-else-if="field.options" v-model="choice" :options="options" />
     <ScenePicker
       v-else-if="field.type === 'scene'"
       v-model="scenes"
       :choices="sceneChoices"
       :enabled-scenes="enabledScenes"
+      :on-enable-picked="onEnablePicked"
+      :enabling-picked="enablingPicked"
       single
     />
     <ScenePicker
@@ -122,11 +169,12 @@ const scenes = computed({
       v-model="scenes"
       :choices="sceneChoices"
       :enabled-scenes="enabledScenes"
+      :on-enable-picked="onEnablePicked"
+      :enabling-picked="enablingPicked"
     />
     <TagInput
       v-else-if="field.type === 'string_list'"
       v-model="list"
-      :delimiter="/\n/"
       :placeholder="t('plugins.form.addItem')"
     />
     <Textarea

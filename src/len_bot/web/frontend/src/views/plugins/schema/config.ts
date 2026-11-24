@@ -7,9 +7,13 @@ export type Draft = Record<string, DraftValue>
 type Translate = (key: string, named?: Record<string, unknown>) => string
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
 export const fieldLabel = (field: ConfigField) => field.label || field.key
 /** An object list with declared sub-fields is edited row by row; one without is edited as JSON. */
 export const hasRows = (field: ConfigField) => field.type === 'object_list' && field.fields.length > 0
+/** A non-secret field that declared a default in plugin.toml. */
+export const hasDefault = (field: ConfigField) => field.type !== 'secret' && !field.required
 
 export function initialField(field: ConfigField, value: FieldValue = field.default): DraftValue {
   if (field.type === 'secret') return ''
@@ -38,6 +42,11 @@ export function initialDraft(fields: ConfigField[], saved: Record<string, SavedV
       return [field.key, initialField(field, item && 'value' in item ? item.value : field.default)]
     }),
   )
+}
+
+/** Defaults for every field; secrets stay empty string so saved secrets are kept untouched. */
+export function defaultDraft(fields: ConfigField[]): Draft {
+  return Object.fromEntries(fields.map((field) => [field.key, initialField(field, field.default)]))
 }
 
 /** Short controls share a row of the form; text that tends to run long takes the whole row. */
@@ -112,10 +121,7 @@ export function configValue(field: ConfigField, value: DraftValue, t: Translate)
     } catch (error) {
       throw new Error(t('plugins.form.badJson', { name: fieldLabel(field), error: (error as Error).message }))
     }
-    if (
-      !Array.isArray(items) ||
-      items.some((item) => item === null || typeof item !== 'object' || Array.isArray(item))
-    )
+    if (!Array.isArray(items) || items.some((item) => !isPlainObject(item)))
       throw new Error(t('plugins.form.notObjects', { name: fieldLabel(field) }))
     return items as FieldValue
   }
@@ -143,6 +149,13 @@ function fieldProblem(field: ConfigField, value: DraftValue, t: Translate): stri
     !String(value ?? '').trim()
   )
     return t('plugins.form.missing', { name })
+  if (
+    field.options &&
+    value !== '' &&
+    value !== null &&
+    !field.options.some((option) => option.value === value)
+  )
+    return t('plugins.form.invalidOption', { name })
   if (field.type === 'object_list' && !hasRows(field)) {
     try {
       configValue(field, value, t)
@@ -212,4 +225,141 @@ export function configBody(
     }
   }
   return config
+}
+
+function fieldToJson(
+  field: ConfigField,
+  value: DraftValue,
+  configured: Record<string, boolean>,
+  redactSecrets: boolean,
+): unknown {
+  if (field.type === 'secret') {
+    if (redactSecrets) return null
+    if (value === null) return ''
+    if (value === '') return configured[field.key] ? null : ''
+    return value
+  }
+  if (field.type === 'object_list') {
+    if (hasRows(field)) {
+      return (value as Row[]).map((row) =>
+        Object.fromEntries(
+          field.fields.map((child) => [child.key, fieldToJson(child, row[child.key], {}, redactSecrets)]),
+        ),
+      )
+    }
+    try {
+      return JSON.parse(value as string)
+    } catch {
+      return []
+    }
+  }
+  return clone(value)
+}
+
+/**
+ * Serialize the draft to indented JSON. Saved untouched secrets serialize as `null` (keep saved value).
+ * Passing `redactSecrets: true` replaces every secret field with `null` so copying never leaks secrets.
+ */
+export function draftToJson(
+  fields: ConfigField[],
+  values: Draft,
+  configured: Record<string, boolean>,
+  options: { redactSecrets?: boolean } = {},
+): string {
+  const redact = Boolean(options.redactSecrets)
+  const object = Object.fromEntries(
+    fields.map((field) => [field.key, fieldToJson(field, values[field.key], configured, redact)]),
+  )
+  return JSON.stringify(object, null, 2)
+}
+
+function parseJsonField(
+  field: ConfigField,
+  raw: unknown,
+  configured: Record<string, boolean>,
+  t: Translate,
+): { value: DraftValue } | { error: string } {
+  const name = fieldLabel(field)
+  if (field.type === 'secret') {
+    if (raw === undefined || raw === null) return { value: '' }
+    if (typeof raw !== 'string') return { error: t('plugins.form.badType', { name }) }
+    if (raw === '' && configured[field.key]) return { value: null }
+    return { value: raw }
+  }
+  if (raw === undefined) return { value: initialField(field, field.default) }
+  if (field.type === 'boolean') {
+    if (typeof raw !== 'boolean') return { error: t('plugins.form.badType', { name }) }
+    return { value: raw }
+  }
+  if (field.type === 'integer' || field.type === 'number') {
+    if (raw === null) return { value: null }
+    if (typeof raw !== 'number' || !Number.isFinite(raw))
+      return { error: t('plugins.form.badType', { name }) }
+    return { value: raw }
+  }
+  if (field.type === 'scene') {
+    if (raw === null || raw === '') return { value: null }
+    if (typeof raw !== 'string') return { error: t('plugins.form.badType', { name }) }
+    return { value: raw }
+  }
+  if (field.type === 'string_list' || field.type === 'scene_list') {
+    if (!Array.isArray(raw) || raw.some((item) => typeof item !== 'string'))
+      return { error: t('plugins.form.badType', { name }) }
+    return { value: [...(raw as string[])] }
+  }
+  if (field.type === 'object_list') {
+    if (!Array.isArray(raw) || raw.some((item) => !isPlainObject(item)))
+      return { error: t('plugins.form.notObjects', { name }) }
+    if (!hasRows(field)) return { value: JSON.stringify(raw, null, 2) }
+    const childKeys = new Set(field.fields.map((child) => child.key))
+    const rows: Row[] = []
+    for (const item of raw as Record<string, unknown>[]) {
+      for (const key of Object.keys(item)) {
+        if (!childKeys.has(key))
+          return { error: t('plugins.form.unknownKey', { key: `${field.key}.${key}` }) }
+      }
+      const row: Row = {}
+      for (const child of field.fields) {
+        const parsed = parseJsonField(child, item[child.key], {}, t)
+        if ('error' in parsed) return parsed
+        row[child.key] = parsed.value
+      }
+      rows.push(row)
+    }
+    return { value: rows }
+  }
+  // string, path, url
+  if (raw === null && !field.required) return { value: '' }
+  if (typeof raw !== 'string') return { error: t('plugins.form.badType', { name }) }
+  return { value: raw }
+}
+
+/**
+ * Parse a JSON string back into a `Draft` using the same field schema.
+ * `null` on a secret field keeps the saved secret (`''` in draft); `""` on a saved secret marks it for clearing.
+ */
+export function jsonToDraft(
+  fields: ConfigField[],
+  raw: string,
+  configured: Record<string, boolean>,
+  t: Translate,
+): { draft: Draft } | { error: string } {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error) {
+    return { error: t('plugins.form.jsonSyntax', { error: (error as Error).message }) }
+  }
+  if (!isPlainObject(parsed)) return { error: t('plugins.form.jsonObject') }
+  const knownKeys = new Set(fields.map((field) => field.key))
+  for (const key of Object.keys(parsed)) {
+    if (!knownKeys.has(key)) return { error: t('plugins.form.unknownKey', { key }) }
+  }
+  const draft: Draft = {}
+  for (const field of fields) {
+    const result = parseJsonField(field, parsed[field.key], configured, t)
+    if ('error' in result) return result
+    draft[field.key] = result.value
+  }
+  return { draft }
 }

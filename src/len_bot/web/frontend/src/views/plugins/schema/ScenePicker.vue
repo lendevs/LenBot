@@ -12,31 +12,39 @@ import { useFieldControl } from '../../../ui/field'
 import { controlFrame, controlHeight } from '../../../ui/styles'
 import { sceneSecondaryId } from '../view'
 
-/** One group (`single`) or several, from the groups in the saved configuration. */
+/** One group (`single` / `multiple: false`) or several, from the groups in the saved configuration. */
 const model = defineModel<string | string[] | null>({ required: true })
 const props = defineProps<{
   choices: string[]
   enabledScenes?: string[]
   single?: boolean
+  multiple?: boolean
   id?: string
   invalid?: boolean
+  disabled?: boolean
+  onEnablePicked?: (scenes: string[]) => void | Promise<void>
+  enablingPicked?: boolean
 }>()
 
 const { t } = useI18n()
 const field = useFieldControl(props)
+const isSingle = computed(() => Boolean(props.single) || props.multiple === false)
 const open = ref(false)
 const search = ref('')
 watch(open, (value) => {
   if (!value) search.value = ''
 })
 const picked = computed<string[]>(() =>
-  props.single ? (model.value ? [model.value as string] : []) : ((model.value as string[] | null) ?? []),
+  isSingle.value ? (model.value ? [model.value as string] : []) : ((model.value as string[] | null) ?? []),
 )
 const enabledSet = computed(() => (props.enabledScenes ? new Set(props.enabledScenes) : null))
 const inactivePicked = computed(() =>
   enabledSet.value ? picked.value.filter((scene) => !enabledSet.value!.has(scene)) : [],
 )
-// A saved group that is no longer configured stays visible so it can be removed.
+const enableableInactive = computed(() =>
+  inactivePicked.value.filter((scene) => props.choices.includes(scene)),
+)
+// A saved group that is no longer configured or supported stays visible so it can be removed.
 const all = computed(() => [
   ...props.choices,
   ...picked.value.filter((scene) => !props.choices.includes(scene)),
@@ -57,7 +65,7 @@ const summary = computed(() => {
     : names.join(t('personas.separator'))
 })
 function toggle(scene: string) {
-  if (props.single) {
+  if (isSingle.value) {
     model.value = scene
     open.value = false
   } else {
@@ -67,7 +75,7 @@ function toggle(scene: string) {
   }
 }
 const pickAll = () => (model.value = [...new Set([...picked.value, ...shown.value])])
-const clear = () => (model.value = props.single ? null : [])
+const clear = () => (model.value = isSingle.value ? null : [])
 </script>
 
 <template>
@@ -77,8 +85,10 @@ const clear = () => (model.value = props.single ? null : [])
         <button
           :id="field.id.value"
           type="button"
-          :class="[controlFrame, controlHeight.md, 'cursor-pointer text-left']"
+          :disabled="field.disabled.value"
+          :class="[controlFrame, controlHeight.md, 'cursor-pointer text-left disabled:cursor-not-allowed']"
           :data-invalid="field.invalid.value || undefined"
+          :data-disabled="field.disabled.value || undefined"
           :aria-describedby="field.describedBy.value"
           :aria-expanded="open"
           aria-haspopup="listbox"
@@ -93,7 +103,9 @@ const clear = () => (model.value = props.single ? null : [])
             </span>
           </span>
           <span class="min-w-0 flex-1 truncate text-sm" :class="picked.length ? 'text-ink' : 'text-subtle'">
-            {{ picked.length ? summary : single ? t('plugins.form.pickOne') : t('plugins.form.pickGroups') }}
+            {{
+              picked.length ? summary : isSingle ? t('plugins.form.pickOne') : t('plugins.form.pickGroups')
+            }}
           </span>
           <ChevronDown
             :size="16"
@@ -113,7 +125,7 @@ const clear = () => (model.value = props.single ? null : [])
           :placeholder="t('plugins.form.searchGroups')"
           :aria-label="t('plugins.form.searchGroups')"
         />
-        <div v-if="!single" class="flex items-center gap-1 pl-2">
+        <div v-if="!isSingle" class="flex items-center gap-1 pl-2">
           <span class="mr-auto text-xs text-muted tabular">
             {{ t('plugins.form.pickedCount', { n: picked.length, total: all.length }) }}
           </span>
@@ -127,7 +139,7 @@ const clear = () => (model.value = props.single ? null : [])
         <ul
           class="flex max-h-72 list-none flex-col overflow-y-auto scrollbar-thin"
           role="listbox"
-          :aria-multiselectable="!single"
+          :aria-multiselectable="!isSingle"
         >
           <li v-for="scene in shown" :key="scene">
             <button
@@ -184,6 +196,16 @@ const clear = () => (model.value = props.single ? null : [])
           })
         }}
       </span>
+      <Button
+        v-if="onEnablePicked && enableableInactive.length"
+        size="sm"
+        variant="ghost"
+        :loading="enablingPicked"
+        :disabled="enablingPicked || field.disabled.value"
+        @click="onEnablePicked(enableableInactive)"
+      >
+        {{ t('plugins.form.enablePickedScenes') }}
+      </Button>
     </p>
   </div>
 </template>
