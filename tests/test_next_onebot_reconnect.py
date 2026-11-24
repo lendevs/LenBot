@@ -703,17 +703,27 @@ async def test_look_falls_back_to_platform_when_fresh_url_returns_unparseable_ht
 
 
 def test_file_uri_to_path_parses_posix_windows_and_rejects_malformed_uris():
-    from pathlib import PurePosixPath, PureWindowsPath
+    from pathlib import PurePath, PurePosixPath, PureWindowsPath
     from len_bot.next.platform.onebot_audio import _local_path, file_uri_to_path
+
+    class _WindowsDispatchPath(PurePath):
+        def __new__(cls, *args):
+            return PureWindowsPath(*args)
+
+    assert not issubclass(_WindowsDispatchPath, PureWindowsPath)
 
     # POSIX file:// URIs (including percent-encoded spaces and localhost authority).
     assert file_uri_to_path('file:///tmp/voice%20clip.wav', path_cls=PurePosixPath) == PurePosixPath('/tmp/voice clip.wav')
     assert file_uri_to_path('file://localhost/tmp/a%20b.png', path_cls=PurePosixPath) == PurePosixPath('/tmp/a b.png')
 
-    # Windows standard three-slash and NapCat/LLOneBot two-slash drive URIs.
+    # Windows standard three-slash and NapCat/LLOneBot two-slash drive URIs (including Path-style dispatchers).
     assert (
         file_uri_to_path('file:///C:/Users/foo/a%20b.wav', path_cls=PureWindowsPath)
         == PureWindowsPath('C:/Users/foo/a b.wav')
+    )
+    assert (
+        file_uri_to_path('file:///C:/Users/foo/cached%20image.png', path_cls=_WindowsDispatchPath)
+        == PureWindowsPath('C:/Users/foo/cached image.png')
     )
     assert (
         file_uri_to_path('file://C:/Users/foo/a%20b.wav', path_cls=PureWindowsPath)

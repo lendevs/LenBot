@@ -54,7 +54,7 @@ def file_uri_to_path[P: PurePath](value: str, *, path_cls: type[P] = Path) -> P 
     else:
         return None
     decoded = unquote(raw_path)
-    if issubclass(path_cls, PureWindowsPath):
+    if isinstance(path_cls("."), PureWindowsPath):
         if not re.match(r"^/[A-Za-z]:[\\/]", decoded):
             return None
         candidate = decoded[1:]
