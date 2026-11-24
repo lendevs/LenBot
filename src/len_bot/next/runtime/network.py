@@ -67,6 +67,7 @@ class NetworkRuntime:
                  on_update: Callable[[], None] | None = None):
         self.config, self.store = config, store
         self.mind, self.vision = mind, vision
+        self._owned_vision: ChatModel | None = None
         self.events = EventHub()
         self.log_secrets = credentials(config)
         SECRETS.add(self.log_secrets)
@@ -628,7 +629,13 @@ class NetworkRuntime:
                                     await self.audio.close()
                                     await self.reference.close()
                                 finally:
-                                    await self.platform.close()
+                                    try:
+                                        if self._owned_vision is not None:
+                                            owned_vision = self._owned_vision
+                                            self._owned_vision = None
+                                            await owned_vision.__aexit__(None, None, None)
+                                    finally:
+                                        await self.platform.close()
                     self._status("stopped")
                     self._emit({"type": "runtime", "status": "stopped"})
             finally:

@@ -341,6 +341,16 @@ class SessionUpkeep:
             if scene in self._wake:
                 self._wake[scene].set()
 
+    def model_rebound(self) -> None:
+        """Model settings changed live: clear failure counters and wake scenes stopped by old model errors."""
+        stuck = set(self._model_stuck) | set(self._failures)
+        self._model_stuck.clear()
+        self._failures.clear()
+        self._failed_at.clear()
+        for scene in stuck:
+            if scene in self._wake:
+                self._wake[scene].set()
+
     def compacted(self, scene: str) -> None:
         """Older history just left the session: take its range now, below the usual thresholds."""
         if scene in self._wake and not self._blocked(scene):
