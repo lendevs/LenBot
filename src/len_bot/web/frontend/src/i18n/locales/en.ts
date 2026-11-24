@@ -1839,6 +1839,9 @@ export default {
       configureVision: 'Configure standalone vision',
       editVision: 'Expand standalone vision',
       visionBackupActive: 'Backup configured; the chat model currently reads images directly',
+      useStandaloneVision: 'Use standalone vision',
+      syncToCustomRoles: 'Sync model to active uses',
+      syncedToCustomRoles: 'Synced to {n} active use | Synced to {n} active uses',
     },
     vectors: {
       memory: 'Memory and reference embeddings',
