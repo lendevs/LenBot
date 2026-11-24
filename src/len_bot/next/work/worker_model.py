@@ -20,7 +20,7 @@ from typing import Any
 from ..chat.recap import estimate_text_request
 from ..models.client import ModelProtocolError, ModelSettings
 from ..models.slots import ModelSlots
-from ..models.tokens import token_record
+from ..models.tokens import TokenUsage, token_record
 from .worker_stream import ChatCompletionStream
 from .native_stream import NativeStream
 from ..models.providers import http_client, auth_headers
@@ -479,6 +479,7 @@ class WorkerModelProxy:
         response_bytes = 0
         error_body = bytearray()
         deadline: asyncio.Timeout | None = None
+        parser: ChatCompletionStream | NativeStream | None = None
         try:
             outgoing, wire, text_estimate, image_unknown = self._request(payload_bytes)
             async with self._slot():
@@ -590,6 +591,18 @@ class WorkerModelProxy:
                 settled = True
                 known_usage = error.usage if isinstance(error, ModelProtocolError) else None
                 known_tokens = error.token_usage if isinstance(error, ModelProtocolError) else None
+                if known_tokens is None and parser is not None:
+                    partial_raw, partial_tokens = parser.partial_usage()
+                    if partial_tokens is not None and (
+                        partial_tokens.prompt_tokens is not None
+                        or partial_tokens.completion_tokens is not None
+                    ):
+                        known_usage = partial_raw
+                        known_tokens = TokenUsage(
+                            partial_tokens.prompt_tokens or 0,
+                            partial_tokens.completion_tokens or 0,
+                            partial_tokens.cached_tokens,
+                        )
                 tokens = token_record(known_tokens)
                 facts = {
                     "http_status": status,

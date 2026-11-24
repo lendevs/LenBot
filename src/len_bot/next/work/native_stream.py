@@ -5,8 +5,9 @@ import json
 import re
 from copy import deepcopy
 
-from ..models.client import ModelProtocolError, ModelSettings
-from ..models.protocols import parse_reply
+from ..models.client import ModelProtocolError, ModelSettings, parse_token_usage
+from ..models.protocols import normalized_usage, parse_reply
+from ..models.tokens import TokenUsage
 
 
 class NativeStream:
@@ -82,6 +83,29 @@ class NativeStream:
                     saved['finishReason'] = candidate['finishReason']
             if 'usageMetadata' in event:
                 self.response.setdefault('usageMetadata', {}).update(event['usageMetadata'])
+
+    def partial_usage(self) -> tuple[dict | None, TokenUsage | None]:
+        if not isinstance(self.response, dict):
+            return None, None
+        api = self.settings.api
+        if api == 'openai-responses':
+            raw = self.response.get('usage')
+            raw_for_parse = raw
+        elif api == 'anthropic':
+            raw = self.response.get('usage')
+            if not isinstance(raw, dict) or not raw:
+                return None, None
+            raw_for_parse = {'output_tokens': 0, **raw}
+        else:
+            raw = self.response.get('usageMetadata')
+            raw_for_parse = raw
+        if not isinstance(raw, dict):
+            return None, None
+        try:
+            token_usage = parse_token_usage(normalized_usage(api, raw_for_parse))
+        except (TypeError, ValueError):
+            return None, None
+        return deepcopy(raw), token_usage
 
     def finish(self):
         if self.buffer.strip():

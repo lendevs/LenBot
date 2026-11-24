@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +14,7 @@ from len_bot.next.prompt_files import read_prompt
 from len_bot.next.storage.store import Store
 from len_bot.next.work import execution as execution_module
 from len_bot.next.work.execution import PROGRESS_NOTICE_INTERVAL, TaskExecution, WatchdogStoppedError
-from len_bot.next.work.pi_rpc import PiRecord
+from len_bot.next.work.pi_rpc import PiRecord, PiRpc
 from len_bot.next.work.store import TaskStore
 from len_bot.next.work.watchdog import TaskWatchdog, WatchdogDecision
 
@@ -407,3 +409,126 @@ def test_worker_prompts_keep_placeholders_and_self_check_rules():
     assert "${facts}" in continuation_prompt
     assert "deliver_file" in continuation_prompt
     assert "ask_requester" in continuation_prompt
+
+
+@pytest.mark.asyncio
+async def test_consume_does_not_deadlock_on_full_pi_rpc_queue_during_watchdog_steer(tmp_path):
+    child_script = (
+        "import json, sys\n"
+        "def emit(obj):\n"
+        "    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\\n')\n"
+        "prompt = json.loads(sys.stdin.readline())\n"
+        "emit({'type': 'response', 'id': prompt['id'], 'command': 'prompt', 'success': True})\n"
+        "for i in range(1, 5):\n"
+        "    emit({'type': 'tool_execution_start', 'toolCallId': f't{i}', 'toolName': 'bash', 'args': {'cmd': 'ls'}})\n"
+        "    if i < 4:\n"
+        "        emit({'type': 'tool_execution_end', 'toolCallId': f't{i}', 'toolName': 'bash', 'isError': False})\n"
+        "sys.stdout.flush()\n"
+        "steer = json.loads(sys.stdin.readline())\n"
+        "for _ in range(300):\n"
+        "    emit({'type': 'tool_execution_update', 'toolCallId': 't4', 'toolName': 'bash', 'args': {'cmd': 'ls'}})\n"
+        "emit({'type': 'response', 'id': steer['id'], 'command': 'steer', 'success': True})\n"
+        "emit({'type': 'tool_execution_end', 'toolCallId': 't4', 'toolName': 'bash', 'isError': False})\n"
+        "emit({'type': 'message_end', 'message': {'role': 'assistant', 'stopReason': 'stop', "
+        "'content': [{'type': 'text', 'text': '已排空300条事件:' + steer['type']}]}})\n"
+        "emit({'type': 'agent_settled'})\n"
+        "sys.stdout.flush()\n"
+    )
+    with _make_execution(tmp_path) as (_store, records, item, task_exec, _, _):
+        pi = await PiRpc.spawn(
+            [sys.executable, "-u", "-c", child_script],
+            cwd=tmp_path,
+            env=os.environ,
+            stderr_path=tmp_path / "pi.stderr",
+        )
+        try:
+            task_exec._session = SimpleNamespace(
+                pi=pi,
+                proxy=SimpleNamespace(busy=False, recorded=lambda v: v),
+                egress=None,
+                browser_cli_version=None,
+            )
+            task_exec.active_limit = 1800.0
+            async with asyncio.timeout(30.0) as timer:
+                task_exec._timer = timer
+                result = await asyncio.wait_for(task_exec._consume(), timeout=5.0)
+            assert result == "已排空300条事件:steer"
+            assert pi._pending == {}
+            assert task_exec._watchdog_steers == set()
+            assert [(e["action"], e["reason"]) for e in records.watchdog_events(SCENE, item.id)] == [
+                ("steer", "identical_tool_loop"),
+            ]
+        finally:
+            await pi.close()
+
+
+@pytest.mark.asyncio
+async def test_silent_hang_queue_update_echo_does_not_retrigger_steer(tmp_path):
+    class _EchoQueuePi:
+        def __init__(self):
+            self._queue: asyncio.Queue[PiRecord] = asyncio.Queue()
+            self.commands: list[tuple[str, dict]] = []
+            self.steer_sent = asyncio.Event()
+
+        async def command(self, name: str, **fields):
+            self.commands.append((name, fields))
+            if name == "steer":
+                await self._queue.put(
+                    _record({"type": "queue_update", "steering": [fields["message"]], "followUp": []})
+                )
+                self.steer_sent.set()
+            return PiRecord(body={"type": "response", "command": name, "success": True}, raw=b"{}")
+
+        def push(self, record: PiRecord) -> None:
+            self._queue.put_nowait(record)
+
+        async def next_event(self) -> PiRecord:
+            return await self._queue.get()
+
+    with _make_execution(tmp_path) as (_store, records, item, task_exec, _, _):
+        pi = _EchoQueuePi()
+        task_exec._watchdog = TaskWatchdog(hang_timeout_seconds=1.0)
+        task_exec._watchdog.hang_timeout_seconds = 0.05
+        task_exec._session = SimpleNamespace(
+            pi=pi,
+            proxy=SimpleNamespace(busy=False, recorded=lambda v: v),
+            egress=None,
+            browser_cli_version=None,
+        )
+        task_exec.active_limit = 1800.0
+
+        async def run_consume() -> str:
+            async with asyncio.timeout(30.0) as timer:
+                task_exec._timer = timer
+                return await task_exec._consume()
+
+        consuming = asyncio.create_task(run_consume())
+        try:
+            await asyncio.wait_for(pi.steer_sent.wait(), timeout=2.0)
+            # Stay silent for >3x hang_timeout after Pi echoes queue_update: must NOT re-steer.
+            await asyncio.sleep(0.16)
+            assert [cmd for cmd, _ in pi.commands if cmd == "steer"] == ["steer"]
+
+            # Real worker activity re-arms silent_hang once, and its queue_update echo again suppresses repeats.
+            pi.steer_sent.clear()
+            pi.push(_record({"type": "bash_execution_update", "delta": "resumed"}))
+            await asyncio.wait_for(pi.steer_sent.wait(), timeout=2.0)
+            await asyncio.sleep(0.12)
+            assert [cmd for cmd, _ in pi.commands if cmd == "steer"] == ["steer", "steer"]
+
+            pi.push(_record({"type": "message_end", "message": {
+                "role": "assistant", "stopReason": "stop", "content": [{"type": "text", "text": "静默未重复引导"}]
+            }}))
+            pi.push(_record({"type": "agent_settled"}))
+            result = await asyncio.wait_for(consuming, timeout=2.0)
+        finally:
+            if not consuming.done():
+                consuming.cancel()
+                await asyncio.gather(consuming, return_exceptions=True)
+
+        assert result == "静默未重复引导"
+        assert [cmd for cmd, _ in pi.commands if cmd == "steer"] == ["steer", "steer"]
+        assert [(e["action"], e["reason"]) for e in records.watchdog_events(SCENE, item.id)] == [
+            ("steer", "silent_hang"),
+            ("steer", "silent_hang"),
+        ]

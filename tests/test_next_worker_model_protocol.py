@@ -581,3 +581,133 @@ async def test_worker_model_failed_calls_do_not_lock_token_budget(tmp_path):
                 assert len(budget_tokens) == 1
                 assert budget_tokens[0]['input'] == 20 and budget_tokens[0]['output'] == 5
                 assert len(tasks.call_tokens(task.scene, task.id)) == 4
+
+
+@pytest.mark.asyncio
+async def test_anthropic_partial_usage_on_stream_timeout_is_charged_to_budget(tmp_path):
+    from len_bot.next.storage.store import Store
+    from len_bot.next.work.store import TaskStore
+
+    upstream_hits = 0
+    partial_start = (
+        'event: message_start\ndata: '
+        + json.dumps({
+            'type': 'message_start',
+            'message': {
+                'id': 'msg_partial',
+                'type': 'message',
+                'role': 'assistant',
+                'content': [],
+                'stop_reason': None,
+                'usage': {'input_tokens': 125},
+            },
+        })
+        + '\n\n'
+    ).encode()
+    second_events = [
+        {
+            'type': 'message_start',
+            'message': {
+                'id': 'msg_second',
+                'type': 'message',
+                'role': 'assistant',
+                'content': [],
+                'stop_reason': None,
+                'usage': {'input_tokens': 70, 'output_tokens': 0},
+            },
+        },
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'ok'}},
+        {'type': 'content_block_stop', 'index': 0},
+        {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 10}},
+        {'type': 'message_stop'},
+    ]
+    second_stream = b''.join(
+        f'event: {ev["type"]}\ndata: {json.dumps(ev)}\n\n'.encode() for ev in second_events
+    )
+
+    async def serve(reader, writer):
+        nonlocal upstream_hits
+        upstream_hits += 1
+        header = (await reader.readuntil(b'\r\n\r\n')).decode()
+        fields = {k.lower(): v for k, v in (line.split(': ', 1) for line in header.split('\r\n')[1:] if ': ' in line)}
+        await reader.readexactly(int(fields['content-length']))
+        try:
+            if upstream_hits == 1:
+                writer.write(
+                    b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n'
+                    + partial_start
+                )
+                await writer.drain()
+                await asyncio.sleep(0.25)
+            else:
+                writer.write(
+                    b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n'
+                    + f'Content-Length: {len(second_stream)}\r\nConnection: close\r\n\r\n'.encode()
+                    + second_stream
+                )
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+
+    with Store(tmp_path / 'state.db') as store:
+        tasks = TaskStore(store)
+        task = tasks.create('onebot:group:80001', 'onebot:70001', '部分用量计费', '产物', '上下文', '输入')
+        server = await asyncio.start_server(serve, '127.0.0.1', 0)
+        async with server:
+            port = server.sockets[0].getsockname()[1]
+            settings = ModelSettings(
+                api='anthropic',
+                base_url=f'http://127.0.0.1:{port}/v1',
+                api_key='synthetic-key',
+                model='fixture',
+                max_output_tokens=1024,
+                temperature=None,
+                timeout_seconds=0.06,
+            )
+            req_bytes = json.dumps({
+                'model': 'fixture',
+                'stream': True,
+                'messages': [{'role': 'user', 'content': 'hello'}],
+            }).encode()
+            async with WorkerModelProxy(
+                settings,
+                'fixture',
+                8192,
+                'synthetic-task',
+                Limits(10, 100000, 100000, max_tokens=200),
+                start_call=lambda facts: tasks.start_call(task.scene, task.id, facts),
+                finish_call=tasks.finish_call,
+            ) as proxy:
+                # 1) Stream reports 125 input tokens via message_start, then stalls and times out.
+                with pytest.raises(TimeoutError):
+                    async with proxy.open('synthetic-task', req_bytes) as response:
+                        async for _ in response.body:
+                            pass
+                assert proxy._tokens_unknown is False
+                assert proxy._spent == 125
+                assert tasks.call_tokens(task.scene, task.id, for_budget=True) == [
+                    {'input': 125, 'output': 0, 'cached': None},
+                ]
+
+                # 2) Second call spends 80 tokens (total 205 >= 200), completing and exhausting the budget.
+                async with proxy.open('synthetic-task', req_bytes) as response:
+                    assert b''.join([chunk async for chunk in response.body]) == second_stream
+                assert proxy._tokens_unknown is False
+                assert proxy._spent == 205
+                assert tasks.call_tokens(task.scene, task.id, for_budget=True) == [
+                    {'input': 125, 'output': 0, 'cached': None},
+                    {'input': 70, 'output': 10, 'cached': None},
+                ]
+
+                # 3) Next call is rejected immediately by the token limit without hitting upstream.
+                with pytest.raises(WorkerModelError, match='token limit'):
+                    async with proxy.open('synthetic-task', req_bytes):
+                        pytest.fail('Exceeded token budget reached upstream')
+                assert upstream_hits == 2

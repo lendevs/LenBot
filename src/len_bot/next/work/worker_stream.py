@@ -55,6 +55,9 @@ class ChatCompletionStream:
     def done(self) -> bool:
         return self._done
 
+    def partial_usage(self) -> tuple[dict | None, TokenUsage | None]:
+        return copy.deepcopy(self._usage), self._token_usage
+
     def _fail(self, message: str, raw: bytes, *, usage: dict | None = None) -> NoReturn:
         raise ModelProtocolError(
             f"Invalid Chat Completions SSE: {message}; frame={raw[:500]!r}",
