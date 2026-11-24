@@ -106,6 +106,11 @@ class WorkerModelProxy:
                                    timeout_seconds=settings.timeout_seconds, proxy=settings.proxy)
 
     @property
+    def busy(self) -> bool:
+        """True while a worker model call is queued for a slot or streaming from upstream."""
+        return self._busy
+
+    @property
     def path(self) -> str:
         return {'openai-chat': '/v1/chat/completions', 'openai-responses': '/v1/responses',
                 'anthropic': '/v1/messages', 'gemini': '/v1beta/models/' + quote(self.settings.model.removeprefix('models/'), safe='') + ':streamGenerateContent?alt=sse'}[self.settings.api]

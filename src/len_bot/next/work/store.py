@@ -201,7 +201,25 @@ class TaskStore:
             "WHERE scene=? AND task_id=? AND kind='watchdog' ORDER BY id",
             (scene, id),
         ).fetchall()
-        return [{"id": row[0], "created": row[1], **json.loads(row[2])} for row in rows]
+        events = []
+        for row in rows:
+            data = json.loads(row[2])
+            events.append({
+                "id": row[0],
+                "created": row[1],
+                "action": data["action"],
+                "reason": data["reason"],
+                "detail": data["detail"],
+            })
+        return events
+
+    def add_watchdog_event(self, scene: str, id: int, decision) -> int:
+        """Record a watchdog steer or stop without creating a separate pending_notices wake."""
+        return self.add_event(scene, id, "watchdog", {
+            "action": decision.action,
+            "reason": decision.reason,
+            "detail": decision.detail,
+        }, notice=None)
 
     def router_tickets(self, scene: str, *, recent_since: float,
                        active_limit: int = 20, recent_limit: int = 3) -> dict:
