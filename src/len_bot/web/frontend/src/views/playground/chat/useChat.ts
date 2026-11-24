@@ -2,8 +2,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { keys } from '../../../api/query'
 import { chatApi, type ChatSource } from '../../../api/trials'
+import { isPrivateScene } from '../../../layouts/shell/scenes'
 
 export type LiveStatus = 'connecting' | 'connected' | 'disconnected'
+
+/** Avatar endpoints that answered 404 are cached so bubbles fall back to initials without spamming 404s. */
+const missingAvatars = new Set<string>()
 
 /**
  * One chat's state, refreshed by its own event socket: the server sends `changed` after every stored message,
@@ -16,12 +20,42 @@ export function useChat(source: ChatSource) {
     queryFn: ({ signal }) => chatApi.state(source, signal),
   })
   const live = ref<LiveStatus>('connecting')
+  const avatarUrl = chatApi.avatar(source)
+  const botAvatar = ref<string | null>(null)
+  let avatarController: AbortController | null = null
+  let avatarObjectUrl: string | null = null
   let socket: WebSocket | null = null
   let retry = 0
   let timer = 0
   let refreshTimer = 0
   let lastRefresh = 0
   const REFRESH_INTERVAL_MS = 300
+
+  async function loadAvatar() {
+    if (missingAvatars.has(avatarUrl)) {
+      botAvatar.value = null
+      return
+    }
+    avatarController = new AbortController()
+    try {
+      const response = await fetch(avatarUrl, {
+        credentials: 'same-origin',
+        signal: avatarController.signal,
+      })
+      if (response.status === 404) {
+        missingAvatars.add(avatarUrl)
+        botAvatar.value = null
+        return
+      }
+      if (!response.ok) return
+      const blob = await response.blob()
+      if (avatarController.signal.aborted) return
+      avatarObjectUrl = URL.createObjectURL(blob)
+      botAvatar.value = avatarObjectUrl
+    } catch {
+      // Aborted or offline: stay on the initial fallback without marking the avatar missing.
+    }
+  }
 
   function runRefresh() {
     lastRefresh = Date.now()
@@ -74,7 +108,10 @@ export function useChat(source: ChatSource) {
     old?.close()
     connect()
   }
-  onMounted(connect)
+  onMounted(() => {
+    connect()
+    void loadAvatar()
+  })
   onBeforeUnmount(() => {
     window.clearTimeout(timer)
     window.clearTimeout(refreshTimer)
@@ -82,14 +119,20 @@ export function useChat(source: ChatSource) {
     const old = socket
     socket = null
     old?.close()
+    avatarController?.abort()
+    avatarController = null
+    if (avatarObjectUrl) {
+      URL.revokeObjectURL(avatarObjectUrl)
+      avatarObjectUrl = null
+    }
   })
 
   const data = computed(() => state.data.value)
-  const isPrivate = computed(() => data.value?.scene.split(':')[1] === 'private')
+  const isPrivate = computed(() => isPrivateScene(data.value?.scene ?? ''))
   const messages = computed(() => [...(data.value?.messages ?? [])].sort((a, b) => a.seq - b.seq))
   const turns = computed(() => [...(data.value?.turns ?? [])].sort((a, b) => b.started - a.started))
   const thinking = computed(() => turns.value.some((turn) => turn.ended === null))
   const botName = computed(() => data.value?.persona?.name ?? 'Bot')
-  return { state, data, live, reconnect, isPrivate, messages, turns, thinking, botName }
+  return { state, data, live, reconnect, isPrivate, messages, turns, thinking, botName, botAvatar }
 }
 export type Chat = ReturnType<typeof useChat>

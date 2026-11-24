@@ -23,10 +23,12 @@ const statusLabel = useStatusLabel()
 const state = computed(() => host.state as HostState)
 const query = ref('')
 const shown = computed(() => {
-  const words = query.value.trim().toLowerCase()
-  return state.value.scenes.filter(
-    (item) => !words || groupLabel(item.scene).toLowerCase().includes(words) || item.scene.includes(words),
-  )
+  const terms = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!terms.length) return state.value.scenes
+  return state.value.scenes.filter((item) => {
+    const haystack = `${groupLabel(item.scene)} ${item.scene} ${item.persona.name}`.toLowerCase()
+    return terms.every((term) => haystack.includes(term))
+  })
 })
 const members = (scene: string) => (host.members as Record<string, number>)[scene]
 
@@ -124,7 +126,7 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
         :aria-label="t('groups.search')"
       />
       <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
-        <li v-for="item in shown" :key="item.scene" class="flex min-w-0 flex-col gap-2.5 py-3">
+        <li v-for="item in shown" :key="item.scene" class="flex min-w-0 flex-col py-3">
           <div class="flex min-w-0 items-center gap-3">
             <RouterLink
               :to="groupsTarget(item.scene)"
@@ -172,33 +174,31 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
               @update:model-value="(enabled: boolean) => void toggleOpen(item.scene, enabled)"
             />
           </div>
-          <div class="flex min-w-0 flex-wrap items-center gap-2 pl-11">
-            <SegmentedControl
-              :model-value="levelOf(item)"
-              :options="levels"
-              size="sm"
-              :disabled="leveling(item.scene) || opening(item.scene) || !isOpen(item)"
-              :label="t('overview.groups.level', { name: groupLabel(item.scene) })"
-              @update:model-value="(value) => value && void changeLevel(item.scene, value as WakeLevel)"
-            />
-            <button
-              type="button"
-              class="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-10"
-              :class="
-                chatOn(item)
-                  ? 'border-line-strong bg-surface-raised text-ink shadow-card hover:bg-hover'
-                  : 'border-line bg-fill text-muted hover:bg-hover hover:text-ink'
-              "
-              :aria-pressed="chatOn(item)"
-              :disabled="
-                !state.connection.accepting || switching(item.scene) || opening(item.scene) || !isOpen(item)
-              "
-              :title="t(chatOn(item) ? 'overview.groups.chatHint' : 'overview.groups.pluginsHint')"
-              :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
-              @click="void toggleChat(item.scene, !chatOn(item))"
-            >
-              {{ t(chatOn(item) ? 'overview.groups.modeChat' : 'overview.groups.modePlugins') }}
-            </button>
+          <div class="ui-grid-collapse" :data-open="isOpen(item) ? 'true' : 'false'" :inert="!isOpen(item)">
+            <div>
+              <div class="flex min-w-0 flex-wrap items-center gap-2 pt-2.5 pl-11">
+                <SegmentedControl
+                  :model-value="levelOf(item)"
+                  :options="levels"
+                  size="sm"
+                  :disabled="leveling(item.scene) || opening(item.scene) || !isOpen(item)"
+                  :label="t('overview.groups.level', { name: groupLabel(item.scene) })"
+                  @update:model-value="(value) => value && void changeLevel(item.scene, value as WakeLevel)"
+                />
+                <Button
+                  size="sm"
+                  :variant="chatOn(item) ? 'secondary' : 'ghost'"
+                  :loading="switching(item.scene)"
+                  :disabled="!state.connection.accepting || opening(item.scene) || !isOpen(item)"
+                  :aria-pressed="chatOn(item)"
+                  :title="t(chatOn(item) ? 'overview.groups.chatHint' : 'overview.groups.pluginsHint')"
+                  :aria-label="t('overview.groups.chat', { name: groupLabel(item.scene) })"
+                  @click="void toggleChat(item.scene, !chatOn(item))"
+                >
+                  {{ t(chatOn(item) ? 'overview.groups.modeChat' : 'overview.groups.modePlugins') }}
+                </Button>
+              </div>
+            </div>
           </div>
         </li>
         <li v-if="!shown.length" class="py-6 text-center text-sm text-muted">

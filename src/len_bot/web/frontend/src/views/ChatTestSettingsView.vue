@@ -8,6 +8,7 @@ import type { PersonaExample } from '../api/personas'
 import { chatTestApi, type ScenePersonaValues } from '../api/trials'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges'
 import { formatNumber } from '../i18n/format'
+import { scenePlatform } from '../layouts/shell/scenes'
 import Badge from '../ui/Badge.vue'
 import Button from '../ui/Button.vue'
 import ErrorNote from '../ui/ErrorNote.vue'
@@ -50,20 +51,47 @@ const body = (draft: Draft): ScenePersonaValues => ({
   relationships: Object.fromEntries(draft.relationships.map((row) => [row.account.trim(), row.text.trim()])),
   behavior_addendum: draft.addendum.trim() || null,
 })
+
 const draft = ref<Draft | null>(null)
+const baseJson = ref<string | null>(null)
+const remoteUpdated = ref(false)
+
+function adopt(saved: ScenePersonaValues) {
+  draft.value = draftOf(saved)
+  baseJson.value = JSON.stringify(draft.value)
+  remoteUpdated.value = false
+}
+
+// Compared row by row: a repeated account would collapse in the saved object and hide the edit.
+const dirty = computed(
+  () => baseJson.value !== null && draft.value !== null && JSON.stringify(draft.value) !== baseJson.value,
+)
 watch(
   () => stored.data.value?.saved,
   (saved) => {
-    if (saved) draft.value = draftOf(saved)
+    if (!saved) return
+    const nextJson = JSON.stringify(draftOf(saved))
+    if (baseJson.value === null) {
+      adopt(saved)
+      return
+    }
+    if (nextJson === baseJson.value) {
+      remoteUpdated.value = false
+      return
+    }
+    if (!dirty.value) {
+      adopt(saved)
+      return
+    }
+    remoteUpdated.value = true
   },
   { immediate: true },
 )
-// Compared row by row: a repeated account would collapse in the saved object and hide the edit.
-const dirty = computed(() => {
-  const saved = stored.data.value?.saved
-  return Boolean(saved && draft.value) && JSON.stringify(draft.value) !== JSON.stringify(draftOf(saved!))
-})
 useUnsavedChanges(dirty)
+
+const accountPlaceholder = computed(
+  () => `${scenePlatform(settings.data.value?.scene ?? '') || 'onebot'}:10001`,
+)
 
 const errors = computed(() => {
   const found: Record<string, string> = {}
@@ -83,13 +111,15 @@ const save = useMutation({
   mutationFn: () => chatTestApi.saveScenePersona(body(draft.value!)),
   onSuccess: (result) => {
     client.setQueryData(keys.chatTest.scenePersona(), result)
-    draft.value = draftOf(result.saved)
+    adopt(result.saved)
     toast.success(result.restart_required ? t('chatTest.settings.savedRestart') : t('common.saved'))
   },
 })
-const saveError = computed(() =>
-  save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+const describedSaveError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')) : null,
 )
+const saveError = computed(() => describedSaveError.value?.message ?? null)
+const saveRawError = computed(() => describedSaveError.value?.raw ?? null)
 
 const list = (items: string[]) =>
   items.length ? items.join(t('chatTest.settings.separator')) : t('chatTest.settings.none')
@@ -123,6 +153,16 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
       :retry="stored.refetch"
     />
     <form v-else-if="draft" class="flex flex-col gap-5 pb-6" @submit.prevent="save.mutate()">
+      <div
+        v-if="remoteUpdated"
+        role="status"
+        class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+      >
+        <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+        <Button size="sm" variant="ghost" @click="stored.data.value && adopt(stored.data.value.saved)">
+          {{ t('ui.draft.reloadRemote') }}
+        </Button>
+      </div>
       <FormSection :title="t('chatTest.settings.additions')" :columns="1">
         <template v-if="stored.data.value?.restart_required" #actions>
           <Badge tone="warning">{{ t('chatTest.settings.restart') }}</Badge>
@@ -145,7 +185,7 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
                   <Field :error="errors[`${index}.account`]">
                     <Input
                       v-model="row.account"
-                      placeholder="onebot:10001"
+                      :placeholder="accountPlaceholder"
                       mono
                       :aria-label="t('groups.settings.persona.account')"
                     />
@@ -155,13 +195,17 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
                   <IconButton
                     :icon="Trash2"
                     :label="t('common.delete')"
-                    variant="ghost"
+                    variant="danger-ghost"
                     @click="draft.relationships.splice(index, 1)"
                   />
                 </div>
                 <div class="order-3 col-span-2 min-w-0 sm:order-2 sm:col-span-1">
                   <Field :error="errors[`${index}.text`]">
-                    <Input v-model="row.text" :aria-label="t('groups.settings.persona.relationship')" />
+                    <Input
+                      v-model="row.text"
+                      :placeholder="t('chatTest.settings.relationshipPlaceholder')"
+                      :aria-label="t('groups.settings.persona.relationship')"
+                    />
                   </Field>
                 </div>
               </div>
@@ -186,9 +230,10 @@ const exampleKey = (example: PersonaExample, index: number) => `${index}:${examp
         :dirty="dirty"
         :saving="save.isPending.value"
         :error="saveError"
+        :raw-error="saveRawError"
         :invalid="Object.keys(errors).length > 0"
         @save="save.mutate()"
-        @discard="draft = draftOf(stored.data.value!.saved)"
+        @discard="stored.data.value && adopt(stored.data.value.saved)"
       />
     </form>
 

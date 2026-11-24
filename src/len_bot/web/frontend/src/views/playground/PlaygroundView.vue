@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowUpRight, ChevronRight, MessageCirclePlus, Square } from '@lucide/vue'
+import { ArrowUpRight, MessageCirclePlus, Square } from '@lucide/vue'
 import { keys } from '../../api/query'
 import { trialSource, trialsApi, type TrialInfo } from '../../api/trials'
 import { developerDetails } from '../../composables/useDeveloperMode'
@@ -13,7 +13,6 @@ import { host } from '../../api/hostStore'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
-import CodeBlock from '../../ui/CodeBlock.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
@@ -35,7 +34,6 @@ const active = computed(() => items.value.find((item) => item.active) ?? null)
 const selected = computed(
   () => items.value.find((item) => item.id === route.query.trial) ?? active.value ?? items.value[0] ?? null,
 )
-const pick = (id: string) => void router.replace({ query: { ...route.query, trial: id } })
 /** Times follow the group's clock, as the chat window does. */
 const zone = (scene: string) =>
   ((host.state?.scenes ?? []) as HostScene[]).find((item) => item.scene === scene)?.timezone
@@ -56,6 +54,17 @@ watch(active, (value) => {
 const showForm = computed(
   () => !active.value && (starting.value || !selected.value || Boolean(text('scene') || text('persona'))),
 )
+
+function pick(id: string) {
+  starting.value = false
+  void router.replace({ query: { trial: id } })
+}
+function cancelStart() {
+  starting.value = false
+  if (text('scene') || text('persona')) {
+    void router.replace({ query: selected.value ? { trial: selected.value.id } : {} })
+  }
+}
 
 function participationLabel(trial: TrialInfo) {
   const { only_direct, level } = trial.attention
@@ -114,6 +123,9 @@ async function end() {
           <Button v-else-if="!showForm" variant="primary" :icon="MessageCirclePlus" @click="starting = true">
             {{ t('playground.new') }}
           </Button>
+          <Button v-else-if="items.length > 0" variant="ghost" @click="cancelStart">
+            {{ t('common.cancel') }}
+          </Button>
         </div>
       </div>
       <StartForm v-if="showForm" :scene="text('scene')" :persona="text('persona')" @started="started" />
@@ -137,24 +149,7 @@ async function end() {
             </Button>
           </div>
         </div>
-        <details v-if="selected.context.length" class="group text-sm">
-          <summary
-            class="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted select-none hover:text-ink [&::-webkit-details-marker]:hidden"
-          >
-            <ChevronRight
-              :size="14"
-              class="shrink-0 text-subtle transition-transform duration-150 group-open:rotate-90"
-              aria-hidden="true"
-            />
-            <span class="tabular">
-              {{ t('playground.context', { n: selected.context.length }, selected.context.length) }}
-            </span>
-          </summary>
-          <div class="mt-2">
-            <CodeBlock :code="selected.context.join('\n\n')" :max-lines="12" />
-          </div>
-        </details>
-        <ChatPanel :key="selected.id" :source="trialSource(selected.id)" />
+        <ChatPanel :key="selected.id" :source="trialSource(selected.id)" :context="selected.context" />
         <RawRecord
           v-if="developerDetails"
           :label="t('playground.scope')"

@@ -1,5 +1,6 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { scenePlatform } from '../../../layouts/shell/scenes'
 
 export type MemberRole = 'member' | 'admin' | 'owner'
 export interface Member {
@@ -33,20 +34,24 @@ export function useMembers(scene: Ref<string | undefined>, isPrivate: Ref<boolea
   const { t } = useI18n()
   const members = ref<Member[]>([])
   const current = ref('')
+  const platform = computed(() => scenePlatform(scene.value ?? '') || 'onebot')
+
   watch(
     scene,
     (value) => {
       if (!value) return
       if (isPrivate.value) {
-        const [platform, , ...rest] = value.split(':')
+        const [prefix, , ...rest] = value.split(':')
         members.value = [
-          { uid: `${platform}:${rest.join(':')}`, nickname: t('playground.other'), role: 'member' },
+          { uid: `${prefix}:${rest.join(':')}`, nickname: t('playground.other'), role: 'member' },
         ]
-      } else
+      } else {
+        const prefix = scenePlatform(value) || 'onebot'
         members.value = read(value) ?? [
-          { uid: 'onebot:10001', nickname: t('playground.sampleA'), role: 'member' },
-          { uid: 'onebot:10002', nickname: t('playground.sampleB'), role: 'member' },
+          { uid: `${prefix}:10001`, nickname: t('playground.sampleA'), role: 'member' },
+          { uid: `${prefix}:10002`, nickname: t('playground.sampleB'), role: 'member' },
         ]
+      }
       current.value = members.value[0]!.uid
     },
     { immediate: true },
@@ -63,21 +68,27 @@ export function useMembers(scene: Ref<string | undefined>, isPrivate: Ref<boolea
   )
 
   function nextUid() {
+    const prefix = platform.value
     const used = new Set(members.value.map((member) => member.uid))
     let number = 10001
-    while (used.has(`onebot:${number}`)) number++
-    return `onebot:${number}`
+    while (used.has(`${prefix}:${number}`)) number++
+    return `${prefix}:${number}`
   }
-  function save(member: Member, adding: boolean) {
-    const clean = { ...member, nickname: member.nickname.trim() }
+  function save(member: Member, adding: boolean, previousUid?: string) {
+    const clean: Member = {
+      uid: member.uid.trim(),
+      nickname: member.nickname.trim(),
+      role: member.role,
+    }
+    const targetUid = previousUid ?? clean.uid
     members.value = adding
       ? [...members.value, clean]
-      : members.value.map((item) => (item.uid === clean.uid ? clean : item))
+      : members.value.map((item) => (item.uid === targetUid ? clean : item))
     current.value = clean.uid
   }
   function remove(uid: string) {
     members.value = members.value.filter((item) => item.uid !== uid)
     if (current.value === uid) current.value = members.value[0]!.uid
   }
-  return { members, current, speaker, nextUid, save, remove }
+  return { members, current, speaker, platform, nextUid, save, remove }
 }

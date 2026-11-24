@@ -35,11 +35,25 @@ const FAILED_TURNS = new Set(['error', 'timeout', 'interrupted', 'step_limit', '
 /** From this many groups on, the same kind of trouble reads as one item. */
 const MERGE_FROM = 3
 
+function dayStamp(date: Date, timeZone?: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
+}
+
 /** What needs the operator, as the overview lists it and the top bar counts it. */
 export function useAttention() {
   const { t } = useI18n()
   const { online, status } = useConnectionStatus()
-  const scope = computed(() => `${host.state?.bot_id}:${(host.overview as Overview | null)?.since}`)
+  const scope = computed(() => {
+    const day = host.overview as Overview | null
+    const timeZone = day?.timezone ?? host.state?.timezone
+    const today = day ? dayStamp(new Date(day.since * 1000), timeZone) : dayStamp(new Date(), timeZone)
+    return `${host.state?.bot_id ?? ''}:${today}`
+  })
 
   // Each group stays one click away inside the merged item.
   function perScene(
@@ -84,6 +98,8 @@ export function useAttention() {
           })
         } else if (item.latest_error) {
           const latest = item.latest_error as { error?: string }
+          const runtimeTo: RouteLocationRaw =
+            kind === 'plugin' ? { name: 'host-plugins', query: { item: item.name, part: 'logs' } } : to
           items.push({
             key: `${kind}:${item.name}`,
             revision: JSON.stringify([item.error_count, item.latest_error]),
@@ -94,7 +110,7 @@ export function useAttention() {
             ),
             error: latest.error ?? null,
             tone: 'warning',
-            to,
+            to: runtimeTo,
             action: t('overview.todo.view'),
           })
         }
@@ -105,10 +121,8 @@ export function useAttention() {
     if (!day) return items
 
     const toAnswer = t('overview.todo.toAnswer')
-    perScene(
-      items,
-      'task-wait',
-      (day.waiting_tasks ?? []).map((item) => ({
+    for (const item of day.waiting_tasks ?? []) {
+      items.push({
         key: `task-wait:${item.scene}:${item.id}`,
         revision: `${item.id}:${item.question_title ?? ''}`,
         text: t('overview.todo.taskWaiting', {
@@ -119,9 +133,8 @@ export function useAttention() {
         tone: 'warning',
         to: groupsTarget(item.scene, 'tasks', { id: String(item.id) }),
         action: toAnswer,
-      })),
-      (n) => t('overview.todo.taskWaitingMany', { n }),
-    )
+      })
+    }
 
     const view = t('overview.todo.view')
     perScene(
@@ -141,7 +154,7 @@ export function useAttention() {
       items.push({
         key: `model:${call.id}`,
         revision: call.count,
-        text: t('overview.todo.modelErrors', { n: call.count }, call.count),
+        text: t('overview.todo.modelErrors', { group: groupLabel(call.scene), n: call.count }, call.count),
         error: call.error,
         tone: 'error',
         to: {
@@ -177,7 +190,7 @@ export function useAttention() {
         revision: n,
         text: t('overview.todo.taskFailed', { group: groupLabel(scene), n }, n),
         tone: 'warning',
-        to: groupsTarget(scene, 'tasks'),
+        to: groupsTarget(scene, 'tasks', { filter: 'failed' }),
         action: view,
       })),
       (groups) => t('overview.todo.taskFailedMany', { groups }),
@@ -217,7 +230,7 @@ export function useAttention() {
           time: formatDateTime(until, { timeZone: day.timezone }),
         }),
         tone: 'info',
-        to: groupsTarget(scene, 'settings'),
+        to: groupsTarget(scene, 'settings', { section: 'speech' }),
         action: view,
       })),
       (groups) => t('overview.todo.speechMany', { groups }),
@@ -257,7 +270,9 @@ export function useAttention() {
     allItems.value.flatMap((item) => {
       if (!item.children) return visible(item) ? [item] : []
       const children = item.children.filter(visible)
-      return children.length ? [{ ...item, children, text: item.summary!(children.length) }] : []
+      if (!children.length) return []
+      if (children.length < MERGE_FROM) return children
+      return [{ ...item, children, text: item.summary!(children.length) }]
     }),
   )
 
