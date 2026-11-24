@@ -668,3 +668,52 @@ async def test_ordinary_term_needs_five_new_message_samples(tmp_path):
         assert '上次评估位置' in instructions[2]
         item = upkeep.jargon.items(SCENE, 'ordinary', 10, 0)['items'][0]
         assert item['count'] == 6 and item['last_evaluated_seq'] == store.max_message_seq(SCENE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('conflict_kind', ['modified', 'created', 'deleted'])
+async def test_memory_draft_aborts_commit_when_target_changed_externally(tmp_path, monkeypatch, conflict_kind):
+    target = 'people/70002.md'
+    write_call = ('memory', {'action': 'write', 'path': target, 'content': '后台整理草稿内容。', 'reason': '整理'})
+    if conflict_kind == 'created':
+        replies = [turns._calls(write_call), _text({'expressions': [], 'terms': []})]
+    else:
+        replies = [
+            turns._calls(('memory', {'action': 'read', 'path': target}), write_call),
+            _text({'expressions': [], 'terms': []}),
+        ]
+    async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
+        if conflict_kind != 'created':
+            await memory.write(SCENE, target, '人工初版内容。', '初始记录')
+        _group_messages(store)
+
+        complete = upkeep.mind.complete
+        tampered = False
+
+        async def tamper_before_final(messages, *args, **kwargs):
+            nonlocal tampered
+            if not tampered and messages[-1]['role'] == 'tool':
+                tampered = True
+                if conflict_kind == 'modified':
+                    await memory.write(SCENE, target, '人工最新编辑。', '面板人工修改')
+                elif conflict_kind == 'created':
+                    await memory.write(SCENE, target, '人工新建内容。', '面板人工新建')
+                else:
+                    await memory.delete(SCENE, target, '面板人工删除', forget=False)
+            return await complete(messages, *args, **kwargs)
+
+        monkeypatch.setattr(upkeep.mind, 'complete', tamper_before_final)
+        upkeep.request(SCENE, 'memory')
+        assert await upkeep._step(SCENE)
+
+        job = memory.jobs.latest(SCENE)
+        assert job['status'] == 'failed'
+        assert '在整理期间已被修改' in (job['error'] or '')
+        assert memory.jobs.after(SCENE) == 0
+        if conflict_kind == 'modified':
+            assert (await memory.backend.read(SCENE, target)).content == '人工最新编辑。'
+        elif conflict_kind == 'created':
+            assert (await memory.backend.read(SCENE, target)).content == '人工新建内容。'
+        else:
+            with pytest.raises(FileNotFoundError):
+                await memory.backend.read(SCENE, target)

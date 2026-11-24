@@ -505,11 +505,20 @@ class ChatContext:
                 if not (message['role'] == 'user' and isinstance(message['content'], str)
                         and message['content'].startswith('宿主启动状态：'))]
 
-    def project_entries(self, entries: list[tuple[int, dict]]) -> list[tuple[int, dict]]:
+    def project_entries(
+        self,
+        entries: list[tuple[int, dict]],
+        *,
+        protect_from_seq: int | None = None,
+    ) -> list[tuple[int, dict]]:
         entries = self.conversation_entries(entries)
         thought_template = Template(read_prompt("next_unspoken_thought.md"))
         projected_entries: list[tuple[int, dict]] = []
-        for seq, message in project_old_results(entries, self.config.compaction.keep_recent_tokens):
+        for seq, message in project_old_results(
+            entries,
+            self.config.compaction.keep_recent_tokens,
+            protect_from_seq=protect_from_seq,
+        ):
             for projected in project_messages([message], self.config.models.roles.mind.history_policy):
                 if (projected["role"] == "assistant" and not projected.get("tool_calls")
                         and isinstance(projected.get("content"), str) and projected["content"].strip()):
@@ -526,8 +535,15 @@ class ChatContext:
         refs = self.references(entries)
         return discovered, attention, refs
 
-    async def project(self, recap: str | None, entries: list[tuple[int, dict]], state: dict) -> list[dict]:
-        entries = self.project_entries(entries)
+    async def project(
+        self,
+        recap: str | None,
+        entries: list[tuple[int, dict]],
+        state: dict,
+        *,
+        protect_from_seq: int | None = None,
+    ) -> list[dict]:
+        entries = self.project_entries(entries, protect_from_seq=protect_from_seq)
         quiet = None if self.quiet_state is None else self.quiet_state()
         discovered, attention, refs = await self.store.read(self._project_reads, entries, quiet)
         self.refresh_tools(discovered)

@@ -81,7 +81,8 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
                     recap: str | None, summary_template: str, window_tokens: int,
                     source_entries: list[Entry] | None = None,
                     token_scale: float = 1.0, include_latest: bool = False,
-                    reasoning_reserve_tokens: int = 0) -> CompactionPlan:
+                    reasoning_reserve_tokens: int = 0,
+                    allow_oversized_source: bool = False) -> CompactionPlan:
     """``include_latest`` may fold every entry into the recap, as a role handover does."""
     summary_text_tokens = summary_output_tokens - reasoning_reserve_tokens
     if summary_text_tokens <= 0:
@@ -120,15 +121,25 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
     budget = summary_text_tokens
     prompt = Template(summary_template).substitute(summary_budget_tokens=budget)
 
-    source = entries[:cut] if source_entries is None else [
-        entry for entry in source_entries if entry[0] <= entries[cut - 1][0]]
-    request = [{"role": "system", "content": prompt},
-               {"role": "user", "content": recap_source(recap, source)}]
+    def build_request_for(boundary: int) -> list[dict]:
+        source = entries[:boundary] if source_entries is None else [
+            entry for entry in source_entries if entry[0] <= entries[boundary - 1][0]]
+        return [{"role": "system", "content": prompt},
+                {"role": "user", "content": recap_source(recap, source)}]
+
+    request = build_request_for(cut)
     required = estimate_request(request, [], summary_output_tokens)
     if required > window_tokens:
-        raise ContextBudgetError(
-            f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
-            "请调大窗口或调小回想最大长度")
+        for earlier in reversed([b for b in boundaries if b < cut]):
+            earlier_request = build_request_for(earlier)
+            if estimate_request(earlier_request, [], summary_output_tokens) <= window_tokens:
+                cut, request = earlier, earlier_request
+                break
+        else:
+            if not allow_oversized_source:
+                raise ContextBudgetError(
+                    f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
+                    "请调大窗口或调小回想最大长度")
     return CompactionPlan(entries[cut - 1][0], budget, request, entries[cut - 1][1],
                           entries[cut][1] if cut < len(entries) else None)
 

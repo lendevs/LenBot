@@ -78,8 +78,26 @@ def _chat_message(message: dict, settings: ModelSettings) -> dict:
     return {k: v for k, v in message.items() if k not in internal and not (k == 'tool_calls' and v is None)}
 
 
+ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
+
+
 def _cache_breakpoint(block: dict) -> dict:
     return block if block.get('cache_control') is not None else {**block, 'cache_control': {'type': 'ephemeral'}}
+
+
+def _count_cache_breakpoints(system: list[dict], tools: list[dict], contents: list[dict]) -> int:
+    used = sum(1 for block in system if block.get('cache_control') is not None)
+    used += sum(1 for tool in tools if tool.get('cache_control') is not None)
+    for message in contents:
+        for block in message.get('content') or ():
+            if not isinstance(block, dict):
+                continue
+            if block.get('cache_control') is not None:
+                used += 1
+            nested = block.get('content')
+            if isinstance(nested, list):
+                used += sum(1 for sub in nested if isinstance(sub, dict) and sub.get('cache_control') is not None)
+    return used
 
 
 def build_request(settings: ModelSettings, messages: list[dict], tools: list[dict], *,
@@ -130,7 +148,11 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
         for message in messages:
             role = message['role']
             if role in {'system', 'developer'}:
-                system.extend(_parts(message['content']))
+                system.extend(
+                    {'type': 'text', 'text': p['text'],
+                     **({'cache_control': p['cache_control']} if p.get('cache_control') is not None else {})}
+                    for p in _parts(message['content'])
+                )
                 continue
             native = _native(message, settings)
             if native is not None:
@@ -166,28 +188,38 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
                     contents.append({'role': native_role, key: content})
         if api == 'anthropic':
             payload.update(messages=contents, max_tokens=output, stream=False)
-            if len(contents) >= 2:
+            native_tools = [
+                {'name': t['function']['name'], 'description': t['function'].get('description', ''),
+                 'input_schema': t['function']['parameters'],
+                 **({'cache_control': t['cache_control']} if t.get('cache_control') is not None else {})}
+                for t in tools
+            ] if tools else []
+            used = _count_cache_breakpoints(system, native_tools, contents)
+            if system:
+                if used < ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+                    for i in reversed(range(len(system))):
+                        if system[i]['type'] == 'text' and system[i].get('text', '').strip():
+                            if system[i].get('cache_control') is None:
+                                system[i] = _cache_breakpoint(system[i])
+                                used += 1
+                            break
+                payload['system'] = system
+            if native_tools:
+                if used < ANTHROPIC_MAX_CACHE_BREAKPOINTS and native_tools[-1].get('cache_control') is None:
+                    native_tools[-1] = _cache_breakpoint(native_tools[-1])
+                    used += 1
+                payload['tools'] = native_tools
+            if len(contents) >= 2 and used < ANTHROPIC_MAX_CACHE_BREAKPOINTS:
                 blocks = contents[-2]['content']
                 for i in reversed(range(len(blocks))):
                     if blocks[i]['type'] in {'thinking', 'redacted_thinking'}:
                         continue
                     if blocks[i]['type'] == 'text' and not blocks[i].get('text', '').strip():
                         continue
-                    blocks[i] = _cache_breakpoint(blocks[i])
+                    if blocks[i].get('cache_control') is None:
+                        blocks[i] = _cache_breakpoint(blocks[i])
+                        used += 1
                     break
-            if system:
-                for i in reversed(range(len(system))):
-                    if system[i]['type'] == 'text' and system[i].get('text', '').strip():
-                        system[i] = _cache_breakpoint(system[i])
-                        break
-                payload['system'] = system
-            if tools:
-                native_tools = [{'name': t['function']['name'], 'description': t['function'].get('description', ''),
-                                 'input_schema': t['function']['parameters'],
-                                 **({'cache_control': t['cache_control']} if t.get('cache_control') is not None else {})}
-                                for t in tools]
-                native_tools[-1] = _cache_breakpoint(native_tools[-1])
-                payload['tools'] = native_tools
             if settings.thinking_budget_tokens is not None:
                 payload['thinking'] = {'type': 'enabled', 'budget_tokens': settings.thinking_budget_tokens}
             elif settings.reasoning_effort is not None:

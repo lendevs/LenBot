@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from typing import Literal
 
 Tier = Literal["direct", "normal", "worker", "background"]
+WORKER_BURST_LIMIT = 2
 
 
 class ModelSlots:
@@ -27,6 +28,7 @@ class ModelSlots:
         self._active = 0
         self._worker_active = 0
         self._background_active = 0
+        self._worker_streak = 0
         self._direct: deque[asyncio.Future[None]] = deque()
         self._normal: deque[asyncio.Future[None]] = deque()
         self._worker: deque[asyncio.Future[None]] = deque()
@@ -55,8 +57,10 @@ class ModelSlots:
         self._active += 1
         if tier == "worker":
             self._worker_active += 1
+            self._worker_streak = self._worker_streak + 1 if self._background else 0
         elif tier == "background":
             self._background_active += 1
+            self._worker_streak = 0
 
     def _fill(self) -> None:
         while self._active < self.limit:
@@ -65,14 +69,17 @@ class ModelSlots:
                 waiter, tier = self._direct.popleft(), "direct"
             elif self._normal:
                 waiter, tier = self._normal.popleft(), "normal"
-            elif self._worker and noninteractive_active < self.worker_limit:
-                waiter, tier = self._worker.popleft(), "worker"
-            elif (
-                self._background
-                and noninteractive_active < self.worker_limit
-                and self._background_active < self.background_limit
-            ):
-                waiter, tier = self._background.popleft(), "background"
+            elif noninteractive_active < self.worker_limit:
+                if (
+                    self._background
+                    and self._background_active < self.background_limit
+                    and (not self._worker or self._worker_streak >= WORKER_BURST_LIMIT)
+                ):
+                    waiter, tier = self._background.popleft(), "background"
+                elif self._worker:
+                    waiter, tier = self._worker.popleft(), "worker"
+                else:
+                    break
             else:
                 break
             if waiter.cancelled():
@@ -98,10 +105,15 @@ class ModelSlots:
                    scene: str | None = None) -> AsyncIterator[None]:
         tier: Tier = ("direct" if direct else "background" if background
                       else "worker" if worker else "normal")
+        background_due = (
+            bool(self._background)
+            and self._background_active < self.background_limit
+            and self._worker_streak >= WORKER_BURST_LIMIT
+        )
         higher_waiting = {
             "direct": bool(self._direct),
             "normal": bool(self._direct or self._normal),
-            "worker": bool(self._direct or self._normal or self._worker),
+            "worker": bool(self._direct or self._normal or self._worker or background_due),
             "background": bool(self._direct or self._normal or self._worker or self._background),
         }[tier]
         waiter: asyncio.Future[None] | None = None

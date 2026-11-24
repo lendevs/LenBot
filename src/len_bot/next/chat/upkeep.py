@@ -97,6 +97,17 @@ class MemoryDraft:
         self.memory, self.scene = memory, scene
         self.operations: list[dict] = []
         self.files: dict[str, str | None] = {}
+        self.baselines: dict[str, str | None] = {}
+
+    async def _record_baseline(self, path: str) -> str | None:
+        if path not in self.baselines:
+            try:
+                page = await self.memory.backend.read(self.scene, path)
+            except FileNotFoundError:
+                self.baselines[path] = None
+            else:
+                self.baselines[path] = page.content
+        return self.baselines[path]
 
     async def execute(self, arguments: dict) -> str:
         item = MEMORY_ARGUMENTS.validate_python(arguments)
@@ -111,11 +122,9 @@ class MemoryDraft:
                 self.memory.store.check_message_records(self.scene, item.exclude_records)
             if item.path not in self.files:
                 # The backend read also checks file type, path and symlink boundaries for new targets.
-                try:
-                    await self.memory.backend.read(self.scene, item.path)
-                except FileNotFoundError:
-                    if isinstance(item, DeleteMemory):
-                        raise
+                baseline = await self._record_baseline(item.path)
+                if baseline is None and isinstance(item, DeleteMemory):
+                    raise FileNotFoundError(item.path)
             elif isinstance(item, DeleteMemory) and self.files[item.path] is None:
                 raise FileNotFoundError(item.path)
             if any(path.startswith(item.path + "/") for path, content in self.files.items() if content is not None):
@@ -125,11 +134,16 @@ class MemoryDraft:
             self.files[item.path] = item.content if isinstance(item, WriteMemory) else None
             self.operations.append(arguments)
             return encode({"action": item.action, "path": item.path, "staged": True})
-        if isinstance(item, ReadMemory) and item.scope == "scene" and item.path in self.files:
-            content = self.files[item.path]
-            if content is None:
+        if isinstance(item, ReadMemory) and item.scope == "scene":
+            if item.path in self.files:
+                content = self.files[item.path]
+                if content is None:
+                    raise FileNotFoundError(item.path)
+                return encode({"path": item.path, "content": content})
+            baseline = await self._record_baseline(item.path)
+            if baseline is None:
                 raise FileNotFoundError(item.path)
-            return encode({"path": item.path, "content": content})
+            return encode({"path": item.path, "content": baseline})
         if isinstance(item, BrowseMemory) and item.scope == "scene" and self.files:
             return await self.browse(item)
         if isinstance(item, SearchMemory) and self.files:
@@ -141,6 +155,44 @@ class MemoryDraft:
             hits.extend(hit for hit in current if hit["scope"] != "scene" or hit["path"] not in self.files)
             return encode({"hits": hits[:item.limit]})
         return await self.memory.execute(self.scene, arguments)
+
+    async def commit(self) -> list[tuple[dict, dict]]:
+        if not self.operations:
+            return []
+        target_paths = list(dict.fromkeys(operation["path"] for operation in self.operations))
+        committed: list[tuple[dict, dict]] = []
+        async with self.memory.write_lock(self.scene):
+            for path in target_paths:
+                expected = self.baselines[path]
+                try:
+                    current: str | None = (await self.memory.backend.read(self.scene, path)).content
+                except FileNotFoundError:
+                    current = None
+                if current != expected:
+                    raise RuntimeError(f"记忆文件 {path} 在整理期间已被修改，放弃旧草稿等待重整")
+            for operation in self.operations:
+                item = MEMORY_ARGUMENTS.validate_python(operation)
+                self.memory.own_bot_path(self.scene, item.path)
+                if isinstance(item, WriteMemory):
+                    require_bot_path(item.path, self.memory.known_persona_ids(self.scene))
+                    result = asdict(await self.memory.backend.write(self.scene, item.path, item.content, item.reason))
+                elif isinstance(item, DeleteMemory):
+                    result = asdict(await self.memory.backend.delete(self.scene, item.path, item.reason))
+                elif isinstance(item, ForgetMemory):
+                    selected = sorted(set(item.exclude_records))
+                    self.memory.store.check_message_records(self.scene, selected)
+                    added = self.memory.jobs.exclude_records(self.scene, selected)
+                    try:
+                        forgotten = await self.memory.backend.forget(self.scene, item.path)
+                    except Exception as error:
+                        raise RuntimeError(
+                            f"已保存 {len(selected)} 条原话的抽取排除；记忆遗忘未完成：{type(error).__name__}: {error}"
+                        ) from error
+                    result = {**asdict(forgotten), "excluded_records": selected, "new_exclusions": added}
+                else:
+                    raise ValueError(f"Unsupported staged memory operation: {item.action}")
+                committed.append((operation, result))
+        return committed
 
     async def browse(self, item: BrowseMemory) -> str:
         prefix = item.path + "/" if item.path else ""
@@ -833,8 +885,7 @@ class SessionUpkeep:
         job = begun.memory_job
         written = []
         if draft is not None:
-            for operation in draft.operations:
-                result = json.loads(await self.memory.execute(scene, operation))
+            for operation, result in await draft.commit():
                 written.append(result["path"])
                 job["details"]["writes"].append({
                     "path": result["path"], "action": operation["action"], "changed_at": result.get("changed_at"),

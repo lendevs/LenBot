@@ -355,7 +355,12 @@ _FOLDABLE_TOOLS = {
 }
 
 
-def project_old_results(entries: list[tuple[int, dict]], keep_recent_tokens: int) -> list[tuple[int, dict]]:
+def project_old_results(
+    entries: list[tuple[int, dict]],
+    keep_recent_tokens: int = 0,
+    *,
+    protect_from_seq: int | None = None,
+) -> list[tuple[int, dict]]:
     """Keep recent results whole; older saved web pages and large read-only results fold to compact summaries."""
     prefix, _, suffix = Template(read_prompt('next_web_read.md')).substitute(result='\0').partition('\0')
     calls: dict[str, tuple[str, object]] = {}
@@ -389,7 +394,9 @@ def project_old_results(entries: list[tuple[int, dict]], keep_recent_tokens: int
         cutoff = (offsets[-1] - keep_recent_tokens) // step * step
         candidates = [
             item for item in candidates
-            if item[0] < first_tail_tool and offsets[item[0]] < cutoff
+            if item[0] < first_tail_tool
+            and offsets[item[0]] < cutoff
+            and (protect_from_seq is None or entries[item[0]][0] < protect_from_seq)
         ]
     if not candidates:
         return entries
