@@ -302,6 +302,15 @@ const name = (value: string) => encodeURIComponent(value)
 
 export type PluginAction = 'apply' | 'cancel' | 'rollback' | 'reload'
 
+/** Key format expected by backend `plugins.disabled_rules[plugin]` (`host.py:293`). */
+export function commandRuleKey(commandName: string): string {
+  return commandName.startsWith('/') ? commandName : `/${commandName}`
+}
+
+export function matchRuleKey(pattern: string): string {
+  return pattern
+}
+
 export function pluginTitle(snapshot: PluginsSnapshot | null | undefined, pluginName: string): string {
   if (!snapshot) return pluginName
   const running = snapshot.running.plugins.find((item) => item.name === pluginName)

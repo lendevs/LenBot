@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { RouteLocationRaw } from 'vue-router'
+import type { LocationQueryRaw, RouteLocationRaw } from 'vue-router'
 
 export const groupTabs = ['live', 'session', 'memory', 'reference', 'tasks', 'learning', 'settings'] as const
 export type GroupTab = (typeof groupTabs)[number]
@@ -18,7 +18,7 @@ export const lastGroupTab = ref<GroupTab>('live')
 export function groupsTarget(
   scene?: string,
   tab: GroupTab = lastGroupTab.value,
-  query = {},
+  query: LocationQueryRaw = {},
 ): RouteLocationRaw {
   return scene
     ? { name: 'groups', params: { scene, tab }, query }

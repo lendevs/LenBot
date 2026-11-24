@@ -54,12 +54,12 @@ const field = useFieldControl(props)
         :placeholder="placeholder"
         :aria-invalid="field.invalid.value || undefined"
         :aria-describedby="field.describedBy.value"
-        :class="[controlInput, 'font-mono text-sm']"
+        :class="[controlInput, 'font-mono text-sm pointer-coarse:text-lg']"
       />
       <button
         v-if="canRefresh"
         type="button"
-        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40"
+        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:size-8"
         :disabled="field.disabled.value || refreshDisabled || refreshing"
         :aria-label="t('models.probe.list')"
         :title="t('models.probe.list')"
@@ -72,7 +72,7 @@ const field = useFieldControl(props)
       </button>
       <ComboboxTrigger
         v-if="models?.length"
-        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:text-ink"
+        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:text-ink pointer-coarse:size-8"
         :aria-label="t('ui.combobox.options')"
       >
         <ChevronsUpDown :size="15" aria-hidden="true" />
@@ -87,7 +87,7 @@ const field = useFieldControl(props)
         <ComboboxViewport
           class="max-h-[min(20rem,var(--reka-combobox-content-available-height))] overflow-y-auto p-1 scrollbar-thin"
         >
-          <ComboboxEmpty class="px-2 py-3 text-center text-sm text-subtle">
+          <ComboboxEmpty class="px-2 py-3 text-center text-sm text-muted">
             {{ t('ui.combobox.empty') }}
           </ComboboxEmpty>
           <ComboboxItem
