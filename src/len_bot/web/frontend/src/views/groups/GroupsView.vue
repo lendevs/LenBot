@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, provide, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import { useQueryClient } from '@tanstack/vue-query'
 import { useMediaQuery } from '@vueuse/core'
 import { ChevronsUpDown, Plus } from '@lucide/vue'
 import type { HostScene } from '../../api/host'
-import { sceneTitles } from '../../api/scenes'
+import { keys } from '../../api/query'
 import { useCurrentScene } from '../../composables/useCurrentScene'
 import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { useHostEvents } from '../../realtime/hostEvents'
 import { host, readHostState } from '../../api/hostStore'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, groupSecondaryId, isPrivateScene } from '../../layouts/shell/scenes'
 import Avatar from '../../ui/Avatar.vue'
 import Button from '../../ui/Button.vue'
 import EmptyState from '../../ui/EmptyState.vue'
@@ -34,21 +35,22 @@ const TasksTab = defineAsyncComponent(() => import('./tasks/TasksTab.vue'))
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const client = useQueryClient()
 const wide = useMediaQuery('(min-width: 1024px)')
 const picking = ref(false)
 const adding = ref(false)
+const settingsKey = ref(0)
 
-// Old tabs inside a workbench tab hide their own page title.
-provide('embedded-page', true)
+watch(wide, (value) => {
+  if (value) picking.value = false
+})
 
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const { scene, current } = useCurrentScene()
-const titles = sceneTitles as Record<string, string>
-const secondaryId = (value: string) => (titles[value] ? value.split(':').slice(2).join(':') : '')
 // Learning runs in group chats only.
-const available = computed(() =>
-  groupTabs.filter((value) => value !== 'learning' || scene.value?.split(':')[1] !== 'private'),
-)
+const supportsTab = (targetScene: string, name: GroupTab) =>
+  name !== 'learning' || !isPrivateScene(targetScene)
+const available = computed(() => groupTabs.filter((value) => supportsTab(scene.value, value)))
 const tab = computed<GroupTab>(() => {
   const { scene: first, tab: second } = route.params
   const name = isGroupTab(second) ? second : isGroupTab(first) ? first : lastGroupTab.value
@@ -56,28 +58,58 @@ const tab = computed<GroupTab>(() => {
 })
 const tabs = computed(() => available.value.map((value) => ({ value, label: t(`groups.tabs.${value}`) })))
 
+// Tracks a fallback redirect (e.g. private chat without learning → live) so it never overwrites `lastGroupTab`.
+let fallbackTarget: string | null = null
+
 // One canonical address per view: /groups/<scene>/<tab>.
 watch(
   [scene, tab, () => route.params.scene, () => route.params.tab],
   ([value, name, first, second]) => {
-    lastGroupTab.value = name
-    if (value && (first !== value || second !== name)) {
+    if (!value) return
+    const requested = isGroupTab(second) ? second : isGroupTab(first) ? first : null
+    const targetKey = `${value}:${name}`
+    if (requested !== null && available.value.includes(requested)) {
+      if (fallbackTarget === targetKey) fallbackTarget = null
+      else lastGroupTab.value = requested
+    } else if (requested !== null || !available.value.includes(lastGroupTab.value)) {
+      fallbackTarget = targetKey
+    }
+    if (first !== value || second !== name) {
       void router.replace({ name: 'groups', params: { scene: value, tab: name }, query: route.query })
     }
   },
   { immediate: true },
 )
 
-function select(value: string) {
+async function select(value: string) {
+  if (value === scene.value) {
+    picking.value = false
+    return
+  }
+  const preferred = lastGroupTab.value
+  const supported = supportsTab(value, preferred)
+  const nextTab: GroupTab = supported ? preferred : 'live'
+  // Inner tab and timeline filter carry over; item ids belong to the previous group.
+  const query: LocationQueryRaw = {}
+  if (typeof route.query.tab === 'string') query.tab = route.query.tab
+  if (typeof route.query.filter === 'string') query.filter = route.query.filter
+  fallbackTarget = supported ? null : `${value}:${nextTab}`
+  const failure = await router.push({ name: 'groups', params: { scene: value, tab: nextTab }, query })
+  if (failure) {
+    fallbackTarget = null
+    return
+  }
   picking.value = false
-  if (value === scene.value) return
-  // The inner tab of an old page carries over; item ids belong to the previous group.
-  const inner = typeof route.query.tab === 'string' ? { tab: route.query.tab } : {}
-  void router.push({ name: 'groups', params: { scene: value, tab: tab.value }, query: inner })
 }
 const selectedTab = computed({
   get: () => tab.value,
-  set: (value: GroupTab) => void router.push({ name: 'groups', params: { scene: scene.value, tab: value } }),
+  set: (value: GroupTab) => {
+    if (value === tab.value) return
+    fallbackTarget = null
+    void router.push({ name: 'groups', params: { scene: scene.value, tab: value } }).then((failure) => {
+      if (!failure) lastGroupTab.value = value
+    })
+  },
 })
 
 function addFromSheet() {
@@ -95,6 +127,11 @@ useUnsavedChanges(
   },
 )
 
+function discardSettings() {
+  dirty.settings = false
+  settingsKey.value += 1
+}
+
 // Quiet hours and the hourly speaking limit end without an event; read the state again when one does.
 let timer: ReturnType<typeof setTimeout> | undefined
 watch(
@@ -103,7 +140,19 @@ watch(
     clearTimeout(timer)
     const next = Math.min(...items.map((item) => item.chat_status.changes_at ?? Infinity))
     if (Number.isFinite(next)) {
-      timer = setTimeout(readHostState, Math.min(Math.max(0, next * 1000 - Date.now()) + 1000, 2 ** 31 - 1))
+      timer = setTimeout(
+        () => {
+          void readHostState()
+          const affected = new Set(
+            items
+              .filter((item) => item.chat_status.changes_at !== null && item.chat_status.changes_at <= next)
+              .map((item) => item.scene),
+          )
+          if (scene.value) affected.add(scene.value)
+          for (const id of affected) void client.invalidateQueries({ queryKey: keys.scene.control(id) })
+        },
+        Math.min(Math.max(0, next * 1000 - Date.now()) + 1000, 2 ** 31 - 1),
+      )
     }
   },
   { immediate: true },
@@ -123,7 +172,7 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
     <div v-else class="grid min-w-0 items-start gap-6 lg:grid-cols-[264px_minmax(0,1fr)]">
       <aside
         v-if="wide"
-        class="sticky top-20 flex h-[calc(100dvh-6.5rem)] min-h-0 flex-col border-r border-line pr-4"
+        class="sticky top-18 flex max-h-[calc(100dvh-5.5rem)] min-h-0 flex-col border-r border-line pr-4"
       >
         <GroupList :scenes="scenes" :selected="scene" @select="select" @add="adding = true" />
       </aside>
@@ -138,52 +187,59 @@ useHostEvents(readHostState, { types: ['message.sent'], minInterval: 2000 })
           <Avatar :name="groupLabel(scene)" shape="square" :size="28" />
         </span>
         <span class="min-w-0 flex-1 truncate text-base font-medium text-ink">{{ groupLabel(scene) }}</span>
-        <span v-if="secondaryId(scene)" class="shrink-0 font-mono text-xs text-muted tabular">
-          {{ secondaryId(scene) }}
+        <span v-if="groupSecondaryId(scene)" class="shrink-0 font-mono text-xs text-muted tabular">
+          {{ groupSecondaryId(scene) }}
         </span>
         <ChevronsUpDown :size="16" class="shrink-0 text-muted" aria-hidden="true" />
       </button>
 
       <section v-if="current" class="flex min-w-0 flex-col gap-4">
-        <GroupHeader :item="current" :switchable="!wide" @switch="picking = true" />
-        <Tabs v-model="selectedTab" :items="tabs" :label="groupLabel(scene)">
-          <template #[tab]>
-            <div :key="`${scene}:${tab}`" class="grid min-w-0 gap-4">
-              <LiveTab
-                v-if="tab === 'live'"
-                :scene="scene"
-                :time-zone="current.timezone"
-                :persona="current.persona.name"
-              />
-              <SessionTab v-else-if="tab === 'session'" :scene="scene" :time-zone="current.timezone" />
-              <MemoryTab
-                v-else-if="tab === 'memory'"
-                :scene="scene"
-                :time-zone="current.timezone"
-                @dirty="(value: boolean) => (dirty.memory = value)"
-              />
-              <ReferenceTab v-else-if="tab === 'reference'" :scene="scene" />
-              <TasksTab
-                v-else-if="tab === 'tasks'"
-                :scene="scene"
-                :time-zone="current.timezone"
-                @dirty="(value: boolean) => (dirty.tasks = value)"
-              />
-              <LearningTab
-                v-else-if="tab === 'learning'"
-                :scene="scene"
-                :time-zone="current.timezone"
-                @dirty="(value: boolean) => (dirty.learning = value)"
-              />
-              <SettingsTab
-                v-else
-                :scene="scene"
-                :time-zone="current.timezone"
-                @dirty="(value: boolean) => (dirty.settings = value)"
-              />
-            </div>
-          </template>
-        </Tabs>
+        <GroupHeader
+          :item="current"
+          :switchable="!wide"
+          :settings-dirty="dirty.settings"
+          @switch="picking = true"
+          @discard-settings="discardSettings"
+        />
+        <Tabs v-model="selectedTab" :items="tabs" :label="groupLabel(scene)" />
+        <Transition name="ui-tab" mode="out-in">
+          <div :key="`${scene}:${tab}`" class="grid min-w-0 gap-4">
+            <LiveTab
+              v-if="tab === 'live'"
+              :scene="scene"
+              :time-zone="current.timezone"
+              :persona="current.persona.name"
+              :persona-path="current.persona_path"
+            />
+            <SessionTab v-else-if="tab === 'session'" :scene="scene" :time-zone="current.timezone" />
+            <MemoryTab
+              v-else-if="tab === 'memory'"
+              :scene="scene"
+              :time-zone="current.timezone"
+              @dirty="(value: boolean) => (dirty.memory = value)"
+            />
+            <ReferenceTab v-else-if="tab === 'reference'" :scene="scene" />
+            <TasksTab
+              v-else-if="tab === 'tasks'"
+              :scene="scene"
+              :time-zone="current.timezone"
+              @dirty="(value: boolean) => (dirty.tasks = value)"
+            />
+            <LearningTab
+              v-else-if="tab === 'learning'"
+              :scene="scene"
+              :time-zone="current.timezone"
+              @dirty="(value: boolean) => (dirty.learning = value)"
+            />
+            <SettingsTab
+              v-else
+              :key="settingsKey"
+              :scene="scene"
+              :time-zone="current.timezone"
+              @dirty="(value: boolean) => (dirty.settings = value)"
+            />
+          </div>
+        </Transition>
       </section>
     </div>
 

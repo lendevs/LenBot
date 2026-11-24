@@ -7,20 +7,27 @@ import { hostApi, type IntentCondition, type SceneFocus } from '../../../api/hos
 import { keys } from '../../../api/query'
 import { currentLocale } from '../../../i18n'
 import { formatDateTime } from '../../../i18n/format'
+import { useHostEvent } from '../../../realtime/stream'
 import IconButton from '../../../ui/IconButton.vue'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
 
-const props = defineProps<{ scene: string; timeZone?: string }>()
+const props = defineProps<{ scene: string; timeZone?: string; nameOf?: (uid: string) => string }>()
 const { t } = useI18n()
 const client = useQueryClient()
 const key = computed(() => keys.host.focus(props.scene))
 
-// Intents change inside turns and expire on their own; a short poll keeps the bar current.
+// Intents change inside turns and expire on their own; turn.ended refreshes right away and a short poll catches expiries.
 const focus = useQuery({
   queryKey: key,
   queryFn: ({ signal }) => hostApi.focus(props.scene, signal),
   refetchInterval: 10_000,
+})
+useHostEvent('turn.ended', (event) => {
+  if (event.scene === props.scene) void client.invalidateQueries({ queryKey: key.value })
+})
+useHostEvent('host.state', (event) => {
+  if (event.scene === props.scene) void client.invalidateQueries({ queryKey: key.value })
 })
 const intents = computed(() => focus.data.value?.intents ?? [])
 const wrapUp = computed(() => focus.data.value?.wrap_up ?? null)
@@ -35,7 +42,7 @@ const drop = useMutation({
 })
 
 const unitList = computed(() => new Intl.ListFormat(currentLocale.value, { type: 'unit', style: 'short' }))
-const account = (uid: string) => uid.split(':').slice(1).join(':')
+const account = (uid: string) => props.nameOf?.(uid) ?? uid.split(':').slice(1).join(':')
 function condition(item: IntentCondition) {
   if (item.type === 'person')
     return t('groups.live.focus.when.person', { who: unitList.value.format(item.people.map(account)) })
