@@ -951,16 +951,20 @@ class LocalMemory:
         hits = []
         for (scope, path), rows in grouped.items():
             content = self._read_sync(scope, path).content
-            # Adjacent matched sections become one source range; non-adjacent ones
-            # keep a visible gap. The source is read once and returned once.
+            # Overlapping, contained or adjacent matched sections become one source range;
+            # non-adjacent ones keep a visible gap. The source is read once and returned once.
             ranges: list[dict] = []
-            for row in sorted(rows, key=lambda row: row['start_char']):
-                if ranges and ranges[-1]['end_char'] == row['start_char']:
-                    ranges[-1]['end_char'] = row['end_char']
-                    ranges[-1]['headings'].append(json.loads(row['heading']))
+            for row in sorted(rows, key=lambda row: (row['start_char'], -row['end_char'])):
+                heading = json.loads(row['heading'])
+                if ranges and (row['start_char'] <= ranges[-1]['end_char']
+                               or not content[ranges[-1]['end_char']:row['start_char']].strip()):
+                    if row['end_char'] > ranges[-1]['end_char']:
+                        ranges[-1]['end_char'] = row['end_char']
+                    if heading not in ranges[-1]['headings']:
+                        ranges[-1]['headings'].append(heading)
                 else:
                     ranges.append({'start_char': row['start_char'], 'end_char': row['end_char'],
-                                   'headings': [json.loads(row['heading'])], 'source_version': row['source_version']})
+                                   'headings': [heading], 'source_version': row['source_version']})
             preview = '\n…\n'.join(content[part['start_char']:part['end_char']] for part in ranges)
             hits.append(LocalMemoryHit(scope='public' if scope == 'public' else 'scene', path=path,
                                        preview=preview, total_chars=len(content), sections=tuple(ranges)))

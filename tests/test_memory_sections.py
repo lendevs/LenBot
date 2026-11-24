@@ -381,3 +381,99 @@ async def test_summary_uses_background_slots_and_strict_json_boundary(tmp_path):
         result = await summarizer.summarize(SCENE, 'events')
     assert result['abstract'] == '活动摘要'
     assert slot_calls == [{'direct': False, 'background': True, 'scene': SCENE}]
+
+
+@pytest.mark.asyncio
+async def test_overlapping_and_adjacent_same_file_sections_merge_without_budget_waste(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=300, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    content = (
+        '# 季度复盘\n\n'
+        '## 营收总览\n'
+        '华东季度营收核心指标达成预期。\n\n'
+        '### 华东细分\n'
+        '华东季度营收核心指标来自三个新客户。\n'
+    )
+    await memory.write(SCENE, 'resources/q3_review.md', content, '父子小节样本')
+
+    # Adjacent parent + child sections merge into one contiguous range without repeating text.
+    hits = await memory.search(SCENE, '华东季度营收核心指标', 5, automatic=True)
+    assert len(hits) == 1
+    assert len(hits[0].sections) == 1
+    assert hits[0].preview.count('华东季度营收核心指标来自三个新客户') == 1
+
+    # Also verify explicit overlapping ancestor/child character intervals merge without duplicating body text.
+    version = hashlib.sha256(content.encode('utf-8')).hexdigest()
+    with sqlite3.connect(memory.index) as db:
+        db.execute(
+            'INSERT INTO memory_sections(scope,path,heading,start_char,end_char,source_version,content) '
+            'VALUES(?,?,?,?,?,?,?)',
+            (SCENE, 'resources/q3_review.md', json.dumps(['季度复盘'], ensure_ascii=False),
+             0, len(content), version, content.casefold()),
+        )
+        rowid = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+        db.execute('INSERT INTO memory_fts(rowid,content) VALUES(?,?)', (rowid, content.casefold()))
+
+    overlap_hits = await memory.search(SCENE, '华东季度营收核心指标', 5, automatic=True)
+    assert len(overlap_hits) == 1
+    assert len(overlap_hits[0].sections) == 1
+    assert overlap_hits[0].sections[0]['start_char'] == 0
+    assert overlap_hits[0].sections[0]['end_char'] == len(content)
+    assert overlap_hits[0].preview == content
+    assert overlap_hits[0].preview.count('华东季度营收核心指标达成预期') == 1
+    assert overlap_hits[0].preview.count('华东季度营收核心指标来自三个新客户') == 1
+
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        recalled = await service.recall(SCENE, chat('看看华东季度营收核心指标的报告'))
+    assert [item['path'] for item in recalled['items']] == ['resources/q3_review.md']
+    assert recalled['content_chars'] <= 300
+    assert recalled['items'][0]['content'].count('华东季度营收核心指标来自三个新客户') == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_recall_retains_resources_under_events_flood_and_recap_artifact_cues(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=900, recall_limit=3)
+    memory = LocalMemory(settings.local)
+    for idx in range(1, 8):
+        await memory.write(
+            SCENE,
+            f'events/day_{idx:02d}.md',
+            f'# 第 {idx} 天讨论\n\n大家讨论了季度财务报告和上次生成的表格文件，提到季度财务报告进度 {idx}。\n',
+            '普通事件样本',
+        )
+    await memory.write(
+        SCENE,
+        'resources/q3_finance.md',
+        '# 季度财务报告\n\n任务 #42 交付文件 q3_finance.xlsx（file_id=7），记录季度财务报告净利润 520 万元。\n',
+        '场景资料产物样本',
+    )
+
+    # 1) Direct chat with artifact lookup intent retains the resources/ hit within recall_limit & budget.
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        direct = await service.recall(SCENE, chat('帮我查一下上次生成的季度财务报告文件'))
+        direct_paths = [item['path'] for item in direct['items']]
+        assert 'resources/q3_finance.md' in direct_paths
+        assert len(direct_paths) <= settings.recall_limit
+        assert direct['content_chars'] <= settings.recall_budget_chars
+        assert any('520 万元' in item['content'] for item in direct['items'])
+
+        # 2) Recap topic line with task ticket / filename / resources/ clue feeds cue recall for resources/.
+        recap = (
+            '## 话题脉络\n'
+            '- 讨论了下周天气\n'
+            '- 任务 #42 已生成季度财务报告 q3_finance.xlsx（file_id=7），归档在 resources/q3_finance.md\n\n'
+            '## 我答应的事\n'
+            '- 周五前发书单\n'
+        )
+        cues = recall_cues(recap)
+        assert '#42' in cues and 'q3_finance.xlsx' in cues and '下周天气' not in cues
+        via_cues = await service.recall(SCENE, chat('那个表格文件再发一下'), cues)
+        cue_paths = [item['path'] for item in via_cues['items']]
+        assert 'resources/q3_finance.md' in cue_paths
+        assert len(cue_paths) <= settings.recall_limit
+        assert via_cues['content_chars'] <= settings.recall_budget_chars
+        assert any('520 万元' in item['content'] for item in via_cues['items'])

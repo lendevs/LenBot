@@ -712,9 +712,13 @@ class WorkTasks:
             recent = [{'event': event['id'], 'kind': event['kind'], 'created': event['created']} for event in page['events']]
         finished = self.records.finish(item.scene, item.id, status, summary, error)
         files = [file_info(file, self.records) for file in self.records.list_files(item.scene, item.id)]
+        watchdogs = self.records.watchdog_events(item.scene, item.id)
+        last_watchdog = None if not watchdogs else {k: watchdogs[-1][k] for k in ("action", "reason", "detail")}
         body = {"status": status, "summary": summary, "error": error, "files": files,
                 "started": finished.started, "ended": finished.ended,
-                "tokens": token_summary(self.records.call_tokens(item.scene, item.id))}
+                "tokens": token_summary(self.records.call_tokens(item.scene, item.id)),
+                "can_continue": not self.records.workspace_discarded(item.scene, item.id),
+                "watchdog": last_watchdog}
         notice = f"[任务执行结束] #{item.id}；请求人 {item.requester}；{item.goal}\n" + json.dumps(body, ensure_ascii=False)
         if recent:
             notice += '\n最近过程编号（原文由请求人或任务管理者按event读取）：\n' + json.dumps(recent, ensure_ascii=False)
