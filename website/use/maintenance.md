@@ -59,6 +59,23 @@ uv run --no-sync python -m len_bot.next.maintenance.plugin_dependencies
 - **回复记录保留**：控制旧回合步骤记录的保留天数。
 - **聊天原文保留**：可选**永久**或指定天数；清理过期聊天原文时会自动跳过后台记忆整理（或当前启用的记忆插件）尚未处理完的消息。
 
+### 离线回收数据库空间
+
+数据保留清理释放的是数据库文件内部的空闲页，SQLite 不会自动缩小磁盘上的文件体积。当历史请求快照占满磁盘，或升级建立快照时提示剩余空间不足，先停止实例，再在实例根目录运行 `compact`：
+
+```sh
+# 仅估算当前空闲页可回收的空间，不修改数据库（仍需先停止实例以获取实例锁）
+uv run --no-sync python -m len_bot.next.maintenance.compact --dry-run
+
+# 按指定保留天数（不传则沿用配置，传 0 跳过过期）过期非锚点历史请求快照，并通过 VACUUM INTO 重写回收空间
+uv run --no-sync python -m len_bot.next.maintenance.compact --request-days 7
+
+# 当前磁盘剩余空间不足以存放临时副本时，将 VACUUM INTO 的临时文件放到其他磁盘目录
+uv run --no-sync python -m len_bot.next.maintenance.compact --request-days 7 --scratch-dir /path/to/tmp
+```
+
+命令会同时处理主业务数据库与旁边的 `.memory.sqlite3`（每个场景最近一次聊天调用快照会作为锚点保留，不影响 `usage` 历史统计）。部署包和 Docker 下的解释器路径与前文维护命令相同：在实例根目录分别使用 `releases/<版本>/python`（Linux 为 `bin/python3`，Windows 为 `python.exe`）或容器内的 `/opt/lenbot/.venv/bin/python` 运行 `-m len_bot.next.maintenance.compact`。
+
 ## 导出隔离测试副本
 
 需要在不影响线上群聊的前提下用真实历史数据验证新设置、新角色或新插件时，先停止实例再执行 `test_copy`：

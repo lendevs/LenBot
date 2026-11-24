@@ -118,7 +118,7 @@ uv run --no-sync ruff check src/len_bot scripts deploy/package tests
 
 业务数据库格式 `3` 为 `model_calls` 增加 `model_call_mind_usage` 索引，聊天请求查询本群最近一次聊天调用的用量时不再扫描整张表。升级时由同一条 `upgrade` 命令建立索引；数据库较大时首次建立要读取大部分文件，可能需要数分钟。
 
-业务数据库格式 `4` 为 `messages`、`notices`、`model_calls`、`turns` 和 `plugin_events` 补齐按场景序号、接收时间、群禁言通知、插件调用与轮次开始时间查询的索引，消除大体量生产库上的全场景排序与全表扫描。升级同样由 `upgrade` 命令建立缺失索引。
+业务数据库格式 `4` 为 `image_cache` 增加 `frames` 列（默认 `1`，用于区分动图多帧网格与旧单帧缓存），并为 `messages`、`notices`、`model_calls`、`turns` 和 `plugin_events` 补齐按场景序号、接收时间、群禁言通知、未过期请求快照、插件调用与轮次开始时间查询的索引，消除大体量生产库上的全场景排序与全表扫描。升级同样由 `upgrade` 命令补齐该列与缺失索引；磁盘空间紧张的大库可在升级前先停机运行 `uv run --no-sync python -m len_bot.next.maintenance.compact` 回收空闲页。
 
 上述四个 SQLite 数据库通过 `PRAGMA application_id` 标识文件类型，通过 `PRAGMA user_version` 记录格式编号；宿主只打开这两个值与当前代码一致的数据库文件。资料检索索引库（`reference/library.py`）仅保存可由源文档重建的派生数据，表结构变化时自动重建。
 

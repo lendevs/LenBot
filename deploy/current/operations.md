@@ -46,6 +46,7 @@
 | `python -m len_bot.next.maintenance.doctor` | 否（只读打开数据库） | 检查根配置、业务数据库、记忆处理库、本地记忆索引及各插件的数据版本与键值库格式，每项输出一行 JSON，任一失败退出码为 `1` |
 | `python -m len_bot.next.maintenance.upgrade run --snapshot <新目录>` | 是 | 持有实例锁，将实例目录与外部引用目录完整备份至 `<新目录>`，执行数据升级、恢复插件依赖并运行 `doctor`；任一步失败自动从快照还原 |
 | `python -m len_bot.next.maintenance.upgrade restore --snapshot <快照目录>` | 是 | 从指定快照目录还原实例数据，配合切回旧版程序使用 |
+| `python -m len_bot.next.maintenance.compact` | 是（持有实例锁；`--dry-run` 仅估算不改库，但同样需要停机获取实例锁） | 按配置或 `--request-days <天数>`（`0` 跳过过期）过期非锚点历史请求快照，并通过 `VACUUM INTO` 回收主业务库与 `.memory.sqlite3` 磁盘空间；支持 `--dry-run` 只读估算与 `--scratch-dir <目录>` 跨盘压缩 |
 | `python -m len_bot.next.maintenance.memory_reindex` | 是 | 重建本地长期记忆的全文与向量索引，保留正文和修改历史，清空目录摘要以便后续按新正文重生成 |
 | `python -m len_bot.next.maintenance.reindex_expressions` | 是 | 更换学习向量绑定后重建群聊说法向量索引 |
 | `python -m len_bot.next.maintenance.plugin_dependencies` | 是 | 重建 Python 环境后，合并并一次性安装所有已安装插件声明的依赖 |
@@ -67,7 +68,7 @@
 
 ## 数据格式版本
 
-根配置格式为 `4`：接入平台后使用 `delivery: "live"`，群配置移除 `simulated_delivery`。旧配置读取时按 `configuration/migrations.py` 转换，更新时 `upgrade apply` 阶段写回。业务数据库、记忆处理库、本地记忆索引、插件键值库和插件接口的格式编号均为 `1`。资料索引由源文件重建。
+根配置格式为 `6`（旧配置读取时按 `configuration/migrations.py` 逐步转换，更新时在 `upgrade apply` 阶段写回），业务数据库格式为 `4`（升级时由 `upgrade` 迁移表结构与索引），记忆处理库、本地记忆索引、插件键值库与插件接口的格式编号均为 `1`。资料索引由源文件重建；各版本变更细节与定义位置见 [CONTRIBUTING.md](../../CONTRIBUTING.md#数据格式)。
 
 ## 用量记账与后台任务资源
 
