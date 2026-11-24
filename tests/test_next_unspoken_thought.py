@@ -493,3 +493,86 @@ async def test_prepare_context_holds_compaction_on_plan_budget_error_and_uses_co
                 assert prepared.messages
                 assert len(requests) == 1
                 assert store.recap(SCENE) == "## 近期对话\n- 读过一个长网页。"
+
+
+@pytest.mark.asyncio
+async def test_hand_over_folds_all_batches_and_unread_tool_blocks_compaction_past_it(tmp_path):
+    # 1. Multi-batch hand_over folds every entry through the final seq before committing once.
+    config, persona = _chat_config(tmp_path / "handover", trigger=8000, window=9500, max_output=256)
+    requests: list = []
+    replies = [
+        (200, "application/json", json.dumps({
+            "choices": [{"message": {"role": "assistant", "content": "第一批交接摘要", "tool_calls": None},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 800, "completion_tokens": 20},
+        }, ensure_ascii=False).encode()),
+        (200, "application/json", json.dumps({
+            "choices": [{"message": {"role": "assistant", "content": "完整角色交接摘要", "tool_calls": None},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 900, "completion_tokens": 25},
+        }, ensure_ascii=False).encode()),
+    ]
+    server = await peer_server(replies, requests)
+    async with server:
+        config.models.providers["synthetic"].base_url = (
+            f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1"
+        )
+        with Store(config.database, now=lambda: START) as store:
+            store.append(SCENE, {"role": "user", "content": "第一段历史讨论内容 " * 550})
+            store.append(SCENE, {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "s1", "type": "function", "function": {"name": "say", "arguments": '{"content":"旧角色第一句"}'}},
+            ]})
+            store.append(SCENE, {"role": "tool", "tool_call_id": "s1", "content": '{"status":"simulated"}'})
+            store.append(SCENE, {"role": "user", "content": "第二段历史讨论内容 " * 550})
+            store.append(SCENE, {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "s2", "type": "function", "function": {"name": "say", "arguments": '{"content":"旧角色最后承诺"}'}},
+            ]})
+            store.append(SCENE, {"role": "tool", "tool_call_id": "s2", "content": '{"status":"simulated"}'})
+            last_seq = store.active_history(SCENE)[1][-1][0]
+            async with ChatModel(config.model_settings("mind")) as mind:
+                chat = Chat(config, persona, store, mind, now=lambda: START)
+                assert await chat.hand_over("旧角色", "新角色") == "done"
+                recap, remaining = store.active_history(SCENE)
+                assert len(requests) == 2
+                assert remaining == []
+                assert recap == "完整角色交接摘要"
+                through = store.db.execute(
+                    "SELECT compact_through FROM mind_sessions WHERE scene=?", (SCENE,)
+                ).fetchone()[0]
+                assert through == last_seq == 6
+
+    # 2. Unread tool result is never compacted away even if a follow-up user message triggers prepare_context.
+    config2, persona2 = _chat_config(tmp_path / "protect_compact", trigger=6500, window=24000, max_output=256)
+    config2.compaction.keep_recent_tokens = 50
+    unread_marker = "本轮刚读取尚未交给模型的网页核心正文" * 180
+    with Store(config2.database, now=lambda: START) as store:
+        store.append(SCENE, {"role": "user", "content": "先聊几句旧话 " * 300})
+        store.append(SCENE, {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "s0", "type": "function", "function": {"name": "say", "arguments": '{"content":"好的"}'}},
+        ]})
+        store.append(SCENE, {"role": "tool", "tool_call_id": "s0", "content": '{"status":"simulated"}'})
+        store.append(SCENE, {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "t_unread", "type": "function", "function": {"name": "web_read", "arguments": "{}"}},
+        ]})
+        store.append(SCENE, {"role": "tool", "tool_call_id": "t_unread", "content": unread_marker})
+        tool_seq = store.active_history(SCENE)[1][-1][0]
+        store.append(SCENE, {"role": "user", "content": "顺便再问一句"})
+        recap_requests: list = []
+        recap_ok = (200, "application/json", json.dumps({
+            "choices": [{"message": {"role": "assistant", "content": "## 早期摘要", "tool_calls": None},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 500, "completion_tokens": 20},
+        }, ensure_ascii=False).encode())
+        server2 = await peer_server([recap_ok], recap_requests)
+        async with server2:
+            config2.models.providers["synthetic"].base_url = (
+                f"http://127.0.0.1:{server2.sockets[0].getsockname()[1]}/v1"
+            )
+            async with ChatModel(config2.model_settings("mind")) as mind:
+                chat = Chat(config2, persona2, store, mind, now=lambda: START)
+                chat._unseen_tool_seq = tool_seq
+                turn_id = store.start_turn(SCENE)
+                prepared = await chat.prepare_context(turn_id, observed_at=START)
+                tool_msgs = [m for m in prepared.messages if m["role"] == "tool" and m["tool_call_id"] == "t_unread"]
+                assert len(tool_msgs) == 1
+                assert unread_marker in tool_msgs[0]["content"]

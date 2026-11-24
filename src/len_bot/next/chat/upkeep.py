@@ -146,13 +146,28 @@ class MemoryDraft:
             return encode({"path": item.path, "content": baseline})
         if isinstance(item, BrowseMemory) and item.scope == "scene" and self.files:
             return await self.browse(item)
-        if isinstance(item, SearchMemory) and self.files:
+        if isinstance(item, SearchMemory):
             current = json.loads(await self.memory.execute(self.scene, arguments))["hits"]
             hits = [{"scope": "scene", "path": path, "preview": excerpt(content, item.query, 500),
                      "total_chars": len(content), "sections": [], "score": None}
                     for path, content in self.files.items() if content is not None and
                     (item.query.casefold() in (path + " " + content).casefold() or evidence(content, item.query))]
-            hits.extend(hit for hit in current if hit["scope"] != "scene" or hit["path"] not in self.files)
+            for hit in current:
+                if hit["scope"] != "scene":
+                    hits.append(hit)
+                elif hit["path"] not in self.files:
+                    baseline = await self._record_baseline(hit["path"])
+                    if baseline is None:
+                        continue
+                    if len(baseline) == hit["total_chars"] and hit["preview"] in baseline:
+                        hits.append(hit)
+                    elif item.query.casefold() in (hit["path"] + " " + baseline).casefold() or evidence(baseline, item.query):
+                        hits.append({
+                            **hit,
+                            "preview": excerpt(baseline, item.query, 500),
+                            "total_chars": len(baseline),
+                            "sections": [],
+                        })
             return encode({"hits": hits[:item.limit]})
         return await self.memory.execute(self.scene, arguments)
 

@@ -717,3 +717,36 @@ async def test_memory_draft_aborts_commit_when_target_changed_externally(tmp_pat
         else:
             with pytest.raises(FileNotFoundError):
                 await memory.backend.read(SCENE, target)
+
+
+@pytest.mark.asyncio
+async def test_memory_draft_search_records_baseline_and_blocks_stale_write(tmp_path, monkeypatch):
+    target = 'people/70002.md'
+    write_call = ('memory', {'action': 'write', 'path': target, 'content': '基于旧搜索预览的草稿。', 'reason': '整理'})
+    replies = [
+        turns._calls(('memory', {'action': 'search', 'query': '草莓蛋糕'})),
+        turns._calls(write_call),
+        _text({'expressions': [], 'terms': []}),
+    ]
+    async with _upkeep(tmp_path, replies) as (upkeep, store, memory, forks, bodies):
+        await memory.write(SCENE, target, '群友喜欢草莓蛋糕。', '初始记录')
+        _group_messages(store)
+
+        complete = upkeep.mind.complete
+        tampered = False
+
+        async def tamper_after_search(messages, *args, **kwargs):
+            nonlocal tampered
+            if not tampered and messages[-1]['role'] == 'tool':
+                tampered = True
+                await memory.write(SCENE, target, '人工刚补充：群友对花生过敏且喜欢草莓蛋糕。', '面板修改')
+            return await complete(messages, *args, **kwargs)
+
+        monkeypatch.setattr(upkeep.mind, 'complete', tamper_after_search)
+        upkeep.request(SCENE, 'memory')
+        assert await upkeep._step(SCENE)
+
+        job = memory.jobs.latest(SCENE)
+        assert job['status'] == 'failed'
+        assert '在整理期间已被修改' in (job['error'] or '')
+        assert (await memory.backend.read(SCENE, target)).content == '人工刚补充：群友对花生过敏且喜欢草莓蛋糕。'

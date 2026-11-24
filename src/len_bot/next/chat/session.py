@@ -346,6 +346,7 @@ class Chat:
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
                     allow_oversized_source=self.config.recap_plugin is None,
+                    protect_from_seq=self._unseen_tool_seq,
                 )
                 recap = await self.compact(turn_id, plan, chat=projection)
         except BaseException as error:
@@ -379,15 +380,28 @@ class Chat:
                 if entries:
                     state = turn_state(self.config, self.store, now=self.now())
                     projection = await self.context.project(recap, entries, state)
-                    plan = plan_compaction(
-                        self.context.project_entries(entries), system=projection[0], state=projection[-1],
-                        tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
-                        trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
-                        summary_output_tokens=self.config.recap_output_tokens,
-                        reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=recap,
-                        summary_template=template, window_tokens=binding.context_window_tokens,
-                        source_entries=self.context.conversation_entries(entries), include_latest=True,
-                    )
+                    pending_entries = self.context.project_entries(entries)
+                    pending_source = self.context.conversation_entries(entries)
+                    current_recap = recap
+                    final_through = entries[-1][0]
+                    # A handover follows its own template for the next role; fold every batch through the
+                    # last active entry before committing once so no previous-role lines remain raw.
+                    while pending_entries:
+                        plan = plan_compaction(
+                            pending_entries, system=projection[0], state=projection[-1],
+                            tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
+                            trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
+                            summary_output_tokens=self.config.recap_output_tokens,
+                            reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=current_recap,
+                            summary_template=template, window_tokens=binding.context_window_tokens,
+                            source_entries=pending_source, include_latest=True,
+                        )
+                        current_recap = (await self.request(
+                            turn_id, "recap", plan.request_messages, [], recap_target=plan
+                        )).text
+                        pending_entries = [entry for entry in pending_entries if entry[0] > plan.through]
+                        pending_source = [entry for entry in pending_source if entry[0] > plan.through]
+                    await self.store.call(self.store.commit_recap, scene, final_through, current_recap)
                 else:
                     # Only an earlier recap is active; rewrite it in place.
                     through = self.store.db.execute("SELECT compact_through FROM mind_sessions WHERE scene=?",
@@ -396,8 +410,7 @@ class Chat:
                     plan = CompactionPlan(through, budget, [
                         {"role": "system", "content": Template(template).substitute(summary_budget_tokens=budget)},
                         {"role": "user", "content": recap_source(recap, [])}])
-                # A handover follows its own template for the next role; the scene's recap plugin does not write it.
-                await self.compact(turn_id, plan, strategy=False)
+                    await self.compact(turn_id, plan, strategy=False)
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -478,6 +491,7 @@ class Chat:
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
                     allow_oversized_source=self.config.recap_plugin is None,
+                    protect_from_seq=self._unseen_tool_seq,
                 )
                 await self.compact(turn_id, plan, chat=messages)
             except (ModelOutputLimitError, ContextBudgetError) as error:

@@ -152,48 +152,54 @@ async def load_look_image(store: Store, scene: str, arguments: LookArguments, se
         deadline = asyncio.timeout(settings.timeout_seconds)
         try:
             async with deadline:
-                if original is not None:
-                    body = original[1]
+                async def _prepare_from(raw_bytes: bytes, source_label: str) -> tuple[ImageAsset, str]:
                     fetched_at = store.now()
-                    pixels_source = 'saved_platform_original'
+                    jpeg, animated, width, height, frames = await _prepare_pixels(
+                        raw_bytes, settings, max_frames=LOOK_MAX_FRAMES
+                    )
+                    return ImageAsset(
+                        jpeg=jpeg, width=width, height=height, animated=animated,
+                        fetched_at=fetched_at, frames=frames,
+                    ), source_label
+
+                async def _via_platform() -> tuple[ImageAsset, str]:
+                    raw_bytes = await fetch_media(picture_data, settings.max_bytes)
+                    return await _prepare_from(raw_bytes, 'platform_download')
+
+                async def _via_http() -> tuple[ImageAsset, str]:
+                    _, _, raw_bytes = await fetch_public(
+                        image_url(picture_data), settings.timeout_seconds,
+                        lambda _type, _prefix: settings.max_bytes,
+                        fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
+                    )
+                    return await _prepare_from(raw_bytes, 'http_response')
+
+                if original is not None:
+                    asset, pixels_source = await _prepare_from(original[1], 'saved_platform_original')
                 elif recording is not None:
-                    body, fetched_at = recording.image(arguments.message, arguments.image)
+                    raw_bytes, fetched_at = recording.image(arguments.message, arguments.image)
+                    jpeg, animated, width, height, frames = await _prepare_pixels(
+                        raw_bytes, settings, max_frames=LOOK_MAX_FRAMES
+                    )
+                    asset = ImageAsset(jpeg=jpeg, width=width, height=height, animated=animated,
+                                       fetched_at=fetched_at, frames=frames)
                     pixels_source = 'frozen_original'
                 elif fetch_media is not None and _needs_platform_fetch(
                     picture_data, message_time=message.time, now=store.now()
                 ):
                     try:
-                        body = await fetch_media(picture_data, settings.max_bytes)
-                        pixels_source = 'platform_download'
+                        asset, pixels_source = await _via_platform()
                     except Exception:
                         if deadline.expired() or not _has_url(picture_data):
                             raise
-                        _, _, body = await fetch_public(
-                            image_url(picture_data), settings.timeout_seconds,
-                            lambda _type, _prefix: settings.max_bytes,
-                            fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
-                        )
-                        pixels_source = 'http_response'
-                    fetched_at = store.now()
+                        asset, pixels_source = await _via_http()
                 else:
                     try:
-                        _, _, body = await fetch_public(
-                            image_url(picture_data), settings.timeout_seconds,
-                            lambda _type, _prefix: settings.max_bytes,
-                            fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
-                        )
-                        pixels_source = 'http_response'
+                        asset, pixels_source = await _via_http()
                     except Exception:
                         if deadline.expired() or fetch_media is None or not _has_platform_id(picture_data):
                             raise
-                        body = await fetch_media(picture_data, settings.max_bytes)
-                        pixels_source = 'platform_download'
-                    fetched_at = store.now()
-                jpeg, animated, width, height, frames = await _prepare_pixels(
-                    body, settings, max_frames=LOOK_MAX_FRAMES
-                )
-                asset = ImageAsset(jpeg=jpeg, width=width, height=height, animated=animated,
-                                   fetched_at=fetched_at, frames=frames)
+                        asset, pixels_source = await _via_platform()
                 store.save_image(scene, arguments.message, arguments.image, asset)
         except TimeoutError as error:
             if deadline.expired():

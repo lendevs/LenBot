@@ -663,3 +663,40 @@ async def test_parse_forward_content_and_controlled_group_file_download(monkeypa
     assert seen == [('https://files.example/doc.bin', 512)]
     with pytest.raises(ValueError, match='credentials'):
         await download_group_file(call_bad_url, '80001', '/a1', 102, 512)
+
+
+@pytest.mark.asyncio
+async def test_look_falls_back_to_platform_when_fresh_url_returns_unparseable_html(tmp_path, monkeypatch):
+    from io import BytesIO
+    from PIL import Image
+    from len_bot.next.configuration.chat import ImageSettings
+    from len_bot.next.media import images as next_images
+    from len_bot.next.media.images import LookArguments, load_look_image
+    from len_bot.next.platform.onebot_messages import parse_message
+
+    buf = BytesIO()
+    Image.new('RGB', (16, 16), 'green').save(buf, format='PNG')
+    valid_png = buf.getvalue()
+
+    with Store(tmp_path / 'html_fallback.sqlite3', now=lambda: 1_700_000_100.0) as store:
+        raw = {
+            'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
+            'user_id': 70001, 'message_id': 'html-url-1', 'time': 1_700_000_050.0,
+            'sender': {'nickname': '群友'},
+            'message': [{'type': 'image', 'data': {'file': 'fallback.png', 'url': 'https://cdn.example/login.html'}}],
+        }
+        store.enqueue(parse_message(raw, own_message_ids=set()), raw, received_at=1_700_000_050.0)
+
+        async def fake_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+            return url, 'text/html', b'<html><body>Expired link</body></html>'
+
+        async def fetch_media(_data: dict, _max_bytes: int) -> bytes:
+            return valid_png
+
+        monkeypatch.setattr(next_images, 'fetch_public', fake_fetch_public)
+        asset, reused, source = await load_look_image(
+            store, SCENE, LookArguments(message='html-url-1'), ImageSettings(),
+            fake_ip_networks=(), fetch_media=fetch_media,
+        )
+        assert not reused and source == 'platform_download'
+        assert asset.width == 16 and asset.height == 16

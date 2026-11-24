@@ -82,12 +82,17 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
                     source_entries: list[Entry] | None = None,
                     token_scale: float = 1.0, include_latest: bool = False,
                     reasoning_reserve_tokens: int = 0,
-                    allow_oversized_source: bool = False) -> CompactionPlan:
+                    allow_oversized_source: bool = False,
+                    protect_from_seq: int | None = None) -> CompactionPlan:
     """``include_latest`` may fold every entry into the recap, as a role handover does."""
     summary_text_tokens = summary_output_tokens - reasoning_reserve_tokens
     if summary_text_tokens <= 0:
         raise ContextBudgetError("回想输出额度需要大于思考预留，请调大回想最大长度或调小思考额度")
-    boundaries = [cut for cut in complete_boundaries(entries) if cut < len(entries) or include_latest]
+    boundaries = [
+        cut for cut in complete_boundaries(entries)
+        if (cut < len(entries) or include_latest)
+        and (protect_from_seq is None or entries[cut - 1][0] < protect_from_seq)
+    ]
     if not boundaries:
         required = estimate_request([system] + project_history(recap, entries) + [state], tools, 0)
         raise ContextBudgetError(

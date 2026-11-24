@@ -265,8 +265,8 @@ def normalized_usage(api: str, usage: dict | None) -> dict | None:
     else:
         prompt, output = count('promptTokenCount'), count('candidatesTokenCount')
         thoughts, cached = count('thoughtsTokenCount'), count('cachedContentTokenCount')
-        if output is not None:
-            output += thoughts or 0
+        if output is not None or thoughts is not None:
+            output = (output or 0) + (thoughts or 0)
     return {**usage, 'prompt_tokens': prompt, 'completion_tokens': output, 'prompt_tokens_details': {'cached_tokens': cached}}
 
 

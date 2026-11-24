@@ -711,3 +711,32 @@ async def test_anthropic_partial_usage_on_stream_timeout_is_charged_to_budget(tm
                     async with proxy.open('synthetic-task', req_bytes):
                         pytest.fail('Exceeded token budget reached upstream')
                 assert upstream_hits == 2
+
+
+def test_gemini_partial_usage_retains_thoughts_tokens_without_candidates():
+    from len_bot.next.work.native_stream import NativeStream
+
+    settings = ModelSettings(
+        api='gemini',
+        base_url='http://127.0.0.1:9/v1beta',
+        api_key='synthetic-key',
+        model='gemini-fixture',
+        max_output_tokens=1024,
+        temperature=None,
+        timeout_seconds=10.0,
+    )
+    stream = NativeStream(settings, 65536)
+    chunk = (
+        b'data: '
+        + json.dumps({
+            'candidates': [{'content': {'role': 'model', 'parts': []}}],
+            'usageMetadata': {'promptTokenCount': 100, 'thoughtsTokenCount': 40},
+        }).encode()
+        + b'\n\n'
+    )
+    stream.feed(chunk)
+    raw_usage, token_usage = stream.partial_usage()
+    assert raw_usage == {'promptTokenCount': 100, 'thoughtsTokenCount': 40}
+    assert token_usage is not None
+    assert token_usage.prompt_tokens == 100
+    assert token_usage.completion_tokens == 40
