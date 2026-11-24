@@ -104,6 +104,25 @@ export function useAttention() {
     health('mcp', state?.mcp ?? [])
     if (!day) return items
 
+    const toAnswer = t('overview.todo.toAnswer')
+    perScene(
+      items,
+      'task-wait',
+      (day.waiting_tasks ?? []).map((item) => ({
+        key: `task-wait:${item.scene}:${item.id}`,
+        revision: `${item.id}:${item.question_title ?? ''}`,
+        text: t('overview.todo.taskWaiting', {
+          group: groupLabel(item.scene),
+          id: item.id,
+          goal: item.question_title || item.goal,
+        }),
+        tone: 'warning',
+        to: groupsTarget(item.scene, 'tasks', { id: String(item.id) }),
+        action: toAnswer,
+      })),
+      (n) => t('overview.todo.taskWaitingMany', { n }),
+    )
+
     const view = t('overview.todo.view')
     perScene(
       items,

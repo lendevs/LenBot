@@ -297,6 +297,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                     "hourly": store.hourly_overview(scenes, hour - 23 * 3600, 24, usage=usage),
                     "activity": store.recent_activity(scenes, 12),
                     "failed_tasks": store.failed_tasks(scenes, start.timestamp()),
+                    "waiting_tasks": store.waiting_tasks(scenes),
+                    "active_tasks": store.active_tasks_count(scenes),
                     "model_health": store.model_health(scenes, now.timestamp() - 7 * 86400),
                     "memory_stuck": stuck,
                     "speech_held": {scene: until for scene, chat in runtime.chats.items()

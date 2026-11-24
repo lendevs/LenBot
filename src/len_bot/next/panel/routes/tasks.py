@@ -18,6 +18,7 @@ from len_bot.web.errors import validation_detail
 
 from .. import responses
 from ...configuration.types import STRICT
+from ...models.tokens import token_summary
 from ..task_models import TaskDetail, TaskPage
 from ...runtime.network import NetworkRuntime
 from ...work.files import file_info
@@ -116,6 +117,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         def read_detail():
             item = records.get(scene, id)
             events = records.event_previews(scene, id, after=after, limit=limit)
+            token_records = records.call_tokens(scene, id)
             return {"task": {**asdict(item), "workspace_discard_requested": records.workspace_discarded(scene, id),
                              "active_timeout_seconds": None if runtime.tasks is None else runtime.tasks.active_timeout(item)},
                     "events": events,
@@ -124,7 +126,12 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                                 "output_count": len(records.browser_file_sources(scene, id))},
                     "next_after": events[-1]["id"] if events else after,
                     "files": [file_info(file, records) for file in records.list_files(scene, id)],
-                    "budget": None,
+                    "budget": {
+                        "calls": len(token_records),
+                        "max_calls": None if runtime.config.worker is None else runtime.config.worker.max_calls,
+                        "tokens": token_summary(token_records),
+                        "max_tokens": None if runtime.config.worker is None else runtime.config.worker.max_tokens,
+                    },
                     "watchdog": records.watchdog_events(scene, id)}
 
         try:
