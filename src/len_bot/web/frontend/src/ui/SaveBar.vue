@@ -20,15 +20,17 @@ const props = withDefaults(
     saveLabel?: string
     /** Compact action shown beside the error message, such as jumping to the invalid field. */
     actionLabel?: string
+    /** Keep the bar visible for an explicit error even before the form becomes dirty. */
+    visible?: boolean
   }>(),
-  { error: null, rawError: null, saveLabel: undefined, actionLabel: undefined },
+  { error: null, rawError: null, saveLabel: undefined, actionLabel: undefined, visible: false },
 )
 const emit = defineEmits<{ save: []; discard: []; action: [] }>()
 
 const { t } = useI18n()
 const mac = /Mac|iPhone|iPad/.test(navigator.platform)
 const bar = ref<HTMLElement>()
-const canSave = computed(() => props.dirty && !props.saving && !props.invalid)
+const canSave = computed(() => (props.dirty || Boolean(props.visible)) && !props.saving && !props.invalid)
 const hasRaw = computed(() =>
   Boolean(props.error && props.rawError && props.rawError.trim() && props.rawError !== props.error),
 )
@@ -58,7 +60,7 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
 <template>
   <Transition name="ui-rise">
     <div
-      v-if="dirty || saving || Boolean(error)"
+      v-if="dirty || saving || Boolean(visible && error)"
       ref="bar"
       class="sticky bottom-3 z-(--z-top) mx-auto mt-6 flex w-full max-w-3xl flex-col rounded-lg border border-line-strong bg-surface-raised pt-2.5 pr-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] pl-3.5 shadow-float sm:bottom-4"
       role="region"

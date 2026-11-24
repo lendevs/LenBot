@@ -669,6 +669,7 @@ const saveBarLabel = computed(() =>
     <SaveBar
       :dirty="dirty"
       :saving="working"
+      :visible="Boolean(barError)"
       :error="barError"
       :raw-error="saveError ? rawSaveError : null"
       :invalid="invalid"
