@@ -192,6 +192,27 @@ def test_chat_switch_arguments_name_one_target_state():
         arguments('chat', section='scene', enabled=True)
 
 
+def test_host_manage_infers_section_from_plugin_or_role():
+    assert arguments('describe', plugin='bilibili').section == 'plugin'
+    assert arguments('update', plugin='bilibili', changes={'enabled': True}).section == 'plugin'
+    assert arguments('describe', role='mind').section == 'models'
+    assert arguments('update', role='mind', changes={'temperature': 0.5}).section == 'models'
+
+    for action, extra in (
+        ('describe', {}),
+        ('describe', {'plugin': 'bilibili', 'role': 'mind'}),
+        ('update', {'plugin': 'bilibili', 'role': 'mind', 'changes': {}}),
+        ('status', {'plugin': 'bilibili'}),
+        ('status', {'role': 'mind'}),
+        ('chat', {'enabled': True, 'plugin': 'bilibili'}),
+        ('chat', {'enabled': True, 'role': 'mind'}),
+        ('restart', {'plugin': 'bilibili'}),
+        ('restart', {'role': 'mind'}),
+    ):
+        with pytest.raises(ValueError):
+            arguments(action, **extra)
+
+
 @pytest.mark.asyncio
 async def test_status_reports_each_scene_chat_switch(tmp_path):
     instance(tmp_path)

@@ -235,8 +235,10 @@ def parse_chat_completion(body: object) -> ModelReply:
             raise ValueError("usage must be an object or null")
         token_usage = parse_token_usage(usage)
         choices = body["choices"]
-        if not isinstance(choices, list) or not choices:
+        if not isinstance(choices, list):
             raise ValueError("expected a nonempty choices array")
+        if not choices:
+            raise ValueError("expected a nonempty choices array（服务商返回空候选列表 choices=[]，常见于上游内容过滤或网关异常）")
         choice = choices[0]
         if not isinstance(choice, dict):
             raise ValueError("expected a choice object")
@@ -244,6 +246,8 @@ def parse_chat_completion(body: object) -> ModelReply:
         if finish_reason == "length":
             raise ModelOutputLimitError("模型输出额度耗尽（finish_reason=length）", response=body,
                                         usage=usage, token_usage=token_usage)
+        if finish_reason == "content_filter":
+            raise ValueError("content_filter: 服务商因内容安全过滤中止输出（finish_reason='content_filter'）")
         if finish_reason not in {"stop", "tool_calls"}:
             raise ValueError(f"incomplete or unsupported finish_reason: {finish_reason!r}")
         message = choice["message"]

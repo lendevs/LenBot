@@ -24,6 +24,7 @@ from len_bot.next.models.client import (
     parse_chat_completion,
 )
 from len_bot.next.models.projection import project_old_results
+from len_bot.next.models.protocols import build_request
 from len_bot.next.prompt_files import read_prompt
 from len_bot.next.storage.codec import encode
 
@@ -674,3 +675,76 @@ def test_recap_source_extracts_ticket_anchors_and_preserves_plain_sessions():
             'question_title': '请选择导出范围',
         },
     ]
+
+
+def test_parse_chat_completion_explains_empty_choices_and_content_filter():
+    empty_choices = recorded_response()
+    empty_choices['choices'] = []
+    with pytest.raises(ModelProtocolError) as empty_failure:
+        parse_chat_completion(empty_choices)
+    assert 'expected a nonempty choices array' in str(empty_failure.value)
+    assert '服务商返回空候选列表 choices=[]' in str(empty_failure.value)
+    assert 'response fragment:' in str(empty_failure.value)
+
+    non_list = recorded_response()
+    non_list['choices'] = None
+    with pytest.raises(ModelProtocolError) as non_list_failure:
+        parse_chat_completion(non_list)
+    assert 'expected a nonempty choices array' in str(non_list_failure.value)
+    assert 'choices=[]' not in str(non_list_failure.value)
+
+    filtered = recorded_response()
+    filtered['choices'][0]['finish_reason'] = 'content_filter'
+    with pytest.raises(ModelProtocolError) as filter_failure:
+        parse_chat_completion(filtered)
+    assert 'content_filter' in str(filter_failure.value)
+    assert '内容安全过滤' in str(filter_failure.value)
+    assert "finish_reason='content_filter'" in str(filter_failure.value)
+    assert 'response fragment:' in str(filter_failure.value)
+
+
+def test_anthropic_breakpoints_skip_trailing_thinking_blank_text_and_null_cache_control():
+    settings = ModelSettings(api='anthropic', base_url='http://127.0.0.1/v1', api_key='fixture', model='fixture')
+    binding = {'api': 'anthropic', 'model': 'fixture', 'base_url': 'http://127.0.0.1/v1'}
+
+    # Trailing thinking block falls back to the preceding non-empty block.
+    assistant_with_thinking = {
+        'role': 'assistant',
+        'content': '前文回答',
+        '_continuation': {
+            'binding': binding,
+            'data': [
+                {'type': 'text', 'text': '前文回答'},
+                {'type': 'thinking', 'thinking': '内部推理', 'signature': 'sig-1'},
+            ],
+        },
+    }
+    _, thinking_payload = build_request(settings, [assistant_with_thinking, {'role': 'user', 'content': '继续'}], [])
+    assert thinking_payload['messages'][0]['content'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in thinking_payload['messages'][0]['content'][1]
+
+    # Trailing whitespace text falls back to the preceding non-empty text, and cache_control=None is ignored.
+    messages = [
+        {'role': 'system', 'content': [{'type': 'text', 'text': '系统提示'}, {'type': 'text', 'text': '   '}]},
+        {'role': 'user', 'content': [
+            {'type': 'text', 'text': '首段', 'cache_control': None},
+            {'type': 'text', 'text': '有效前缀', 'cache_control': None},
+            {'type': 'text', 'text': ' \n\t '},
+        ]},
+        {'role': 'assistant', 'content': '收到'},
+    ]
+    tools = [{'type': 'function', 'function': {'name': 'lookup', 'parameters': {'type': 'object'}}, 'cache_control': None}]
+    _, payload = build_request(settings, messages, tools)
+    assert payload['system'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in payload['system'][1]
+    assert 'cache_control' not in payload['messages'][0]['content'][0]
+    assert payload['messages'][0]['content'][1]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in payload['messages'][0]['content'][2]
+    assert payload['tools'][0]['cache_control'] == {'type': 'ephemeral'}
+
+    # All-blank system does not receive cache_control.
+    _, blank_system_payload = build_request(settings, [
+        {'role': 'system', 'content': [{'type': 'text', 'text': '   \n '}]},
+        {'role': 'user', 'content': '你好'},
+    ], [])
+    assert 'cache_control' not in blank_system_payload['system'][0]

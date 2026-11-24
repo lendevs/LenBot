@@ -32,7 +32,12 @@ class HostManageArguments(BaseModel):
     def action_fields(self):
         if self.action in {'describe', 'update'}:
             if self.section is None:
-                raise ValueError('describe/update require section')
+                if self.plugin is not None and self.role is None:
+                    self.section = 'plugin'
+                elif self.role is not None and self.plugin is None:
+                    self.section = 'models'
+                else:
+                    raise ValueError('describe/update require section')
             if self.section == 'plugin' and self.plugin is None:
                 raise ValueError('plugin section requires plugin')
             if self.section == 'models' and self.role is None:
