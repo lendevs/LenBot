@@ -6,9 +6,8 @@ import asyncio
 import base64
 import binascii
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePath
 import re
-from urllib.parse import unquote, urlsplit
 import wave
 
 from ..models.asr import AudioSettings
@@ -40,9 +39,26 @@ def _http_url(value: object) -> str | None:
     return None
 
 
+_WINDOWS_DRIVE_FILE_URI = re.compile(r"^file://([A-Za-z]:[\\/])")
+
+
+def file_uri_to_path[P: PurePath](value: str, *, path_cls: type[P] = Path) -> P | None:
+    if not value.startswith("file://"):
+        return None
+    normalized = _WINDOWS_DRIVE_FILE_URI.sub(r"file:///\1", value)
+    if not normalized.startswith(("file:///", "file://localhost/")):
+        return None
+    try:
+        if hasattr(path_cls, "from_uri"):
+            return path_cls.from_uri(normalized)
+        return Path.from_uri.__func__(path_cls, normalized)
+    except ValueError:
+        return None
+
+
 def _local_path(value: str) -> Path | None:
     if value.startswith("file://"):
-        return Path(unquote(urlsplit(value).path))
+        return file_uri_to_path(value)
     if value.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", value):
         return Path(value)
     return None
@@ -124,8 +140,11 @@ async def fetch_record(call: PlatformCall, source: dict, settings: AudioSettings
             if isinstance(data, dict) and not (isinstance(data.get("base64"), str) and data["base64"]):
                 returned_file = data.get("file")
                 if isinstance(returned_file, str) and returned_file.strip():
-                    returned_local = _local_path(returned_file.strip()) or Path(returned_file.strip())
-                    if returned_local.is_file():
+                    candidate = returned_file.strip()
+                    returned_local = _local_path(candidate)
+                    if returned_local is None and not candidate.startswith(("file://", "http://", "https://")):
+                        returned_local = Path(candidate)
+                    if returned_local is not None and returned_local.is_file():
                         wav = await asyncio.to_thread(_read_local_capped, returned_local, settings.max_bytes)
                         return _parse_wav(wav, settings)
                 remote_url = _http_url(data.get("url")) or _http_url(returned_file)

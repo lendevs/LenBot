@@ -700,3 +700,129 @@ async def test_look_falls_back_to_platform_when_fresh_url_returns_unparseable_ht
         )
         assert not reused and source == 'platform_download'
         assert asset.width == 16 and asset.height == 16
+
+
+def test_file_uri_to_path_parses_posix_windows_and_rejects_malformed_uris():
+    from pathlib import PurePosixPath, PureWindowsPath
+    from len_bot.next.platform.onebot_audio import _local_path, file_uri_to_path
+
+    # POSIX file:// URIs (including percent-encoded spaces and localhost authority).
+    assert file_uri_to_path('file:///tmp/voice%20clip.wav', path_cls=PurePosixPath) == PurePosixPath('/tmp/voice clip.wav')
+    assert file_uri_to_path('file://localhost/tmp/a%20b.png', path_cls=PurePosixPath) == PurePosixPath('/tmp/a b.png')
+
+    # Windows standard three-slash and NapCat/LLOneBot two-slash drive URIs.
+    assert (
+        file_uri_to_path('file:///C:/Users/foo/a%20b.wav', path_cls=PureWindowsPath)
+        == PureWindowsPath('C:/Users/foo/a b.wav')
+    )
+    assert (
+        file_uri_to_path('file://C:/Users/foo/a%20b.wav', path_cls=PureWindowsPath)
+        == PureWindowsPath('C:/Users/foo/a b.wav')
+    )
+    assert (
+        file_uri_to_path('file://C:\\Users\\foo\\a.wav', path_cls=PureWindowsPath)
+        == PureWindowsPath('C:/Users/foo/a.wav')
+    )
+    assert (
+        file_uri_to_path('file://localhost/C:/Users/foo/a.wav', path_cls=PureWindowsPath)
+        == PureWindowsPath('C:/Users/foo/a.wav')
+    )
+
+    # Foreign-platform absolute URI returns None rather than raising ValueError.
+    assert file_uri_to_path('file:///C:/Users/foo/a.wav', path_cls=PurePosixPath) is None
+    assert file_uri_to_path('file://C:/Users/foo/a.wav', path_cls=PurePosixPath) is None
+    assert file_uri_to_path('file:///tmp/a.wav', path_cls=PureWindowsPath) is None
+
+    # Malformed or relative file:// URIs return None on every platform.
+    for invalid in ('file://relative', 'file://relative/path.png', 'file://', 'file:///', 'https://cdn.example/a.png'):
+        assert file_uri_to_path(invalid, path_cls=PurePosixPath) is None
+        assert file_uri_to_path(invalid, path_cls=PureWindowsPath) is None
+        assert file_uri_to_path(invalid) is None
+    assert _local_path('file://relative/voice.wav') is None
+
+
+@pytest.mark.asyncio
+async def test_onebot_get_image_and_audio_support_file_uri_and_malformed_fallback(tmp_path, monkeypatch):
+    from io import BytesIO
+    import wave
+    from len_bot.next.models.asr import AudioSettings
+    from len_bot.next.platform import onebot_audio
+    from len_bot.next.platform.onebot_audio import fetch_record
+
+    img_file = tmp_path / 'cached image.png'
+    img_file.write_bytes(b'file-uri-image-bytes')
+
+    wav_buf = BytesIO()
+    with wave.open(wav_buf, 'wb') as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(8000)
+        stream.writeframes(b'\x00\x00' * 800)
+    wav_bytes = wav_buf.getvalue()
+    wav_file = tmp_path / 'voice clip.wav'
+    wav_file.write_bytes(wav_bytes)
+
+    image_responses = {
+        'uri.png': {'status': 'ok', 'retcode': 0, 'data': {'file': img_file.as_uri()}},
+        'bad-uri.png': {'status': 'ok', 'retcode': 0, 'data': {
+            'file': 'file://relative/path.png', 'url': 'https://cdn.example/fallback-image.png',
+        }},
+        'empty-uri.png': {'status': 'ok', 'retcode': 0, 'data': {
+            'file': 'file:///', 'url': 'https://cdn.example/fallback-empty.png',
+        }},
+    }
+
+    async def peer(websocket):
+        async for frame in websocket:
+            request = json.loads(frame)
+            assert request['action'] == 'get_image'
+            payload = image_responses[request['params']['file']]
+            await websocket.send(json.dumps({**payload, 'echo': request['echo']}))
+
+    fetched_image_urls: list[str] = []
+
+    async def fake_image_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+        fetched_image_urls.append(url)
+        return url, 'image/png', b'fallback-http-image-bytes'
+
+    monkeypatch.setattr(onebot_module, 'fetch_public', fake_image_fetch_public)
+    async with serve(peer, '127.0.0.1', 0) as server:
+        settings = OneBotForward(mode='forward_ws', ws_url=f'ws://127.0.0.1:{server.sockets[0].getsockname()[1]}',
+                                 request_timeout_seconds=1)
+        async with OneBot(settings, bot_id='onebot:90001', on_event=lambda event: None,
+                          on_error=lambda error: None) as bot:
+            assert await bot.download({'file': 'uri.png'}, 256) == b'file-uri-image-bytes'
+            assert fetched_image_urls == []
+            assert await bot.download({'file': 'bad-uri.png'}, 256) == b'fallback-http-image-bytes'
+            assert await bot.download({'file': 'empty-uri.png'}, 256) == b'fallback-http-image-bytes'
+            assert fetched_image_urls == [
+                'https://cdn.example/fallback-image.png',
+                'https://cdn.example/fallback-empty.png',
+            ]
+
+    fetched_audio_urls: list[str] = []
+
+    async def fake_audio_fetch_public(url, timeout_seconds, byte_limit, *, fake_ip_networks, public_dns_url=None):
+        fetched_audio_urls.append(url)
+        return url, 'audio/wav', wav_bytes
+
+    monkeypatch.setattr(onebot_audio, 'fetch_public', fake_audio_fetch_public)
+    audio_settings = AudioSettings()
+
+    async def call_local_uri(action: str, params: dict) -> dict:
+        assert action == 'get_record'
+        return {'status': 'ok', 'retcode': 0, 'data': {'file': wav_file.as_uri()}}
+
+    local_wav, local_duration = await fetch_record(call_local_uri, {'file': 'voice.amr'}, audio_settings)
+    assert local_wav == wav_bytes and local_duration == pytest.approx(0.1)
+    assert fetched_audio_urls == []
+
+    async def call_malformed_uri(action: str, params: dict) -> dict:
+        assert action == 'get_record'
+        return {'status': 'ok', 'retcode': 0, 'data': {
+            'file': 'file://relative/voice.wav', 'url': 'https://cdn.example/fallback-voice.wav',
+        }}
+
+    remote_wav, remote_duration = await fetch_record(call_malformed_uri, {'file': 'voice.amr'}, audio_settings)
+    assert remote_wav == wav_bytes and remote_duration == pytest.approx(0.1)
+    assert fetched_audio_urls == ['https://cdn.example/fallback-voice.wav']

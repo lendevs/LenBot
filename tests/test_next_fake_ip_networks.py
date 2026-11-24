@@ -1,6 +1,6 @@
 import asyncio
 import socket
-from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -100,8 +100,21 @@ async def test_bwrap_version_probe_is_async_and_docker_tmpfs_includes_nodev(tmp_
     from len_bot.next.work.sandbox import DockerSandbox, DockerSettings
 
     fake_bwrap = tmp_path / 'bwrap'
-    fake_bwrap.write_text('#!/bin/sh\necho "bubblewrap 0.9.0"\n', encoding='utf-8')
-    fake_bwrap.chmod(0o755)
+    if sys.platform != 'win32':
+        fake_bwrap.write_text('#!/bin/sh\necho "bubblewrap 0.9.0"\n', encoding='utf-8')
+        fake_bwrap.chmod(0o755)
+    else:
+        class _FakeProcess:
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b'bubblewrap 0.9.0\n', b''
+
+        async def _fake_exec(*_args, **_kwargs):
+            return _FakeProcess()
+
+        monkeypatch.setattr(asyncio, 'create_subprocess_exec', _fake_exec)
+
     bwrap = BwrapSandbox(BwrapSettings(
         bwrap_binary=fake_bwrap, task_runtime=tmp_path / 'rt',
         workspace_root=tmp_path / 'ws', runtime_root=tmp_path / 'run',
@@ -111,7 +124,7 @@ async def test_bwrap_version_probe_is_async_and_docker_tmpfs_includes_nodev(tmp_
 
     captured: list[tuple[str, ...]] = []
     docker = DockerSandbox(DockerSettings(
-        docker_binary=Path('/usr/bin/docker'), docker_host='unix:///var/run/docker.sock',
+        docker_binary=tmp_path / 'docker', docker_host='unix:///var/run/docker.sock',
         image='lenbot-worker:test', workspace_root=tmp_path / 'dws', runtime_root=tmp_path / 'drun',
         uid=1000, gid=1000, tmpfs_size='128m',
     ))
@@ -127,3 +140,38 @@ async def test_bwrap_version_probe_is_async_and_docker_tmpfs_includes_nodev(tmp_
     create_cmd = captured[0]
     tmpfs_index = create_cmd.index('--tmpfs')
     assert create_cmd[tmpfs_index + 1] == '/tmp:rw,noexec,nosuid,nodev,size=128m'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('version_output', 'expected'),
+    [
+        (b'bubblewrap 0.9.0\n', ['--size', str(64 * 1024 * 1024)]),
+        (b'bubblewrap 0.7.0\n', []),
+    ],
+)
+async def test_bwrap_version_probe_async_protocol_selects_tmpfs_size(tmp_path, monkeypatch, version_output, expected):
+    from len_bot.next.work.bwrap import BwrapSandbox, BwrapSettings
+
+    seen: list[tuple[str, ...]] = []
+
+    class _FakeProcess:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return version_output, b''
+
+    async def _fake_exec(*args, **_kwargs):
+        seen.append(args)
+        return _FakeProcess()
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', _fake_exec)
+    fake_bwrap = tmp_path / 'bwrap'
+    bwrap = BwrapSandbox(BwrapSettings(
+        bwrap_binary=fake_bwrap, task_runtime=tmp_path / 'rt',
+        workspace_root=tmp_path / 'ws', runtime_root=tmp_path / 'run',
+        memory_bytes=128 * 1024 * 1024, pids_limit=64, file_bytes=1024 * 1024, tmpfs_bytes=64 * 1024 * 1024,
+    ))
+    assert await bwrap._tmpfs_size() == expected
+    assert await bwrap._tmpfs_size() == expected
+    assert seen == [(str(fake_bwrap), '--version')]
