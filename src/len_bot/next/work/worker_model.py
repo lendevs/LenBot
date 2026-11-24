@@ -538,12 +538,17 @@ class WorkerModelProxy:
                             except BaseException:
                                 self._closed = True
                                 raise
-                            if tokens is not None or status not in REJECTED_HTTP_STATUSES:
+                            if tokens is not None or error is None:
                                 self._add_tokens(tokens)
 
                         async def body() -> AsyncIterator[bytes]:
                             nonlocal response_bytes
                             async for chunk in upstream.aiter_raw():
+                                if chunk:
+                                    now = asyncio.get_running_loop().time()
+                                    self._last_active_at = now
+                                    if deadline is not None:
+                                        deadline.reschedule(now + self.settings.timeout_seconds)
                                 response_bytes += len(chunk)
                                 if response_bytes > self.limits.max_response_bytes:
                                     raise WorkerModelError("worker model response exceeds max_response_bytes")
@@ -603,7 +608,7 @@ class WorkerModelProxy:
                 except BaseException as finish_error:
                     self._closed = True
                     error.add_note(f"model-call recording also failed: {finish_error}")
-                if tokens is not None or status not in REJECTED_HTTP_STATUSES:
+                if tokens is not None:
                     self._add_tokens(tokens)
             if error is not original_error:
                 raise error from original_error

@@ -337,6 +337,7 @@ class TaskExecution:
             except TimeoutError:
                 continue
             self._last_event_at = loop.time()
+            self._watchdog.on_activity()
             body = record.body
             if record.type == "message_update":
                 if self._live_text.update(body["assistantMessageEvent"]):
@@ -388,10 +389,8 @@ class TaskExecution:
         item = self.item
         self.records.add_watchdog_event(item.scene, item.id, decision)
         self.on_update(item.scene)
-        if decision.action == "steer":
+        if decision.action == "steer" and decision.steer_message:
             await self._session.pi.command("steer", message=decision.steer_message)
-        elif decision.action == "stop":
-            raise WatchdogStoppedError(f"任务看门狗中止（{decision.reason}）：{decision.detail}")
 
     def _progress(self, text: str) -> None:
         text = self.recorded(text).strip()
