@@ -59,6 +59,10 @@ const tokenNote = computed(() => {
     output: formatNumber(value.tokens.output),
   })
 })
+const activeTasksNote = computed(() => {
+  const n = day.value?.active_tasks ?? 0
+  return n > 0 ? t('overview.stats.tasks', { n: formatNumber(n) }) : undefined
+})
 const effects = computed(() =>
   Object.entries(day.value?.reply_effects ?? {})
     .filter(([, n]) => n)
@@ -117,7 +121,9 @@ const effects = computed(() =>
                 :value="item.value"
                 :trend="item.trend"
                 :tone="item.tone"
-                :caption="item.key === 'tokens' ? tokenNote : undefined"
+                :caption="
+                  item.key === 'tokens' ? tokenNote : item.key === 'schedules' ? activeTasksNote : undefined
+                "
                 :format-options="
                   item.key === 'tokens' ? { notation: 'compact', maximumFractionDigits: 1 } : undefined
                 "

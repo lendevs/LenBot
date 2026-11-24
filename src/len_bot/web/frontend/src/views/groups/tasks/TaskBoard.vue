@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useInfiniteQuery, useQuery } from '@tanstack/vue-query'
 import { useMediaQuery } from '@vueuse/core'
-import { ArrowLeft, Plus, TriangleAlert } from '@lucide/vue'
+import { ArrowLeft, MessageCircleQuestion, Plus, TriangleAlert } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { tasksApi, type Task, type TaskFilter } from '../../../api/tasks'
 import { formatDateTime } from '../../../i18n/format'
@@ -45,7 +45,7 @@ watch(
   { immediate: true },
 )
 const filters = computed(() =>
-  (['active', 'all', 'done', 'failed', 'cancelled'] as const).map((value) => ({
+  (['active', 'waiting_input', 'all', 'done', 'failed', 'cancelled'] as const).map((value) => ({
     value,
     label: t(`groups.tasks.filters.${value}`),
   })),
@@ -149,7 +149,7 @@ const split = computed(() => wide.value && (rows.value.length > 0 || selected.va
           :aria-label="t('groups.tasks.views.tasks')"
         >
           <div v-if="showToolbar" class="flex flex-wrap items-center gap-2">
-            <div class="w-32"><Select v-model="filter" :options="filters" size="sm" /></div>
+            <div class="w-36"><Select v-model="filter" :options="filters" size="sm" /></div>
             <Button
               v-if="accepting"
               size="sm"
@@ -183,6 +183,13 @@ const split = computed(() => wide.value && (rows.value.length > 0 || selected.va
                   :class="item.id === selected ? 'font-semibold text-ink' : 'text-ink'"
                 >
                   {{ item.goal }}
+                </span>
+                <span
+                  v-if="item.status === 'waiting_input' && item.question?.title"
+                  class="flex items-center gap-1.5 text-xs text-warning"
+                >
+                  <MessageCircleQuestion :size="13" class="shrink-0" aria-hidden="true" />
+                  <span class="truncate">{{ item.question.title }}</span>
                 </span>
                 <span class="flex items-center gap-2 text-xs text-muted">
                   <span class="tabular">#{{ item.id }}</span>

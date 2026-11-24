@@ -17,6 +17,7 @@ from len_bot.next.panel.setup import create_setup_app
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.runtime.network import NetworkRuntime
 from len_bot.next.storage.store import Store
+from len_bot.next.work.store import TaskStore
 from test_next_panel_acts_as_owner import SCENE, write_instance
 
 
@@ -139,4 +140,67 @@ def test_setup_responses_keep_the_unfiltered_json(tmp_path):
                 assert response.status_code == 200
                 route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == path)
                 assert_unchanged(route, response.json())
+    asyncio.run(run())
+
+
+def test_overview_waiting_tasks_and_task_detail_budget_watchdog(tmp_path):
+    from types import SimpleNamespace
+
+    async def run():
+        async with panel(tmp_path) as (app, client, raw):
+            with Store(tmp_path / 'host.sqlite3') as store:
+                tasks = TaskStore(store)
+                waiting = tasks.create(SCENE, 'onebot:70001', '整理季度数据', '报告.md', '', '请生成报告')
+                tasks.start(SCENE, waiting.id)
+                call_id = tasks.start_call(SCENE, waiting.id, {'provider': 'synthetic', 'model': 'm1'})
+                tasks.finish_call(call_id, {'tokens': {'input': 120, 'output': 45, 'cached': 30}})
+                tasks.add_watchdog_event(
+                    SCENE,
+                    waiting.id,
+                    SimpleNamespace(action='steer', reason='repeat_tool', detail='连续重复调用工具，已提示调整策略'),
+                )
+                tasks.set_question(
+                    SCENE,
+                    waiting.id,
+                    {'id': 'q-1', 'method': 'input', 'title': '需要确认导出格式'},
+                )
+                tasks.create(SCENE, 'onebot:70001', '排队中的任务', '结果.txt', '', '待执行')
+
+            overview_route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == '/api/host/overview')
+            raw_overview = await raw.get('/api/host/overview')
+            assert raw_overview.status_code == 200, raw_overview.text
+            assert_unchanged(overview_route, raw_overview.json())
+            overview = (await client.get('/api/host/overview')).json()
+            assert overview['active_tasks'] == 2
+            assert len(overview['waiting_tasks']) == 1
+            assert overview['waiting_tasks'][0]['id'] == waiting.id
+            assert overview['waiting_tasks'][0]['scene'] == SCENE
+            assert overview['waiting_tasks'][0]['goal'] == '整理季度数据'
+            assert overview['waiting_tasks'][0]['requester'] == 'onebot:70001'
+            assert overview['waiting_tasks'][0]['question_title'] == '需要确认导出格式'
+
+            list_route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == '/api/host/tasks')
+            raw_waiting = await raw.get('/api/host/tasks', params={'scene': SCENE, 'status': 'waiting_input'})
+            assert raw_waiting.status_code == 200, raw_waiting.text
+            assert_unchanged(list_route, raw_waiting.json())
+            assert [item['id'] for item in raw_waiting.json()['items']] == [waiting.id]
+
+            detail_route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == '/api/host/tasks/{id}')
+            raw_detail = await raw.get(f'/api/host/tasks/{waiting.id}', params={'scene': SCENE})
+            assert raw_detail.status_code == 200, raw_detail.text
+            assert_unchanged(detail_route, raw_detail.json())
+            detail = (await client.get(f'/api/host/tasks/{waiting.id}', params={'scene': SCENE})).json()
+            assert detail['budget'] == {
+                'calls': 1,
+                'max_calls': None,
+                'tokens': {'input': 120, 'output': 45, 'cached': 30, 'known_calls': 1, 'unknown_calls': 0},
+                'max_tokens': None,
+            }
+            assert len(detail['watchdog']) == 1
+            assert detail['watchdog'][0]['action'] == 'steer'
+            assert detail['watchdog'][0]['reason'] == 'repeat_tool'
+            assert detail['watchdog'][0]['detail'] == '连续重复调用工具，已提示调整策略'
+            assert isinstance(detail['watchdog'][0]['id'], int)
+            assert isinstance(detail['watchdog'][0]['created'], float)
+
     asyncio.run(run())
