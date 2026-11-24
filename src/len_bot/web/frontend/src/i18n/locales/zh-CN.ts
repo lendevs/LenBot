@@ -28,8 +28,10 @@ export default {
     required: '必填',
     locateError: '定位到错误项',
     reset: '重置',
+    download: '下载',
   },
   ui: {
+    field: { info: '{label}说明' },
     input: { clear: '清空' },
     number: { increase: '加一', decrease: '减一' },
     select: { placeholder: '请选择' },

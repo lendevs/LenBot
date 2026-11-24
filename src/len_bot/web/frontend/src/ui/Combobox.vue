@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends string | number">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ComboboxAnchor,
@@ -42,7 +42,7 @@ const props = withDefaults(
 
 const { t } = useI18n()
 const field = useFieldControl(props)
-const search = ref('')
+const open = ref(false)
 const byValue = computed(() => new Map(props.options.map((option) => [option.value, option])))
 const chosen = computed<T[]>(() =>
   props.multiple
@@ -55,15 +55,43 @@ const chosen = computed<T[]>(() =>
 function labelOf(value: unknown): string {
   return byValue.value.get(value as T)?.label ?? (value === undefined || value === null ? '' : String(value))
 }
+const search = ref(props.multiple ? '' : labelOf(model.value))
+
+watch(open, (isOpen) => {
+  if (!isOpen) search.value = props.multiple ? '' : labelOf(model.value)
+})
+watch(
+  () => [props.multiple, model.value, byValue.value] as const,
+  ([isMultiple, value]) => {
+    if (!isMultiple && !open.value) search.value = labelOf(value)
+  },
+)
+
 function remove(value: T) {
   model.value = chosen.value.filter((item) => item !== value)
+}
+
+function onInputKeydown(event: KeyboardEvent) {
+  if (
+    !props.multiple ||
+    event.key !== 'Backspace' ||
+    event.isComposing ||
+    field.disabled.value ||
+    search.value.length > 0 ||
+    chosen.value.length === 0
+  )
+    return
+  const input = event.target as HTMLInputElement | null
+  if (input && input.value.length > 0) return
+  event.preventDefault()
+  remove(chosen.value[chosen.value.length - 1]!)
 }
 </script>
 
 <template>
   <ComboboxRoot
     v-model="model"
-    v-model:search-term="search"
+    v-model:open="open"
     :multiple="multiple"
     :disabled="field.disabled.value"
     open-on-click
@@ -85,12 +113,12 @@ function remove(value: T) {
           <span
             v-for="value in chosen"
             :key="value"
-            class="inline-flex h-6 max-w-full animate-fade items-center gap-1 rounded-sm border border-line bg-fill pr-0.5 pl-2 text-xs font-medium text-ink-2"
+            class="inline-flex h-6 max-w-full animate-fade items-center gap-1 rounded-sm border border-line bg-fill pr-0.5 pl-2 text-xs font-medium text-ink-2 pointer-coarse:min-h-7"
           >
             <span class="truncate">{{ labelOf(value) }}</span>
             <button
               type="button"
-              class="inline-flex size-5 cursor-pointer items-center justify-center rounded-xs text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
+              class="inline-flex size-5 cursor-pointer items-center justify-center rounded-xs text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring pointer-coarse:size-7"
               :aria-label="t('ui.combobox.remove', { name: labelOf(value) })"
               :disabled="field.disabled.value"
               @click.stop="remove(value)"
@@ -101,15 +129,17 @@ function remove(value: T) {
         </template>
         <ComboboxInput
           :id="field.id.value"
+          v-model="search"
           :placeholder="chosen.length && multiple ? undefined : (placeholder ?? t('ui.combobox.placeholder'))"
           :display-value="multiple ? undefined : labelOf"
           :aria-invalid="field.invalid.value || undefined"
           :aria-describedby="field.describedBy.value"
           class="h-6 min-w-16 flex-1 bg-transparent px-0.5 outline-none placeholder:text-subtle focus-visible:outline-none disabled:cursor-not-allowed"
+          @keydown="onInputKeydown"
         />
       </div>
       <ComboboxTrigger
-        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:pointer-events-none"
+        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:pointer-events-none pointer-coarse:size-8"
         :aria-label="t('ui.combobox.options')"
       >
         <ChevronsUpDown :size="15" aria-hidden="true" />
@@ -123,7 +153,7 @@ function remove(value: T) {
         :class="[floatingPanel, 'min-w-(--reka-combobox-trigger-width) max-w-[calc(100vw-24px)]']"
       >
         <ComboboxViewport class="max-h-72 overflow-y-auto p-1 scrollbar-thin">
-          <ComboboxEmpty class="px-2 py-3 text-center text-sm text-subtle">
+          <ComboboxEmpty class="px-2 py-3 text-center text-sm text-muted">
             {{ t('ui.combobox.empty') }}
           </ComboboxEmpty>
           <ComboboxItem
@@ -138,7 +168,7 @@ function remove(value: T) {
             ]"
           >
             <span class="truncate">{{ option.label }}</span>
-            <span v-if="option.meta" class="ml-auto shrink-0 text-xs text-subtle tabular">
+            <span v-if="option.meta" class="ml-auto shrink-0 text-xs text-muted tabular">
               {{ option.meta }}
             </span>
             <ComboboxItemIndicator class="absolute right-2.5 inline-flex text-primary">

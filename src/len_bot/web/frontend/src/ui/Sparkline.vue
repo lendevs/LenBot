@@ -64,7 +64,7 @@ const activePoint = computed(() => {
   return { x: point[0], y: point[1], period, text }
 })
 
-function onMove(event: MouseEvent) {
+function onPointer(event: PointerEvent) {
   if (!props.values.length) return
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
@@ -76,10 +76,12 @@ function onMove(event: MouseEvent) {
 
 <template>
   <div
-    class="relative w-full select-none"
+    class="relative w-full touch-pan-y select-none"
     :style="{ color: colors[tone] }"
-    @mousemove="onMove"
-    @mouseleave="hovered = null"
+    @pointerdown="onPointer"
+    @pointermove="onPointer"
+    @pointerleave="hovered = null"
+    @pointercancel="hovered = null"
   >
     <svg
       class="block w-full overflow-visible"

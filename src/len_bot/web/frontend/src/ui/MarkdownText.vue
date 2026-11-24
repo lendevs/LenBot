@@ -4,8 +4,14 @@ import { blocks } from './markdown'
 import MarkdownSpans from './MarkdownSpans.vue'
 
 /** Model-written Markdown as plain elements; see `markdown.ts` for the subset. */
-const props = defineProps<{ text: string }>()
+const props = withDefaults(defineProps<{ text: string; size?: 'sm' | 'md' }>(), {
+  size: undefined,
+})
 
+const sizes = {
+  sm: 'text-sm leading-6',
+  md: 'text-base leading-relaxed',
+} as const
 const parsed = computed(() => blocks(props.text))
 const headingClass = (level: number) => {
   if (level === 1) return 'mt-2 text-lg font-semibold tracking-tight text-ink first:mt-0'
@@ -16,7 +22,7 @@ const headingClass = (level: number) => {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-2.5 break-words">
+  <div class="flex min-w-0 flex-col gap-2.5 break-words" :class="size && sizes[size]">
     <template v-for="(block, index) in parsed" :key="index">
       <p v-if="block.kind === 'heading'" :class="headingClass(block.level)">
         <MarkdownSpans :spans="block.spans" />
@@ -69,7 +75,7 @@ const headingClass = (level: number) => {
           <span class="min-w-0"><MarkdownSpans :spans="item.spans" /></span>
         </li>
       </ul>
-      <p v-else class="leading-relaxed">
+      <p v-else>
         <template v-for="(line, row) in block.lines" :key="row">
           <br v-if="row" />
           <MarkdownSpans :spans="line" />

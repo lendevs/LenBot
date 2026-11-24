@@ -20,7 +20,7 @@ const { t } = useI18n()
 const placement = {
   right: 'inset-y-0 right-0 h-dvh w-full border-l',
   left: 'inset-y-0 left-0 h-dvh w-full border-r',
-  bottom: 'inset-x-0 bottom-0 max-h-[88dvh] w-full rounded-t-xl border-t',
+  bottom: 'inset-x-0 bottom-0 max-h-[88dvh] w-full rounded-t-xl border-t pb-[env(safe-area-inset-bottom)]',
 }
 const widths = { sm: 'sm:max-w-sm', md: 'sm:max-w-md', lg: 'sm:max-w-2xl' }
 </script>
@@ -39,14 +39,17 @@ const widths = { sm: 'sm:max-w-sm', md: 'sm:max-w-md', lg: 'sm:max-w-2xl' }
         @pointer-down-outside="(event) => busy && event.preventDefault()"
         @interact-outside="(event) => busy && event.preventDefault()"
       >
+        <div v-if="side === 'bottom'" class="flex shrink-0 justify-center pt-2.5 pb-0.5" aria-hidden="true">
+          <span class="h-1 w-9 rounded-full bg-line-strong" />
+        </div>
         <header
           class="flex shrink-0 items-center justify-between gap-4 border-b border-line px-5 py-3.5"
-          :class="hideHeader && 'sr-only'"
+          :class="[hideHeader && 'sr-only', side === 'bottom' && !hideHeader && 'pt-2']"
         >
           <DialogTitle class="min-w-0 truncate text-lg font-semibold text-ink">{{ title }}</DialogTitle>
           <DialogClose
             :disabled="busy"
-            class="-mr-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-40"
+            class="-mr-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted transition-[background-color,color,transform] duration-(--dur-1) ease-out hover:bg-hover hover:text-ink focus-visible:focus-ring enabled:active:scale-95 disabled:pointer-events-none disabled:opacity-40 pointer-coarse:size-10"
             :aria-label="t('ui.dialog.close')"
           >
             <X :size="18" aria-hidden="true" />

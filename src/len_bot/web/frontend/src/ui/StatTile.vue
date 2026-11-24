@@ -42,7 +42,7 @@ watch(
 )
 /** Numbers count up to their new value instead of jumping. */
 const shown = useTransition(target, {
-  duration: 600,
+  duration: 360,
   transition: TransitionPresets.easeOutCubic,
   disabled: computed(() => motion.value === 'reduce'),
 })
@@ -92,8 +92,9 @@ const deltaText = computed(() =>
         {{ deltaText }}
       </span>
     </div>
+    <Skeleton v-if="trend !== undefined && loading" width="100%" height="28px" class="mt-0.5" />
     <Sparkline
-      v-if="trend && !loading"
+      v-else-if="trend"
       :values="trend"
       :labels="trendLabels"
       :format-value="(item) => formatter.format(item)"
@@ -101,6 +102,7 @@ const deltaText = computed(() =>
       :height="28"
       class="mt-0.5"
     />
-    <span v-if="caption && !loading" class="truncate text-xs text-muted tabular">{{ caption }}</span>
+    <Skeleton v-if="caption !== undefined && loading" width="68%" height="16px" />
+    <span v-else-if="caption" class="truncate text-xs text-muted tabular">{{ caption }}</span>
   </div>
 </template>

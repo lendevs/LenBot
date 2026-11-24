@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { TagsInputInput, TagsInputItem, TagsInputItemDelete, TagsInputItemText, TagsInputRoot } from 'reka-ui'
 import { X } from '@lucide/vue'
@@ -23,6 +24,19 @@ const props = withDefaults(
 const SEPARATORS = /[,\uff0c\n]/
 const { t } = useI18n()
 const field = useFieldControl(props)
+const duplicate = ref<string | null>(null)
+let duplicateTimer: ReturnType<typeof setTimeout> | undefined
+onBeforeUnmount(() => clearTimeout(duplicateTimer))
+
+function onInvalid(payload: unknown) {
+  const value = typeof payload === 'string' ? payload : String(payload ?? '')
+  if (!model.value.includes(value)) return
+  duplicate.value = value
+  clearTimeout(duplicateTimer)
+  duplicateTimer = setTimeout(() => {
+    duplicate.value = null
+  }, 900)
+}
 </script>
 
 <template>
@@ -40,21 +54,25 @@ const field = useFieldControl(props)
     ]"
     :data-invalid="field.invalid.value || undefined"
     :data-disabled="field.disabled.value || undefined"
+    @invalid="onInvalid"
   >
-    <TagsInputItem
-      v-for="item in model"
-      :key="item"
-      :value="item"
-      class="inline-flex h-6 max-w-full animate-fade items-center gap-1 rounded-sm border border-line bg-fill pr-0.5 pl-2 text-xs font-medium text-ink-2 transition-colors data-[state=active]:border-line-strong data-[state=active]:bg-hover data-[state=active]:text-ink"
-    >
-      <TagsInputItemText class="truncate" />
-      <TagsInputItemDelete
-        class="inline-flex size-5 cursor-pointer items-center justify-center rounded-xs text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
-        :aria-label="t('ui.tags.remove', { name: item })"
+    <TransitionGroup name="ui-list">
+      <TagsInputItem
+        v-for="item in model"
+        :key="item"
+        :value="item"
+        class="inline-flex h-6 max-w-full items-center gap-1 rounded-sm border pr-0.5 pl-2 text-xs font-medium transition-[border-color,background-color,color] duration-(--dur-1) ease-out data-[state=active]:border-line-strong data-[state=active]:bg-hover data-[state=active]:text-ink pointer-coarse:min-h-7"
+        :class="duplicate === item ? 'border-primary bg-selected text-ink' : 'border-line bg-fill text-ink-2'"
       >
-        <X :size="12" aria-hidden="true" />
-      </TagsInputItemDelete>
-    </TagsInputItem>
+        <TagsInputItemText class="truncate" />
+        <TagsInputItemDelete
+          class="inline-flex size-5 cursor-pointer items-center justify-center rounded-xs text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring pointer-coarse:size-7"
+          :aria-label="t('ui.tags.remove', { name: item })"
+        >
+          <X :size="12" aria-hidden="true" />
+        </TagsInputItemDelete>
+      </TagsInputItem>
+    </TransitionGroup>
     <TagsInputInput
       :id="field.id.value"
       :placeholder="model.length ? undefined : (placeholder ?? t('ui.tags.placeholder'))"

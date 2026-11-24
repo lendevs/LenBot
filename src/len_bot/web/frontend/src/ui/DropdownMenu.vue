@@ -51,7 +51,7 @@ const emit = defineEmits<{ closeAutoFocus: [event: Event] }>()
           <DropdownMenuSeparator v-if="entry.type === 'separator'" class="-mx-1 my-1 h-px bg-line" />
           <DropdownMenuLabel
             v-else-if="entry.type === 'label'"
-            class="truncate px-2.5 pt-1.5 pb-1 text-xs font-medium text-subtle"
+            class="truncate px-2.5 pt-1.5 pb-1 text-xs font-medium text-muted"
           >
             {{ entry.label }}
           </DropdownMenuLabel>
@@ -76,7 +76,7 @@ const emit = defineEmits<{ closeAutoFocus: [event: Event] }>()
               aria-hidden="true"
             />
             <span class="truncate">{{ entry.label }}</span>
-            <span v-if="entry.shortcut" class="ml-auto shrink-0 pl-4 text-2xs text-subtle tabular">
+            <span v-if="entry.shortcut" class="ml-auto shrink-0 pl-4 text-2xs text-muted tabular">
               {{ entry.shortcut }}
             </span>
           </DropdownMenuItem>

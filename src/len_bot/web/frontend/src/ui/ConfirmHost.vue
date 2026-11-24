@@ -22,6 +22,7 @@ const open = computed({
     :title="shown.title"
     :message="shown.message"
     :confirm-label="shown.confirmLabel"
+    :cancel-label="shown.cancelLabel"
     :tone="shown.tone"
     @confirm="answerConfirm(true)"
   />

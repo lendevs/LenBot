@@ -4,6 +4,7 @@ export interface ConfirmRequest {
   title: string
   message?: string
   confirmLabel?: string
+  cancelLabel?: string
   tone?: 'danger' | 'primary'
 }
 

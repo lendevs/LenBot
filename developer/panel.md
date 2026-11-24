@@ -16,7 +16,7 @@
 
 检查命令在前端目录执行：`npm run typecheck`、`npm run lint`（ESLint 加 Prettier）、`npm run build`。CI 跑同样三项。构建产物写到 `src/len_bot/web/static/dist`，不进 Git。
 
-所有代码都是 TypeScript 或 `<script setup lang="ts">`，新文件不写 `.js`（`useAuth.js`、`useDeveloperMode.js`、`router/navigation.js` 是还没改写的少数几个）。Tailwind 的预检样式（preflight）放在 base 层，工具类不分层，原因写在 `styles/app.css` 开头。根字号固定 14px：间距、字号、圆角都按像素映射，但 `max-w-lg` 这类容器宽度用 rem。
+所有代码都是 TypeScript 或 `<script setup lang="ts">`，不写 `.js`。Tailwind 的预检样式（preflight）放在 base 层，工具类不分层，原因写在 `styles/app.css` 开头。根字号固定 14px：间距、字号、圆角都按像素映射，但 `max-w-lg` 这类容器宽度用 rem。
 
 ## 目录
 
@@ -80,7 +80,7 @@ src/
 |---|---|---|
 | 按钮 | `Button`、`IconButton` | `variant`：primary、secondary、ghost、danger、danger-ghost；`to` 渲染路由链接，`href` 渲染普通链接；`loading` 时禁用并显示转圈。`IconButton` 必须给 `label`，同时作为提示和读屏名称 |
 | 表单 | `Field`、`Input`、`Textarea`、`NumberInput`、`Select`、`Combobox`、`TagInput`、`Switch`、`Checkbox`、`RadioGroup`、`SegmentedControl` | 控件放进 `Field` 后自动拿到 id、错误状态和 `aria-describedby`。`Combobox` 加 `multiple` 变成可搜索多选；`TagInput` 用中英文逗号和换行分隔；`Switch` 的 `loading` 表示正在保存 |
-| 分区 | `FormSection`、`SaveBar`、`Tabs` | `FormSection` 两列网格，`Field` 加 `wide` 占满一行；`SaveBar` 在有修改时浮在底部，支持 Ctrl/⌘ S；`Tabs` 的面板写成以页签值命名的插槽，没有插槽时只切换值（路由驱动的页签） |
+| 分区 | `FormSection`、`SaveBar`、`Tabs`、`Collapsible` | `FormSection` 两列网格，`Field` 加 `wide` 占满一行；`SaveBar` 在有修改时浮在底部，支持 Ctrl/⌘ S；`Tabs` 的面板写成以页签值命名的插槽，没有插槽时只切换值（路由驱动的页签）；`Collapsible` 提供分区与行内折叠展开，支持计数与状态点 |
 | 浮层 | `Dialog`、`Sheet`、`ConfirmDialog`、`Popover`、`DropdownMenu`、`Tooltip` | `Dialog` 的 `busy` 期间不能关闭；`Sheet` 可从右、左、下方滑出 |
 | 反馈 | `toast`（`ui/toast.ts`）、`confirm()`（`ui/confirm.ts`）、`ErrorNote`、`EmptyState`、`Skeleton`、`Spinner` | `ErrorNote` 接受任何错误对象，显示可读原因并能展开错误原文 |
 | 展示 | `Badge`、`StatusDot`、`Avatar`、`Kbd`、`CodeBlock`、`StatTile`、`Sparkline`、`Timeline` 与 `TimelineItem` | `Avatar` 没有图片时按名字生成颜色和首字；`CodeBlock` 传对象时显示缩进后的 JSON，过长自动折叠；`StatTile` 的数字变化有过渡 |
@@ -104,7 +104,7 @@ src/
 
 同一份构建产物服务三种模式，由 `/api/panel-context` 的 `mode` 区分：`isolated-multi` 是宿主面板（`AppShell`），`isolated` 是单场景隔离试聊（`TrialShell`），`setup` 是首次配置向导（`panel/setup.py`，还没有根配置时运行）。向导模式没有登录，路由守卫把所有地址都送到 `/setup`，其他模式下 `/setup` 回到首页。向导页（`views/setup/`）不经过外壳，自己提供 `TooltipProvider`；启动时终端打印的链接是 `/#token=…`，`main.ts` 在第一次导航前把令牌移进本标签页的 sessionStorage，之后每个 `/api/setup/*` 请求带 `X-Setup-Token`。草稿暂存在 sessionStorage，密码和密钥不暂存。
 
-文档标题由侧栏标签或路由的 `meta.titleKey` 生成。`/host/...` 是旧外壳的地址，只做重定向，不再新增；旧路由名 `host-scenes`、`host-memory`、`host-tasks`、`host-resources` 也是重定向，指向工作台对应页签，M2.11 清理旧页面时一并删除。
+文档标题由侧栏标签或路由的 `meta.titleKey` 生成。
 
 ## 数据层
 

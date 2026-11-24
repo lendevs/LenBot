@@ -47,7 +47,7 @@ const value = computed({
   set: (next: number | undefined) => (model.value = next === undefined || Number.isNaN(next) ? null : next),
 })
 const stepper =
-  'inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-ink focus-visible:focus-ring enabled:active:scale-95 disabled:pointer-events-none disabled:opacity-35 pointer-coarse:size-8'
+  'inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted transition-[background-color,color,transform] duration-(--dur-1) ease-out hover:bg-hover hover:text-ink focus-visible:focus-ring enabled:active:scale-95 disabled:pointer-events-none disabled:opacity-35 pointer-coarse:size-9'
 </script>
 
 <template>

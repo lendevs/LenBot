@@ -37,14 +37,14 @@ const field = useFieldControl(props)
     <label
       v-for="option in options"
       :key="option.value"
-      class="inline-flex min-w-0 items-center gap-2.5 text-base text-ink"
+      class="inline-flex min-w-0 items-center gap-2.5 text-base text-ink pointer-coarse:min-h-9"
       :class="option.disabled || field.disabled.value ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'"
     >
       <RadioGroupItem
         :value="option.value"
         :disabled="option.disabled"
         :data-invalid="field.invalid.value || undefined"
-        class="inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface transition-colors duration-150 hover:border-subtle focus-visible:focus-ring data-invalid:border-error data-invalid:hover:border-error data-[state=checked]:border-primary"
+        class="inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface transition-[border-color,transform] duration-(--dur-1) ease-out hover:border-subtle focus-visible:focus-ring enabled:active:scale-95 data-invalid:border-error data-invalid:hover:border-error data-[state=checked]:border-primary"
       >
         <RadioGroupIndicator
           class="size-2.5 animate-[ui-pop-in_var(--dur-1)_var(--ease-spring)] rounded-full bg-primary"
