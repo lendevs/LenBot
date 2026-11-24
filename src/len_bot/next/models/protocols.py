@@ -79,7 +79,7 @@ def _chat_message(message: dict, settings: ModelSettings) -> dict:
 
 
 def _cache_breakpoint(block: dict) -> dict:
-    return block if 'cache_control' in block else {**block, 'cache_control': {'type': 'ephemeral'}}
+    return block if block.get('cache_control') is not None else {**block, 'cache_control': {'type': 'ephemeral'}}
 
 
 def build_request(settings: ModelSettings, messages: list[dict], tools: list[dict], *,
@@ -155,7 +155,7 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
                         content.append(_image(part['image_url']['url'], api))
                     else:
                         raise ValueError(f'不支持的内容块：{part["type"]}')
-                    if api == 'anthropic' and 'cache_control' in part:
+                    if api == 'anthropic' and part.get('cache_control') is not None:
                         content[-1]['cache_control'] = part['cache_control']
             native_role = ('assistant' if role == 'assistant' else 'user') if api == 'anthropic' else ('model' if role == 'assistant' else 'user')
             key = 'content' if api == 'anthropic' else 'parts'
@@ -168,18 +168,23 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
             payload.update(messages=contents, max_tokens=output, stream=False)
             if len(contents) >= 2:
                 blocks = contents[-2]['content']
-                if blocks[-1]['type'] not in {'thinking', 'redacted_thinking'}:
-                    blocks[-1] = _cache_breakpoint(blocks[-1])
+                for i in reversed(range(len(blocks))):
+                    if blocks[i]['type'] in {'thinking', 'redacted_thinking'}:
+                        continue
+                    if blocks[i]['type'] == 'text' and not blocks[i].get('text', '').strip():
+                        continue
+                    blocks[i] = _cache_breakpoint(blocks[i])
+                    break
             if system:
                 for i in reversed(range(len(system))):
-                    if system[i]['type'] == 'text':
+                    if system[i]['type'] == 'text' and system[i].get('text', '').strip():
                         system[i] = _cache_breakpoint(system[i])
                         break
                 payload['system'] = system
             if tools:
                 native_tools = [{'name': t['function']['name'], 'description': t['function'].get('description', ''),
                                  'input_schema': t['function']['parameters'],
-                                 **({'cache_control': t['cache_control']} if 'cache_control' in t else {})}
+                                 **({'cache_control': t['cache_control']} if t.get('cache_control') is not None else {})}
                                 for t in tools]
                 native_tools[-1] = _cache_breakpoint(native_tools[-1])
                 payload['tools'] = native_tools

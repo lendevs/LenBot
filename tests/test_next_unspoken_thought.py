@@ -15,7 +15,7 @@ from len_bot.next.chat.expression import ChatExpression
 from len_bot.next.chat.session import Chat
 from len_bot.next.chat.tools import SayArguments, build_tools
 from len_bot.next.config import load_config
-from len_bot.next.models.client import ChatModel, ModelHTTPError, ModelSettings
+from len_bot.next.models.client import ChatModel, ModelHTTPError, ModelProtocolError, ModelSettings
 from len_bot.next.models.protocols import build_request
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.platform.messages import SendResult
@@ -194,6 +194,80 @@ async def test_recap_transient_failure_enters_300s_cooldown_and_hard_overflow_st
             chat = Chat(hard_config, hard_persona, store, mind, now=lambda: now[0])
             turn_id = store.start_turn(SCENE)
             with pytest.raises(ModelHTTPError):
+                await chat.prepare_context(turn_id, observed_at=now[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recap_body", "hard_error"),
+    [
+        (
+            {"choices": [{"message": {"role": "assistant", "content": "   ", "tool_calls": None}, "finish_reason": "stop"}]},
+            ValueError,
+        ),
+        (
+            {"choices": [{"message": {"role": "assistant", "content": "", "tool_calls": None}, "finish_reason": "content_filter"}]},
+            ModelProtocolError,
+        ),
+        (
+            {"choices": []},
+            ModelProtocolError,
+        ),
+    ],
+    ids=["empty-text", "content-filter", "empty-choices"],
+)
+async def test_recap_empty_or_protocol_failure_enters_cooldown_and_mind_still_replies(tmp_path, recap_body, hard_error):
+    now = [START]
+    config, persona = _chat_config(tmp_path / "soft", trigger=8000, window=64000, max_output=512)
+    config.attention.direct_idle_seconds = 0
+    config.attention.focus_seconds = 0
+    sent: list[str] = []
+    requests: list = []
+    replies = [
+        (200, "application/json", json.dumps(recap_body).encode()),
+        tool_response("say", {"content": "压缩失败也不影响回复", "end_turn": True}, "say1"),
+    ]
+    server = await peer_server(replies, requests)
+    async with server:
+        config.models.providers["synthetic"].base_url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1"
+        with Store(config.database, now=lambda: now[0]) as store:
+            for index in range(10):
+                store.append(SCENE, {"role": "user", "content": f"聊天记录 {index}：" + ("测试内容" * 120)})
+
+            async def send_message(part, *, image_bytes=None):
+                sent.append("".join(seg.data["text"] for seg in part.segments if seg.type == "text"))
+                return SendResult(status="sent", platform_message_id=f"sent-{len(sent)}", error=None)
+
+            async with ChatModel(config.model_settings("mind")) as mind:
+                chat = Chat(config, persona, store, mind, send_message=send_message, now=lambda: now[0])
+                events: list[dict] = []
+                runner = SceneRunner(chat, events.append)
+                runner.closing = True
+                runner.receive(onebot_message(70001, 100, "在吗", direct=True))
+                await asyncio.wait_for(runner.run(), 5)
+
+                assert chat._recap_cooldown_until == START + 300.0
+                assert chat.turn_model_failure is None
+
+            assert sent == ["压缩失败也不影响回复"]
+            assert len(requests) == 2
+            turns = [event for event in events if "turn_id" in event]
+            assert len(turns) == 1 and turns[0]["status"] == "settled" and turns[0]["failed_tools"] == 0
+
+    hard_config, hard_persona = _chat_config(tmp_path / "hard", trigger=6500, window=8500, max_output=512)
+    with Store(hard_config.database, now=lambda: now[0]) as store:
+        for index in range(10):
+            store.append(SCENE, {"role": "user", "content": f"超窗记录 {index}：" + ("长文本内容" * 120)})
+        store.append(SCENE, {"role": "user", "content": "最新一条短消息"})
+        async with ChatModel(hard_config.model_settings("mind")) as mind:
+            await mind._client.aclose()
+            mind._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda _: httpx.Response(200, json=recap_body)),
+                base_url="https://fixture.invalid/",
+            )
+            chat = Chat(hard_config, hard_persona, store, mind, now=lambda: now[0])
+            turn_id = store.start_turn(SCENE)
+            with pytest.raises(hard_error):
                 await chat.prepare_context(turn_id, observed_at=now[0])
 
 

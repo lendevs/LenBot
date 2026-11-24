@@ -46,7 +46,8 @@ from ..memory.service import MemoryService, MemorySettings, recall_cues
 from ..reference.library import ReferenceLibrary
 from ..reference.tool import changes_notice
 from ..platform.messages import UploadResult
-from ..models.client import ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError, ModelReply
+from ..models.client import (ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError,
+                             ModelProtocolError, ModelReply)
 from ..models.request import request_estimate, request_model
 from ..models.slots import ModelSlots
 from ..persona.profile import Persona, select_style
@@ -473,8 +474,12 @@ class Chat:
                 log_event(logger, 'compaction_held', level=logging.WARNING, error=error, input_tokens=estimated,
                           trigger_tokens=trigger, window_tokens=binding.context_window_tokens)
                 return PreparedContext(messages, estimated, method)
-            except (ModelHTTPError, ModelConnectionError, TimeoutError) as error:
-                if self.turn_stopped or not fits_cooldown:
+            except (ModelHTTPError, ModelConnectionError, TimeoutError, ModelProtocolError, ValueError) as error:
+                if (
+                    (isinstance(error, (ModelProtocolError, ValueError)) and self.config.recap_plugin is not None)
+                    or self.turn_stopped
+                    or not fits_cooldown
+                ):
                     raise
                 self.turn_model_failure = None
                 self._recap_cooldown_until = self.store.now() + RECAP_COOLDOWN_SECONDS
