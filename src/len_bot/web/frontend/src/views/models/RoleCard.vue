@@ -226,10 +226,7 @@ watch(retries, (text) => {
           />
         </Field>
       </div>
-      <div
-        v-if="role === 'mind' || role === 'vision' || role === 'worker'"
-        class="grid gap-x-8 gap-y-3 sm:grid-cols-2"
-      >
+      <div v-if="role === 'mind' || role === 'vision'" class="grid gap-x-8 gap-y-3 sm:grid-cols-2">
         <Field :label="t('models.roles.imageInput')" inline>
           <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
         </Field>
