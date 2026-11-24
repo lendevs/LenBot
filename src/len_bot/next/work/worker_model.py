@@ -33,14 +33,30 @@ _ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
 _ANTHROPIC_NON_CACHEABLE_TYPES = frozenset({"thinking", "redacted_thinking"})
 
 
+def _has_cache_control(item: dict[str, Any]) -> bool:
+    return item.get("cache_control") is not None
+
+
+def _is_cacheable_anthropic_block(block: Any) -> bool:
+    if not isinstance(block, dict):
+        return False
+    block_type = block.get("type")
+    if block_type in _ANTHROPIC_NON_CACHEABLE_TYPES:
+        return False
+    if block_type == "text":
+        text = block.get("text")
+        return isinstance(text, str) and bool(text.strip())
+    return True
+
+
 def _count_anthropic_cache_controls(payload: dict[str, Any]) -> int:
-    count = 1 if payload.get("cache_control") is not None else 0
+    count = 1 if _has_cache_control(payload) else 0
     system = payload.get("system")
     if isinstance(system, list):
-        count += sum(1 for block in system if isinstance(block, dict) and "cache_control" in block)
+        count += sum(1 for block in system if isinstance(block, dict) and _has_cache_control(block))
     tools = payload.get("tools")
     if isinstance(tools, list):
-        count += sum(1 for tool in tools if isinstance(tool, dict) and "cache_control" in tool)
+        count += sum(1 for tool in tools if isinstance(tool, dict) and _has_cache_control(tool))
     messages = payload.get("messages")
     if isinstance(messages, list):
         for message in messages:
@@ -52,12 +68,12 @@ def _count_anthropic_cache_controls(payload: dict[str, Any]) -> int:
             for block in content:
                 if not isinstance(block, dict):
                     continue
-                if "cache_control" in block:
+                if _has_cache_control(block):
                     count += 1
                 if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
                     count += sum(
                         1 for item in block["content"]
-                        if isinstance(item, dict) and "cache_control" in item
+                        if isinstance(item, dict) and _has_cache_control(item)
                     )
     return count
 
@@ -68,13 +84,16 @@ def _apply_anthropic_cache_breakpoints(outgoing: dict[str, Any]) -> None:
         return
 
     system = outgoing.get("system")
-    if isinstance(system, str) and system:
+    if isinstance(system, str) and system.strip():
         outgoing["system"] = [{"type": "text", "text": system, "cache_control": dict(_ANTHROPIC_CACHE_CONTROL)}]
         breakpoints += 1
     elif isinstance(system, list) and system:
         for block in reversed(system):
             if isinstance(block, dict) and block.get("type") == "text":
-                if "cache_control" not in block:
+                text = block.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                if not _has_cache_control(block):
                     block["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
                     breakpoints += 1
                 break
@@ -85,7 +104,7 @@ def _apply_anthropic_cache_breakpoints(outgoing: dict[str, Any]) -> None:
     tools = outgoing.get("tools")
     if isinstance(tools, list) and tools:
         last_tool = tools[-1]
-        if isinstance(last_tool, dict) and "cache_control" not in last_tool:
+        if isinstance(last_tool, dict) and not _has_cache_control(last_tool):
             last_tool["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
             breakpoints += 1
 
@@ -97,13 +116,13 @@ def _apply_anthropic_cache_breakpoints(outgoing: dict[str, Any]) -> None:
         target = messages[-2]
         if isinstance(target, dict):
             content = target.get("content")
-            if isinstance(content, str) and content:
+            if isinstance(content, str) and content.strip():
                 target["content"] = [{"type": "text", "text": content, "cache_control": dict(_ANTHROPIC_CACHE_CONTROL)}]
                 breakpoints += 1
             elif isinstance(content, list) and content:
                 for block in reversed(content):
-                    if isinstance(block, dict) and block.get("type") not in _ANTHROPIC_NON_CACHEABLE_TYPES:
-                        if "cache_control" not in block:
+                    if _is_cacheable_anthropic_block(block):
+                        if not _has_cache_control(block):
                             block["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
                             breakpoints += 1
                         break
@@ -180,6 +199,7 @@ class WorkerModelProxy:
         self._entered = False
         self._closed = False
         self._busy = False
+        self._last_active_at = 0.0
         self._calls = 0
         self._spent = 0
         self._tokens_unknown = False
@@ -191,6 +211,11 @@ class WorkerModelProxy:
     def busy(self) -> bool:
         """True while a worker model call is queued for a slot or streaming from upstream."""
         return self._busy
+
+    @property
+    def last_active_at(self) -> float:
+        """Event-loop timestamp when the most recent worker model call started or finished."""
+        return self._last_active_at
 
     @property
     def path(self) -> str:
@@ -446,6 +471,7 @@ class WorkerModelProxy:
         ):
             raise WorkerModelError("worker model token limit reached, or an earlier call reported no tokens")
         self._busy = True
+        self._last_active_at = asyncio.get_running_loop().time()
         self._active_task = asyncio.current_task()
         call_id: int | None = None
         settled = False
@@ -585,5 +611,6 @@ class WorkerModelProxy:
         finally:
             self._active_task = None
             self._busy = False
+            self._last_active_at = asyncio.get_running_loop().time()
             if self._closed and not self._client.is_closed:
                 await self._client.aclose()

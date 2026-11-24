@@ -44,10 +44,11 @@ class ModelSlots:
     def _can_take(self, tier: Tier) -> bool:
         if self._active >= self.limit:
             return False
+        noninteractive_active = self._worker_active + self._background_active
         if tier == "worker":
-            return self._worker_active < self.worker_limit
+            return noninteractive_active < self.worker_limit
         if tier == "background":
-            return self._background_active < self.background_limit
+            return noninteractive_active < self.worker_limit and self._background_active < self.background_limit
         return True
 
     def _increment(self, tier: Tier) -> None:
@@ -59,13 +60,18 @@ class ModelSlots:
 
     def _fill(self) -> None:
         while self._active < self.limit:
+            noninteractive_active = self._worker_active + self._background_active
             if self._direct:
                 waiter, tier = self._direct.popleft(), "direct"
             elif self._normal:
                 waiter, tier = self._normal.popleft(), "normal"
-            elif self._worker and self._worker_active < self.worker_limit:
+            elif self._worker and noninteractive_active < self.worker_limit:
                 waiter, tier = self._worker.popleft(), "worker"
-            elif self._background and self._background_active < self.background_limit:
+            elif (
+                self._background
+                and noninteractive_active < self.worker_limit
+                and self._background_active < self.background_limit
+            ):
                 waiter, tier = self._background.popleft(), "background"
             else:
                 break

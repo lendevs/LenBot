@@ -308,6 +308,29 @@ async def test_consume_triggers_watchdog_steer_stop_and_silent_hang(tmp_path):
         assert task_exec._last_event_at > 0.0
         assert task_exec._watchdog.on_tool_start("x3", "bash", {"cmd": "id"}) is None
 
+        # 4. Recent proxy.last_active_at prevents false silent_hang right after a long model slot wait.
+        task_exec._watchdog = TaskWatchdog(hang_timeout_seconds=0.05)
+        settle_pi = _FakePi([
+            0.01,
+            _record({"type": "message_end", "message": {
+                "role": "assistant", "stopReason": "stop", "content": [{"type": "text", "text": "完成"}]
+            }}),
+            _record({"type": "agent_settled"}),
+        ])
+        now_loop = asyncio.get_running_loop().time()
+        task_exec._session = SimpleNamespace(
+            pi=settle_pi,
+            proxy=SimpleNamespace(busy=False, last_active_at=now_loop + 10.0, recorded=lambda v: v),
+            egress=None,
+            browser_cli_version=None,
+        )
+        async with asyncio.timeout(30.0) as timer:
+            task_exec._timer = timer
+            # Simulate _consume loop when _last_event_at was older than hang_timeout_seconds,
+            # by overriding hang_timeout_seconds very small while last_active_at is fresh.
+            result_text = await task_exec._consume()
+        assert result_text == "完成"
+
 
 def test_worker_prompts_keep_placeholders_and_self_check_rules():
     worker_prompt = read_prompt("next_worker.md")

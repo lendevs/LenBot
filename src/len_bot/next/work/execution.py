@@ -321,8 +321,9 @@ class TaskExecution:
         self._last_event_at = loop.time()
         final: dict | None = None
         while True:
+            last_active = max(self._last_event_at, getattr(session.proxy, "last_active_at", 0.0))
             decision = self._watchdog.check_idle(
-                loop.time() - self._last_event_at,
+                loop.time() - last_active,
                 model_busy=session.proxy.busy,
                 waiting_input=self._timer is not None and self._timer.when() is None,
             )
@@ -401,7 +402,8 @@ class TaskExecution:
         now = time.monotonic()
         if (self._last_progress_notice_at is None
                 or now - self._last_progress_notice_at >= PROGRESS_NOTICE_INTERVAL):
-            notice = f"[任务进度] #{item.id}；{item.goal}\n{text}"
+            goal_line = " ".join(item.goal.splitlines())
+            notice = f"[任务进度] #{item.id}；{goal_line}\n{text}"
             self._last_progress_notice_at = now
         else:
             notice = None

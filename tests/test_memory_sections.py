@@ -474,6 +474,15 @@ async def test_auto_recall_retains_resources_under_events_flood_and_recap_artifa
         via_cues = await service.recall(SCENE, chat('那个表格文件再发一下'), cues)
         cue_paths = [item['path'] for item in via_cues['items']]
         assert 'resources/q3_finance.md' in cue_paths
-        assert len(cue_paths) <= settings.recall_limit
+        assert len(cue_paths) <= settings.recall_limit + 2
         assert via_cues['content_chars'] <= settings.recall_budget_chars
         assert any('520 万元' in item['content'] for item in via_cues['items'])
+
+        # 3) Even when normal chat query fills all recall_limit (3) hits without resource keywords,
+        #    recap promise/question cues still append up to CUE_HITS extra entries within budget.
+        await memory.write(SCENE, 'events/booklist.md', '# 十一月书单\n\n周五前发书单的完整书目清单。\n', '承诺事项样本')
+        full_plus_cue = await service.recall(SCENE, chat('大家最近讨论季度财务报告进度怎么样'), '周五前发书单')
+        full_paths = [item['path'] for item in full_plus_cue['items']]
+        assert 'events/booklist.md' in full_paths
+        assert len(full_paths) >= settings.recall_limit + 1
+        assert full_plus_cue['content_chars'] <= settings.recall_budget_chars

@@ -203,4 +203,23 @@ def test_overview_waiting_tasks_and_task_detail_budget_watchdog(tmp_path):
             assert isinstance(detail['watchdog'][0]['id'], int)
             assert isinstance(detail['watchdog'][0]['created'], float)
 
+            # After finish + continue requeue, calls resets to current execution while tokens stay cumulative.
+            with Store(tmp_path / 'host.sqlite3') as store:
+                tasks = TaskStore(store)
+                tasks.set_question(SCENE, waiting.id, None)
+                tasks.finish(SCENE, waiting.id, 'done', '首轮完成', None)
+                tasks.requeue(SCENE, waiting.id, '补充第二章图表', requester='onebot:70001')
+                tasks.start(SCENE, waiting.id)
+                call_id_2 = tasks.start_call(SCENE, waiting.id, {'provider': 'synthetic', 'model': 'm1'})
+                tasks.finish_call(call_id_2, {'tokens': {'input': 80, 'output': 20, 'cached': 10}})
+
+            continued_detail = (await client.get(f'/api/host/tasks/{waiting.id}', params={'scene': SCENE})).json()
+            assert_unchanged(detail_route, continued_detail)
+            assert continued_detail['budget'] == {
+                'calls': 1,
+                'max_calls': None,
+                'tokens': {'input': 200, 'output': 65, 'cached': 40, 'known_calls': 2, 'unknown_calls': 0},
+                'max_tokens': None,
+            }
+
     asyncio.run(run())

@@ -126,9 +126,10 @@ const budget = computed(() => {
   const value = first.value?.budget
   const status = task.value?.status
   if (!value) return null
-  if (value.calls <= 0 && status !== 'running' && status !== 'waiting_input') return null
+  const totalCalls = value.tokens.known_calls + value.tokens.unknown_calls
+  if (value.calls <= 0 && totalCalls <= 0 && status !== 'running' && status !== 'waiting_input') return null
   const totalTokens = value.tokens.input + value.tokens.output
-  const cachedTokens = value.tokens.cached ?? 0
+  const cachedTokens = value.tokens.cached
   const callsRatio =
     value.max_calls && value.max_calls > 0
       ? Math.min(100, Math.round((value.calls / value.max_calls) * 100))

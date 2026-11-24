@@ -188,3 +188,33 @@ async def test_cancelled_waiters_do_not_leak_slot_counts():
     assert slots._worker_active == 0
     assert slots._background_active == 0
     assert not slots._direct and not slots._normal and not slots._worker and not slots._background
+
+
+@pytest.mark.asyncio
+async def test_worker_plus_background_share_noninteractive_cap_preserving_hot_slot():
+    slots = ModelSlots(4)
+    entered: list[str] = []
+    release = asyncio.Event()
+
+    async def hold(label: str, *, worker: bool = False, background: bool = False) -> None:
+        async with slots.slot(worker=worker, background=background):
+            entered.append(label)
+            await release.wait()
+
+    tasks = [
+        asyncio.create_task(hold("w1", worker=True)),
+        asyncio.create_task(hold("w2", worker=True)),
+        asyncio.create_task(hold("bg1", background=True)),
+        asyncio.create_task(hold("w3", worker=True)),
+        asyncio.create_task(hold("bg2", background=True)),
+    ]
+    await _yield_loop()
+    # Combined worker + background must not exceed limit - 1 (3), leaving 1 hot slot for normal chat.
+    assert len(entered) == 3
+    assert slots._worker_active + slots._background_active == 3
+
+    async with slots.slot():
+        assert slots._active == 4
+
+    release.set()
+    await asyncio.gather(*tasks)

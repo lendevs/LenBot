@@ -169,19 +169,27 @@ def extract_ticket_anchors(entries: list[Entry]) -> list[dict]:
         kind, raw_id, requester, goal = match.groups()
         task_id = int(raw_id)
         payload = None
-        json_line = rest.split("\n", 1)[0].strip()
-        if json_line:
-            try:
-                parsed = json.loads(json_line)
-                if isinstance(parsed, dict):
-                    payload = parsed
-            except ValueError:
-                pass
+        goal_extra: list[str] = []
+        for raw_line in rest.splitlines():
+            candidate = raw_line.strip()
+            if not candidate:
+                continue
+            if candidate.startswith("{"):
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        payload = parsed
+                        break
+                except ValueError:
+                    pass
+            if payload is None:
+                goal_extra.append(candidate)
         anchor = anchors.setdefault(task_id, {"task_id": task_id})
         if requester:
             anchor["requester"] = requester.strip()
         if goal:
-            anchor["goal"] = goal.strip()
+            full_goal = " ".join([goal.strip(), *goal_extra]).strip()
+            anchor["goal"] = full_goal
         if kind == "执行结束":
             anchor.pop("question_id", None)
             anchor.pop("question_title", None)

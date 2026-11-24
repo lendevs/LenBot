@@ -118,6 +118,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
             item = records.get(scene, id)
             events = records.event_previews(scene, id, after=after, limit=limit)
             token_records = records.call_tokens(scene, id)
+            current_calls = records.execution_call_count(scene, id)
             return {"task": {**asdict(item), "workspace_discard_requested": records.workspace_discarded(scene, id),
                              "active_timeout_seconds": None if runtime.tasks is None else runtime.tasks.active_timeout(item)},
                     "events": events,
@@ -127,7 +128,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                     "next_after": events[-1]["id"] if events else after,
                     "files": [file_info(file, records) for file in records.list_files(scene, id)],
                     "budget": {
-                        "calls": len(token_records),
+                        "calls": current_calls,
                         "max_calls": None if runtime.config.worker is None else runtime.config.worker.max_calls,
                         "tokens": token_summary(token_records),
                         "max_tokens": None if runtime.config.worker is None else runtime.config.worker.max_tokens,

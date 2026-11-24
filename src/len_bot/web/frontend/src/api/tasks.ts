@@ -72,10 +72,10 @@ export interface TaskBudget {
   calls: number
   max_calls: number | null
   tokens: {
-    calls: number
     input: number
     output: number
-    cached: number | null
+    cached: number
+    known_calls: number
     unknown_calls: number
   }
   max_tokens: number | null

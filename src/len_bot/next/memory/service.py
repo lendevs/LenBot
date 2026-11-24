@@ -452,35 +452,28 @@ class MemoryService:
                                            require_evidence=text_only, match_query=text_query)
             query_entries = [(hit, text_query, text_only) for hit in selected]
 
-        cue_hits: list[dict] = []
         cue_prefer_resource = resource_intent or _has_resource_intent(cues)
         need_resource_from_cues = (
-            resource_intent and not any(_is_resource_hit(hit) for hit, _, _ in query_entries)
+            bool(cues) and budget > 0 and resource_intent
+            and not any(_is_resource_hit(hit) for hit, _, _ in query_entries)
         )
-        if cues and budget > 0 and (len(query_entries) < recall_limit or need_resource_from_cues):
+        prefetched_cue_hits: list[dict] | None = None
+        if need_resource_from_cues:
             query_keys = seen | {(hit["scope"], hit["path"]) for hit, _, _ in query_entries}
-            cue_fetch = min(100, max(CUE_HITS * 8, 50)) if cue_prefer_resource else CUE_HITS
-            raw_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
-                                                             persona=persona, literal=True)
-                            if (hit["scope"], hit["path"]) not in query_keys]
-            if need_resource_from_cues and query_entries:
-                resource_cue = next(
-                    (hit for hit in raw_cue_hits
-                     if _is_resource_hit(hit) and evidence(hit["preview"], cues) > 0),
-                    None,
-                )
-                if resource_cue is not None:
-                    if len(query_entries) >= recall_limit:
-                        query_entries[-1] = (resource_cue, cues, True)
-                    else:
-                        query_entries.append((resource_cue, cues, True))
-                    raw_cue_hits = [hit for hit in raw_cue_hits
-                                    if (hit["scope"], hit["path"]) != (resource_cue["scope"], resource_cue["path"])]
-            cue_limit = min(CUE_HITS, max(0, recall_limit - len(query_entries)))
-            has_resource = any(_is_resource_hit(hit) for hit, _, _ in query_entries)
-            cue_hits = _select_recall_hits(raw_cue_hits, cue_limit,
-                                           prefer_resource=cue_prefer_resource and not has_resource,
-                                           require_evidence=True, match_query=cues)
+            cue_fetch = min(100, max(CUE_HITS * 8, 50))
+            prefetched_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
+                                                                    persona=persona, literal=True)
+                                   if (hit["scope"], hit["path"]) not in query_keys]
+            resource_cue = next(
+                (hit for hit in prefetched_cue_hits
+                 if _is_resource_hit(hit) and evidence(hit["preview"], cues) > 0),
+                None,
+            )
+            if resource_cue is not None:
+                if query_entries and len(query_entries) >= recall_limit:
+                    query_entries[-1] = (resource_cue, cues, True)
+                else:
+                    query_entries.append((resource_cue, cues, True))
 
         for position, (hit, match_text, evidence_capped) in enumerate(query_entries):
             # Each remaining hit gets an equal share; what a short one leaves goes to the next.
@@ -492,7 +485,19 @@ class MemoryService:
             append(hit["scope"], hit["path"], excerpt(hit["preview"], match_text, share), share,
                    kind="excerpt",
                    source_chars=hit["total_chars"], sections=hit["sections"])
-        if cue_hits and budget > 0:
+
+        if cues and budget > 0:
+            has_resource = any(_is_resource_hit(item) for item in items)
+            if prefetched_cue_hits is None:
+                cue_fetch = min(100, max(CUE_HITS * 8, 50)) if (cue_prefer_resource and not has_resource) else CUE_HITS
+                raw_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
+                                                                 persona=persona, literal=True)
+                                if (hit["scope"], hit["path"]) not in seen]
+            else:
+                raw_cue_hits = [hit for hit in prefetched_cue_hits if (hit["scope"], hit["path"]) not in seen]
+            cue_hits = _select_recall_hits(raw_cue_hits, CUE_HITS,
+                                           prefer_resource=cue_prefer_resource and not has_resource,
+                                           require_evidence=True, match_query=cues)
             for position, hit in enumerate(cue_hits):
                 share = min(budget // (len(cue_hits) - position), EVIDENCE_CHARS * evidence(hit["preview"], cues))
                 append(hit["scope"], hit["path"], excerpt(hit["preview"], cues, share), share, kind="excerpt",

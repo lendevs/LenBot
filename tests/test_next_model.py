@@ -617,6 +617,9 @@ def test_old_large_readonly_tool_results_fold_with_quantized_stability():
     assert projected[5][1]['content'] == small_search
     assert projected[6][1]['content'] == malformed_knowledge
 
+    # Unconsumed trailing tool outputs larger than keep_recent_tokens must NEVER fold before assistant reads them.
+    assert project_old_results(history, 50) == history
+
 
 def test_recap_source_extracts_ticket_anchors_and_preserves_plain_sessions():
     from len_bot.next.chat.recap import extract_ticket_anchors, recap_source
@@ -636,7 +639,7 @@ def test_recap_source_extracts_ticket_anchors_and_preserves_plain_sessions():
     assert recap_source('之前的回想', plain_entries) == expected_plain
 
     done_notice = (
-        '[任务执行结束] #7；请求人 onebot:1001；导出月报\n'
+        '[任务执行结束] #7；请求人 onebot:1001；导出月报\n含华东分部\n'
         + json.dumps({
             'status': 'done',
             'summary': '已生成月报',
@@ -659,7 +662,7 @@ def test_recap_source_extracts_ticket_anchors_and_preserves_plain_sessions():
         {
             'task_id': 7,
             'requester': 'onebot:1001',
-            'goal': '导出月报',
+            'goal': '导出月报 含华东分部',
             'status': 'done',
             'can_continue': True,
             'files': [{'id': 3, 'name': '月报.xlsx'}],

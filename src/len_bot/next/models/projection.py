@@ -379,12 +379,18 @@ def project_old_results(entries: list[tuple[int, dict]], keep_recent_tokens: int
     if not candidates:
         return entries
     if keep_recent_tokens > 0:
+        first_tail_tool = len(entries)
+        while first_tail_tool > 0 and entries[first_tail_tool - 1][1]['role'] == 'tool':
+            first_tail_tool -= 1
         offsets = [0]
         for _, message in entries:
             offsets.append(offsets[-1] + ceil(len(encode(message).encode('utf-8')) / 3))
         step = max(1, keep_recent_tokens // 2)
         cutoff = (offsets[-1] - keep_recent_tokens) // step * step
-        candidates = [item for item in candidates if offsets[item[0]] < cutoff]
+        candidates = [
+            item for item in candidates
+            if item[0] < first_tail_tool and offsets[item[0]] < cutoff
+        ]
     if not candidates:
         return entries
     projected = entries.copy()

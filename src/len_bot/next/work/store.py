@@ -440,6 +440,17 @@ class TaskStore:
                          provider=body["request"]["provider"], model=body["request"]["model"],
                          tokens=facts.get("tokens"))
 
+    def execution_call_count(self, scene: str, id: int) -> int:
+        """Model calls recorded in the current (or latest) execution, matching per-execution ``max_calls``."""
+        self.get(scene, id)
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM task_events WHERE scene=? AND task_id=? AND kind='model_call' "
+            "AND id > COALESCE((SELECT MAX(id) FROM task_events WHERE scene=? AND task_id=? "
+            "AND kind='input' AND json_extract(body,'$.mode')='continue'), 0)",
+            (scene, id, scene, id),
+        ).fetchone()
+        return int(row[0])
+
     def call_tokens(self, scene: str, id: int, *, for_budget: bool = False) -> list[dict | None]:
         self.get(scene, id)
         rows = self.db.execute(

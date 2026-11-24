@@ -354,3 +354,33 @@ async def test_worker_proxy_uses_worker_slot_tier_and_is_busy_while_queued():
     assert len(received) == 1
     assert received[0]['prompt_cache_key'] == 'slot-test-key'
     assert len(finished) == 1 and finished[0][1]['error'] is None
+
+
+def test_worker_anthropic_cache_skips_empty_text_blocks_and_null_cache_control():
+    from len_bot.next.work.worker_model import _apply_anthropic_cache_breakpoints
+
+    outgoing = {
+        'model': 'fixture',
+        'stream': True,
+        'system': [
+            {'type': 'text', 'text': 'valid system', 'cache_control': None},
+            {'type': 'text', 'text': '   '},
+        ],
+        'tools': [{'name': 'bash', 'input_schema': {'type': 'object'}, 'cache_control': None}],
+        'messages': [
+            {
+                'role': 'assistant',
+                'content': [
+                    {'type': 'tool_use', 'id': 'tu-1', 'name': 'bash', 'input': {}},
+                    {'type': 'text', 'text': ''},
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'tu-1', 'content': 'ok'}]},
+        ],
+    }
+    _apply_anthropic_cache_breakpoints(outgoing)
+    assert outgoing['system'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in outgoing['system'][1]
+    assert outgoing['tools'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert outgoing['messages'][0]['content'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in outgoing['messages'][0]['content'][1]

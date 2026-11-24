@@ -719,7 +719,8 @@ class WorkTasks:
                 "tokens": token_summary(self.records.call_tokens(item.scene, item.id)),
                 "can_continue": not self.records.workspace_discarded(item.scene, item.id),
                 "watchdog": last_watchdog}
-        notice = f"[任务执行结束] #{item.id}；请求人 {item.requester}；{item.goal}\n" + json.dumps(body, ensure_ascii=False)
+        goal_line = " ".join(item.goal.splitlines())
+        notice = f"[任务执行结束] #{item.id}；请求人 {item.requester}；{goal_line}\n" + json.dumps(body, ensure_ascii=False)
         if recent:
             notice += '\n最近过程编号（原文由请求人或任务管理者按event读取）：\n' + json.dumps(recent, ensure_ascii=False)
         self.records.add_event(item.scene, item.id, "finished", body, notice=notice)
