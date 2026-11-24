@@ -267,3 +267,104 @@ def test_egress_status_does_not_mutate_in_memory_day_cache(tmp_path):
         assert state['up'] == 0 and state['down'] == 0
         # Read-only status query must neither insert the new day key nor delete older keys in _scene_days.
         assert list(usage._scene_days.keys()) == [(SCENE, '1999-01-01')]
+
+
+def test_short_query_search_finds_two_char_chinese_word_beyond_5000_messages(tmp_path):
+    from dataclasses import asdict
+    from len_bot.next.platform.messages import ChatMessage, Segment, Sender
+    from len_bot.next.storage.codec import encode
+
+    with Store(tmp_path / 'host.sqlite3') as store:
+        def make_msg(index: int, text: str, at: float) -> ChatMessage:
+            return ChatMessage(
+                id=f'm-{index}', platform='onebot', bot_id='onebot:90001', scene=SCENE,
+                platform_message_id=f'm-{index}', sender=Sender('onebot:70001', '群友', None, None),
+                time=at, segments=[Segment('text', {'text': text})],
+                reply_to=None, mentions_bot=False, is_self=False, send_status='received',
+            )
+
+        # Insert 5,050 filler messages after two early hits (sharing a timestamp to also verify seq tie-break).
+        total = 5052
+        message_rows = []
+        search_rows = []
+        for index in range(1, total + 1):
+            if index == 1:
+                text, at = '以前买过苹果很好吃', 100.0
+            elif index == 2:
+                text, at = '同秒也提到了苹果', 100.0
+            elif index == total:
+                text, at = '最新一条也有苹果', float(index * 10)
+            else:
+                text, at = f'普通闲聊记录编号 {index}', float(index * 10)
+            body = encode(asdict(make_msg(index, text, at)))
+            message_rows.append((index, SCENE, f'm-{index}', body, '{}', at))
+            search_rows.append((index, text))
+        with store.db as db:
+            db.executemany(
+                'INSERT INTO messages(seq,scene,platform_id,body,raw,received_at) VALUES (?,?,?,?,?,?)',
+                message_rows,
+            )
+            db.executemany(
+                'INSERT INTO message_search(rowid,search_text) VALUES (?,?)',
+                search_rows,
+            )
+
+        snap = store.max_message_seq(SCENE)
+        newest = store.search_messages(
+            SCENE, query='苹果', who=None, after=None, before=None,
+            snapshot=snap, offset=0, limit=10, order='newest',
+        )
+        assert [seq for seq, _ in newest] == [total, 2, 1]
+
+        paged = store.search_messages(
+            SCENE, query='苹果', who=None, after=None, before=None,
+            snapshot=snap, offset=1, limit=2, order='newest',
+        )
+        assert [seq for seq, _ in paged] == [2, 1]
+
+        oldest = store.search_messages(
+            SCENE, query='苹果', who=None, after=None, before=None,
+            snapshot=snap, offset=0, limit=10, order='oldest',
+        )
+        assert [seq for seq, _ in oldest] == [1, 2, total]
+
+
+@pytest.mark.asyncio
+async def test_host_state_tolerates_concurrent_scene_add_and_remove(tmp_path):
+    from copy import deepcopy
+    from test_host_stream import login, panel
+
+    async with panel(tmp_path) as (runtime, client, _):
+        await login(client)
+        added_scene = 'onebot:group:80099'
+        saved_scene_cfg = deepcopy(runtime.config.scenes[SCENE])
+        saved_chat = runtime.chats[SCENE]
+        saved_runner = runtime.runners[SCENE]
+        original_read = runtime.store.read
+        mutated = False
+
+        async def read_with_scene_churn(fn, *args, **kwargs):
+            nonlocal mutated
+            # Mutate config.scenes, runtime.chats, and runtime.runners while store.read executes in its worker thread.
+            task = asyncio.create_task(original_read(fn, *args, **kwargs))
+            if not mutated:
+                mutated = True
+                runtime.config.scenes[added_scene] = saved_scene_cfg
+                runtime.config.scenes.pop(SCENE, None)
+                runtime.chats.pop(SCENE, None)
+                runtime.runners.pop(SCENE, None)
+            return await task
+
+        runtime.store.read = read_with_scene_churn
+        try:
+            response = await client.get('/api/host/state')
+        finally:
+            runtime.store.read = original_read
+            runtime.config.scenes.pop(added_scene, None)
+            runtime.config.scenes[SCENE] = saved_scene_cfg
+            runtime.chats[SCENE] = saved_chat
+            runtime.runners[SCENE] = saved_runner
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert [item['scene'] for item in body['scenes']] == [SCENE]

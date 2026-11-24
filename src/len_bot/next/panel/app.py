@@ -181,8 +181,14 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
 
     @app.get("/api/host/state", response_model=responses.HostState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
+        scene_entries = [
+            (scene, settings, runtime.chats[scene], runtime.runners[scene])
+            for scene, settings in list(config.scenes.items())
+            if scene in runtime.chats and scene in runtime.runners
+        ]
+        runners = [(scene, runner) for scene, _, _, runner in scene_entries]
         statuses = await runtime.store.read(
-            lambda: {scene: runtime.runners[scene].chat_status() for scene in config.scenes}
+            lambda: {scene: runner.chat_status() for scene, runner in runners}
         )
         return {
             "bot_id": config.bot_id,
@@ -205,18 +211,19 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                               for adapter in [adapter_for(runtime.platform, name)]},
             },
             "scenes": [
-                {"scene": scene, "persona": {"id": runtime.chats[scene].persona.id,
-                                              "name": runtime.chats[scene].persona.name},
+                {"scene": scene, "persona": {"id": chat.persona.id,
+                                              "name": chat.persona.name},
                  "persona_path": str(settings.persona),
                  "persona_switch": switching(scene),
-                 "voice_mode": settings.voice_mode, "timezone": config.scene_timezone(scene),
-                 "scene_open": not runtime.runners[scene].state.closed,
-                 "chat_enabled": not runtime.runners[scene].state.paused,
+                 "voice_mode": settings.voice_mode,
+                 "timezone": config.timezone if settings.timezone is None else settings.timezone,
+                 "scene_open": not runner.state.closed,
+                 "chat_enabled": not runner.state.paused,
                  "chat_status": statuses[scene],
-                 "attention": {"only_direct": runtime.chats[scene].config.attention.only_direct,
-                               "level": wake_level(runtime.chats[scene].config.attention, joining=True)},
-                 "wake_level": wake_level(runtime.chats[scene].config.attention)}
-                for scene, settings in config.scenes.items()
+                 "attention": {"only_direct": chat.config.attention.only_direct,
+                               "level": wake_level(chat.config.attention, joining=True)},
+                 "wake_level": wake_level(chat.config.attention)}
+                for scene, settings, chat, runner in scene_entries
             ],
             "memory_backend": None if config.memory is None else config.memory.backend,
             # Only what needs attention on the home page; details live on the capabilities page.

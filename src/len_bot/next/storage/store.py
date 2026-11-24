@@ -1116,20 +1116,48 @@ class Store:
                 ).fetchall()
                 return [(row[0], decode_message(row[1])) for row in rows]
             if shorts:
-                # Trigram FTS5 cannot index <3-char terms; bound the time-ordered index scan before probing FTS rowids.
-                recent_conditions = ["m.scene=?", "+m.seq<=?", *filters]
+                # Trigram FTS5 cannot index <3-char terms; scan time-ordered chunks with keyset cursors until full.
+                if limit <= 0:
+                    return []
+                base_conditions = ["m.scene=?", "+m.seq<=?", *filters]
                 short_conditions = " AND ".join("instr(s.search_text,?)>0" for _ in shorts)
-                scan_limit = max(SHORT_QUERY_SCAN_LIMIT, limit + offset)
-                rows = self.db.execute(
-                    "WITH recent(seq,body) AS MATERIALIZED ("
-                    "SELECT m.seq,m.body FROM messages m WHERE " + " AND ".join(recent_conditions)
-                    + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ?"
-                    ") SELECT m.seq,m.body FROM recent m CROSS JOIN message_search s ON s.rowid=m.seq WHERE "
-                    + short_conditions
-                    + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
-                    (scene, snapshot, *filter_params, scan_limit, *shorts, limit, offset),
-                ).fetchall()
-                return [(row[0], decode_message(row[1])) for row in rows]
+                rev_direction = "" if order == "newest" else " DESC"
+                cmp, bound_cmp = ("<", "<=") if order == "newest" else (">", ">=")
+                batch_size = SHORT_QUERY_SCAN_LIMIT
+                need = offset + limit
+                collected: list[tuple[int, str]] = []
+                cursor: tuple[object, int] | None = None
+                while len(collected) < need:
+                    recent_conditions = list(base_conditions)
+                    recent_params: list[object] = [scene, snapshot, *filter_params]
+                    if cursor is not None:
+                        recent_conditions.append(
+                            f"json_extract(m.body,'$.time'){bound_cmp}? "
+                            f"AND (json_extract(m.body,'$.time'){cmp}? OR m.seq{cmp}?)"
+                        )
+                        recent_params.extend([cursor[0], cursor[0], cursor[1]])
+                    rows = self.db.execute(
+                        "WITH recent(seq,body,t) AS MATERIALIZED ("
+                        "SELECT m.seq,m.body,json_extract(m.body,'$.time') FROM messages m WHERE "
+                        + " AND ".join(recent_conditions)
+                        + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ?"
+                        ") SELECT r.seq,r.body,r.t,1,0 FROM recent r "
+                        "CROSS JOIN message_search s ON s.rowid=r.seq WHERE " + short_conditions
+                        + " UNION ALL "
+                        "SELECT tail.seq,NULL,tail.t,0,(SELECT COUNT(*) FROM recent) FROM ("
+                        f"SELECT seq,t FROM recent ORDER BY t{rev_direction},seq{rev_direction} LIMIT 1"
+                        ") tail "
+                        f"ORDER BY 4 DESC,3{direction},1{direction}",
+                        (*recent_params, batch_size, *shorts),
+                    ).fetchall()
+                    if not rows:
+                        break
+                    tail = rows[-1]
+                    collected.extend((row[0], row[1]) for row in rows[:-1])
+                    if tail[4] < batch_size:
+                        break
+                    cursor = (tail[2], tail[0])
+                return [(seq, decode_message(body)) for seq, body in collected[offset:need]]
         # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.
         conditions = ["m.scene=?", "+m.seq<=?", *filters]
         rows = self.db.execute(
