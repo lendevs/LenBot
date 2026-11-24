@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { RouterLink } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowUpCircle, Puzzle } from '@lucide/vue'
 import { keys } from '../../api/query'
 import { pluginsApi, type PluginUpdate } from '../../api/plugins'
 import type { PluginUpdateResult } from '../../api/system'
-import { readPendingRestart, readPluginUpdates } from '../../api/hostStore'
+import { readHostState, readPendingRestart, readPluginUpdates } from '../../api/hostStore'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import { describeError } from '../../ui/errors'
@@ -28,6 +29,7 @@ const apply = useMutation({
   mutationFn: (names: string[] | null) => pluginsApi.applyUpdates(names),
   onSuccess: (snapshot) => {
     queryClient.setQueryData(keys.plugins.all(), snapshot)
+    queryClient.setQueryData(keys.plugins.updates(), snapshot.updates)
     const results = (snapshot.operation?.updates ?? []) as PluginUpdateResult[]
     const failed = results.filter((item) => item.error)
     if (failed.length)
@@ -46,12 +48,16 @@ const apply = useMutation({
       detail: describeError(error, t('ui.error.network')).message,
     }),
   onSettled: () => {
+    void readHostState()
     void readPluginUpdates()
     void queryClient.invalidateQueries({ queryKey: keys.plugins.all() })
     void queryClient.invalidateQueries({ queryKey: ['plugin-catalog'] })
   },
 })
-const running = (name: string) => apply.isPending.value && Boolean(apply.variables.value?.includes(name))
+
+const runningAll = computed(() => apply.isPending.value && apply.variables.value === null)
+const runningOne = (name: string) =>
+  apply.isPending.value && Array.isArray(apply.variables.value) && apply.variables.value.includes(name)
 </script>
 
 <template>
@@ -69,11 +75,11 @@ const running = (name: string) => apply.isPending.value && Boolean(apply.variabl
         size="sm"
         variant="primary"
         :icon="ArrowUpCircle"
-        :loading="apply.isPending.value && apply.variables.value === null"
+        :loading="runningAll"
         :disabled="busy || apply.isPending.value"
         @click="apply.mutate(null)"
       >
-        {{ t('plugins.updates.all') }}
+        {{ runningAll ? t('plugins.updates.updating') : t('plugins.updates.all') }}
       </Button>
     </header>
     <ul class="flex list-none flex-col divide-y divide-line">
@@ -82,7 +88,21 @@ const running = (name: string) => apply.isPending.value && Boolean(apply.variabl
         :key="item.name"
         class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm"
       >
-        <span class="min-w-0 flex-1 truncate font-medium text-ink">{{ item.title || item.name }}</span>
+        <div class="flex min-w-0 flex-1 items-baseline gap-2">
+          <RouterLink
+            :to="{ name: 'host-plugins', query: { item: item.name, part: 'version' } }"
+            :aria-label="t('plugins.updates.inspect', { name: item.title || item.name })"
+            class="min-w-0 truncate rounded-xs font-medium text-ink transition-colors hover:text-primary hover:underline focus-visible:focus-ring"
+          >
+            {{ item.title || item.name }}
+          </RouterLink>
+          <span
+            v-if="item.title && item.title !== item.name"
+            class="hidden truncate font-mono text-xs text-subtle sm:inline"
+          >
+            {{ item.name }}
+          </span>
+        </div>
         <span class="text-muted tabular">
           v{{ item.installed_version }} →
           <strong class="font-semibold text-ink">v{{ item.version }}</strong>
@@ -94,11 +114,11 @@ const running = (name: string) => apply.isPending.value && Boolean(apply.variabl
         <Button
           v-else
           size="sm"
-          :loading="running(item.name)"
+          :loading="runningOne(item.name)"
           :disabled="busy || apply.isPending.value"
           @click="apply.mutate([item.name])"
         >
-          {{ t('plugins.updates.one') }}
+          {{ runningOne(item.name) ? t('plugins.updates.updating') : t('plugins.updates.one') }}
         </Button>
       </li>
     </ul>

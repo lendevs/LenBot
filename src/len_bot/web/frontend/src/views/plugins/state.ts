@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { pluginsApi, type Health, type PluginsSnapshot } from '../../api/plugins'
 import { keys } from '../../api/query'
-import { readPendingRestart } from '../../api/hostStore'
+import { readHostState, readPendingRestart, readPluginUpdates } from '../../api/hostStore'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
@@ -25,8 +25,17 @@ export function usePlugins() {
     snapshot.data.value?.running.plugins.find((item) => item.name === name)?.health ??
     null
 
-  /** Which write is running: a plugin name, `install`, `paths` or `scene:<id>`. */
-  const busy = ref<string | null>(null)
+  /**
+   * Running write keys: fine-grained keys such as `install:<name>`, `toggle:<name>`, `reload:<name>`,
+   * `update:<name>`, `scene:<id>`, `paths`, or `<name>` so single-card writes do not lock other cards.
+   */
+  const active = ref<string[]>([])
+  const busy = computed<string | null>(() => active.value[active.value.length - 1] ?? null)
+  const isBusy = (part?: string): boolean =>
+    part === undefined ? active.value.length > 0 : active.value.includes(part)
+  const pluginBusy = (name: string): boolean =>
+    active.value.some((part) => part === name || part.endsWith(`:${name}`))
+
   /**
    * Runs one write and takes the snapshot it answers with. Errors go to a toast unless `quiet`, in which case
    * the caller shows them (a dialog keeps them next to its form).
@@ -36,12 +45,15 @@ export function usePlugins() {
     action: () => Promise<PluginsSnapshot>,
     options: { success?: string; failure?: string; quiet?: boolean } = {},
   ): Promise<PluginsSnapshot | null> {
-    busy.value = part
+    active.value = [...active.value, part]
     try {
       const result = await action()
       client.setQueryData(keys.plugins.all(), result)
+      client.setQueryData(keys.plugins.updates(), result.updates)
       void client.invalidateQueries({ queryKey: keys.plugins.health() })
       void readPendingRestart()
+      void readHostState()
+      void readPluginUpdates()
       if (options.success) toast.success(options.success)
       return result
     } catch (error) {
@@ -52,10 +64,11 @@ export function usePlugins() {
       void snapshot.refetch()
       return null
     } finally {
-      busy.value = null
+      const index = active.value.indexOf(part)
+      if (index !== -1) active.value = [...active.value.slice(0, index), ...active.value.slice(index + 1)]
     }
   }
-  return { snapshot, healthOf, busy: computed(() => busy.value), run }
+  return { snapshot, healthOf, busy, isBusy, pluginBusy, run }
 }
 
 export type PluginsState = ReturnType<typeof usePlugins>
