@@ -1796,6 +1796,9 @@ export default {
       configureVision: '预配独立看图模型',
       editVision: '展开预配看图模型',
       visionBackupActive: '已预配备用模型，当前由聊天模型直接看图',
+      useStandaloneVision: '改用独立看图模型',
+      syncToCustomRoles: '同步模型到已开启用途',
+      syncedToCustomRoles: '已同步到 {n} 个已开启用途',
     },
     vectors: {
       memory: '记忆和资料向量',

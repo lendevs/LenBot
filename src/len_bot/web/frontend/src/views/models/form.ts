@@ -68,19 +68,25 @@ export const candidateOf = (row: ProviderRow): Candidate => ({
   },
 })
 
-export function newBinding(provider: string): ChatBinding {
+export function newBinding(
+  provider: string,
+  role?: Exclude<ChatRole, 'mind'>,
+  mind?: ChatBinding,
+): ChatBinding {
+  const contextWindow = mind?.context_window_tokens ?? 128000
+  const baseMaxOutput = role === 'worker' ? Math.max(4096, mind?.max_output_tokens ?? 4096) : 4096
   return {
     provider,
     model: '',
-    context_window_tokens: 128000,
+    context_window_tokens: contextWindow,
     temperature: null,
-    max_output_tokens: 1024,
-    timeout_seconds: 60,
+    max_output_tokens: Math.min(baseMaxOutput, Math.max(1, contextWindow - 1)),
+    timeout_seconds: role === 'worker' || role === 'memory' ? 180 : 60,
     thinking: null,
     reasoning_effort: null,
     quick_reasoning_effort: null,
     thinking_budget_tokens: null,
-    image_input: true,
+    image_input: role === 'vision' ? true : (mind?.image_input ?? false),
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',
     retry_delays_seconds: [2, 5],
@@ -309,13 +315,59 @@ export function useModelsForm() {
     fitProtocol(binding, providerFor(id)?.api)
   }
   function toggleRole(role: Exclude<ChatRole, 'mind'>, on: boolean) {
-    const first = optionsFor(role)[0]?.value ?? ''
-    if (!on) draft.value!.roles[role] = null
-    else {
-      const binding = newBinding(first)
-      fitProtocol(binding, providerFor(first)?.api)
-      draft.value!.roles[role] = binding
+    if (!on) {
+      draft.value!.roles[role] = null
+      return
     }
+    const mind = draft.value!.roles.mind
+    const provider = supports(providerFor(mind.provider), role)
+      ? mind.provider
+      : (optionsFor(role)[0]?.value ?? '')
+    const binding = newBinding(provider, role, mind)
+    fitProtocol(binding, providerFor(provider)?.api)
+    draft.value!.roles[role] = binding
+  }
+  function useStandaloneVision() {
+    if (!draft.value) return
+    draft.value.roles.mind.image_input = false
+    if (draft.value.roles.vision === null) toggleRole('vision', true)
+  }
+  const syncableRoles = ['memory', 'learner', 'worker'] as const
+  const canSyncFromMind = computed(() => {
+    const value = draft.value
+    if (!value) return false
+    const mind = value.roles.mind
+    const row = providerFor(mind.provider)
+    return syncableRoles.some((role) => {
+      const target = value.roles[role]
+      return (
+        target !== null &&
+        supports(row, role) &&
+        (target.provider !== mind.provider ||
+          target.model !== mind.model ||
+          target.context_window_tokens !== mind.context_window_tokens ||
+          target.image_input !== mind.image_input)
+      )
+    })
+  })
+  function syncCustomRolesFromMind(): number {
+    const value = draft.value
+    if (!value) return 0
+    const mind = value.roles.mind
+    const row = providerFor(mind.provider)
+    let count = 0
+    for (const role of syncableRoles) {
+      const target = value.roles[role]
+      if (!target || !supports(row, role)) continue
+      target.provider = mind.provider
+      target.model = mind.model
+      target.context_window_tokens = mind.context_window_tokens
+      target.image_input = mind.image_input
+      fitProtocol(target, row?.api)
+      count += 1
+    }
+    if (count > 0) toast.success(t('models.roles.syncedToCustomRoles', { n: count }, count))
+    return count
   }
   function toggleAsr(on: boolean) {
     draft.value!.roles.asr = on
@@ -450,6 +502,9 @@ export function useModelsForm() {
     changeProtocol,
     chooseRoleProvider,
     toggleRole,
+    useStandaloneVision,
+    canSyncFromMind,
+    syncCustomRolesFromMind,
     toggleAsr,
     problems,
     save: () => saving.mutate(),

@@ -41,6 +41,11 @@ function followMindVision() {
   form.toggleRole('vision', false)
   visionExpanded.value = false
 }
+function switchToStandaloneVision() {
+  if (props.role !== 'vision') return
+  form.useStandaloneVision()
+  visionExpanded.value = true
+}
 const bothThinking = computed(() =>
   Boolean(
     binding.value && binding.value.reasoning_effort !== null && binding.value.thinking_budget_tokens !== null,
@@ -139,7 +144,15 @@ watch(retries, (text) => {
         </span>
       </div>
       <div class="flex shrink-0 items-center gap-2">
-        <Button v-if="visionCollapsed" size="sm" variant="ghost" @click="visionExpanded = true">
+        <Button
+          v-if="role === 'mind' && form.canSyncFromMind.value"
+          size="sm"
+          variant="ghost"
+          @click="form.syncCustomRolesFromMind()"
+        >
+          {{ t('models.roles.syncToCustomRoles') }}
+        </Button>
+        <Button v-else-if="visionCollapsed" size="sm" variant="ghost" @click="visionExpanded = true">
           {{ binding ? t('models.roles.editVision') : t('models.roles.configureVision') }}
         </Button>
         <template v-else-if="mindSees">
@@ -151,17 +164,22 @@ watch(retries, (text) => {
         <Switch v-else-if="role !== 'mind'" v-model="enabled" :aria-label="title" />
       </div>
     </header>
-    <p v-if="!binding || mindSees" class="text-sm text-muted">
-      {{
-        mindSees
-          ? binding
-            ? t('models.roles.visionBackupActive')
-            : t('models.roles.mindSees')
-          : role === 'vision'
-            ? t('models.roles.noVision')
-            : t('models.roles.followsMind')
-      }}
-    </p>
+    <div v-if="!binding || mindSees" class="flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm text-muted">
+        {{
+          mindSees
+            ? binding
+              ? t('models.roles.visionBackupActive')
+              : t('models.roles.mindSees')
+            : role === 'vision'
+              ? t('models.roles.noVision')
+              : t('models.roles.followsMind')
+        }}
+      </p>
+      <Button v-if="mindSees" size="sm" variant="secondary" @click="switchToStandaloneVision">
+        {{ t('models.roles.useStandaloneVision') }}
+      </Button>
+    </div>
     <template v-if="binding && !visionCollapsed">
       <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
         <Field :label="t('models.roles.provider')">
@@ -208,11 +226,14 @@ watch(retries, (text) => {
           />
         </Field>
       </div>
-      <div v-if="role === 'mind'" class="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+      <div
+        v-if="role === 'mind' || role === 'vision' || role === 'worker'"
+        class="grid gap-x-8 gap-y-3 sm:grid-cols-2"
+      >
         <Field :label="t('models.roles.imageInput')" inline>
           <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
         </Field>
-        <Field :label="t('models.roles.quickReply')" inline>
+        <Field v-if="role === 'mind'" :label="t('models.roles.quickReply')" inline>
           <Switch v-model="quickReply" :aria-label="t('models.roles.quickReply')" />
         </Field>
       </div>
