@@ -664,6 +664,9 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             search = source.get('web_search')
             if search is not None and search.get('connection') is not None:
                 search['connection'] = renames.get(search['connection'], search['connection'])
+            read = source.get('web_read')
+            if read is not None and read.get('connection') is not None:
+                read['connection'] = renames.get(read['connection'], read['connection'])
             memory = source.get('memory')
             if memory is not None and memory['local'].get('embedding') is not None:
                 binding = memory['local']['embedding']

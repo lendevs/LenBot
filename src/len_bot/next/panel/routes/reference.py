@@ -7,12 +7,14 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from .. import responses
 from ...configuration.types import STRICT
 from ...platform.adapter import PlatformCallError
 from ...platform.platform_tools import group_file_url, group_files
+from ...reference.library import ReferenceHit
 from ...reference.sources import KINDS, MAX_FILE_BYTES, kind_of
 from ...runtime.network import NetworkRuntime
 
@@ -74,6 +76,21 @@ class GroupFileTarget(BaseModel):
     file_id: str
     busid: int
     name: str
+
+
+class ReferenceSearchRequest(BaseModel):
+    model_config = STRICT
+    query: str = Field(min_length=1, max_length=500)
+    scope: Literal["all", "scene", "chat", "persona"] = "all"
+    limit: int = Field(default=8, ge=1, le=30)
+
+
+def _hit_section(hit: ReferenceHit) -> str | None:
+    if hit.heading:
+        return " / ".join(hit.heading)
+    if hit.page is not None:
+        return f"第 {hit.page} 页"
+    return None
 
 
 async def download(url: str, transport: httpx.AsyncBaseTransport | None = None) -> bytes:
@@ -203,3 +220,25 @@ def register_host_reference(app: FastAPI, *, runtime: NetworkRuntime, user: Call
             raise HTTPException(422, str(error)) from error
         index(scene)
         return await listing(scene)
+
+    @app.post("/api/host/scenes/{scene}/reference/search", response_model=responses.ReferenceSearch)
+    async def search(scene: str, body: ReferenceSearchRequest, _: str = Depends(user)):
+        if scene not in runtime.chats:
+            raise HTTPException(404, "当前宿主未配置此场景")
+        scope: Literal["all", "chat", "persona"] = "chat" if body.scope == "scene" else body.scope
+        try:
+            hits = await library.search(scene, runtime.chats[scene].persona, body.query, scope=scope, limit=body.limit)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return {
+            "hits": [
+                {
+                    "scope": "scene" if hit.owner.startswith("scene:") else "persona",
+                    "path": hit.path,
+                    "section": _hit_section(hit),
+                    "preview": hit.text,
+                    "score": None,
+                }
+                for hit in hits
+            ]
+        }

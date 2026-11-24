@@ -162,3 +162,212 @@ class Sample(Plugin):
                     await runtime.plugins.close()
 
     asyncio.run(run())
+
+
+def test_plugin_panel_enhancements_candidate_apply_rules_and_batch_scenes(tmp_path):
+    binding = {'provider': 'primary', 'model': 'fixture', 'context_window_tokens': 16000}
+    initialize(tmp_path, FirstSetup.model_validate_json(json.dumps({
+        'bot_id': 'onebot:90001', 'owners': ['onebot:70001'], 'timezone': 'UTC',
+        'onebot': {'mode': 'forward_ws', 'ws_url': 'ws://127.0.0.1:9'},
+        'provider': {'api': 'openai-chat', 'base_url': 'http://127.0.0.1:9/v1', 'api_key': 'synthetic-unused'},
+        'compaction': {'input_tokens': 2000}, 'mind': binding, 'scene': 'onebot:group:80001',
+        'panel_port': 8088, 'username': 'fixture', 'password': 'synthetic-password',
+    })))
+    raw = json.loads((tmp_path / 'lenbot.config.json').read_text())
+    raw['telegram'] = {'bot_id': 'telegram:7001', 'bot_token': '7001:' + 'T' * 35}
+    raw['scenes']['onebot:group:80002'] = {'persona': raw['scenes']['onebot:group:80001']['persona']}
+    raw['scenes']['telegram:group:-100123'] = {'persona': raw['scenes']['onebot:group:80001']['persona']}
+    (tmp_path / 'lenbot.config.json').write_text(json.dumps(raw, ensure_ascii=False))
+    config = load_host_config(tmp_path)
+
+    def build_zip(version: str, *, title: str | None = '示例插件', data_version: int = 1,
+                  permissions: str = '["send"]', chat_platforms: str = '["onebot"]',
+                  dependencies: str = '[]') -> bytes:
+        manifest_lines = [
+            'name = "sample"',
+            *([] if title is None else [f'title = "{title}"']),
+            f'version = "{version}"',
+            'interface = 1',
+            f'data_version = {data_version}',
+            'requires_lenbot = ">=0.2,<1"',
+            'requires_python = ">=3.13"',
+            'platforms = ["linux", "darwin", "win32"]',
+            'reload = "plugin"',
+            'authors = ["LEN5010"]',
+            'license = "AGPL-3.0-only"',
+            'description = "全栈面板测试插件"',
+            f'permissions = {permissions}',
+            f'chat_platforms = {chat_platforms}',
+            f'dependencies = {dependencies}',
+            '',
+            '[config.show_details]',
+            'type = "boolean"',
+            'description = "是否显示详细回复"',
+            'default = true',
+        ]
+        source = '''from len_bot.plugin import Plugin, RecallBlock, command, fullmatch, regex, recall, compact, tool
+
+class Sample(Plugin):
+    @command("示例", "示例命令")
+    async def cmd(self, ctx, args):
+        return "ok"
+
+    @fullmatch("今日直播", "日历")
+    async def today(self, ctx):
+        return "ok"
+
+    @regex(r"查看 (?P<name>.+)", "正则查询", priority=5)
+    async def query(self, ctx, match):
+        return "ok"
+
+    @tool("sample_tool", "示例工具")
+    async def run_tool(self, ctx) -> str:
+        return "ok"
+
+    def unavailable_tools(self, scene):
+        return {} if self.ctx.config["show_details"] else {"sample_tool": "详细模式未开启"}
+
+    @recall()
+    async def remember(self, request):
+        return [RecallBlock("记录", "内容")]
+
+    @compact()
+    async def summarize(self, request):
+        return "摘要"
+'''
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, 'w') as archive:
+            archive.writestr('plugin.toml', '\n'.join(manifest_lines) + '\n')
+            archive.writestr('__init__.py', source)
+        return buf.getvalue()
+
+    async def run():
+        with Store(config.database) as store:
+            async with ChatModel(config.model_settings('mind')) as mind, open_memory(config, store) as memory:
+                scenes = [(config.scene_config(scene), load_persona(config.scenes[scene].persona))
+                          for scene in config.scenes]
+                runtime = NetworkRuntime(config, scenes, store, mind, memory=memory)
+                runtime.accepting = True
+                app = create_app(config, runtime, root=tmp_path)
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+                    assert (await client.post('/api/auth/login', json={
+                        'username': 'fixture', 'password': 'synthetic-password'})).status_code == 200
+
+                    # 1. Upload first candidate -> installed_manifest is None; batch scenes rejected before apply.
+                    uploaded = await client.post('/api/host/plugins/zip',
+                                                 files={'file': ('sample.zip', build_zip('1.0.0'))})
+                    assert uploaded.status_code == 200, uploaded.text
+                    snap = uploaded.json()
+                    cand = snap['available']['sample'][0]
+                    assert cand['title'] == '示例插件' and cand['data_version'] == 1
+                    assert cand['installed_manifest'] is None
+                    assert 'group_digest' in snap['catalog_entries']
+
+                    uninstalled = await client.put('/api/host/plugins/sample/scenes',
+                                                   json={'scenes': ['onebot:group:80001']})
+                    assert uninstalled.status_code == 422 and '尚未应用源码' in uninstalled.text
+
+                    # 2. Candidate parameter reading tolerates missing configured entry (no KeyError / AttributeError).
+                    saved_raw = json.loads((tmp_path / 'lenbot.config.json').read_text())
+                    saved_raw['plugins'].pop('sample', None)
+                    saved_raw['plugins']['disabled'] = []
+                    (tmp_path / 'lenbot.config.json').write_text(json.dumps(saved_raw, ensure_ascii=False))
+
+                    # 3. One-step save + apply_candidate=True + disabled_rules.
+                    applied = await client.put('/api/host/plugins/sample', json={
+                        'enabled': True, 'config': {'show_details': False},
+                        'apply_candidate': True, 'disabled_rules': ['/示例', '今日直播'],
+                    })
+                    assert applied.status_code == 200, applied.text
+                    body = applied.json()
+                    assert body['operation'] == {'name': 'sample', 'restart_required': False,
+                                                 'candidate_config_saved': True}
+                    assert body['restart_required'] is False
+                    assert body['saved']['disabled_rules'] == {'sample': ['/示例', '今日直播']}
+                    running_sample = next(item for item in body['running']['plugins'] if item['name'] == 'sample')
+                    assert running_sample['title'] == '示例插件'
+                    assert running_sample['disabled_rules'] == ['/示例', '今日直播']
+                    assert running_sample['commands'] == [{'name': '示例', 'description': '示例命令', 'disabled': True}]
+                    assert running_sample['rules'] == [
+                        {'kind': 'fullmatch', 'pattern': '今日直播', 'description': '日历', 'disabled': True},
+                        {'kind': 'regex', 'pattern': r'查看 (?P<name>.+)', 'description': '正则查询',
+                         'priority': 5, 'disabled': False},
+                    ]
+                    assert running_sample['unavailable_tools'] == {}
+
+                    # 4. Batch scenes toggle + chat_platforms check + memory_plugin/recap_plugin cleanup.
+                    bad_dup = await client.put('/api/host/plugins/sample/scenes',
+                                               json={'scenes': ['onebot:group:80001', 'onebot:group:80001']})
+                    assert bad_dup.status_code == 422
+                    bad_unknown = await client.put('/api/host/plugins/sample/scenes',
+                                                   json={'scenes': ['onebot:group:99999']})
+                    assert bad_unknown.status_code == 422
+                    bad_platform = await client.put('/api/host/plugins/sample/scenes',
+                                                    json={'scenes': ['telegram:group:-100123']})
+                    assert bad_platform.status_code == 422 and 'onebot' in bad_platform.text
+
+                    enabled_scenes = await client.put('/api/host/plugins/sample/scenes',
+                                                      json={'scenes': ['onebot:group:80001', 'onebot:group:80002']})
+                    assert enabled_scenes.status_code == 200, enabled_scenes.text
+                    snap = enabled_scenes.json()
+                    assert snap['restart_required'] is False
+                    assert 'sample' in snap['scenes']['onebot:group:80001']['running']
+                    assert 'sample' in snap['scenes']['onebot:group:80002']['running']
+                    running_sample = next(item for item in snap['running']['plugins'] if item['name'] == 'sample')
+                    assert running_sample['unavailable_tools'] == {'sample_tool': '详细模式未开启'}
+
+                    # Bind memory_plugin & recap_plugin on group 80001, then remove 80001 via batch scenes.
+                    bound = await client.put('/api/host/scenes/onebot:group:80001/plugins', json={
+                        'plugins': ['sample'], 'memory_plugin': 'sample', 'recap_plugin': 'sample',
+                    })
+                    assert bound.status_code == 200, bound.text
+                    removed = await client.put('/api/host/plugins/sample/scenes',
+                                               json={'scenes': ['onebot:group:80002']})
+                    assert removed.status_code == 200, removed.text
+                    snap = removed.json()
+                    assert snap['restart_required'] is False
+                    assert snap['scenes']['onebot:group:80001']['saved'] == []
+                    assert snap['scenes']['onebot:group:80001']['memory_plugin'] == {'saved': None, 'running': None}
+                    assert snap['scenes']['onebot:group:80001']['recap_plugin'] == {'saved': None, 'running': None}
+                    assert snap['scenes']['onebot:group:80002']['running'] == ['sample']
+
+                    # 5. Non-candidate disabled_rules update preserves config when config is omitted,
+                    # and empty list cleans root config key.
+                    toggled = await client.put('/api/host/plugins/sample', json={
+                        'enabled': True, 'disabled_rules': ['/示例'],
+                    })
+                    assert toggled.status_code == 200, toggled.text
+                    assert load_host_config(tmp_path).plugins.configured['sample'] == {'show_details': False}
+                    assert toggled.json()['saved']['disabled_rules'] == {'sample': ['/示例']}
+
+                    cleared = await client.put('/api/host/plugins/sample', json={
+                        'enabled': True, 'config': {'show_details': True}, 'disabled_rules': [],
+                    })
+                    assert cleared.status_code == 200, cleared.text
+                    snap = cleared.json()
+                    assert snap['restart_required'] is False
+                    assert snap['saved']['disabled_rules'] == {}
+                    assert 'disabled_rules' not in json.loads((tmp_path / 'lenbot.config.json').read_text())['plugins']
+                    running_sample = next(item for item in snap['running']['plugins'] if item['name'] == 'sample')
+                    assert running_sample['disabled_rules'] == []
+                    assert running_sample['commands'] == [{'name': '示例', 'description': '示例命令', 'disabled': False}]
+                    assert running_sample['unavailable_tools'] == {}
+
+                    # 6. Uploading a v2 candidate attaches installed_manifest of v1.
+                    v2 = await client.post('/api/host/plugins/zip', files={'file': (
+                        'sample.zip', build_zip('2.0.0', data_version=2, permissions='["send", "history"]',
+                                                chat_platforms='["onebot", "telegram"]'))})
+                    assert v2.status_code == 200, v2.text
+                    cand2 = v2.json()['available']['sample'][0]
+                    assert cand2['version'] == '2.0.0' and cand2['data_version'] == 2
+                    assert cand2['installed_manifest'] == {
+                        'version': '1.0.0',
+                        'data_version': 1,
+                        'permissions': [{'name': 'send', 'title': '在启用的群内发送消息'}],
+                        'chat_platforms': ['onebot'],
+                        'dependencies': [],
+                    }
+                if runtime.plugins is not None:
+                    await runtime.plugins.close()
+
+    asyncio.run(run())

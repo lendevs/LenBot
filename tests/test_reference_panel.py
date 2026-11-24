@@ -254,3 +254,51 @@ async def test_group_files_are_only_available_in_onebot_groups(tmp_path):
             response = await client.post(f'{path}/group-files', json={
                 'file_id': '/file', 'busid': 102, 'name': 'notes.md'})
             assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reference_search_tests_scene_and_persona_scopes_with_contract_fields(tmp_path):
+    from test_reference_library import pdf
+
+    async with panel(tmp_path, knowledge="# 角色设定\n\n## 偏好\n\n最喜欢抹茶味点心。\n") as (client, runtime):
+        uploaded = await client.post(PATH, files={
+            "file": ("活动手册.md", "# 活动\n\n## 报名\n\n报名截止十一月三日，地点抹茶屋。\n".encode()),
+        })
+        assert uploaded.status_code == 200, uploaded.text
+        pdf_upload = await client.post(PATH, files={
+            "file": ("guide.pdf", pdf(["Annual meeting checklist"])),
+        })
+        assert pdf_upload.status_code == 200, pdf_upload.text
+        await settled(client)
+
+        all_res = await client.post(f"{PATH}/search", json={"query": "抹茶", "scope": "all", "limit": 8})
+        assert all_res.status_code == 200, all_res.text
+        all_hits = all_res.json()["hits"]
+        assert {item["scope"] for item in all_hits} == {"scene", "persona"}
+        by_scope = {item["scope"]: item for item in all_hits}
+        assert by_scope["scene"]["path"] == "活动手册.md"
+        assert by_scope["scene"]["section"] == "活动 / 报名"
+        assert "十一月三日" in by_scope["scene"]["preview"]
+        assert by_scope["scene"]["score"] is None
+        assert by_scope["persona"]["path"] == "设定.md"
+        assert by_scope["persona"]["section"] == "角色设定 / 偏好"
+        assert "抹茶味点心" in by_scope["persona"]["preview"]
+        assert by_scope["persona"]["score"] is None
+
+        scene_only = await client.post(f"{PATH}/search", json={"query": "抹茶", "scope": "scene"})
+        assert scene_only.status_code == 200
+        assert [item["scope"] for item in scene_only.json()["hits"]] == ["scene"]
+
+        chat_only = await client.post(f"{PATH}/search", json={"query": "checklist", "scope": "chat"})
+        assert chat_only.status_code == 200
+        [pdf_hit] = chat_only.json()["hits"]
+        assert (pdf_hit["scope"], pdf_hit["path"], pdf_hit["section"], pdf_hit["score"]) == (
+            "scene", "guide.pdf", "第 1 页", None)
+
+        persona_only = await client.post(f"{PATH}/search", json={"query": "抹茶", "scope": "persona"})
+        assert persona_only.status_code == 200
+        assert [item["scope"] for item in persona_only.json()["hits"]] == ["persona"]
+
+        assert (await client.post(f"{PATH}/search", json={"query": "   "})).status_code == 422
+        assert (await client.post("/api/host/scenes/onebot:group:99999/reference/search",
+                                  json={"query": "抹茶"})).status_code == 404
