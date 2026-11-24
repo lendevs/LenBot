@@ -77,11 +77,16 @@ export function statusOf(snapshot: PluginsSnapshot, name: string, health: Health
 }
 
 /** Filter buckets of the installed list. */
-export type Bucket = 'on' | 'attention' | 'disabled' | 'idle'
+export type Bucket = 'running' | 'disabled' | 'attention'
 export function bucketOf(status: PluginStatus): Bucket {
-  if (status === 'disabled') return 'disabled'
-  if (status === 'idle') return 'idle'
-  return status === 'failed' || status === 'degraded' ? 'attention' : 'on'
+  if (status === 'failed' || status === 'degraded') return 'attention'
+  if (status === 'disabled' || status === 'idle' || status === 'stopped') return 'disabled'
+  return 'running'
+}
+
+export function hasManifestIssue(snapshot: PluginsSnapshot, name: string): boolean {
+  const entries = snapshot.available[name] ?? []
+  return entries.length > 1 || entries.some((entry) => Boolean(entry.error))
 }
 
 const permissionKey = (list: Permission[] | null | undefined) =>

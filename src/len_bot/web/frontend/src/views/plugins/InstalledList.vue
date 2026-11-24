@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Blocks,
@@ -12,7 +12,7 @@ import {
   Store,
   Trash2,
 } from '@lucide/vue'
-import { pluginsApi, type PluginsSnapshot } from '../../api/plugins'
+import { commandRuleKey, pluginsApi, pluginTitle, type PluginsSnapshot } from '../../api/plugins'
 import Button from '../../ui/Button.vue'
 import DropdownMenu, { type MenuEntry } from '../../ui/DropdownMenu.vue'
 import EmptyState from '../../ui/EmptyState.vue'
@@ -25,7 +25,16 @@ import PathsDialog from './PathsDialog.vue'
 import PluginCard from './PluginCard.vue'
 import PluginUpdatesSection from './PluginUpdatesSection.vue'
 import { usePluginsState } from './state'
-import { bucketOf, descriptionOf, manifestOf, pluginNames, statusOf, type Bucket } from './view'
+import {
+  bucketOf,
+  descriptionOf,
+  hasManifestIssue,
+  manifestOf,
+  pluginNames,
+  runningOf,
+  statusOf,
+  type Bucket,
+} from './view'
 
 const props = defineProps<{ snapshot: PluginsSnapshot }>()
 const emit = defineEmits<{ open: [name: string]; install: [request: InstallRequest]; discover: [] }>()
@@ -36,35 +45,40 @@ const names = computed(() => pluginNames(props.snapshot))
 const running = computed(
   () => props.snapshot.running.plugins.filter((item) => item.status === 'running').length,
 )
-const bucket = (name: string) => bucketOf(statusOf(props.snapshot, name, state.healthOf(name)))
+const bucket = (name: string): Bucket =>
+  hasManifestIssue(props.snapshot, name)
+    ? 'attention'
+    : bucketOf(statusOf(props.snapshot, name, state.healthOf(name)))
 
 type Filter = 'all' | Bucket
 const filter = ref<Filter>('all')
 const filters = computed(() => {
   const counts: Record<Filter, number> = {
     all: names.value.length,
-    on: 0,
-    attention: 0,
+    running: 0,
     disabled: 0,
-    idle: 0,
+    attention: 0,
   }
   for (const name of names.value) counts[bucket(name)]++
-  return (['all', 'on', 'attention', 'disabled', 'idle'] as const)
-    .filter((key) => key === 'all' || counts[key])
-    .map((key) => ({ value: key, label: `${t(`plugins.filters.${key}`)} ${counts[key]}` }))
+  return (['all', 'running', 'disabled', 'attention'] as const).map((key) => ({
+    value: key,
+    label: `${t(`plugins.filters.${key}`)} ${counts[key]}`,
+  }))
 })
-watch(filters, (list) => {
-  if (!list.some((item) => item.value === filter.value)) filter.value = 'all'
-})
+
 const query = ref('')
 const shown = computed(() => {
   const words = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
   return names.value.filter((name) => {
     if (filter.value !== 'all' && bucket(name) !== filter.value) return false
+    if (!words.length) return true
+    const commands = runningOf(props.snapshot, name)?.commands ?? []
     const text = [
+      pluginTitle(props.snapshot, name),
       name,
       descriptionOf(props.snapshot, name),
       ...(manifestOf(props.snapshot, name)?.authors ?? []),
+      ...commands.flatMap((cmd) => [commandRuleKey(cmd.name), cmd.description]),
     ]
       .join(' ')
       .toLowerCase()
@@ -91,21 +105,23 @@ async function removeData(name: string) {
     tone: 'danger',
   })
   if (sure)
-    await state.run(name, () => pluginsApi.removeData(name), { success: t('plugins.removeData.done') })
+    await state.run(`remove-data:${name}`, () => pluginsApi.removeData(name), {
+      success: t('plugins.removeData.done'),
+    })
 }
 </script>
 
 <template>
   <div class="flex min-w-0 flex-col gap-5">
     <div class="flex flex-wrap items-center gap-2.5">
-      <div v-if="names.length > 3" class="w-full sm:w-64">
+      <div v-if="names.length" class="w-full sm:w-64">
         <Input
           v-model="query"
           type="search"
           size="sm"
           :icon="Search"
-          :placeholder="t('plugins.search')"
-          :aria-label="t('plugins.search')"
+          :placeholder="t('plugins.filters.search')"
+          :aria-label="t('plugins.filters.search')"
           clearable
         />
       </div>
@@ -125,7 +141,7 @@ async function removeData(name: string) {
         </DropdownMenu>
       </div>
     </div>
-    <div v-if="filters.length > 2" class="overflow-x-auto scrollbar-thin">
+    <div v-if="names.length" class="overflow-x-auto scrollbar-thin">
       <SegmentedControl v-model="filter" :options="filters" size="sm" :label="t('plugins.filters.label')" />
     </div>
 
@@ -158,7 +174,7 @@ async function removeData(name: string) {
             size="sm"
             variant="danger-ghost"
             :icon="Trash2"
-            :loading="state.busy.value === item.name"
+            :loading="state.isBusy(`remove-data:${item.name}`)"
             @click="removeData(item.name)"
           >
             {{ t('plugins.removeData.confirm') }}
