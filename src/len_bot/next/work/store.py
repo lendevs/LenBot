@@ -13,7 +13,6 @@ from ..models.usage import record_usage
 from ..storage.codec import encode
 from .materials import MATERIALS
 from ..memory.embeddings import _reject_constant
-from .worker_model import REJECTED_HTTP_STATUSES
 
 if TYPE_CHECKING:
     from ..storage.store import Store
@@ -460,8 +459,7 @@ class TaskStore:
         records = []
         for row in rows:
             response = None if row[0] is None else json.loads(row[0])
-            if (for_budget and response is not None and response.get('tokens') is None
-                    and response.get('http_status') in REJECTED_HTTP_STATUSES and response.get('error') is not None):
+            if for_budget and response is not None and response.get('tokens') is None and response.get('error') is not None:
                 continue
             records.append(None if response is None else response.get('tokens'))
         return records

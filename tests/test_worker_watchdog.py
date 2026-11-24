@@ -99,79 +99,74 @@ def _record(body: dict) -> PiRecord:
     return PiRecord(body=body, raw=b"{}")
 
 
-def test_identical_tool_loop_steers_on_third_stops_on_fifth_and_resets():
-    watchdog = TaskWatchdog()
+def test_identical_tool_loop_steers_once_never_stops_and_resets():
+    assert issubclass(WatchdogStoppedError, RuntimeError)
+    watchdog = TaskWatchdog(repeat_stop_threshold=5, error_stop_threshold=8)
+    assert watchdog.repeat_steer_threshold == 4
+    assert watchdog.error_steer_threshold == 6
 
     assert watchdog.on_tool_start("c1", "bash", {"cmd": "ls", "dir": "/tmp"}) is None
     assert watchdog.on_tool_start("c2", "bash", {"dir": "/tmp", "cmd": "ls"}) is None
+    assert watchdog.on_tool_start("c3", "bash", {"cmd": "ls", "dir": "/tmp"}) is None
 
-    third = watchdog.on_tool_start("c3", "bash", {"cmd": "ls", "dir": "/tmp"})
-    assert third is not None
-    assert third.action == "steer"
-    assert third.reason == "identical_tool_loop"
-    assert third.steer_message and "ask_requester" in third.steer_message
+    fourth = watchdog.on_tool_start("c4", "bash", {"cmd": "ls", "dir": "/tmp"})
+    assert fourth is not None
+    assert fourth.action == "steer"
+    assert fourth.reason == "identical_tool_loop"
+    assert fourth.steer_message and "ask_requester" in fourth.steer_message
 
-    # Already steered once for this repeated signature.
-    assert watchdog.on_tool_start("c4", "bash", {"cmd": "ls", "dir": "/tmp"}) is None
+    # Already steered once for this repeated signature; never hard-stops even past legacy stop threshold.
+    for idx in range(5, 9):
+        assert watchdog.on_tool_start(f"c{idx}", "bash", {"cmd": "ls", "dir": "/tmp"}) is None
 
-    fifth = watchdog.on_tool_start("c5", "bash", {"cmd": "ls", "dir": "/tmp"})
-    assert fifth is not None
-    assert fifth.action == "stop"
-    assert fifth.reason == "identical_tool_loop"
-
-    # Changing arguments resets the repeat counter and allows a fresh cycle.
-    assert watchdog.on_tool_start("c6", "bash", {"cmd": "pwd"}) is None
-    assert watchdog.on_tool_start("c7", "bash", {"cmd": "pwd"}) is None
-    steered_again = watchdog.on_tool_start("c8", "bash", {"cmd": "pwd"})
+    # Changing arguments resets the repeat counter and allows a fresh steer cycle.
+    for idx in range(9, 12):
+        assert watchdog.on_tool_start(f"c{idx}", "bash", {"cmd": "pwd"}) is None
+    steered_again = watchdog.on_tool_start("c12", "bash", {"cmd": "pwd"})
     assert steered_again is not None and steered_again.action == "steer"
 
     # Human intervention clears repeat counters while keeping active tool tracking intact.
     assert watchdog.active_tools is True
     watchdog.reset_intervention()
     assert watchdog.active_tools is True
-    assert watchdog.on_tool_start("c9", "bash", {"cmd": "pwd"}) is None
-    assert watchdog.on_tool_start("c10", "bash", {"cmd": "pwd"}) is None
-    steered_after_reset = watchdog.on_tool_start("c11", "bash", {"cmd": "pwd"})
+    for idx in range(13, 16):
+        assert watchdog.on_tool_start(f"c{idx}", "bash", {"cmd": "pwd"}) is None
+    steered_after_reset = watchdog.on_tool_start("c16", "bash", {"cmd": "pwd"})
     assert steered_after_reset is not None and steered_after_reset.action == "steer"
 
 
-def test_consecutive_tool_errors_steer_on_fifth_stop_on_eighth_and_clear_on_success():
+def test_consecutive_tool_errors_steer_once_never_stop_and_clear_on_success():
     watchdog = TaskWatchdog()
 
-    for idx in range(1, 5):
+    for idx in range(1, 6):
         watchdog.on_tool_start(f"e{idx}", "bash", {"cmd": f"cmd-{idx}"})
         assert watchdog.on_tool_end(f"e{idx}", "bash", is_error=True) is None
 
-    watchdog.on_tool_start("e5", "bash", {"cmd": "cmd-5"})
-    fifth = watchdog.on_tool_end("e5", "bash", is_error=True)
-    assert fifth is not None
-    assert fifth.action == "steer"
-    assert fifth.reason == "consecutive_tool_errors"
-    assert fifth.steer_message
+    watchdog.on_tool_start("e6", "bash", {"cmd": "cmd-6"})
+    sixth = watchdog.on_tool_end("e6", "bash", is_error=True)
+    assert sixth is not None
+    assert sixth.action == "steer"
+    assert sixth.reason == "consecutive_tool_errors"
+    assert sixth.steer_message
 
-    for idx in (6, 7):
+    # Subsequent consecutive errors in the same streak never trigger action="stop" or repeat steer.
+    for idx in range(7, 11):
         watchdog.on_tool_start(f"e{idx}", "bash", {"cmd": f"cmd-{idx}"})
         assert watchdog.on_tool_end(f"e{idx}", "bash", is_error=True) is None
-
-    watchdog.on_tool_start("e8", "bash", {"cmd": "cmd-8"})
-    eighth = watchdog.on_tool_end("e8", "bash", is_error=True)
-    assert eighth is not None
-    assert eighth.action == "stop"
-    assert eighth.reason == "consecutive_tool_errors"
 
     # One successful tool call clears the consecutive error counter and steer flag.
     watchdog.on_tool_start("ok", "bash", {"cmd": "ok"})
     assert watchdog.on_tool_end("ok", "bash", is_error=False) is None
 
-    for idx in range(1, 5):
+    for idx in range(1, 6):
         watchdog.on_tool_start(f"r{idx}", "read", {"path": f"f{idx}"})
         assert watchdog.on_tool_end(f"r{idx}", "read", is_error=True) is None
-    watchdog.on_tool_start("r5", "read", {"path": "f5"})
-    steered_again = watchdog.on_tool_end("r5", "read", is_error=True)
+    watchdog.on_tool_start("r6", "read", {"path": "f6"})
+    steered_again = watchdog.on_tool_end("r6", "read", is_error=True)
     assert steered_again is not None and steered_again.action == "steer"
 
 
-def test_check_idle_guards_against_false_silent_hang():
+def test_check_idle_steers_once_and_rearms_after_activity():
     watchdog = TaskWatchdog(hang_timeout_seconds=180.0)
 
     assert watchdog.check_idle(179.9, model_busy=False, waiting_input=False) is None
@@ -186,10 +181,25 @@ def test_check_idle_guards_against_false_silent_hang():
     watchdog.on_tool_end("long-build", "bash", is_error=False)
     assert watchdog.active_tools is False
 
-    stopped = watchdog.check_idle(180.0, model_busy=False, waiting_input=False)
-    assert stopped is not None
-    assert stopped.action == "stop"
-    assert stopped.reason == "silent_hang"
+    steered = watchdog.check_idle(180.0, model_busy=False, waiting_input=False)
+    assert steered is not None
+    assert steered.action == "steer"
+    assert steered.reason == "silent_hang"
+    assert steered.steer_message and "ask_requester" in steered.steer_message
+
+    # Only steers once per idle period until fresh activity arrives.
+    assert watchdog.check_idle(240.0, model_busy=False, waiting_input=False) is None
+
+    watchdog.on_activity()
+    steered_again = watchdog.check_idle(180.0, model_busy=False, waiting_input=False)
+    assert steered_again is not None
+    assert steered_again.action == "steer"
+    assert steered_again.reason == "silent_hang"
+    assert watchdog.check_idle(240.0, model_busy=False, waiting_input=False) is None
+
+    watchdog.reset_intervention()
+    steered_after_reset = watchdog.check_idle(180.0, model_busy=False, waiting_input=False)
+    assert steered_after_reset is not None and steered_after_reset.action == "steer"
 
 
 def test_progress_dedup_notice_budget_and_watchdog_store_roundtrip(tmp_path, monkeypatch):
@@ -247,13 +257,24 @@ def test_progress_dedup_notice_budget_and_watchdog_store_roundtrip(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_consume_triggers_watchdog_steer_stop_and_silent_hang(tmp_path):
+async def test_consume_steers_without_stopping_on_loop_errors_and_silent_hang(tmp_path):
     with _make_execution(tmp_path) as (_store, records, item, task_exec, _, _):
-        # 1. Identical tool loop triggers steer at 3 and WatchdogStoppedError at 5.
-        pi = _FakePi([
-            _record({"type": "tool_execution_start", "toolCallId": f"t{i}", "toolName": "bash", "args": {"cmd": "ls"}})
-            for i in range(1, 6)
+        # 1. Identical tool loop triggers a single steer at 4 and never raises WatchdogStoppedError.
+        loop_events = []
+        for i in range(1, 7):
+            loop_events.append(
+                _record({"type": "tool_execution_start", "toolCallId": f"t{i}", "toolName": "bash", "args": {"cmd": "ls"}})
+            )
+            loop_events.append(
+                _record({"type": "tool_execution_end", "toolCallId": f"t{i}", "toolName": "bash", "isError": False})
+            )
+        loop_events.extend([
+            _record({"type": "message_end", "message": {
+                "role": "assistant", "stopReason": "stop", "content": [{"type": "text", "text": "循环已纠偏"}]
+            }}),
+            _record({"type": "agent_settled"}),
         ])
+        pi = _FakePi(loop_events)
         task_exec._session = SimpleNamespace(
             pi=pi,
             proxy=SimpleNamespace(busy=False, recorded=lambda v: v),
@@ -263,27 +284,64 @@ async def test_consume_triggers_watchdog_steer_stop_and_silent_hang(tmp_path):
         task_exec.active_limit = 1800.0
         async with asyncio.timeout(30.0) as timer:
             task_exec._timer = timer
-            with pytest.raises(WatchdogStoppedError, match="identical_tool_loop"):
-                await task_exec._consume()
+            result = await task_exec._consume()
 
+        assert result == "循环已纠偏"
         steer_cmds = [fields for cmd, fields in pi.commands if cmd == "steer"]
         assert len(steer_cmds) == 1
         assert "bash" in steer_cmds[0]["message"]
         saved = records.watchdog_events(SCENE, item.id)
         assert [(e["action"], e["reason"]) for e in saved] == [
             ("steer", "identical_tool_loop"),
-            ("stop", "identical_tool_loop"),
         ]
         assert records.pending_notices(SCENE) == []
 
-        # 2. Streaming updates refresh _last_event_at before continue; silent hang stops when idle.
+        # 2. Consecutive tool errors trigger a single steer at 6 and do not kill the task.
+        task_exec._watchdog = TaskWatchdog()
+        error_events = []
+        for i in range(1, 9):
+            error_events.append(
+                _record({"type": "tool_execution_start", "toolCallId": f"e{i}", "toolName": "bash", "args": {"cmd": f"c{i}"}})
+            )
+            error_events.append(
+                _record({"type": "tool_execution_end", "toolCallId": f"e{i}", "toolName": "bash", "isError": True})
+            )
+        error_events.extend([
+            _record({"type": "message_end", "message": {
+                "role": "assistant", "stopReason": "stop", "content": [{"type": "text", "text": "错误已恢复"}]
+            }}),
+            _record({"type": "agent_settled"}),
+        ])
+        err_pi = _FakePi(error_events)
+        task_exec._session = SimpleNamespace(
+            pi=err_pi,
+            proxy=SimpleNamespace(busy=False, recorded=lambda v: v),
+            egress=None,
+            browser_cli_version=None,
+        )
+        async with asyncio.timeout(30.0) as timer:
+            task_exec._timer = timer
+            err_result = await task_exec._consume()
+
+        assert err_result == "错误已恢复"
+        err_steers = [fields for cmd, fields in err_pi.commands if cmd == "steer"]
+        assert len(err_steers) == 1
+        assert records.watchdog_events(SCENE, item.id)[-1]["action"] == "steer"
+        assert records.watchdog_events(SCENE, item.id)[-1]["reason"] == "consecutive_tool_errors"
+
+        # 3. Silent idle steers once without stopping, stays quiet until activity resumes, and re-arms on activity.
         task_exec._watchdog = TaskWatchdog(hang_timeout_seconds=1.0)
-        task_exec._watchdog.hang_timeout_seconds = 0.08
+        task_exec._watchdog.hang_timeout_seconds = 0.06
         hang_pi = _FakePi([
-            0.04,
+            0.03,
             _record({"type": "tool_execution_update", "toolCallId": "u1", "toolName": "bash", "args": {}}),
-            0.04,
-            _record({"type": "bash_execution_update", "delta": "working"}),
+            0.18,
+            _record({"type": "bash_execution_update", "delta": "resumed"}),
+            0.16,
+            _record({"type": "message_end", "message": {
+                "role": "assistant", "stopReason": "stop", "content": [{"type": "text", "text": "空闲恢复完成"}]
+            }}),
+            _record({"type": "agent_settled"}),
         ])
         task_exec._session = SimpleNamespace(
             pi=hang_pi,
@@ -293,23 +351,29 @@ async def test_consume_triggers_watchdog_steer_stop_and_silent_hang(tmp_path):
         )
         async with asyncio.timeout(30.0) as timer:
             task_exec._timer = timer
-            with pytest.raises(WatchdogStoppedError, match="silent_hang"):
-                await task_exec._consume()
+            hang_result = await task_exec._consume()
 
+        assert hang_result == "空闲恢复完成"
+        hang_steers = [fields for cmd, fields in hang_pi.commands if cmd == "steer"]
+        assert len(hang_steers) == 2
         saved_after = records.watchdog_events(SCENE, item.id)
-        assert saved_after[-1]["action"] == "stop"
-        assert saved_after[-1]["reason"] == "silent_hang"
+        assert [(e["action"], e["reason"]) for e in saved_after[-2:]] == [
+            ("steer", "silent_hang"),
+            ("steer", "silent_hang"),
+        ]
 
-        # 3. Manual steer resets intervention counters and refreshes _last_event_at.
+        # 4. Manual steer resets intervention counters (including idle steer) and refreshes _last_event_at.
         task_exec._watchdog.on_tool_start("x1", "bash", {"cmd": "id"})
         task_exec._watchdog.on_tool_start("x2", "bash", {"cmd": "id"})
+        task_exec._watchdog.on_tool_start("x3", "bash", {"cmd": "id"})
         task_exec._last_event_at = 0.0
         await task_exec.steer("换个目录查")
         assert task_exec._last_event_at > 0.0
-        assert task_exec._watchdog.on_tool_start("x3", "bash", {"cmd": "id"}) is None
+        assert task_exec._watchdog.on_tool_start("x4", "bash", {"cmd": "id"}) is None
 
-        # 4. Recent proxy.last_active_at prevents false silent_hang right after a long model slot wait.
-        task_exec._watchdog = TaskWatchdog(hang_timeout_seconds=0.05)
+        # 5. Recent proxy.last_active_at prevents false silent_hang right after a long model slot wait.
+        task_exec._watchdog = TaskWatchdog(hang_timeout_seconds=1.0)
+        task_exec._watchdog.hang_timeout_seconds = 0.05
         settle_pi = _FakePi([
             0.01,
             _record({"type": "message_end", "message": {
@@ -326,10 +390,9 @@ async def test_consume_triggers_watchdog_steer_stop_and_silent_hang(tmp_path):
         )
         async with asyncio.timeout(30.0) as timer:
             task_exec._timer = timer
-            # Simulate _consume loop when _last_event_at was older than hang_timeout_seconds,
-            # by overriding hang_timeout_seconds very small while last_active_at is fresh.
             result_text = await task_exec._consume()
         assert result_text == "完成"
+        assert [cmd for cmd, _ in settle_pi.commands if cmd == "steer"] == []
 
 
 def test_worker_prompts_keep_placeholders_and_self_check_rules():

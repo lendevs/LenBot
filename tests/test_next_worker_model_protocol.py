@@ -71,6 +71,13 @@ def test_rejected_calls_remain_unknown_in_records_but_do_not_block_a_task_budget
         assert tasks.call_tokens(task.scene, task.id, for_budget=True) == []
         interrupted = tasks.start_call(task.scene, task.id, {'provider': 'fixture', 'model': 'fixture'})
         tasks.finish_call(interrupted, {'http_status': 200, 'tokens': None, 'error': 'response interrupted'})
+        assert tasks.call_tokens(task.scene, task.id, for_budget=True) == []
+        bad_gateway = tasks.start_call(task.scene, task.id, {'provider': 'fixture', 'model': 'fixture'})
+        tasks.finish_call(bad_gateway, {'http_status': 502, 'tokens': None, 'error': 'upstream model HTTP 502'})
+        assert tasks.call_tokens(task.scene, task.id, for_budget=True) == []
+        no_usage = tasks.start_call(task.scene, task.id, {'provider': 'fixture', 'model': 'fixture'})
+        tasks.finish_call(no_usage, {'http_status': 200, 'tokens': None, 'error': None})
+        assert tasks.call_tokens(task.scene, task.id) == [None, None, None, None]
         assert tasks.call_tokens(task.scene, task.id, for_budget=True) == [None]
 
 
@@ -384,3 +391,193 @@ def test_worker_anthropic_cache_skips_empty_text_blocks_and_null_cache_control()
     assert outgoing['tools'][0]['cache_control'] == {'type': 'ephemeral'}
     assert outgoing['messages'][0]['content'][0]['cache_control'] == {'type': 'ephemeral'}
     assert 'cache_control' not in outgoing['messages'][0]['content'][1]
+
+
+@pytest.mark.asyncio
+async def test_worker_model_stream_reschedules_idle_timeout_and_still_times_out_on_stall():
+    finished = []
+    mode = {'kind': 'slow_chunks'}
+    chunks = [
+        f'data: {json.dumps({"choices": [{"index": 0, "delta": {"content": f"part-{i} "}}]})}\n\n'.encode()
+        for i in range(4)
+    ] + [
+        (
+            f'data: {json.dumps({"choices": [{"index": 0, "delta": {"content": "done"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 15, "completion_tokens": 5}})}\n\n'
+            'data: [DONE]\n\n'
+        ).encode(),
+    ]
+
+    async def serve(reader, writer):
+        header = (await reader.readuntil(b'\r\n\r\n')).decode()
+        fields = {k.lower(): v for k, v in (line.split(': ', 1) for line in header.split('\r\n')[1:] if ': ' in line)}
+        await reader.readexactly(int(fields['content-length']))
+        writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n')
+        await writer.drain()
+        try:
+            if mode['kind'] == 'slow_chunks':
+                for part in chunks:
+                    await asyncio.sleep(0.03)
+                    writer.write(part)
+                    await writer.drain()
+            else:
+                writer.write(chunks[0])
+                await writer.drain()
+                await asyncio.sleep(0.3)
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+
+    server = await asyncio.start_server(serve, '127.0.0.1', 0)
+    async with server:
+        port = server.sockets[0].getsockname()[1]
+        settings = ModelSettings(
+            api='openai-chat',
+            base_url=f'http://127.0.0.1:{port}/v1',
+            api_key='synthetic-key',
+            model='fixture',
+            max_output_tokens=1024,
+            timeout_seconds=0.08,
+        )
+        req_bytes = json.dumps({
+            'model': 'fixture',
+            'stream': True,
+            'messages': [{'role': 'user', 'content': 'stream long code'}],
+        }).encode()
+        async with WorkerModelProxy(
+            settings, 'fixture', 4096, 'synthetic-task', Limits(10, 100000, 100000),
+            start_call=lambda _: len(finished) + 1,
+            finish_call=lambda ident, res: finished.append((ident, res)),
+        ) as proxy:
+            # 1) 5 chunks * 0.03s = ~0.15s > timeout_seconds (0.08s), succeeds because each chunk reschedules deadline.
+            async with proxy.open('synthetic-task', req_bytes) as response:
+                collected = b''.join([chunk async for chunk in response.body])
+            assert collected == b''.join(chunks)
+            assert len(finished) == 1
+            assert finished[0][1]['error'] is None
+            assert finished[0][1]['tokens']['input'] == 15
+            assert finished[0][1]['tokens']['output'] == 5
+
+            # 2) Stalling silently beyond timeout_seconds still raises TimeoutError.
+            mode['kind'] = 'stall'
+            with pytest.raises(TimeoutError):
+                async with proxy.open('synthetic-task', req_bytes) as response:
+                    async for _ in response.body:
+                        pass
+            assert len(finished) == 2
+            assert 'TimeoutError' in finished[1][1]['error']
+            assert finished[1][1]['tokens'] is None
+            assert proxy._tokens_unknown is False
+
+
+@pytest.mark.asyncio
+async def test_worker_model_failed_calls_do_not_lock_token_budget(tmp_path):
+    from len_bot.next.models.client import ModelProtocolError
+    from len_bot.next.storage.store import Store
+    from len_bot.next.work.store import TaskStore
+
+    behaviors = ['disconnect', 'timeout', 'http_502', 'ok']
+    ok_stream = (
+        f'data: {json.dumps({"choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 20, "completion_tokens": 5}})}\n\n'
+        'data: [DONE]\n\n'
+    ).encode()
+    partial_chunk = f'data: {json.dumps({"choices": [{"index": 0, "delta": {"content": "half"}}]})}\n\n'.encode()
+
+    async def serve(reader, writer):
+        header = (await reader.readuntil(b'\r\n\r\n')).decode()
+        fields = {k.lower(): v for k, v in (line.split(': ', 1) for line in header.split('\r\n')[1:] if ': ' in line)}
+        await reader.readexactly(int(fields['content-length']))
+        behavior = behaviors.pop(0)
+        try:
+            if behavior == 'disconnect':
+                writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n' + partial_chunk)
+                await writer.drain()
+            elif behavior == 'timeout':
+                writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n' + partial_chunk)
+                await writer.drain()
+                await asyncio.sleep(0.25)
+            elif behavior == 'http_502':
+                body = b'Bad Gateway'
+                writer.write(
+                    b'HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n'
+                    + f'Content-Length: {len(body)}\r\nConnection: close\r\n\r\n'.encode()
+                    + body
+                )
+                await writer.drain()
+            else:
+                writer.write(
+                    b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n'
+                    + f'Content-Length: {len(ok_stream)}\r\nConnection: close\r\n\r\n'.encode()
+                    + ok_stream
+                )
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+
+    with Store(tmp_path / 'state.db') as store:
+        tasks = TaskStore(store)
+        task = tasks.create('onebot:group:80001', 'onebot:70001', '预算续接测试', '产物', '上下文', '输入')
+        server = await asyncio.start_server(serve, '127.0.0.1', 0)
+        async with server:
+            port = server.sockets[0].getsockname()[1]
+            settings = ModelSettings(
+                api='openai-chat',
+                base_url=f'http://127.0.0.1:{port}/v1',
+                api_key='synthetic-key',
+                model='fixture',
+                max_output_tokens=1024,
+                timeout_seconds=0.06,
+            )
+            req_bytes = json.dumps({
+                'model': 'fixture',
+                'stream': True,
+                'messages': [{'role': 'user', 'content': 'retry after error'}],
+            }).encode()
+            async with WorkerModelProxy(
+                settings, 'fixture', 4096, 'synthetic-task', Limits(10, 100000, 100000, max_tokens=1000),
+                start_call=lambda facts: tasks.start_call(task.scene, task.id, facts),
+                finish_call=tasks.finish_call,
+            ) as proxy:
+                # 1) Mid-stream disconnect without usage -> does not lock token budget.
+                with pytest.raises(ModelProtocolError):
+                    async with proxy.open('synthetic-task', req_bytes) as response:
+                        async for _ in response.body:
+                            pass
+                assert proxy._tokens_unknown is False
+                assert tasks.call_tokens(task.scene, task.id, for_budget=True) == []
+
+                # 2) Mid-stream timeout without usage -> does not lock token budget.
+                with pytest.raises(TimeoutError):
+                    async with proxy.open('synthetic-task', req_bytes) as response:
+                        async for _ in response.body:
+                            pass
+                assert proxy._tokens_unknown is False
+                assert tasks.call_tokens(task.scene, task.id, for_budget=True) == []
+
+                # 3) HTTP 502 without usage -> does not lock token budget.
+                async with proxy.open('synthetic-task', req_bytes) as response:
+                    assert response.status == 502
+                    assert b''.join([chunk async for chunk in response.body]) == b'Bad Gateway'
+                assert proxy._tokens_unknown is False
+                assert tasks.call_tokens(task.scene, task.id, for_budget=True) == []
+
+                # 4) Subsequent valid call still runs and records real token spend.
+                async with proxy.open('synthetic-task', req_bytes) as response:
+                    assert response.status == 200
+                    assert b''.join([chunk async for chunk in response.body]) == ok_stream
+                assert proxy._tokens_unknown is False
+                assert proxy._spent == 25
+                budget_tokens = tasks.call_tokens(task.scene, task.id, for_budget=True)
+                assert len(budget_tokens) == 1
+                assert budget_tokens[0]['input'] == 20 and budget_tokens[0]['output'] == 5
+                assert len(tasks.call_tokens(task.scene, task.id)) == 4
