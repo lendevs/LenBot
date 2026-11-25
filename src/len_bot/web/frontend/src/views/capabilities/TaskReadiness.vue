@@ -6,15 +6,15 @@ import { useRouter } from 'vue-router'
 import type { RouteLocationRaw } from 'vue-router'
 import { ArrowUpRight, Check, Circle, X } from '@lucide/vue'
 import { capabilitiesApi } from '../../api/capabilities'
+import { personasApi } from '../../api/personas'
 import { tasksApi } from '../../api/tasks'
 import { keys } from '../../api/query'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import { groupsTarget } from '../groups/route'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
-import { sceneSecondaryId } from './status'
 
 const props = defineProps<{
   /** Whether the worker model role is bound; tasks use the chat model otherwise. */
@@ -25,6 +25,20 @@ const readiness = useQuery({
   queryKey: keys.host.workerReadiness(),
   queryFn: ({ signal }) => capabilitiesApi.workerReadiness(signal),
 })
+const roles = useQuery({
+  queryKey: keys.personas.all(),
+  queryFn: ({ signal }) => personasApi.library(signal),
+})
+function personaKeyFor(sceneId: string, personaId: string | null): string | null {
+  const list = roles.data.value?.roles ?? []
+  const byScene = list.find((role) => role.scenes.includes(sceneId) || role.running_scenes.includes(sceneId))
+  if (byScene) return byScene.key
+  if (personaId) {
+    const byId = list.find((role) => role.id === personaId)
+    if (byId) return byId.key
+  }
+  return null
+}
 
 type State = 'ok' | 'missing' | 'neutral'
 interface Item {
@@ -85,7 +99,8 @@ const items = computed<Item[]>(() => {
         to: groupsTarget(scene.scene, 'settings'),
         action: t('capabilities.worker.ready.toGroup'),
       })
-    else if (scene.missing_tools.length)
+    else if (scene.missing_tools.length) {
+      const personaKey = personaKeyFor(scene.scene, scene.persona)
       result.push({
         key: `${scene.scene}:tools`,
         label: name,
@@ -94,10 +109,13 @@ const items = computed<Item[]>(() => {
         value: t('capabilities.worker.ready.tools', {
           tools: scene.missing_tools.join(t('personas.separator')),
         }),
-        to: { name: 'host-persona', query: scene.persona ? { persona: scene.persona } : {} },
+        to: {
+          name: 'host-persona',
+          query: personaKey ? { persona: personaKey, tab: 'abilities' } : {},
+        },
         action: t('capabilities.worker.ready.toPersona'),
       })
-    else
+    } else
       result.push({
         key: scene.scene,
         label: name,
@@ -112,7 +130,7 @@ const items = computed<Item[]>(() => {
     key: 'delivery',
     label: t('capabilities.worker.ready.delivery'),
     state: live ? 'ok' : 'neutral',
-    value: t(`capabilities.worker.ready.${live ? 'onebot' : 'simulated'}`),
+    value: t(`capabilities.worker.ready.${live ? 'live' : 'simulated'}`),
     ...(live
       ? {}
       : {
@@ -161,12 +179,17 @@ const tones = { ok: 'text-success', missing: 'text-error', neutral: 'text-subtle
         :class="tones[item.state]"
         aria-hidden="true"
       />
-      <span class="inline-flex min-w-0 items-baseline gap-1.5">
-        <span class="truncate text-sm font-medium text-ink">{{ item.label }}</span>
-        <span v-if="item.meta" class="shrink-0 font-mono text-xs text-muted tabular">{{ item.meta }}</span>
+      <span class="inline-flex max-w-full min-w-0 items-baseline gap-1.5">
+        <span class="min-w-0 truncate text-sm font-medium text-ink">{{ item.label }}</span>
+        <span
+          v-if="item.meta"
+          class="max-w-28 shrink-0 truncate font-mono text-xs text-muted tabular sm:max-w-none"
+        >
+          {{ item.meta }}
+        </span>
       </span>
       <span
-        class="min-w-0 flex-1 text-sm break-words"
+        class="min-w-32 flex-1 text-sm break-words"
         :class="item.state === 'missing' ? 'text-error' : 'text-muted'"
       >
         {{ item.value }}

@@ -8,7 +8,7 @@ import { capabilitiesApi, type SkillInfo, type SkillSource } from '../../api/cap
 import { personasApi } from '../../api/personas'
 import { keys } from '../../api/query'
 import { host } from '../../api/hostStore'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import EmptyState from '../../ui/EmptyState.vue'
@@ -17,7 +17,6 @@ import Field from '../../ui/Field.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import SkillDialog from './SkillDialog.vue'
-import { sceneSecondaryId } from './status'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -67,13 +66,14 @@ const allowance = computed(() => {
 })
 
 const inspected = ref<SkillInfo | null>(null)
-const inspecting = computed({
-  get: () => inspected.value !== null,
-  set: (value: boolean) => {
-    if (!value) inspected.value = null
-  },
+const inspecting = ref(false)
+function inspect(skill: SkillInfo) {
+  inspected.value = skill
+  inspecting.value = true
+}
+watch(scene, () => {
+  inspecting.value = false
 })
-watch(scene, () => (inspected.value = null))
 </script>
 
 <template>
@@ -156,7 +156,7 @@ watch(scene, () => (inspected.value = null))
                 {{ skill.description }}
               </p>
             </div>
-            <Button size="sm" variant="ghost" :icon="FileSearch" @click="inspected = skill">
+            <Button size="sm" variant="ghost" :icon="FileSearch" @click="inspect(skill)">
               {{ t('capabilities.skills.files') }}
             </Button>
           </li>

@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { onBeforeRouteUpdate } from 'vue-router'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { ArrowLeft, ChevronDown, Plug, PlugZap, Plus, Trash2, X } from '@lucide/vue'
 import { capabilitiesApi, type McpService, type McpState } from '../../api/capabilities'
 import { keys } from '../../api/query'
-import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { developerDetails } from '../../composables/useDeveloperMode'
 import { readPendingRestart } from '../../api/hostStore'
 import { formatDateTime } from '../../i18n/format'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import CodeBlock from '../../ui/CodeBlock.vue'
@@ -28,11 +28,11 @@ import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import RawRecord from '../groups/tasks/RawRecord.vue'
 import ScenePicker from '../plugins/schema/ScenePicker.vue'
-import { mcpTone, sceneSecondaryId } from './status'
+import { mcpTone } from './status'
 
 /** `name` is null while adding a service. */
 const props = defineProps<{ name: string | null; state: McpState; wide: boolean }>()
-const emit = defineEmits<{ back: []; saved: [name: string]; removed: [] }>()
+const emit = defineEmits<{ back: []; saved: [name: string]; removed: []; dirty: [value: boolean] }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
@@ -40,8 +40,10 @@ const client = useQueryClient()
 interface Pair {
   key: string
   value: string
-  /** Saved before: the value is not sent back, and an empty one keeps it. */
+  /** Saved before: the value is not sent back, and an empty one keeps it while transport is unchanged. */
   kept: boolean
+  /** Original saved key when the pair came from the server's masked credentials. */
+  originalKey: string | null
 }
 interface Draft {
   name: string
@@ -56,6 +58,11 @@ interface Draft {
   url: string
   pairs: Pair[]
 }
+const normalizeArgs = (text: string) =>
+  text
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean)
 function draftOf(name: string | null): Draft {
   const saved = name ? props.state.saved[name] : undefined
   const transport = saved?.transport
@@ -75,24 +82,70 @@ function draftOf(name: string | null): Draft {
       key,
       value: value ?? '',
       kept: value === null,
+      originalKey: value === null ? key : null,
     })),
   }
 }
 const initial = computed(() => draftOf(props.name))
 const copy = (value: Draft): Draft => JSON.parse(JSON.stringify(value)) as Draft
 const draft = ref<Draft>(copy(initial.value))
+const nameTouched = ref(false)
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 watch(initial, (next, previous) => {
   if (!previous || same(draft.value, previous)) draft.value = copy(next)
 })
+/** Changing transport type, URL, command or args requires re-entering saved secrets (mirrors mcp.py). */
+const transportChanged = computed(() => {
+  if (props.name === null) return false
+  const current = draft.value
+  const base = initial.value
+  if (current.type !== base.type) return true
+  if (current.type === 'http') return current.url.trim() !== base.url.trim()
+  return (
+    current.command.trim() !== base.command.trim() ||
+    JSON.stringify(normalizeArgs(current.args)) !== JSON.stringify(normalizeArgs(base.args))
+  )
+})
+watch(transportChanged, (changed) => {
+  if (changed) {
+    if (draft.value.pairs.some((pair) => pair.kept)) {
+      draft.value.pairs = draft.value.pairs.map((pair) => (pair.kept ? { ...pair, kept: false } : pair))
+    }
+  } else {
+    const canRestore = (pair: Pair) =>
+      !pair.kept && pair.originalKey !== null && pair.key.trim() === pair.originalKey && pair.value === ''
+    if (draft.value.pairs.some(canRestore)) {
+      draft.value.pairs = draft.value.pairs.map((pair) => (canRestore(pair) ? { ...pair, kept: true } : pair))
+    }
+  }
+})
+const needsReenter = (pair: Pair) => Boolean(pair.originalKey !== null && !pair.kept && !pair.value.trim())
+
 /** Set once this editor saved or removed its service, right before the list selects another one. */
 const finished = ref(false)
-const dirty = computed(
-  () =>
-    !finished.value &&
-    (props.name === null ? Boolean(draft.value.name.trim()) : !same(draft.value, initial.value)),
-)
-useUnsavedChanges(dirty, { keep: ['tab'] })
+const dirty = computed(() => !finished.value && !same(draft.value, initial.value))
+watch(dirty, (value) => emit('dirty', value), { immediate: true })
+onBeforeRouteUpdate(async (to, from) => {
+  if (!dirty.value) return true
+  const toTab = typeof to.query.tab === 'string' ? to.query.tab : 'mcp'
+  const fromTab = typeof from.query.tab === 'string' ? from.query.tab : 'mcp'
+  const currentKey = props.name ?? '+'
+  if (
+    to.path === from.path &&
+    toTab === 'mcp' &&
+    fromTab === 'mcp' &&
+    to.query.item !== from.query.item &&
+    to.query.item !== currentKey
+  ) {
+    return await confirm({
+      title: t('ui.unsaved.title'),
+      message: t('ui.unsaved.message'),
+      confirmLabel: t('common.discard'),
+      tone: 'danger',
+    })
+  }
+  return true
+})
 
 const NAME = /^[a-z][a-z0-9_]{0,23}$/
 const errors = computed(() => {
@@ -112,6 +165,7 @@ const errors = computed(() => {
   if (value.max_response_bytes === null) result.bytes = t('capabilities.required')
   const names = value.pairs.map((pair) => pair.key.trim()).filter(Boolean)
   if (new Set(names).size !== names.length) result.pairs = t('capabilities.mcp.pairsRepeat')
+  else if (value.pairs.some(needsReenter)) result.pairs = t('capabilities.mcp.secretReenter')
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)
@@ -121,7 +175,10 @@ function body(): McpService {
   const pairs = Object.fromEntries(
     value.pairs
       .filter((pair) => pair.key.trim())
-      .map((pair) => [pair.key.trim(), pair.kept && pair.value === '' ? null : pair.value]),
+      .map((pair) => [
+        pair.key.trim(),
+        pair.kept && !transportChanged.value && pair.value === '' ? null : pair.value,
+      ]),
   ) as Record<string, string | null>
   return {
     enabled: value.enabled,
@@ -133,10 +190,7 @@ function body(): McpService {
         ? {
             type: 'stdio',
             command: value.command.trim(),
-            args: value.args
-              .split('\n')
-              .map((item) => item.trim())
-              .filter(Boolean),
+            args: normalizeArgs(value.args),
             cwd: value.cwd.trim(),
             env: pairs,
           }
@@ -213,6 +267,9 @@ const setPair = (index: number, patch: Partial<Pair>) =>
 const saveError = computed(() =>
   save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
 )
+const saveRawError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')).raw : null,
+)
 </script>
 
 <template>
@@ -261,7 +318,8 @@ const saveError = computed(() =>
           <Button
             size="sm"
             :icon="PlugZap"
-            :disabled="running.status === 'disabled'"
+            :disabled="running.status === 'disabled' || dirty"
+            :title="dirty ? t('capabilities.mcp.saveBeforeReconnect') : undefined"
             :loading="control.isPending.value && control.variables.value === 'connect'"
             @click="reconnect"
           >
@@ -279,6 +337,7 @@ const saveError = computed(() =>
           </Button>
         </div>
       </div>
+      <p v-if="dirty" class="text-xs text-muted">{{ t('capabilities.mcp.saveBeforeReconnect') }}</p>
       <ErrorNote v-if="running.error" :title="t('capabilities.mcp.connectFailed')" :error="running.error" />
       <details v-if="running.tools.length" class="group">
         <summary
@@ -323,9 +382,9 @@ const saveError = computed(() =>
           v-if="name === null"
           :label="t('capabilities.mcp.name')"
           required
-          :error="draft.name ? errors.name : null"
+          :error="dirty || nameTouched ? errors.name : null"
         >
-          <Input v-model="draft.name" mono placeholder="search_docs" autofocus />
+          <Input v-model="draft.name" mono placeholder="search_docs" autofocus @blur="nameTouched = true" />
         </Field>
         <Field :label="t('capabilities.mcp.enabled')" inline :wide="name !== null">
           <Switch v-model="draft.enabled" />
@@ -347,7 +406,11 @@ const saveError = computed(() =>
           />
         </div>
         <template v-if="draft.type === 'stdio'">
-          <Field :label="t('capabilities.mcp.command')" required :error="errors.command">
+          <Field
+            :label="t('capabilities.mcp.command')"
+            required
+            :error="name !== null || dirty ? errors.command : null"
+          >
             <Input v-model="draft.command" mono placeholder="npx" />
           </Field>
           <Field :label="t('capabilities.mcp.cwd')" required :error="errors.cwd">
@@ -362,7 +425,13 @@ const saveError = computed(() =>
             />
           </Field>
         </template>
-        <Field v-else :label="t('capabilities.mcp.url')" required wide :error="draft.url ? errors.url : null">
+        <Field
+          v-else
+          :label="t('capabilities.mcp.url')"
+          required
+          wide
+          :error="dirty || draft.url ? errors.url : null"
+        >
           <Input v-model="draft.url" type="url" mono placeholder="http://127.0.0.1:8000/mcp" />
         </Field>
       </FormSection>
@@ -390,8 +459,15 @@ const saveError = computed(() =>
                 type="password"
                 mono
                 autocomplete="new-password"
+                :invalid="needsReenter(pair)"
                 :aria-label="t('capabilities.mcp.pairValue')"
-                :placeholder="pair.kept ? t('plugins.form.secretKept') : t('capabilities.mcp.pairValue')"
+                :placeholder="
+                  pair.kept
+                    ? t('plugins.form.secretKept')
+                    : needsReenter(pair)
+                      ? t('capabilities.mcp.secretReenterPlaceholder')
+                      : t('capabilities.mcp.pairValue')
+                "
                 @update:model-value="(value: string) => setPair(index, { value })"
               />
             </div>
@@ -410,7 +486,7 @@ const saveError = computed(() =>
             size="sm"
             variant="ghost"
             :icon="Plus"
-            @click="draft.pairs = [...draft.pairs, { key: '', value: '', kept: false }]"
+            @click="draft.pairs = [...draft.pairs, { key: '', value: '', kept: false, originalKey: null }]"
           >
             {{ t('capabilities.mcp.addPair') }}
           </Button>
@@ -442,9 +518,16 @@ const saveError = computed(() =>
       :dirty="dirty"
       :saving="save.isPending.value"
       :error="saveError"
+      :raw-error="saveRawError"
       :invalid="invalid"
       @save="save.mutate()"
-      @discard="draft = copy(initial)"
+      @discard="
+        () => {
+          draft = copy(initial)
+          nameTouched = false
+          save.reset()
+        }
+      "
     />
   </div>
 </template>

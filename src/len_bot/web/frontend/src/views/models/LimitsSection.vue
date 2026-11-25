@@ -8,14 +8,13 @@ import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
 import { readPendingRestart } from '../../api/hostStore'
 import { formatDateTime } from '../../i18n/format'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
-import { sceneSecondaryId } from './form'
 
 interface Limits {
   daily_tokens: number | null
@@ -41,13 +40,20 @@ const blocked = computed(() =>
   (state.data.value?.scenes ?? []).filter((item) => item.blocked && item.speech.blocked_until === null),
 )
 
+const cloneLimits = (value: Limits): Limits => ({
+  daily_tokens: value.daily_tokens,
+  scene_daily_tokens: { ...value.scene_daily_tokens },
+})
 const versionOf = (snapshot: SettingsSnapshot) =>
   (snapshot.versions as { limits?: string } | undefined)?.limits
 const draft = ref<Limits>(pick(props.snapshot))
+const adopted = ref<Limits>(cloneLimits(draft.value))
 /** The version the draft started from; a save against a newer one is refused instead of overwriting it. */
 const base = ref(versionOf(props.snapshot))
 function adopt(snapshot: SettingsSnapshot) {
-  draft.value = pick(snapshot)
+  const next = pick(snapshot)
+  draft.value = next
+  adopted.value = cloneLimits(next)
   base.value = versionOf(snapshot)
 }
 const same = (a: Limits, b: Limits) =>
@@ -70,38 +76,63 @@ function setSceneLimit(scene: string, value: number | null) {
 }
 
 const conflict = ref<string | null>(null)
+const rejectedDraft = ref<Limits | null>(null)
 const save = useMutation({
   mutationFn: () => modelsApi.saveLimits({ ...draft.value, version: base.value }),
-  onMutate: () => (conflict.value = null),
+  onMutate: () => {
+    conflict.value = null
+    rejectedDraft.value = null
+  },
   onSuccess: (snapshot) => {
     client.setQueryData(keys.host.settings(), snapshot)
     adopt(snapshot)
+    rejectedDraft.value = null
     void client.invalidateQueries({ queryKey: keys.host.limits() })
     void readPendingRestart()
     toast.success(t('common.saved'))
   },
   onError: (error) => {
-    // Changed in another tab first: load the latest limits so the next save works, and say the edit is gone.
+    // Changed in another tab first: stash the user's draft and load the latest version so reapplying works cleanly.
     const data =
       error instanceof ApiError && error.code === 'limits_conflict'
         ? (error.data as { snapshot?: SettingsSnapshot })
         : null
     if (!data?.snapshot) return
+    const attempted = cloneLimits(draft.value)
+    const latest = pick(data.snapshot)
+    rejectedDraft.value = same(attempted, latest) ? null : attempted
     client.setQueryData(keys.host.settings(), data.snapshot)
     adopt(data.snapshot)
     conflict.value = t('models.limits.conflict')
   },
 })
+function reapplyRejected() {
+  if (!rejectedDraft.value) return
+  const validScenes = new Set(scenes.value)
+  draft.value = {
+    daily_tokens: rejectedDraft.value.daily_tokens,
+    scene_daily_tokens: Object.fromEntries(
+      Object.entries(rejectedDraft.value.scene_daily_tokens).filter(([scene]) => validScenes.has(scene)),
+    ),
+  }
+  rejectedDraft.value = null
+  conflict.value = null
+  if (save.isError.value) save.reset()
+}
 const saveError = computed(
   () =>
     conflict.value ??
     (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null),
 )
+const saveRawError = computed(() =>
+  !conflict.value && save.isError.value ? describeError(save.error.value, t('ui.error.network')).raw : null,
+)
 watch(
   draft,
   () => {
-    if (dirty.value) {
+    if (!same(draft.value, adopted.value)) {
       conflict.value = null
+      rejectedDraft.value = null
       if (save.isError.value) save.reset()
     }
   },
@@ -181,12 +212,16 @@ watch(
       :dirty="dirty || Boolean(conflict)"
       :saving="save.isPending.value"
       :error="saveError"
+      :raw-error="saveRawError"
       :invalid="!dirty"
+      :action-label="rejectedDraft ? t('models.limits.reapply') : undefined"
       @save="dirty && save.mutate()"
+      @action="reapplyRejected"
       @discard="
         () => {
           adopt(snapshot)
           conflict = null
+          rejectedDraft = null
           save.reset()
         }
       "
