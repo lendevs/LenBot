@@ -14,6 +14,7 @@ import DropdownMenu from '../../ui/DropdownMenu.vue'
 import EmptyState from '../../ui/EmptyState.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Input from '../../ui/Input.vue'
+import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
@@ -31,6 +32,7 @@ const library = useQuery({
   queryFn: ({ signal }) => personasApi.library(signal),
 })
 const roles = computed(() => library.data.value?.roles ?? [])
+const existingKeys = computed(() => roles.value.map((role) => role.key))
 const refresh = () => void client.invalidateQueries({ queryKey: keys.personas.all() })
 // A switch from the group command or another page changes which groups use a role.
 watch(
@@ -48,11 +50,21 @@ const opened = computed(() => roles.value.find((role) => role.key === key.value)
 const open = (value: string | null) =>
   router.push({ name: 'host-persona', query: value === null ? {} : { persona: value } })
 
+type UsageFilter = 'all' | 'inUse' | 'unused'
+const filter = ref<UsageFilter>('all')
+const filters = computed(() =>
+  (['all', 'inUse', 'unused'] as const).map((value) => ({
+    value,
+    label: t(`personas.filters.${value}`),
+  })),
+)
 const query = ref('')
 const shown = computed(() => {
   const words = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  if (!words.length) return roles.value
   return roles.value.filter((role) => {
+    if (filter.value === 'inUse' && !role.scenes.length) return false
+    if (filter.value === 'unused' && role.scenes.length > 0) return false
+    if (!words.length) return true
     const text = [
       role.name,
       role.key,
@@ -148,8 +160,15 @@ const exporting = useMutation({
             clearable
           />
         </div>
+        <SegmentedControl
+          v-if="roles.length"
+          v-model="filter"
+          :options="filters"
+          size="sm"
+          :label="t('personas.all')"
+        />
         <span class="text-sm text-muted tabular">
-          {{ t('personas.count', { n: formatNumber(roles.length) }) }}
+          {{ t('personas.count', { n: formatNumber(roles.length) }, roles.length) }}
           <template v-if="roles.length">· {{ t('personas.inUse', { n: formatNumber(inUse) }) }}</template>
         </span>
         <div class="ml-auto">
@@ -183,6 +202,12 @@ const exporting = useMutation({
         />
       </div>
     </template>
-    <CreatePersonaDialog v-if="request" :request="request" @done="created" @close="request = null" />
+    <CreatePersonaDialog
+      v-if="request"
+      :request="request"
+      :existing-keys="existingKeys"
+      @done="created"
+      @close="request = null"
+    />
   </div>
 </template>

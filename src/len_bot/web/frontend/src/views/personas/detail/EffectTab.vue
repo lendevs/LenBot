@@ -5,8 +5,9 @@ import { MessageCircle } from '@lucide/vue'
 import type { HostScene } from '../../../api/host'
 import type { PersonaRole } from '../../../api/personas'
 import { host } from '../../../api/hostStore'
-import { groupLabel } from '../../../layouts/shell/scenes'
+import { groupLabel, groupSecondaryId } from '../../../layouts/shell/scenes'
 import Badge from '../../../ui/Badge.vue'
+import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Select from '../../../ui/Select.vue'
@@ -16,6 +17,7 @@ import { useProfile } from './profileForm'
 
 /** `others` names the other tabs holding unsaved edits; trial and preview use only the profile form. */
 const props = defineProps<{ role: PersonaRole; others: string[] }>()
+const emit = defineEmits<{ jump: [tab: 'profile' | 'speech'] }>()
 
 const { t } = useI18n()
 const sceneFieldId = useId()
@@ -28,11 +30,10 @@ const modes = computed(() => [
 
 /** Select options cannot be empty; this stands for the role without any group's settings. */
 const NONE = '*'
-const groupId = (value: string) => value.split(':').slice(2).join(':') || value
 const groupOptionLabel = (value: string) => {
   const name = groupLabel(value)
-  const id = groupId(value)
-  return id !== name ? `${name} (${id})` : name
+  const id = groupSecondaryId(value)
+  return id ? `${name} (${id})` : name
 }
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
 const fallback = () =>
@@ -49,7 +50,12 @@ watch(options, (value) => {
 })
 
 const unsaved = computed(() => form.dirty.value.identity || form.dirty.value.speech)
-const problem = computed(() => form.problem('identity') ?? form.problem('speech'))
+const identityProblem = computed(() => form.problem('identity'))
+const speechProblem = computed(() => form.problem('speech'))
+const problem = computed(() => identityProblem.value ?? speechProblem.value)
+const problemTab = computed<'profile' | 'speech' | null>(() =>
+  identityProblem.value ? 'profile' : speechProblem.value ? 'speech' : null,
+)
 const excluded = computed(() =>
   props.others.map((name) => t(`personas.detail.tabs.${name}`)).join(t('personas.separator')),
 )
@@ -72,10 +78,23 @@ const excluded = computed(() =>
         <Badge v-if="others.length">{{ t('personas.detail.effect.excluded', { names: excluded }) }}</Badge>
       </div>
     </div>
-    <p v-if="problem" class="text-sm text-error">{{ problem }}</p>
+    <div
+      v-if="problem && mode !== 'preview'"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-error-bg px-3.5 py-2.5 text-sm text-error"
+    >
+      <span>{{ problem }}</span>
+      <Button v-if="problemTab" size="sm" variant="ghost" @click="emit('jump', problemTab)">
+        {{ t('personas.detail.preview.fixIn', { tab: t(`personas.detail.tabs.${problemTab}`) }) }}
+      </Button>
+    </div>
     <EmptyState v-if="mode === 'trial' && !scenes.length" :icon="MessageCircle" :title="t('groups.empty')" />
     <KeepAlive v-else>
-      <PreviewPanel v-if="mode === 'preview'" :role="role" :scene="scene === NONE ? null : scene" />
+      <PreviewPanel
+        v-if="mode === 'preview'"
+        :role="role"
+        :scene="scene === NONE ? null : scene"
+        @jump="emit('jump', $event)"
+      />
       <TrialPanel v-else :role="role" :scene="scene === NONE ? '' : scene" />
     </KeepAlive>
   </div>

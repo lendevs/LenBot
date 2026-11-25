@@ -2,9 +2,16 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { FileSearch, Puzzle, TriangleAlert } from '@lucide/vue'
+import { FileSearch, Puzzle, Search, TriangleAlert } from '@lucide/vue'
 import { keys } from '../../../api/query'
-import { personasApi, type Allowance, type SkillInfo, type ToolInfo } from '../../../api/personas'
+import {
+  personasApi,
+  type Abilities,
+  type Allowance,
+  type Applied,
+  type SkillInfo,
+  type ToolInfo,
+} from '../../../api/personas'
 import { developerDetails } from '../../../composables/useDeveloperMode'
 import { readPendingRestart } from '../../../api/hostStore'
 import Badge from '../../../ui/Badge.vue'
@@ -15,6 +22,7 @@ import SkillDialog from '../../capabilities/SkillDialog.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
+import Input from '../../../ui/Input.vue'
 import SaveBar from '../../../ui/SaveBar.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Switch from '../../../ui/Switch.vue'
@@ -40,13 +48,53 @@ const copy = (value: Allowance): Allowance => (value === 'all' ? 'all' : [...val
 const sorted = (value: Allowance) => (value === 'all' ? value : [...value].sort().join())
 const tools = ref<Allowance>([])
 const skills = ref<Allowance>([])
+const baseTools = ref<Allowance | null>(null)
+const baseSkills = ref<Allowance | null>(null)
+
 function adopt() {
   const data = abilities.data.value
   if (!data) return
   tools.value = copy(data.tools.saved)
   skills.value = copy(data.skills.saved)
+  baseTools.value = copy(data.tools.saved)
+  baseSkills.value = copy(data.skills.saved)
+  save.reset()
 }
-watch(() => abilities.data.value, adopt, { immediate: true })
+
+// Keep unsaved checkboxes across window-refocus refetches; auto-merge untouched parts.
+watch(
+  () => abilities.data.value,
+  (data) => {
+    if (!data) return
+    if (baseTools.value === null || baseSkills.value === null) {
+      tools.value = copy(data.tools.saved)
+      skills.value = copy(data.skills.saved)
+      baseTools.value = copy(data.tools.saved)
+      baseSkills.value = copy(data.skills.saved)
+      return
+    }
+    if (sorted(data.tools.saved) !== sorted(baseTools.value)) {
+      if (
+        sorted(tools.value) === sorted(baseTools.value) ||
+        sorted(tools.value) === sorted(data.tools.saved)
+      ) {
+        tools.value = copy(data.tools.saved)
+        baseTools.value = copy(data.tools.saved)
+      }
+    }
+    if (sorted(data.skills.saved) !== sorted(baseSkills.value)) {
+      if (
+        sorted(skills.value) === sorted(baseSkills.value) ||
+        sorted(skills.value) === sorted(data.skills.saved)
+      ) {
+        skills.value = copy(data.skills.saved)
+        baseSkills.value = copy(data.skills.saved)
+      }
+    }
+  },
+  { immediate: true },
+)
+
 const toolsChanged = computed(
   () => Boolean(abilities.data.value) && sorted(tools.value) !== sorted(abilities.data.value!.tools.saved),
 )
@@ -56,13 +104,42 @@ const skillsChanged = computed(
 const dirty = computed(() => toolsChanged.value || skillsChanged.value)
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
+const remoteUpdated = computed(() => {
+  const data = abilities.data.value
+  if (!data || baseTools.value === null || baseSkills.value === null) return false
+  const toolsConflict =
+    sorted(tools.value) !== sorted(baseTools.value) &&
+    sorted(data.tools.saved) !== sorted(baseTools.value) &&
+    sorted(tools.value) !== sorted(data.tools.saved)
+  const skillsConflict =
+    sorted(skills.value) !== sorted(baseSkills.value) &&
+    sorted(data.skills.saved) !== sorted(baseSkills.value) &&
+    sorted(skills.value) !== sorted(data.skills.saved)
+  return toolsConflict || skillsConflict
+})
+
 const catalog = computed(() => abilities.data.value?.tools.catalog ?? [])
-const builtIn = computed(() => catalog.value.filter((tool) => !tool.source))
-const extra = computed(() => catalog.value.filter((tool) => tool.source))
+const toolSearch = ref('')
 const note = (tool: ToolInfo) =>
   te(`personas.detail.abilities.notes.${tool.name}`)
     ? t(`personas.detail.abilities.notes.${tool.name}`)
     : tool.summary
+const filteredCatalog = computed(() => {
+  const words = toolSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return catalog.value
+  return catalog.value.filter((tool) => {
+    const text = [tool.name, labels.tool(tool.name), note(tool), tool.source ?? ''].join(' ').toLowerCase()
+    return words.every((word) => text.includes(word))
+  })
+})
+const builtIn = computed(() => filteredCatalog.value.filter((tool) => !tool.source))
+const extra = computed(() => filteredCatalog.value.filter((tool) => tool.source))
+const toolGroups = computed(() =>
+  [
+    { key: 'built-in', title: t('personas.detail.abilities.builtInTools'), items: builtIn.value },
+    { key: 'extra', title: t('personas.detail.abilities.extraTools'), items: extra.value },
+  ].filter((group) => group.items.length > 0),
+)
 
 /** Tools that only work together: picking the first adds the rest. */
 const companions: Record<string, string[]> = {
@@ -109,10 +186,31 @@ function skillChanged() {
 const save = useMutation({
   mutationFn: async () => {
     const directory = abilities.data.value!.directory
-    let result = null
-    if (toolsChanged.value) result = await personasApi.saveTools(props.persona, directory, tools.value)
-    if (skillsChanged.value) result = await personasApi.saveSkills(props.persona, directory, skills.value)
-    return result!
+    const results: Applied[] = []
+    if (toolsChanged.value) {
+      const saved = await personasApi.saveTools(props.persona, directory, tools.value)
+      results.push(saved)
+      baseTools.value = copy(saved.saved)
+      tools.value = copy(saved.saved)
+      client.setQueryData<Abilities>(abilitiesKey.value, (prev) =>
+        prev ? { ...prev, tools: { ...prev.tools, saved: copy(saved.saved) } } : prev,
+      )
+    }
+    if (skillsChanged.value) {
+      const saved = await personasApi.saveSkills(props.persona, directory, skills.value)
+      results.push(saved)
+      baseSkills.value = copy(saved.saved)
+      skills.value = copy(saved.saved)
+      client.setQueryData<Abilities>(abilitiesKey.value, (prev) =>
+        prev ? { ...prev, skills: { ...prev.skills, saved: copy(saved.saved) } } : prev,
+      )
+    }
+    const errors = results.map((item) => item.apply_error).filter((item): item is string => Boolean(item))
+    return {
+      affected_scenes: [...new Set(results.flatMap((item) => item.affected_scenes ?? []))],
+      applied: results.every((item) => item.applied !== false),
+      apply_error: errors.length ? errors.join('\n') : null,
+    } satisfies Applied
   },
   onSuccess: (result) => {
     writes.done(result, ['abilities', 'files'])
@@ -132,13 +230,42 @@ const save = useMutation({
     :retry="abilities.refetch"
   />
   <form v-else class="flex max-w-3xl flex-col gap-8 pb-6" @submit.prevent="save.mutate()">
+    <div
+      v-if="remoteUpdated"
+      role="status"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+    >
+      <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+      <Button size="sm" variant="ghost" @click="adopt">
+        {{ t('ui.draft.reloadRemote') }}
+      </Button>
+    </div>
+
     <FormSection :title="t('personas.detail.abilities.tools')" :columns="1">
       <Field :label="t('personas.detail.abilities.allTools')" inline>
         <Switch :model-value="tools === 'all'" @update:model-value="allTools" />
       </Field>
-      <template v-for="group in [builtIn, extra]" :key="group === builtIn ? 'built-in' : 'extra'">
-        <ul v-if="group.length" class="flex list-none flex-col divide-y divide-line border-y border-line">
-          <li v-for="tool in group" :key="tool.name" class="flex flex-col gap-1.5 py-3">
+      <div v-if="catalog.length" class="max-w-xs">
+        <Input
+          v-model="toolSearch"
+          type="search"
+          size="sm"
+          :icon="Search"
+          clearable
+          :placeholder="t('personas.detail.abilities.searchTools')"
+          :aria-label="t('personas.detail.abilities.searchTools')"
+        />
+      </div>
+      <p v-if="toolSearch.trim() && !toolGroups.length" class="py-4 text-center text-sm text-muted">
+        {{ t('common.noResults') }}
+      </p>
+      <div v-for="group in toolGroups" :key="group.key" class="flex flex-col gap-2">
+        <h4 class="flex items-center gap-2 text-xs font-medium text-muted">
+          <span>{{ group.title }}</span>
+          <span class="tabular">{{ group.items.length }}</span>
+        </h4>
+        <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+          <li v-for="tool in group.items" :key="tool.name" class="flex flex-col gap-1.5 py-3">
             <Checkbox
               :model-value="allowed(tools, tool.name)"
               :disabled="tools === 'all' || (tool.reasons.length > 0 && !allowed(tools, tool.name))"
@@ -167,7 +294,7 @@ const save = useMutation({
             </div>
           </li>
         </ul>
-      </template>
+      </div>
     </FormSection>
 
     <FormSection :title="t('personas.detail.abilities.skills')" :columns="1">
@@ -212,6 +339,7 @@ const save = useMutation({
       :dirty="dirty"
       :saving="save.isPending.value"
       :error="save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null"
+      :raw-error="save.isError.value ? describeError(save.error.value, t('ui.error.network')).raw : null"
       @save="save.mutate()"
       @discard="adopt"
     />

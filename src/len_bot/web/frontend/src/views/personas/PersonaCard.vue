@@ -12,17 +12,18 @@ import IconButton from '../../ui/IconButton.vue'
 const props = defineProps<{ role: PersonaRole; busy?: boolean }>()
 const emit = defineEmits<{ open: []; copy: []; export: []; remove: [] }>()
 
+const MAX_SCENES = 2
 const { t } = useI18n()
 const name = computed(() => props.role.name || props.role.key)
 const broken = computed(() => Boolean(props.role.error))
 const usage = computed(() => {
   const names = props.role.scenes.map(groupLabel)
   if (!names.length) return t('personas.unused')
-  return names.length > 2
+  return names.length > MAX_SCENES
     ? t('personas.usedMany', {
-        names: names.slice(0, 2).join(t('personas.separator')),
+        names: names.slice(0, MAX_SCENES).join(t('personas.separator')),
         n: names.length,
-        more: names.length - 2,
+        more: names.length - MAX_SCENES,
       })
     : t('personas.used', { names: names.join(t('personas.separator')) })
 })
@@ -55,8 +56,8 @@ const items = computed<MenuEntry[]>(() => [
         <!-- The stretched link makes the whole card open the role; the menu sits above it. -->
         <button
           type="button"
-          class="block max-w-full cursor-pointer truncate text-left text-base font-semibold text-ink after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none focus-visible:after:focus-ring"
-          :class="!role.scenes.length && 'text-ink-2'"
+          class="block max-w-full cursor-pointer truncate text-left text-base font-semibold after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none focus-visible:after:focus-ring"
+          :class="role.scenes.length ? 'text-ink' : 'text-ink-2'"
           @click="emit('open')"
         >
           {{ name }}
@@ -92,7 +93,7 @@ const items = computed<MenuEntry[]>(() => [
       <template v-else>
         <span v-if="role.scenes.length" class="flex shrink-0" aria-hidden="true">
           <span
-            v-for="scene in role.scenes.slice(0, 3)"
+            v-for="scene in role.scenes.slice(0, MAX_SCENES)"
             :key="scene"
             class="inline-flex rounded-[28%] ring-2 ring-surface not-first:-ml-1"
           >

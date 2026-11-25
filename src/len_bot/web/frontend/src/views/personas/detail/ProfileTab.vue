@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PersonaRole } from '../../../api/personas'
+import Button from '../../../ui/Button.vue'
 import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
 import Input from '../../../ui/Input.vue'
@@ -18,8 +19,15 @@ const { t } = useI18n()
 const form = useProfile()
 // Folded unless the role already uses one of these, so nothing written is hidden. The tab opens after the draft.
 const draft = form.draft.value
+const defaultSelfRef = t('personas.detail.profile.defaultSelfReference')
 const more = ref(
-  Boolean(draft && (draft.behavior.trim() || draft.aliases.length || draft.self_reference.join() !== '我')),
+  Boolean(
+    draft &&
+    (draft.behavior.trim() ||
+      draft.aliases.length ||
+      draft.self_reference.length !== 1 ||
+      draft.self_reference[0] !== defaultSelfRef),
+  ),
 )
 </script>
 
@@ -29,6 +37,16 @@ const more = ref(
     class="flex max-w-3xl flex-col gap-8 pb-6"
     @submit.prevent="form.save('identity')"
   >
+    <div
+      v-if="form.remoteUpdated.value.identity"
+      role="status"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+    >
+      <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+      <Button size="sm" variant="ghost" @click="form.discard('identity')">
+        {{ t('ui.draft.reloadRemote') }}
+      </Button>
+    </div>
     <FormSection :title="t('personas.detail.profile.who')">
       <Field
         :label="t('personas.detail.profile.name')"
@@ -69,6 +87,7 @@ const more = ref(
       :dirty="form.dirty.value.identity"
       :saving="form.isSaving('identity')"
       :error="form.saveError('identity') ?? form.problem('identity')"
+      :raw-error="form.saveRawError('identity')"
       :invalid="Boolean(form.problem('identity'))"
       @save="form.save('identity')"
       @discard="form.discard('identity')"
