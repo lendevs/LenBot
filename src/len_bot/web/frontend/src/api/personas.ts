@@ -1,5 +1,6 @@
 import { http, request, requestBlob } from './client'
 import type { PersonaSummary } from './host'
+import type { Participation } from './participation'
 
 /** Types of panel/routes/persona.py as the persona library uses them. */
 
@@ -159,6 +160,7 @@ export interface Trial {
   draft_source: string | null
   memory_plugin: string | null
   context?: string[]
+  attention?: Participation
 }
 
 const base = (key: string) => `/api/host/personas/${encodeURIComponent(key)}`
@@ -221,9 +223,9 @@ export const personasApi = {
     http.get<StickerListing>(`${base(key)}/sticker-files`, undefined, signal),
   saveStickers: (key: string, directory: string, entries: StickerEntry[]) =>
     http.put<StickerListing>(`${base(key)}/sticker-files/entries`, { directory, entries }),
-  uploadSticker: (key: string, directory: string, file: File) => {
+  uploadSticker: (key: string, directory: string, file: File, name = file.name) => {
     const body = new FormData()
-    body.append('name', file.name)
+    body.append('name', name)
     body.append('file', file)
     body.append('directory', directory)
     return request<{ file: string }>(`${base(key)}/sticker-files/image`, { method: 'POST', body })
@@ -253,11 +255,17 @@ export const personasApi = {
     http.put<Applied & { saved: Allowance }>(`${base(key)}/skills`, { directory, skills }),
 
   /** A trial of unsaved role files in a copy of one group's settings; platform sending is always simulated. */
-  trial: (scene: string, context: number, draft: { directory: string; files: PersonaFiles }) =>
+  trial: (
+    scene: string,
+    context: number,
+    draft: { directory: string; files: PersonaFiles },
+    attention?: Participation,
+  ) =>
     http.post<Trial>('/api/host/trials', {
       scene,
       context_messages: context,
       persona_draft: draft,
+      ...(attention ? { attention } : {}),
     }),
   stopTrial: (id: string) => http.post<Trial>(`/api/host/trials/${encodeURIComponent(id)}/stop`),
 }

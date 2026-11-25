@@ -28,19 +28,35 @@ export function useProfileForm(key: Ref<string>) {
     queryFn: ({ signal }) => personasApi.profile(key.value, signal),
   })
   const draft = ref<PersonaProfile | null>(null)
+  /** Baseline per field that the current draft forked from, for field-level merges and conflict detection. */
+  const base = ref<PersonaProfile | null>(null)
 
-  // A part saved elsewhere (raw files, the other tab) joins the draft when the draft left that part unchanged.
+  watch(key, () => {
+    draft.value = null
+    base.value = null
+  })
+
+  // Field-level merge: remote changes (from FilesTab or another session) merge into untouched fields,
+  // while two-way edits to the same field keep the local draft and raise `remoteUpdated`.
   watch(
     () => saved.data.value?.profile,
-    (value, previous) => {
+    (value) => {
       if (!value) return
-      if (!draft.value || !previous) {
+      if (!draft.value || !base.value) {
         draft.value = copy(value)
+        base.value = copy(value)
         return
       }
+      const currentDraft = draft.value
+      const currentBase = base.value
       for (const part of parts) {
-        if (same(pick(draft.value, part), pick(previous, part)))
-          Object.assign(draft.value, copy(pick(value, part)))
+        for (const field of fields[part]) {
+          if (same(value[field], currentBase[field])) continue
+          if (same(currentDraft[field], currentBase[field]) || same(currentDraft[field], value[field])) {
+            ;(currentDraft as Record<string, unknown>)[field] = copy(value[field])
+            ;(currentBase as Record<string, unknown>)[field] = copy(value[field])
+          }
+        }
       }
     },
     { immediate: true },
@@ -51,6 +67,23 @@ export function useProfileForm(key: Ref<string>) {
       draft.value && saved.data.value && !same(pick(draft.value, part), pick(saved.data.value.profile, part)),
     )
   const dirty = computed(() => ({ identity: changed('identity'), speech: changed('speech') }))
+
+  const hasConflict = (part: ProfilePart) => {
+    const currentDraft = draft.value
+    const currentBase = base.value
+    const currentSaved = saved.data.value?.profile
+    if (!currentDraft || !currentBase || !currentSaved) return false
+    return fields[part].some(
+      (field) =>
+        !same(currentDraft[field], currentBase[field]) &&
+        !same(currentSaved[field], currentBase[field]) &&
+        !same(currentDraft[field], currentSaved[field]),
+    )
+  }
+  const remoteUpdated = computed(() => ({
+    identity: hasConflict('identity'),
+    speech: hasConflict('speech'),
+  }))
 
   /** First problem that blocks saving a part, as the save bar shows it. */
   function problem(part: ProfilePart): string | null {
@@ -78,7 +111,12 @@ export function useProfileForm(key: Ref<string>) {
         ...pick(draft.value!, part),
       })
     },
-    onSuccess: (result) => {
+    onSuccess: (result, part) => {
+      if (draft.value && base.value) {
+        const savedPart = copy(pick(result.profile, part))
+        Object.assign(draft.value, savedPart)
+        Object.assign(base.value, copy(savedPart))
+      }
       client.setQueryData(keys.personas.part(key.value, 'profile'), result)
       writes.done(result, ['files'])
     },
@@ -91,10 +129,18 @@ export function useProfileForm(key: Ref<string>) {
     saving.isError.value && saving.variables.value === part
       ? describeError(saving.error.value, t('ui.error.network')).message
       : null
+  const saveRawError = (part: ProfilePart) =>
+    saving.isError.value && saving.variables.value === part
+      ? describeError(saving.error.value, t('ui.error.network')).raw
+      : null
 
   function discard(part: ProfilePart) {
-    if (draft.value && saved.data.value)
-      Object.assign(draft.value, copy(pick(saved.data.value.profile, part)))
+    if (draft.value && base.value && saved.data.value) {
+      const savedPart = copy(pick(saved.data.value.profile, part))
+      Object.assign(draft.value, savedPart)
+      Object.assign(base.value, copy(savedPart))
+    }
+    if (saving.variables.value === part) saving.reset()
   }
 
   /** Role files of the whole draft, saved or not, for a draft trial. */
@@ -103,7 +149,19 @@ export function useProfileForm(key: Ref<string>) {
     return { directory, files }
   }
 
-  return { saved, draft, dirty, problem, save, isSaving, saveError, discard, draftFiles }
+  return {
+    saved,
+    draft,
+    dirty,
+    remoteUpdated,
+    problem,
+    save,
+    isSaving,
+    saveError,
+    saveRawError,
+    discard,
+    draftFiles,
+  }
 }
 
 export type ProfileForm = ReturnType<typeof useProfileForm>

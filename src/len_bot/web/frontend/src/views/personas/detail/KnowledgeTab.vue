@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, BookOpen, FileText, Plus, Search, Trash2 } from '@lucide/vue'
+import { ArrowLeft, BookOpen, FileText, Plus, Search, Trash2, Upload } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { personasApi, type KnowledgeListing } from '../../../api/personas'
 import { formatNumber } from '../../../i18n/format'
@@ -11,14 +11,17 @@ import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
+import IconButton from '../../../ui/IconButton.vue'
 import Input from '../../../ui/Input.vue'
 import SaveBar from '../../../ui/SaveBar.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
 import Spinner from '../../../ui/Spinner.vue'
+import TagInput from '../../../ui/TagInput.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import { confirm } from '../../../ui/confirm'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
+import { hasUnclosedFrontmatter, parseFrontmatterTags, syncFrontmatterTags } from './frontmatter'
 import { useRoleWrites } from './writes'
 
 const props = defineProps<{ persona: string }>()
@@ -31,6 +34,8 @@ const listingKey = computed(() => keys.personas.part(props.persona, 'knowledge')
 const listing = useQuery({
   queryKey: listingKey,
   queryFn: ({ signal }) => personasApi.knowledge(props.persona, signal),
+  refetchInterval: (query) =>
+    query.state.data?.files.some((file) => file.index === 'processing') ? 3000 : false,
 })
 const files = computed(() => listing.data.value?.files ?? [])
 const directory = computed(() => listing.data.value?.saved_path ?? '')
@@ -48,6 +53,13 @@ const filteredFiles = computed(() => {
 const open = ref<{ filename: string | null; content: string } | null>(null)
 const name = ref('')
 const text = ref('')
+const unclosedFrontmatter = computed(() => hasUnclosedFrontmatter(text.value))
+const docTags = computed<string[]>({
+  get: () => parseFrontmatterTags(text.value),
+  set: (value) => {
+    text.value = syncFrontmatterTags(text.value, value)
+  },
+})
 const dirty = computed(() =>
   open.value === null
     ? false
@@ -97,6 +109,29 @@ watch(
   },
 )
 
+/** Write endpoints omit reference index fields; keep untouched files' status until background refetch returns. */
+function mergeListing(
+  result: KnowledgeListing,
+  changedFilenames: ReadonlySet<string> = new Set(),
+): KnowledgeListing {
+  const previous = listing.data.value?.files ?? []
+  const byName = new Map(previous.map((item) => [item.filename, item]))
+  return {
+    ...result,
+    files: result.files.map((item) => {
+      if (changedFilenames.has(item.filename)) return item
+      const prev = byName.get(item.filename)
+      if (!prev) return item
+      return {
+        ...item,
+        ...(prev.index !== undefined ? { index: prev.index } : {}),
+        ...(prev.chunks !== undefined ? { chunks: prev.chunks } : {}),
+        ...(prev.vectors !== undefined ? { vectors: prev.vectors } : {}),
+      }
+    }),
+  }
+}
+
 async function pick(filename: string) {
   if (open.value?.filename === filename || loadingFile.value === filename) return
   if (!(await leave())) return
@@ -145,9 +180,9 @@ async function close() {
   save.reset()
 }
 
-function adopt(result: KnowledgeListing) {
-  client.setQueryData(listingKey.value, result)
-  writes.done(result)
+function adopt(result: KnowledgeListing, changedFilenames?: ReadonlySet<string>, message?: string) {
+  client.setQueryData(listingKey.value, mergeListing(result, changedFilenames))
+  writes.done(result, ['knowledge'], message)
 }
 const save = useMutation({
   mutationFn: () =>
@@ -159,8 +194,9 @@ const save = useMutation({
       text.value,
     ),
   onSuccess: (result) => {
-    adopt(result)
     const saved = result.document
+    const changedName = saved?.filename ?? target.value
+    adopt(result, new Set([changedName]))
     if (saved) {
       open.value = { filename: saved.filename, content: saved.content }
       text.value = saved.content
@@ -170,10 +206,10 @@ const save = useMutation({
 const removal = useMutation({
   mutationFn: (filename: string) => personasApi.removeDocument(props.persona, directory.value, filename),
   onSuccess: (result) => {
-    client.setQueryData(listingKey.value, result)
-    writes.done(result, [], t('personas.detail.knowledge.removed'))
+    adopt(result, undefined, t('personas.detail.knowledge.removed'))
     open.value = null
     text.value = ''
+    save.reset()
   },
   onError: (error) =>
     toast.error(t('personas.detail.knowledge.removeFailed'), {
@@ -203,6 +239,114 @@ function discard() {
     name.value = ''
   }
   text.value = open.value?.content ?? ''
+  save.reset()
+}
+
+const mdPicker = ref<HTMLInputElement | null>(null)
+const dragging = ref(false)
+let dragDepth = 0
+
+const importing = useMutation({
+  mutationFn: async (items: { filename: string; content: string; exists: boolean }[]) => {
+    let latest: KnowledgeListing | null = null
+    const changed = new Set<string>()
+    for (const item of items) {
+      latest = await personasApi.writeDocument(
+        props.persona,
+        !item.exists,
+        directory.value,
+        item.filename,
+        item.content,
+      )
+      changed.add(item.filename)
+    }
+    return { latest, changed, count: items.length }
+  },
+  onSuccess: ({ latest, changed, count }) => {
+    if (!latest) return
+    adopt(latest, changed, t('personas.detail.knowledge.imported', { n: count }, count))
+    if (count === 1 && !dirty.value && latest.document) {
+      open.value = { filename: latest.document.filename, content: latest.document.content }
+      text.value = latest.document.content
+      save.reset()
+    }
+  },
+  onError: (error) => {
+    toast.error(t('personas.detail.knowledge.importFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    })
+    void listing.refetch()
+  },
+})
+
+async function handleImportFiles(picked: File[]) {
+  if (!picked.length || importing.isPending.value) return
+  const mdFiles = picked.filter((item) => item.name.toLowerCase().endsWith('.md'))
+  if (!mdFiles.length) {
+    toast.error(t('personas.detail.knowledge.mdOnly'))
+    return
+  }
+  const existingNames = new Set(files.value.map((item) => item.filename))
+  const seen = new Set<string>()
+  const entries: { filename: string; content: string; exists: boolean }[] = []
+  for (const item of mdFiles) {
+    const cleanName = item.name.replace(/[\\/]/g, '_')
+    if (seen.has(cleanName)) continue
+    seen.add(cleanName)
+    entries.push({
+      filename: cleanName,
+      content: await item.text(),
+      exists: existingNames.has(cleanName),
+    })
+  }
+  const collisions = entries.filter((item) => item.exists)
+  if (collisions.length) {
+    const sure = await confirm({
+      title: t('personas.detail.knowledge.overwriteTitle'),
+      message: collisions.map((item) => item.filename).join(t('personas.separator')),
+      confirmLabel: t('personas.detail.knowledge.overwriteConfirm'),
+      tone: 'danger',
+    })
+    if (!sure) return
+  }
+  importing.mutate(entries)
+}
+
+function mdChosen(event: Event) {
+  const input = event.target as HTMLInputElement
+  const picked = Array.from(input.files ?? [])
+  input.value = ''
+  if (picked.length) void handleImportFiles(picked)
+}
+
+function onDragEnter(event: DragEvent) {
+  if (importing.isPending.value) return
+  event.preventDefault()
+  dragDepth += 1
+  dragging.value = true
+}
+function onDragOver(event: DragEvent) {
+  if (importing.isPending.value) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  dragging.value = true
+}
+function onDragLeave(event: DragEvent) {
+  if (importing.isPending.value) return
+  event.preventDefault()
+  dragDepth -= 1
+  if (dragDepth <= 0) {
+    dragDepth = 0
+    dragging.value = false
+  }
+}
+function onDrop(event: DragEvent) {
+  if (importing.isPending.value) return
+  event.preventDefault()
+  dragDepth = 0
+  dragging.value = false
+  const dropped = Array.from(event.dataTransfer?.files ?? [])
+  if (dropped.length) void handleImportFiles(dropped)
 }
 </script>
 
@@ -214,21 +358,59 @@ function discard() {
     :error="listing.error.value"
     :retry="listing.refetch"
   />
-  <div v-else class="grid min-w-0 items-start gap-5 lg:grid-cols-[16.5rem_minmax(0,1fr)] lg:gap-0">
+  <div
+    v-else
+    class="grid min-w-0 items-start gap-5 lg:grid-cols-[16.5rem_minmax(0,1fr)] lg:gap-0"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
+    <input
+      ref="mdPicker"
+      type="file"
+      accept=".md,text/markdown"
+      multiple
+      class="sr-only"
+      tabindex="-1"
+      aria-hidden="true"
+      @change="mdChosen"
+    />
     <aside
       class="flex min-w-0 flex-col gap-2.5 lg:border-r lg:border-line lg:pr-5"
-      :class="open && 'max-lg:hidden'"
+      :class="[open && 'max-lg:hidden', dragging && 'rounded-lg ring-2 ring-primary/60']"
     >
-      <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center justify-between gap-1.5">
         <h3 class="text-base font-semibold text-ink">{{ t('personas.detail.knowledge.title') }}</h3>
-        <Button size="sm" :icon="Plus" @click="create">{{ t('personas.detail.knowledge.create') }}</Button>
+        <div class="flex items-center gap-1">
+          <IconButton
+            :icon="Upload"
+            :label="t('personas.detail.knowledge.importMd')"
+            size="sm"
+            variant="ghost"
+            :loading="importing.isPending.value"
+            @click="mdPicker?.click()"
+          />
+          <Button size="sm" :icon="Plus" @click="create">{{ t('personas.detail.knowledge.create') }}</Button>
+        </div>
       </div>
-      <EmptyState
-        v-if="!files.length"
-        :icon="BookOpen"
-        :title="t('personas.detail.knowledge.empty')"
-        compact
-      />
+      <div
+        v-if="dragging"
+        class="rounded-md border border-dashed border-primary bg-selected/40 px-3 py-2.5 text-center text-xs font-medium text-ink"
+      >
+        {{ t('personas.detail.knowledge.dropMd') }}
+      </div>
+      <EmptyState v-if="!files.length" :icon="BookOpen" :title="t('personas.detail.knowledge.empty')" compact>
+        <Button
+          size="sm"
+          variant="secondary"
+          :icon="Upload"
+          :loading="importing.isPending.value"
+          @click="mdPicker?.click()"
+        >
+          {{ t('personas.detail.knowledge.importMd') }}
+        </Button>
+      </EmptyState>
       <template v-else>
         <Input
           v-model="search"
@@ -265,12 +447,16 @@ function discard() {
                   {{ title(file.filename) }}
                 </span>
                 <span class="block truncate text-xs text-muted tabular">
-                  {{ t('personas.detail.knowledge.chars', { n: formatNumber(file.chars) }) }}
+                  {{ t('personas.detail.knowledge.chars', { n: formatNumber(file.chars) }, file.chars) }}
                   <template v-if="file.index">
                     ·
                     {{
                       file.index === 'indexed'
-                        ? t('personas.detail.knowledge.indexed', { n: formatNumber(file.chunks ?? 0) })
+                        ? t(
+                            'personas.detail.knowledge.indexed',
+                            { n: formatNumber(file.chunks ?? 0) },
+                            file.chunks ?? 0,
+                          )
                         : t(`personas.detail.knowledge.${file.index}`)
                     }}
                   </template>
@@ -288,15 +474,15 @@ function discard() {
     <div class="min-w-0 lg:pl-6" :class="!open && 'max-lg:hidden'">
       <section v-if="open" class="flex min-w-0 flex-col gap-4 pb-6">
         <div class="flex min-h-8 items-center gap-2">
-          <div class="-ml-2 lg:hidden">
+          <div class="-ml-2 shrink-0 lg:hidden">
             <Button variant="ghost" size="sm" :icon="ArrowLeft" @click="close">
               {{ t('personas.detail.knowledge.title') }}
             </Button>
           </div>
-          <h3 class="min-w-0 flex-1 truncate text-base font-semibold text-ink max-lg:hidden">
+          <h3 class="min-w-0 flex-1 truncate text-base font-semibold text-ink">
             {{ open.filename ? title(open.filename) : t('personas.detail.knowledge.new') }}
           </h3>
-          <div v-if="open.filename" class="ml-auto">
+          <div v-if="open.filename" class="ml-auto shrink-0">
             <Button
               size="sm"
               variant="danger-ghost"
@@ -315,6 +501,9 @@ function discard() {
         >
           <Input v-model="name" mono placeholder="people/xiaoming.md" />
         </Field>
+        <Field :label="t('personas.detail.knowledge.tags')">
+          <TagInput v-model="docTags" size="sm" :disabled="unclosedFrontmatter" />
+        </Field>
         <Field :label="open.filename === null ? t('personas.detail.knowledge.content') : undefined">
           <Textarea
             v-model="text"
@@ -329,6 +518,7 @@ function discard() {
           :error="
             save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : problem
           "
+          :raw-error="save.isError.value ? describeError(save.error.value, t('ui.error.network')).raw : null"
           :invalid="Boolean(problem)"
           @save="save.mutate()"
           @discard="discard"
