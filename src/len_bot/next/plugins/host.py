@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import importlib.util
@@ -122,8 +122,13 @@ class Loaded:
     mention_commands: set[str] = field(default_factory=set)
     fullmatches: dict[str, tuple[str, str]] = field(default_factory=dict)
     patterns: list[Pattern] = field(default_factory=list)
+    disabled_commands: dict[str, str] = field(default_factory=dict)        # name -> description
+    disabled_fullmatches: dict[str, str] = field(default_factory=dict)     # text -> description
+    disabled_patterns: list[Pattern] = field(default_factory=list)
+    disabled_rules: tuple[str, ...] = ()
     notices: dict[str, str] = field(default_factory=dict)                   # type -> method
     tools: dict[str, ToolEntry] = field(default_factory=dict)
+    unavailable_tools: dict[str, str] = field(default_factory=dict)
     recall: str | None = None                                               # method
     compact: str | None = None                                              # method
     memory_tool: ToolEntry | None = None
@@ -236,7 +241,8 @@ class PluginHost:
         previous = recorded_errors(config.logging.directory, 'plugin_error', 'plugin', limit=ERROR_LIMIT)
         for name, values in settings.configured.items():
             scenes = tuple(scene for scene, item in config.scenes.items() if name in item.plugins)
-            record = Loaded(name, None, None, scenes, values=values)
+            record = Loaded(name, None, None, scenes, values=values,
+                            disabled_rules=tuple(settings.disabled_rules.get(name, [])))
             record.errors.extend(previous.get(name, []))
             self.plugins[name] = record
             if name in settings.disabled:
@@ -276,17 +282,28 @@ class PluginHost:
             cls = proxy_class(directory, record.name, described)
         else:
             cls = self._import(directory, record.name)
-        unused = set(disabled_rules)
+        record.disabled_rules = tuple(disabled_rules)
+        disabled_set = set(disabled_rules)
+        matched_rules: set[str] = set()
         for attribute in dir(cls):
             mark = getattr(getattr(cls, attribute), MARK, None)
             if mark is None:
                 continue
             if not inspect.iscoroutinefunction(getattr(cls, attribute)):
                 raise ValueError(f"{attribute} 必须是 async 函数")
-            rule = ("/" + mark[1] if mark[0] == "command" else mark[1] if mark[0] == "fullmatch"
-                    else mark[1].pattern if mark[0] == "regex" else None)
-            if rule is not None and rule in unused:
-                unused.discard(rule)
+            rule_keys = (("/" + mark[1],) if mark[0] == "command"
+                         else (f"fullmatch:{mark[1]}", mark[1]) if mark[0] == "fullmatch"
+                         else (f"regex:{mark[1].pattern}", mark[1].pattern) if mark[0] == "regex"
+                         else ())
+            matched = [key for key in rule_keys if key in disabled_set]
+            if matched:
+                matched_rules.update(matched)
+                if mark[0] == "command":
+                    record.disabled_commands[mark[1]] = mark[2]
+                elif mark[0] == "fullmatch":
+                    record.disabled_fullmatches[mark[1]] = mark[2]
+                elif mark[0] == "regex":
+                    record.disabled_patterns.append(Pattern(mark[1], mark[2], attribute, mark[3]))
                 continue
             if mark[0] == "command":
                 if mark[1] in self.commands or mark[1] in record.commands:
@@ -327,6 +344,7 @@ class PluginHost:
                     _arguments(mark[1], getattr(cls, attribute), needs_source=mark[4]), attribute, mark[4])
             else:
                 record.backgrounds.append(Background(attribute, mark[1]))
+        unused = disabled_set - matched_rules
         if unused:
             logger.warning("插件 %s 不存在以下规则，plugins.disabled_rules 中的条目未生效：%s",
                            record.name, "、".join(sorted(unused)))
@@ -425,6 +443,11 @@ class PluginHost:
         runner = None if self.runtime is None else self.runtime.runners.get(scene)
         return runner is not None and runner.state.closed
 
+    def scene_paused(self, scene: str) -> bool:
+        """Whether chat is paused for this scene (plugins still run, mind does not consume events)."""
+        runner = None if self.runtime is None else self.runtime.runners.get(scene)
+        return runner is not None and bool(runner.state.paused)
+
     def _speaking(self, plugin: str, scene: str) -> Loaded:
         record = self._active(plugin, scene)
         if self.scene_closed(scene):
@@ -473,6 +496,7 @@ class PluginHost:
             values = parsed.model_dump(mode="json")
             await writer(plugin, values)
             record.values = values
+            SECRETS.add(secret_values(record.manifest, values))
             current = parsed.model_dump()
             record.context.config.clear()
             record.context.config.update(current)
@@ -536,8 +560,10 @@ class PluginHost:
         now = datetime.fromtimestamp(self.now(), ZoneInfo(self.scene_timezone(scene)))
         content = Template(read_prompt("next_plugin_event.md")).substitute(
             plugin=plugin, time=now.isoformat(timespec="seconds"), text=self.redact(plugin, text.strip())).strip()
-        PluginStore(self.runtime.store).add_plugin_event(scene, plugin, "event", content)
-        self.runtime.runners[scene].changed.set()
+        delivered = self.scene_paused(scene)
+        PluginStore(self.runtime.store).add_plugin_event(scene, plugin, "event", content, delivered=delivered)
+        if not delivered:
+            self.runtime.runners[scene].changed.set()
         self._notify()
 
     def quiet(self, plugin: str, scene: str, seconds: float | None, direct: Literal["allow", "defer"]) -> None:
@@ -731,12 +757,25 @@ class PluginHost:
         task.add_done_callback(finished)
         return task
 
+    def _unavailable_tools(self, record: Loaded, scene: str, *, record_error: bool = True) -> dict[str, str]:
+        if record.instance is None or not record.tools:
+            return {}
+        try:
+            result = record.instance.unavailable_tools(scene)
+            if not isinstance(result, Mapping):
+                raise TypeError(f"unavailable_tools 须返回映射，实际为 {type(result).__name__}")
+            return {str(name): self.redact(record.name, str(reason)) for name, reason in result.items()}
+        except Exception as error:
+            detail = (self._record(record, '工具可用性检查', error) if record_error
+                      else redact_values(error_text(error), record.manifest, record.values))
+            return dict.fromkeys(record.tools, f"插件可用性检查失败：{detail}")
+
     def tools_for(self, scene: str, *, preparing: bool = False) -> list[ExternalTool]:
         tools = []
         for record in self.plugins.values():
             if (record.status != "running" and not (preparing and record.status == "loaded")) or scene not in record.scenes:
                 continue
-            unavailable = record.instance.unavailable_tools(scene)
+            unavailable = self._unavailable_tools(record, scene)
             for name, entry in record.tools.items():
                 if name not in unavailable:
                     tools.append(self._external_tool(record, name, entry))
@@ -751,7 +790,7 @@ class PluginHost:
         """All configured plugin tools, including reasons they cannot be discovered."""
         previews = []
         for record in self.plugins.values():
-            unavailable = {} if record.instance is None else record.instance.unavailable_tools(scene)
+            unavailable = self._unavailable_tools(record, scene, record_error=False)
             for name, entry in record.tools.items():
                 tool = self._external_tool(record, name, entry)
                 reasons = []
@@ -922,9 +961,18 @@ class PluginHost:
             answered = not matched.waiter.future.done()
             if answered:
                 matched.waiter.future.set_result(message)
-            PluginStore(self.runtime.store).add_plugin_event(message.scene, record.name, "reply", self.message_report(
-                message, matched, "已交给插件。" if answered else "插件的等待已结束，未处理这条消息。"))
-            self._notify()
+            report = self.message_report(
+                message, matched, "已交给插件。" if answered else "插件的等待已结束，未处理这条消息。")
+            delivered = self.scene_paused(message.scene)
+
+            async def record_reply() -> None:
+                await self.runtime.store.call(
+                    PluginStore(self.runtime.store).add_plugin_event,
+                    message.scene, record.name, "reply", report, delivered=delivered,
+                )
+                self._notify()
+
+            self._spawn(record, matched.label, record_reply())
             return
 
         async def invoke() -> None:
@@ -942,8 +990,12 @@ class PluginHost:
             except Exception as error:
                 result = "处理失败：" + self._record(record, matched.label, error)
             finally:
-                PluginStore(self.runtime.store).add_plugin_event(
-                    message.scene, record.name, "reply", self.message_report(message, matched, result))
+                report = self.message_report(message, matched, result)
+                delivered = self.scene_paused(message.scene)
+                await self.runtime.store.call(
+                    PluginStore(self.runtime.store).add_plugin_event,
+                    message.scene, record.name, "reply", report, delivered=delivered,
+                )
                 self._notify()
 
         self._spawn(record, matched.label, invoke())
@@ -1069,8 +1121,10 @@ class PluginHost:
     async def reload(self, name: str, saved: HostConfig) -> None:
         if self.closing:
             raise RuntimeError("插件宿主已结束，不能在停止后重载")
+        previous_errors: list[dict] = []
         if name in self.plugins:
             await self.stop_plugin(name)
+            previous_errors = list(self.plugins[name].errors)
         settings = saved.plugins
         if settings is None or name not in settings.configured:
             self.plugins.pop(name, None)
@@ -1078,10 +1132,13 @@ class PluginHost:
             return
         scenes = tuple(scene for scene in self.config.scenes
                        if scene in saved.scenes and name in saved.scenes[scene].plugins)
-        record = Loaded(name, None, None, scenes, values=settings.configured[name])
+        record = Loaded(name, None, None, scenes, values=settings.configured[name],
+                        disabled_rules=tuple(settings.disabled_rules.get(name, [])))
         self.plugins[name] = record
         if name in settings.disabled:
+            record.errors.extend(previous_errors)
             record.status = "stopped"
+            self._notify()
             return
         found, self.discovery_errors = discover(settings.paths)
         reserved = set(self.core_tools)
@@ -1098,7 +1155,13 @@ class PluginHost:
                        settings.disabled_rules.get(name, []), described)
             if self.started or (self.runtime is not None and self.runtime.accepting):
                 await self.start_plugin(record)
+            if record.status == "failed" and previous_errors:
+                new_errors = list(record.errors)
+                record.errors.clear()
+                record.errors.extend(previous_errors)
+                record.errors.extend(new_errors)
         except Exception as error:
+            record.errors.extend(previous_errors)
             record.status, record.error = "failed", self._record(record, "加载", error)
             self._remove_entries(record)
             self._unload_module(record)
@@ -1130,11 +1193,21 @@ class PluginHost:
         return {"level": level, "errors_last_hour": len(recent), "failing": failing,
                 "last_error_at": record.errors[-1]["at"] if record.errors else None}
 
+    def _state_unavailable_tools(self, record: Loaded) -> dict[str, str]:
+        reasons = dict(record.unavailable_tools)
+        if record.status == "running" and record.instance is not None and record.tools and record.scenes:
+            per_scene = [self._unavailable_tools(record, scene, record_error=False) for scene in record.scenes]
+            for name in record.tools:
+                if name not in reasons and all(name in item for item in per_scene):
+                    reasons[name] = per_scene[0][name]
+        return reasons
+
     def state(self) -> dict:
         plugins = []
         for record in self.plugins.values():
             plugins.append({
                 "name": record.name, "status": record.status, "error": record.error,
+                "title": None if record.manifest is None else record.manifest.title,
                 "health": self.health(record),
                 "directory": None if record.directory is None else str(record.directory),
                 "version": record.manifest.version if record.status == "running" else None,
@@ -1146,18 +1219,27 @@ class PluginHost:
                                 [{"name": name, "title": PERMISSION_TITLES[name]}
                                  for name in record.manifest.permissions]),
                 "scenes": list(record.scenes),
-                "commands": [{"name": name, "description": description}
-                             for name, (description, _) in record.commands.items()],
-                "rules": ([{"kind": "fullmatch", "pattern": text, "description": description}
+                "commands": ([{"name": name, "description": description, "disabled": False}
+                              for name, (description, _) in record.commands.items()]
+                             + [{"name": name, "description": description, "disabled": True}
+                                for name, description in record.disabled_commands.items()]),
+                "rules": ([{"kind": "fullmatch", "pattern": text, "description": description, "disabled": False}
                            for text, (description, _) in record.fullmatches.items()]
+                          + [{"kind": "fullmatch", "pattern": text, "description": description, "disabled": True}
+                             for text, description in record.disabled_fullmatches.items()]
                           + [{"kind": "regex", "pattern": item.expression.pattern,
-                              "description": item.description, "priority": item.priority}
-                             for item in record.patterns]),
+                              "description": item.description, "priority": item.priority, "disabled": False}
+                             for item in record.patterns]
+                          + [{"kind": "regex", "pattern": item.expression.pattern,
+                              "description": item.description, "priority": item.priority, "disabled": True}
+                             for item in record.disabled_patterns]),
+                "disabled_rules": list(record.disabled_rules),
                 "notices": sorted(record.notices),
                 "tools": [{"name": name, "description": entry.description,
                            "summary": entry.description if entry.summary is None else entry.summary,
                            "parameters": entry.model.model_json_schema(), "needs_source": entry.needs_source}
                           for name, entry in record.tools.items()],
+                "unavailable_tools": self._state_unavailable_tools(record),
                 "instructions": record.instructions,
                 # Memory entries a group may choose this plugin for: recall, memory_tool, compact.
                 "memory_entries": [name for name, present in (("recall", record.recall is not None),

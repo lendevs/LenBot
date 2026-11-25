@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { systemApi, systemOf, type PanelAccount } from '../../api/system'
 import ErrorNote from '../../ui/ErrorNote.vue'
@@ -12,17 +12,33 @@ import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
 import { useSettingsDraft } from './draft'
 
+const emit = defineEmits<{ dirty: [value: boolean] }>()
+
 const { t } = useI18n()
 const password = ref('')
+const passwordAgain = ref('')
+const passwordAgainTouched = ref(false)
 const form = useSettingsDraft<PanelAccount | null>({
   pick: (snapshot) => systemOf(snapshot).panel,
   section: 'panel',
-  extra: () => password.value !== '',
-  reset: () => (password.value = ''),
+  extra: () => password.value !== '' || passwordAgain.value !== '',
+  reset: () => {
+    password.value = ''
+    passwordAgain.value = ''
+    passwordAgainTouched.value = false
+  },
   save: (value) => systemApi.savePanel({ ...value!, password: password.value || null }),
 })
 const { settings, draft } = form
+watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
+watch([password, passwordAgain], ([next, again]) => {
+  form.clearError()
+  if (!next && !again) passwordAgainTouched.value = false
+})
 
+const passwordMismatch = computed(
+  () => Boolean(password.value || passwordAgain.value) && password.value !== passwordAgain.value,
+)
 const errors = computed(() => {
   const result: Record<string, string> = {}
   const value = draft.value
@@ -31,11 +47,13 @@ const errors = computed(() => {
   else if (value.username !== value.username.trim()) result.username = t('system.account.usernameSpace')
   if (password.value && (password.value.length < 8 || !password.value.trim()))
     result.password = t('system.account.passwordRule')
+  if (passwordMismatch.value && (passwordAgain.value !== '' || passwordAgainTouched.value))
+    result.passwordAgain = t('system.account.passwordMismatch')
   if (!value.host.trim()) result.host = t('system.required')
   if (value.port === null) result.port = t('system.required')
   return result
 })
-const invalid = computed(() => Object.keys(errors.value).length > 0)
+const invalid = computed(() => Object.keys(errors.value).length > 0 || passwordMismatch.value)
 </script>
 
 <template>
@@ -46,10 +64,10 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
     :error="settings.error.value"
     :retry="settings.refetch"
   />
-  <div v-else-if="draft" class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div v-else-if="draft" class="flex min-w-0 max-w-3xl flex-col gap-4">
+    <div class="flex min-w-0 flex-col gap-6">
       <FormSection :title="t('system.account.login')">
-        <Field :label="t('system.account.username')" :error="errors.username" required>
+        <Field :label="t('system.account.username')" :error="errors.username" required wide>
           <Input v-model="draft.username" autocomplete="username" />
         </Field>
         <Field :label="t('system.account.password')" :error="errors.password">
@@ -58,6 +76,19 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
             type="password"
             autocomplete="new-password"
             :placeholder="t('system.account.passwordKept')"
+          />
+        </Field>
+        <Field
+          :label="t('system.account.passwordAgain')"
+          :error="errors.passwordAgain"
+          :required="Boolean(password)"
+        >
+          <Input
+            v-model="passwordAgain"
+            type="password"
+            autocomplete="new-password"
+            :placeholder="t('system.account.passwordKept')"
+            @blur="passwordAgainTouched = true"
           />
         </Field>
       </FormSection>
@@ -83,6 +114,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
       :dirty="form.dirty.value"
       :saving="form.saving.value"
       :error="form.saveError.value"
+      :raw-error="form.saveRawError.value"
       :invalid="invalid"
       @save="form.submit"
       @discard="form.discard"

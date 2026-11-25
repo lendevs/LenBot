@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from string import Template
+from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -15,6 +16,7 @@ from .messages import Segment, render_body
 from .onebot_messages import normalized_segment
 from ..storage.store import Store, encode
 from ..prompt_files import read_prompt
+from ..tools.http_read import MAX_REDIRECTS, _target, fetch_public
 
 
 PlatformCall = Callable[[str, dict], Awaitable[dict]]
@@ -150,16 +152,23 @@ def parse_forward(raw: object) -> list[ForwardNode]:
             time = item["time"]
             if isinstance(time, bool) or not isinstance(time, (int, float)):
                 raise ValueError(f"messages[{index}].time must be a Unix timestamp")
-            wire = item["message"]
+            if "message" in item and item["message"] is not None:
+                wire_field, wire = "message", item["message"]
+            elif "content" in item:
+                wire_field, wire = "content", item["content"]
+            elif "message" in item:
+                wire_field, wire = "message", item["message"]
+            else:
+                raise KeyError("message")
             if not isinstance(wire, list):
-                raise ValueError(f"messages[{index}].message must be a segment array")
+                raise ValueError(f"messages[{index}].{wire_field} must be a segment array")
             segments = []
             for position, segment in enumerate(wire):
                 if (not isinstance(segment, dict) or not isinstance(segment["type"], str) or not segment["type"]
                         or not isinstance(segment["data"], dict)):
-                    raise ValueError(f"messages[{index}].message[{position}] must have type text and data object")
+                    raise ValueError(f"messages[{index}].{wire_field}[{position}] must have type text and data object")
                 if segment["type"] == "text" and not isinstance(segment["data"]["text"], str):
-                    raise ValueError(f"messages[{index}].message[{position}].data.text must be text")
+                    raise ValueError(f"messages[{index}].{wire_field}[{position}].data.text must be text")
                 segments.append(normalized_segment(segment["type"], segment["data"]))
             nodes.append(ForwardNode("onebot:" + _id(sender["user_id"], f"messages[{index}].sender.user_id"),
                                      card or nickname, float(time), segments))
@@ -318,6 +327,7 @@ async def group_file_url(call: PlatformCall, group_id: str, file_id: str, busid:
     url = _succeeded(raw, "get_group_file_url").get("url")
     if not isinstance(url, str) or not url.startswith(("http://", "https://")):
         raise ValueError(f"get_group_file_url 返回无法解析：url must be an http address; raw={repr(raw)[:500]}")
+    _target(url)
     return url
 
 
@@ -371,22 +381,50 @@ async def list_group_files(scene: str, timezone: str, args: GroupFilesArguments,
 
 
 async def download_group_file(call: PlatformCall, group_id: str, file_id: str, busid: int, max_bytes: int,
-                              transport: httpx.AsyncBaseTransport | None = None) -> bytes:
+                              transport: httpx.AsyncBaseTransport | None = None, *,
+                              fake_ip_networks: tuple = (), public_dns_url: str | None = None) -> bytes:
     """A group file's current content from the address OneBot gives, refused once it passes ``max_bytes``."""
     url = await group_file_url(call, group_id, file_id, busid)
-    async with httpx.AsyncClient(timeout=60, trust_env=False, follow_redirects=True, transport=transport) as client:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-            data = bytearray()
-            async for chunk in response.aiter_bytes():
-                data.extend(chunk)
-                if len(data) > max_bytes:
-                    raise ValueError(f"群文件超过 worker.max_file_bytes：{len(data)} > {max_bytes}")
-    return bytes(data)
+    if transport is None:
+        try:
+            _, _, data = await fetch_public(
+                url, 60.0, lambda _type, _prefix: max_bytes,
+                fake_ip_networks=fake_ip_networks, public_dns_url=public_dns_url,
+            )
+        except ValueError as error:
+            if "decoded bytes" in str(error):
+                raise ValueError(f"群文件超过 worker.max_file_bytes：{error}") from error
+            raise
+        return data
+    current = url
+    async with httpx.AsyncClient(timeout=60, trust_env=False, follow_redirects=False, transport=transport) as client:
+        for redirect in range(MAX_REDIRECTS + 1):
+            current, *_ = _target(current)
+            async with client.stream("GET", current) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if location is None or not location.strip():
+                        raise ValueError(f"群文件下载重定向缺少 Location：HTTP {response.status_code}")
+                    if redirect == MAX_REDIRECTS:
+                        raise ValueError(f"群文件下载超过 {MAX_REDIRECTS} 次重定向")
+                    current = urljoin(current, location)
+                    continue
+                response.raise_for_status()
+                data = bytearray()
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > max_bytes:
+                        raise ValueError(f"群文件超过 worker.max_file_bytes：{len(data)} > {max_bytes}")
+                return bytes(data)
+    raise AssertionError("redirect loop exhausted without returning")
 
 
-def group_file_fetch(call: PlatformCall, group_id: str):
+def group_file_fetch(call: PlatformCall, group_id: str, *,
+                     fake_ip_networks: tuple = (), public_dns_url: str | None = None):
     """The delegate fetcher for one group's files: download by file_id and busid."""
+    network_kwargs = ({"fake_ip_networks": fake_ip_networks, "public_dns_url": public_dns_url}
+                      if fake_ip_networks else {})
+
     async def fetch(item, max_bytes: int) -> bytes:
-        return await download_group_file(call, group_id, item.file_id, item.busid, max_bytes)
+        return await download_group_file(call, group_id, item.file_id, item.busid, max_bytes, **network_kwargs)
     return fetch

@@ -59,7 +59,7 @@ class _LocalHost(PluginHost):
         return self.turn_floors.get(scene, 0)
 
     async def send_parts(self, plugin: str, scene: str, parts: Sequence[Content], reply_to: str | None) -> Sent:
-        self._active(plugin, scene)
+        self._permit(self._speaking(plugin, scene), 'send')
         parts, omitted = platform_parts(scene, parts)
         captured = tuple(Text(self.redact(plugin, item.text)) if isinstance(item, Text) else
                          Image(item.data, self.redact(plugin, item.description)) if isinstance(item, Image) else item
@@ -69,18 +69,18 @@ class _LocalHost(PluginHost):
         return Sent('simulated', report if omitted is None else f'{report}；{omitted}')
 
     def recent_messages(self, plugin: str, scene: str, limit: int) -> list[ChatMessage]:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), 'history')
         return [item for item in self.messages if item.scene == scene][-limit:]
 
     def messages_between(self, plugin: str, scene: str, after: float, before: float,
                          offset: int, limit: int) -> list[ChatMessage]:
-        self._active(plugin, scene)
+        self._permit(self._active(plugin, scene), 'history')
         selected = sorted((item for item in self.messages if item.scene == scene and after <= item.time < before),
                           key=lambda item: item.time)
         return selected[offset:offset + limit]
 
     def emit_event(self, plugin: str, scene: str, text: str) -> None:
-        self._active(plugin, scene)
+        self._permit(self._speaking(plugin, scene), 'events')
         PluginStore(self.runtime.store).add_plugin_event(scene, plugin, 'event', self.redact(plugin, text))
 
     def quiet(self, plugin: str, scene: str, seconds: float | None, direct: str) -> None:
@@ -99,14 +99,17 @@ class _LocalHost(PluginHost):
         return found
 
     async def generate(self, plugin, scene, prompt, role, system):
+        self._permit(self._active(plugin, scene), 'generate')
         if not self.model_enabled:
             raise RuntimeError('Local plugin testing does not provide a model; pass explicit models to PluginTest')
         return await super().generate(plugin, scene, prompt, role, system)
 
     async def memory(self, plugin, scene, arguments):
+        self._permit(self._active(plugin, scene), 'memory')
         raise RuntimeError('Local plugin testing does not provide a memory service')
 
     async def delegate(self, plugin, scene, requester, goal, deliverable, context, materials):
+        self._permit(self._active(plugin, scene), 'delegate')
         raise RuntimeError('Local plugin testing does not provide a task worker')
 
 

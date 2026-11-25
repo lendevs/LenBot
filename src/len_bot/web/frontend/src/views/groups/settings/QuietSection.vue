@@ -7,17 +7,23 @@ import FormSection from '../../../ui/FormSection.vue'
 import Input from '../../../ui/Input.vue'
 import Select from '../../../ui/Select.vue'
 import Switch from '../../../ui/Switch.vue'
-import { useForm } from './form'
+import { cloneValue, useForm } from './form'
 
 const { t } = useI18n()
 const form = useForm()
 const quiet = computed(() => form.draft.scene.attention.quiet_hours)
 const enabled = computed({
   get: () => quiet.value !== null,
-  set: (value: boolean) =>
-    (form.draft.scene.attention.quiet_hours = value
-      ? { start: '23:00', end: '07:00', direct: 'defer', notice_text: null }
-      : null),
+  set: (value: boolean) => {
+    if (!value) {
+      form.draft.scene.attention.quiet_hours = null
+      return
+    }
+    const saved = form.saved?.scene.attention.quiet_hours
+    form.draft.scene.attention.quiet_hours = saved
+      ? cloneValue(saved)
+      : { start: '23:00', end: '07:00', direct: 'defer', notice_text: null }
+  },
 })
 const directOptions = computed(() =>
   (['allow', 'notice', 'defer'] as const).map((value) => ({
@@ -44,7 +50,7 @@ const notice = computed({
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.quiet.section')">
+  <FormSection id="quiet" :title="t('groups.settings.quiet.section')">
     <template #actions>
       <Switch v-model="enabled" :aria-label="t('groups.settings.quiet.section')" />
     </template>

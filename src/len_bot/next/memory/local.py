@@ -93,6 +93,43 @@ _Result = TypeVar("_Result")
 _FILE_LOCK = threading.RLock()
 _PENDING_FILE = '.memory-pending.json'
 logger = logging.getLogger(__name__)
+# High-frequency filler/polite/discourse trigrams that appear across unrelated memories
+# and add noise in text-only automatic recall without carrying topic identity.
+_AUTOMATIC_STOP_TRIGRAMS = frozenset({
+    "哈哈哈", "呵呵呵", "嘿嘿嘿", "嘻嘻嘻", "呜呜呜", "啊啊啊", "嗯嗯嗯", "哦哦哦",
+    "好好好", "对对对", "是是是", "行行行", "来来来",
+    "不知道", "为什么", "怎么办", "什么意", "么意思", "没问题", "没关系", "不好意",
+    "好意思", "对不起", "谢谢你", "感谢你", "不客气", "辛苦了", "太好了", "真的吗",
+    "是不是", "有没有", "可不可", "不可以", "能不能", "行不行", "好不好", "对不对",
+    "怎么样", "怎么说", "怎么回", "么回事", "干什么", "做什么", "说什么", "是什么",
+    "就是说", "也就是", "其实是", "好像是", "应该是", "可能是", "我觉得", "我感觉",
+    "我认为", "我以为", "你觉得", "确实是", "的确是", "差不多", "一会儿", "等一下",
+    "看一下", "问一下", "试一下", "说一下", "帮一下", "大家好", "早上好", "中午好",
+    "下午好", "晚上好", "谢谢大", "谢大家", "那没事", "没事了", "可以的", "好的呀",
+    "好家伙", "笑死我", "确实啊", "那好吧", "知道了", "明白了", "收到啦",
+    "the", "and", "for", "are", "but", "not", "you", "was", "has", "lol", "hhh",
+})
+_AUTOMATIC_STOP_BIGRAMS = frozenset({
+    "不知", "知道", "为什", "什么", "怎么", "么办", "没问", "问题", "意思", "没关", "关系",
+    "不好", "好意", "对不", "不起", "谢谢", "客气", "辛苦", "真的", "是不", "不是", "有没",
+    "没有", "可以", "不能", "就是", "其实", "好像", "应该", "可能", "觉得", "感觉", "确实",
+    "一下", "大家",
+})
+_FILLER_CHARS = frozenset("的了呢吧啊呀哦嗯嘛哈呵嘿嘻呜哇唉哎哟噢呃额吗呐呗喽咯啦")
+
+
+def _distinctive_trigram(term: str) -> bool:
+    if term in _AUTOMATIC_STOP_TRIGRAMS or len(set(term)) < 2:
+        return False
+    if not all(ch.isalnum() for ch in term):
+        return False
+    return not all(ch in _FILLER_CHARS for ch in term)
+
+
+def _distinctive_bigram(pair: str) -> bool:
+    if pair in _AUTOMATIC_STOP_BIGRAMS or len(set(pair)) < 2:
+        return False
+    return not all(ch in _FILLER_CHARS for ch in pair)
 
 
 class VectorIndexNeedsRebuild(ValueError):
@@ -106,6 +143,18 @@ class _FileMutation(BaseModel):
     action: Literal['write', 'delete', 'forget', 'summary', 'clear-summary']
     changed_at: float
     files: dict[str, str | None]
+
+
+def _encode_segment(part: str) -> str:
+    return quote(part, safe='') if sys.platform == 'win32' else part
+
+
+def _decode_segment(part: str) -> str:
+    return unquote(part) if sys.platform == 'win32' else part
+
+
+def _decode_parts(parts: tuple[str, ...]) -> str:
+    return '/'.join(_decode_segment(part) for part in parts)
 
 
 def _sync_directory(path: Path) -> None:
@@ -134,11 +183,14 @@ def _recover_files(root: Path, base: Path) -> None:
                                         (change.scope, change.path)).fetchone() is None
                              and db.execute('SELECT 1 FROM memory_changes WHERE scope=? AND path=?',
                                             (change.scope, change.path)).fetchone() is None)
-                summary_paths = {str(Path(relative).parent) for relative in change.files
-                                 if Path(relative).name in SUMMARY_FILES}
+                summary_paths = {
+                    '' if (parent := Path(relative).parent) == Path('.') else _decode_parts(parent.parts)
+                    for relative in change.files
+                    if Path(relative).name in SUMMARY_FILES
+                }
                 committed = committed and all(db.execute(
                     'SELECT 1 FROM memory_summaries WHERE scope=? AND path=?',
-                    (change.scope, '' if path == '.' else path)).fetchone() is None for path in summary_paths)
+                    (change.scope, path)).fetchone() is None for path in summary_paths)
             else:
                 row = db.execute('SELECT generated_at FROM memory_summaries WHERE scope=? AND path=?',
                                  (change.scope, change.path)).fetchone()
@@ -440,15 +492,22 @@ class LocalMemory:
             return "public"
         raise ValueError(f"unknown memory read scope: {scope!r}")
 
-    def _target(self, scope: str, path: str, *, file: bool) -> Path:
+    def _target(self, scope: str, path: str, *, file: bool,
+                _dir_names: dict[Path, list[str]] | None = None) -> Path:
         parts = _parts(path, file=file)
         base = self._base(scope)
-        target = base.joinpath(*(quote(part, safe='') for part in parts)) if sys.platform == 'win32' else base.joinpath(*parts)
+        target = base.joinpath(*(_encode_segment(part) for part in parts))
         parent = base
         for part in target.relative_to(base).parts:
             if parent.exists() and (parent / part).exists():
-                differently_cased = next((child.name for child in parent.iterdir()
-                                         if child.name != part and child.name.casefold() == part.casefold()), None)
+                if _dir_names is None:
+                    names = [child.name for child in parent.iterdir()]
+                else:
+                    names = _dir_names.get(parent)
+                    if names is None:
+                        names = _dir_names[parent] = [child.name for child in parent.iterdir()]
+                differently_cased = next((name for name in names
+                                         if name != part and name.casefold() == part.casefold()), None)
                 if differently_cased is not None:
                     raise ValueError(f'Memory path casing differs from existing {differently_cased!r}: {path!r}')
             parent /= part
@@ -477,16 +536,14 @@ class LocalMemory:
                     summaries.append(path)
                     continue
                 if category == "public":
-                    scope, relative = "public", path.relative_to(directory).as_posix()
-                    if sys.platform == 'win32':
-                        relative = '/'.join(unquote(part) for part in path.relative_to(directory).parts)
+                    scope, relative = "public", _decode_parts(path.relative_to(directory).parts)
                 else:
                     position = path.relative_to(directory).parts
-                    disk_scope = unquote(position[0]) if sys.platform == 'win32' else position[0]
+                    disk_scope = _decode_segment(position[0])
                     if len(position) < 2 or _SCENE.fullmatch(disk_scope) is None:
                         raise ValueError(f"unexpected memory source path: {path}")
                     scope = disk_scope
-                    relative = '/'.join(unquote(part) for part in position[1:]) if sys.platform == 'win32' else Path(*position[1:]).as_posix()
+                    relative = _decode_parts(position[1:])
                 actual = self._target(scope, relative, file=True)
                 files[(scope, relative)] = _source_text(actual)
         return files, summaries
@@ -681,24 +738,29 @@ class LocalMemory:
 
     def _browse_sync(self, scope: str, path: str, offset: int, limit: int,
                      bot_persona: str | None = None) -> MemoryPage:
-        directory = self._target(scope, path, file=False)
+        dir_names: dict[Path, list[str]] = {}
+        directory = self._target(scope, path, file=False, _dir_names=dir_names)
         if not directory.exists() and not path:
             return MemoryPage(nodes=(), has_more=False)
         if not directory.exists():
             raise FileNotFoundError(directory)
         if not directory.is_dir():
             raise NotADirectoryError(directory)
-        entries = sorted((entry for entry in directory.iterdir()
-                          if entry.is_dir() or (entry.suffix == ".md" and entry.name not in SUMMARY_FILES)),
-                         key=lambda entry: (not entry.is_dir(), entry.name))
+        all_entries = list(directory.iterdir())
+        dir_names[directory] = [entry.name for entry in all_entries]
+        entries = sorted(
+            ((entry, _decode_segment(entry.name)) for entry in all_entries
+             if entry.is_dir() or (entry.suffix == ".md" and entry.name not in SUMMARY_FILES)),
+            key=lambda item: (not item[0].is_dir(), item[1]),
+        )
         if bot_persona is not None and path.strip('/') == 'bot':
-            entries = [entry for entry in entries if entry.name == bot_persona]
+            entries = [item for item in entries if item[1] == bot_persona]
         shown = entries[offset:offset + limit]
-        nodes = tuple(MemoryNode(path=f"{path}/{entry.name}" if path else entry.name,
-                                 name=entry.name, is_dir=entry.is_dir())
-                      for entry in shown)
+        nodes = tuple(MemoryNode(path=f"{path}/{name}" if path else name,
+                                 name=name, is_dir=entry.is_dir())
+                      for entry, name in shown)
         for node in nodes:
-            self._target(scope, node.path, file=not node.is_dir)
+            self._target(scope, node.path, file=not node.is_dir, _dir_names=dir_names)
         return MemoryPage(nodes=nodes, has_more=offset + limit < len(entries))
 
     async def browse(self, scene: str, path: str = "", *, scope: Literal["scene", "public"] = "scene",
@@ -714,11 +776,14 @@ class LocalMemory:
         root = self._target(scope, "", file=False)
         if not root.exists():
             return []
+        entries = sorted(
+            (tuple(_decode_segment(part) for part in target.relative_to(root).parts), target)
+            for target in root.rglob("*.md")
+            if target.name not in SUMMARY_FILES
+        )
         files = []
-        for target in sorted(root.rglob("*.md")):
-            if target.name in SUMMARY_FILES:
-                continue
-            path = target.relative_to(root).as_posix()
+        for parts, target in entries:
+            path = "/".join(parts)
             self._target(scope, path, file=True)
             files.append({"path": path, "chars": len(_source_text(target))})
         return files
@@ -857,7 +922,8 @@ class LocalMemory:
         if len(folded) < 3:
             return LocalMemory._lexical_rows(db, scene, folded, limit, include_public, bot_persona)
         # A short message remains searchable when a following reply adds another line.
-        terms, short = query_terms(folded)
+        raw_terms, short = query_terms(folded)
+        terms = [term for term in raw_terms if _distinctive_trigram(term)]
         scopes = (scene, "public") if include_public else (scene,)
         placeholders = ",".join("?" for _ in scopes)
         eligible = _eligible(bot_persona)
@@ -872,7 +938,7 @@ class LocalMemory:
             selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
                 WHERE scope IN ({placeholders}) AND ({matches}) {eligible}""")
             parameters += [*scopes, *short]
-        pairs = query_bigrams(folded)
+        pairs = [pair for pair in query_bigrams(folded) if _distinctive_bigram(pair)]
         if len(pairs) >= 3:
             selects.append(f"""SELECT id, scope, path, 0 FROM memory_sections
                 WHERE scope IN ({placeholders}) {eligible}
@@ -903,16 +969,20 @@ class LocalMemory:
         hits = []
         for (scope, path), rows in grouped.items():
             content = self._read_sync(scope, path).content
-            # Adjacent matched sections become one source range; non-adjacent ones
-            # keep a visible gap. The source is read once and returned once.
+            # Overlapping, contained or adjacent matched sections become one source range;
+            # non-adjacent ones keep a visible gap. The source is read once and returned once.
             ranges: list[dict] = []
-            for row in sorted(rows, key=lambda row: row['start_char']):
-                if ranges and ranges[-1]['end_char'] == row['start_char']:
-                    ranges[-1]['end_char'] = row['end_char']
-                    ranges[-1]['headings'].append(json.loads(row['heading']))
+            for row in sorted(rows, key=lambda row: (row['start_char'], -row['end_char'])):
+                heading = json.loads(row['heading'])
+                if ranges and (row['start_char'] <= ranges[-1]['end_char']
+                               or not content[ranges[-1]['end_char']:row['start_char']].strip()):
+                    if row['end_char'] > ranges[-1]['end_char']:
+                        ranges[-1]['end_char'] = row['end_char']
+                    if heading not in ranges[-1]['headings']:
+                        ranges[-1]['headings'].append(heading)
                 else:
                     ranges.append({'start_char': row['start_char'], 'end_char': row['end_char'],
-                                   'headings': [json.loads(row['heading'])], 'source_version': row['source_version']})
+                                   'headings': [heading], 'source_version': row['source_version']})
             preview = '\n…\n'.join(content[part['start_char']:part['end_char']] for part in ranges)
             hits.append(LocalMemoryHit(scope='public' if scope == 'public' else 'scene', path=path,
                                        preview=preview, total_chars=len(content), sections=tuple(ranges)))
@@ -1102,15 +1172,19 @@ class LocalMemory:
     def _summary_inputs_sync(self, scope: str, path: str) -> dict:
         directory = self._summary_directory(scope, path)
         files, directories = [], []
-        for entry in sorted(directory.iterdir(), key=lambda item: item.name):
-            relative = f"{path}/{entry.name}" if path else entry.name
+        entries = sorted(
+            ((entry, _decode_segment(entry.name)) for entry in directory.iterdir()),
+            key=lambda item: item[1],
+        )
+        for entry, name in entries:
+            relative = f"{path}/{name}" if path else name
             if entry.is_dir():
                 self._target(scope, relative, file=False)
                 summary = self._summary_sync(scope, relative)
-                directories.append({"name": entry.name,
+                directories.append({"name": name,
                                     "abstract": summary.abstract if summary.changed_after is None else None})
             elif entry.suffix == ".md" and entry.name not in SUMMARY_FILES:
-                files.append({"name": entry.name, "content": _source_text(self._target(scope, relative, file=True))})
+                files.append({"name": name, "content": _source_text(self._target(scope, relative, file=True))})
         return {"path": path, "files": files, "directories": directories}
 
     async def summary_inputs(self, scene: str, path: str, *,

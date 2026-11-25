@@ -9,6 +9,7 @@ import { logsApi, type LogFilter, type LogRecord } from '../../../api/logs'
 import { keys } from '../../../api/query'
 import { timelineApi } from '../../../api/timeline'
 import { host } from '../../../api/hostStore'
+import { formatBytes, formatNumber } from '../../../i18n/format'
 import { groupLabel } from '../../../layouts/shell/scenes'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import Badge from '../../../ui/Badge.vue'
@@ -34,7 +35,9 @@ const labels = useLogLabels()
 const text = (key: string) => (typeof route.query[key] === 'string' ? (route.query[key] as string) : '')
 function setQuery(change: LocationQueryRaw) {
   const next: LocationQueryRaw = { ...route.query, ...change }
-  for (const [key, value] of Object.entries(next)) if (value === '' || value === null) delete next[key]
+  for (const [key, value] of Object.entries(next)) {
+    if (value === '' || value === null || value === undefined) delete next[key]
+  }
   void router.replace({ query: next })
 }
 
@@ -101,6 +104,7 @@ const filter = computed<LogFilter>(() => ({
   ...(level.value !== ALL ? { level: level.value as LogFilter['level'] } : {}),
   ...(scene.value !== ALL ? { scene: scene.value } : {}),
   ...(source.value !== ALL ? { source: source.value } : {}),
+  ...(kind.value && kind.value !== '_other' ? { event: kind.value } : {}),
   ...(text('plugin') ? { plugin: text('plugin') } : {}),
   ...(text('task') ? { task_id: text('task') } : {}),
   ...(turn.value ? { turn_id: turn.value } : {}),
@@ -125,43 +129,100 @@ watch(items, (list) => {
 })
 
 const eventKey = (item: LogRecord) => item.event ?? '_other'
+
+interface IndexedLog {
+  item: LogRecord
+  key: string
+  kind: string
+  haystack: string
+}
+
+function fingerprint(item: LogRecord): string {
+  const digest = (item.message ?? '').slice(0, 64)
+  return `${item.ts}|${item.source}|${item.event ?? ''}|${item.turn_id ?? ''}|${item.task_id ?? ''}|${item.message_seq ?? ''}|${digest}`
+}
+
+/** Precompute stable content-fingerprint keys (oldest-first for collision stability) and lowercase search text. */
+const indexed = computed<IndexedLog[]>(() => {
+  const list = items.value
+  const seen = new Map<string, number>()
+  const rows = new Array<IndexedLog>(list.length)
+  for (let i = list.length - 1; i >= 0; i--) {
+    const item = list[i]!
+    const base = fingerprint(item)
+    const count = seen.get(base) ?? 0
+    seen.set(base, count + 1)
+    rows[i] = {
+      item,
+      key: count === 0 ? base : `${base}#${count}`,
+      kind: eventKey(item),
+      haystack: [
+        item.event,
+        item.event && labels.event(item.event),
+        item.message,
+        item.source,
+        item.scene,
+        item.plugin,
+        item.tool,
+        item.task_id,
+        item.turn_id,
+        item.error?.type,
+        item.error?.message,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase(),
+    }
+  }
+  return rows
+})
+
 const kinds = computed(() => {
   const counts = new Map<string, number>()
-  for (const item of items.value) counts.set(eventKey(item), (counts.get(eventKey(item)) ?? 0) + 1)
+  for (const row of indexed.value) counts.set(row.kind, (counts.get(row.kind) ?? 0) + 1)
   return [...counts].sort((a, b) => b[1] - a[1])
 })
-const haystack = (item: LogRecord) =>
-  [
-    item.event,
-    item.event && labels.event(item.event),
-    item.message,
-    item.source,
-    item.scene,
-    item.plugin,
-    item.tool,
-    item.task_id,
-    item.turn_id,
-    item.error?.type,
-    item.error?.message,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
+const kindChips = computed<[string, number][]>(() => {
+  if (!kind.value) return kinds.value
+  if (kinds.value.some(([key]) => key === kind.value)) return kinds.value
+  return [[kind.value, 0], ...kinds.value]
+})
 const shown = computed(() => {
   const words = text('q').toLowerCase().split(/\s+/).filter(Boolean)
-  return items.value.filter(
-    (item) =>
-      (!kind.value || eventKey(item) === kind.value) &&
-      (!words.length || words.every((word) => haystack(item).includes(word))),
+  return indexed.value.filter(
+    (row) =>
+      (!kind.value || row.kind === kind.value) &&
+      (!words.length || words.every((word) => row.haystack.includes(word))),
   )
 })
-const keyed = computed(() => shown.value.map((item, index) => ({ item, key: `${item.ts}#${index}` })))
+const expanded = ref(new Set<string>())
+function toggleExpanded(key: string, value: boolean) {
+  const next = new Set(expanded.value)
+  if (value) next.add(key)
+  else next.delete(key)
+  expanded.value = next
+}
+watch(indexed, (rows) => {
+  if (!expanded.value.size) return
+  const present = new Set(rows.map((row) => row.key))
+  let changed = false
+  const next = new Set<string>()
+  for (const key of expanded.value) {
+    if (present.has(key)) next.add(key)
+    else changed = true
+  }
+  if (changed) expanded.value = next
+})
 const more = computed(() => items.value.length >= limit.value && limit.value < LIMITS[LIMITS.length - 1]!)
 const timeZone = computed(() => host.state?.timezone as string | undefined)
 
-function onFilter(key: 'turn' | 'plugin' | 'task' | 'scene', value: string) {
+function onFilter(key: 'turn' | 'plugin' | 'task' | 'scene', value: string, itemScene?: string) {
   if (key === 'plugin') plugin.value = value
   if (key === 'task') task.value = String(value)
+  if (key === 'turn' && itemScene) {
+    setQuery({ turn: value, scene: itemScene })
+    return
+  }
   setQuery({ [key]: value })
 }
 
@@ -178,10 +239,9 @@ const detail = useQuery({
 })
 
 const files = useQuery({ queryKey: keys.system.logFiles(), queryFn: ({ signal }) => logsApi.files(signal) })
-const size = (bytes: number) => `${Math.max(1, Math.ceil(bytes / 1024))} KB`
 
 function exportShown() {
-  const blob = new Blob([shown.value.map((item) => JSON.stringify(item)).join('\n') + '\n'], {
+  const blob = new Blob([shown.value.map((row) => JSON.stringify(row.item)).join('\n') + '\n'], {
     type: 'application/x-ndjson',
   })
   const link = Object.assign(document.createElement('a'), {
@@ -194,95 +254,126 @@ function exportShown() {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <section class="flex min-w-0 flex-col gap-4 rounded-xl border border-line bg-surface p-4">
+  <div class="flex min-w-0 flex-col gap-5">
+    <section class="flex min-w-0 flex-col gap-3.5 border-b border-line pb-5">
       <div class="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
-        <div class="col-span-2">
-          <SegmentedControl v-model="level" :options="levels" :label="t('logs.level')" />
+        <div class="col-span-2 sm:w-auto">
+          <Field :label="t('logs.level')">
+            <div class="flex min-h-9 items-center">
+              <SegmentedControl v-model="level" :options="levels" :label="t('logs.level')" />
+            </div>
+          </Field>
         </div>
-        <Field :label="t('logs.group')" class="col-span-2 sm:w-48">
-          <Select v-model="scene" :options="sceneOptions" />
-        </Field>
-        <Field :label="t('logs.source')" class="col-span-2 sm:w-64">
-          <Select v-model="source" :options="sourceOptions" />
-        </Field>
-        <Field :label="t('logs.plugin')" class="sm:w-36">
-          <Input v-model="plugin" mono clearable />
-        </Field>
-        <Field :label="t('logs.task')" class="sm:w-28">
-          <Input v-model="task" mono clearable />
-        </Field>
+        <div class="col-span-2 sm:w-48">
+          <Field :label="t('logs.group')">
+            <Select v-model="scene" :options="sceneOptions" />
+          </Field>
+        </div>
+        <div class="col-span-2 sm:w-60">
+          <Field :label="t('logs.source')">
+            <Select v-model="source" :options="sourceOptions" />
+          </Field>
+        </div>
+        <div class="min-w-0 sm:w-36">
+          <Field :label="t('logs.plugin')">
+            <Input v-model="plugin" mono clearable />
+          </Field>
+        </div>
+        <div class="min-w-0 sm:w-28">
+          <Field :label="t('logs.task')">
+            <Input v-model="task" mono clearable />
+          </Field>
+        </div>
       </div>
       <div class="flex flex-wrap items-center gap-3">
-        <Input
-          v-model="search"
-          :icon="Search"
-          clearable
-          :placeholder="t('logs.search')"
-          class="min-w-0 flex-1 basis-60"
-          :aria-label="t('logs.search')"
-        />
+        <div class="min-w-0 flex-1 basis-56">
+          <Input
+            v-model="search"
+            :icon="Search"
+            clearable
+            :placeholder="t('logs.search')"
+            :aria-label="t('logs.search')"
+          />
+        </div>
         <Field :label="t('logs.follow')" inline>
           <Switch v-model="follow" />
         </Field>
-        <Button
-          size="sm"
-          variant="ghost"
-          :icon="RefreshCw"
-          :loading="logs.isFetching.value && !follow"
-          @click="logs.refetch()"
-        >
-          {{ t('logs.refresh') }}
-        </Button>
-        <Button size="sm" variant="ghost" :icon="Download" :disabled="!shown.length" @click="exportShown">
-          {{ t('logs.export', { n: shown.length }, shown.length) }}
-        </Button>
+        <div class="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            :icon="RefreshCw"
+            :loading="logs.isFetching.value && !follow"
+            @click="logs.refetch()"
+          >
+            {{ t('logs.refresh') }}
+          </Button>
+          <Button size="sm" variant="ghost" :icon="Download" :disabled="!shown.length" @click="exportShown">
+            {{ t('logs.export', { n: formatNumber(shown.length) }, shown.length) }}
+          </Button>
+        </div>
       </div>
       <div v-if="turn" class="flex flex-wrap items-center gap-2">
-        <Badge tone="brand">{{ t('logs.onlyTurn', { id: turn.slice(0, 8) }) }}</Badge>
+        <Badge tone="info">{{ t('logs.onlyTurn', { id: turn.slice(0, 8) }) }}</Badge>
         <Button size="sm" variant="ghost" :icon="X" @click="setQuery({ turn: undefined })">
           {{ t('logs.allTurns') }}
         </Button>
       </div>
-      <div v-if="kinds.length > 1" class="flex flex-wrap gap-1.5" role="group" :aria-label="t('logs.kinds')">
+      <div
+        v-if="kinds.length > 1 || Boolean(kind)"
+        class="flex flex-wrap items-center gap-1.5"
+        role="group"
+        :aria-label="t('logs.kinds')"
+      >
         <button
           type="button"
-          class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
+          class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
           :class="
-            !kind ? 'border-primary bg-primary-bg text-primary' : 'border-line text-ink-2 hover:bg-hover'
+            !kind
+              ? 'border-line-strong bg-fill font-semibold text-ink'
+              : 'border-line bg-surface text-muted hover:bg-hover hover:text-ink'
           "
           :aria-pressed="!kind"
           @click="setQuery({ event: undefined })"
         >
           {{ t('logs.allKinds') }}
-          <span class="tabular opacity-70">{{ items.length }}</span>
+          <span v-if="!kind" class="tabular opacity-75">{{ formatNumber(items.length) }}</span>
         </button>
         <button
-          v-for="[key, count] in kinds"
+          v-for="[key, count] in kindChips"
           :key="key"
           type="button"
-          class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
+          class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
           :class="
             kind === key
-              ? 'border-primary bg-primary-bg text-primary'
-              : 'border-line text-ink-2 hover:bg-hover'
+              ? 'border-line-strong bg-fill font-semibold text-ink'
+              : 'border-line bg-surface text-muted hover:bg-hover hover:text-ink'
           "
           :aria-pressed="kind === key"
+          :title="kind === key ? t('logs.clearEvent') : undefined"
           @click="setQuery({ event: kind === key ? undefined : key })"
         >
           {{ key === '_other' ? labels.event(undefined) : labels.event(key) }}
-          <span class="tabular opacity-70">{{ count }}</span>
+          <span class="tabular opacity-75">{{ formatNumber(count) }}</span>
+          <X v-if="kind === key" :size="12" class="text-muted" aria-hidden="true" />
         </button>
       </div>
     </section>
 
-    <section v-if="call > 0" class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4">
-      <h3 class="text-base font-semibold">{{ t('logs.events.model_call') }} #{{ call }}</h3>
+    <section v-if="call > 0" class="flex min-w-0 flex-col gap-3 border-b border-line pb-5">
+      <header class="flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-base font-semibold text-ink tabular">
+          {{ t('logs.events.model_call') }} #{{ call }}
+        </h3>
+        <Button size="sm" variant="ghost" :icon="X" @click="setQuery({ call: undefined })">
+          {{ t('logs.closeCall') }}
+        </Button>
+      </header>
       <Skeleton v-if="callDetail.isPending.value" :lines="3" />
       <ErrorNote
         v-else-if="callDetail.isError.value"
         :error="callDetail.error.value"
-        :title="t('logs.turnFailed')"
+        :title="t('logs.callFailed')"
         :retry="callDetail.refetch"
       />
       <ErrorNote
@@ -293,18 +384,11 @@ function exportShown() {
           detail: { message: callDetail.data.value.error, data: callDetail.data.value },
         }"
       />
-      <CodeBlock
-        v-else-if="callDetail.data.value"
-        :code="JSON.stringify(callDetail.data.value, null, 2)"
-        :max-lines="24"
-      />
+      <CodeBlock v-else-if="callDetail.data.value" :code="callDetail.data.value" :max-lines="24" />
     </section>
-    <section
-      v-if="turn && scene !== ALL"
-      class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-4"
-    >
+    <section v-if="turn && scene !== ALL" class="flex min-w-0 flex-col gap-3 border-b border-line pb-5">
       <header class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-base font-semibold">{{ t('logs.turnTitle') }}</h3>
+        <h3 class="text-base font-semibold text-ink">{{ t('logs.turnTitle') }}</h3>
         <Button size="sm" variant="ghost" :icon-right="ArrowUpRight" :to="groupsTarget(scene, 'live')">
           {{ t('logs.openGroup') }}
         </Button>
@@ -328,20 +412,12 @@ function exportShown() {
     />
     <EmptyState v-else-if="!shown.length" :icon="ScrollText" :title="t('logs.empty')" compact />
     <div v-else class="flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface">
-      <VirtualList
-        :items="keyed"
-        :get-key="(row) => row.key"
-        :estimate-size="76"
-        class="max-h-[min(70vh,720px)]"
-      >
-        <template #default="{ item: row }">
-          <LogRow :item="row.item" :time-zone="timeZone" :turn="turn" @filter="onFilter" />
-        </template>
-      </VirtualList>
       <div
-        class="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2 text-xs text-muted"
+        class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-fill px-4 py-2 text-xs text-muted"
       >
-        <span class="tabular">{{ t('logs.count', { shown: shown.length, read: items.length }) }}</span>
+        <span class="tabular">
+          {{ t('logs.count', { shown: formatNumber(shown.length), read: formatNumber(items.length) }) }}
+        </span>
         <Button
           v-if="more"
           size="sm"
@@ -349,24 +425,38 @@ function exportShown() {
           :loading="logs.isFetching.value"
           @click="limit = LIMITS[LIMITS.indexOf(limit) + 1]!"
         >
-          {{ t('logs.more', { n: LIMITS[LIMITS.indexOf(limit) + 1] }) }}
+          {{ t('logs.more', { n: formatNumber(LIMITS[LIMITS.indexOf(limit) + 1]!) }) }}
         </Button>
       </div>
+      <VirtualList
+        :items="shown"
+        :get-key="(row) => row.key"
+        :estimate-size="72"
+        class="max-h-[min(68dvh,42rem)]"
+      >
+        <template #default="{ item: row }">
+          <LogRow
+            :item="row.item"
+            :time-zone="timeZone"
+            :turn="turn"
+            :open="expanded.has(row.key)"
+            @update:open="(value: boolean) => toggleExpanded(row.key, value)"
+            @filter="onFilter"
+          />
+        </template>
+      </VirtualList>
     </div>
 
-    <section
-      v-if="files.data.value?.items.length"
-      class="flex min-w-0 flex-col gap-2 rounded-xl border border-line bg-surface p-4"
-    >
-      <h3 class="text-base font-semibold">{{ t('logs.files') }}</h3>
-      <ul class="flex list-none flex-col divide-y divide-line">
-        <li v-for="file in files.data.value.items" :key="file.name" class="flex items-center gap-3 py-2">
+    <section v-if="files.data.value?.items.length" class="flex min-w-0 max-w-3xl flex-col gap-2.5 pt-2">
+      <h3 class="text-base font-semibold text-ink">{{ t('logs.files') }}</h3>
+      <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+        <li v-for="file in files.data.value.items" :key="file.name" class="flex items-center gap-3 py-2.5">
           <FileText :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
-          <span class="min-w-0 flex-1 truncate font-mono text-sm">{{ file.name }}</span>
-          <span class="text-xs text-muted tabular">{{ size(file.bytes) }}</span>
+          <span class="min-w-0 flex-1 truncate font-mono text-sm text-ink">{{ file.name }}</span>
+          <span class="text-xs text-muted tabular">{{ formatBytes(file.bytes) }}</span>
           <a
             :href="logsApi.fileUrl(file.name)"
-            class="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-ink hover:bg-hover focus-visible:focus-ring"
+            class="link-plain inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-semibold text-ink transition-colors hover:bg-hover focus-visible:focus-ring"
           >
             <Download :size="15" aria-hidden="true" />
             {{ t('logs.download') }}

@@ -8,7 +8,9 @@ shapes and usage were retained.
 
 import asyncio
 import json
+from math import ceil
 from pathlib import Path
+from string import Template
 
 import pytest
 from pydantic import ValidationError
@@ -21,6 +23,10 @@ from len_bot.next.models.client import (
     ModelSettings,
     parse_chat_completion,
 )
+from len_bot.next.models.projection import project_old_results
+from len_bot.next.models.protocols import build_request
+from len_bot.next.prompt_files import read_prompt
+from len_bot.next.storage.codec import encode
 
 
 RECORDED_RESPONSE = Path(__file__).parent / "fixtures/next/model/response-02.json"
@@ -127,6 +133,36 @@ def test_missing_usage_in_recorded_response_is_unknown_not_zero():
     reply = parse_chat_completion(body)
     assert reply.usage is None
     assert reply.token_usage is None
+
+
+@pytest.mark.parametrize('field', ['prompt_cache_hit_tokens', 'cache_read_input_tokens'])
+def test_gateway_cached_usage_falls_back_only_when_standard_count_is_unknown(field):
+    body = recorded_response()
+    body['usage'][field] = 32
+    assert parse_chat_completion(body).token_usage.cached_tokens == 0
+    del body['usage']['prompt_tokens_details']
+    assert parse_chat_completion(body).token_usage.cached_tokens == 32
+    body['usage'][field] = -1
+    with pytest.raises(ModelProtocolError, match=field):
+        parse_chat_completion(body)
+
+
+def test_old_web_results_fold_at_block_boundaries():
+    page = {'document': 'doc-1', 'text': 'original body ' * 100}
+    content = Template(read_prompt('next_web_read.md')).substitute(result=encode(page))
+    tool = {'role': 'tool', 'tool_call_id': 'read-1', 'content': content}
+    call = {'role': 'assistant', 'content': None, 'tool_calls': [
+        {'type': 'function', 'id': 'read-1', 'function': {'name': 'web_read', 'arguments': '{}'}}]}
+    history = [(1, call), (2, tool)]
+    keep = ceil(len(encode(tool).encode()) / 3)
+    short = [*history, (3, {'role': 'user', 'content': '还有呢？'})]
+    longer = [*short, (4, {'role': 'user', 'content': 'x' * (keep * 2)})]
+    assert project_old_results(history, keep) == history
+    assert project_old_results(short, keep) == short
+    folded = project_old_results(longer, keep)[1][1]['content']
+    assert page['document'] in folded and page['text'] not in folded
+    assert project_old_results(history, 0)[1][1]['content'] == folded
+    assert tool['content'] == content
 
 
 @pytest.mark.parametrize(
@@ -321,9 +357,20 @@ async def test_loopback_http_error_propagates_original_body_without_retry():
             with pytest.raises(ModelHTTPError, match="请求受限") as failure:
                 await model.complete([{"role": "user", "content": "hello"}], [])
     assert "replay rate limit" in failure.value.response["detail"]
-    assert "429" in str(failure.value)
+    assert "HTTP 429: replay rate limit" in str(failure.value)
+    assert failure.value.status == 429 and failure.value.retryable
+    assert failure.value.body == failure.value.response['detail']
     assert requests == 1
     assert "reasoning_effort" not in payloads[0]
+
+
+def test_http_error_plain_text_is_printable_and_bounded():
+    detail = 'busy\r\n\tupstream\x00' + 'x' * 300
+    error = ModelHTTPError(502, detail)
+    assert 'HTTP 502: ' + ('busy upstream ' + 'x' * 300)[:240] + '）' in str(error)
+    assert error.body == detail and error.retryable
+    empty = ModelHTTPError(400, '')
+    assert 'HTTP 400）' in str(empty) and not empty.retryable
 
 
 @pytest.mark.asyncio
@@ -397,3 +444,572 @@ def test_recorded_summary_code_fence_is_not_silently_repaired():
     reply = parse_chat_completion({'choices': [recorded]})
     with pytest.raises(ValueError, match='Invalid memory summary response.*response fragment'):
         parse_summary(reply)
+
+
+def test_old_large_readonly_tool_results_fold_with_quantized_stability():
+    search_payload = {
+        'provider': 'tavily',
+        'query': 'LenBot 部署说明',
+        'fetched_at': '2026-10-01T08:00Z',
+        'results': [
+            {
+                'title': '部署指南',
+                'url': 'https://example.invalid/deploy',
+                'snippet': '详细部署步骤说明' * 40,
+                'published_at': '2026-09-30',
+            },
+            {
+                'title': '常见问题',
+                'url': 'https://example.invalid/faq',
+                'snippet': '常见问题排查说明' * 40,
+            },
+        ],
+        'top_page': {
+            'document': 42,
+            'url': 'https://example.invalid/deploy',
+            'title': '部署指南',
+            'total_chars': 3000,
+            'next_offset': 2000,
+            'text': '这是完整网页正文内容' * 120,
+        },
+    }
+    search_content = Template(read_prompt('next_web_search.md')).substitute(
+        result=json.dumps(search_payload, ensure_ascii=False))
+
+    recall_body = (
+        '2026-09-20｜UTC +0000\n'
+        '12:00:00 "小明"(onebot:1001) [id="m-101"，record=11]\n'
+        + '  ' + ('上周讨论过月报字段口径' * 70) + '\n'
+        '12:05:00 "小红"(onebot:1002) [id="m-102"，record=12]\n'
+        + '  ' + ('确认需要保留原始明细表' * 70)
+    )
+    recall_content = Template(read_prompt('next_recall.md')).substitute(
+        summary='search（最新优先） 第 1 页，共 2 条。没有下一页了。', result=recall_body)
+
+    knowledge_payload = {
+        'action': 'search',
+        'query': '端口 配置',
+        'offset': 0,
+        'next_offset': None,
+        'matches': [
+            {
+                'scope': 'chat',
+                'filename': 'ops/guide.md',
+                'heading': ['部署', '端口'],
+                'page': 3,
+                'offset': 512,
+                'matched': ['端口'],
+                'text': '默认面板端口与反向代理配置原文内容' * 80,
+            },
+        ],
+    }
+    knowledge_content = Template(read_prompt('next_knowledge.md')).substitute(
+        persona_id='p1', persona_name='小然', chat='本群',
+        result=json.dumps(knowledge_payload, ensure_ascii=False))
+
+    forward_text = '\n'.join([
+        '[1] [2026-09-20 10:00:00+08:00] 小明(onebot:1001)：',
+        '  ' + ('第一条转发消息正文' * 40),
+        '[2] [2026-09-20 10:02:00+08:00] 小红(onebot:1002)：',
+        '  ' + ('第二条转发消息正文' * 40),
+        '[3] [2026-09-20 10:05:00+08:00] 小明(onebot:1001)：',
+        '  ' + ('第三条转发消息正文' * 40),
+        '[4] [2026-09-20 10:08:00+08:00] 小刚(onebot:1003)：',
+        '  ' + ('第四条超长隐藏内容' * 40),
+    ])
+    forward_payload = {
+        'message': 'm-900', 'forward': 1, 'forward_id': 'fwd-1',
+        'top_level_items': 4, 'offset': 0, 'total_chars': len(forward_text),
+        'next_offset': None, 'text': forward_text,
+    }
+    forward_content = Template(read_prompt('next_forward.md')).substitute(
+        scene='onebot:group:80001', result=encode(forward_payload)).strip()
+
+    small_search = Template(read_prompt('next_web_search.md')).substitute(
+        result=json.dumps({'provider': 'tavily', 'query': '短查', 'results': [
+            {'title': '短标题', 'url': 'https://example.invalid/s', 'snippet': '短摘要'}]}, ensure_ascii=False))
+    malformed_knowledge = 'not valid json ' * 100
+
+    assert all(len(c) > 1200 for c in (search_content, recall_content, knowledge_content,
+                                       forward_content, malformed_knowledge))
+    assert len(small_search) <= 1200
+
+    assistant = {
+        'role': 'assistant', 'content': None,
+        'tool_calls': [
+            {'type': 'function', 'id': 'c-search', 'function': {
+                'name': 'web_search', 'arguments': json.dumps({'query': 'LenBot 部署说明', 'count': 2}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-recall', 'function': {
+                'name': 'recall_chat', 'arguments': json.dumps({'action': 'search', 'query': '月报'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-know', 'function': {
+                'name': 'knowledge', 'arguments': json.dumps({'action': 'search', 'query': '端口 配置'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-fwd', 'function': {
+                'name': 'open_forward', 'arguments': json.dumps({'message': 'm-900'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-small', 'function': {
+                'name': 'web_search', 'arguments': json.dumps({'query': '短查'}, ensure_ascii=False)}},
+            {'type': 'function', 'id': 'c-bad', 'function': {
+                'name': 'knowledge', 'arguments': json.dumps({'action': 'search', 'query': '坏'}, ensure_ascii=False)}},
+        ],
+    }
+    history = [
+        (1, assistant),
+        (2, {'role': 'tool', 'tool_call_id': 'c-search', 'content': search_content}),
+        (3, {'role': 'tool', 'tool_call_id': 'c-recall', 'content': recall_content}),
+        (4, {'role': 'tool', 'tool_call_id': 'c-know', 'content': knowledge_content}),
+        (5, {'role': 'tool', 'tool_call_id': 'c-fwd', 'content': forward_content}),
+        (6, {'role': 'tool', 'tool_call_id': 'c-small', 'content': small_search}),
+        (7, {'role': 'tool', 'tool_call_id': 'c-bad', 'content': malformed_knowledge}),
+    ]
+    total_tokens = sum(ceil(len(encode(m).encode('utf-8')) / 3) for _, m in history)
+    keep = total_tokens + 200
+
+    # Within keep_recent_tokens: nothing folds.
+    assert project_old_results(history, keep) == history
+    # Small follow-up that does not cross the quantized step boundary keeps the prefix identical.
+    with_small = [*history, (8, {'role': 'user', 'content': '继续聊聊'})]
+    assert project_old_results(with_small, keep) == with_small
+
+    # Push past cutoff into the middle of a quantized step so all early entries fold cleanly.
+    step = keep // 2
+    pushed = [*with_small, (9, {'role': 'user', 'content': 'x' * ((2 * step + step // 2) * 3)})]
+    projected = project_old_results(pushed, keep)
+    # Adding another small turn inside the same step leaves the folded prefix byte-for-byte stable.
+    pushed_more = [*pushed, (10, {'role': 'user', 'content': '好的收到'})]
+    assert project_old_results(pushed_more, keep)[:len(pushed)] == projected
+
+    folded_search = projected[1][1]['content']
+    assert 'web_read(document=...)' in folded_search and 'web_search' in folded_search
+    search_json = json.loads(folded_search.splitlines()[0])
+    assert search_json['query'] == 'LenBot 部署说明'
+    assert search_json['top_page']['document'] == 42
+    assert 'text' not in search_json['top_page']
+    assert len(search_json['results']) == 2
+    assert search_payload['top_page']['text'] not in folded_search
+
+    folded_recall = projected[2][1]['content']
+    assert 'recall_chat' in folded_recall
+    recall_json = json.loads(folded_recall.splitlines()[0])
+    assert recall_json['arguments'] == {'action': 'search', 'query': '月报'}
+    assert recall_json['count'] == 2
+    assert [m['record'] for m in recall_json['messages']] == [11, 12]
+    assert [m['platform_message_id'] for m in recall_json['messages']] == ['m-101', 'm-102']
+    assert len(folded_recall) < len(recall_content)
+
+    folded_know = projected[3][1]['content']
+    assert 'knowledge' in folded_know
+    know_json = json.loads(folded_know.splitlines()[0])
+    assert know_json['count'] == 1
+    assert know_json['matches'][0]['filename'] == 'ops/guide.md'
+    assert know_json['matches'][0]['offset'] == 512
+    assert know_json['matches'][0]['page'] == 3
+    assert 'text' not in know_json['matches'][0]
+    assert len(folded_know) < len(knowledge_content)
+
+    folded_fwd = projected[4][1]['content']
+    assert 'open_forward' in folded_fwd
+    fwd_json = json.loads(folded_fwd.splitlines()[0])
+    assert fwd_json['item_count'] == 4
+    assert fwd_json['senders'] == ['小明(onebot:1001)', '小红(onebot:1002)', '小刚(onebot:1003)']
+    assert fwd_json['time_range'] == {'start': '2026-09-20 10:00:00+08:00', 'end': '2026-09-20 10:08:00+08:00'}
+    assert len(fwd_json['previews']) == 3
+    assert '第四条超长隐藏内容' not in folded_fwd
+
+    # Small result (<= 1200 chars) and unparseable result stay untouched.
+    assert projected[5][1]['content'] == small_search
+    assert projected[6][1]['content'] == malformed_knowledge
+
+    # Unconsumed trailing tool outputs larger than keep_recent_tokens must NEVER fold before assistant reads them.
+    assert project_old_results(history, 50) == history
+
+
+def test_recap_source_extracts_ticket_anchors_and_preserves_plain_sessions():
+    from len_bot.next.chat.recap import extract_ticket_anchors, recap_source
+
+    plain_entries = [
+        (1, {'role': 'user', 'content': '大家好'}),
+        (2, {'role': 'assistant', 'content': '你好呀'}),
+    ]
+    expected_plain = encode({
+        '已有回想': '之前的回想',
+        '新增旧会话': [
+            {'role': 'user', 'content': '大家好'},
+            {'role': 'assistant', 'content': '你好呀'},
+        ],
+    })
+    assert extract_ticket_anchors(plain_entries) == []
+    assert recap_source('之前的回想', plain_entries) == expected_plain
+
+    done_notice = (
+        '[任务执行结束] #7；请求人 onebot:1001；导出月报\n含华东分部\n'
+        + json.dumps({
+            'status': 'done',
+            'summary': '已生成月报',
+            'error': None,
+            'files': [{'id': 3, 'name': '月报.xlsx', 'size': 2048}],
+            'can_continue': True,
+        }, ensure_ascii=False)
+    )
+    question_notice = (
+        '[任务提问] #8；请求人 onebot:1002\n'
+        + json.dumps({'id': 'q-1', 'title': '请选择导出范围', 'method': 'select'}, ensure_ascii=False)
+    )
+    task_entries = [
+        *plain_entries,
+        (3, {'role': 'user', 'content': done_notice}),
+        (4, {'role': 'user', 'content': question_notice}),
+    ]
+    parsed = json.loads(recap_source(None, task_entries))
+    assert parsed['涉及工单与交付标识'] == [
+        {
+            'task_id': 7,
+            'requester': 'onebot:1001',
+            'goal': '导出月报 含华东分部',
+            'status': 'done',
+            'can_continue': True,
+            'files': [{'id': 3, 'name': '月报.xlsx'}],
+        },
+        {
+            'task_id': 8,
+            'requester': 'onebot:1002',
+            'question_id': 'q-1',
+            'question_title': '请选择导出范围',
+        },
+    ]
+
+
+def test_parse_chat_completion_explains_empty_choices_and_content_filter():
+    empty_choices = recorded_response()
+    empty_choices['choices'] = []
+    with pytest.raises(ModelProtocolError) as empty_failure:
+        parse_chat_completion(empty_choices)
+    assert 'expected a nonempty choices array' in str(empty_failure.value)
+    assert '服务商返回空候选列表 choices=[]' in str(empty_failure.value)
+    assert 'response fragment:' in str(empty_failure.value)
+
+    non_list = recorded_response()
+    non_list['choices'] = None
+    with pytest.raises(ModelProtocolError) as non_list_failure:
+        parse_chat_completion(non_list)
+    assert 'expected a nonempty choices array' in str(non_list_failure.value)
+    assert 'choices=[]' not in str(non_list_failure.value)
+
+    filtered = recorded_response()
+    filtered['choices'][0]['finish_reason'] = 'content_filter'
+    with pytest.raises(ModelProtocolError) as filter_failure:
+        parse_chat_completion(filtered)
+    assert 'content_filter' in str(filter_failure.value)
+    assert '内容安全过滤' in str(filter_failure.value)
+    assert "finish_reason='content_filter'" in str(filter_failure.value)
+    assert 'response fragment:' in str(filter_failure.value)
+
+
+def test_anthropic_breakpoints_skip_trailing_thinking_blank_text_and_null_cache_control():
+    settings = ModelSettings(api='anthropic', base_url='http://127.0.0.1/v1', api_key='fixture', model='fixture')
+    binding = {'api': 'anthropic', 'model': 'fixture', 'base_url': 'http://127.0.0.1/v1'}
+
+    # Trailing thinking block falls back to the preceding non-empty block.
+    assistant_with_thinking = {
+        'role': 'assistant',
+        'content': '前文回答',
+        '_continuation': {
+            'binding': binding,
+            'data': [
+                {'type': 'text', 'text': '前文回答'},
+                {'type': 'thinking', 'thinking': '内部推理', 'signature': 'sig-1'},
+            ],
+        },
+    }
+    _, thinking_payload = build_request(settings, [assistant_with_thinking, {'role': 'user', 'content': '继续'}], [])
+    assert thinking_payload['messages'][0]['content'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in thinking_payload['messages'][0]['content'][1]
+
+    # Trailing whitespace text falls back to the preceding non-empty text, and cache_control=None is ignored.
+    messages = [
+        {'role': 'system', 'content': [{'type': 'text', 'text': '系统提示'}, {'type': 'text', 'text': '   '}]},
+        {'role': 'user', 'content': [
+            {'type': 'text', 'text': '首段', 'cache_control': None},
+            {'type': 'text', 'text': '有效前缀', 'cache_control': None},
+            {'type': 'text', 'text': ' \n\t '},
+        ]},
+        {'role': 'assistant', 'content': '收到'},
+    ]
+    tools = [{'type': 'function', 'function': {'name': 'lookup', 'parameters': {'type': 'object'}}, 'cache_control': None}]
+    _, payload = build_request(settings, messages, tools)
+    assert payload['system'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in payload['system'][1]
+    assert 'cache_control' not in payload['messages'][0]['content'][0]
+    assert payload['messages'][0]['content'][1]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in payload['messages'][0]['content'][2]
+    assert payload['tools'][0]['cache_control'] == {'type': 'ephemeral'}
+
+    # All-blank system does not receive cache_control.
+    _, blank_system_payload = build_request(settings, [
+        {'role': 'system', 'content': [{'type': 'text', 'text': '   \n '}]},
+        {'role': 'user', 'content': '你好'},
+    ], [])
+    assert 'cache_control' not in blank_system_payload['system'][0]
+
+
+def test_anthropic_strips_null_system_cache_control_and_caps_total_breakpoints_at_four():
+    settings = ModelSettings(api='anthropic', base_url='http://127.0.0.1/v1', api_key='fixture', model='fixture')
+
+    def count_breakpoints(payload: dict) -> int:
+        total = sum(1 for b in payload.get('system', []) if b.get('cache_control') is not None)
+        total += sum(1 for t in payload.get('tools', []) if t.get('cache_control') is not None)
+        for msg in payload.get('messages', []):
+            for b in msg.get('content', []):
+                if b.get('cache_control') is not None:
+                    total += 1
+                nested = b.get('content')
+                if isinstance(nested, list):
+                    total += sum(1 for sub in nested if isinstance(sub, dict) and sub.get('cache_control') is not None)
+        return total
+
+    # 1. Explicit cache_control=None in system blocks must never be emitted.
+    _, null_sys_payload = build_request(settings, [
+        {'role': 'system', 'content': [
+            {'type': 'text', 'text': '第一段', 'cache_control': None},
+            {'type': 'text', 'text': '   ', 'cache_control': None},
+        ]},
+        {'role': 'user', 'content': '你好'},
+    ], [])
+    assert null_sys_payload['system'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in null_sys_payload['system'][1]
+
+    # 2. Existing breakpoints across system, tools, and nested tool_result sub-blocks cap auto breakpoints at 4.
+    binding = {'api': 'anthropic', 'model': 'fixture', 'base_url': 'http://127.0.0.1/v1'}
+    messages = [
+        {'role': 'system', 'content': [
+            {'type': 'text', 'text': '系统一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '系统二', 'cache_control': None},
+        ]},
+        {'role': 'user', 'content': '查一下'},
+        {
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [{'id': 'call-1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}],
+            '_continuation': {
+                'binding': binding,
+                'data': [{'type': 'tool_use', 'id': 'call-1', 'name': 'lookup', 'input': {}}],
+            },
+        },
+        {'role': 'tool', 'tool_call_id': 'call-1', 'content': [
+            {'type': 'text', 'text': '结果一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '结果二', 'cache_control': {'type': 'ephemeral'}},
+        ]},
+        {'role': 'assistant', 'content': '已整理'},
+        {'role': 'user', 'content': '继续'},
+    ]
+    tools = [
+        {'type': 'function', 'function': {'name': 'lookup', 'parameters': {'type': 'object'}}, 'cache_control': None},
+    ]
+    _, capped_payload = build_request(settings, messages, tools)
+    # 3 existing (system[0] + 2 tool_result sub-blocks) -> only 1 auto slot left, given to system[1].
+    assert count_breakpoints(capped_payload) == 4
+    assert capped_payload['system'][1]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in capped_payload['tools'][0]
+    assert 'cache_control' not in capped_payload['messages'][-2]['content'][-1]
+
+    # 3. When 4 breakpoints already exist, no additional auto breakpoints are added and null system cache_control is still stripped.
+    messages_four = [
+        {'role': 'system', 'content': [
+            {'type': 'text', 'text': '系统一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '系统二', 'cache_control': None},
+        ]},
+        {'role': 'user', 'content': [
+            {'type': 'text', 'text': '历史一', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': '历史二', 'cache_control': {'type': 'ephemeral'}},
+        ]},
+        {'role': 'assistant', 'content': '收到'},
+        {'role': 'user', 'content': '最新'},
+    ]
+    tools_one = [
+        {'type': 'function', 'function': {'name': 'lookup', 'parameters': {'type': 'object'}},
+         'cache_control': {'type': 'ephemeral'}},
+        {'type': 'function', 'function': {'name': 'other', 'parameters': {'type': 'object'}}},
+    ]
+    _, full_payload = build_request(settings, messages_four, tools_one)
+    assert count_breakpoints(full_payload) == 4
+    assert 'cache_control' not in full_payload['system'][1]
+    assert 'cache_control' not in full_payload['tools'][1]
+    assert 'cache_control' not in full_payload['messages'][-2]['content'][-1]
+
+
+def test_project_old_results_protects_unread_tool_seq_across_arriving_user_messages():
+    page1 = {'document': 'doc-old', 'text': 'old body ' * 120}
+    page2 = {'document': 'doc-new', 'text': 'new body ' * 120}
+    content1 = Template(read_prompt('next_web_read.md')).substitute(result=encode(page1))
+    content2 = Template(read_prompt('next_web_read.md')).substitute(result=encode(page2))
+    history = [
+        (1, {'role': 'assistant', 'content': None, 'tool_calls': [
+            {'type': 'function', 'id': 'r1', 'function': {'name': 'web_read', 'arguments': '{}'}}]}),
+        (2, {'role': 'tool', 'tool_call_id': 'r1', 'content': content1}),
+        (3, {'role': 'assistant', 'content': None, 'tool_calls': [
+            {'type': 'function', 'id': 'r2', 'function': {'name': 'web_read', 'arguments': '{}'}}]}),
+        (4, {'role': 'tool', 'tool_call_id': 'r2', 'content': content2}),
+        (5, {'role': 'user', 'content': '新群消息 ' * 600}),
+    ]
+    keep = 100
+    # Without protection, arriving user messages push both tool results behind cutoff and fold both.
+    unprotected = project_old_results(history, keep)
+    assert page1['text'] not in unprotected[1][1]['content']
+    assert page2['text'] not in unprotected[3][1]['content']
+
+    # With protect_from_seq=4, older seq 2 still folds while unread seq 4 stays intact.
+    protected = project_old_results(history, keep, protect_from_seq=4)
+    assert page1['text'] not in protected[1][1]['content']
+    assert protected[3][1]['content'] == content2
+
+
+def test_plan_compaction_shrinks_oversized_source_to_earlier_boundary_and_supports_oversized_opt_in():
+    from len_bot.next.chat.recap import ContextBudgetError, estimate_request, plan_compaction
+
+    system = {'role': 'system', 'content': '系统设定'}
+    state = {'role': 'user', 'content': '当前状态'}
+    template = '请压缩到 $summary_budget_tokens token 内。'
+    # Projected entries are compact (already folded), while raw source_entries are huge.
+    entries = [
+        (1, {'role': 'user', 'content': '段1摘要'}),
+        (2, {'role': 'user', 'content': '段2摘要'}),
+        (3, {'role': 'user', 'content': '段3摘要'}),
+        (4, {'role': 'user', 'content': '最新一条'}),
+    ]
+    source_entries = [
+        (1, {'role': 'user', 'content': 'A' * 1500}),
+        (2, {'role': 'user', 'content': 'B' * 1500}),
+        (3, {'role': 'user', 'content': 'C' * 4500}),
+        (4, {'role': 'user', 'content': '最新一条'}),
+    ]
+    # Window fits source_entries[:2] (~1100 tokens + 200 output) but NOT source_entries[:3] (~2600 tokens + 200 output).
+    plan = plan_compaction(
+        entries, system=system, state=state, tools=[], output_tokens=200, trigger_tokens=800,
+        keep_recent_tokens=20, summary_output_tokens=200, recap=None, summary_template=template,
+        window_tokens=1600, source_entries=source_entries,
+    )
+    assert plan.through == 2
+    assert estimate_request(plan.request_messages, [], 200) <= 1600
+
+    # When even the earliest single boundary exceeds window_tokens:
+    # default raises ContextBudgetError; allow_oversized_source=True returns the plan for continuation fallback.
+    huge_first = [
+        (1, {'role': 'user', 'content': 'A' * 6000}),
+        (2, {'role': 'user', 'content': 'B' * 1500}),
+        (3, {'role': 'user', 'content': '最新一条'}),
+    ]
+    with pytest.raises(ContextBudgetError):
+        plan_compaction(
+            entries[:3], system=system, state=state, tools=[], output_tokens=200, trigger_tokens=800,
+            keep_recent_tokens=20, summary_output_tokens=200, recap=None, summary_template=template,
+            window_tokens=1600, source_entries=huge_first,
+        )
+    allowed = plan_compaction(
+        entries[:3], system=system, state=state, tools=[], output_tokens=200, trigger_tokens=800,
+        keep_recent_tokens=20, summary_output_tokens=200, recap=None, summary_template=template,
+        window_tokens=1600, source_entries=huge_first, allow_oversized_source=True,
+    )
+    assert allowed.through == 2
+
+
+def test_project_old_results_folds_with_braced_custom_prompt_placeholders(monkeypatch):
+    from len_bot.next import prompt_files
+
+    custom_prompts = {
+        'next_web_search.md': '自定义网页搜索结果：\n\n${result}\n\n请优先参考权威来源。\n',
+        'next_knowledge.md': (
+            '角色 ${persona_name}（${persona_id}）在 ${chat} 的检索资料：\n\n${result}\n\n请注明文件名。\n'
+        ),
+        'next_recall.md': '历史记录摘要：${summary}\n\n${result}\n\n以上记录仅供参考。\n',
+        'next_forward.md': '场景 ${scene} 的合并转发：\n\n${result}\n',
+    }
+    for name, text in custom_prompts.items():
+        prompt_files.check(name, text)
+    monkeypatch.setattr(prompt_files, '_running', custom_prompts)
+
+    search_payload = {
+        'provider': 'tavily',
+        'query': '花括号占位符测试',
+        'results': [{'title': '文档标题', 'url': 'https://example.invalid/doc', 'snippet': '搜索片段正文' * 60}],
+        'top_page': {
+            'document': 7, 'url': 'https://example.invalid/doc', 'title': '文档标题',
+            'total_chars': 2400, 'next_offset': 2000, 'text': '超长网页正文内容' * 120,
+        },
+    }
+    search_content = Template(read_prompt('next_web_search.md')).substitute(
+        result=json.dumps(search_payload, ensure_ascii=False))
+
+    knowledge_payload = {
+        'action': 'search',
+        'query': '模板',
+        'matches': [{
+            'scope': 'chat', 'filename': 'docs/template.md', 'page': 2, 'offset': 64,
+            'text': '资料检索原文详细内容' * 150,
+        }],
+    }
+    knowledge_content = Template(read_prompt('next_knowledge.md')).substitute(
+        persona_id='p1', persona_name='小然', chat='本群',
+        result=json.dumps(knowledge_payload, ensure_ascii=False))
+
+    recall_body = (
+        '2026-09-20｜UTC +0000\n'
+        '12:00:00 "小明"(onebot:1001) [id="m-201"，record=21]\n'
+        + '  ' + ('自定义花括号占位符聊天记录内容' * 120)
+    )
+    recall_content = Template(read_prompt('next_recall.md')).substitute(
+        summary='search（最新优先） 第 1 页，共 1 条。没有下一页了。', result=recall_body)
+
+    forward_text = '[1] [2026-09-20 10:00:00+08:00] 小明(onebot:1001)：\n  ' + ('转发正文' * 350)
+    forward_payload = {
+        'message': 'm-300', 'forward': 1, 'forward_id': 'fwd-2',
+        'top_level_items': 1, 'offset': 0, 'total_chars': len(forward_text),
+        'next_offset': None, 'text': forward_text,
+    }
+    forward_content = Template(read_prompt('next_forward.md')).substitute(
+        scene='onebot:group:80001', result=encode(forward_payload))
+
+    assert all(len(c) > 1200 for c in (search_content, knowledge_content, recall_content, forward_content))
+
+    history = [
+        (1, {
+            'role': 'assistant', 'content': None,
+            'tool_calls': [
+                {'type': 'function', 'id': 'b-search', 'function': {
+                    'name': 'web_search', 'arguments': json.dumps({'query': '花括号占位符测试'}, ensure_ascii=False)}},
+                {'type': 'function', 'id': 'b-know', 'function': {
+                    'name': 'knowledge', 'arguments': json.dumps({'action': 'search', 'query': '模板'}, ensure_ascii=False)}},
+                {'type': 'function', 'id': 'b-recall', 'function': {
+                    'name': 'recall_chat', 'arguments': json.dumps({'action': 'search', 'query': '占位符'}, ensure_ascii=False)}},
+                {'type': 'function', 'id': 'b-fwd', 'function': {
+                    'name': 'open_forward', 'arguments': json.dumps({'message': 'm-300'}, ensure_ascii=False)}},
+            ],
+        }),
+        (2, {'role': 'tool', 'tool_call_id': 'b-search', 'content': search_content}),
+        (3, {'role': 'tool', 'tool_call_id': 'b-know', 'content': knowledge_content}),
+        (4, {'role': 'tool', 'tool_call_id': 'b-recall', 'content': recall_content}),
+        (5, {'role': 'tool', 'tool_call_id': 'b-fwd', 'content': forward_content}),
+    ]
+    projected = project_old_results(history, 0)
+
+    folded_search = projected[1][1]['content']
+    search_json = json.loads(folded_search.splitlines()[0])
+    assert search_json['query'] == '花括号占位符测试'
+    assert search_json['top_page']['document'] == 7
+    assert 'text' not in search_json['top_page']
+    assert search_payload['top_page']['text'] not in folded_search
+
+    folded_know = projected[2][1]['content']
+    know_json = json.loads(folded_know.splitlines()[0])
+    assert know_json['count'] == 1
+    assert know_json['matches'][0]['filename'] == 'docs/template.md'
+    assert 'text' not in know_json['matches'][0]
+
+    folded_recall = projected[3][1]['content']
+    recall_json = json.loads(folded_recall.splitlines()[0])
+    assert recall_json['summary'] == 'search（最新优先） 第 1 页，共 1 条。没有下一页了。'
+    assert recall_json['count'] == 1
+    assert recall_json['messages'][0]['record'] == 21
+    assert '以上记录仅供参考' not in recall_json['messages'][0]['preview']
+
+    folded_fwd = projected[4][1]['content']
+    fwd_json = json.loads(folded_fwd.splitlines()[0])
+    assert fwd_json['item_count'] == 1
+    assert fwd_json['senders'] == ['小明(onebot:1001)']

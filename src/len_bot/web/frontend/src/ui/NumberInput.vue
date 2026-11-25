@@ -5,7 +5,7 @@ import { NumberFieldDecrement, NumberFieldIncrement, NumberFieldInput, NumberFie
 import { Minus, Plus } from '@lucide/vue'
 import { currentLocale } from '../i18n'
 import { useFieldControl } from './field'
-import { controlFrame, controlHeight } from './styles'
+import { controlFrameBase, controlHeight } from './styles'
 
 const model = defineModel<number | null>({ default: null })
 const props = withDefaults(
@@ -13,11 +13,11 @@ const props = withDefaults(
     min?: number
     max?: number
     step?: number
-    /** Shown after the number, such as 秒 or tokens. */
+    /** Shown after the number, such as s or tokens. */
     unit?: string
     placeholder?: string
     size?: 'sm' | 'md'
-    /** Hide the − and + buttons for wide ranges where stepping is pointless. */
+    /** Hide the - and + buttons for wide ranges where stepping is pointless. */
     steppers?: boolean
     /** Round typed values to a multiple of `step`; off for free decimals. */
     snap?: boolean
@@ -47,7 +47,7 @@ const value = computed({
   set: (next: number | undefined) => (model.value = next === undefined || Number.isNaN(next) ? null : next),
 })
 const stepper =
-  'inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:pointer-events-none disabled:opacity-35 pointer-coarse:size-8'
+  'inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted transition-[background-color,color,transform] duration-(--dur-1) ease-out hover:bg-hover hover:text-ink focus-visible:focus-ring enabled:active:scale-95 disabled:pointer-events-none disabled:opacity-35 pointer-coarse:size-9'
 </script>
 
 <template>
@@ -60,7 +60,7 @@ const stepper =
     :locale="currentLocale"
     :format-options="formatOptions"
     :disabled="field.disabled.value"
-    :class="[controlFrame, controlHeight[size], 'pr-1.5']"
+    :class="[controlFrameBase, controlHeight[size], 'gap-2 pl-3', steppers ? 'pr-1.5' : 'pr-3']"
     :data-invalid="field.invalid.value || undefined"
     :data-disabled="field.disabled.value || undefined"
   >
@@ -69,9 +69,9 @@ const stepper =
       :placeholder="placeholder"
       :aria-invalid="field.invalid.value || undefined"
       :aria-describedby="field.describedBy.value"
-      class="h-full w-full min-w-0 flex-1 bg-transparent tabular outline-none placeholder:text-subtle focus-visible:outline-none"
+      class="h-full w-full min-w-0 flex-1 bg-transparent tabular outline-none placeholder:text-subtle focus-visible:outline-none disabled:cursor-not-allowed"
     />
-    <span v-if="unit" class="shrink-0 text-sm text-subtle">{{ unit }}</span>
+    <span v-if="unit" class="shrink-0 text-xs text-subtle select-none">{{ unit }}</span>
     <template v-if="steppers">
       <NumberFieldDecrement :class="stepper" :aria-label="t('ui.number.decrease')">
         <Minus :size="14" aria-hidden="true" />

@@ -38,8 +38,29 @@ export interface LearningState {
   index: { needs_rebuild?: boolean; rebuilding?: boolean; [field: string]: unknown } | null
   selection_enabled: boolean
   expression_counts: Record<Review, number>
-  latest: { status: string; ended: number | null; error: string | null } | null
+  latest: {
+    id?: number
+    status: string
+    started?: number | null
+    ended: number | null
+    error: string | null
+  } | null
   service_state: unknown
+}
+
+export interface JargonState {
+  scene: string
+  enabled: boolean
+  selection_enabled: boolean
+  cursor: unknown
+  service_state: unknown
+}
+
+export interface StickerState {
+  scene: string
+  enabled: boolean
+  service_state: unknown
+  counts: Record<Sticker['status'], number>
 }
 
 export interface Expression {
@@ -53,6 +74,20 @@ export interface Expression {
   /** Times its word-for-word use drew a correction or dislike in the last 30 days. */
   disliked?: number
 }
+
+export interface ExpressionSourceMessage {
+  record: number
+  available: boolean
+  rendered: string | null
+  message: Record<string, unknown> | null
+}
+
+export interface ExpressionDetail extends Expression {
+  sources: number[]
+  source_messages: ExpressionSourceMessage[]
+}
+
+export type StickerFilter = Review | 'queued' | 'failed'
 
 export type JargonView = 'learned' | 'adopted' | 'uncertain' | 'ordinary' | 'rejected'
 
@@ -152,26 +187,39 @@ export const learningApi = {
   state: (scene: string, signal?: AbortSignal) =>
     http.get<LearningState>(learningBase(scene), undefined, signal),
   learnNow: (scene: string) => http.post<unknown>(`${learningBase(scene)}/request`),
+  retryLearning: (scene: string) => http.post<unknown>(`${learningBase(scene)}/retry`),
   reindex: (scene: string) => http.post<{ expressions: number }>(`${learningBase(scene)}/reindex`),
 
   expressions: (scene: string, status: Review, offset: number, signal?: AbortSignal) =>
     http.get<Page<Expression>>(`${learningBase(scene)}/expressions`, { status, offset, limit: 20 }, signal),
+  expression: (scene: string, id: number, signal?: AbortSignal) =>
+    http.get<ExpressionDetail>(`${learningBase(scene)}/expressions/${id}`, undefined, signal),
   putExpression: (scene: string, id: number, body: { situation: string; style: string; status: Review }) =>
     http.put<Expression>(`${learningBase(scene)}/expressions/${id}`, body),
 
+  jargonState: (scene: string, signal?: AbortSignal) =>
+    http.get<JargonState>(`${learningBase(scene)}/jargon`, undefined, signal),
+  runJargon: (scene: string) => http.post<unknown>(`${learningBase(scene)}/jargon/run`),
   jargon: (scene: string, status: JargonView, offset: number, signal?: AbortSignal) =>
     http.get<Page<JargonTerm>>(`${learningBase(scene)}/jargon/terms`, { status, offset, limit: 20 }, signal),
   putJargon: (scene: string, id: number, body: { meaning: string | null; status: Review }) =>
     http.put<JargonTerm>(`${learningBase(scene)}/jargon/terms/${id}`, body),
 
-  stickers: (scene: string, review: Review, offset: number, signal?: AbortSignal) =>
+  stickerState: (scene: string, signal?: AbortSignal) =>
+    http.get<StickerState>(`${learningBase(scene)}/stickers`, undefined, signal),
+  runStickers: (scene: string) => http.post<unknown>(`${learningBase(scene)}/stickers/run`),
+  stickers: (scene: string, filter: StickerFilter, offset: number, signal?: AbortSignal) =>
     http.get<Page<Sticker>>(
       `${learningBase(scene)}/stickers/candidates`,
-      // Pending review only lists stickers whose description is finished.
-      { review, offset, limit: 20, status: review === 'pending' ? 'complete' : undefined },
+      filter === 'queued' || filter === 'failed'
+        ? { status: filter, offset, limit: 20 }
+        : // Pending review only lists stickers whose description is finished.
+          { review: filter, offset, limit: 20, status: filter === 'pending' ? 'complete' : undefined },
       signal,
     ),
   stickerImage: (scene: string, id: number) => `${learningBase(scene)}/stickers/candidates/${id}/image`,
+  retrySticker: (scene: string, id: number) =>
+    http.post<unknown>(`${learningBase(scene)}/stickers/candidates/${id}/retry`),
   putSticker: (
     scene: string,
     id: number,
@@ -184,12 +232,13 @@ export const learningApi = {
     },
   ) => http.put<Sticker>(`${learningBase(scene)}/stickers/candidates/${id}`, body),
 
-  effects: (scene: string, signal?: AbortSignal) =>
-    http.get<ReplyEffectsState>(`${base(scene)}/reply-effects`, { days: 7 }, signal),
-  effectItems: (scene: string, state: string | undefined, offset: number, signal?: AbortSignal) =>
+  effects: (scene: string, days = 7, signal?: AbortSignal) =>
+    http.get<ReplyEffectsState>(`${base(scene)}/reply-effects`, { days }, signal),
+  runEffects: (scene: string) => http.post<unknown>(`${base(scene)}/reply-effects/request`),
+  effectItems: (scene: string, state: string | undefined, offset: number, days = 7, signal?: AbortSignal) =>
     http.get<Page<ReplyEffect>>(
       `${base(scene)}/reply-effects/items`,
-      { state, offset, limit: 20, days: 7 },
+      { state, offset, limit: 20, days },
       signal,
     ),
   effect: (scene: string, id: number, signal?: AbortSignal) =>

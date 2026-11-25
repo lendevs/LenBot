@@ -504,7 +504,7 @@ def register_host_persona(app: FastAPI, *, root: Path, runtime: NetworkRuntime,
     @app.post("/api/host/scenes/{scene}/persona-examples", response_model=responses.RoleFiles, response_model_exclude_unset=True)
     async def add_example(scene: str, item: ExpressionExample, _: str = Depends(user)):
         require_scene(scene)
-        expression = LearningStore(runtime.store).expression(scene, item.expression_id)
+        expression = await runtime.store.read(LearningStore(runtime.store).expression, scene, item.expression_id)
         if expression is None:
             raise HTTPException(404, "当前场景不存在此表达候选")
         if expression["status"] != "adopted":

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery } from '@tanstack/vue-query'
 import { memoryApi, type MemoryScope } from '../../../api/memory'
 import { keys } from '../../../api/query'
-import { formatDateTime } from '../../../i18n/format'
+import { formatDateTime, formatNumber } from '../../../i18n/format'
+import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
+import { describeError } from '../../../ui/errors'
+import { toast } from '../../../ui/toast'
 
 /** Developer view of the embedding requests memory made, read on demand. */
 const props = defineProps<{ scene: string; timeZone: string }>()
@@ -29,8 +32,29 @@ const calls = useInfiniteQuery({
 })
 const rows = computed(() => calls.data.value?.pages.flatMap((page) => page.calls) ?? [])
 const opened = ref<Record<number, unknown>>({})
+const loadingDetail = ref<Record<number, boolean>>({})
+watch(scope, () => {
+  opened.value = {}
+  loadingDetail.value = {}
+})
 async function detail(id: number) {
-  opened.value = { ...opened.value, [id]: await memoryApi.embeddingCall(props.scene, scope.value, id) }
+  if (loadingDetail.value[id]) return
+  const activeScope = scope.value
+  loadingDetail.value = { ...loadingDetail.value, [id]: true }
+  try {
+    const result = await memoryApi.embeddingCall(props.scene, activeScope, id)
+    if (scope.value === activeScope) {
+      opened.value = { ...opened.value, [id]: result }
+    }
+  } catch (error) {
+    toast.error(t('groups.memory.embedding.detailFailed'), {
+      detail: describeError(error, t('ui.error.network')).message,
+    })
+  } finally {
+    const next = { ...loadingDetail.value }
+    delete next[id]
+    loadingDetail.value = next
+  }
 }
 const purpose = (value: string) =>
   te(`groups.memory.embedding.purposes.${value}`) ? t(`groups.memory.embedding.purposes.${value}`) : value
@@ -53,20 +77,30 @@ const purpose = (value: string) =>
     <p v-if="reading && calls.isSuccess.value && !rows.length" class="text-sm text-muted">
       {{ t('groups.memory.embedding.none') }}
     </p>
-    <ul class="flex list-none flex-col divide-y divide-line">
-      <li v-for="call in rows" :key="call.id" class="flex flex-col gap-2 py-3">
+    <ul v-if="rows.length" class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li v-for="call in rows" :key="call.id" class="flex flex-col gap-2 py-3.5">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <strong class="font-medium text-ink">#{{ call.id }} {{ purpose(call.purpose) }}</strong>
+          <strong class="font-medium text-ink">
+            <span class="tabular">#{{ call.id }}</span>
+            {{ purpose(call.purpose) }}
+          </strong>
           <span class="text-xs text-subtle tabular">{{ formatDateTime(call.started, { timeZone }) }}</span>
-          <span class="text-xs text-subtle">
+          <span class="text-xs text-subtle tabular">
             {{
               call.tokens
-                ? t('groups.memory.embedding.tokens', { n: call.tokens.input })
+                ? t('groups.memory.embedding.tokens', { n: formatNumber(call.tokens.input) })
                 : t('groups.memory.embedding.noTokens')
             }}
           </span>
-          <span v-if="call.error" class="text-xs text-error">{{ t('groups.memory.embedding.error') }}</span>
-          <Button v-if="!opened[call.id]" size="sm" variant="ghost" class="ml-auto" @click="detail(call.id)">
+          <Badge v-if="call.error" tone="error">{{ t('groups.memory.embedding.error') }}</Badge>
+          <Button
+            v-if="!opened[call.id]"
+            size="sm"
+            variant="ghost"
+            :loading="Boolean(loadingDetail[call.id])"
+            class="ml-auto"
+            @click="detail(call.id)"
+          >
             {{ t('groups.memory.embedding.detail') }}
           </Button>
         </div>

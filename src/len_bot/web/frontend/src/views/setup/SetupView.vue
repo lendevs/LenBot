@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, provide, ref, watch, type Component } from 'vue'
+import { computed, nextTick, provide, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useMediaQuery } from '@vueuse/core'
 import { TooltipProvider } from 'reka-ui'
-import { ArrowLeft, ArrowRight, Check, Save } from '@lucide/vue'
+import { ArrowLeft, ArrowRight, Check, Moon, Save, Sun } from '@lucide/vue'
 import { forgetSetupToken, setupApi, setupToken, type SetupSaved } from '../../api/setup'
 import markUrl from '../../assets/lenbot-mark-tile.svg'
+import { setThemeMode, themeMode } from '../../composables/useThemeMode'
 import { currentLocale, localeOptions, setLocale, type Locale } from '../../i18n'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
+import IconButton from '../../ui/IconButton.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import DonePanel from './DonePanel.vue'
@@ -36,10 +39,22 @@ const views: Record<Step, Component> = {
 
 const token = setupToken()
 const current = ref(0)
+const direction = ref<1 | -1>(1)
 /** The furthest step reached; earlier ones can be opened from the step list. */
 const reached = ref(0)
 const step = computed(() => steps[current.value])
 const last = computed(() => current.value === steps.length - 1)
+const mobileSteps = ref<HTMLOListElement>()
+const stepHost = ref<HTMLElement>()
+const pendingFocusInvalid = ref(false)
+
+const prefersDark = useMediaQuery('(prefers-color-scheme: dark)')
+const isDark = computed(
+  () => themeMode.value === 'dark' || (themeMode.value === 'system' && prefersDark.value),
+)
+function toggleTheme() {
+  setThemeMode(isDark.value ? 'light' : 'dark')
+}
 
 const setup = useQuery({
   queryKey: ['setup', 'protocols'],
@@ -64,10 +79,50 @@ watch(
   { immediate: true },
 )
 
+watch(current, () => {
+  void nextTick(() => {
+    const active = mobileSteps.value?.querySelector<HTMLElement>('[aria-current="step"]')
+    if (!active) return
+    const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth'
+    active.scrollIntoView({ behavior, block: 'nearest', inline: 'center' })
+  })
+})
+
 function go(index: number) {
+  if (index !== current.value) direction.value = index > current.value ? 1 : -1
   current.value = index
   reached.value = Math.max(reached.value, index)
   window.scrollTo({ top: 0 })
+}
+
+/** Scroll the first invalid control into view and focus it so the operator lands directly on what needs fixing. */
+async function focusFirstInvalid() {
+  await nextTick()
+  await nextTick()
+  const root = stepHost.value
+  if (!root) return
+  const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? 'auto'
+    : 'smooth'
+  const invalid = root.querySelector<HTMLElement>('[data-invalid]')
+  if (invalid) {
+    invalid.scrollIntoView({ behavior, block: 'center' })
+    const focusable = invalid.matches('input, textarea, select, button, [tabindex]')
+      ? invalid
+      : invalid.querySelector<HTMLElement>('input, textarea, select, button, [tabindex]')
+    focusable?.focus({ preventScroll: true })
+    return
+  }
+  const alert = root.querySelector<HTMLElement>('[role="alert"]')
+  alert?.scrollIntoView({ behavior, block: 'center' })
+}
+
+function onAfterEnter() {
+  if (!pendingFocusInvalid.value) return
+  pendingFocusInvalid.value = false
+  void focusFirstInvalid()
 }
 
 /** Leaving a step shows its problems; the step only changes when there are none. */
@@ -78,6 +133,7 @@ function ready(index: number): boolean {
 
 function next() {
   if (ready(current.value)) go(current.value + 1)
+  else void focusFirstInvalid()
 }
 
 const saved = ref<SetupSaved | null>(null)
@@ -97,7 +153,12 @@ const save = useMutation({
 function submit(withPlugins = true) {
   for (let index = 0; index < steps.length; index += 1) {
     if (!ready(index)) {
-      go(index)
+      if (index === current.value) {
+        void focusFirstInvalid()
+      } else {
+        pendingFocusInvalid.value = true
+        go(index)
+      }
       return
     }
   }
@@ -122,9 +183,9 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
       >
         <div class="flex items-center gap-3">
           <img :src="markUrl" alt="" class="size-10 rounded-lg" />
-          <div class="leading-tight">
-            <p class="font-semibold text-ink">LenBot</p>
-            <p class="text-sm text-muted">{{ t('setup.title') }}</p>
+          <div class="min-w-0 leading-tight">
+            <p class="truncate font-semibold tracking-tight text-ink">LenBot</p>
+            <p class="truncate text-xs text-muted">{{ t('setup.title') }}</p>
           </div>
         </div>
         <ol class="m-0 flex list-none flex-col gap-1 p-0" :aria-label="t('setup.stepsLabel')">
@@ -133,7 +194,9 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
               type="button"
               class="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm transition-colors focus-visible:focus-ring"
               :class="[
-                index === current && !saved ? 'bg-selected font-medium text-ink' : 'text-muted',
+                index === current && !saved
+                  ? 'bg-surface-raised font-semibold text-ink shadow-card ring-1 ring-line'
+                  : 'text-muted',
                 index <= reached && !saved
                   ? 'cursor-pointer hover:bg-hover hover:text-ink'
                   : 'cursor-default',
@@ -143,28 +206,37 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
               @click="go(index)"
             >
               <span
-                class="inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs transition-colors"
+                class="inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium transition-colors tabular"
                 :class="
                   saved || index < current
-                    ? 'border-brand bg-brand text-white'
+                    ? 'border-success/30 bg-success-bg text-success'
                     : index === current
-                      ? 'border-brand text-primary'
-                      : 'border-line-strong'
+                      ? 'border-primary bg-primary font-semibold text-on-primary'
+                      : index <= reached
+                        ? 'border-line-strong bg-surface text-ink-2'
+                        : 'border-line text-subtle'
                 "
               >
-                <Check v-if="saved || index < current" :size="13" :stroke-width="3" aria-hidden="true" />
+                <Check v-if="saved || index < current" :size="13" :stroke-width="2.75" aria-hidden="true" />
                 <template v-else>{{ index + 1 }}</template>
               </span>
               <span class="min-w-0 truncate">{{ t(`setup.steps.${name}`) }}</span>
             </button>
           </li>
         </ol>
-        <div class="mt-auto">
+        <div class="mt-auto flex items-center gap-2">
+          <IconButton
+            :icon="isDark ? Sun : Moon"
+            :label="t(isDark ? 'login.switchToLight' : 'login.switchToDark')"
+            size="sm"
+            variant="secondary"
+            @click="toggleTheme"
+          />
           <SegmentedControl
             :model-value="locale"
             :options="localeOptions"
             size="sm"
-            label="Language"
+            :label="t('shell.account.language')"
             @update:model-value="chooseLocale"
           />
         </div>
@@ -173,49 +245,101 @@ const progress = computed(() => (saved.value ? 100 : (current.value / (steps.len
       <div class="flex min-w-0 flex-col">
         <div class="h-0.5 bg-track" aria-hidden="true">
           <div
-            class="h-full bg-brand transition-[width] duration-300 ease-out"
+            class="h-full bg-primary transition-[width] duration-300 ease-out"
             :style="{ width: `${progress}%` }"
           />
         </div>
-        <header class="flex items-center justify-between gap-3 px-4 pt-4 lg:hidden">
-          <div class="flex min-w-0 items-center gap-2.5">
-            <img :src="markUrl" alt="" class="size-8 rounded-md" />
-            <span class="truncate text-sm font-semibold">{{ t('setup.title') }}</span>
+        <header class="flex flex-col gap-3 border-b border-line bg-sidebar px-4 py-3 lg:hidden">
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex min-w-0 items-center gap-2.5">
+              <img :src="markUrl" alt="" class="size-7 shrink-0 rounded-md" />
+              <span class="truncate text-sm font-semibold text-ink">{{ t('setup.title') }}</span>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <IconButton
+                :icon="isDark ? Sun : Moon"
+                :label="t(isDark ? 'login.switchToLight' : 'login.switchToDark')"
+                size="sm"
+                variant="secondary"
+                @click="toggleTheme"
+              />
+              <SegmentedControl
+                :model-value="locale"
+                :options="localeOptions"
+                size="sm"
+                :label="t('shell.account.language')"
+                @update:model-value="chooseLocale"
+              />
+            </div>
           </div>
-          <SegmentedControl
-            :model-value="locale"
-            :options="localeOptions"
-            size="sm"
-            label="Language"
-            @update:model-value="chooseLocale"
-          />
+          <ol
+            v-if="!saved && token"
+            ref="mobileSteps"
+            class="m-0 flex list-none items-center gap-1.5 overflow-x-auto p-0 [scrollbar-width:none]"
+            :aria-label="t('setup.stepsLabel')"
+          >
+            <li v-for="(name, index) in steps" :key="name" class="shrink-0">
+              <button
+                type="button"
+                class="inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium whitespace-nowrap transition-colors focus-visible:focus-ring tabular"
+                :class="[
+                  index === current
+                    ? 'border-primary bg-surface-raised font-semibold text-ink shadow-card'
+                    : index < current
+                      ? 'border-line bg-surface text-ink-2'
+                      : 'border-transparent text-subtle',
+                  index <= reached ? 'cursor-pointer hover:text-ink' : 'cursor-default opacity-60',
+                ]"
+                :aria-current="index === current ? 'step' : undefined"
+                :disabled="index > reached || save.isPending.value"
+                @click="go(index)"
+              >
+                <Check
+                  v-if="index < current"
+                  :size="12"
+                  :stroke-width="2.75"
+                  class="text-success"
+                  aria-hidden="true"
+                />
+                <span v-else>{{ index + 1 }}.</span>
+                <span>{{ t(`setup.steps.${name}`) }}</span>
+              </button>
+            </li>
+          </ol>
         </header>
 
-        <div class="flex-1 px-4 py-8 sm:px-8 lg:px-14 lg:py-14">
+        <div class="flex-1 px-4 py-7 sm:px-8 lg:px-14 lg:py-14">
           <DonePanel v-if="saved" :result="saved" :username="username" />
           <div v-else-if="!token" class="mx-auto w-full max-w-2xl">
             <ErrorNote :title="t('setup.noToken')" :error="t('setup.noTokenText')" />
           </div>
-          <div v-else class="mx-auto flex w-full max-w-2xl flex-col gap-6">
+          <div v-else ref="stepHost" class="mx-auto flex w-full max-w-2xl flex-col gap-6">
             <ErrorNote
               v-if="setup.isError.value"
               :title="t('setup.readFailed')"
               :error="setup.error.value"
               :retry="setup.refetch"
             />
-            <div class="flex flex-col gap-1">
-              <p class="text-sm text-muted" role="status">
+            <div class="flex flex-col gap-1 border-b border-line pb-4">
+              <p class="text-xs font-medium text-muted tabular" role="status">
                 {{ t('setup.stepOf', { n: current + 1, total: steps.length }) }}
               </p>
-              <h1 class="text-2xl font-semibold text-ink">{{ t(`setup.steps.${step}`) }}</h1>
+              <h1 class="text-2xl font-semibold tracking-tight text-ink">{{ t(`setup.steps.${step}`) }}</h1>
             </div>
             <Skeleton v-if="setup.isPending.value" :lines="6" />
-            <form v-else :key="step" class="animate-rise" novalidate @submit.prevent>
-              <component :is="views[step]" />
-              <MoreFields v-if="last" class="mt-6" :title="t('setup.steps.plugins')">
-                <div class="sm:col-span-2"><PluginsStep /></div>
-              </MoreFields>
-            </form>
+            <Transition
+              v-else
+              :name="direction > 0 ? 'step-forward' : 'step-back'"
+              mode="out-in"
+              @after-enter="onAfterEnter"
+            >
+              <form :key="step" novalidate @submit.prevent>
+                <component :is="views[step]" />
+                <MoreFields v-if="last" class="mt-6" :title="t('setup.steps.plugins')">
+                  <div class="sm:col-span-2"><PluginsStep /></div>
+                </MoreFields>
+              </form>
+            </Transition>
             <ErrorNote v-if="save.isError.value" :title="t('setup.saveFailed')" :error="save.error.value" />
             <div class="flex flex-wrap items-center gap-2 border-t border-line pt-5">
               <Button

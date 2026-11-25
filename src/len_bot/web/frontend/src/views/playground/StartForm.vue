@@ -8,7 +8,7 @@ import { personasApi } from '../../api/personas'
 import { keys } from '../../api/query'
 import { trialsApi, type TrialInfo } from '../../api/trials'
 import { host } from '../../api/hostStore'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, groupSecondaryId } from '../../layouts/shell/scenes'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
@@ -47,10 +47,14 @@ watch(
   { immediate: true },
 )
 const sceneOptions = computed(() =>
-  scenes.value.map((item) => ({
-    value: item.scene,
-    label: `${groupLabel(item.scene)} · ${item.persona.name}`,
-  })),
+  scenes.value.map((item) => {
+    const name = groupLabel(item.scene)
+    const id = groupSecondaryId(item.scene)
+    return {
+      value: item.scene,
+      label: `${id ? `${name} (${id})` : name} · ${item.persona.name}`,
+    }
+  }),
 )
 const role = ref(props.persona ?? '')
 const roleOptions = computed(() =>
@@ -99,10 +103,7 @@ const ready = computed(() => Boolean(scene.value) && (from.value === 'group' || 
 </script>
 
 <template>
-  <form
-    class="flex max-w-3xl flex-col gap-5 rounded-xl border border-line bg-surface p-5"
-    @submit.prevent="start.mutate()"
-  >
+  <form class="flex max-w-2xl flex-col gap-6" @submit.prevent="start.mutate()">
     <FormSection :title="t('playground.start.title')">
       <Field :label="t('playground.start.from')" wide>
         <div><SegmentedControl v-model="from" :options="froms" :label="t('playground.start.from')" /></div>

@@ -13,7 +13,6 @@ import { host } from '../../api/hostStore'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
-import CodeBlock from '../../ui/CodeBlock.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
@@ -35,7 +34,6 @@ const active = computed(() => items.value.find((item) => item.active) ?? null)
 const selected = computed(
   () => items.value.find((item) => item.id === route.query.trial) ?? active.value ?? items.value[0] ?? null,
 )
-const pick = (id: string) => void router.replace({ query: { ...route.query, trial: id } })
 /** Times follow the group's clock, as the chat window does. */
 const zone = (scene: string) =>
   ((host.state?.scenes ?? []) as HostScene[]).find((item) => item.scene === scene)?.timezone
@@ -56,6 +54,17 @@ watch(active, (value) => {
 const showForm = computed(
   () => !active.value && (starting.value || !selected.value || Boolean(text('scene') || text('persona'))),
 )
+
+function pick(id: string) {
+  starting.value = false
+  void router.replace({ query: { trial: id } })
+}
+function cancelStart() {
+  starting.value = false
+  if (text('scene') || text('persona')) {
+    void router.replace({ query: selected.value ? { trial: selected.value.id } : {} })
+  }
+}
 
 function participationLabel(trial: TrialInfo) {
   const { only_direct, level } = trial.attention
@@ -98,8 +107,8 @@ async function end() {
       :retry="trials.refetch"
     />
     <template v-else>
-      <div v-if="items.length" class="flex flex-wrap items-center gap-3">
-        <div class="w-full sm:w-80">
+      <div v-if="items.length" class="flex flex-wrap items-center gap-3 border-b border-line pb-4">
+        <div class="w-full tabular sm:w-96">
           <Select
             :model-value="selected?.id"
             :options="records"
@@ -114,36 +123,33 @@ async function end() {
           <Button v-else-if="!showForm" variant="primary" :icon="MessageCirclePlus" @click="starting = true">
             {{ t('playground.new') }}
           </Button>
+          <Button v-else-if="items.length > 0" variant="ghost" @click="cancelStart">
+            {{ t('common.cancel') }}
+          </Button>
         </div>
       </div>
       <StartForm v-if="showForm" :scene="text('scene')" :persona="text('persona')" @started="started" />
       <template v-if="selected && !(showForm && !selected.active)">
         <div class="flex flex-wrap items-center gap-2 text-sm text-ink-2">
-          <span>{{ t('playground.persona', { name: selected.persona }) }}</span>
+          <span class="font-medium text-ink">{{ t('playground.persona', { name: selected.persona }) }}</span>
           <Badge v-if="selected.persona_source === 'draft'" tone="info">{{ t('playground.draft') }}</Badge>
           <Badge v-if="selected.memory_plugin">
             {{ t('playground.nativeMemory', { name: selected.memory_plugin }) }}
           </Badge>
           <Badge v-if="selected.scene.split(':')[1] === 'group'">{{ participationLabel(selected) }}</Badge>
           <Badge v-if="!selected.active">{{ t('playground.ended') }}</Badge>
-          <Button
-            v-if="selected.scene.split(':')[1] === 'group'"
-            class="ml-auto"
-            size="sm"
-            variant="ghost"
-            :icon-right="ArrowUpRight"
-            :to="groupsTarget(selected.scene, 'settings')"
-          >
-            {{ t('playground.participationSettings') }}
-          </Button>
+          <div v-if="selected.scene.split(':')[1] === 'group'" class="sm:ml-auto">
+            <Button
+              size="sm"
+              variant="ghost"
+              :icon-right="ArrowUpRight"
+              :to="groupsTarget(selected.scene, 'settings')"
+            >
+              {{ t('playground.participationSettings') }}
+            </Button>
+          </div>
         </div>
-        <details v-if="selected.context.length" class="text-sm">
-          <summary class="cursor-pointer text-muted hover:text-ink">
-            {{ t('playground.context', { n: selected.context.length }, selected.context.length) }}
-          </summary>
-          <CodeBlock :code="selected.context.join('\n\n')" :max-lines="12" class="mt-2" />
-        </details>
-        <ChatPanel :key="selected.id" :source="trialSource(selected.id)" />
+        <ChatPanel :key="selected.id" :source="trialSource(selected.id)" :context="selected.context" />
         <RawRecord
           v-if="developerDetails"
           :label="t('playground.scope')"

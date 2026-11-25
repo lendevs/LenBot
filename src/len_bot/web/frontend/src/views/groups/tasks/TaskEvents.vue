@@ -25,10 +25,10 @@ function toggle(id: number) {
 </script>
 
 <template>
-  <section class="flex flex-col gap-2">
+  <section class="flex flex-col gap-2 border-t border-line pt-5">
     <h3 class="text-sm font-medium text-ink">{{ t('groups.tasks.events.title') }}</h3>
     <p v-if="!events.length" class="text-sm text-muted">{{ t('groups.tasks.events.empty') }}</p>
-    <ol v-else class="flex list-none flex-col divide-y divide-line">
+    <ol v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
       <EventRow
         v-for="event in events"
         :key="event.id"

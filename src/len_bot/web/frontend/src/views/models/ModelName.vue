@@ -12,8 +12,9 @@ import {
   ComboboxTrigger,
   ComboboxViewport,
 } from 'reka-ui'
-import { Check, ChevronsUpDown } from '@lucide/vue'
+import { Check, ChevronsUpDown, RefreshCw } from '@lucide/vue'
 import type { ListedModel } from '../../api/models'
+import Spinner from '../../ui/Spinner.vue'
 import { useFieldControl } from '../../ui/field'
 import { controlFrame, controlHeight, controlInput, floatingPanel } from '../../ui/styles'
 
@@ -22,10 +23,14 @@ const model = defineModel<string>({ required: true })
 const props = defineProps<{
   models?: ListedModel[]
   placeholder?: string
+  canRefresh?: boolean
+  refreshDisabled?: boolean
+  refreshing?: boolean
   id?: string
   invalid?: boolean
   disabled?: boolean
 }>()
+const emit = defineEmits<{ refresh: [] }>()
 const { t } = useI18n()
 const field = useFieldControl(props)
 </script>
@@ -49,11 +54,25 @@ const field = useFieldControl(props)
         :placeholder="placeholder"
         :aria-invalid="field.invalid.value || undefined"
         :aria-describedby="field.describedBy.value"
-        :class="[controlInput, 'font-mono text-sm']"
+        :class="[controlInput, 'font-mono text-sm pointer-coarse:text-lg']"
       />
+      <button
+        v-if="canRefresh"
+        type="button"
+        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:size-8"
+        :disabled="field.disabled.value || refreshDisabled || refreshing"
+        :aria-label="t('models.probe.list')"
+        :title="t('models.probe.list')"
+        :aria-busy="refreshing || undefined"
+        @pointerdown.stop
+        @click.stop="emit('refresh')"
+      >
+        <Spinner v-if="refreshing" :size="14" />
+        <RefreshCw v-else :size="14" aria-hidden="true" />
+      </button>
       <ComboboxTrigger
         v-if="models?.length"
-        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center text-subtle hover:text-ink"
+        class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:text-ink pointer-coarse:size-8"
         :aria-label="t('ui.combobox.options')"
       >
         <ChevronsUpDown :size="15" aria-hidden="true" />
@@ -63,10 +82,12 @@ const field = useFieldControl(props)
       <ComboboxContent
         position="popper"
         :side-offset="4"
-        :class="[floatingPanel, 'w-(--reka-combobox-trigger-width) max-w-[calc(100vw-16px)]']"
+        :class="[floatingPanel, 'w-(--reka-combobox-trigger-width) max-w-[calc(100vw-1rem)]']"
       >
-        <ComboboxViewport class="max-h-[min(20rem,var(--reka-combobox-content-available-height))] p-1">
-          <ComboboxEmpty class="px-2 py-3 text-center text-sm text-subtle">
+        <ComboboxViewport
+          class="max-h-[min(20rem,var(--reka-combobox-content-available-height))] overflow-y-auto p-1 scrollbar-thin"
+        >
+          <ComboboxEmpty class="px-2 py-3 text-center text-sm text-muted">
             {{ t('ui.combobox.empty') }}
           </ComboboxEmpty>
           <ComboboxItem
@@ -74,9 +95,9 @@ const field = useFieldControl(props)
             :key="item.id"
             :value="item.id"
             :text-value="`${item.id} ${item.name}`"
-            class="relative flex cursor-default flex-col gap-1 rounded-sm py-2 pr-8 pl-2 text-sm outline-none select-none data-highlighted:bg-hover"
+            class="relative flex cursor-default flex-col gap-0.5 rounded-sm py-2 pr-8 pl-2 text-sm outline-none select-none data-highlighted:bg-hover"
           >
-            <span class="w-full font-mono wrap-anywhere">{{ item.id }}</span>
+            <span class="w-full font-mono text-ink wrap-anywhere">{{ item.id }}</span>
             <span v-if="item.name !== item.id" class="w-full text-xs text-muted wrap-anywhere">
               {{ item.name }}
             </span>

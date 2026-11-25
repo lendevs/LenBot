@@ -18,18 +18,23 @@ export interface ToastItem extends ToastOptions {
 }
 
 export const toasts = ref<ToastItem[]>([])
+const MAX_OPEN = 5
 let next = 1
 
 function show(tone: ToastTone, title: string, options: ToastOptions = {}): number {
   const id = next++
   const duration = options.duration ?? (tone === 'error' ? 8000 : 4000)
-  toasts.value = [...toasts.value.slice(-4), { id, tone, title, open: true, ...options, duration }]
+  const openItems = toasts.value.filter((entry) => entry.open)
+  let overflow = openItems.length - (MAX_OPEN - 1)
+  if (overflow > 0) {
+    for (const entry of openItems) {
+      if (overflow <= 0) break
+      entry.open = false
+      overflow--
+    }
+  }
+  toasts.value = [...toasts.value, { id, tone, title, open: true, ...options, duration }]
   return id
-}
-
-export function dismissToast(id: number): void {
-  const item = toasts.value.find((entry) => entry.id === id)
-  if (item) item.open = false
 }
 
 /** Called by Toaster after the exit animation. */

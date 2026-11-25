@@ -22,7 +22,6 @@ from ..configuration.editing import _read_saved, save_config
 from ..models.limits import speech_quota
 from ..models.usage import instance_usage
 from ..memory.jobs import processing_records
-from ..storage.store import Store
 from .routes.capabilities import register_host_capabilities
 from .routes.persona import register_host_persona
 from .routes.persona_stickers import register_host_persona_stickers
@@ -182,6 +181,15 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
 
     @app.get("/api/host/state", response_model=responses.HostState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
+        scene_entries = [
+            (scene, settings, runtime.chats[scene], runtime.runners[scene])
+            for scene, settings in list(config.scenes.items())
+            if scene in runtime.chats and scene in runtime.runners
+        ]
+        runners = [(scene, runner) for scene, _, _, runner in scene_entries]
+        statuses = await runtime.store.read(
+            lambda: {scene: runner.chat_status() for scene, runner in runners}
+        )
         return {
             "bot_id": config.bot_id,
             "timezone": config.timezone,
@@ -203,18 +211,19 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                               for adapter in [adapter_for(runtime.platform, name)]},
             },
             "scenes": [
-                {"scene": scene, "persona": {"id": runtime.chats[scene].persona.id,
-                                              "name": runtime.chats[scene].persona.name},
+                {"scene": scene, "persona": {"id": chat.persona.id,
+                                              "name": chat.persona.name},
                  "persona_path": str(settings.persona),
                  "persona_switch": switching(scene),
-                 "voice_mode": settings.voice_mode, "timezone": config.scene_timezone(scene),
-                 "scene_open": not runtime.runners[scene].state.closed,
-                 "chat_enabled": not runtime.runners[scene].state.paused,
-                 "chat_status": runtime.runners[scene].chat_status(),
-                 "attention": {"only_direct": runtime.chats[scene].config.attention.only_direct,
-                               "level": wake_level(runtime.chats[scene].config.attention, joining=True)},
-                 "wake_level": wake_level(runtime.chats[scene].config.attention)}
-                for scene, settings in config.scenes.items()
+                 "voice_mode": settings.voice_mode,
+                 "timezone": config.timezone if settings.timezone is None else settings.timezone,
+                 "scene_open": not runner.state.closed,
+                 "chat_enabled": not runner.state.paused,
+                 "chat_status": statuses[scene],
+                 "attention": {"only_direct": chat.config.attention.only_direct,
+                               "level": wake_level(chat.config.attention, joining=True)},
+                 "wake_level": wake_level(chat.config.attention)}
+                for scene, settings, chat, runner in scene_entries
             ],
             "memory_backend": None if config.memory is None else config.memory.backend,
             # Only what needs attention on the home page; details live on the capabilities page.
@@ -274,8 +283,9 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
     overview_read_at = 0.0
 
     def read_overview():
-        with Store(config.database, now=runtime.store.now, readonly=True) as store, processing_records(config.database, None) as records:
-            now = datetime.fromtimestamp(runtime.store.now(), ZoneInfo(config.timezone))
+        store = runtime.store
+        with processing_records(config.database, None) as records:
+            now = datetime.fromtimestamp(store.now(), ZoneInfo(config.timezone))
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end = start + timedelta(days=1)
             scenes = list(config.scenes)
@@ -294,6 +304,8 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                     "hourly": store.hourly_overview(scenes, hour - 23 * 3600, 24, usage=usage),
                     "activity": store.recent_activity(scenes, 12),
                     "failed_tasks": store.failed_tasks(scenes, start.timestamp()),
+                    "waiting_tasks": store.waiting_tasks(scenes),
+                    "active_tasks": store.active_tasks_count(scenes),
                     "model_health": store.model_health(scenes, now.timestamp() - 7 * 86400),
                     "memory_stuck": stuck,
                     "speech_held": {scene: until for scene, chat in runtime.chats.items()
@@ -305,14 +317,14 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
         nonlocal overview_cached, overview_read_at
         async with overview_lock:
             if overview_cached is None or time.monotonic() - overview_read_at >= 5:
-                overview_cached = await asyncio.to_thread(read_overview)
+                overview_cached = await runtime.store.read(read_overview)
                 overview_read_at = time.monotonic()
             return overview_cached
 
     @app.get("/api/host/scenes/{scene}/messages/{seq}/images/{image_index}")
     async def original_image(scene: str, seq: int, image_index: int, _: str = Depends(user)):
         configured_scene(scene)
-        image = runtime.store.original_image(scene, seq, image_index)
+        image = await runtime.store.read(runtime.store.original_image, scene, seq, image_index)
         if image is None:
             raise HTTPException(404, "当前场景不存在此已保存图片",
                                 headers={"Cache-Control": "no-store"})
@@ -324,9 +336,9 @@ def create_app(config: HostConfig, runtime: NetworkRuntime, *, root: Path,
                       limit: int = Query(default=50, ge=1, le=200), active_only: bool = True,
                       _: str = Depends(user)):
         configured_scene(scene)
-        return {"scene": scene, "timezone": config.scene_timezone(scene), "active_only": active_only,
-                **runtime.store.mind_history_page(scene, before=before, limit=limit,
-                                                 active_only=active_only)}
+        page = await runtime.store.read(runtime.store.mind_history_page, scene, before=before, limit=limit,
+                                        active_only=active_only)
+        return {"scene": scene, "timezone": config.scene_timezone(scene), "active_only": active_only, **page}
 
     @app.websocket("/api/host/stream")
     async def stream(websocket: WebSocket):

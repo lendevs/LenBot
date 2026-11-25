@@ -2,19 +2,20 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { ArrowUpRight, MessagesSquare, Repeat } from '@lucide/vue'
+import { ArrowUpRight, MessagesSquare, Repeat, Search } from '@lucide/vue'
 import type { HostScene } from '../../../api/host'
 import type { PersonaRole } from '../../../api/personas'
 import { keys } from '../../../api/query'
 import { settingsApi } from '../../../api/settings'
 import { host, readHostState } from '../../../api/hostStore'
-import { groupLabel } from '../../../layouts/shell/scenes'
+import { groupLabel, groupSecondaryId } from '../../../layouts/shell/scenes'
 import Avatar from '../../../ui/Avatar.vue'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import Checkbox from '../../../ui/Checkbox.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import IconButton from '../../../ui/IconButton.vue'
+import Input from '../../../ui/Input.vue'
 import { confirm } from '../../../ui/confirm'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
@@ -26,15 +27,40 @@ const { t } = useI18n()
 const client = useQueryClient()
 const name = computed(() => props.role.name || props.role.key)
 const scenes = computed(() => (host.state?.scenes ?? []) as HostScene[])
-const rows = computed(() =>
-  scenes.value.map((item) => ({
-    scene: item.scene,
-    current: item.persona.name,
-    using: item.persona_path === props.role.path && props.role.running_scenes.includes(item.scene),
-    // Saved for this role while the group still finishes a reply with the previous one.
-    waiting: props.role.scenes.includes(item.scene) && !props.role.running_scenes.includes(item.scene),
-  })),
-)
+
+interface SceneRow {
+  scene: string
+  current: string
+  using: boolean
+  waiting: boolean
+}
+
+const rows = computed<SceneRow[]>(() => {
+  const rank = (row: SceneRow) => (row.using ? 0 : row.waiting ? 1 : 2)
+  return scenes.value
+    .map((item) => ({
+      scene: item.scene,
+      current: item.persona.name,
+      using: item.persona_path === props.role.path && props.role.running_scenes.includes(item.scene),
+      // Saved for this role while the group still finishes a reply with the previous one.
+      waiting: props.role.scenes.includes(item.scene) && !props.role.running_scenes.includes(item.scene),
+    }))
+    .sort((a, b) => rank(a) - rank(b))
+})
+
+const search = ref('')
+const shownRows = computed(() => {
+  const words = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return rows.value
+  return rows.value.filter((row) => {
+    const text = [groupLabel(row.scene), groupSecondaryId(row.scene), row.scene, row.current]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return words.every((word) => text.includes(word))
+  })
+})
+
 const chosen = ref<string[]>([])
 watch(
   () => props.role.scenes.join(),
@@ -43,8 +69,32 @@ watch(
 const choosable = computed(() =>
   rows.value.filter((row) => !row.using && !row.waiting).map((row) => row.scene),
 )
+const visibleChoosable = computed(() =>
+  shownRows.value.filter((row) => !row.using && !row.waiting).map((row) => row.scene),
+)
+const chosenVisibleCount = computed(
+  () => visibleChoosable.value.filter((scene) => chosen.value.includes(scene)).length,
+)
+
 function toggle(scene: string, on: boolean) {
-  chosen.value = on ? [...chosen.value, scene] : chosen.value.filter((item) => item !== scene)
+  chosen.value = on ? [...new Set([...chosen.value, scene])] : chosen.value.filter((item) => item !== scene)
+}
+function toggleVisibleAll(on: boolean) {
+  if (on) {
+    chosen.value = [...new Set([...chosen.value, ...visibleChoosable.value])]
+  } else {
+    const visible = new Set(visibleChoosable.value)
+    chosen.value = chosen.value.filter((item) => !visible.has(item))
+  }
+}
+function canPick(row: SceneRow) {
+  return !row.using && !row.waiting && !props.blocked && !use.isPending.value
+}
+function onRowClick(row: SceneRow, event: MouseEvent) {
+  if (!canPick(row)) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('a, button, input, [role="checkbox"]')) return
+  toggle(row.scene, !chosen.value.includes(row.scene))
 }
 
 const use = useMutation({
@@ -88,7 +138,11 @@ const use = useMutation({
 })
 async function apply() {
   const sure = await confirm({
-    title: t('personas.detail.scenes.confirm', { n: chosen.value.length, name: name.value }),
+    title: t(
+      'personas.detail.scenes.confirm',
+      { n: chosen.value.length, name: name.value },
+      chosen.value.length,
+    ),
     message: chosen.value.map(groupLabel).join(t('personas.separator')),
     confirmLabel: t('personas.detail.scenes.apply'),
     tone: 'primary',
@@ -100,35 +154,61 @@ async function apply() {
 <template>
   <EmptyState v-if="!rows.length" :icon="MessagesSquare" :title="t('groups.empty')" />
   <div v-else class="flex max-w-3xl flex-col gap-4">
-    <div v-if="choosable.length" class="flex flex-wrap items-center gap-3">
+    <div v-if="rows.length > 4 || choosable.length" class="flex flex-wrap items-center gap-3">
+      <div v-if="rows.length > 4" class="w-full sm:w-64">
+        <Input
+          v-model="search"
+          type="search"
+          size="sm"
+          :icon="Search"
+          clearable
+          :placeholder="t('groups.search')"
+          :aria-label="t('groups.search')"
+        />
+      </div>
       <Checkbox
+        v-if="visibleChoosable.length"
         :model-value="
-          chosen.length === 0 ? false : chosen.length === choosable.length ? true : 'indeterminate'
+          chosenVisibleCount === 0
+            ? false
+            : chosenVisibleCount === visibleChoosable.length
+              ? true
+              : 'indeterminate'
         "
-        :disabled="!choosable.length || Boolean(blocked)"
-        @update:model-value="(on) => (chosen = on === true ? [...choosable] : [])"
+        :disabled="!visibleChoosable.length || Boolean(blocked)"
+        @update:model-value="(on) => toggleVisibleAll(on === true)"
       >
         <span class="text-sm text-ink-2">{{ t('personas.detail.scenes.selectAll') }}</span>
       </Checkbox>
-      <Button
-        variant="primary"
-        size="sm"
-        :icon="Repeat"
-        :loading="use.isPending.value"
-        :disabled="!chosen.length || Boolean(blocked)"
-        class="ml-auto"
-        @click="apply"
-      >
-        {{
-          chosen.length
-            ? t('personas.detail.scenes.applyCount', { n: chosen.length })
-            : t('personas.detail.scenes.apply')
-        }}
-      </Button>
+      <div v-if="choosable.length" class="ml-auto tabular">
+        <Button
+          variant="primary"
+          size="sm"
+          :icon="Repeat"
+          :loading="use.isPending.value"
+          :disabled="!chosen.length || Boolean(blocked)"
+          @click="apply"
+        >
+          {{
+            chosen.length
+              ? t('personas.detail.scenes.applyCount', { n: chosen.length }, chosen.length)
+              : t('personas.detail.scenes.apply')
+          }}
+        </Button>
+      </div>
     </div>
     <p v-if="blocked" class="text-sm text-warning">{{ blocked }}</p>
-    <ul class="flex flex-col divide-y divide-line rounded-lg border border-line bg-surface">
-      <li v-for="row in rows" :key="row.scene" class="flex min-h-14 items-center gap-3 px-4 py-2.5">
+    <p v-if="!shownRows.length" class="py-6 text-center text-sm text-muted">
+      {{ t('common.noResults') }}
+    </p>
+    <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li
+        v-for="row in shownRows"
+        :key="row.scene"
+        class="flex min-h-14 items-center gap-3 px-2 py-2.5 transition-colors"
+        :class="canPick(row) && 'cursor-pointer hover:bg-hover/60'"
+        @click="onRowClick(row, $event)"
+      >
         <Checkbox
           v-if="!row.using && !row.waiting"
           :model-value="chosen.includes(row.scene)"
@@ -139,10 +219,26 @@ async function apply() {
         <span v-else-if="choosable.length" class="size-4.5 shrink-0" aria-hidden="true" />
         <Avatar :name="groupLabel(row.scene)" shape="square" :size="32" />
         <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-medium text-ink">{{ groupLabel(row.scene) }}</span>
-          <span v-if="!row.using" class="block truncate text-xs text-muted">{{ row.current }}</span>
+          <span
+            class="block truncate text-sm font-medium text-ink"
+            :class="!groupSecondaryId(row.scene) && 'tabular'"
+          >
+            {{ groupLabel(row.scene) }}
+          </span>
+          <span
+            v-if="groupSecondaryId(row.scene) || (!row.using && row.current)"
+            class="flex min-w-0 items-center gap-1.5 text-xs text-muted"
+          >
+            <span v-if="groupSecondaryId(row.scene)" class="shrink-0 font-mono text-subtle tabular">
+              {{ groupSecondaryId(row.scene) }}
+            </span>
+            <template v-if="!row.using && row.current">
+              <span v-if="groupSecondaryId(row.scene)" class="text-subtle" aria-hidden="true">·</span>
+              <span class="truncate">{{ row.current }}</span>
+            </template>
+          </span>
         </span>
-        <Badge v-if="row.using" tone="brand">{{ t('personas.detail.scenes.using') }}</Badge>
+        <Badge v-if="row.using" tone="success" dot>{{ t('personas.detail.scenes.using') }}</Badge>
         <Badge v-else-if="row.waiting" tone="warning" dot pulse>
           {{ t('personas.detail.scenes.waiting') }}
         </Badge>

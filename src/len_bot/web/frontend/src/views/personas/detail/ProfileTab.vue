@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PersonaRole } from '../../../api/personas'
+import Button from '../../../ui/Button.vue'
 import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
 import Input from '../../../ui/Input.vue'
@@ -18,25 +19,45 @@ const { t } = useI18n()
 const form = useProfile()
 // Folded unless the role already uses one of these, so nothing written is hidden. The tab opens after the draft.
 const draft = form.draft.value
+const defaultSelfRef = t('personas.detail.profile.defaultSelfReference')
 const more = ref(
-  Boolean(draft && (draft.behavior.trim() || draft.aliases.length || draft.self_reference.join() !== '我')),
+  Boolean(
+    draft &&
+    (draft.behavior.trim() ||
+      draft.aliases.length ||
+      draft.self_reference.length !== 1 ||
+      draft.self_reference[0] !== defaultSelfRef),
+  ),
 )
 </script>
 
 <template>
-  <form v-if="form.draft.value" class="flex max-w-3xl flex-col gap-8" @submit.prevent="form.save('identity')">
+  <form
+    v-if="form.draft.value"
+    class="flex max-w-3xl flex-col gap-8 pb-6"
+    @submit.prevent="form.save('identity')"
+  >
+    <div
+      v-if="form.remoteUpdated.value.identity"
+      role="status"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+    >
+      <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+      <Button size="sm" variant="ghost" @click="form.discard('identity')">
+        {{ t('ui.draft.reloadRemote') }}
+      </Button>
+    </div>
     <FormSection :title="t('personas.detail.profile.who')">
-      <Field wide>
-        <AvatarEditor :role="role" :name="form.draft.value.name" />
-      </Field>
       <Field
         :label="t('personas.detail.profile.name')"
         :error="form.draft.value.name.trim() ? null : t('personas.detail.problems.name')"
         required
-        wide
       >
-        <Input v-model="form.draft.value.name" class="sm:max-w-sm" />
+        <Input v-model="form.draft.value.name" />
       </Field>
+      <div class="flex min-w-0 items-start sm:pt-6">
+        <AvatarEditor :role="role" :name="form.draft.value.name" />
+      </div>
     </FormSection>
     <FormSection :title="t('personas.detail.profile.character')" :columns="1">
       <Field :label="t('personas.detail.profile.brief')">
@@ -66,6 +87,7 @@ const more = ref(
       :dirty="form.dirty.value.identity"
       :saving="form.isSaving('identity')"
       :error="form.saveError('identity') ?? form.problem('identity')"
+      :raw-error="form.saveRawError('identity')"
       :invalid="Boolean(form.problem('identity'))"
       @save="form.save('identity')"
       @discard="form.discard('identity')"

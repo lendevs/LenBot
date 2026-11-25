@@ -1,4 +1,4 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { chatApi, type ChatSource } from '../../../api/trials'
 import type { Member } from './members'
@@ -38,66 +38,116 @@ export type ScenarioKey = keyof typeof SCENARIOS
 const STEP_GAP_MS = 1200
 const BOT_REPLY_TIMEOUT_MS = 90_000
 
+function abortError(): DOMException {
+  return new DOMException('Aborted', 'AbortError')
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(abortError())
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      reject(abortError())
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 export function useScenarios(source: ChatSource, chat: Chat, members: Ref<Member[]>) {
   const { t } = useI18n()
   const playing = ref<ScenarioKey | null>(null)
   const error = ref<string | null>(null)
   const available = computed(() => !chat.isPrivate.value && members.value.length >= 2)
+  let controller: AbortController | null = null
+
+  function stop() {
+    controller?.abort()
+    controller = null
+    playing.value = null
+  }
+  onScopeDispose(stop)
 
   const lastBotSeq = () =>
     Math.max(0, ...chat.messages.value.filter((message) => message.is_self).map((message) => message.seq))
-  function botReplyAfter(seq: number): Promise<boolean> {
-    return new Promise((resolve) => {
+
+  function botReplyAfter(seq: number, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return Promise.reject(abortError())
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        window.clearTimeout(timer)
+        stopWatch()
+        signal.removeEventListener('abort', onAbort)
+      }
+      const onAbort = () => {
+        cleanup()
+        reject(abortError())
+      }
       const timer = window.setTimeout(() => {
-        stop()
+        cleanup()
         resolve(false)
       }, BOT_REPLY_TIMEOUT_MS)
-      const stop = watch(
+      const stopWatch = watch(
         () => lastBotSeq(),
         (latest) => {
           if (latest <= seq) return
-          window.clearTimeout(timer)
-          stop()
+          cleanup()
           resolve(true)
         },
         { immediate: true },
       )
+      signal.addEventListener('abort', onAbort, { once: true })
     })
   }
 
   async function play(key: ScenarioKey) {
     if (playing.value || !available.value) return
+    const current = new AbortController()
+    controller = current
     playing.value = key
     error.value = null
     const people = members.value.slice(0, 2)
     try {
       for (const [index, step] of (SCENARIOS[key] as Step[]).entries()) {
-        if (index) await new Promise((resolve) => window.setTimeout(resolve, STEP_GAP_MS))
+        if (current.signal.aborted) return
+        if (index) await sleep(STEP_GAP_MS, current.signal)
+        if (current.signal.aborted || !chat.data.value?.running) return
         const member = people[step.speaker]!
         const before = lastBotSeq()
-        await chatApi.send(source, {
-          uid: member.uid,
-          nickname: member.nickname,
-          role: member.role,
-          text: t(`playground.scenarios.${key}.${step.text}`),
-          mentions:
-            step.mention === 'bot'
-              ? [chat.data.value!.bot_id]
-              : step.mention === 'other'
-                ? [people[1 - step.speaker]!.uid]
-                : [],
-          reply_to: null,
-        })
-        if (step.awaitBot && !(await botReplyAfter(before))) {
-          error.value = t('playground.scenarios.noReply')
+        await chatApi.send(
+          source,
+          {
+            uid: member.uid,
+            nickname: member.nickname,
+            role: member.role,
+            text: t(`playground.scenarios.${key}.${step.text}`),
+            mentions:
+              step.mention === 'bot'
+                ? [chat.data.value.bot_id]
+                : step.mention === 'other'
+                  ? [people[1 - step.speaker]!.uid]
+                  : [],
+            reply_to: null,
+          },
+          current.signal,
+        )
+        if (step.awaitBot && !(await botReplyAfter(before, current.signal))) {
+          if (!current.signal.aborted) error.value = t('playground.scenarios.noReply')
           return
         }
       }
     } catch (caught) {
+      if (current.signal.aborted) return
       error.value = caught instanceof Error ? caught.message : String(caught)
     } finally {
-      playing.value = null
+      if (controller === current) {
+        controller = null
+        playing.value = null
+      }
     }
   }
-  return { playing, error, available, play }
+  return { playing, error, available, play, stop }
 }

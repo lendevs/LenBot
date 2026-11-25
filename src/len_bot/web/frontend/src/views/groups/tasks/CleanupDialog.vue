@@ -28,6 +28,15 @@ const storage = useQuery({
   queryFn: ({ signal }) => storageApi.task(props.scene, viewing.value, signal),
 })
 const temporary = computed(() => storage.data.value?.temporary.filter((item) => item.exists) ?? [])
+const nothingToClean = computed(() => {
+  if (targets.length === 0) return true
+  if (targets.length === 1) {
+    if (storage.isPending.value || storage.isError.value || !storage.data.value) return true
+    if (!storage.data.value.cleanable) return true
+    if (props.operation === 'temporary' && temporary.value.length === 0) return true
+  }
+  return false
+})
 
 const clean = useMutation({
   mutationFn: () => storageApi.cleanup(props.scene, targets, props.operation),
@@ -64,7 +73,8 @@ const open = computed({
         />
         <template v-else-if="storage.data.value">
           <p class="text-sm text-ink">
-            #{{ viewing }} {{ storage.data.value.task.goal }}
+            <span class="tabular">#{{ viewing }}</span>
+            {{ storage.data.value.task.goal }}
             <span v-if="!storage.data.value.cleanable" class="text-warning">
               · {{ t('groups.tasks.space.notCleanable') }}
             </span>
@@ -72,11 +82,11 @@ const open = computed({
           <template v-if="operation === 'temporary'">
             <ul
               v-if="temporary.length"
-              class="flex list-none flex-col divide-y divide-line rounded-lg border border-line font-mono text-xs"
+              class="flex list-none flex-col divide-y divide-line border-y border-line font-mono text-xs"
             >
-              <li v-for="item in temporary" :key="item.path" class="flex gap-3 px-3 py-1.5">
+              <li v-for="item in temporary" :key="item.path" class="flex gap-3 px-2 py-2">
                 <span class="min-w-0 flex-1 break-all text-ink-2">{{ item.path }}</span>
-                <span class="tabular text-muted">{{ formatBytes(item.file_bytes) }}</span>
+                <span class="shrink-0 text-muted tabular">{{ formatBytes(item.file_bytes) }}</span>
               </li>
             </ul>
             <p v-else class="text-sm text-muted">{{ t('groups.tasks.space.cleanup.nothing') }}</p>
@@ -97,11 +107,11 @@ const open = computed({
         :title="t('groups.tasks.space.cleanup.failed')"
         :error="clean.error.value"
       />
-      <ul v-if="results" class="flex list-none flex-col divide-y divide-line rounded-lg border border-line">
-        <li v-for="item in results" :key="item.task_id" class="flex flex-col gap-1.5 px-3 py-2">
+      <ul v-if="results" class="flex list-none flex-col divide-y divide-line border-y border-line">
+        <li v-for="item in results" :key="item.task_id" class="flex flex-col gap-1.5 px-2 py-2.5">
           <div class="flex items-center gap-3">
-            <span class="tabular text-sm text-ink">#{{ item.task_id }}</span>
-            <span v-if="item.removal" class="min-w-0 flex-1 text-xs text-muted">
+            <span class="text-sm text-ink tabular">#{{ item.task_id }}</span>
+            <span v-if="item.removal" class="min-w-0 flex-1 text-xs text-muted tabular">
               {{
                 t('groups.tasks.space.cleanup.removal', {
                   removed: item.removal.removed.length,
@@ -125,7 +135,13 @@ const open = computed({
       <Button variant="ghost" :disabled="clean.isPending.value" @click="emit('close')">
         {{ t(results ? 'common.close' : 'common.cancel') }}
       </Button>
-      <Button v-if="!results" variant="danger" :loading="clean.isPending.value" @click="clean.mutate()">
+      <Button
+        v-if="!results"
+        variant="danger"
+        :loading="clean.isPending.value"
+        :disabled="nothingToClean"
+        @click="clean.mutate()"
+      >
         {{ t(`groups.tasks.space.cleanup.${operation}`) }}
       </Button>
     </template>

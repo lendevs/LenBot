@@ -21,7 +21,7 @@ from ..chat.commands import Commands
 from ..chat.tools import task_data_tools, tool_catalog
 from ..tools.skills import select_skills
 from ..config import LabConfig, SharedConfig
-from .logs import credentials, log_context, log_event
+from .logs import SECRETS, credentials, log_context, log_event
 from .lifecycle import HostLifecycle
 from .model_alerts import ModelAlerts
 from ..platform.messages import ChatMessage, Notice, SendResult, UploadResult
@@ -67,8 +67,10 @@ class NetworkRuntime:
                  on_update: Callable[[], None] | None = None):
         self.config, self.store = config, store
         self.mind, self.vision = mind, vision
+        self._owned_vision: ChatModel | None = None
         self.events = EventHub()
         self.log_secrets = credentials(config)
+        SECRETS.add(self.log_secrets)
         self.memory = memory
         self.budget = ModelBudget(config, store, root=config._instance_root) if budget is None else budget
         if slots is None and (config.limits.daily_tokens is not None or config.limits.scene_daily_tokens):
@@ -276,7 +278,7 @@ class NetworkRuntime:
             self.events.publish("host.state")
             self.notify()
 
-    def _emit(self, result: dict, *, error: BaseException | None = None) -> None:
+    def _emit(self, result: dict, *, error: BaseException | None = None, notify: bool = True) -> None:
         """One runtime event in the host log; the panel reads it back from the log file.
 
         ``error`` text in the result and a passed exception both become the record's ``error`` object.
@@ -293,7 +295,8 @@ class NetworkRuntime:
         if result['type'] == 'turn' and self.upkeep is not None:
             # Upkeep skips a scene while it is in a turn; the turn's end lets it look again.
             self.upkeep.wake(result['scene'])
-        self.notify()
+        if notify:
+            self.notify()
 
     def _platform_error(self, error: str) -> None:
         self.last_platform_error = error
@@ -315,7 +318,7 @@ class NetworkRuntime:
             return
         if isinstance(message, Notice):
             if not self.accepting:
-                self._emit({"type": "receipt", "status": "not_accepted", "reason": self.status})
+                self._emit({"type": "receipt", "status": "not_accepted", "reason": self.status}, notify=False)
                 return
             if message.scene not in self.runners:
                 return
@@ -327,7 +330,7 @@ class NetworkRuntime:
                 self.stop()
                 raise
             self._emit({"type": "platform_event", "notice_type": message.notice_type,
-                        "plugin_handlers": handled})
+                        "plugin_handlers": handled}, notify=False)
             self.events.publish('notice.received', scene=message.scene, kind=message.notice_type)
             return
         with log_context(scene=message.scene, platform_message_id=message.platform_message_id):
@@ -355,7 +358,7 @@ class NetworkRuntime:
     def _receive_message(self, message, raw: dict) -> None:
         if not self.accepting:
             self._emit({"type": "receipt", "scene": message.scene,
-                        "status": "not_accepted", "reason": self.status})
+                        "status": "not_accepted", "reason": self.status}, notify=False)
             return
         runner = self.runners.get(message.scene)
         if runner is None and self._owner_private(message):
@@ -370,7 +373,7 @@ class NetworkRuntime:
             return
         if runner is None or message.scene in self.scene_service.retiring:
             self._emit({"type": "receipt", "scene": message.scene, "status": "ignored",
-                        "platform_message_id": message.platform_message_id})
+                        "platform_message_id": message.platform_message_id}, notify=False)
             return
         blocked = message.sender.uid in runner.config.permissions.blacklist
         # A paused chat only stops waking the model; plugin rules and commands keep answering.
@@ -406,7 +409,8 @@ class NetworkRuntime:
             self.audio.request(message.scene)
             self.events.publish('message.received', scene=message.scene, message_seq=receipt['message_seq'],
                                 verdict=receipt['wake_verdict'])
-        self._emit({"type": "receipt", **receipt, "scene": message.scene})
+        self._emit({"type": "receipt", **receipt, "scene": message.scene},
+                   notify=bool(receipt.get("wake_verdict", {}).get("woke")))
 
     async def _ready(self, wait: bool, scene: str | None = None) -> bool:
         if self.stopped.is_set():
@@ -524,115 +528,127 @@ class NetworkRuntime:
                     raise results[0]
         return False
 
+    async def _close_owned_vision(self) -> None:
+        if self._owned_vision is not None:
+            owned = self._owned_vision
+            self._owned_vision = None
+            await owned.__aexit__(None, None, None)
+
     async def run(self, *, manage_signals: bool = True, manual_connection: bool = False) -> None:
-        if self.platform is None:
-            from .stdin_host import run_stdin
-            await run_stdin(self, manage_signals=manage_signals)
-            return
-        if self.stopped.is_set():
-            self._status("stopped")
-            return
-        self._status("starting")
         try:
-            if manage_signals:
-                remove_signals = install_stop(self.stop)
-            if self.tasks is not None:
-                await self.tasks.recover()
-            if not await self._start_platform(manual_connection=manual_connection):
+            if self.platform is None:
+                from .stdin_host import run_stdin
+                await run_stdin(self, manage_signals=manage_signals)
                 return
-            async with asyncio.TaskGroup() as group:
-                pending: list[asyncio.Task] = []
-                try:
-                    stopping = group.create_task(self.stopped.wait())
-                    pending.append(stopping)
-                    self._status("waiting_connection")
-                    self._emit({"type": "runtime", "status": "started", "input": self.platform.name,
-                                "delivery": self.config.delivery, "addresses": self.platform.addresses})
-                    terminated = group.create_task(self.platform.wait_terminated())
-                    connected = group.create_task(self.platform.wait_connected(None))
-                    pending.extend([terminated, connected])
-                    done, _ = await asyncio.wait({connected, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
-                    if connected not in done or stopping in done or terminated in done:
-                        return
-                    await connected
-                    if self.tasks is not None:
-                        await self.tasks.start()
-                        pending.append(group.create_task(self.tasks.wait_failure()))
-                    if self.upkeep is not None:
-                        self.upkeep.start()
-                    self.audio.start()
-                    if self.sticker_collection is not None:
-                        self.sticker_collection.start()
-                    if self.plugins is not None:
-                        await self.plugins.start()
-                    self.refresh_external_tools()
-                    self.accepting = self.platform.connected
-                    self._status("running")
-                    self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
-                                "delivery": self.config.delivery})
-                    pending.append(group.create_task(self.retention.run()))
-                    self.scene_service.start(group)
-                    scenes_ended = group.create_task(self.scene_service.wait_stopped())
-                    pending.append(scenes_ended)
-                    done, _ = await asyncio.wait({scenes_ended, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
-                    self.accepting = False
-                    reason = ("storage_error" if self.storage_error is not None else
-                              "signal" if stopping in done
-                              else "panel_disconnect" if terminated in done and self.disconnect_requested
-                              else "transport_closed" if terminated in done
-                              else "scene_stopped")
-                    self._status("stopping")
-                    self._emit({"type": "runtime", "status": "stopping", "reason": reason})
-                    self.stopped.set()
-                    if self.plugins is not None:
-                        await self.plugins.close()
-                    await self.audio.close()
-                    if self.sticker_collection is not None:
-                        await self.sticker_collection.close()
-                    if self.upkeep is not None:
-                        await self.upkeep.close()
-                    if self.tasks is not None:
-                        await self.tasks.close()
-                    for runner in self.runners.values():
-                        runner.close_input()
-                    await self.scene_service.join()
-                finally:
-                    self.accepting = False
-                    self.scene_service.group = None
-                    for task in pending:
-                        task.cancel()
-        finally:
+            if self.stopped.is_set():
+                self._status("stopped")
+                return
+            self._status("starting")
             try:
-                try:
-                    if self.plugins is not None:
-                        await self.plugins.close()
-                    if self.tasks is not None:
-                        await self.tasks.close()
-                finally:
+                if manage_signals:
+                    remove_signals = install_stop(self.stop)
+                if self.tasks is not None:
+                    await self.tasks.recover()
+                if not await self._start_platform(manual_connection=manual_connection):
+                    return
+                async with asyncio.TaskGroup() as group:
+                    pending: list[asyncio.Task] = []
                     try:
+                        stopping = group.create_task(self.stopped.wait())
+                        pending.append(stopping)
+                        self._status("waiting_connection")
+                        self._emit({"type": "runtime", "status": "started", "input": self.platform.name,
+                                    "delivery": self.config.delivery, "addresses": self.platform.addresses})
+                        terminated = group.create_task(self.platform.wait_terminated())
+                        connected = group.create_task(self.platform.wait_connected(None))
+                        pending.extend([terminated, connected])
+                        done, _ = await asyncio.wait({connected, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
+                        if connected not in done or stopping in done or terminated in done:
+                            return
+                        await connected
+                        if self.tasks is not None:
+                            await self.tasks.start()
+                            pending.append(group.create_task(self.tasks.wait_failure()))
+                        if self.upkeep is not None:
+                            self.upkeep.start()
+                        self.audio.start()
+                        if self.sticker_collection is not None:
+                            self.sticker_collection.start()
+                        if self.plugins is not None:
+                            await self.plugins.start()
+                        self.refresh_external_tools()
+                        self.accepting = self.platform.connected
+                        self._status("running")
+                        self._emit({"type": "runtime", "status": "ready", "input": self.platform.name,
+                                    "delivery": self.config.delivery})
+                        pending.append(group.create_task(self.retention.run()))
+                        self.scene_service.start(group)
+                        scenes_ended = group.create_task(self.scene_service.wait_stopped())
+                        pending.append(scenes_ended)
+                        done, _ = await asyncio.wait({scenes_ended, stopping, terminated}, return_when=asyncio.FIRST_COMPLETED)
+                        self.accepting = False
+                        reason = ("storage_error" if self.storage_error is not None else
+                                  "signal" if stopping in done
+                                  else "panel_disconnect" if terminated in done and self.disconnect_requested
+                                  else "transport_closed" if terminated in done
+                                  else "scene_stopped")
+                        self._status("stopping")
+                        self._emit({"type": "runtime", "status": "stopping", "reason": reason})
+                        self.stopped.set()
+                        if self.plugins is not None:
+                            await self.plugins.close()
+                        await self.audio.close()
+                        if self.sticker_collection is not None:
+                            await self.sticker_collection.close()
                         if self.upkeep is not None:
                             await self.upkeep.close()
+                        if self.tasks is not None:
+                            await self.tasks.close()
+                        for runner in self.runners.values():
+                            runner.close_input()
+                        await self.scene_service.join()
+                    finally:
+                        self.accepting = False
+                        self.scene_service.group = None
+                        for task in pending:
+                            task.cancel()
+            finally:
+                try:
+                    try:
+                        if self.plugins is not None:
+                            await self.plugins.close()
+                        if self.tasks is not None:
+                            await self.tasks.close()
                     finally:
                         try:
-                            if self.sticker_collection is not None:
-                                await self.sticker_collection.close()
+                            if self.upkeep is not None:
+                                await self.upkeep.close()
                         finally:
                             try:
-                                if self.mcp is not None:
-                                    await self.mcp.close()
+                                if self.sticker_collection is not None:
+                                    await self.sticker_collection.close()
                             finally:
                                 try:
-                                    await self.audio.close()
-                                    await self.reference.close()
+                                    if self.mcp is not None:
+                                        await self.mcp.close()
                                 finally:
-                                    await self.platform.close()
-                    self._status("stopped")
-                    self._emit({"type": "runtime", "status": "stopped"})
-            finally:
-                if manage_signals:
-                    remove_signals()
-            if self.storage_error is not None:
-                raise self.storage_error
+                                    try:
+                                        await self.audio.close()
+                                        await self.reference.close()
+                                    finally:
+                                        try:
+                                            await self._close_owned_vision()
+                                        finally:
+                                            await self.platform.close()
+                        self._status("stopped")
+                        self._emit({"type": "runtime", "status": "stopped"})
+                finally:
+                    if manage_signals:
+                        remove_signals()
+                if self.storage_error is not None:
+                    raise self.storage_error
+        finally:
+            await self._close_owned_vision()
 
 
 async def run_network(config: SharedConfig, scene_configs: list[tuple[LabConfig, Persona]],

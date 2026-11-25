@@ -31,8 +31,12 @@ const parts = computed(() => {
     <template #trigger>
       <button
         type="button"
-        class="inline-flex size-5 cursor-pointer items-center justify-center rounded-sm transition-colors hover:bg-hover focus-visible:focus-ring"
-        :class="verdict.woke ? 'text-primary' : 'text-subtle opacity-70 hover:opacity-100'"
+        class="relative -my-0.5 inline-flex size-5 cursor-pointer items-center justify-center rounded-sm transition-colors after:pointer-coarse:absolute after:pointer-coarse:-inset-2.5 focus-visible:focus-ring"
+        :class="
+          verdict.woke
+            ? 'text-info hover:bg-info-bg'
+            : 'text-subtle opacity-75 hover:bg-hover hover:text-muted hover:opacity-100'
+        "
         :title="`${title} · ${verdict.reason}`"
         :aria-label="title"
       >
@@ -40,7 +44,16 @@ const parts = computed(() => {
       </button>
     </template>
     <div class="flex flex-col gap-2 text-sm">
-      <strong class="font-semibold" :class="verdict.woke ? 'text-primary' : 'text-ink'">{{ title }}</strong>
+      <div class="flex items-center gap-1.5">
+        <component
+          :is="verdict.woke ? Zap : Moon"
+          :size="14"
+          class="shrink-0"
+          :class="verdict.woke ? 'text-info' : 'text-muted'"
+          aria-hidden="true"
+        />
+        <strong class="font-semibold text-ink">{{ title }}</strong>
+      </div>
       <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <dt class="text-muted">{{ t('groups.live.verdict.reason') }}</dt>
         <dd class="min-w-0 break-words text-ink">{{ verdict.reason }}</dd>
@@ -59,7 +72,7 @@ const parts = computed(() => {
         </template>
       </dl>
       <template v-if="verdict.parts">
-        <strong class="border-t border-line pt-2 text-xs font-semibold text-ink-2">
+        <strong class="border-t border-line pt-2 text-xs font-semibold text-ink-2 tabular">
           {{ t('groups.live.verdict.parts.title') }} ·
           {{ t('groups.live.verdict.parts.messages', { n: verdict.parts.messages }) }}
         </strong>
@@ -68,8 +81,12 @@ const parts = computed(() => {
             <dt class="text-muted">{{ t(`groups.live.verdict.parts.${name}`) }}</dt>
             <dd class="text-right tabular">{{ signed(value) }}</dd>
           </template>
-          <dt class="text-muted">{{ t('groups.live.verdict.parts.raw') }}</dt>
-          <dd class="text-right font-medium tabular">{{ number(verdict.parts.raw) }}</dd>
+          <dt class="mt-0.5 border-t border-line pt-1 font-medium text-ink-2">
+            {{ t('groups.live.verdict.parts.raw') }}
+          </dt>
+          <dd class="mt-0.5 border-t border-line pt-1 text-right font-medium text-ink tabular">
+            {{ number(verdict.parts.raw) }}
+          </dd>
           <dt class="text-muted">{{ t('groups.live.verdict.parts.activity') }}</dt>
           <dd class="text-right tabular">× {{ number(verdict.parts.activity) }}</dd>
         </dl>

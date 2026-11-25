@@ -307,3 +307,162 @@ async def test_available_groups_come_from_every_connected_platform(tmp_path):
         assert listed.json()['items'] == [{'scene': 'telegram:group:-100123', 'name': '合成群', 'members': None}]
         state = (await client.get('/api/host/state')).json()
         assert state['connection']['platforms'] == {'onebot': False, 'telegram': True, 'feishu': False}
+
+
+@pytest.mark.asyncio
+async def test_connection_test_supports_onebot_with_saved_or_new_token(tmp_path):
+    from websockets.asyncio.server import serve
+
+    seen_auth: list[str | None] = []
+
+    async def handler(websocket):
+        seen_auth.append(websocket.request.headers.get('Authorization'))
+        raw = await websocket.recv()
+        req = json.loads(raw)
+        assert req['action'] == 'get_login_info'
+        await websocket.send(json.dumps({
+            'status': 'ok',
+            'retcode': 0,
+            'data': {'user_id': 90001, 'nickname': 'TestBot'},
+            'echo': req['echo'],
+        }))
+
+    async with serve(handler, '127.0.0.1', 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        ws_url = f'ws://127.0.0.1:{port}'
+        async with panel(tmp_path) as (client, _):
+            snapshot = (await client.get('/api/host/settings')).json()
+            onebot = {key: value for key, value in snapshot['saved']['connection']['onebot'].items()
+                      if key != 'access_token_configured'}
+            # Moving address without re-entering token is rejected.
+            moved = {**onebot, 'ws_url': ws_url}
+            refused = await client.post('/api/host/settings/connection/test', json={
+                'platform': 'onebot', 'onebot': moved, 'access_token': None})
+            assert refused.status_code == 422 and '重新填写访问令牌' in refused.text
+            # Testing with an explicit token succeeds and sends the token.
+            tested = await client.post('/api/host/settings/connection/test', json={
+                'platform': 'onebot', 'onebot': moved, 'access_token': 'probe-secret'})
+            assert tested.status_code == 200, tested.text
+            assert tested.json() == {'bot_id': 'onebot:90001', 'name': '90001'}
+            assert seen_auth == ['Bearer probe-secret']
+
+
+@pytest.mark.asyncio
+async def test_connection_test_reuses_running_reverse_ws_and_collects_handshake_rejections(tmp_path):
+    from websockets.asyncio.client import connect
+
+    reverse_cfg = {
+        'mode': 'reverse_ws',
+        'listen_host': '127.0.0.1',
+        'listen_port': 0,
+        'access_token': 'reverse-secret',
+        'request_timeout_seconds': 0.5,
+    }
+    first_root = tmp_path / 'first'
+    first_root.mkdir()
+    async with panel(first_root, onebot=reverse_cfg) as (client, runtime):
+        await runtime.platform.start()
+        try:
+            onebot_adapter = runtime.platform.member('onebot')
+            listen_host, listen_port = onebot_adapter.addresses[0][:2]
+
+            login_info_calls = 0
+
+            async def reverse_peer():
+                nonlocal login_info_calls
+                async with connect(
+                    f'ws://{listen_host}:{listen_port}',
+                    additional_headers={
+                        'Authorization': 'Bearer reverse-secret',
+                        'X-Client-Role': 'Universal',
+                        'X-Self-ID': '90001',
+                    },
+                ) as ws:
+                    async for raw in ws:
+                        req = json.loads(raw)
+                        if req.get('action') == 'get_login_info':
+                            login_info_calls += 1
+                            await ws.send(json.dumps({
+                                'status': 'ok',
+                                'retcode': 0,
+                                'data': {'user_id': 90001, 'nickname': 'RevBot'},
+                                'echo': req['echo'],
+                            }))
+
+            peer_task = asyncio.create_task(reverse_peer())
+            try:
+                await onebot_adapter.wait_connected(2.0)
+                active_payload = {
+                    'mode': 'reverse_ws',
+                    'listen_host': listen_host,
+                    'listen_port': listen_port,
+                    'action_transport': 'websocket',
+                    'http_url': None,
+                    'request_timeout_seconds': 0.5,
+                    'ping_interval_seconds': 20.0,
+                    'ping_timeout_seconds': 20.0,
+                    'max_frame_bytes': 1048576,
+                }
+                # Testing the active reverse_ws listener reuses the running adapter AND re-runs get_login_info each time.
+                tested = await client.post('/api/host/settings/connection/test', json={
+                    'platform': 'onebot', 'onebot': active_payload, 'access_token': 'reverse-secret'})
+                assert tested.status_code == 200, tested.text
+                assert tested.json() == {'bot_id': 'onebot:90001', 'name': '90001'}
+                assert login_info_calls == 1
+
+                tested_again = await client.post('/api/host/settings/connection/test', json={
+                    'platform': 'onebot', 'onebot': active_payload, 'access_token': 'reverse-secret'})
+                assert tested_again.status_code == 200, tested_again.text
+                assert login_info_calls == 2
+
+                # Changing token on the active port asks for save + restart instead of colliding on bind.
+                changed_token = await client.post('/api/host/settings/connection/test', json={
+                    'platform': 'onebot', 'onebot': active_payload, 'access_token': 'other-secret'})
+                assert changed_token.status_code == 422 and '保存并重启' in changed_token.text
+            finally:
+                peer_task.cancel()
+                await asyncio.gather(peer_task, return_exceptions=True)
+        finally:
+            await runtime.platform.close()
+
+    # Testing a separate reverse_ws port records handshake rejection via on_error without crashing _handshake.
+    import socket
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        free_port = sock.getsockname()[1]
+
+    second_root = tmp_path / 'second'
+    second_root.mkdir()
+    async with panel(second_root) as (client, _):
+        async def bad_peer():
+            await asyncio.sleep(0.1)
+            try:
+                async with connect(
+                    f'ws://127.0.0.1:{free_port}',
+                    additional_headers={'Authorization': 'Bearer wrong-token', 'X-Client-Role': 'Universal'},
+                ):
+                    pass
+            except Exception:
+                pass
+
+        bad_task = asyncio.create_task(bad_peer())
+        try:
+            rejected = await client.post('/api/host/settings/connection/test', json={
+                'platform': 'onebot',
+                'onebot': {
+                    'mode': 'reverse_ws',
+                    'listen_host': '127.0.0.1',
+                    'listen_port': free_port,
+                    'action_transport': 'websocket',
+                    'http_url': None,
+                    'request_timeout_seconds': 0.4,
+                    'ping_interval_seconds': 20.0,
+                    'ping_timeout_seconds': 20.0,
+                    'max_frame_bytes': 1048576,
+                },
+                'access_token': 'expected-secret',
+            })
+            assert rejected.status_code == 422
+            assert 'access token does not match' in rejected.text
+        finally:
+            await asyncio.gather(bad_task, return_exceptions=True)

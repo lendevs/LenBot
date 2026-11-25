@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { AudioLines } from '@lucide/vue'
@@ -26,6 +26,12 @@ const list = useInfiniteQuery({
   queryFn: ({ pageParam, signal }) => audioApi.list(props.scene, pageParam, signal),
   initialPageParam: 0,
   getNextPageParam: (page) => page.next_offset ?? undefined,
+  refetchInterval: (query) =>
+    query.state.data?.pages.some((page) =>
+      page.items.some((item) => item.status === 'queued' || item.status === 'running'),
+    )
+      ? 2500
+      : false,
 })
 const first = computed(() => list.data.value?.pages[0])
 const rows = computed(() => list.data.value?.pages.flatMap((page) => page.items) ?? [])
@@ -65,6 +71,24 @@ const reading = useMutation({
       detail: describeError(error, t('ui.error.network')).message,
     }),
 })
+
+const isTranscribing = (item: AudioItem) =>
+  transcribe.isPending.value &&
+  transcribe.variables.value !== undefined &&
+  id(transcribe.variables.value) === id(item)
+const isReadingCalls = (item: AudioItem) =>
+  reading.isPending.value && reading.variables.value !== undefined && id(reading.variables.value) === id(item)
+
+let activeAudio: HTMLAudioElement | null = null
+function onAudioPlay(event: Event) {
+  const current = event.currentTarget as HTMLAudioElement
+  if (activeAudio && activeAudio !== current && !activeAudio.paused) activeAudio.pause()
+  activeAudio = current
+}
+onBeforeUnmount(() => {
+  if (activeAudio && !activeAudio.paused) activeAudio.pause()
+  activeAudio = null
+})
 </script>
 
 <template>
@@ -90,23 +114,30 @@ const reading = useMutation({
         :error="first.worker_error"
       />
       <EmptyState v-if="!rows.length" :icon="AudioLines" :title="t('groups.live.audio.empty')" compact />
-      <ul v-else class="flex list-none flex-col divide-y divide-line">
-        <li v-for="item in rows" :key="id(item)" class="flex flex-col gap-2 py-3">
-          <div class="flex items-center gap-2">
-            <Badge :tone="tones[item.status]" dot size="sm">
-              {{ t(`groups.live.audio.status.${item.status}`) }}
-            </Badge>
-            <span class="tabular text-xs text-muted">
-              {{ formatDateTime(item.updated, { timeZone: first.timezone }) }}
-              <template v-if="item.duration !== null">
-                · {{ t('groups.live.audio.seconds', { n: item.duration.toFixed(1) }) }}
-              </template>
-            </span>
+      <ul v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
+        <li v-for="item in rows" :key="id(item)" class="flex flex-col gap-2.5 py-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge :tone="tones[item.status]" dot :pulse="item.status === 'running'" size="sm">
+                {{ t(`groups.live.audio.status.${item.status}`) }}
+              </Badge>
+              <span class="text-xs text-muted tabular">
+                {{
+                  [
+                    formatDateTime(item.updated, { timeZone: first.timezone }),
+                    item.duration !== null
+                      ? t('groups.live.audio.seconds', { n: item.duration.toFixed(1) })
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                }}
+              </span>
+            </div>
             <Button
               size="sm"
               variant="ghost"
-              class="ml-auto"
-              :loading="transcribe.isPending.value && transcribe.variables.value === item"
+              :loading="isTranscribing(item)"
               :disabled="
                 !first.available || first.stopping || item.status === 'queued' || item.status === 'running'
               "
@@ -120,37 +151,37 @@ const reading = useMutation({
             :src="audioApi.wavUrl(scene, item)"
             controls
             preload="none"
-            class="w-full max-w-md"
+            class="h-9 w-full max-w-md"
+            @play="onAudioPlay"
           />
-          <p v-if="item.transcript !== null" class="text-sm whitespace-pre-wrap text-ink">
+          <p
+            v-if="item.transcript !== null"
+            class="text-sm break-words whitespace-pre-wrap"
+            :class="item.transcript ? 'text-ink' : 'text-muted'"
+          >
             {{ item.transcript || t('groups.live.audio.noText') }}
           </p>
           <ErrorNote v-if="item.error" :title="t('groups.live.audio.itemFailed')" :error="item.error" />
           <template v-if="developerDetails">
-            <Button
-              v-if="!(id(item) in calls)"
-              size="sm"
-              variant="ghost"
-              class="self-start"
-              :loading="reading.isPending.value && reading.variables.value === item"
-              @click="reading.mutate(item)"
-            >
-              {{ t('groups.live.audio.calls') }}
-            </Button>
+            <div v-if="!(id(item) in calls)">
+              <Button size="sm" variant="ghost" :loading="isReadingCalls(item)" @click="reading.mutate(item)">
+                {{ t('groups.live.audio.calls') }}
+              </Button>
+            </div>
             <CodeBlock v-else :code="calls[id(item)]" :max-lines="12" />
           </template>
         </li>
       </ul>
-      <Button
-        v-if="list.hasNextPage.value"
-        size="sm"
-        variant="ghost"
-        class="self-start"
-        :loading="list.isFetchingNextPage.value"
-        @click="list.fetchNextPage()"
-      >
-        {{ t('groups.live.audio.older') }}
-      </Button>
+      <div v-if="list.hasNextPage.value">
+        <Button
+          size="sm"
+          variant="ghost"
+          :loading="list.isFetchingNextPage.value"
+          @click="list.fetchNextPage()"
+        >
+          {{ t('groups.live.audio.older') }}
+        </Button>
+      </div>
     </template>
   </div>
 </template>

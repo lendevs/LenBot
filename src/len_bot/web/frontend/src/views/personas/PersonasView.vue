@@ -7,12 +7,14 @@ import { ArrowLeft, ChevronDown, FileArchive, Plus, Search, UserRound } from '@l
 import { keys } from '../../api/query'
 import { personasApi, type PersonaRole } from '../../api/personas'
 import { host } from '../../api/hostStore'
+import { formatNumber } from '../../i18n/format'
 import { groupLabel } from '../../layouts/shell/scenes'
 import Button from '../../ui/Button.vue'
 import DropdownMenu from '../../ui/DropdownMenu.vue'
 import EmptyState from '../../ui/EmptyState.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Input from '../../ui/Input.vue'
+import SegmentedControl from '../../ui/SegmentedControl.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
@@ -30,6 +32,7 @@ const library = useQuery({
   queryFn: ({ signal }) => personasApi.library(signal),
 })
 const roles = computed(() => library.data.value?.roles ?? [])
+const existingKeys = computed(() => roles.value.map((role) => role.key))
 const refresh = () => void client.invalidateQueries({ queryKey: keys.personas.all() })
 // A switch from the group command or another page changes which groups use a role.
 watch(
@@ -47,12 +50,29 @@ const opened = computed(() => roles.value.find((role) => role.key === key.value)
 const open = (value: string | null) =>
   router.push({ name: 'host-persona', query: value === null ? {} : { persona: value } })
 
+type UsageFilter = 'all' | 'inUse' | 'unused'
+const filter = ref<UsageFilter>('all')
+const filters = computed(() =>
+  (['all', 'inUse', 'unused'] as const).map((value) => ({
+    value,
+    label: t(`personas.filters.${value}`),
+  })),
+)
 const query = ref('')
 const shown = computed(() => {
   const words = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  if (!words.length) return roles.value
   return roles.value.filter((role) => {
-    const text = [role.name, role.key, role.brief, ...role.aliases, ...role.scenes.map(groupLabel)]
+    if (filter.value === 'inUse' && !role.scenes.length) return false
+    if (filter.value === 'unused' && role.scenes.length > 0) return false
+    if (!words.length) return true
+    const text = [
+      role.name,
+      role.key,
+      role.brief,
+      ...role.aliases,
+      ...role.scenes,
+      ...role.scenes.map(groupLabel),
+    ]
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
@@ -128,27 +148,37 @@ const exporting = useMutation({
       </EmptyState>
     </template>
     <template v-else>
-      <div class="flex flex-wrap items-center gap-2">
-        <Input
-          v-model="query"
-          type="search"
+      <div class="flex flex-wrap items-center gap-2.5">
+        <div class="w-full sm:w-64">
+          <Input
+            v-model="query"
+            type="search"
+            size="sm"
+            :icon="Search"
+            :placeholder="t('personas.search')"
+            :aria-label="t('personas.search')"
+            clearable
+          />
+        </div>
+        <SegmentedControl
+          v-if="roles.length"
+          v-model="filter"
+          :options="filters"
           size="sm"
-          :icon="Search"
-          :placeholder="t('personas.search')"
-          :aria-label="t('personas.search')"
-          clearable
-          class="w-full sm:w-64"
+          :label="t('personas.all')"
         />
-        <span class="text-sm text-muted">
-          {{ t('personas.count', { n: roles.length }) }}
-          <template v-if="roles.length">· {{ t('personas.inUse', { n: inUse }) }}</template>
+        <span class="text-sm text-muted tabular">
+          {{ t('personas.count', { n: formatNumber(roles.length) }, roles.length) }}
+          <template v-if="roles.length">· {{ t('personas.inUse', { n: formatNumber(inUse) }) }}</template>
         </span>
-        <DropdownMenu :items="menu">
-          <Button variant="primary" size="sm" :icon="Plus" class="ml-auto">
-            {{ t('personas.create.createTitle') }}
-            <ChevronDown :size="14" aria-hidden="true" />
-          </Button>
-        </DropdownMenu>
+        <div class="ml-auto">
+          <DropdownMenu :items="menu" align="end">
+            <Button variant="primary" size="sm" :icon="Plus">
+              {{ t('personas.create.createTitle') }}
+              <ChevronDown :size="14" aria-hidden="true" />
+            </Button>
+          </DropdownMenu>
+        </div>
       </div>
       <EmptyState v-if="!roles.length" :icon="UserRound" :title="t('personas.empty')">
         <Button variant="primary" :icon="Plus" @click="request = { kind: 'create' }">
@@ -156,7 +186,7 @@ const exporting = useMutation({
         </Button>
       </EmptyState>
       <EmptyState v-else-if="!shown.length" :icon="Search" :title="t('common.noResults')" compact />
-      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
+      <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
         <PersonaCard
           v-for="role in shown"
           :key="role.key"
@@ -172,6 +202,12 @@ const exporting = useMutation({
         />
       </div>
     </template>
-    <CreatePersonaDialog v-if="request" :request="request" @done="created" @close="request = null" />
+    <CreatePersonaDialog
+      v-if="request"
+      :request="request"
+      :existing-keys="existingKeys"
+      @done="created"
+      @close="request = null"
+    />
   </div>
 </template>

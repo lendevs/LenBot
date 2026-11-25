@@ -33,14 +33,15 @@ const { t } = useI18n()
     <AlertDialogPortal>
       <AlertDialogOverlay class="ui-overlay fixed inset-0 z-(--z-dialog) bg-overlay backdrop-blur-[2px]" />
       <AlertDialogContent
-        class="ui-dialog fixed top-1/2 left-1/2 z-(--z-dialog) w-[calc(100vw-32px)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl bg-surface-raised p-6 text-ink shadow-dialog outline-none"
+        v-bind="message ? {} : { 'aria-describedby': undefined }"
+        class="ui-dialog fixed top-1/2 left-1/2 z-(--z-dialog) w-[calc(100vw-24px)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-5 text-ink shadow-dialog outline-none sm:p-6"
         @escape-key-down="(event) => busy && event.preventDefault()"
       >
-        <AlertDialogTitle class="text-lg font-semibold">{{ title }}</AlertDialogTitle>
-        <AlertDialogDescription v-if="message" class="mt-2 text-base text-muted">
+        <AlertDialogTitle class="text-lg font-semibold text-ink">{{ title }}</AlertDialogTitle>
+        <AlertDialogDescription v-if="message" class="mt-2 text-base leading-relaxed text-muted">
           {{ message }}
         </AlertDialogDescription>
-        <div class="mt-6 flex justify-end gap-2">
+        <div class="mt-6 flex flex-wrap justify-end gap-2">
           <AlertDialogCancel as-child>
             <Button :disabled="busy">{{ cancelLabel ?? t('common.cancel') }}</Button>
           </AlertDialogCancel>

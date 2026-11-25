@@ -1,6 +1,7 @@
-import { computed, inject, ref, watch, type InjectionKey } from 'vue'
+import { computed, inject, reactive, ref, watch, type InjectionKey } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import type { WebRead, WebSearch } from '../../api/capabilities'
 import {
   modelsApi,
   trimUrl,
@@ -16,6 +17,7 @@ import {
 } from '../../api/models'
 import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
+import { READ_APIS, SEARCH_APIS } from '../../api/webServices'
 import { readPendingRestart } from '../../api/hostStore'
 import { groupLabel } from '../../layouts/shell/scenes'
 import { describeError } from '../../ui/errors'
@@ -62,19 +64,25 @@ export const candidateOf = (row: ProviderRow): Candidate => ({
   },
 })
 
-export function newBinding(provider: string): ChatBinding {
+export function newBinding(
+  provider: string,
+  role?: Exclude<ChatRole, 'mind'>,
+  mind?: ChatBinding,
+): ChatBinding {
+  const contextWindow = mind?.context_window_tokens ?? 128000
+  const baseMaxOutput = role === 'worker' ? Math.max(4096, mind?.max_output_tokens ?? 4096) : 4096
   return {
     provider,
     model: '',
-    context_window_tokens: 128000,
+    context_window_tokens: contextWindow,
     temperature: null,
-    max_output_tokens: 1024,
-    timeout_seconds: 60,
+    max_output_tokens: Math.min(baseMaxOutput, Math.max(1, contextWindow - 1)),
+    timeout_seconds: role === 'worker' || role === 'memory' ? 180 : 60,
     thinking: null,
     reasoning_effort: null,
     quick_reasoning_effort: null,
     thinking_budget_tokens: null,
-    image_input: true,
+    image_input: role === 'vision',
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',
     retry_delays_seconds: [2, 5],
@@ -158,14 +166,26 @@ function toChange(draft: ModelsDraft, memory: boolean): ModelsChange {
 }
 
 export type Tab = 'providers' | 'roles' | 'vectors' | 'usage'
+export type ProblemField =
+  | 'name'
+  | 'url'
+  | 'key'
+  | 'provider'
+  | 'model'
+  | 'context'
+  | 'maxOutput'
+  | 'timeout'
+  | 'thinking'
+  | 'retries'
+  | 'language'
 export interface Problem {
   text: string
   tab: Tab
   /** Row id of the provider the problem is on. */
   provider?: string
-  /** `roles.<name>`, `memory` or `learning.<scene>`. */
+  /** `roles.<name>`, `memory`, `learning.<scene>`, `web_search` or `web_read`. */
   place?: string
-  field?: 'name' | 'url' | 'key'
+  field?: ProblemField
 }
 
 export function useModelsForm() {
@@ -190,18 +210,49 @@ export function useModelsForm() {
   const draft = ref<ModelsDraft | null>(null)
   /** Models read from each provider, by row id; dropped when the provider's address or key changes. */
   const catalog = ref<Record<string, ListedModel[]>>({})
+  const catalogLoading = ref<Record<string, boolean>>({})
+  const catalogError = ref<Record<string, unknown>>({})
+  const triedSave = ref(false)
+  const retryErrors = reactive<Partial<Record<ChatRole, 'format' | 'max'>>>({})
+  function setRetryError(role: ChatRole, error: 'format' | 'max' | null) {
+    if (error) retryErrors[role] = error
+    else delete retryErrors[role]
+  }
+  const hasRetryError = computed(() => Object.values(retryErrors).some(Boolean))
+  let resetSaving = () => {}
   const adopt = () => {
     draft.value = saved.value && copy(saved.value)
     catalog.value = {}
+    catalogError.value = {}
+    triedSave.value = false
+    for (const role of chatRoles) delete retryErrors[role]
+    resetSaving()
   }
   const changeOf = (value: ModelsDraft | null) =>
     value ? JSON.stringify(toChange(value, memoryOn.value)) : ''
-  const dirty = computed(() => Boolean(draft.value) && changeOf(draft.value) !== changeOf(saved.value))
+  const dirty = computed(
+    () => Boolean(draft.value) && (changeOf(draft.value) !== changeOf(saved.value) || hasRetryError.value),
+  )
+  const tabDirty = computed<Record<Exclude<Tab, 'usage'>, boolean>>(() => {
+    const current = draft.value
+    const base = saved.value
+    if (!current || !base) return { providers: false, roles: false, vectors: false }
+    return {
+      providers:
+        JSON.stringify(toChange(current, memoryOn.value).providers) !==
+        JSON.stringify(toChange(base, memoryOn.value).providers),
+      roles: JSON.stringify(current.roles) !== JSON.stringify(base.roles) || hasRetryError.value,
+      vectors:
+        JSON.stringify([memoryOn.value ? current.memory_embedding : null, current.learning_embeddings]) !==
+        JSON.stringify([memoryOn.value ? base.memory_embedding : null, base.learning_embeddings]),
+    }
+  })
   // Saved elsewhere meanwhile: an unchanged draft follows, an edited one is kept.
   watch(
     saved,
     (_, previous) => {
-      if (!draft.value || changeOf(draft.value) === changeOf(previous ?? null)) adopt()
+      if (!draft.value || (!hasRetryError.value && changeOf(draft.value) === changeOf(previous ?? null)))
+        adopt()
     },
     { immediate: true },
   )
@@ -209,17 +260,55 @@ export function useModelsForm() {
     () => draft.value?.providers.map((row) => [row.id, JSON.stringify(candidateOf(row))] as const),
     (rows, before = []) => {
       const old = new Map(before)
-      for (const [id, value] of rows ?? []) if (old.get(id) !== value) delete catalog.value[id]
+      for (const [id, value] of rows ?? []) {
+        if (old.get(id) !== value) {
+          delete catalog.value[id]
+          delete catalogError.value[id]
+        }
+      }
     },
   )
 
   const providerFor = (id: string | undefined) => draft.value?.providers.find((row) => row.id === id)
   const nameOf = (id: string) => providerFor(id)?.alias || t('models.providers.unnamed')
   const roleTitle = (role: string) => t(`models.roles.names.${role}`)
+  async function loadCatalog(id: string): Promise<void> {
+    const row = providerFor(id)
+    if (!row || !hasKey(row) || !row.base_url.trim() || catalogLoading.value[id]) return
+    const snapshot = JSON.stringify(candidateOf(row))
+    catalogLoading.value = { ...catalogLoading.value, [id]: true }
+    const cleared = { ...catalogError.value }
+    delete cleared[id]
+    catalogError.value = cleared
+    try {
+      const value = await modelsApi.list(candidateOf(row))
+      const current = providerFor(id)
+      if (!current || JSON.stringify(candidateOf(current)) !== snapshot) return
+      catalog.value[id] = value.models
+      toast.success(t('models.probe.listed', { n: value.models.length }, value.models.length))
+    } catch (error) {
+      const current = providerFor(id)
+      if (current && JSON.stringify(candidateOf(current)) === snapshot) {
+        catalogError.value = { ...catalogError.value, [id]: error }
+      }
+      toast.error(t('models.probe.listFailed'), {
+        detail: describeError(error, t('ui.error.network')).message,
+      })
+    } finally {
+      const next = { ...catalogLoading.value }
+      delete next[id]
+      catalogLoading.value = next
+    }
+  }
   /** Everything bound to a provider, for the list and the delete confirmation. */
   function usedBy(id: string): string[] {
     const value = draft.value
     if (!value) return []
+    const resolveWeb = (connection: string | null | undefined) =>
+      connection
+        ? (value.providers.find((item) => item.originalAlias === connection) ??
+          value.providers.find((item) => item.alias.trim() === connection))
+        : undefined
     return [
       ...Object.entries(value.roles)
         .filter(([, item]) => item?.provider === id)
@@ -227,8 +316,9 @@ export function useModelsForm() {
       ...(['web_search', 'web_read'] as const)
         .filter(
           (name) =>
-            (settings.data.value?.saved[name] as { connection?: string } | null)?.connection ===
-            providerFor(id)?.originalAlias,
+            resolveWeb(
+              (settings.data.value?.saved[name] as { connection?: string | null } | null)?.connection,
+            )?.id === id,
         )
         .map((name) => t(name === 'web_search' ? 'capabilities.web.search' : 'capabilities.web.read')),
       ...(value.memory_embedding?.provider === id ? [t('models.vectors.memory')] : []),
@@ -246,6 +336,7 @@ export function useModelsForm() {
   function addProvider(): string {
     const id = `draft:${crypto.randomUUID()}`
     const api = 'openai-chat'
+    triedSave.value = false
     draft.value!.providers.push({
       id,
       alias: '',
@@ -261,6 +352,8 @@ export function useModelsForm() {
   }
   function removeProvider(id: string) {
     draft.value!.providers = draft.value!.providers.filter((row) => row.id !== id)
+    delete catalog.value[id]
+    delete catalogError.value[id]
   }
   function changeProtocol(row: ProviderRow, api: string) {
     const before = protocol(row.api)
@@ -279,13 +372,58 @@ export function useModelsForm() {
     fitProtocol(binding, providerFor(id)?.api)
   }
   function toggleRole(role: Exclude<ChatRole, 'mind'>, on: boolean) {
-    const first = optionsFor(role)[0]?.value ?? ''
-    if (!on) draft.value!.roles[role] = null
-    else {
-      const binding = newBinding(first)
-      fitProtocol(binding, providerFor(first)?.api)
-      draft.value!.roles[role] = binding
+    if (!on) {
+      draft.value!.roles[role] = null
+      delete retryErrors[role]
+      return
     }
+    const mind = draft.value!.roles.mind
+    const provider = supports(providerFor(mind.provider), role)
+      ? mind.provider
+      : (optionsFor(role)[0]?.value ?? '')
+    const binding = newBinding(provider, role, mind)
+    fitProtocol(binding, providerFor(provider)?.api)
+    draft.value!.roles[role] = binding
+  }
+  function useStandaloneVision() {
+    if (!draft.value) return
+    draft.value.roles.mind.image_input = false
+    if (draft.value.roles.vision === null) toggleRole('vision', true)
+  }
+  const syncableRoles = ['memory', 'learner', 'worker'] as const
+  const canSyncFromMind = computed(() => {
+    const value = draft.value
+    if (!value) return false
+    const mind = value.roles.mind
+    const row = providerFor(mind.provider)
+    return syncableRoles.some((role) => {
+      const target = value.roles[role]
+      return (
+        target !== null &&
+        supports(row, role) &&
+        (target.provider !== mind.provider ||
+          target.model !== mind.model ||
+          target.context_window_tokens !== mind.context_window_tokens)
+      )
+    })
+  })
+  function syncCustomRolesFromMind(): number {
+    const value = draft.value
+    if (!value) return 0
+    const mind = value.roles.mind
+    const row = providerFor(mind.provider)
+    let count = 0
+    for (const role of syncableRoles) {
+      const target = value.roles[role]
+      if (!target || !supports(row, role)) continue
+      target.provider = mind.provider
+      target.model = mind.model
+      target.context_window_tokens = mind.context_window_tokens
+      fitProtocol(target, row?.api)
+      count += 1
+    }
+    if (count > 0) toast.success(t('models.roles.syncedToCustomRoles', { n: count }, count))
+    return count
   }
   function toggleAsr(on: boolean) {
     draft.value!.roles.asr = on
@@ -301,7 +439,7 @@ export function useModelsForm() {
 
   const problems = computed<Problem[]>(() => {
     const value = draft.value
-    if (!value || !protocols.data.value) return []
+    if (!value) return []
     const found: Problem[] = []
     const names = value.providers.map((row) => row.alias)
     for (const row of value.providers) {
@@ -323,6 +461,39 @@ export function useModelsForm() {
             : t('models.problems.noKey', { name: nameOf(row.id) }),
         })
     }
+    const webRefs: [
+      'web_search' | 'web_read',
+      WebSearch | WebRead | null | undefined,
+      Partial<Record<string, string[]>>,
+    ][] = [
+      ['web_search', settings.data.value?.saved.web_search as WebSearch | null | undefined, SEARCH_APIS],
+      ['web_read', settings.data.value?.saved.web_read as WebRead | null | undefined, READ_APIS],
+    ]
+    for (const [name, config, apis] of webRefs) {
+      const connection = config?.connection
+      if (!connection) continue
+      const service = t(name === 'web_search' ? 'capabilities.web.search' : 'capabilities.web.read')
+      const row =
+        value.providers.find((item) => item.originalAlias === connection) ??
+        value.providers.find((item) => item.alias.trim() === connection)
+      if (!row) {
+        found.push({
+          tab: 'providers',
+          place: name,
+          text: t('models.problems.webRemoved', { service, name: connection }),
+        })
+        continue
+      }
+      const allowed = apis[config.provider]
+      if (allowed && !allowed.includes(row.api)) {
+        found.push({
+          tab: 'providers',
+          provider: row.id,
+          place: name,
+          text: t('models.problems.unsupported', { title: service, name: nameOf(row.id) }),
+        })
+      }
+    }
     const check = (
       title: string,
       use: string,
@@ -333,10 +504,15 @@ export function useModelsForm() {
       if (!item) return
       const at = { tab, place }
       const row = providerFor(item.provider)
-      if (!row) found.push({ ...at, text: t('models.problems.noProvider', { title }) })
-      else if (!supports(row, use))
-        found.push({ ...at, text: t('models.problems.unsupported', { title, name: nameOf(row.id) }) })
-      if (!item.model.trim()) found.push({ ...at, text: t('models.problems.noModel', { title }) })
+      if (!row) found.push({ ...at, field: 'provider', text: t('models.problems.noProvider', { title }) })
+      else if (protocols.data.value && !supports(row, use))
+        found.push({
+          ...at,
+          field: 'provider',
+          text: t('models.problems.unsupported', { title, name: nameOf(row.id) }),
+        })
+      if (!item.model.trim())
+        found.push({ ...at, field: 'model', text: t('models.problems.noModel', { title }) })
     }
     for (const role of chatRoles) {
       const binding = value.roles[role]
@@ -345,16 +521,28 @@ export function useModelsForm() {
       if (!binding) continue
       const at = { tab: 'roles' as const, place }
       const title = roleTitle(role)
-      if (
-        binding.context_window_tokens === null ||
-        binding.max_output_tokens === null ||
-        binding.timeout_seconds === null
+      if (binding.context_window_tokens === null)
+        found.push({ ...at, field: 'context', text: t('models.problems.noContext', { title }) })
+      if (binding.max_output_tokens === null)
+        found.push({ ...at, field: 'maxOutput', text: t('models.problems.noMaxOutput', { title }) })
+      else if (
+        binding.context_window_tokens !== null &&
+        binding.max_output_tokens >= binding.context_window_tokens
       )
-        found.push({ ...at, text: t('models.problems.missingNumber', { title }) })
-      else if (binding.max_output_tokens >= binding.context_window_tokens)
-        found.push({ ...at, text: t('models.problems.outputTooLong', { title }) })
+        found.push({ ...at, field: 'maxOutput', text: t('models.problems.outputTooLong', { title }) })
+      if (binding.timeout_seconds === null)
+        found.push({ ...at, field: 'timeout', text: t('models.problems.noTimeout', { title }) })
       if (binding.reasoning_effort !== null && binding.thinking_budget_tokens !== null)
-        found.push({ ...at, text: t('models.problems.bothThinking', { title }) })
+        found.push({ ...at, field: 'thinking', text: t('models.problems.bothThinking', { title }) })
+      const retryError = retryErrors[role]
+      if (retryError)
+        found.push({
+          ...at,
+          field: 'retries',
+          text: t(retryError === 'max' ? 'models.problems.retriesMax' : 'models.problems.retriesFormat', {
+            title,
+          }),
+        })
     }
     const asr = value.roles.asr
     check(roleTitle('asr'), 'asr', asr, 'roles', 'roles.asr')
@@ -362,10 +550,16 @@ export function useModelsForm() {
       found.push({
         tab: 'roles',
         place: 'roles.asr',
-        text: t('models.problems.missingNumber', { title: roleTitle('asr') }),
+        field: 'timeout',
+        text: t('models.problems.noTimeout', { title: roleTitle('asr') }),
       })
     if (asr?.language && !/^[a-z]{2}$/.test(asr.language))
-      found.push({ tab: 'roles', place: 'roles.asr', text: t('models.problems.language') })
+      found.push({
+        tab: 'roles',
+        place: 'roles.asr',
+        field: 'language',
+        text: t('models.problems.language'),
+      })
     if (memoryOn.value)
       check(t('models.vectors.memory'), 'embedding', value.memory_embedding, 'vectors', 'memory')
     for (const [scene, item] of Object.entries(value.learning_embeddings))
@@ -388,11 +582,19 @@ export function useModelsForm() {
       toast.success(t('common.saved'))
     },
   })
+  resetSaving = () => {
+    if (saving.isError.value) saving.reset()
+  }
+  watch(draft, () => resetSaving(), { deep: true })
   const saveError = computed(() =>
     saving.isError.value
       ? describeError(saving.error.value, t('ui.error.network')).message
       : (problems.value[0]?.text ?? null),
   )
+  const saveRawError = computed(() =>
+    saving.isError.value ? describeError(saving.error.value, t('ui.error.network')).raw : null,
+  )
+  const hasProblem = computed(() => !saving.isError.value && problems.value.length > 0)
 
   return {
     settings,
@@ -402,7 +604,13 @@ export function useModelsForm() {
     memoryOn,
     draft,
     catalog,
+    catalogLoading,
+    catalogError,
+    loadCatalog,
+    triedSave,
+    setRetryError,
     dirty,
+    tabDirty,
     adopt,
     providerFor,
     nameOf,
@@ -414,11 +622,19 @@ export function useModelsForm() {
     changeProtocol,
     chooseRoleProvider,
     toggleRole,
+    useStandaloneVision,
+    canSyncFromMind,
+    syncCustomRolesFromMind,
     toggleAsr,
     problems,
-    save: () => saving.mutate(),
+    hasProblem,
+    save: () => {
+      triedSave.value = true
+      if (problems.value.length === 0) saving.mutate()
+    },
     busy: computed(() => saving.isPending.value),
     saveError,
+    saveRawError,
   }
 }
 

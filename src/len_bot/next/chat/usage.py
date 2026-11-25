@@ -9,16 +9,23 @@ from ..models.tokens import token_summary
 
 
 def wake_usage(store, scenes: list[str] | None, since: float, until: float, timezone: str) -> list[dict]:
-    condition = '' if scenes is None else f"AND scene IN ({','.join('?' for _ in scenes)})"
+    if scenes is not None and not scenes:
+        return []
+    if scenes is None:
+        where, params = 'started>=? AND started<?', (since, until)
+    else:
+        where = f"scene IN ({','.join('?' for _ in scenes)}) AND started>=? AND started<?"
+        params = (*scenes, since, until)
     turns = list(store.db.execute(
-        f'SELECT id,scene,started,wake_channel,first_expression_at FROM turns WHERE started>=? AND started<? {condition}',
-        (since, until, *(scenes or []))))
+        f'SELECT id,scene,started,wake_channel,first_expression_at FROM turns WHERE {where}',
+        params))
     tokens = defaultdict(list)
-    # The same scene filter as above: a one-group view must not read every group's mind calls.
+    # Drive from the time-bounded turns CTE so SQLite probes model_calls via turn_calls instead of scanning it.
     for turn_id, body in store.db.execute(
-        'SELECT c.turn_id,c.tokens FROM model_calls c JOIN turns t ON t.id=c.turn_id '
-        f"WHERE t.started>=? AND t.started<? AND c.role='mind' {condition.replace('scene', 't.scene')}",
-        (since, until, *(scenes or []))):
+        f'WITH recent_turns AS MATERIALIZED (SELECT id,wake_channel FROM turns WHERE {where}) '
+        "SELECT c.turn_id,c.tokens FROM recent_turns CROSS JOIN model_calls c ON c.turn_id=recent_turns.id "
+        "WHERE c.role='mind'",
+        params):
         tokens[turn_id].append(None if body is None else json.loads(body))
     grouped = {}
     zone = ZoneInfo(timezone)

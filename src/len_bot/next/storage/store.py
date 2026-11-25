@@ -29,9 +29,10 @@ from .schema import business_script, create_database, expected_tables, require_c
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 FORMAT_UPGRADE = '请停止实例后执行 uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot。'
 MAX_SEARCH_TERMS = 8
+SHORT_QUERY_SCAN_LIMIT = 5000
 
 
 def search_terms(query: str) -> list[str]:
@@ -89,6 +90,7 @@ class ImageAsset:
     description: str | None = None
     description_model: str | None = None
     described_at: float | None = None
+    frames: int = 1
 
 
 class Store:
@@ -105,8 +107,10 @@ class Store:
             connect(path, readonly=readonly, threaded=True),
             reader=None if readonly else (lambda: connect(path, readonly=True, threaded=True)))
         self.db.row_factory = sqlite3.Row
-        # The database thread: chat-path writes fsync there instead of on the event loop.
+        # The database write thread: chat-path writes fsync there instead of on the event loop.
+        # Read snapshots run on their own pool so a multi-row read never queues behind a write fsync or another read.
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='lenbot-db')
+        self._read_worker = ThreadPoolExecutor(max_workers=4, thread_name_prefix='lenbot-db-read')
         try:
             if state is not None and state[2]:
                 require_columns(self.db, business_script(), path=path, label='业务库', version=FORMAT_VERSION,
@@ -116,6 +120,8 @@ class Store:
                     raise ValueError(f'Existing business database is not initialized: {path}')
                 create_database(self.db, FORMAT_VERSION)
         except BaseException:
+            self._worker.shutdown(wait=True)
+            self._read_worker.shutdown(wait=True)
             self.db.close()
             raise
 
@@ -124,6 +130,7 @@ class Store:
 
     def __exit__(self, *_: object) -> None:
         self._worker.shutdown(wait=True)
+        self._read_worker.shutdown(wait=True)
         self.db.close()
 
     def _held(self, function: Callable, args: tuple, kwargs: dict):
@@ -135,12 +142,12 @@ class Store:
             return function(*args, **kwargs)
 
     async def read[T](self, function: Callable[..., T], /, *args, **kwargs) -> T:
-        """Run one read-only store call on the database thread without the write connection.
+        """Run one read-only store call on the read pool without the write connection.
 
         It reads one consistent snapshot on a read connection, so a long scan does not hold up
         writes from the event loop; a write inside it fails.
         """
-        return await self._run(self._read, function, args, kwargs)
+        return await self._run(self._read, function, args, kwargs, executor=self._read_worker)
 
     async def call[T](self, function: Callable[..., T], /, *args, **kwargs) -> T:
         """Run one store call (a ``Store`` method or a sub-store's) on the database thread.
@@ -149,13 +156,14 @@ class Store:
         awaiting task is cancelled, the write still commits and the cancellation is delivered right
         after, the same state a synchronous call followed by the next await would leave.
         """
-        return await self._run(self._held, function, args, kwargs)
+        return await self._run(self._held, function, args, kwargs, executor=self._worker)
 
-    async def _run(self, runner: Callable, function: Callable, args: tuple, kwargs: dict):
+    async def _run(self, runner: Callable, function: Callable, args: tuple, kwargs: dict, *,
+                   executor: ThreadPoolExecutor):
         # The caller's log context (scene, turn) follows the call onto the database thread.
         context = contextvars.copy_context()
         future = asyncio.get_running_loop().run_in_executor(
-            self._worker, partial(context.run, runner, function, args, kwargs))
+            executor, partial(context.run, runner, function, args, kwargs))
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:
@@ -242,22 +250,22 @@ class Store:
 
     def image(self, scene: str, platform_id: str, image_index: int) -> ImageAsset | None:
         row = self.db.execute(
-            "SELECT jpeg,width,height,animated,fetched_at,description,description_model,described_at "
+            "SELECT jpeg,width,height,animated,fetched_at,description,description_model,described_at,frames "
             "FROM image_cache WHERE scene=? AND platform_id=? AND image_index=?",
             (scene, platform_id, image_index),
         ).fetchone()
         if row is None:
             return None
-        return ImageAsset(row[0], row[1], row[2], bool(row[3]), row[4], row[5], row[6], row[7])
+        return ImageAsset(row[0], row[1], row[2], bool(row[3]), row[4], row[5], row[6], row[7], row[8])
 
     def save_image(self, scene: str, platform_id: str, image_index: int, asset: ImageAsset) -> None:
         with self.db:
             self.db.execute(
                 "INSERT INTO image_cache(scene,platform_id,image_index,jpeg,width,height,animated,"
-                "fetched_at,description,description_model,described_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "fetched_at,description,description_model,described_at,frames) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (scene, platform_id, image_index, asset.jpeg, asset.width, asset.height,
                  int(asset.animated), asset.fetched_at, asset.description,
-                 asset.description_model, asset.described_at),
+                 asset.description_model, asset.described_at, asset.frames),
             )
 
     def save_image_description(self, scene: str, platform_id: str, image_index: int,
@@ -383,6 +391,27 @@ class Store:
         return dict(self.db.execute(
             f"SELECT scene,COUNT(*) FROM tasks WHERE scene IN ({placeholders}) AND status='failed' AND ended>=? GROUP BY scene",
             (*scenes, since)))
+
+    def waiting_tasks(self, scenes: Sequence[str]) -> list[dict]:
+        if not scenes:
+            return []
+        placeholders = ",".join("?" for _ in scenes)
+        rows = self.db.execute(
+            f"SELECT id,scene,goal,requester,created,json_extract(question,'$.title') "
+            f"FROM tasks WHERE scene IN ({placeholders}) AND status='waiting_input' ORDER BY created,id",
+            scenes,
+        ).fetchall()
+        return [{"id": row[0], "scene": row[1], "goal": row[2], "requester": row[3],
+                 "created": row[4], "question_title": row[5]} for row in rows]
+
+    def active_tasks_count(self, scenes: Sequence[str]) -> int:
+        if not scenes:
+            return 0
+        placeholders = ",".join("?" for _ in scenes)
+        return int(self.db.execute(
+            f"SELECT COUNT(*) FROM tasks WHERE scene IN ({placeholders}) AND status IN ('queued','running','waiting_input')",
+            scenes,
+        ).fetchone()[0])
 
     def model_errors(self, scenes: Sequence[str], since: float, until: float) -> list[dict]:
         placeholders = ','.join('?' for _ in scenes)
@@ -579,7 +608,8 @@ class Store:
                 *, attention_state: dict | None = None,
                 wake_verdict: dict | None = None,
                 collect_stickers: bool = False, transcribe_audio: bool = False,
-                plugin_claim: tuple[str, str] | None = None) -> int:
+                plugin_claim: tuple[str, str] | None = None,
+                plugin_claim_delivered: bool = False) -> int:
         """Store one received platform message without adding it to the mind yet."""
         with self.db:
             seq = self._save_message(message, raw, received_at)
@@ -588,8 +618,8 @@ class Store:
             if plugin_claim is not None:
                 plugin, content = plugin_claim
                 self.db.execute(
-                    "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,'reply',?,?)",
-                    (message.scene, plugin, content, received_at),
+                    "INSERT INTO plugin_events(scene,plugin,kind,content,created,delivered_at) VALUES (?,?,'reply',?,?,?)",
+                    (message.scene, plugin, content, received_at, received_at if plugin_claim_delivered else None),
                 )
             if transcribe_audio:
                 for index, _ in enumerate((part for part in message.segments if part.type == "audio"), 1):
@@ -1049,38 +1079,91 @@ class Store:
                         after: float | None, before: float | None, snapshot: int,
                         offset: int, limit: int,
                         order: Literal["newest", "oldest"] = "oldest") -> list[tuple[int, ChatMessage]]:
-        # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.
-        cte, join = "", ""
-        conditions = ["m.scene=?", "+m.seq<=?"]
-        params: list[object] = [scene, snapshot]
+        direction = " DESC" if order == "newest" else ""
+        filters: list[str] = []
+        filter_params: list[object] = []
+        if who is not None:
+            filters.append("json_extract(m.body,'$.sender.uid')=?")
+            filter_params.append(who)
+        if after is not None:
+            filters.append("json_extract(m.body,'$.time')>=?")
+            filter_params.append(after)
+        if before is not None:
+            filters.append("json_extract(m.body,'$.time')<?")
+            filter_params.append(before)
         if query is not None:
             phrases, shorts = [], []
             for term in search_terms(query):
                 (phrases if len(term) >= 3 else shorts).append(term)
             if phrases:
-                # The full-text hits are computed once; probing the virtual table per message is far slower.
-                cte = "WITH hit(seq) AS MATERIALIZED (SELECT rowid FROM message_search WHERE search_text MATCH ?) "
-                join = " JOIN hit ON hit.seq=m.seq"
-                params.insert(0, " AND ".join('"' + term.replace('"', '""') + '"' for term in phrases))
-            if shorts:
-                join += " JOIN message_search s ON s.rowid=m.seq"
+                # Filter FTS5 hits first, then probe messages by INTEGER PRIMARY KEY instead of scanning the scene.
+                hit_conditions = ["search_text MATCH ?", "rowid<=?"]
+                hit_params: list[object] = [
+                    " AND ".join('"' + term.replace('"', '""') + '"' for term in phrases),
+                    snapshot,
+                ]
                 for term in shorts:
-                    conditions.append("instr(s.search_text,?)>0")
-                    params.append(term)
-        if who is not None:
-            conditions.append("json_extract(m.body,'$.sender.uid')=?")
-            params.append(who)
-        if after is not None:
-            conditions.append("json_extract(m.body,'$.time')>=?")
-            params.append(after)
-        if before is not None:
-            conditions.append("json_extract(m.body,'$.time')<?")
-            params.append(before)
-        direction = " DESC" if order == "newest" else ""
+                    hit_conditions.append("instr(search_text,?)>0")
+                    hit_params.append(term)
+                conditions = ["m.scene=?", *filters]
+                rows = self.db.execute(
+                    "WITH hit(seq) AS MATERIALIZED (SELECT rowid FROM message_search WHERE "
+                    + " AND ".join(hit_conditions)
+                    + ") SELECT m.seq,m.body FROM hit CROSS JOIN messages m ON m.seq=hit.seq WHERE "
+                    + " AND ".join(conditions)
+                    + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
+                    (*hit_params, scene, *filter_params, limit, offset),
+                ).fetchall()
+                return [(row[0], decode_message(row[1])) for row in rows]
+            if shorts:
+                # Trigram FTS5 cannot index <3-char terms; scan time-ordered chunks with keyset cursors until full.
+                if limit <= 0:
+                    return []
+                base_conditions = ["m.scene=?", "+m.seq<=?", *filters]
+                short_conditions = " AND ".join("instr(s.search_text,?)>0" for _ in shorts)
+                rev_direction = "" if order == "newest" else " DESC"
+                cmp, bound_cmp = ("<", "<=") if order == "newest" else (">", ">=")
+                batch_size = SHORT_QUERY_SCAN_LIMIT
+                need = offset + limit
+                collected: list[tuple[int, str]] = []
+                cursor: tuple[object, int] | None = None
+                while len(collected) < need:
+                    recent_conditions = list(base_conditions)
+                    recent_params: list[object] = [scene, snapshot, *filter_params]
+                    if cursor is not None:
+                        recent_conditions.append(
+                            f"json_extract(m.body,'$.time'){bound_cmp}? "
+                            f"AND (json_extract(m.body,'$.time'){cmp}? OR m.seq{cmp}?)"
+                        )
+                        recent_params.extend([cursor[0], cursor[0], cursor[1]])
+                    rows = self.db.execute(
+                        "WITH recent(seq,body,t) AS MATERIALIZED ("
+                        "SELECT m.seq,m.body,json_extract(m.body,'$.time') FROM messages m WHERE "
+                        + " AND ".join(recent_conditions)
+                        + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ?"
+                        ") SELECT r.seq,r.body,r.t,1,0 FROM recent r "
+                        "CROSS JOIN message_search s ON s.rowid=r.seq WHERE " + short_conditions
+                        + " UNION ALL "
+                        "SELECT tail.seq,NULL,tail.t,0,(SELECT COUNT(*) FROM recent) FROM ("
+                        f"SELECT seq,t FROM recent ORDER BY t{rev_direction},seq{rev_direction} LIMIT 1"
+                        ") tail "
+                        f"ORDER BY 4 DESC,3{direction},1{direction}",
+                        (*recent_params, batch_size, *shorts),
+                    ).fetchall()
+                    if not rows:
+                        break
+                    tail = rows[-1]
+                    collected.extend((row[0], row[1]) for row in rows[:-1])
+                    if tail[4] < batch_size:
+                        break
+                    cursor = (tail[2], tail[0])
+                return [(seq, decode_message(body)) for seq, body in collected[offset:need]]
+        # "+m.seq" keeps the snapshot from steering the planner away from the time-ordered indexes.
+        conditions = ["m.scene=?", "+m.seq<=?", *filters]
         rows = self.db.execute(
-            cte + "SELECT m.seq,m.body FROM messages m" + join + " WHERE " + " AND ".join(conditions)
+            "SELECT m.seq,m.body FROM messages m WHERE " + " AND ".join(conditions)
             + f" ORDER BY json_extract(m.body,'$.time'){direction},m.seq{direction} LIMIT ? OFFSET ?",
-            (*params, limit, offset),
+            (scene, snapshot, *filter_params, limit, offset),
         ).fetchall()
         return [(row[0], decode_message(row[1])) for row in rows]
 
@@ -1121,6 +1204,18 @@ class Store:
             "AND json_extract(body,'$.is_self')=1", (scene,)
         )}
 
+
+    def known_name(self, scene: str, uid: str | None) -> str | None:
+        """The group card or nickname this account last spoke with here."""
+        if uid is None:
+            return None
+        row = self.db.execute(
+            "SELECT COALESCE(NULLIF(json_extract(body,'$.sender.card'),''),json_extract(body,'$.sender.nickname')) "
+            "FROM messages WHERE scene=? AND json_extract(body,'$.sender.uid')=? "
+            "ORDER BY json_extract(body,'$.time') DESC, seq DESC LIMIT 1",
+            (scene, uid),
+        ).fetchone()
+        return None if row is None else row[0]
 
     def latest_sender_role(self, scene: str, uid: str) -> str | None:
         row = self.db.execute(
@@ -1351,8 +1446,9 @@ class Store:
 
     def last_mind_request(self, scene: str) -> dict | None:
         row = self.db.execute(
-            "SELECT request FROM model_calls JOIN turns ON turns.id=model_calls.turn_id "
-            "WHERE turns.scene=? AND model_calls.role='mind' ORDER BY model_calls.id DESC LIMIT 1",
+            "SELECT request FROM model_calls "
+            "WHERE scene=? AND role='mind' AND plugin IS NULL AND turn_id IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1",
             (scene,),
         ).fetchone()
         return None if row is None else json.loads(row[0])

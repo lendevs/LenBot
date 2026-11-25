@@ -112,13 +112,54 @@ const SECRETS = [
   'vectorProxy',
 ] as const
 
+/** Reasoning tokens reserved inside the recap's output allowance (`SharedConfig.recap_reasoning_reserve`). */
+function recapReserve(
+  maxOutput: number,
+  quickEffort: string,
+  effort: string,
+  thinkingBudget: number | null,
+): number {
+  const recapEffort = quickEffort.trim() || null
+  if (recapEffort !== null) {
+    return recapEffort === 'none' || recapEffort === 'off' ? 0 : Math.floor(maxOutput / 2)
+  }
+  const mindEffort = effort.trim() || null
+  if (mindEffort === 'none' || mindEffort === 'off') return 0
+  if (thinkingBudget !== null) return thinkingBudget
+  return Math.floor(maxOutput / 2)
+}
+
+function compactionBounds(
+  window: number,
+  output: number,
+  quickEffort: string,
+  effort: string,
+  thinkingBudget: number | null,
+): { min: number; max: number; reserve: number } {
+  const reserve = recapReserve(output, quickEffort, effort, thinkingBudget)
+  return {
+    reserve,
+    min: Math.max(1, output - reserve + 1),
+    max: window - output,
+  }
+}
+
 /**
  * The compaction threshold for a window: the root config's default 60000, or three quarters of what the
- * window keeps after the output when that is smaller. The system prompt and tools alone take several
- * thousand tokens, so a much smaller threshold leaves no room for the recap.
+ * window keeps after the output when that is smaller, clamped into `[min, max]` when valid.
  */
-function compactionBudget(window: number, output: number): number {
-  return Math.min(60000, Math.floor((window - output) * 0.75))
+function compactionBudget(
+  window: number,
+  output: number,
+  quickEffort = 'low',
+  effort = '',
+  thinkingBudget: number | null = null,
+): number {
+  const { min, max } = compactionBounds(window, output, quickEffort, effort, thinkingBudget)
+  if (max <= 1) return 1
+  const preferred = Math.max(1, Math.min(60000, Math.floor(max * 0.75)))
+  if (min > max) return preferred
+  return Math.min(max, Math.max(min, preferred))
 }
 
 function initial(): Draft {
@@ -489,10 +530,17 @@ export function createWizard() {
   }
 
   watch(
-    () => [draft.contextWindow, draft.maxOutput] as const,
-    ([window, output], previous) => {
-      if (!previous || window === null || output === null) return
-      if (window > output + 1024) draft.inputBudget = compactionBudget(window, output)
+    () =>
+      [draft.contextWindow, draft.maxOutput, draft.quickEffort, draft.effort, draft.thinkingBudget] as const,
+    ([window, output, quickEffort, effort, thinkingBudget], previous) => {
+      if (!previous || window === null || output === null || window <= output) return
+      const [prevWindow, prevOutput] = previous
+      if (window !== prevWindow || output !== prevOutput) {
+        draft.inputBudget = compactionBudget(window, output, quickEffort, effort, thinkingBudget)
+      } else if (draft.inputBudget !== null) {
+        const { min, max } = compactionBounds(window, output, quickEffort, effort, thinkingBudget)
+        if (min <= max && draft.inputBudget < min) draft.inputBudget = min
+      }
     },
   )
 
@@ -550,8 +598,45 @@ export function createWizard() {
       need('model', Boolean(draft.model.trim()))
       need('contextWindow', draft.contextWindow !== null && draft.contextWindow >= 2048, 'contextWindow')
       need('maxOutput', draft.maxOutput !== null && draft.maxOutput >= 1)
-      need('inputBudget', draft.inputBudget !== null && draft.inputBudget >= 1)
+      need(
+        'maxOutput',
+        draft.contextWindow === null || draft.maxOutput === null || draft.maxOutput < draft.contextWindow,
+        'maxOutputWindow',
+      )
       need('thinkingBudget', !(draft.effort.trim() && draft.thinkingBudget !== null), 'bothThinking')
+      const recapUsesThinkingBudget =
+        !draft.quickEffort.trim() &&
+        !['none', 'off'].includes(draft.effort.trim()) &&
+        draft.thinkingBudget !== null
+      if (recapUsesThinkingBudget && draft.maxOutput !== null) {
+        need('thinkingBudget', draft.thinkingBudget! < draft.maxOutput, 'thinkingBudgetMaxOutput')
+      }
+      need('inputBudget', draft.inputBudget !== null && draft.inputBudget >= 1)
+      if (
+        draft.contextWindow !== null &&
+        draft.maxOutput !== null &&
+        draft.maxOutput >= 1 &&
+        draft.maxOutput < draft.contextWindow &&
+        (!recapUsesThinkingBudget || draft.thinkingBudget! < draft.maxOutput)
+      ) {
+        const bounds = compactionBounds(
+          draft.contextWindow,
+          draft.maxOutput,
+          draft.quickEffort,
+          draft.effort,
+          draft.thinkingBudget,
+        )
+        if (bounds.min > bounds.max) {
+          need('maxOutput', false, 'maxOutputCompaction')
+        } else {
+          need('inputBudget', draft.inputBudget === null || draft.inputBudget >= bounds.min, 'inputBudgetMin')
+          need(
+            'inputBudget',
+            draft.inputBudget === null || draft.inputBudget <= bounds.max,
+            'inputBudgetWindow',
+          )
+        }
+      }
       need('maxSteps', draft.maxSteps !== null && draft.maxSteps > 0)
       if (searchAlias() === 'search') {
         need('searchBaseUrl', httpUrl(draft.searchBaseUrl.trim()), 'httpUrl')

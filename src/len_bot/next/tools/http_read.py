@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import zlib
 from collections.abc import Callable
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -14,6 +15,7 @@ from .host_traffic import MeteredTransport, admit
 
 MAX_REDIRECTS = 5
 ERROR_BYTES = 2048
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 
 def _target(url: str) -> tuple[str, str, int, str, str]:
@@ -65,9 +67,113 @@ async def _error_fragment(response: httpx.Response) -> str:
     return fragment.decode("utf-8", errors="replace")
 
 
+def _parse_content_encoding(raw: str) -> str:
+    encodings = [part.strip().lower() for part in raw.split(",") if part.strip()]
+    encodings = [item for item in encodings if item != "identity"]
+    if not encodings:
+        return "identity"
+    if len(encodings) == 1 and encodings[0] in {"gzip", "x-gzip"}:
+        return "gzip"
+    if len(encodings) == 1 and encodings[0] == "deflate":
+        return "deflate"
+    raise ValueError(f"HTTP read unsupported Content-Encoding: {raw}")
+
+
+async def _read_body(response: httpx.Response, media_type: str,
+                     byte_limit: Callable[[str, bytes], int]) -> bytes:
+    encoding = _parse_content_encoding(response.headers.get("content-encoding", ""))
+    body = bytearray()
+    prefix = bytearray()
+    if encoding == "identity":
+        async for chunk in response.aiter_raw(chunk_size=65536):
+            if len(prefix) < 5:
+                prefix.extend(chunk[: 5 - len(prefix)])
+            limit = byte_limit(media_type, bytes(prefix))
+            if len(body) + len(chunk) > limit:
+                raise ValueError(f"HTTP read resource exceeds {limit} decoded bytes")
+            body.extend(chunk)
+        return bytes(body)
+
+    wbits = 16 + zlib.MAX_WBITS if encoding == "gzip" else zlib.MAX_WBITS
+    decompressor = zlib.decompressobj(wbits)
+    raw_deflate_tried = False
+    produced = False
+    gzip_between_members = False
+    raw_bytes = 0
+
+    def append_decoded(piece: bytes) -> None:
+        nonlocal produced
+        if not piece:
+            return
+        produced = True
+        if len(prefix) < 5:
+            prefix.extend(piece[: 5 - len(prefix)])
+        limit = byte_limit(media_type, bytes(prefix))
+        if len(body) + len(piece) > limit:
+            raise ValueError(f"HTTP read resource exceeds {limit} decoded bytes")
+        body.extend(piece)
+
+    async for chunk in response.aiter_raw(chunk_size=65536):
+        if not chunk:
+            continue
+        raw_bytes += len(chunk)
+        current_limit = byte_limit(media_type, bytes(prefix))
+        if raw_bytes > current_limit * 2 + 65536:
+            raise ValueError(f"HTTP read compressed stream exceeds safe size for {current_limit} decoded bytes")
+        if gzip_between_members:
+            decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            gzip_between_members = False
+        buf = chunk
+        while buf:
+            limit = byte_limit(media_type, bytes(prefix))
+            remaining = limit - len(body)
+            max_length = min(5 - len(prefix), remaining + 1) if len(prefix) < 5 else remaining + 1
+            if max_length <= 0:
+                raise ValueError(f"HTTP read resource exceeds {limit} decoded bytes")
+            try:
+                piece = decompressor.decompress(buf, max_length)
+            except zlib.error as error:
+                if encoding == "deflate" and not produced and not raw_deflate_tried:
+                    raw_deflate_tried = True
+                    decompressor = zlib.decompressobj(-zlib.MAX_WBITS)
+                    continue
+                raise ValueError(f"HTTP read invalid {encoding} body: {error}") from error
+            append_decoded(piece)
+            if decompressor.eof:
+                unused = decompressor.unused_data
+                try:
+                    tail = decompressor.flush()
+                except zlib.error as error:
+                    raise ValueError(f"HTTP read invalid {encoding} body: {error}") from error
+                append_decoded(tail)
+                if encoding == "gzip":
+                    if unused:
+                        buf = unused
+                        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                    else:
+                        gzip_between_members = True
+                        buf = b""
+                else:
+                    buf = b""
+            elif decompressor.unconsumed_tail:
+                buf = decompressor.unconsumed_tail
+            else:
+                buf = b""
+    if raw_bytes and not gzip_between_members:
+        try:
+            tail = decompressor.flush()
+        except zlib.error as error:
+            raise ValueError(f"HTTP read invalid {encoding} body: {error}") from error
+        append_decoded(tail)
+        if encoding == "gzip" and not decompressor.eof:
+            raise ValueError("HTTP read truncated gzip body")
+    return bytes(body)
+
+
 async def fetch_public(url: str, timeout_seconds: float,
                        byte_limit: Callable[[str, bytes], int], *,
-                       fake_ip_networks: tuple, public_dns_url: str | None = None) -> tuple[str, str, bytes]:
+                       fake_ip_networks: tuple, public_dns_url: str | None = None,
+                       headers: dict[str, str] | None = None) -> tuple[str, str, bytes]:
     """GET once per hop with checked first address, preserving original Host and TLS name."""
     current = url
     for redirect in range(MAX_REDIRECTS + 1):
@@ -79,13 +185,18 @@ async def fetch_public(url: str, timeout_seconds: float,
         authority = numeric_host if port == (443 if scheme == "https" else 80) else f"{numeric_host}:{port}"
         parts = urlsplit(current)
         numeric_url = urlunsplit((scheme, authority, parts.path, parts.query, ""))
+        request_headers = dict(headers) if headers else {}
+        if not any(key.lower() == "user-agent" for key in request_headers):
+            request_headers["User-Agent"] = USER_AGENT
+        request_headers["Host"] = host_header
+        request_headers["Accept-Encoding"] = "gzip, deflate"
         # A client belongs to exactly one hop, preventing cross-origin connection reuse.
         async with httpx.AsyncClient(
             timeout=timeout_seconds, trust_env=False, follow_redirects=False,
             transport=MeteredTransport(httpx.AsyncHTTPTransport(retries=0, trust_env=False), host=host, ip=address),
         ) as client:
             async with client.stream(
-                "GET", numeric_url, headers={"Host": host_header, "Accept-Encoding": "identity"},
+                "GET", numeric_url, headers=request_headers,
                 extensions={"sni_hostname": host},
             ) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
@@ -104,16 +215,6 @@ async def fetch_public(url: str, timeout_seconds: float,
                     fragment = await _error_fragment(response)
                     raise ValueError(f"HTTP read status {response.status_code}: {fragment}")
                 media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                body = bytearray()
-                prefix = bytearray()
-                if response.headers.get("content-encoding", "identity").lower() != "identity":
-                    raise ValueError("HTTP read requires an uncompressed response (Accept-Encoding: identity)")
-                async for chunk in response.aiter_raw(chunk_size=65536):
-                    if len(prefix) < 5:
-                        prefix.extend(chunk[: 5 - len(prefix)])
-                    limit = byte_limit(media_type, bytes(prefix))
-                    if len(body) + len(chunk) > limit:
-                        raise ValueError(f"HTTP read resource exceeds {limit} decoded bytes")
-                    body.extend(chunk)
-                return current, response.headers.get("content-type", ""), bytes(body)
+                body = await _read_body(response, media_type, byte_limit)
+                return current, response.headers.get("content-type", ""), body
     raise AssertionError("redirect loop exhausted without returning")

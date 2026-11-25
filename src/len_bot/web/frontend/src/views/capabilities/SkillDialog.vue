@@ -3,10 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { capabilitiesApi, type SkillPlace } from '../../api/capabilities'
+import { readPendingRestart } from '../../api/hostStore'
 import { keys } from '../../api/query'
 import { developerDetails } from '../../composables/useDeveloperMode'
 import { formatBytes } from '../../i18n/format'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import CodeBlock from '../../ui/CodeBlock.vue'
@@ -36,10 +37,15 @@ const listing = useQuery({
 const path = ref<string | null>(null)
 const text = ref('')
 const next = ref<number | null>(null)
+let readSeq = 0
 const read = useMutation({
-  mutationFn: ({ file, offset }: { file: string; offset: number }) =>
-    capabilitiesApi.skillText(props.place, file, offset),
-  onSuccess: (page, { file, offset }) => {
+  mutationFn: async ({ file, offset }: { file: string; offset: number }) => {
+    const seq = ++readSeq
+    const page = await capabilitiesApi.skillText(props.place, file, offset)
+    return { page, seq }
+  },
+  onSuccess: ({ page, seq }, { file, offset }) => {
+    if (seq !== readSeq) return
     path.value = file
     text.value = offset ? text.value + page.content : page.content
     next.value = page.next_offset
@@ -48,8 +54,9 @@ const read = useMutation({
 watch(
   () => listing.data.value,
   (value) => {
-    if (value && path.value === null && value.files.some((file) => file.path === 'SKILL.md'))
-      read.mutate({ file: 'SKILL.md', offset: 0 })
+    if (!value || path.value !== null || !value.files.length) return
+    const initial = value.files.find((file) => file.path === 'SKILL.md') ?? value.files[0]
+    if (initial) read.mutate({ file: initial.path, offset: 0 })
   },
   { immediate: true },
 )
@@ -60,6 +67,7 @@ const done = (message: string) => {
   toast.success(message)
   client.removeQueries({ queryKey: key.value })
   void client.invalidateQueries({ queryKey: keys.skills.all() })
+  void readPendingRestart()
   emit('changed')
   open.value = false
 }
@@ -92,6 +100,10 @@ async function confirmRemove() {
   })
   if (sure) remove.mutate()
 }
+const usedGroupLabel = (scene: string) => {
+  const id = sceneSecondaryId(scene)
+  return id ? `${groupLabel(scene)} (${id})` : groupLabel(scene)
+}
 const busy = computed(() => move.isPending.value || remove.isPending.value)
 const actionError = computed(() => move.error.value ?? remove.error.value)
 </script>
@@ -114,22 +126,26 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
         <Badge v-if="!listing.data.value.skill.model_invocation" tone="warning">
           {{ t('capabilities.skills.manualOnly') }}
         </Badge>
-        <span v-if="listing.data.value.used_by_running.length">
+        <span v-if="listing.data.value.used_by_running.length" class="tabular">
           {{
             t('capabilities.skills.usedBy', {
-              groups: listing.data.value.used_by_running.map(groupLabel).join(t('personas.separator')),
+              groups: listing.data.value.used_by_running.map(usedGroupLabel).join(t('personas.separator')),
             })
           }}
         </span>
       </p>
-      <div class="flex flex-wrap gap-1.5">
+      <div class="flex flex-wrap gap-1.5 font-mono">
         <Button
           v-for="file in listing.data.value.files"
           :key="file.path"
           size="sm"
           :variant="file.path === path ? 'secondary' : 'ghost'"
-          class="font-mono"
           :aria-pressed="file.path === path"
+          :loading="
+            read.isPending.value &&
+            read.variables.value?.offset === 0 &&
+            read.variables.value?.file === file.path
+          "
           :title="formatBytes(file.size)"
           @click="read.mutate({ file: file.path, offset: 0 })"
         >
@@ -141,6 +157,7 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
         :title="t('capabilities.skills.readFile')"
         :error="read.error.value"
       />
+      <Skeleton v-else-if="!path && read.isPending.value" :lines="6" />
       <CodeBlock
         v-if="path"
         :code="text || t('capabilities.skills.emptyFile')"
@@ -148,30 +165,30 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
         wrap
         :max-lines="30"
       />
-      <Button
-        v-if="next !== null && path"
-        size="sm"
-        variant="ghost"
-        class="self-start"
-        :loading="read.isPending.value"
-        @click="read.mutate({ file: path, offset: next })"
-      >
-        {{ t('capabilities.skills.continue') }}
-      </Button>
+      <div v-if="next !== null && path" class="flex">
+        <Button
+          size="sm"
+          variant="ghost"
+          :loading="read.isPending.value"
+          @click="read.mutate({ file: path, offset: next })"
+        >
+          {{ t('capabilities.skills.continue') }}
+        </Button>
+      </div>
       <ErrorNote v-if="actionError" :title="t('capabilities.failed')" :error="actionError" />
       <RawRecord v-if="developerDetails" :label="t('capabilities.skills.raw')" :code="listing.data.value" />
     </div>
     <template v-if="movable || removable" #footer>
-      <Button
-        v-if="removable"
-        variant="danger-ghost"
-        class="mr-auto"
-        :disabled="!listing.data.value || busy"
-        :loading="remove.isPending.value"
-        @click="confirmRemove"
-      >
-        {{ t('common.delete') }}
-      </Button>
+      <span v-if="removable" class="mr-auto inline-flex">
+        <Button
+          variant="danger-ghost"
+          :disabled="!listing.data.value || busy"
+          :loading="remove.isPending.value"
+          @click="confirmRemove"
+        >
+          {{ t('common.delete') }}
+        </Button>
+      </span>
       <Button
         v-if="place.source === 'task'"
         :disabled="!listing.data.value || busy"

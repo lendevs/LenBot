@@ -1,4 +1,5 @@
 import type { Tone } from '../../ui/Badge.vue'
+export { sceneSecondaryId } from '../../layouts/shell/scenes'
 
 const mcpTones: Record<string, Tone> = {
   running: 'success',

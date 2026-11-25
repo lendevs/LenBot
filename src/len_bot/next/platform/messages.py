@@ -79,6 +79,17 @@ def plain_text(message: ChatMessage) -> str:
                    for segment in message.segments)
 
 
+CARD_LIMIT = 16
+
+
+def _display_name(message: ChatMessage) -> str | None:
+    """The name shown in the transcript; a long free-form card is clipped."""
+    name = (message.sender.card or "").strip() or (message.sender.nickname or "").strip()
+    if not name:
+        return None
+    return name if len(name) <= CARD_LIMIT else name[:CARD_LIMIT] + "…"
+
+
 def _speaker(message: ChatMessage) -> str:
     if message.is_self:
         if message.send_status == "failed":
@@ -88,7 +99,7 @@ def _speaker(message: ChatMessage) -> str:
         if message.send_status == "simulated":
             return "我（模拟）"
         return "我"
-    name = message.sender.card or message.sender.nickname
+    name = _display_name(message)
     return f"{name}({message.sender.uid})" if name else f"{message.sender.uid}"
 
 
@@ -184,7 +195,7 @@ def render_batch(items: Sequence[tuple[ChatMessage, ChatMessage | None, dict[int
             lines.append(f"{message.scene}｜{local.date()}｜{timezone} {local.strftime('%z')}")
             previous = header
         # Names and IDs are data on one line, not new batch headings.
-        name = '我' if message.is_self else message.sender.card or message.sender.nickname
+        name = '我' if message.is_self else _display_name(message)
         speaker = (f"{message.sender.uid}" if name is None else
                    f"{json.dumps(name, ensure_ascii=False)}({message.sender.uid})")
         labels = []

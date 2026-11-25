@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown } from '@lucide/vue'
+import Collapsible from '../../../ui/Collapsible.vue'
 import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
 import Input from '../../../ui/Input.vue'
@@ -30,7 +30,6 @@ type NumberKey =
 
 const { t } = useI18n()
 const form = useForm()
-const details = ref(false)
 
 const participation = computed({
   get: (): Participation => ({
@@ -69,10 +68,12 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; min?: number; 
   { key: 'explore_probability', step: 0.01, max: 1 },
   { key: 'max_extensions' },
 ]
+
+const hasDetailsError = computed(() => timing.some((item) => Boolean(form.errors[`attention.${item.key}`])))
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.participation.section')">
+  <FormSection id="participation" :title="t('groups.settings.participation.section')">
     <ParticipationChoice v-model="participation" />
     <Field
       v-if="!form.draft.scene.attention.only_direct"
@@ -91,23 +92,13 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; min?: number; 
       <Switch v-model="form.draft.scene.transcribe_audio" />
     </Field>
 
-    <div class="sm:col-span-2">
-      <button
-        type="button"
-        class="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-sm font-medium text-muted hover:text-ink focus-visible:focus-ring"
-        :aria-expanded="details"
-        @click="details = !details"
-      >
-        <ChevronDown
-          :size="15"
-          class="transition-transform"
-          :class="details && 'rotate-180'"
-          aria-hidden="true"
-        />
-        {{ t('groups.settings.participation.details') }}
-      </button>
-    </div>
-    <template v-if="details">
+    <Collapsible
+      v-model:open="form.expanded.participationDetails"
+      :title="t('groups.settings.participation.details')"
+      :dot="hasDetailsError ? 'error' : false"
+      class="sm:col-span-2"
+      content-class="grid gap-x-5 gap-y-5 sm:grid-cols-2"
+    >
       <Field
         v-for="item in timing"
         :key="item.key"
@@ -123,6 +114,6 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; min?: number; 
           @update:model-value="(value) => (form.draft.scene.attention[item.key] = value as number)"
         />
       </Field>
-    </template>
+    </Collapsible>
   </FormSection>
 </template>

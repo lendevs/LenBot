@@ -20,7 +20,7 @@ from .expression import ChatExpression, MessageSender
 from .tools import MemoryPlugins, SceneTools
 from ..config import LabConfig
 from .recap import (CompactionPlan, ContextBudgetError, continuation_request, estimate_content,
-                    estimate_text_request, plan_compaction, recap_source)
+                    estimate_request, estimate_text_request, plan_compaction, recap_source)
 from ..learning.expression_match import select_by_words
 from ..learning.expression_selection import ExpressionService
 from ..learning.store import DISLIKED_DAYS, LearningStore
@@ -40,11 +40,14 @@ PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "kn
 # Consecutive sends not confirmed as delivered after which the turn ends; rewriting the message again would
 # meet the same platform, and an unconfirmed send may already be in the group.
 SEND_FAILURE_LIMIT = 2
+# Automatic recap backoff after transient provider failures when the uncompacted request still fits the window.
+RECAP_COOLDOWN_SECONDS = 300.0
 from ..memory.service import MemoryService, MemorySettings, recall_cues
 from ..reference.library import ReferenceLibrary
 from ..reference.tool import changes_notice
 from ..platform.messages import UploadResult
-from ..models.client import ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError, ModelReply
+from ..models.client import (ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError,
+                             ModelProtocolError, ModelReply)
 from ..models.request import request_estimate, request_model
 from ..models.slots import ModelSlots
 from ..persona.profile import Persona, select_style
@@ -163,13 +166,20 @@ class Chat:
         # has grown by another keep_recent_tokens, turns go on with the existing recap instead of paying
         # for the same failing recap again.
         self.compaction_held_at: int | None = None
+        # Cooldown timestamp after a transient provider/network error in automatic recap.
+        self._recap_cooldown_until: float = 0.0
+        # Live quiet state callback supplied by the scene runner when attached.
+        self.quiet_state: Callable[[], dict | None] | None = None
         # Successful mind replies in the running turn, and the provider failure that ended it.
         self.turn_model_replies = 0
         self.turn_model_failure: dict | None = None
+        # First unread non-expression tool result seq in the current turn, protected from folding across arriving chat.
+        self._unseen_tool_seq: int | None = None
         if config.models.roles.vision is not None and vision is None:
             raise ValueError("vision 客户端必须与根配置的视觉模型绑定一起提供")
         self.skills = () if tasks is None else tasks.skills[config.scene]
         self.context = ChatContext(config, persona, store, platform=send_message is not None, memory=memory)
+        self.context.quiet_state = lambda: None if self.quiet_state is None else self.quiet_state()
         self.expression = ChatExpression(
             config, persona, store, context=self.context,
             send_message=send_message,
@@ -177,6 +187,7 @@ class Chat:
             notify=self.notify, on_reply_sample=on_reply_sample, now=now,
             exclude_from_memory=None if memory is None else lambda seq: memory.jobs.exclude_records(config.scene, [seq]))
         self.expression.reserve = lambda: self.speech_reserve
+        self.expression.should_interrupt = self.direct_interrupt_pending
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
@@ -260,6 +271,7 @@ class Chat:
             raise
         if role == "mind":
             self.turn_model_replies += 1
+            self._unseen_tool_seq = None
         return reply
 
     async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True,
@@ -277,13 +289,22 @@ class Chat:
             log_event(logger, 'plugin_compaction', plugin=plugin, compact_through=plan.through)
         else:
             messages, tools = plan.request_messages, []
+            used_continuation = False
+            window_tokens = self.config.models.roles.mind.context_window_tokens
             if chat is not None and plan.kept_first is not None:
                 continued = continuation_request(chat[:-1], plan)
                 estimated, _ = await self.store.read(
                     request_estimate, self.config, self.store, self.mind, scene=self.config.scene, role="recap",
                     messages=continued, tools=self.toolset.tools, output_tokens=self.config.recap_output_tokens)
-                if estimated <= self.config.models.roles.mind.context_window_tokens:
+                if estimated <= window_tokens:
                     messages, tools = continued, self.toolset.tools
+                    used_continuation = True
+            if not used_continuation:
+                required = estimate_request(plan.request_messages, [], self.config.recap_output_tokens)
+                if required > window_tokens:
+                    raise ContextBudgetError(
+                        f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
+                        "请调大窗口或调小回想最大长度")
             recap = (await self.request(turn_id, "recap", messages, tools, recap_target=plan)).text
         await self.store.call(self.store.commit_recap, self.config.scene, plan.through, recap)
         return recap
@@ -324,6 +345,8 @@ class Chat:
                     summary_template=read_prompt("next_recap.md"),
                     window_tokens=binding.context_window_tokens,
                     source_entries=self.context.conversation_entries(entries), token_scale=scale,
+                    allow_oversized_source=self.config.recap_plugin is None,
+                    protect_from_seq=self._unseen_tool_seq,
                 )
                 recap = await self.compact(turn_id, plan, chat=projection)
         except BaseException as error:
@@ -331,6 +354,7 @@ class Chat:
             self.notify()
             raise
         self.compaction_held_at = None
+        self._recap_cooldown_until = 0.0
         self.store.end_turn(turn_id, "manual_compaction")
         if self.on_compaction is not None:
             self.on_compaction()
@@ -356,15 +380,28 @@ class Chat:
                 if entries:
                     state = turn_state(self.config, self.store, now=self.now())
                     projection = await self.context.project(recap, entries, state)
-                    plan = plan_compaction(
-                        self.context.project_entries(entries), system=projection[0], state=projection[-1],
-                        tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
-                        trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
-                        summary_output_tokens=self.config.recap_output_tokens,
-                        reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=recap,
-                        summary_template=template, window_tokens=binding.context_window_tokens,
-                        source_entries=self.context.conversation_entries(entries), include_latest=True,
-                    )
+                    pending_entries = self.context.project_entries(entries)
+                    pending_source = self.context.conversation_entries(entries)
+                    current_recap = recap
+                    final_through = entries[-1][0]
+                    # A handover follows its own template for the next role; fold every batch through the
+                    # last active entry before committing once so no previous-role lines remain raw.
+                    while pending_entries:
+                        plan = plan_compaction(
+                            pending_entries, system=projection[0], state=projection[-1],
+                            tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
+                            trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
+                            summary_output_tokens=self.config.recap_output_tokens,
+                            reasoning_reserve_tokens=self.config.recap_reasoning_reserve, recap=current_recap,
+                            summary_template=template, window_tokens=binding.context_window_tokens,
+                            source_entries=pending_source, include_latest=True,
+                        )
+                        current_recap = (await self.request(
+                            turn_id, "recap", plan.request_messages, [], recap_target=plan
+                        )).text
+                        pending_entries = [entry for entry in pending_entries if entry[0] > plan.through]
+                        pending_source = [entry for entry in pending_source if entry[0] > plan.through]
+                    await self.store.call(self.store.commit_recap, scene, final_through, current_recap)
                 else:
                     # Only an earlier recap is active; rewrite it in place.
                     through = self.store.db.execute("SELECT compact_through FROM mind_sessions WHERE scene=?",
@@ -373,8 +410,7 @@ class Chat:
                     plan = CompactionPlan(through, budget, [
                         {"role": "system", "content": Template(template).substitute(summary_budget_tokens=budget)},
                         {"role": "user", "content": recap_source(recap, [])}])
-                # A handover follows its own template for the next role; the scene's recap plugin does not write it.
-                await self.compact(turn_id, plan, strategy=False)
+                    await self.compact(turn_id, plan, strategy=False)
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -424,7 +460,7 @@ class Chat:
                                                                       self.config.scene))
             state = await self.store.read(turn_state, self.config, self.store, now=observed_at,
                                           expression_style=expression_style, recalled=recalled)
-            messages = await self.context.project(recap, entries, state)
+            messages = await self.context.project(recap, entries, state, protect_from_seq=self._unseen_tool_seq)
             estimated, method = await self.store.read(
                 request_estimate, self.config, self.store, self.mind, scene=self.config.scene,
                 role='mind', messages=messages, tools=self.toolset.tools, output_tokens=0)
@@ -437,20 +473,26 @@ class Chat:
                 return PreparedContext(messages, estimated, method)
             hold = self.compaction_held_at
             fits = estimated + binding.max_output_tokens <= binding.context_window_tokens
+            fits_cooldown = estimated + binding.max_output_tokens < binding.context_window_tokens
             if hold is not None and fits and estimated < hold + self.config.compaction.keep_recent_tokens:
                 return PreparedContext(messages, estimated, method)
+            if fits_cooldown and self.store.now() < self._recap_cooldown_until:
+                return PreparedContext(messages, estimated, method)
             scale = token_scale
-            plan = plan_compaction(
-                self.context.project_entries(entries), system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
-                output_tokens=binding.max_output_tokens, trigger_tokens=trigger,
-                keep_recent_tokens=self.config.compaction.keep_recent_tokens,
-                summary_output_tokens=self.config.recap_output_tokens,
-                reasoning_reserve_tokens=self.config.recap_reasoning_reserve,
-                recap=recap, summary_template=read_prompt("next_recap.md"),
-                window_tokens=binding.context_window_tokens,
-                source_entries=self.context.conversation_entries(entries), token_scale=scale,
-            )
             try:
+                plan = plan_compaction(
+                    self.context.project_entries(entries, protect_from_seq=self._unseen_tool_seq),
+                    system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
+                    output_tokens=binding.max_output_tokens, trigger_tokens=trigger,
+                    keep_recent_tokens=self.config.compaction.keep_recent_tokens,
+                    summary_output_tokens=self.config.recap_output_tokens,
+                    reasoning_reserve_tokens=self.config.recap_reasoning_reserve,
+                    recap=recap, summary_template=read_prompt("next_recap.md"),
+                    window_tokens=binding.context_window_tokens,
+                    source_entries=self.context.conversation_entries(entries), token_scale=scale,
+                    allow_oversized_source=self.config.recap_plugin is None,
+                    protect_from_seq=self._unseen_tool_seq,
+                )
                 await self.compact(turn_id, plan, chat=messages)
             except (ModelOutputLimitError, ContextBudgetError) as error:
                 # A recap that ran out of its allowance or budget keeps the existing recap and history; the
@@ -461,7 +503,21 @@ class Chat:
                 log_event(logger, 'compaction_held', level=logging.WARNING, error=error, input_tokens=estimated,
                           trigger_tokens=trigger, window_tokens=binding.context_window_tokens)
                 return PreparedContext(messages, estimated, method)
+            except (ModelHTTPError, ModelConnectionError, TimeoutError, ModelProtocolError, ValueError) as error:
+                if (
+                    (isinstance(error, (ModelProtocolError, ValueError)) and self.config.recap_plugin is not None)
+                    or self.turn_stopped
+                    or not fits_cooldown
+                ):
+                    raise
+                self.turn_model_failure = None
+                self._recap_cooldown_until = self.store.now() + RECAP_COOLDOWN_SECONDS
+                log_event(logger, 'compaction_cooldown', level=logging.WARNING, error=error, input_tokens=estimated,
+                          trigger_tokens=trigger, window_tokens=binding.context_window_tokens,
+                          cooldown_until=self._recap_cooldown_until)
+                return PreparedContext(messages, estimated, method)
             self.compaction_held_at = None
+            self._recap_cooldown_until = 0.0
             compacted = True
             if self.on_compaction is not None:
                 self.on_compaction()
@@ -474,6 +530,18 @@ class Chat:
         if self.reserve_revoked:
             return False
         return self.direct_request or self.reserve_request or self.turn_channel in RESERVE_CHANNELS
+
+    def direct_interrupt_pending(self) -> bool:
+        """A non-blacklisted direct message arrived while this non-direct turn was running."""
+        if self.direct_request:
+            return False
+        private = self.config.scene.split(":", 2)[1] == "private"
+        blacklist = self.config.permissions.blacklist
+        return any(
+            not message.is_self and message.sender.uid not in blacklist
+            and (private or message.mentions_bot)
+            for _, message, _ in self.store.pending_messages(self.config.scene)
+        )
 
     def followup_arrived(self, talking: set[str]) -> bool:
         """A new message from someone this turn answers, or one that addresses the bot."""
@@ -523,6 +591,7 @@ class Chat:
         self.turn_messages = 0
         self.turn_model_replies = 0
         self.turn_model_failure = None
+        self._unseen_tool_seq = None
         observed_at = self.now()
         self.turn_channels = set() if channels is None else set(channels)
         scene = self.config.scene
@@ -657,7 +726,7 @@ class Chat:
                     self._check_stopped()
                     stepped_lookup = any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
                     looked_up = looked_up or stepped_lookup
-                    end_turn, group_failed = False, False
+                    end_turn, group_failed, interrupted = False, False, False
                     # Several read-only calls in one reply run together; results are stored in call order.
                     parallel = [call for call in reply.tool_calls if call.name in PARALLEL_TOOLS]
                     prefetched = {call.id: asyncio.create_task(self.toolset.execute(
@@ -694,6 +763,12 @@ class Chat:
                                         await self.store.call(self.store.complete_tool, scene, call.id, content,
                                                               discovered_tools=discovered,
                                                               response_turn_id=turn_id if reaction else None)
+                                        if not reaction and self._unseen_tool_seq is None:
+                                            page = await self.store.read(
+                                                self.store.mind_history_page, scene, before=None, limit=1, active_only=False,
+                                            )
+                                            if page["entries"]:
+                                                self._unseen_tool_seq = page["entries"][-1]["seq"]
                                         if reaction:
                                             expressions.append(content)
                                             self.turn_expressions += 1
@@ -714,6 +789,9 @@ class Chat:
                                             self.turn_messages += 1
                                         if delivery_status in {"sent", "simulated"}:
                                             end_turn = end_turn or expression.end_turn
+                                            failed_sends = 0
+                                        elif delivery_status == "interrupted":
+                                            interrupted = True
                                             failed_sends = 0
                                         else:
                                             group_failed = True
@@ -738,6 +816,13 @@ class Chat:
                             started.cancel()
                     if failed_sends >= SEND_FAILURE_LIMIT:
                         status, error_text = "send_failed", f"连续 {failed_sends} 次发送没有确认送达"
+                        break
+                    if interrupted:
+                        if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
+                                and await append_new(True, turn_id)):
+                            extensions += 1
+                            continue
+                        status = "settled"
                         break
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the
@@ -770,6 +855,7 @@ class Chat:
             if isinstance(error, TimeoutError) and self.turn_stopped:
                 status, error_text = "cancelled", "聊天已关闭，当前轮停止"
         finally:
+            self._unseen_tool_seq = None
             self.toolset.source_floor = None
             self.turn_deadline = None
         self.store.finish_pending_tools(scene, error_text or status)

@@ -3,18 +3,30 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageCircleQuestion } from '@lucide/vue'
 import type { TaskQuestion } from '../../../api/tasks'
+import { formatDuration } from '../../../i18n/format'
 import Button from '../../../ui/Button.vue'
 import RadioGroup from '../../../ui/RadioGroup.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import { confirm } from '../../../ui/confirm'
 
-const props = defineProps<{ question: TaskQuestion; canAnswer: boolean; busy: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    question: TaskQuestion
+    canAnswer: boolean
+    busy: boolean
+    urgent?: boolean
+    timeoutSeconds?: number | null
+    disabledReason?: string | null
+  }>(),
+  { urgent: false, timeoutSeconds: null, disabledReason: null },
+)
 const emit = defineEmits<{
   answer: [body: { question_id: string; text?: string; confirmed?: boolean }]
   dirty: [value: boolean]
 }>()
 
 const { t } = useI18n()
+const mac = /Mac|iPhone|iPad/.test(navigator.platform)
 const text = ref('')
 const choice = ref<string>()
 const options = computed(() => (props.question.options ?? []).map((value) => ({ value, label: value })))
@@ -42,17 +54,35 @@ async function decide(confirmed: boolean) {
   if (sure) emit('answer', { question_id: props.question.id, confirmed })
 }
 function reply() {
+  if (props.busy) return
   const value = props.question.method === 'select' ? choice.value : text.value.trim()
   if (value) emit('answer', { question_id: props.question.id, text: value })
+}
+function onTextareaKeydown(event: KeyboardEvent) {
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    event.preventDefault()
+    reply()
+  }
 }
 </script>
 
 <template>
-  <section class="flex flex-col gap-3 rounded-lg border border-line-strong px-4 py-3">
-    <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
-      <MessageCircleQuestion :size="16" class="text-warning" aria-hidden="true" />
-      {{ t('groups.tasks.question.title') }}
-    </h3>
+  <section
+    class="flex flex-col gap-3 rounded-lg border px-4 py-3.5"
+    :class="urgent ? 'animate-rise border-warning/30 bg-warning-bg/60' : 'border-line-strong bg-fill'"
+  >
+    <div class="flex flex-wrap items-center gap-2">
+      <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
+        <MessageCircleQuestion :size="16" class="shrink-0 text-warning" aria-hidden="true" />
+        {{ t('groups.tasks.question.title') }}
+      </h3>
+      <span
+        v-if="canAnswer && timeoutSeconds && timeoutSeconds > 0"
+        class="ml-auto text-xs text-muted tabular"
+      >
+        {{ t('groups.tasks.question.timeout', { time: formatDuration(timeoutSeconds * 1000) }) }}
+      </span>
+    </div>
     <p class="text-sm break-words whitespace-pre-wrap text-ink">{{ question.title }}</p>
     <p v-if="question.message" class="text-sm break-words whitespace-pre-wrap text-ink-2">
       {{ question.message }}
@@ -85,6 +115,7 @@ function reply() {
           :rows="2"
           :max-rows="10"
           :placeholder="t('groups.tasks.question.placeholder')"
+          @keydown="onTextareaKeydown"
         />
         <Button
           variant="primary"
@@ -95,8 +126,12 @@ function reply() {
           @click="reply"
         >
           {{ t('groups.tasks.question.answer') }}
+          <span v-if="!busy" class="ml-0.5 text-2xs font-medium opacity-75 max-sm:hidden">
+            {{ mac ? '⌘↵' : 'Ctrl ↵' }}
+          </span>
         </Button>
       </template>
     </template>
+    <p v-else-if="disabledReason" class="text-xs text-muted">{{ disabledReason }}</p>
   </section>
 </template>

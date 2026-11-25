@@ -3,11 +3,11 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-DISCOVERY_REQUIRED_NAMES = frozenset({"scene_control", "host_manage", "schedule_list", "schedule_cancel", "open_forward", "member_info", "group_files", "transcribe"})
+DISCOVERY_REQUIRED_NAMES = frozenset({"host_manage", "schedule_list", "schedule_cancel", "open_forward", "member_info", "group_files", "transcribe"})
 
 
 # knowledge is loaded with the core tools wherever the persona or the chat has files.
-DEFERRED_NAMES = frozenset({"schedule", "memory", "delegate", "task", "send_file", "web_search", "web_read", "scene_control", "host_manage", "schedule_list", "schedule_cancel", "open_forward", "member_info", "group_files", "transcribe"})
+DEFERRED_NAMES = frozenset({"schedule", "memory", "delegate", "task", "send_file", "web_search", "web_read", "host_manage", "schedule_list", "schedule_cancel", "open_forward", "member_info", "group_files", "transcribe"})
 
 
 def deferred_names(allowed_names: set[str], config) -> frozenset[str]:
@@ -56,24 +56,37 @@ class ToolSearchArguments(BaseModel):
 
 
 TOOL_SEARCH = {"type": "function", "function": {
-    "name": "tool_search", "description": "按名称或说明中的原词查找当前已允许的低频工具，最多返回 5 项。"
+    "name": "tool_search", "description": "按名称或说明中的原词查找当前已允许的低频工具，最多返回 5 项，支持空格分隔多关键词。"
     "目录已给出明确工具名时直接用完整名称查询。命中工具从下一次模型请求开始可用。",
     "parameters": ToolSearchArguments.model_json_schema(),
 }}
 
 
 def search_tools(query: str, pool: list[dict], *, descriptions: dict[str, str]) -> list[dict]:
-    query = query.casefold()
+    normalized = query.strip().casefold()
+    if not normalized:
+        return []
+    tokens = list(dict.fromkeys(normalized.split()))
     matches = []
     for tool in pool:
         name = tool["name"].casefold()
-        if name == query:
-            rank = 0
-        elif name.startswith(query):
-            rank = 1
-        elif (query in name or query in tool["description"].casefold()
-              or query in descriptions[tool["name"]].casefold()):
-            rank = 2
+        summary = tool["description"].casefold()
+        full = descriptions[tool["name"]].casefold()
+        haystack = f"{name} {summary} {full}"
+        if name == normalized:
+            rank = (0, 0)
+        elif name.startswith(normalized):
+            rank = (1, 0)
+        elif normalized in name or normalized in summary or normalized in full:
+            rank = (2, 0)
+        elif len(tokens) > 1 or tokens != [normalized]:
+            hits = sum(1 for token in tokens if token in haystack)
+            if hits == len(tokens):
+                rank = (3, 0)
+            elif hits > 0:
+                rank = (4, -hits)
+            else:
+                continue
         else:
             continue
         matches.append((rank, name, tool))

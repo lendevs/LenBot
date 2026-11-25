@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TimelineNotice } from '../../../api/timeline'
 import { developerDetails } from '../../../composables/useDeveloperMode'
-import { formatDateTime } from '../../../i18n/format'
+import { formatDateTime, formatDuration } from '../../../i18n/format'
 import RawRecord from '../tasks/RawRecord.vue'
 
 const props = defineProps<{
@@ -26,7 +26,7 @@ const text = computed(() => {
   const values = {
     name: person(user_id, user_name),
     operator: person(operator_id, operator_name),
-    duration: t(`${prefix}.minutes`, { n: Math.max(1, Math.round((duration ?? 0) / 60)) }),
+    duration: formatDuration(Math.max(0, duration ?? 0) * 1000),
     card: field('card_new'),
     file: (props.notice.raw.file as { name?: string } | undefined)?.name ?? '',
     sub: sub ?? '',
@@ -43,7 +43,7 @@ const text = computed(() => {
 
 <template>
   <div class="flex flex-col items-center gap-1 px-4 py-1.5 text-center">
-    <p class="max-w-full rounded-full bg-fill px-3 py-1 text-xs break-words text-muted">
+    <p class="max-w-full rounded-xl border border-line bg-fill px-3 py-1 text-xs break-words text-muted">
       {{ text }} ·
       <span class="tabular">{{ formatDateTime(notice.time, { timeZone }) }}</span>
     </p>

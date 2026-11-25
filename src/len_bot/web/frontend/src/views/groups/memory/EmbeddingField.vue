@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
 import { List, Zap } from '@lucide/vue'
@@ -7,10 +7,10 @@ import { modelsApi, type Candidate, type EmbeddingBinding } from '../../../api/m
 import Button from '../../../ui/Button.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Field from '../../../ui/Field.vue'
-import Input from '../../../ui/Input.vue'
 import NumberInput from '../../../ui/NumberInput.vue'
 import Select from '../../../ui/Select.vue'
 import Switch from '../../../ui/Switch.vue'
+import ModelName from '../../models/ModelName.vue'
 
 export interface EmbeddingProvider {
   /** What `binding.provider` holds. */
@@ -22,9 +22,19 @@ export interface EmbeddingProvider {
 
 /** An embedding model on one of the providers; null means full-text search only. */
 const binding = defineModel<EmbeddingBinding | null>({ required: true })
-const props = withDefaults(defineProps<{ providers: EmbeddingProvider[]; label?: string }>(), {
-  label: undefined,
-})
+const props = withDefaults(
+  defineProps<{
+    providers: EmbeddingProvider[]
+    label?: string
+    providerError?: string
+    modelError?: string
+  }>(),
+  {
+    label: undefined,
+    providerError: undefined,
+    modelError: undefined,
+  },
+)
 
 const { t } = useI18n()
 const enabled = computed({
@@ -39,6 +49,7 @@ const list = useMutation({ mutationFn: () => modelsApi.list(provider.value!.cand
 const probe = useMutation({
   mutationFn: () => modelsApi.probe(provider.value!.candidate!, binding.value!, 'embedding'),
 })
+const listedCount = computed(() => list.data.value?.models.length ?? 0)
 watch(
   () => binding.value?.provider,
   () => {
@@ -50,16 +61,6 @@ watch(
   () => JSON.stringify(binding.value),
   () => probe.reset(),
 )
-const listed = computed(() =>
-  (list.data.value?.models ?? []).map((item) => ({
-    value: item.id,
-    label: item.name && item.name !== item.id ? `${item.name} · ${item.id}` : item.id,
-  })),
-)
-const picked = ref<string>()
-watch(picked, (id) => {
-  if (id && binding.value) binding.value.model = id
-})
 </script>
 
 <template>
@@ -69,15 +70,22 @@ watch(picked, (id) => {
     </Field>
     <template v-if="binding">
       <div class="grid gap-4 sm:grid-cols-2">
-        <Field :label="t('groups.memory.settings.provider')">
+        <Field :label="t('groups.memory.settings.provider')" :error="providerError">
           <Select
             v-model="binding.provider"
             :options="providerOptions"
             :placeholder="t('groups.memory.settings.noProvider')"
           />
         </Field>
-        <Field :label="t('groups.memory.settings.model')">
-          <Input v-model="binding.model" mono />
+        <Field :label="t('groups.memory.settings.model')" :error="modelError">
+          <ModelName
+            v-model="binding.model"
+            :models="list.data.value?.models"
+            can-refresh
+            :refresh-disabled="!provider?.candidate"
+            :refreshing="list.isPending.value"
+            @refresh="provider?.candidate && list.mutate()"
+          />
         </Field>
         <Field :label="t('groups.memory.settings.dimensions')">
           <NumberInput
@@ -87,11 +95,8 @@ watch(picked, (id) => {
             :placeholder="t('groups.memory.index.defaultDimensions')"
           />
         </Field>
-        <Field v-if="listed.length" :label="t('groups.memory.settings.pick')">
-          <Select v-model="picked" :options="listed" />
-        </Field>
       </div>
-      <div v-if="provider?.candidate" class="flex flex-wrap gap-2">
+      <div v-if="provider?.candidate" class="flex flex-wrap items-center gap-2">
         <Button size="sm" :icon="List" :loading="list.isPending.value" @click="list.mutate()">
           {{ t('groups.memory.settings.list') }}
         </Button>
@@ -104,10 +109,10 @@ watch(picked, (id) => {
         >
           {{ t('groups.memory.settings.probe') }}
         </Button>
+        <span v-if="list.isSuccess.value" class="text-xs text-muted tabular">
+          {{ t('groups.memory.settings.listed', { n: listedCount }, listedCount) }}
+        </span>
       </div>
-      <p v-if="list.isSuccess.value" class="text-xs text-muted">
-        {{ t('groups.memory.settings.listed', { n: list.data.value?.models.length ?? 0 }) }}
-      </p>
       <ErrorNote
         v-if="list.isError.value"
         :title="t('groups.memory.settings.listFailed')"
@@ -121,7 +126,7 @@ watch(picked, (id) => {
       <p
         v-if="probe.data.value"
         role="status"
-        class="rounded-md bg-success-bg px-3 py-2 text-sm whitespace-pre-wrap text-success"
+        class="animate-fade rounded-lg bg-success-bg px-3.5 py-2.5 text-sm break-words whitespace-pre-wrap text-success"
       >
         {{ probe.data.value.text }}
       </p>

@@ -60,19 +60,35 @@ export function useSettingsDraft<T>(options: {
       toast.success(pending ? t('system.savedRestart') : t('common.saved'))
     },
   })
+  watch(
+    draft,
+    () => {
+      if (save.isError.value) save.reset()
+    },
+    { deep: true },
+  )
+  function clearError() {
+    if (save.isError.value) save.reset()
+  }
   async function submit() {
     if (draft.value === undefined) return
     if (options.confirm && !(await options.confirm(draft.value))) return
     save.mutate()
   }
-  const saveError = computed(() =>
-    save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+  const saveDescribed = computed(() =>
+    save.isError.value ? describeError(save.error.value, t('ui.error.network')) : null,
   )
+  const saveError = computed(() => saveDescribed.value?.message ?? null)
+  const saveRawError = computed(() => {
+    const described = saveDescribed.value
+    if (!described || described.raw === null || described.raw === described.message) return null
+    return described.status === null ? described.raw : `HTTP ${described.status}\n${described.raw}`
+  })
   const discard = () => {
     if (saved.value !== undefined) draft.value = copy(saved.value)
     options.reset?.()
     save.reset()
   }
   const saving = computed(() => save.isPending.value)
-  return { settings, saved, draft, dirty, saving, submit, saveError, discard }
+  return { settings, saved, draft, dirty, saving, submit, saveError, saveRawError, clearError, discard }
 }

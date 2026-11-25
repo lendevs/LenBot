@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { refDebounced } from '@vueuse/core'
 import { ArrowUpRight, RefreshCw, Search, Settings2 } from '@lucide/vue'
@@ -8,7 +9,7 @@ import { pluginsApi, type CatalogSourceKind, type MarketEntry, type PluginsSnaps
 import { keys } from '../../api/query'
 import { formatDateTime } from '../../i18n/format'
 import Avatar from '../../ui/Avatar.vue'
-import Badge from '../../ui/Badge.vue'
+import Badge, { type Tone } from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import Dialog from '../../ui/Dialog.vue'
 import EmptyState from '../../ui/EmptyState.vue'
@@ -19,20 +20,29 @@ import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import { toast } from '../../ui/toast'
 import type { InstallRequest } from './InstallDialog.vue'
+import type { OpenOptions } from './PluginsView.vue'
 import { usePluginsState } from './state'
-import { disabledIn, manifestOf, runningOf } from './view'
+import { disabledIn, enabledIn, manifestOf, runningOf } from './view'
 
 const props = defineProps<{ snapshot: PluginsSnapshot }>()
-const emit = defineEmits<{ open: [name: string]; install: [request: InstallRequest] }>()
+const emit = defineEmits<{
+  open: [name: string, options?: OpenOptions]
+  install: [request: InstallRequest]
+}>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const client = useQueryClient()
 const state = usePluginsState()
-const search = ref('')
-const query = refDebounced(search, 250)
+
 const ALL = '*'
-const category = ref(ALL)
+const readQuery = (value: unknown) => (typeof value === 'string' ? value : '')
+const search = ref(readQuery(route.query.q))
+const query = refDebounced(search, 250)
+const category = ref(readQuery(route.query.cat) || ALL)
 const source = ref<CatalogSourceKind | typeof ALL>(ALL)
+
 const catalog = useQuery({
   queryKey: keys.plugins.catalog(),
   queryFn: ({ signal }) => pluginsApi.catalog(signal),
@@ -45,22 +55,48 @@ const market = useQuery({
     pluginsApi.market(query.value.trim(), chosenCategory.value, chosenSource.value, signal),
   placeholderData: keepPreviousData,
 })
+
+// Keep search and category filters reflected in the URL so detail back-navigation restores them.
+watch([query, category], ([nextQ, nextCat]) => {
+  if (route.query.item || route.query.view !== 'discover') return
+  const q = nextQ.trim()
+  const cat = nextCat === ALL ? '' : nextCat
+  if (q === readQuery(route.query.q).trim() && cat === readQuery(route.query.cat)) return
+  const nextQuery: LocationQueryRaw = { view: 'discover' }
+  if (q) nextQuery.q = q
+  if (cat) nextQuery.cat = cat
+  void router.replace({ query: nextQuery })
+})
+watch(
+  () => [readQuery(route.query.q), readQuery(route.query.cat)] as const,
+  ([urlQ, urlCat]) => {
+    if (route.query.item || route.query.view !== 'discover') return
+    if (urlQ !== search.value) search.value = urlQ
+    const nextCat = urlCat || ALL
+    if (nextCat !== category.value) category.value = nextCat
+  },
+)
+
 // Installing, removing or updating changes what the catalog marks as installed.
 watch(
   () => props.snapshot,
   () => void client.invalidateQueries({ queryKey: [...keys.plugins.catalog(), 'market'] }),
 )
-const categories = computed(() => [
-  { value: ALL, label: t('plugins.discover.allCategories') },
-  ...(market.data.value?.categories ?? []).map((value) => ({ value, label: value })),
-])
+const categories = computed(() => {
+  const list = market.data.value?.categories ?? []
+  const extra = category.value !== ALL && !list.includes(category.value) ? [category.value] : []
+  return [
+    { value: ALL, label: t('plugins.discover.allCategories') },
+    ...[...list, ...extra].map((value) => ({ value, label: value })),
+  ]
+})
 const entries = computed(() => market.data.value?.entries ?? [])
 const sources = computed(() => market.data.value?.sources ?? catalog.data.value?.sources ?? [])
 const sourceOptions = computed(() => [
   { value: ALL, label: t('plugins.discover.allSources') },
   ...sources.value.map((item) => ({ value: item.kind, label: t(`plugins.discover.sources.${item.kind}`) })),
 ])
-const sourceTone = { official: 'brand', community: 'info', custom: 'neutral' } as const
+const sourceTone = { official: 'info', community: 'neutral', custom: 'neutral' } as const
 const loadedText = computed(() => {
   const loaded = sources.value.filter((item) => item.loaded_at !== null)
   if (!loaded.length) return ''
@@ -91,8 +127,19 @@ watch(
   { immediate: true },
 )
 
-function stateOf(entry: MarketEntry): { key: string; tone: 'neutral' | 'error' | 'success' | 'info' } | null {
-  if (!entry.installed) return entry.compatible ? null : { key: 'incompatible', tone: 'error' }
+const stagedCandidate = (name: string) => manifestOf(props.snapshot, name)?.source?.candidate ?? null
+const installedOrStaged = (entry: MarketEntry) =>
+  entry.installed || Boolean(stagedCandidate(entry.name)) || entry.name in props.snapshot.available
+const needsEnable = (entry: MarketEntry) =>
+  Boolean(stagedCandidate(entry.name)) || !enabledIn(props.snapshot, entry.name)
+const isInstalling = (name: string) => state.isBusy(`install:${name}`)
+
+function stateOf(entry: MarketEntry): { key: string; tone: Tone } | null {
+  const candidate = stagedCandidate(entry.name)
+  if (!entry.installed && !candidate && !(entry.name in props.snapshot.available)) {
+    return entry.compatible ? null : { key: 'incompatible', tone: 'error' }
+  }
+  if (candidate) return { key: 'candidate', tone: 'info' }
   if (disabledIn(props.snapshot, entry.name)) return { key: 'disabled', tone: 'neutral' }
   const running = runningOf(props.snapshot, entry.name)
   if (running?.status === 'failed') return { key: 'failed', tone: 'error' }
@@ -102,42 +149,41 @@ function stateOf(entry: MarketEntry): { key: string; tone: 'neutral' | 'error' |
 // Only Git installs can update in place; a ZIP install takes its next ZIP through import.
 const updatable = (name: string) => manifestOf(props.snapshot, name)?.source?.installed?.kind === 'git'
 
-const selected = ref<MarketEntry | null>(null)
+const selectedEntry = ref<MarketEntry | null>(null)
+const selected = computed<MarketEntry | null>(() => {
+  if (!selectedEntry.value) return null
+  return entries.value.find((item) => item.name === selectedEntry.value!.name) ?? selectedEntry.value
+})
+const selectedInstalling = computed(() => Boolean(selected.value && isInstalling(selected.value.name)))
 const detailOpen = computed({
-  get: () => selected.value !== null,
+  get: () => selectedEntry.value !== null,
   set: (value: boolean) => {
-    if (!value) selected.value = null
+    if (!value && !selectedInstalling.value) selectedEntry.value = null
   },
 })
+
 async function install(entry: MarketEntry) {
-  selected.value = null
-  const result = await state.run('install', () => pluginsApi.installEntry(entry.name), {
+  const result = await state.run(`install:${entry.name}`, () => pluginsApi.installEntry(entry.name), {
     failure: t('plugins.install.failed'),
   })
   if (!result) return
   toast.success(
     result.operation?.needs_config ? t('plugins.install.readyConfigure') : t('plugins.install.ready'),
   )
-  emit('open', entry.name)
 }
 function configure(entry: MarketEntry) {
-  selected.value = null
-  emit('open', entry.name)
+  selectedEntry.value = null
+  emit('open', entry.name, { q: search.value.trim(), cat: chosenCategory.value })
 }
 function update(entry: MarketEntry) {
-  selected.value = null
+  selectedEntry.value = null
   emit('install', { kind: 'update', name: entry.name, ref: entry.ref })
 }
-const permissionText = (entry: MarketEntry) => {
-  if (entry.permissions === undefined) return ''
-  if (entry.permissions === null) return t('plugins.permissions.undeclared')
-  if (!entry.permissions.length) return t('plugins.permissions.none')
-  return t('plugins.permissions.needs', {
-    list: entry.permissions
-      .map((name) => t(`plugins.permissions.names.${name}`))
-      .join(t('personas.separator')),
-  })
-}
+
+const platformLabel = (platform: string) =>
+  te(`plugins.chatPlatforms.${platform}`) ? t(`plugins.chatPlatforms.${platform}`) : platform
+const permissionLabel = (name: string) =>
+  te(`plugins.permissions.names.${name}`) ? t(`plugins.permissions.names.${name}`) : name
 
 // The server normalizes ">=0.2,<1" to "<1,>=0.2"; lower bounds read first.
 const hostRange = (value: string) =>
@@ -170,18 +216,21 @@ watch(sources, (value) => {
 <template>
   <div class="flex min-w-0 flex-col gap-4">
     <div class="flex flex-wrap items-center gap-2">
-      <Input
-        v-model="search"
-        type="search"
-        size="sm"
-        :icon="Search"
-        :placeholder="t('plugins.discover.search')"
-        :aria-label="t('plugins.discover.search')"
-        clearable
-        class="w-full sm:w-72"
-      />
-      <div class="w-full sm:w-36"><Select v-model="source" :options="sourceOptions" size="sm" /></div>
-      <div class="w-full sm:w-40"><Select v-model="category" :options="categories" size="sm" /></div>
+      <div class="w-full sm:w-72">
+        <Input
+          v-model="search"
+          type="search"
+          size="sm"
+          :icon="Search"
+          :placeholder="t('plugins.discover.search')"
+          :aria-label="t('plugins.discover.search')"
+          clearable
+        />
+      </div>
+      <div class="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+        <div class="min-w-0 sm:w-36"><Select v-model="source" :options="sourceOptions" size="sm" /></div>
+        <div class="min-w-0 sm:w-40"><Select v-model="category" :options="categories" size="sm" /></div>
+      </div>
       <div class="ml-auto flex items-center gap-1">
         <Button
           size="sm"
@@ -197,7 +246,7 @@ watch(sources, (value) => {
         </Button>
       </div>
     </div>
-    <p v-if="loadedText" class="text-xs text-muted">{{ loadedText }}</p>
+    <p v-if="loadedText" class="text-xs text-muted tabular">{{ loadedText }}</p>
 
     <ErrorNote
       v-if="readError"
@@ -214,24 +263,38 @@ watch(sources, (value) => {
     />
     <Skeleton v-if="market.isPending.value || (refresh.isPending.value && !entries.length)" :lines="6" />
     <EmptyState v-else-if="!entries.length" :icon="Search" :title="t('common.noResults')" compact />
-    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))] gap-4">
+    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
       <article
         v-for="entry in entries"
         :key="entry.name"
-        class="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4 shadow-card transition-[border-color,box-shadow] duration-150 hover:border-line-strong hover:shadow-hover"
-        :class="!entry.compatible && !entry.installed && 'opacity-75'"
+        class="relative flex flex-col gap-3 rounded-lg border border-line bg-surface p-4 shadow-card transition-[border-color,box-shadow] duration-150 hover:border-line-strong hover:shadow-hover"
+        :class="!entry.compatible && !installedOrStaged(entry) && 'opacity-75'"
       >
-        <div class="flex items-center gap-3">
+        <div class="flex items-start gap-3">
           <Avatar :name="entry.name" shape="square" :size="40" />
           <div class="min-w-0 flex-1">
             <div class="flex min-w-0 items-center gap-2">
-              <h3 class="truncate text-base font-semibold text-ink">{{ entry.title }}</h3>
+              <h3 class="min-w-0 truncate text-base font-semibold">
+                <button
+                  type="button"
+                  class="block max-w-full cursor-pointer truncate text-left text-ink after:absolute after:inset-0 after:rounded-lg focus-visible:outline-none focus-visible:after:focus-ring"
+                  @click="selectedEntry = entry"
+                >
+                  {{ entry.title }}
+                </button>
+              </h3>
               <Badge :tone="sourceTone[entry.source]">
                 {{ t(`plugins.discover.sources.${entry.source}`) }}
               </Badge>
             </div>
-            <p class="truncate text-xs text-subtle">
-              {{ entry.authors.join(t('personas.separator')) }} · v{{ entry.version }}
+            <p class="mt-0.5 flex items-center gap-1.5 truncate text-xs text-subtle tabular">
+              <span class="truncate font-mono">{{ entry.name }}</span>
+              <span aria-hidden="true">·</span>
+              <span class="shrink-0">v{{ entry.version }}</span>
+              <template v-if="entry.authors.length">
+                <span aria-hidden="true">·</span>
+                <span class="truncate">{{ entry.authors.join(t('personas.separator')) }}</span>
+              </template>
             </p>
           </div>
           <Badge v-if="stateOf(entry)" :tone="stateOf(entry)!.tone" dot>
@@ -240,44 +303,63 @@ watch(sources, (value) => {
         </div>
         <p class="line-clamp-3 text-sm text-muted">{{ entry.description }}</p>
         <p
-          v-if="entry.update_available"
-          class="self-start rounded-sm bg-warning-bg px-2 py-0.5 text-xs text-warning"
+          v-if="entry.update_available && !stagedCandidate(entry.name)"
+          class="self-start rounded-sm bg-warning-bg px-2 py-0.5 text-xs text-warning tabular"
         >
           {{ t('plugins.discover.updatable', { now: entry.installed_version ?? '?', next: entry.version }) }}
         </p>
         <p
-          v-else-if="!entry.compatible"
+          v-else-if="!entry.compatible && !installedOrStaged(entry)"
           class="self-start rounded-sm bg-error-bg px-2 py-0.5 text-xs text-error"
         >
           {{ entry.incompatible_reason }}
         </p>
-        <div v-if="entry.capabilities.length" class="flex flex-wrap gap-1.5">
-          <Badge v-for="item in entry.capabilities" :key="item">{{ item }}</Badge>
+        <div
+          v-if="entry.category || entry.chat_platforms?.length || entry.capabilities.length"
+          class="flex flex-wrap gap-1.5"
+        >
+          <Badge v-if="entry.category" tone="brand">{{ entry.category }}</Badge>
+          <Badge v-for="platform in entry.chat_platforms ?? []" :key="`p:${platform}`" tone="brand">
+            {{ platformLabel(platform) }}
+          </Badge>
+          <Badge v-for="item in entry.capabilities.slice(0, 3)" :key="item">{{ item }}</Badge>
+          <Badge v-if="entry.capabilities.length > 3" class="tabular">
+            +{{ entry.capabilities.length - 3 }}
+          </Badge>
         </div>
-        <div class="mt-auto flex items-center gap-1 border-t border-line pt-3">
-          <Button size="sm" variant="ghost" class="-ml-2" @click="selected = entry">
-            {{ t('plugins.discover.details') }}
-          </Button>
+        <div
+          class="relative z-10 mt-auto flex items-center justify-between gap-2 border-t border-line pt-3"
+          @click.stop
+        >
+          <div class="-ml-2 flex flex-wrap items-center gap-1">
+            <Button size="sm" variant="ghost" @click.stop="selectedEntry = entry">
+              {{ t('plugins.discover.details') }}
+            </Button>
+            <Button
+              v-if="entry.update_available && updatable(entry.name) && !stagedCandidate(entry.name)"
+              size="sm"
+              variant="ghost"
+              :disabled="state.pluginBusy(entry.name)"
+              @click.stop="update(entry)"
+            >
+              {{ t('plugins.discover.updateTo', { version: entry.version }) }}
+            </Button>
+          </div>
           <Button
-            v-if="entry.update_available && updatable(entry.name)"
+            v-if="installedOrStaged(entry)"
             size="sm"
-            variant="ghost"
-            :disabled="state.busy.value !== null"
-            @click="update(entry)"
+            :variant="needsEnable(entry) ? 'primary' : 'secondary'"
+            @click.stop="configure(entry)"
           >
-            {{ t('plugins.discover.updateTo', { version: entry.version }) }}
-          </Button>
-          <Button v-if="entry.installed" size="sm" class="ml-auto" @click="configure(entry)">
-            {{ t('plugins.discover.configure') }}
+            {{ needsEnable(entry) ? t('plugins.discover.configureEnable') : t('plugins.discover.configure') }}
           </Button>
           <Button
             v-else
             size="sm"
             variant="primary"
-            class="ml-auto"
-            :disabled="state.busy.value !== null || !entry.compatible"
-            :loading="state.busy.value === 'install'"
-            @click="install(entry)"
+            :disabled="!entry.compatible || (state.pluginBusy(entry.name) && !isInstalling(entry.name))"
+            :loading="isInstalling(entry.name)"
+            @click.stop="install(entry)"
           >
             {{ t('plugins.discover.install') }}
           </Button>
@@ -285,32 +367,50 @@ watch(sources, (value) => {
       </article>
     </div>
 
-    <Dialog v-model:open="detailOpen" :title="selected?.title ?? ''" size="md">
+    <Dialog v-model:open="detailOpen" :title="selected?.title ?? ''" size="md" :busy="selectedInstalling">
       <div v-if="selected" class="flex flex-col gap-4">
         <p class="text-sm text-ink-2">{{ selected.description }}</p>
         <section v-if="selected.usage.length" class="flex flex-col gap-2">
-          <h3 class="text-sm font-semibold">{{ t('plugins.discover.usage') }}</h3>
+          <h3 class="text-sm font-semibold text-ink">{{ t('plugins.discover.usage') }}</h3>
           <ol class="flex list-decimal flex-col gap-1 pl-5 text-sm text-ink-2">
             <li v-for="item in selected.usage" :key="item">{{ item }}</li>
           </ol>
         </section>
-        <div v-if="selected.capabilities.length" class="flex flex-wrap gap-1.5">
-          <Badge v-for="item in selected.capabilities" :key="item">{{ item }}</Badge>
-        </div>
-        <p
-          v-if="permissionText(selected)"
-          class="text-sm"
-          :class="selected.permissions === null ? 'text-warning' : 'text-muted'"
+        <section v-if="selected.capabilities.length" class="flex flex-col gap-2">
+          <h3 class="text-sm font-semibold text-ink">{{ t('plugins.discover.capabilities') }}</h3>
+          <div class="flex flex-wrap gap-1.5">
+            <Badge v-for="item in selected.capabilities" :key="item">{{ item }}</Badge>
+          </div>
+        </section>
+        <section v-if="selected.permissions !== undefined" class="flex flex-col gap-1.5">
+          <h3 class="text-sm font-semibold text-ink">{{ t('plugins.permissions.title') }}</h3>
+          <p v-if="selected.permissions === null" class="text-sm text-warning">
+            {{ t('plugins.permissions.undeclared') }}
+          </p>
+          <p v-else-if="!selected.permissions.length" class="text-sm text-muted">
+            {{ t('plugins.permissions.none') }}
+          </p>
+          <ul v-else class="flex list-disc flex-col gap-1 pl-5 text-sm text-ink-2">
+            <li v-for="perm in selected.permissions" :key="perm">{{ permissionLabel(perm) }}</li>
+          </ul>
+        </section>
+        <dl
+          class="grid gap-x-6 gap-y-2 border-y border-line py-3 text-sm sm:grid-cols-[max-content_minmax(0,1fr)]"
         >
-          {{ permissionText(selected) }}
-        </p>
-        <dl class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
           <dt class="text-muted">{{ t('plugins.discover.name') }}</dt>
-          <dd class="font-mono">{{ selected.name }}</dd>
+          <dd class="font-mono break-all text-ink">{{ selected.name }}</dd>
+          <template v-if="selected.category">
+            <dt class="text-muted">{{ t('plugins.discover.category') }}</dt>
+            <dd class="text-ink">{{ selected.category }}</dd>
+          </template>
           <dt class="text-muted">{{ t('plugins.discover.source') }}</dt>
-          <dd>{{ t(`plugins.discover.sources.${selected.source}`) }}</dd>
+          <dd class="text-ink">{{ t(`plugins.discover.sources.${selected.source}`) }}</dd>
+          <template v-if="selected.authors.length">
+            <dt class="text-muted">{{ t('plugins.discover.authors') }}</dt>
+            <dd class="text-ink">{{ selected.authors.join(t('personas.separator')) }}</dd>
+          </template>
           <dt class="text-muted">{{ t('plugins.discover.version') }}</dt>
-          <dd>
+          <dd class="text-ink tabular">
             v{{ selected.version }}
             <template v-if="selected.ref">
               ·
@@ -318,24 +418,26 @@ watch(sources, (value) => {
             </template>
           </dd>
           <dt class="text-muted">{{ t('plugins.discover.license') }}</dt>
-          <dd>{{ selected.license }}</dd>
+          <dd class="text-ink">{{ selected.license }}</dd>
           <template v-if="selected.requires_lenbot">
             <dt class="text-muted">{{ t('plugins.discover.host') }}</dt>
-            <dd class="font-mono">{{ hostRange(selected.requires_lenbot) }}</dd>
+            <dd class="font-mono text-ink tabular">{{ hostRange(selected.requires_lenbot) }}</dd>
           </template>
-          <template v-if="selected.chat_platforms">
+          <template v-if="selected.chat_platforms?.length">
             <dt class="text-muted">{{ t('plugins.version.chatPlatforms') }}</dt>
-            <dd>
-              {{
-                selected.chat_platforms
-                  .map((platform) => t(`plugins.chatPlatforms.${platform}`))
-                  .join(t('personas.separator'))
-              }}
+            <dd class="text-ink">
+              {{ selected.chat_platforms.map(platformLabel).join(t('personas.separator')) }}
             </dd>
           </template>
-          <template v-if="selected.installed">
+          <template v-if="selected.installed || stagedCandidate(selected.name)">
             <dt class="text-muted">{{ t('plugins.discover.here') }}</dt>
-            <dd>v{{ selected.installed_version ?? '?' }}</dd>
+            <dd class="text-ink tabular">
+              <template v-if="selected.installed">v{{ selected.installed_version ?? '?' }}</template>
+              <template v-if="stagedCandidate(selected.name)">
+                {{ selected.installed ? ' · ' : ''
+                }}{{ t('plugins.card.candidate', { version: stagedCandidate(selected.name)!.version }) }}
+              </template>
+            </dd>
           </template>
         </dl>
         <p v-if="!selected.compatible" class="rounded-md bg-error-bg px-3 py-2 text-sm text-error">
@@ -364,14 +466,27 @@ watch(sources, (value) => {
         </p>
       </div>
       <template v-if="selected" #footer>
-        <Button variant="ghost" @click="selected = null">{{ t('common.close') }}</Button>
-        <Button v-if="selected.installed" variant="primary" @click="configure(selected)">
-          {{ t('plugins.discover.configure') }}
+        <Button variant="ghost" :disabled="selectedInstalling" @click="selectedEntry = null">
+          {{ t('common.close') }}
+        </Button>
+        <Button
+          v-if="selected.update_available && updatable(selected.name) && !stagedCandidate(selected.name)"
+          variant="secondary"
+          :disabled="state.pluginBusy(selected.name)"
+          @click="update(selected)"
+        >
+          {{ t('plugins.discover.updateTo', { version: selected.version }) }}
+        </Button>
+        <Button v-if="installedOrStaged(selected)" variant="primary" @click="configure(selected)">
+          {{
+            needsEnable(selected) ? t('plugins.discover.configureEnable') : t('plugins.discover.configure')
+          }}
         </Button>
         <Button
           v-else
           variant="primary"
-          :disabled="state.busy.value !== null || !selected.compatible"
+          :disabled="!selected.compatible || (state.pluginBusy(selected.name) && !selectedInstalling)"
+          :loading="selectedInstalling"
           @click="install(selected)"
         >
           {{ t('plugins.discover.install') }}

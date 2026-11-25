@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { systemApi, systemOf, type Processing } from '../../api/system'
 import { developerMode } from '../../composables/useDeveloperMode'
@@ -14,6 +14,8 @@ import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
 import { useSettingsDraft } from './draft'
 
+const emit = defineEmits<{ dirty: [value: boolean] }>()
+
 const { t } = useI18n()
 const form = useSettingsDraft<Processing>({
   pick: (snapshot) => systemOf(snapshot).processing,
@@ -21,6 +23,7 @@ const form = useSettingsDraft<Processing>({
   save: (value) => systemApi.saveProcessing(value),
 })
 const { settings, draft } = form
+watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
 
 type Group = 'compaction' | 'images' | 'audio'
 interface NumberField {
@@ -93,9 +96,9 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
-      <Field :label="t('system.advanced.developer')" inline>
+  <div class="flex min-w-0 max-w-3xl flex-col gap-6">
+    <div class="border-b border-line pb-6">
+      <Field :label="t('system.advanced.developer')" :info="t('system.advanced.developerInfo')" inline>
         <Switch v-model="developerMode" />
       </Field>
     </div>
@@ -107,7 +110,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
       :retry="settings.refetch"
     />
     <template v-else-if="draft">
-      <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+      <div class="flex min-w-0 flex-col gap-6">
         <FormSection
           v-for="{ group, fields } in groups"
           :key="group"
@@ -160,6 +163,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
         :dirty="form.dirty.value"
         :saving="form.saving.value"
         :error="form.saveError.value"
+        :raw-error="form.saveRawError.value"
         :invalid="invalid"
         @save="form.submit"
         @discard="form.discard"

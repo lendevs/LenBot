@@ -36,9 +36,9 @@ VARIED = ["好香", "什么歌", "我也去听听", "被你发现了", "那就�
 def test_repeated_words_and_sticker_are_named():
     text = recent_habits(_history(*(_say(line, "laugh.webp") for line in LOCKED)))
     assert "最近 8 次发言里" in text
-    for part in ("8 条用了「草」", "同一张图用了 8 次"):
+    for part in ("8 条用了「草」", "同一张图用了 8 次", "8 次附带了表情包"):
         assert part in text
-    assert "感叹号" not in text and "配了表情图" not in text
+    assert "感叹号" not in text and "结尾都是「！」" not in text
 
 
 def test_varied_short_lines_need_no_reminder():
@@ -52,10 +52,31 @@ def test_common_sentence_particles_are_not_habits():
     assert "8 条用了「喵」" in text and "「吧」" not in text
 
 
-def test_pictures_with_text_and_mixed_endings_are_left_to_the_persona():
+@pytest.mark.parametrize("punct", ["。", "！", "？", "!", "?"])
+def test_ordinary_single_sentence_punctuation_is_not_named_as_ending_habit(punct):
+    lines = [line + punct for line in VARIED]
+    assert recent_habits(_history(*(_say(line) for line in lines))) is None
+
+
+def test_repeated_multi_char_punctuation_is_still_named():
+    lines = [line + "！！" for line in VARIED[:4]] + VARIED[4:]
+    text = recent_habits(_history(*(_say(line) for line in lines)))
+    assert text is not None and "4 条结尾都是「！！」" in text
+
+
+def test_frequent_stickers_across_recent_expressions_get_a_gentle_reminder():
     endings = ["！", "~", "。", "", "？", "…", "！！", "~"]
     lines = [line + ending for line, ending in zip(VARIED, endings, strict=True)]
-    assert recent_habits(_history(*(_say(line, f"{index}.webp") for index, line in enumerate(lines)))) is None
+    # Five out of eight with distinct stickers stays quiet.
+    five = [_say(line, f"{index}.webp" if index < 5 else None) for index, line in enumerate(lines)]
+    assert recent_habits(_history(*five)) is None
+    # Six or more out of eight triggers a gentle reminder even when files differ.
+    six = [_say(line, f"{index}.webp" if index < 6 else None) for index, line in enumerate(lines)]
+    text = recent_habits(_history(*six))
+    assert text is not None and "6 次附带了表情包" in text
+    # Sticker preview calls do not count as sent stickers.
+    with_previews = [_call("react", {"preview": True}) for _ in range(3)] + five
+    assert recent_habits(_history(*with_previews)) is None
 
 
 # Fictional lines, each sharing one sentence shape in half of the last eight and varied otherwise.

@@ -70,8 +70,10 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
     @app.get(base, response_model=responses.StickerState, response_model_exclude_unset=True)
     async def state(scene: str, _: str = Depends(user)):
         chat_for(scene)
-        return {"scene": scene, "enabled": active(scene), "service_state": service_state(scene),
-                "counts": records.counts(scene)}
+        return await runtime.store.read(lambda: {
+            "scene": scene, "enabled": active(scene), "service_state": service_state(scene),
+            "counts": records.counts(scene),
+        })
 
     @app.get(base + "/candidates", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def candidates(scene: str, review: Literal["pending", "adopted", "rejected"] | None = None,
@@ -79,22 +81,29 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
                          limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
                          _: str = Depends(user)):
         chat_for(scene)
-        return records.items(scene, review=review, status=status, limit=limit, offset=offset)
+        return await runtime.store.read(records.items, scene, review=review, status=status, limit=limit, offset=offset)
 
     @app.get(base + "/candidates/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def candidate(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        item = records.item(scene, id)
-        if item is None:
+
+        def read_candidate():
+            item = records.item(scene, id)
+            if item is None:
+                return None
+            message = runtime.store.read_message(scene, item["source_message_seq"])
+            return {**item, "source_message": {"seq": item["source_message_seq"],
+                                               "body": None if message is None else asdict(message)}}
+
+        result = await runtime.store.read(read_candidate)
+        if result is None:
             raise HTTPException(404, "当前场景不存在此表情候选")
-        message = runtime.store.read_message(scene, item["source_message_seq"])
-        return {**item, "source_message": {"seq": item["source_message_seq"],
-                                          "body": None if message is None else asdict(message)}}
+        return result
 
     @app.get(base + "/candidates/{id}/image", response_class=Response)
     async def original(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        asset = records.original(scene, id)
+        asset = await runtime.store.read(records.original, scene, id)
         if asset is None:
             raise HTTPException(404, "当前场景没有该候选的已保存原件")
         return Response(asset[1], media_type=asset[0], headers={"Cache-Control": "private, no-store"})
@@ -148,14 +157,21 @@ def register_host_stickers(app: FastAPI, *, runtime: NetworkRuntime,
     async def calls(scene: str, limit: int = Query(20, ge=1, le=20),
                     offset: int = Query(0, ge=0), _: str = Depends(user)):
         chat_for(scene)
-        return records.calls(scene, limit=limit, offset=offset)
+        return await runtime.store.read(records.calls, scene, limit=limit, offset=offset)
 
     @app.get(base + "/calls/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def call(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        item = records.call(scene, id)
-        if item is None:
+
+        def read_call():
+            item = records.call(scene, id)
+            if item is None:
+                return None
+            message = runtime.store.read_message(scene, item["source_message_seq"])
+            return {**item, "source_message": {"seq": item["source_message_seq"],
+                                               "body": None if message is None else asdict(message)}}
+
+        result = await runtime.store.read(read_call)
+        if result is None:
             raise HTTPException(404, "当前场景不存在此表情处理记录")
-        message = runtime.store.read_message(scene, item["source_message_seq"])
-        return {**item, "source_message": {"seq": item["source_message_seq"],
-                                          "body": None if message is None else asdict(message)}}
+        return result

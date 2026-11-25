@@ -192,6 +192,7 @@ PERMISSION_TITLES: dict[str, str] = {
 class Manifest(BaseModel):
     model_config = STRICT
     name: str
+    title: str | None = Field(default=None, min_length=1)
     version: str = Field(min_length=1)
     interface: int
     # Shape of data_dir and KV; raised together with Plugin.migrate_data, never lowered.

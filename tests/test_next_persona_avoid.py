@@ -115,6 +115,31 @@ async def test_they_close_the_turn_reference_after_the_habit_reminder(tmp_path):
     assert "不知道" not in block and "出主意" not in block
 
 
+def test_temporal_and_concession_negations_are_excluded_while_prohibitions_stay(tmp_path):
+    package = _package(tmp_path, "narrowed", tools=["say"], documents={})
+    (package / "voice.md").write_text(
+        """不忙的时候她爱看小说。
+不忙时不爱出门，就窝在家里。
+不忙的时候不看手机。
+不顺路的话自己打车。
+平时工作时不回闲聊消息。
+开心的时候，不怎么发语音。
+不管谁来问，她都不会生气。
+不论多忙，都不忘给朋友带奶茶。
+问她要不要吃宵夜，她总说随便。
+犯错不要紧，下次注意就行。
+信息不准确时她会先核实。
+不论什么场合，禁止剧透。
+不管谁催，别乱发脾气。
+""",
+        encoding="utf-8",
+    )
+    assert avoidances(load_persona(package)) == [
+        "不论什么场合，禁止剧透。",
+        "不管谁催，别乱发脾气。",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_a_persona_without_prohibitions_gets_none(tmp_path):
     package = _package(tmp_path, "plain", tools=["say"], documents={})

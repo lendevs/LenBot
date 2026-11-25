@@ -563,3 +563,324 @@ def test_home_page_counts_only_recent_plugin_errors():
     assert attention(item, now) == {"name": "sample", "status": "running", "error": None,
                                     "error_count": 1, "latest_error": item["errors"][0]}
     assert attention({**item, "errors": item["errors"][1:]}, now)["latest_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_config_registers_new_secret_for_redaction_immediately(tmp_path):
+    from len_bot.next.runtime.logs import REDACTED, SECRETS
+    from len_bot.plugin_testing import PluginTest
+
+    package = _copy_sample(tmp_path, "secretcfg")
+    manifest = (package / "plugin.toml").read_text(encoding="utf-8")
+    manifest = manifest.replace('interface = 1\n', 'interface = 1\npermissions = ["configure"]\n', 1)
+    manifest += '\n[config.api_token]\ntype = "secret"\ndescription = "令牌"\ndefault = ""\n'
+    (package / "plugin.toml").write_text(manifest, encoding="utf-8")
+    (package / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin\nclass SecretCfg(Plugin):\n    pass\n', encoding="utf-8")
+
+    token = "sk-live-secret-token-987654321"
+    async with PluginTest(package) as bot:
+        await bot.host.update_config("secretcfg", {"api_token": token})
+        assert REDACTED in SECRETS.clean(f"leaked {token}")
+        assert token not in SECRETS.clean(f"leaked {token}")
+
+
+@pytest.mark.asyncio
+async def test_paused_scene_marks_plugin_events_delivered_and_uses_store_call(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from len_bot.next.platform.onebot_messages import parse_message
+    from len_bot.next.plugins.store import PluginStore
+    from len_bot.next.storage.store import Store
+
+    extra = tmp_path / "personal"
+    extra.mkdir()
+    directory = _copy_sample(extra, "pausedplug")
+    (directory / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin, command\n'
+        'class PausedPlug(Plugin):\n'
+        '    @command("测试", "测试")\n'
+        '    async def run(self, ctx, args):\n'
+        '        return "ok"\n', encoding="utf-8")
+    root = _root(tmp_path, {"paths": [str(extra)], "pausedplug": {}}, ["pausedplug"])
+    config = load_host_config(root)
+    host = PluginHost(config, core_tools=CORE)
+    scene = "onebot:group:80001"
+    changed = asyncio.Event()
+    with Store(config.database) as store:
+        called_via_store_call = []
+        original_call = store.call
+
+        async def spy_call(fn, /, *args, **kwargs):
+            called_via_store_call.append((fn.__name__, kwargs))
+            return await original_call(fn, *args, **kwargs)
+
+        monkeypatch.setattr(store, "call", spy_call)
+        host.runtime = SimpleNamespace(
+            store=store,
+            runners={scene: SimpleNamespace(state=SimpleNamespace(paused=True, closed=False), changed=changed)},
+        )
+        await host.start()
+        try:
+            message = parse_message({
+                'post_type': 'message', 'message_type': 'group', 'group_id': 80001, 'user_id': 70001,
+                'self_id': 90001, 'message_id': 10, 'time': 1790000000,
+                'sender': {'nickname': '群友', 'role': 'member'},
+                'message': [{'type': 'text', 'data': {'text': '/测试'}}]}, own_message_ids=set())
+            matched = host.match_message(message, ())
+            assert matched is not None
+            host.dispatch_message(message, matched)
+            await asyncio.gather(*list(host.tasks))
+            host.emit_event("pausedplug", scene, "后台推送")
+
+            pstore = PluginStore(store)
+            assert pstore.pending_plugin_events(scene) == []
+            events = pstore.plugin_events(scene)
+            assert len(events) == 2 and all(item["delivered_at"] is not None for item in events)
+            assert not changed.is_set()
+            assert ("add_plugin_event", {"delivered": True}) in called_via_store_call
+        finally:
+            await host.close()
+
+
+@pytest.mark.asyncio
+async def test_broken_unavailable_tools_isolated_from_other_plugins(tmp_path):
+    extra = tmp_path / "personal"
+    extra.mkdir()
+    broken = _copy_sample(extra, "badcheck")
+    (broken / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin, tool\n'
+        'class BadCheck(Plugin):\n'
+        '    def unavailable_tools(self, scene):\n'
+        '        raise RuntimeError("boom")\n'
+        '    @tool("bad_tool", "坏工具")\n'
+        '    async def run(self, ctx) -> str:\n'
+        '        return "x"\n', encoding="utf-8")
+    good = _copy_sample(extra, "goodcheck")
+    (good / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin, tool\n'
+        'class GoodCheck(Plugin):\n'
+        '    @tool("good_tool", "好工具")\n'
+        '    async def run(self, ctx) -> str:\n'
+        '        return "ok"\n', encoding="utf-8")
+    root = _root(tmp_path, {"paths": [str(extra)], "badcheck": {}, "goodcheck": {}}, ["badcheck", "goodcheck"])
+    host = PluginHost(load_host_config(root), core_tools=CORE)
+    await host.start()
+    try:
+        scene = "onebot:group:80001"
+        assert [t.name for t in host.tools_for(scene)] == ["good_tool"]
+        previews = {item["name"]: item for item in host.tool_previews(scene)}
+        assert previews["good_tool"]["reasons"] == []
+        assert any("插件可用性检查失败" in reason for reason in previews["bad_tool"]["reasons"])
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_reload_failure_preserves_previous_errors_and_records_new_error(tmp_path):
+    extra = tmp_path / "personal"
+    extra.mkdir()
+    directory = _copy_sample(extra, "flaky")
+    root = _root(tmp_path, {"paths": [str(extra)], "flaky": {}}, ["flaky"])
+    host = PluginHost(load_host_config(root), core_tools=CORE)
+    await host.start()
+    try:
+        host.report_error("flaky", "历史步骤", RuntimeError("先前故障"))
+        (directory / "__init__.py").write_text("syntax error !!!\n", encoding="utf-8")
+        await host.reload("flaky", load_host_config(root))
+        record = host.plugins["flaky"]
+        assert record.status == "failed"
+        messages = [entry["error"] for entry in record.errors]
+        assert any("先前故障" in text for text in messages)
+        assert any("SyntaxError" in text for text in messages)
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_channel_eof_wakes_pending_futures_and_events():
+    import asyncio
+    from io import StringIO
+    import threading
+
+    from len_bot.next.plugins.worker import Channel
+
+    channel = object.__new__(Channel)
+    channel.output = StringIO()
+    channel.lock = threading.Lock()
+    channel.ids = iter(range(1, 100))
+    channel.waiting = {}
+    channel._closed_error = None
+    channel.loop = asyncio.get_running_loop()
+
+    async_task = asyncio.create_task(channel.call("get_kv", "k", None))
+    sync_error: list[BaseException] = []
+
+    def sync_caller():
+        try:
+            channel.call_sync("now")
+        except BaseException as error:
+            sync_error.append(error)
+
+    thread = threading.Thread(target=sync_caller)
+    thread.start()
+    await asyncio.sleep(0.05)
+    channel.fail("stdin EOF")
+    with pytest.raises(RuntimeError, match="stdin EOF"):
+        await async_task
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert len(sync_error) == 1 and isinstance(sync_error[0], RuntimeError)
+    with pytest.raises(RuntimeError, match="stdin EOF"):
+        await channel.call("get_kv", "k", None)
+
+
+def test_plugin_kv_caches_schema_verification_and_still_detects_edits(tmp_path, monkeypatch):
+    from contextlib import closing
+    import sqlite3
+
+    from len_bot.next.plugins import kv as plugin_kv
+
+    stored_calls = 0
+    require_calls = 0
+    real_stored = plugin_kv.stored_state
+    real_require = plugin_kv.require_columns
+
+    def counted_stored(path):
+        nonlocal stored_calls
+        stored_calls += 1
+        return real_stored(path)
+
+    def counted_require(*args, **kwargs):
+        nonlocal require_calls
+        require_calls += 1
+        return real_require(*args, **kwargs)
+
+    monkeypatch.setattr(plugin_kv, "stored_state", counted_stored)
+    monkeypatch.setattr(plugin_kv, "require_columns", counted_require)
+
+    store = plugin_kv.PluginKV(tmp_path)
+    store.set("a", 1)
+    assert (stored_calls, require_calls) == (1, 1)
+    assert store.get("a", None) == 1
+    store.set("b", 2)
+    assert store.get("b", None) == 2
+    assert (stored_calls, require_calls) == (1, 1)
+
+    with closing(sqlite3.connect(store.path, isolation_level=None)) as db:
+        db.execute("ALTER TABLE kv ADD COLUMN extra TEXT")
+    with pytest.raises(ValueError, match="多出列 extra"):
+        store.get("a", None)
+
+
+@pytest.mark.asyncio
+async def test_apply_files_rolls_back_previous_directory_on_failure(tmp_path):
+    from io import BytesIO
+    import zipfile
+
+    from len_bot.next.plugins.install import PluginInstaller
+
+    root = _root(tmp_path, {"paths": ["plugins"], "sample": {}}, ["sample"])
+    installer = PluginInstaller(root)
+    original_dir = installer.directory / "sample"
+    shutil.rmtree(original_dir)
+
+    def make_zip(version: str, marker: str) -> bytes:
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            manifest = (SAMPLE / "plugin.toml").read_text(encoding="utf-8").replace('version = "0.1.0"', f'version = "{version}"')
+            archive.writestr("plugin.toml", manifest)
+            archive.writestr("__init__.py", (SAMPLE / "__init__.py").read_text(encoding="utf-8") + f"\n# {marker}\n")
+        return buf.getvalue()
+
+    await installer.prepare_zip(make_zip("0.1.0", "v1"), "v1.zip", [])
+    installer.apply_files("sample")
+    assert "# v1" in (original_dir / "__init__.py").read_text(encoding="utf-8")
+
+    await installer.prepare_zip(make_zip("0.2.0", "v2"), "v2.zip", [])
+    shutil.rmtree(installer.candidates / "sample")
+    with pytest.raises(FileNotFoundError):
+        installer.apply_files("sample")
+    assert original_dir.is_dir()
+    assert "# v1" in (original_dir / "__init__.py").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_plugin_test_enforces_declared_permissions(tmp_path):
+    from len_bot.plugin_testing import PluginTest
+
+    package = _copy_sample(tmp_path, "strictperm")
+    manifest = (package / "plugin.toml").read_text(encoding="utf-8")
+    manifest = manifest.replace('interface = 1\n', 'interface = 1\npermissions = []\n', 1)
+    (package / "plugin.toml").write_text(manifest, encoding="utf-8")
+    (package / "__init__.py").write_text(
+        'from len_bot.plugin import Plugin\nclass StrictPerm(Plugin):\n    pass\n', encoding="utf-8")
+
+    scene = "onebot:group:80001"
+    async with PluginTest(package, scenes=[scene]) as bot:
+        ctx = bot.host.plugins["strictperm"].context
+        with pytest.raises(PermissionError, match="声明 send"):
+            await ctx.send(scene, "hello")
+        with pytest.raises(PermissionError, match="声明 history"):
+            ctx.recent_messages(scene)
+        with pytest.raises(PermissionError, match="声明 history"):
+            ctx.messages_between(scene, 0, 10)
+        with pytest.raises(PermissionError, match="声明 events"):
+            await ctx.emit_event(scene, "notice")
+        with pytest.raises(PermissionError, match="声明 generate"):
+            await ctx.generate(scene, "hi")
+        with pytest.raises(PermissionError, match="声明 memory"):
+            await ctx.memory(scene, {"action": "search", "query": "x"})
+        with pytest.raises(PermissionError, match="声明 delegate"):
+            await bot.host.delegate("strictperm", scene, "onebot:70001", "g", "d", "c", [])
+
+
+@pytest.mark.asyncio
+async def test_paused_and_reopened_scenes_clear_backlog_plugin_events(tmp_path):
+    from len_bot.next.chat.attention import SceneRunner
+    from len_bot.next.chat.session import Chat
+    from len_bot.next.models.client import ChatModel
+    from len_bot.next.persona.profile import load_persona
+    from len_bot.next.plugins.store import PluginStore
+    from len_bot.next.storage.store import Store
+
+    root = _root(tmp_path, {"paths": ["plugins"], "sample": {}}, ["sample"])
+    host_config = load_host_config(root)
+    scene = "onebot:group:80001"
+    scene_config = host_config.scene_config(scene)
+    scene_config.persona.mkdir(parents=True, exist_ok=True)
+    (scene_config.persona / "persona.yaml").write_text(json.dumps({
+        "id": "synthetic", "name": "合成角色", "brief": "测试。", "behavior": "正常。",
+        "self_reference": ["我"], "aliases": [], "tools": ["say"], "skills": [], "styles": [],
+    }, ensure_ascii=False), encoding="utf-8")
+    for name, body in [("voice.md", "简短。"), ("boundaries.md", "无。"), ("examples.yaml", "[]\n")]:
+        (scene_config.persona / name).write_text(body, encoding="utf-8")
+    persona = load_persona(scene_config.persona)
+    with Store(host_config.database) as store:
+        plugin_store = PluginStore(store)
+        async with ChatModel(scene_config.model_settings("mind")) as mind:
+            runner = SceneRunner(Chat(scene_config, persona, store, mind), lambda _: None)
+            plugin_store.add_plugin_event(scene, "sample", "reply", "暂停前遗留事件 1")
+            plugin_store.add_plugin_event(scene, "sample", "event", "暂停前遗留事件 2")
+            assert len(plugin_store.pending_plugin_events(scene)) == 2
+
+            await runner.set_paused(True)
+            assert plugin_store.pending_plugin_events(scene) == []
+
+            # Pre-upgrade backlog while paused is drained both on startup and when chat resumes.
+            with store.db:
+                store.db.execute(
+                    "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,'reply',?,?)",
+                    (scene, "sample", "启动前历史堆积事件", store.now()),
+                )
+            restarted = SceneRunner(Chat(scene_config, persona, store, mind), lambda _: None)
+            assert restarted.state.paused and plugin_store.pending_plugin_events(scene) == []
+
+            with store.db:
+                store.db.execute(
+                    "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,'reply',?,?)",
+                    (scene, "sample", "恢复前堆积事件", store.now()),
+                )
+            await restarted.set_paused(False)
+            assert plugin_store.pending_plugin_events(scene) == []

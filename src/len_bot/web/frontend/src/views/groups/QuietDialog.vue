@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { hostApi, type SceneControl } from '../../api/host'
+import { hostApi } from '../../api/host'
 import { keys } from '../../api/query'
 import { currentLocale } from '../../i18n'
 import { formatDateTime } from '../../i18n/format'
@@ -20,11 +20,16 @@ const props = defineProps<{ scene: string; timeZone: string }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
+const durationId = useId()
 const minutes = ref<'30' | '60' | '180' | '480'>('60')
 const direct = ref<'allow' | 'defer'>('allow')
 
 const unit = (n: number, name: 'minute' | 'hour') =>
-  new Intl.NumberFormat(currentLocale.value, { style: 'unit', unit: name, unitDisplay: 'long' }).format(n)
+  new Intl.NumberFormat(currentLocale.value, {
+    style: 'unit',
+    unit: name,
+    unitDisplay: currentLocale.value.startsWith('zh') ? 'long' : 'short',
+  }).format(n)
 const durations = computed(() => [
   { value: '30' as const, label: unit(30, 'minute') },
   { value: '60' as const, label: unit(1, 'hour') },
@@ -33,15 +38,20 @@ const durations = computed(() => [
 ])
 
 const quiet = useMutation({
-  mutationFn: () => hostApi.quiet(props.scene, Number(minutes.value) * 60, direct.value),
-  onSuccess: (control: SceneControl) => {
-    client.setQueryData(keys.scene.control(props.scene), control)
+  mutationFn: ({ targetScene, targetZone }: { targetScene: string; targetZone: string }) =>
+    hostApi.quiet(targetScene, Number(minutes.value) * 60, direct.value).then((control) => ({
+      control,
+      targetScene,
+      targetZone,
+    })),
+  onSuccess: ({ control, targetScene, targetZone }) => {
+    client.setQueryData(keys.scene.control(control.scene || targetScene), control)
     void readHostState()
-    open.value = false
+    if (props.scene === targetScene) open.value = false
     const until = control.temporary_quiet?.until
     toast.success(
       until
-        ? t('groups.quiet.started', { time: formatDateTime(until, { timeZone: props.timeZone }) })
+        ? t('groups.quiet.started', { time: formatDateTime(until, { timeZone: targetZone }) })
         : t('common.saved'),
     )
   },
@@ -54,9 +64,12 @@ watch(open, (value) => {
 <template>
   <Dialog v-model:open="open" :title="t('groups.quiet.title')" size="sm" :busy="quiet.isPending.value">
     <div class="flex flex-col gap-5">
-      <Field :label="t('groups.quiet.duration')">
+      <div class="flex min-w-0 flex-col gap-1.5" role="group" :aria-labelledby="durationId">
+        <span :id="durationId" class="min-w-0 text-sm font-medium text-ink-2">
+          {{ t('groups.quiet.duration') }}
+        </span>
         <SegmentedControl v-model="minutes" :options="durations" block :label="t('groups.quiet.duration')" />
-      </Field>
+      </div>
       <Field :label="t('groups.quiet.direct')">
         <RadioGroup
           v-model="direct"
@@ -72,7 +85,11 @@ watch(open, (value) => {
       <Button variant="ghost" :disabled="quiet.isPending.value" @click="open = false">
         {{ t('common.cancel') }}
       </Button>
-      <Button variant="primary" :loading="quiet.isPending.value" @click="quiet.mutate()">
+      <Button
+        variant="primary"
+        :loading="quiet.isPending.value"
+        @click="quiet.mutate({ targetScene: props.scene, targetZone: props.timeZone })"
+      >
         {{ t('groups.quiet.start') }}
       </Button>
     </template>

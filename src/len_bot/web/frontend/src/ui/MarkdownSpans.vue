@@ -9,7 +9,10 @@ defineProps<{ spans: Span[] }>()
     <strong v-if="span.kind === 'strong'" class="font-semibold text-ink">
       <MarkdownSpans :spans="span.children" />
     </strong>
-    <code v-else-if="span.kind === 'code'" class="rounded-sm bg-code px-1 font-mono text-[0.92em]">
+    <code
+      v-else-if="span.kind === 'code'"
+      class="rounded-xs border border-line bg-code px-1 py-px font-mono text-[0.9em] text-ink-2"
+    >
       {{ span.text }}
     </code>
     <a
@@ -17,7 +20,7 @@ defineProps<{ spans: Span[] }>()
       :href="span.href"
       target="_blank"
       rel="noopener noreferrer"
-      class="text-primary hover:underline"
+      class="font-medium text-primary underline-offset-2 hover:underline"
     >
       {{ span.text }}
     </a>

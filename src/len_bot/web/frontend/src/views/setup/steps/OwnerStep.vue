@@ -48,7 +48,7 @@ const timezone = computed({
 <template>
   <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
     <Field v-if="people.length" :label="t('setup.owner.source')" wide>
-      <div>
+      <div class="min-w-0">
         <SegmentedControl v-model="draft.ownerSource" :options="sources" :label="label" />
       </div>
     </Field>

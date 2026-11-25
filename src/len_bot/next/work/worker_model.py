@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+import copy
 from dataclasses import asdict, dataclass
 import hmac
 import json
@@ -19,7 +20,7 @@ from typing import Any
 from ..chat.recap import estimate_text_request
 from ..models.client import ModelProtocolError, ModelSettings
 from ..models.slots import ModelSlots
-from ..models.tokens import token_record
+from ..models.tokens import TokenUsage, token_record
 from .worker_stream import ChatCompletionStream
 from .native_stream import NativeStream
 from ..models.providers import http_client, auth_headers
@@ -27,6 +28,104 @@ from urllib.parse import quote
 from ..runtime.logs import redact, redact_record
 
 REJECTED_HTTP_STATUSES = frozenset({400, 401, 403, 404, 405, 409, 413, 415, 422, 429})
+_ANTHROPIC_CACHE_CONTROL = {"type": "ephemeral"}
+_ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
+_ANTHROPIC_NON_CACHEABLE_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+def _has_cache_control(item: dict[str, Any]) -> bool:
+    return item.get("cache_control") is not None
+
+
+def _is_cacheable_anthropic_block(block: Any) -> bool:
+    if not isinstance(block, dict):
+        return False
+    block_type = block.get("type")
+    if block_type in _ANTHROPIC_NON_CACHEABLE_TYPES:
+        return False
+    if block_type == "text":
+        text = block.get("text")
+        return isinstance(text, str) and bool(text.strip())
+    return True
+
+
+def _count_anthropic_cache_controls(payload: dict[str, Any]) -> int:
+    count = 1 if _has_cache_control(payload) else 0
+    system = payload.get("system")
+    if isinstance(system, list):
+        count += sum(1 for block in system if isinstance(block, dict) and _has_cache_control(block))
+    tools = payload.get("tools")
+    if isinstance(tools, list):
+        count += sum(1 for tool in tools if isinstance(tool, dict) and _has_cache_control(tool))
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if _has_cache_control(block):
+                    count += 1
+                if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+                    count += sum(
+                        1 for item in block["content"]
+                        if isinstance(item, dict) and _has_cache_control(item)
+                    )
+    return count
+
+
+def _apply_anthropic_cache_breakpoints(outgoing: dict[str, Any]) -> None:
+    breakpoints = _count_anthropic_cache_controls(outgoing)
+    if breakpoints >= _ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+        return
+
+    system = outgoing.get("system")
+    if isinstance(system, str) and system.strip():
+        outgoing["system"] = [{"type": "text", "text": system, "cache_control": dict(_ANTHROPIC_CACHE_CONTROL)}]
+        breakpoints += 1
+    elif isinstance(system, list) and system:
+        for block in reversed(system):
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                if not _has_cache_control(block):
+                    block["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
+                    breakpoints += 1
+                break
+
+    if breakpoints >= _ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+        return
+
+    tools = outgoing.get("tools")
+    if isinstance(tools, list) and tools:
+        last_tool = tools[-1]
+        if isinstance(last_tool, dict) and not _has_cache_control(last_tool):
+            last_tool["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
+            breakpoints += 1
+
+    if breakpoints >= _ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+        return
+
+    messages = outgoing.get("messages")
+    if isinstance(messages, list) and len(messages) >= 2:
+        target = messages[-2]
+        if isinstance(target, dict):
+            content = target.get("content")
+            if isinstance(content, str) and content.strip():
+                target["content"] = [{"type": "text", "text": content, "cache_control": dict(_ANTHROPIC_CACHE_CONTROL)}]
+                breakpoints += 1
+            elif isinstance(content, list) and content:
+                for block in reversed(content):
+                    if _is_cacheable_anthropic_block(block):
+                        if not _has_cache_control(block):
+                            block["cache_control"] = dict(_ANTHROPIC_CACHE_CONTROL)
+                            breakpoints += 1
+                        break
 
 
 class WorkerModelError(RuntimeError):
@@ -79,6 +178,7 @@ class WorkerModelProxy:
         *,
         slots: ModelSlots | None = None,
         scene: str | None = None,
+        cache_key: str | None = None,
         start_call: Callable[[dict[str, Any]], int],
         finish_call: Callable[[int, dict[str, Any]], None],
     ):
@@ -92,18 +192,30 @@ class WorkerModelProxy:
         self.limits = limits
         self.slots = slots
         self.scene = scene
+        self._cache_key = cache_key
         self.start_call = start_call
         self.finish_call = finish_call
         self._token = token
         self._entered = False
         self._closed = False
         self._busy = False
+        self._last_active_at = 0.0
         self._calls = 0
         self._spent = 0
         self._tokens_unknown = False
         self._active_task: asyncio.Task[Any] | None = None
         self._client = http_client(base_url=settings.base_url, api_key=settings.api_key, api=settings.api,
                                    timeout_seconds=settings.timeout_seconds, proxy=settings.proxy)
+
+    @property
+    def busy(self) -> bool:
+        """True while a worker model call is queued for a slot or streaming from upstream."""
+        return self._busy
+
+    @property
+    def last_active_at(self) -> float:
+        """Event-loop timestamp when the most recent worker model call started or finished."""
+        return self._last_active_at
 
     @property
     def path(self) -> str:
@@ -130,7 +242,7 @@ class WorkerModelProxy:
         key = 'input' if api == 'openai-responses' else 'messages' if api == 'anthropic' else 'contents'
         if not isinstance(inbound.get(key), list):
             raise WorkerModelError(f'worker {key} must be an array')
-        outgoing = inbound.copy()
+        outgoing = copy.deepcopy(inbound)
         for tool in outgoing.get('tools', []):
             if api == 'openai-responses':
                 valid = isinstance(tool, dict) and tool.get('type') == 'function'
@@ -140,7 +252,7 @@ class WorkerModelProxy:
                 valid = isinstance(tool, dict) and set(tool) == {'functionDeclarations'}
             if not valid:
                 raise WorkerModelError('worker tools must be local function declarations; provider network tools are unavailable')
-        options = dict(inbound.get('generationConfig', {})) if api == 'gemini' else outgoing
+        options = dict(outgoing.get('generationConfig', {})) if api == 'gemini' else outgoing
         output_field = 'max_output_tokens' if api == 'openai-responses' else 'max_tokens' if api == 'anthropic' else 'maxOutputTokens'
         output_tokens = options.get(output_field, self.settings.max_output_tokens)
         if type(output_tokens) is not int or not 0 < output_tokens <= self.settings.max_output_tokens:
@@ -157,6 +269,8 @@ class WorkerModelProxy:
             outgoing.pop('reasoning', None)
             if self.settings.reasoning_effort is not None:
                 outgoing['reasoning'] = {'effort': self.settings.reasoning_effort}
+            if self._cache_key:
+                outgoing.setdefault('prompt_cache_key', self._cache_key)
         elif api == 'anthropic':
             outgoing.pop('thinking', None)
             outgoing.pop('output_config', None)
@@ -164,6 +278,7 @@ class WorkerModelProxy:
                 outgoing['thinking'] = {'type': 'enabled', 'budget_tokens': self.settings.thinking_budget_tokens}
             elif self.settings.reasoning_effort is not None:
                 outgoing.update(thinking={'type': 'adaptive'}, output_config={'effort': self.settings.reasoning_effort})
+            _apply_anthropic_cache_breakpoints(outgoing)
         else:
             options.pop('thinkingConfig', None)
             if self.settings.thinking_budget_tokens is not None:
@@ -210,7 +325,7 @@ class WorkerModelProxy:
         if self.slots is None:
             yield
         else:
-            async with self.slots.slot(scene=self.scene):
+            async with self.slots.slot(worker=True, scene=self.scene):
                 yield
 
     def _add_tokens(self, tokens: dict[str, int | None] | None) -> None:
@@ -356,6 +471,7 @@ class WorkerModelProxy:
         ):
             raise WorkerModelError("worker model token limit reached, or an earlier call reported no tokens")
         self._busy = True
+        self._last_active_at = asyncio.get_running_loop().time()
         self._active_task = asyncio.current_task()
         call_id: int | None = None
         settled = False
@@ -363,6 +479,7 @@ class WorkerModelProxy:
         response_bytes = 0
         error_body = bytearray()
         deadline: asyncio.Timeout | None = None
+        parser: ChatCompletionStream | NativeStream | None = None
         try:
             outgoing, wire, text_estimate, image_unknown = self._request(payload_bytes)
             async with self._slot():
@@ -422,12 +539,17 @@ class WorkerModelProxy:
                             except BaseException:
                                 self._closed = True
                                 raise
-                            if tokens is not None or status not in REJECTED_HTTP_STATUSES:
+                            if tokens is not None or error is None:
                                 self._add_tokens(tokens)
 
                         async def body() -> AsyncIterator[bytes]:
                             nonlocal response_bytes
                             async for chunk in upstream.aiter_raw():
+                                if chunk:
+                                    now = asyncio.get_running_loop().time()
+                                    self._last_active_at = now
+                                    if deadline is not None:
+                                        deadline.reschedule(now + self.settings.timeout_seconds)
                                 response_bytes += len(chunk)
                                 if response_bytes > self.limits.max_response_bytes:
                                     raise WorkerModelError("worker model response exceeds max_response_bytes")
@@ -469,6 +591,18 @@ class WorkerModelProxy:
                 settled = True
                 known_usage = error.usage if isinstance(error, ModelProtocolError) else None
                 known_tokens = error.token_usage if isinstance(error, ModelProtocolError) else None
+                if known_tokens is None and parser is not None:
+                    partial_raw, partial_tokens = parser.partial_usage()
+                    if partial_tokens is not None and (
+                        partial_tokens.prompt_tokens is not None
+                        or partial_tokens.completion_tokens is not None
+                    ):
+                        known_usage = partial_raw
+                        known_tokens = TokenUsage(
+                            partial_tokens.prompt_tokens or 0,
+                            partial_tokens.completion_tokens or 0,
+                            partial_tokens.cached_tokens,
+                        )
                 tokens = token_record(known_tokens)
                 facts = {
                     "http_status": status,
@@ -487,7 +621,7 @@ class WorkerModelProxy:
                 except BaseException as finish_error:
                     self._closed = True
                     error.add_note(f"model-call recording also failed: {finish_error}")
-                if tokens is not None or status not in REJECTED_HTTP_STATUSES:
+                if tokens is not None:
                     self._add_tokens(tokens)
             if error is not original_error:
                 raise error from original_error
@@ -495,5 +629,6 @@ class WorkerModelProxy:
         finally:
             self._active_task = None
             self._busy = False
+            self._last_active_at = asyncio.get_running_loop().time()
             if self._closed and not self._client.is_closed:
                 await self._client.aclose()

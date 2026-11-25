@@ -278,15 +278,14 @@ def create_setup_app(root: Path, token: str, completed: asyncio.Event, *, contai
 
     @app.post('/api/setup/platform', dependencies=[Depends(authorize)], response_model=responses.SetupPlatform, response_model_exclude_unset=True)
     async def probe_platform(item: PlatformProbe):
-        def failed(error: str) -> None:
-            raise ValueError(error)
+        errors: list[str] = []
         try:
-            async with OneBot(item.onebot, bot_id=None, on_event=lambda event: None, on_error=failed) as platform:
+            async with OneBot(item.onebot, bot_id=None, on_event=lambda event: None, on_error=errors.append) as platform:
                 bot_id = await platform.identify()
                 return {'bot_id': bot_id, 'groups': await listed_groups(platform)}
         except OneBotCallError as error:
-            # The message already names the step and the underlying error.
-            raise HTTPException(422, str(error)) from error
+            detail = f'{error}（{errors[-1]}）' if errors else str(error)
+            raise HTTPException(422, detail) from error
         except Exception as error:
             raise HTTPException(422, f'{type(error).__name__}: {error}') from error
 

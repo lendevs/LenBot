@@ -293,3 +293,196 @@ async def test_turn_detail_http_keeps_actual_recalled_section_sources(tmp_path):
         assert recalled['content'] == '## 会场\n读书会在图书馆二楼。\n'
         assert recalled['sections'][0]['headings'] == [['记录', '会场']]
         assert recalled['sections'][0]['source_version'] == hashlib.sha256(content.encode()).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_automatic_recall_filters_noise_trigrams_and_browses_parent_once(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
+    await memory.write(SCENE, 'events/chat.md', '群友说哈哈哈，不知道为什么怎么办，什么意思没问题。', '口水样本')
+    await memory.write(SCENE, 'events/camp.md', '下周末去植物园露营，记得带帐篷。', '主题样本')
+    for idx in range(5):
+        await memory.write(SCENE, f'events/note_{idx}.md', f'记录 {idx}。', '目录浏览样本')
+
+    for noise in ('哈哈哈', '不知道', '为什么', '怎么办', '什么意思', '没问题', '哈哈哈，不知道，为什么，怎么办，没问题'):
+        assert await memory.search(SCENE, noise, 5, automatic=True) == []
+    hits = await memory.search(SCENE, '哈哈哈，植物园露营，没问题', 5, automatic=True)
+    assert [hit.path for hit in hits] == ['events/camp.md']
+
+    calls: list[Path] = []
+    real_iterdir = Path.iterdir
+
+    def counted_iterdir(self):
+        calls.append(self)
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, 'iterdir', counted_iterdir)
+    page = await memory.browse(SCENE, 'events', limit=20)
+    assert len(page.nodes) == 7
+    events_dir = memory.root / 'scenes' / scene_directory(SCENE) / 'events'
+    assert calls.count(events_dir) == 1
+
+
+@pytest.mark.asyncio
+async def test_profile_recall_skips_placeholder_or_empty_preference_section(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=600)
+    memory = LocalMemory(settings.local)
+    await memory.write(SCENE, 'people/onebot:90001/profile.md',
+                       '# 林安\n\n## 相处偏好与雷点\n暂无明确记录。\n\n## 近期情况\n周五准备去爬山。\n', '档案样本')
+    await memory.write(SCENE, 'people/onebot:90001/preferences.md', '暂无明确记录\n', '占位偏好样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        recalled = await service.recall(SCENE, chat('周末天气真好'))
+    paths = [item['path'] for item in recalled['items']]
+    assert paths == ['people/onebot:90001/profile.md']
+    content = recalled['items'][0]['content']
+    assert '相处偏好与雷点' not in content and '暂无明确记录' not in content
+    assert '周五准备去爬山。' in content
+
+
+@pytest.mark.asyncio
+async def test_summary_uses_background_slots_and_strict_json_boundary(tmp_path):
+    from contextlib import asynccontextmanager
+
+    from len_bot.next.memory.summary import MemorySummarizer
+    from len_bot.next.models.client import ModelReply
+
+    valid_summary = ModelReply(
+        message={'role': 'assistant', 'content': '{"abstract": "活动摘要", "overview": "活动总览"}'},
+        text='{"abstract": "活动摘要", "overview": "活动总览"}',
+        tool_calls=[], finish_reason='stop', usage=None, token_usage=None,
+    )
+
+    slot_calls: list[dict] = []
+
+    class FakeSlots:
+        @asynccontextmanager
+        async def slot(self, *, direct=False, background=False, scene=None):
+            slot_calls.append({'direct': direct, 'background': background, 'scene': scene})
+            yield
+
+    class FakeModel:
+        settings = type('S', (), {'model_dump': lambda self, **_: {'model': 'mem'}})()
+
+        async def complete(self, messages, tools):
+            return valid_summary
+
+    class FakeConfig:
+        def binding(self, role):
+            return type('B', (), {'provider': 'p', 'model': 'm', 'max_output_tokens': 256,
+                                  'context_window_tokens': 8192})()
+
+    memory = LocalMemory(LocalMemorySettings(directory=tmp_path / 'memory'))
+    await memory.write(SCENE, 'events/a.md', '周五聚会。', '样本')
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        summarizer = MemorySummarizer(FakeConfig(), memory, jobs, FakeModel(), store, slots=FakeSlots())
+        result = await summarizer.summarize(SCENE, 'events')
+    assert result['abstract'] == '活动摘要'
+    assert slot_calls == [{'direct': False, 'background': True, 'scene': SCENE}]
+
+
+@pytest.mark.asyncio
+async def test_overlapping_and_adjacent_same_file_sections_merge_without_budget_waste(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=300, recall_limit=5)
+    memory = LocalMemory(settings.local)
+    content = (
+        '# 季度复盘\n\n'
+        '## 营收总览\n'
+        '华东季度营收核心指标达成预期。\n\n'
+        '### 华东细分\n'
+        '华东季度营收核心指标来自三个新客户。\n'
+    )
+    await memory.write(SCENE, 'resources/q3_review.md', content, '父子小节样本')
+
+    # Adjacent parent + child sections merge into one contiguous range without repeating text.
+    hits = await memory.search(SCENE, '华东季度营收核心指标', 5, automatic=True)
+    assert len(hits) == 1
+    assert len(hits[0].sections) == 1
+    assert hits[0].preview.count('华东季度营收核心指标来自三个新客户') == 1
+
+    # Also verify explicit overlapping ancestor/child character intervals merge without duplicating body text.
+    version = hashlib.sha256(content.encode('utf-8')).hexdigest()
+    with sqlite3.connect(memory.index) as db:
+        db.execute(
+            'INSERT INTO memory_sections(scope,path,heading,start_char,end_char,source_version,content) '
+            'VALUES(?,?,?,?,?,?,?)',
+            (SCENE, 'resources/q3_review.md', json.dumps(['季度复盘'], ensure_ascii=False),
+             0, len(content), version, content.casefold()),
+        )
+        rowid = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+        db.execute('INSERT INTO memory_fts(rowid,content) VALUES(?,?)', (rowid, content.casefold()))
+
+    overlap_hits = await memory.search(SCENE, '华东季度营收核心指标', 5, automatic=True)
+    assert len(overlap_hits) == 1
+    assert len(overlap_hits[0].sections) == 1
+    assert overlap_hits[0].sections[0]['start_char'] == 0
+    assert overlap_hits[0].sections[0]['end_char'] == len(content)
+    assert overlap_hits[0].preview == content
+    assert overlap_hits[0].preview.count('华东季度营收核心指标达成预期') == 1
+    assert overlap_hits[0].preview.count('华东季度营收核心指标来自三个新客户') == 1
+
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        recalled = await service.recall(SCENE, chat('看看华东季度营收核心指标的报告'))
+    assert [item['path'] for item in recalled['items']] == ['resources/q3_review.md']
+    assert recalled['content_chars'] <= 300
+    assert recalled['items'][0]['content'].count('华东季度营收核心指标来自三个新客户') == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_recall_retains_resources_under_events_flood_and_recap_artifact_cues(tmp_path):
+    settings = LocalMemoryConfig(backend='local', local=LocalMemorySettings(directory=tmp_path / 'memory'),
+                                 recall_budget_chars=900, recall_limit=3)
+    memory = LocalMemory(settings.local)
+    for idx in range(1, 8):
+        await memory.write(
+            SCENE,
+            f'events/day_{idx:02d}.md',
+            f'# 第 {idx} 天讨论\n\n大家讨论了季度财务报告和上次生成的表格文件，提到季度财务报告进度 {idx}。\n',
+            '普通事件样本',
+        )
+    await memory.write(
+        SCENE,
+        'resources/q3_finance.md',
+        '# 季度财务报告\n\n任务 #42 交付文件 q3_finance.xlsx（file_id=7），记录季度财务报告净利润 520 万元。\n',
+        '场景资料产物样本',
+    )
+
+    # 1) Direct chat with artifact lookup intent retains the resources/ hit within recall_limit & budget.
+    with Store(tmp_path / 'chat.db') as store, MemoryJobs(tmp_path / 'jobs.db') as jobs:
+        service = MemoryService(settings, memory, jobs=jobs, store=store, active_personas={})
+        direct = await service.recall(SCENE, chat('帮我查一下上次生成的季度财务报告文件'))
+        direct_paths = [item['path'] for item in direct['items']]
+        assert 'resources/q3_finance.md' in direct_paths
+        assert len(direct_paths) <= settings.recall_limit
+        assert direct['content_chars'] <= settings.recall_budget_chars
+        assert any('520 万元' in item['content'] for item in direct['items'])
+
+        # 2) Recap topic line with task ticket / filename / resources/ clue feeds cue recall for resources/.
+        recap = (
+            '## 话题脉络\n'
+            '- 讨论了下周天气\n'
+            '- 任务 #42 已生成季度财务报告 q3_finance.xlsx（file_id=7），归档在 resources/q3_finance.md\n\n'
+            '## 我答应的事\n'
+            '- 周五前发书单\n'
+        )
+        cues = recall_cues(recap)
+        assert '#42' in cues and 'q3_finance.xlsx' in cues and '下周天气' not in cues
+        via_cues = await service.recall(SCENE, chat('那个表格文件再发一下'), cues)
+        cue_paths = [item['path'] for item in via_cues['items']]
+        assert 'resources/q3_finance.md' in cue_paths
+        assert len(cue_paths) <= settings.recall_limit + 2
+        assert via_cues['content_chars'] <= settings.recall_budget_chars
+        assert any('520 万元' in item['content'] for item in via_cues['items'])
+
+        # 3) Even when normal chat query fills all recall_limit (3) hits without resource keywords,
+        #    recap promise/question cues still append up to CUE_HITS extra entries within budget.
+        await memory.write(SCENE, 'events/booklist.md', '# 十一月书单\n\n周五前发书单的完整书目清单。\n', '承诺事项样本')
+        full_plus_cue = await service.recall(SCENE, chat('大家最近讨论季度财务报告进度怎么样'), '周五前发书单')
+        full_paths = [item['path'] for item in full_plus_cue['items']]
+        assert 'events/booklist.md' in full_paths
+        assert len(full_paths) >= settings.recall_limit + 1
+        assert full_plus_cue['content_chars'] <= settings.recall_budget_chars

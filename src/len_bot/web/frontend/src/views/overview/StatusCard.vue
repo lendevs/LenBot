@@ -13,11 +13,12 @@ import Button from '../../ui/Button.vue'
 import DropdownMenu, { type MenuEntry } from '../../ui/DropdownMenu.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import IconButton from '../../ui/IconButton.vue'
+import StatusDot from '../../ui/StatusDot.vue'
 import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const router = useRouter()
 const { online, status } = useConnectionStatus()
 const state = computed(() => host.state as HostState)
@@ -47,7 +48,8 @@ async function askDisconnect() {
   if (sure) disconnect.mutate()
 }
 
-const anyChat = computed(() => state.value.scenes.some((item) => item.chat_enabled))
+const openScenes = computed(() => state.value.scenes.filter((item) => item.scene_open))
+const anyChat = computed(() => openScenes.value.some((item) => item.chat_enabled))
 const allChat = useMutation({
   mutationFn: (enabled: boolean) => overviewApi.setAllChat(enabled),
   onSuccess: (result) =>
@@ -55,6 +57,32 @@ const allChat = useMutation({
   onError: failed(t('overview.status.allFailed')),
   onSettled: after,
 })
+async function toggleAllChat() {
+  if (anyChat.value) {
+    allChat.mutate(false)
+    return
+  }
+  const pluginsOnly = state.value.scenes.filter((item) => !item.chat_enabled).length
+  if (pluginsOnly > 0) {
+    const sure = await confirm({
+      title: t('overview.status.resumeAllTitle'),
+      message: t('overview.status.resumeAllMessage', { n: pluginsOnly }, pluginsOnly),
+      confirmLabel: t('overview.status.resumeAll'),
+    })
+    if (!sure) return
+  }
+  allChat.mutate(true)
+}
+
+const isSimulated = computed(() => state.value.delivery === 'simulated')
+const platforms = computed(() =>
+  Object.entries(connection.value.platforms ?? {}).map(([name, connected]) => ({
+    name,
+    label: te(`chatPlatforms.${name}`) ? t(`chatPlatforms.${name}`) : name,
+    connected: Boolean(connected),
+  })),
+)
+const showPlatforms = computed(() => platforms.value.length >= 2)
 
 const note = computed(() => {
   const value = connection.value
@@ -87,12 +115,12 @@ const menu = computed<MenuEntry[]>(() => [
 </script>
 
 <template>
-  <section class="flex flex-col gap-4 rounded-xl border border-line bg-surface p-5 shadow-card">
-    <div class="flex flex-wrap items-center gap-x-5 gap-y-4">
+  <section class="flex flex-col gap-4 border-b border-line pb-6">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
       <span class="relative shrink-0">
-        <img :src="markUrl" alt="" class="size-13 rounded-[14px]" />
+        <img :src="markUrl" alt="" class="size-12 rounded-xl" />
         <span
-          class="absolute -right-1 -bottom-1 size-3.5 rounded-full border-2 border-surface"
+          class="absolute -right-1 -bottom-1 size-3.5 rounded-full border-2 border-page"
           :class="
             online
               ? 'animate-pulse-dot bg-success text-success'
@@ -103,19 +131,49 @@ const menu = computed<MenuEntry[]>(() => [
           aria-hidden="true"
         />
       </span>
-      <div class="min-w-0 flex-1 basis-56">
+      <div class="min-w-0 flex-1 basis-52">
         <h2
-          class="text-xl font-semibold"
-          :class="!online && (status.tone === 'error' ? 'text-error' : 'text-warning')"
+          class="text-xl font-semibold tracking-tight"
+          :class="online ? 'text-ink' : status.tone === 'error' ? 'text-error' : 'text-warning'"
         >
           {{ online ? t('overview.status.online') : status.text }}
         </h2>
-        <p class="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">
-          {{
-            [state.bot_id, t('overview.status.groups', { n: state.scenes.length }, state.scenes.length)]
-              .filter(Boolean)
-              .join(' · ')
-          }}
+        <p
+          class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted tabular [overflow-wrap:anywhere]"
+        >
+          <span v-if="state.bot_id" class="font-mono text-xs text-muted">{{ state.bot_id }}</span>
+          <span v-if="state.bot_id" aria-hidden="true">·</span>
+          <span>{{ t('overview.status.groups', { n: state.scenes.length }, state.scenes.length) }}</span>
+          <template v-if="showPlatforms">
+            <span aria-hidden="true">·</span>
+            <span
+              v-for="item in platforms"
+              :key="item.name"
+              class="inline-flex items-center gap-1.5 text-xs text-muted"
+              :title="
+                t(item.connected ? 'overview.status.platformOnline' : 'overview.status.platformOffline', {
+                  name: item.label,
+                })
+              "
+            >
+              <StatusDot
+                :tone="item.connected ? 'success' : status.tone === 'error' ? 'error' : 'warning'"
+                :label="
+                  t(item.connected ? 'overview.status.platformOnline' : 'overview.status.platformOffline', {
+                    name: item.label,
+                  })
+                "
+              />
+              <span>{{ item.label }}</span>
+            </span>
+          </template>
+          <template v-if="isSimulated">
+            <span aria-hidden="true">·</span>
+            <span class="inline-flex items-center gap-1.5 text-xs text-muted">
+              <StatusDot tone="info" />
+              <span>{{ t('overview.status.simulated') }}</span>
+            </span>
+          </template>
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -133,8 +191,8 @@ const menu = computed<MenuEntry[]>(() => [
           size="sm"
           :icon="anyChat ? Pause : Play"
           :loading="allChat.isPending.value"
-          :disabled="!connection.accepting"
-          @click="allChat.mutate(!anyChat)"
+          :disabled="!connection.accepting || !openScenes.length"
+          @click="void toggleAllChat()"
         >
           {{ anyChat ? t('overview.status.pauseAll') : t('overview.status.resumeAll') }}
         </Button>

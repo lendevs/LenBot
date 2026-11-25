@@ -34,30 +34,44 @@ const login = (panel: URL) => {
   return page.href
 }
 
+function parseAddress(): URL | null {
+  try {
+    const url = new URL(address.value.trim())
+    return ['http:', 'https:'].includes(url.protocol) ? url : null
+  } catch {
+    return null
+  }
+}
+
 let stopped = false
 async function wait() {
-  const panel = new URL(address.value)
   const begin = Date.now()
   while (!stopped && Date.now() - begin < 300_000) {
-    try {
-      const response = await fetch(new URL('/api/host/ready', panel), {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(3000),
-      })
-      if (response.ok) {
-        const ready = (await response.json()) as { ready?: boolean; status?: string }
-        if (ready.ready) {
-          state.value = 'ready'
-          setTimeout(() => !stopped && location.assign(login(panel)), 600)
-          return
+    const panel = parseAddress()
+    if (panel) {
+      try {
+        const response = await fetch(new URL('/api/host/ready', panel), {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(3000),
+        })
+        if (response.ok) {
+          const ready = (await response.json()) as { ready?: boolean; status?: string }
+          if (ready.ready) {
+            state.value = 'ready'
+            setTimeout(() => {
+              if (stopped) return
+              location.assign(login(parseAddress() ?? panel))
+            }, 600)
+            return
+          }
+          if (ready.status === 'failed') {
+            state.value = 'failed'
+            return
+          }
         }
-        if (ready.status === 'failed') {
-          state.value = 'failed'
-          return
-        }
+      } catch {
+        // The panel is not listening yet.
       }
-    } catch {
-      // The panel is not listening yet.
     }
     if (Date.now() - begin > 30_000 && state.value === 'starting') state.value = 'slow'
     await new Promise((resolve) => setTimeout(resolve, 500))
@@ -68,14 +82,8 @@ onMounted(wait)
 onBeforeUnmount(() => (stopped = true))
 
 function open() {
-  let panel: URL
-  try {
-    panel = new URL(address.value)
-  } catch {
-    addressError.value = t('setup.problems.httpUrl')
-    return
-  }
-  if (!['http:', 'https:'].includes(panel.protocol)) {
+  const panel = parseAddress()
+  if (!panel) {
     addressError.value = t('setup.problems.httpUrl')
     return
   }
@@ -85,31 +93,40 @@ function open() {
 </script>
 
 <template>
-  <section class="mx-auto flex w-full max-w-md animate-rise flex-col items-center gap-5 text-center">
+  <section class="mx-auto flex w-full max-w-md animate-rise flex-col items-center gap-5 py-6 text-center">
     <img
       :src="markUrl"
       alt=""
-      class="size-16 rounded-xl"
+      class="size-15 rounded-xl"
       :class="
         state === 'starting' || state === 'slow' ? 'animate-[setup-bob_1.6s_var(--ease-out)_infinite]' : ''
       "
     />
     <div class="flex flex-col gap-2" role="status">
-      <h1 class="text-xl font-semibold">{{ t(`setup.done.${state}.title`) }}</h1>
+      <h1
+        class="text-xl font-semibold tracking-tight"
+        :class="state === 'failed' ? 'text-error' : state === 'ready' ? 'text-success' : 'text-ink'"
+      >
+        {{ t(`setup.done.${state}.title`) }}
+      </h1>
       <p class="text-sm text-ink-2">{{ t(`setup.done.${state}.text`) }}</p>
-      <p v-if="installed.length && state !== 'failed'" class="text-sm text-ink-2">
+      <p v-if="installed.length && state !== 'failed'" class="text-sm text-muted">
         {{ t('setup.done.plugins', { names: installed.join(t('setup.done.separator')) }) }}
       </p>
     </div>
-    <div v-if="state === 'starting'" class="flex gap-1.5" aria-hidden="true">
+    <div v-if="state === 'starting'" class="flex gap-2 py-1" aria-hidden="true">
       <span
         v-for="n in 3"
         :key="n"
-        class="size-2 animate-pulse-dot rounded-full bg-brand"
+        class="size-2 animate-pulse-dot rounded-full bg-primary text-primary"
         :style="{ animationDelay: `${n * 160}ms` }"
       />
     </div>
-    <form class="flex w-full flex-col gap-3 text-left" novalidate @submit.prevent="open">
+    <form
+      class="flex w-full flex-col gap-3 border-t border-line pt-5 text-left"
+      novalidate
+      @submit.prevent="open"
+    >
       <Field :label="t('setup.done.address')" :error="addressError" :info="t('setup.done.addressInfo')">
         <Input v-model="address" type="url" mono />
       </Field>

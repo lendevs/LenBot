@@ -170,7 +170,8 @@ class PluginManager:
         saved = await asyncio.to_thread(_read_saved, self.root)
         record = self.installer.read(name)
         candidate_values = self.installer.candidate_values(name)
-        values = saved.plugins.configured[name] if candidate_values is None else candidate_values.values
+        values = (({} if saved.plugins is None else saved.plugins.configured.get(name, {}))
+                  if candidate_values is None else candidate_values.values)
         applied = False
         try:
             manifest = await self.installer.check_apply(name, values, saved.scenes)

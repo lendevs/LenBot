@@ -1,62 +1,95 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, CircleCheck, X } from '@lucide/vue'
+import Badge, { type Tone } from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import CodeBlock from '../../ui/CodeBlock.vue'
+import Collapsible from '../../ui/Collapsible.vue'
 import IconButton from '../../ui/IconButton.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import StatusDot from '../../ui/StatusDot.vue'
 import type { Attention } from './attention'
 
-defineProps<{ items: Attention[]; loading: boolean }>()
+const props = defineProps<{ items: Attention[]; loading: boolean }>()
 const emit = defineEmits<{ dismiss: [item: Attention] }>()
 
 const { t } = useI18n()
+
+const badgeTone = computed<Tone>(() =>
+  props.items.some((item) => item.tone === 'error')
+    ? 'error'
+    : props.items.some((item) => item.tone === 'warning')
+      ? 'warning'
+      : 'info',
+)
 </script>
 
 <template>
   <section class="flex min-w-0 flex-col gap-3">
-    <h2 class="flex items-center gap-2 text-base font-semibold">
+    <h2 class="flex items-center gap-2 text-base font-semibold text-ink">
       {{ t('overview.todo.title') }}
-      <span
-        v-if="items.length"
-        class="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-error-bg px-1.5 text-xs font-semibold text-error tabular"
-      >
-        {{ items.length }}
-      </span>
+      <Badge v-if="items.length" :tone="badgeTone">
+        <span class="tabular">{{ items.length }}</span>
+      </Badge>
     </h2>
-    <Skeleton v-if="loading" :lines="3" />
-    <p v-else-if="!items.length" class="flex items-center gap-2 text-sm font-medium text-success">
-      <CircleCheck :size="18" aria-hidden="true" />
-      {{ t('overview.todo.none') }}
+    <div v-if="loading" class="flex flex-col divide-y divide-line border-y border-line" aria-hidden="true">
+      <div v-for="n in 2" :key="n" class="flex items-center gap-3 py-3">
+        <Skeleton width="8px" height="8px" rounded="rounded-full" />
+        <Skeleton width="68%" height="15px" />
+      </div>
+    </div>
+    <p
+      v-else-if="!items.length"
+      class="flex items-center gap-2 border-t border-line pt-3.5 text-sm text-ink-2"
+    >
+      <CircleCheck :size="16" class="shrink-0 text-success" aria-hidden="true" />
+      <span>{{ t('overview.todo.none') }}</span>
     </p>
-    <ul v-else class="flex list-none flex-col divide-y divide-line rounded-lg border border-line bg-surface">
-      <li v-for="item in items" :key="item.key" class="px-4 py-3">
-        <details v-if="item.children" class="group">
-          <summary
-            class="flex cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden"
-          >
-            <StatusDot :tone="item.tone" />
-            <span class="min-w-0 flex-1 text-sm text-ink">{{ item.text }}</span>
-            <span class="shrink-0 text-xs text-muted">
-              {{ t('overview.todo.groups', { n: item.children.length }) }}
-            </span>
-            <ChevronDown
-              :size="16"
-              class="shrink-0 text-muted transition-transform group-open:rotate-180"
-              aria-hidden="true"
-            />
+    <TransitionGroup
+      v-else
+      tag="ul"
+      name="ui-list"
+      leave-active-class="ui-list-leave-active pointer-events-none absolute inset-x-0"
+      class="relative flex list-none flex-col divide-y divide-line border-y border-line"
+    >
+      <li v-for="item in items" :key="item.key" class="py-3">
+        <Collapsible v-if="item.children" variant="bare">
+          <template #trigger="{ open }">
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-sm text-left focus-visible:focus-ring"
+            >
+              <StatusDot :tone="item.tone" />
+              <span class="min-w-0 flex-1 text-sm text-ink tabular">{{ item.text }}</span>
+              <span class="shrink-0 text-xs text-muted tabular">
+                {{ t('overview.todo.groups', { n: item.children.length }, item.children.length) }}
+              </span>
+              <ChevronDown
+                :size="16"
+                class="shrink-0 text-muted transition-transform duration-(--dur-2)"
+                :class="open && 'rotate-180'"
+                aria-hidden="true"
+              />
+            </button>
+          </template>
+          <template #end>
             <IconButton
               :icon="X"
               :label="t('overview.todo.dismiss')"
               size="sm"
-              @click.stop.prevent="emit('dismiss', item)"
+              @click="emit('dismiss', item)"
             />
-          </summary>
-          <ul class="mt-2 flex list-none flex-col gap-1 border-l-2 border-line pl-3">
+          </template>
+          <TransitionGroup
+            tag="ul"
+            name="ui-list"
+            leave-active-class="ui-list-leave-active pointer-events-none absolute inset-x-0"
+            class="relative mt-2.5 flex list-none flex-col gap-1.5 border-l-2 border-line pl-3.5"
+          >
             <li v-for="child in item.children" :key="child.key" class="flex min-w-0 flex-col gap-1.5 py-1">
               <div class="flex min-w-0 items-center gap-3">
-                <span class="min-w-0 flex-1 text-sm text-ink-2">{{ child.text }}</span>
+                <span class="min-w-0 flex-1 text-sm text-ink-2 tabular">{{ child.text }}</span>
                 <Button v-if="child.to" size="sm" variant="ghost" :to="child.to">{{ child.action }}</Button>
                 <IconButton
                   :icon="X"
@@ -65,19 +98,16 @@ const { t } = useI18n()
                   @click="emit('dismiss', child)"
                 />
               </div>
-              <details v-if="child.error">
-                <summary class="cursor-pointer text-xs text-muted hover:text-ink">
-                  {{ t('common.rawError') }}
-                </summary>
-                <CodeBlock :code="child.error" :max-lines="8" class="mt-1.5" />
-              </details>
+              <Collapsible v-if="child.error" variant="inline" :title="t('common.rawError')">
+                <CodeBlock :code="child.error" :max-lines="8" />
+              </Collapsible>
             </li>
-          </ul>
-        </details>
+          </TransitionGroup>
+        </Collapsible>
         <div v-else class="flex min-w-0 flex-col gap-1.5">
           <div class="flex min-w-0 items-center gap-3">
             <StatusDot :tone="item.tone" />
-            <span class="min-w-0 flex-1 text-sm text-ink">{{ item.text }}</span>
+            <span class="min-w-0 flex-1 text-sm text-ink tabular">{{ item.text }}</span>
             <Button v-if="item.to" size="sm" :to="item.to">{{ item.action }}</Button>
             <IconButton
               :icon="X"
@@ -86,14 +116,13 @@ const { t } = useI18n()
               @click="emit('dismiss', item)"
             />
           </div>
-          <details v-if="item.error" class="pl-5">
-            <summary class="cursor-pointer text-xs text-muted hover:text-ink">
-              {{ t('common.rawError') }}
-            </summary>
-            <CodeBlock :code="item.error" :max-lines="8" class="mt-1.5" />
-          </details>
+          <div v-if="item.error" class="pl-5">
+            <Collapsible variant="inline" :title="t('common.rawError')">
+              <CodeBlock :code="item.error" :max-lines="8" />
+            </Collapsible>
+          </div>
         </div>
       </li>
-    </ul>
+    </TransitionGroup>
   </section>
 </template>

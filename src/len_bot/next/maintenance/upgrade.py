@@ -129,16 +129,19 @@ def migrate_business_database(path: Path) -> bool:
             existing = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
             missing = [sql for name, sql in expected.execute(
                 "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL") if name not in existing]
-        if version == FORMAT_VERSION and not missing:
+        image_columns = {row[1] for row in db.execute('PRAGMA table_info("image_cache")')}
+        need_frames = 'frames' not in image_columns
+        if version == FORMAT_VERSION and not missing and not need_frames:
             return False
         with db:
             db.execute('BEGIN IMMEDIATE')
             if version == 1:
                 db.execute('ALTER TABLE jargon ADD COLUMN judgment TEXT')
                 db.execute('ALTER TABLE jargon ADD COLUMN last_evaluated_seq INTEGER NOT NULL DEFAULT 0')
-            # Format 3 adds model_call_mind_usage, which the loop below creates. Its first build reads every
-            # model_calls row, and scene and plugin sit behind the large request and response columns, so on a
-            # multi-gigabyte database it reads most of the file and can take minutes inside this transaction.
+            if need_frames:
+                db.execute('ALTER TABLE image_cache ADD COLUMN frames INTEGER NOT NULL DEFAULT 1')
+            # Format 3 adds model_call_mind_usage and format 4 adds image_cache.frames plus scene, notice,
+            # plugin-call, turn-start and unexpired-snapshot indexes.
             for sql in missing:
                 db.execute(sql)
             db.execute(f'PRAGMA user_version={FORMAT_VERSION}')

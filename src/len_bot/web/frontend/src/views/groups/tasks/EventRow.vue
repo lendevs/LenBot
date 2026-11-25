@@ -36,14 +36,23 @@ const full = useQuery({
 
 type Part = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
 const IMAGES = ['image/png', 'image/jpeg', 'image/webp']
-/** The readable parts of an event: its text fields and the text and images of a message or tool result. */
+/** The readable parts of an event: its text fields, tool arguments, and message/tool result parts. */
 function parts(record: TaskEvent): Part[] {
   const body = record.body
   const found: Part[] = ['text', 'title', 'message', 'value', 'note', 'summary']
     .filter((key) => typeof body[key] === 'string')
     .map((key) => ({ type: 'text', text: body[key] as string }))
+  if (body.type === 'tool_execution_start' && body.args !== undefined && body.args !== null) {
+    const formatted = typeof body.args === 'string' ? body.args : JSON.stringify(body.args, null, 2)
+    if (formatted) found.push({ type: 'text', text: formatted })
+  }
   if (Array.isArray(body.options))
-    found.push({ type: 'text', text: t('groups.tasks.events.options', { options: body.options.join('、') }) })
+    found.push({
+      type: 'text',
+      text: t('groups.tasks.events.options', {
+        options: body.options.join(t('groups.tasks.schedules.cadence.separator')),
+      }),
+    })
   if (typeof body.confirmed === 'boolean')
     found.push({
       type: 'text',
@@ -73,55 +82,70 @@ const error = computed(() => {
 </script>
 
 <template>
-  <li>
+  <li class="min-w-0">
     <button
       type="button"
-      class="flex w-full cursor-pointer items-baseline gap-3 rounded-sm px-1 py-2 text-left text-sm hover:bg-hover focus-visible:focus-ring"
+      class="flex w-full min-w-0 cursor-pointer items-baseline gap-2.5 px-2 py-2.5 text-left text-sm transition-colors duration-150 hover:bg-hover focus-visible:focus-ring"
       :aria-expanded="open"
       @click="emit('toggle')"
     >
       <ChevronRight
         :size="14"
-        class="shrink-0 self-center text-subtle transition-transform"
+        class="shrink-0 self-center text-subtle transition-transform duration-150"
         :class="open && 'rotate-90'"
         aria-hidden="true"
       />
-      <span class="w-24 shrink-0 text-xs text-muted tabular">
+      <span class="shrink-0 text-xs text-muted tabular">
         {{ formatDateTime(event.created, { timeZone, withSeconds: true }) }}
       </span>
       <span class="shrink-0 text-ink">
         {{ label }}
         <template v-if="event.tool_name">
           ·
-          <span class="font-mono text-xs">{{ event.tool_name }}</span>
+          <span class="font-mono text-xs text-ink-2">{{ event.tool_name }}</span>
         </template>
       </span>
+      <span
+        v-if="event.preview"
+        class="min-w-0 flex-1 truncate text-right text-xs text-muted"
+        :title="event.preview"
+      >
+        {{ event.preview }}
+      </span>
     </button>
-    <div v-if="open" class="flex flex-col gap-2 pb-3 pl-6 sm:pl-[8.75rem]">
-      <Skeleton v-if="full.isPending.value" :lines="2" />
-      <ErrorNote
-        v-else-if="full.isError.value"
-        :title="t('groups.tasks.events.readFailed')"
-        :error="full.error.value"
-        :retry="full.refetch"
-      />
-      <template v-else-if="full.data.value">
-        <template v-for="(part, index) in shown" :key="index">
-          <CodeBlock v-if="part.type === 'text'" :code="part.text" wrap :max-lines="20" />
-          <img
-            v-else
-            :src="`data:${part.mimeType};base64,${part.data}`"
-            :alt="t('groups.tasks.events.image')"
-            loading="lazy"
-            class="h-auto max-w-full rounded-lg border border-line"
+    <div class="ui-grid-collapse" :data-open="open ? 'true' : 'false'" :inert="!open">
+      <div>
+        <div v-if="open || full.data.value" class="flex min-w-0 flex-col gap-2 px-2 pb-3 pl-7">
+          <Skeleton v-if="full.isPending.value" :lines="2" />
+          <ErrorNote
+            v-else-if="full.isError.value"
+            :title="t('groups.tasks.events.readFailed')"
+            :error="full.error.value"
+            :retry="full.refetch"
           />
-        </template>
-        <ErrorNote v-if="error" :title="t('groups.tasks.events.stepError')" :error="error" />
-        <p v-if="!shown.length && !error && !developerDetails" class="text-xs text-muted">
-          {{ t('groups.tasks.events.noText') }}
-        </p>
-        <RawRecord v-if="developerDetails" :label="t('groups.tasks.events.raw')" :code="full.data.value" />
-      </template>
+          <template v-else-if="full.data.value">
+            <template v-for="(part, index) in shown" :key="index">
+              <CodeBlock v-if="part.type === 'text'" :code="part.text" wrap :max-lines="20" />
+              <img
+                v-else
+                :src="`data:${part.mimeType};base64,${part.data}`"
+                :alt="t('groups.tasks.events.image')"
+                loading="lazy"
+                class="h-auto max-w-full rounded-lg border border-line"
+              />
+            </template>
+            <ErrorNote v-if="error" :title="t('groups.tasks.events.stepError')" :error="error" />
+            <p v-if="!shown.length && !error && !developerDetails" class="text-xs text-muted">
+              {{ t('groups.tasks.events.noText') }}
+            </p>
+            <RawRecord
+              v-if="developerDetails"
+              :label="t('groups.tasks.events.raw')"
+              :code="full.data.value"
+            />
+          </template>
+        </div>
+      </div>
     </div>
   </li>
 </template>

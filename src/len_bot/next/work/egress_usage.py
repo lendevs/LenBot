@@ -187,12 +187,13 @@ class EgressUsage:
         task_limit, daily_limit = self._limits(scene)
         if task_id is None:
             date = self._date(scene)
-            up, down = self._day(scene, date)
+            cached = self._scene_days.get((scene, date))
+            up, down = self.records.egress_scene_day_totals(scene, date) if cached is None else tuple(cached)
             limit = daily_limit
         else:
             date = None
             cached = self._tasks.get((scene, task_id))
-            up, down = self.records.egress_task_totals(scene, task_id) if cached is None else cached
+            up, down = self.records.egress_task_totals(scene, task_id) if cached is None else tuple(cached)
             limit = task_limit
         return {
             "up": up, "down": down, "limit": limit, "date": date,

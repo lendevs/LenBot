@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError } from '../../api/client'
@@ -8,7 +8,7 @@ import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
 import { readPendingRestart } from '../../api/hostStore'
 import { formatDateTime } from '../../i18n/format'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import NumberInput from '../../ui/NumberInput.vue'
@@ -25,6 +25,7 @@ const props = defineProps<{ snapshot: SettingsSnapshot }>()
 const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
+const uid = useId()
 const client = useQueryClient()
 const pick = (snapshot: SettingsSnapshot): Limits => {
   const value = snapshot.saved.limits as unknown as Limits
@@ -39,13 +40,22 @@ const blocked = computed(() =>
   (state.data.value?.scenes ?? []).filter((item) => item.blocked && item.speech.blocked_until === null),
 )
 
+const cloneLimits = (value: Limits): Limits => ({
+  daily_tokens: value.daily_tokens,
+  scene_daily_tokens: { ...value.scene_daily_tokens },
+})
 const versionOf = (snapshot: SettingsSnapshot) =>
   (snapshot.versions as { limits?: string } | undefined)?.limits
 const draft = ref<Limits>(pick(props.snapshot))
+const adopted = ref<Limits>(cloneLimits(draft.value))
+const baseline = ref<Limits>(cloneLimits(draft.value))
 /** The version the draft started from; a save against a newer one is refused instead of overwriting it. */
 const base = ref(versionOf(props.snapshot))
 function adopt(snapshot: SettingsSnapshot) {
-  draft.value = pick(snapshot)
+  const next = pick(snapshot)
+  draft.value = next
+  adopted.value = cloneLimits(next)
+  baseline.value = cloneLimits(next)
   base.value = versionOf(snapshot)
 }
 const same = (a: Limits, b: Limits) =>
@@ -58,6 +68,37 @@ watch(saved, (_, previous) => {
 })
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
+function mergeLimitsDelta(
+  latest: Limits,
+  attempted: Limits,
+  forkedFrom: Limits,
+  validScenes?: Set<string>,
+): Limits {
+  const daily_tokens =
+    attempted.daily_tokens !== forkedFrom.daily_tokens ? attempted.daily_tokens : latest.daily_tokens
+  const nextScenes: Record<string, number> = { ...latest.scene_daily_tokens }
+  const touchedScenes = new Set([
+    ...Object.keys(forkedFrom.scene_daily_tokens),
+    ...Object.keys(attempted.scene_daily_tokens),
+  ])
+  for (const scene of touchedScenes) {
+    const before = forkedFrom.scene_daily_tokens[scene]
+    const after = attempted.scene_daily_tokens[scene]
+    if (after === before) continue
+    if (after === undefined) {
+      delete nextScenes[scene]
+    } else if (!validScenes || validScenes.has(scene)) {
+      nextScenes[scene] = after
+    }
+  }
+  if (validScenes) {
+    for (const scene of Object.keys(nextScenes)) {
+      if (!validScenes.has(scene)) delete nextScenes[scene]
+    }
+  }
+  return { daily_tokens, scene_daily_tokens: nextScenes }
+}
+
 /** A group's own limit; empty follows the overall one. */
 const sceneLimit = (scene: string) => draft.value.scene_daily_tokens[scene] ?? null
 function setSceneLimit(scene: string, value: number | null) {
@@ -68,38 +109,75 @@ function setSceneLimit(scene: string, value: number | null) {
 }
 
 const conflict = ref<string | null>(null)
+const rejectedDraft = ref<{ attempted: Limits; forkedFrom: Limits } | null>(null)
 const save = useMutation({
   mutationFn: () => modelsApi.saveLimits({ ...draft.value, version: base.value }),
-  onMutate: () => (conflict.value = null),
+  onMutate: () => {
+    conflict.value = null
+    rejectedDraft.value = null
+  },
   onSuccess: (snapshot) => {
     client.setQueryData(keys.host.settings(), snapshot)
     adopt(snapshot)
+    rejectedDraft.value = null
     void client.invalidateQueries({ queryKey: keys.host.limits() })
     void readPendingRestart()
     toast.success(t('common.saved'))
   },
   onError: (error) => {
-    // Changed in another tab first: load the latest limits so the next save works, and say the edit is gone.
+    // Changed in another tab first: stash the user's delta and load the latest version so reapplying merges cleanly.
     const data =
       error instanceof ApiError && error.code === 'limits_conflict'
         ? (error.data as { snapshot?: SettingsSnapshot })
         : null
     if (!data?.snapshot) return
+    const attempted = cloneLimits(draft.value)
+    const forkedFrom = cloneLimits(baseline.value)
+    const latest = pick(data.snapshot)
+    const preview = mergeLimitsDelta(latest, attempted, forkedFrom)
+    rejectedDraft.value = same(preview, latest) ? null : { attempted, forkedFrom }
     client.setQueryData(keys.host.settings(), data.snapshot)
     adopt(data.snapshot)
     conflict.value = t('models.limits.conflict')
   },
 })
+function reapplyRejected() {
+  if (!rejectedDraft.value) return
+  const validScenes = new Set(scenes.value)
+  draft.value = mergeLimitsDelta(
+    saved.value,
+    rejectedDraft.value.attempted,
+    rejectedDraft.value.forkedFrom,
+    validScenes,
+  )
+  rejectedDraft.value = null
+  conflict.value = null
+  if (save.isError.value) save.reset()
+}
 const saveError = computed(
   () =>
     conflict.value ??
     (save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null),
 )
+const saveRawError = computed(() =>
+  !conflict.value && save.isError.value ? describeError(save.error.value, t('ui.error.network')).raw : null,
+)
+watch(
+  draft,
+  () => {
+    if (!same(draft.value, adopted.value)) {
+      conflict.value = null
+      rejectedDraft.value = null
+      if (save.isError.value) save.reset()
+    }
+  },
+  { deep: true },
+)
 </script>
 
 <template>
-  <section class="flex min-w-0 flex-col gap-4">
-    <h2 class="text-base font-semibold">{{ t('models.limits.title') }}</h2>
+  <section class="flex min-w-0 flex-col gap-5 border-t border-line pt-6">
+    <h2 class="text-base font-semibold text-ink">{{ t('models.limits.title') }}</h2>
     <ErrorNote
       v-if="state.isError.value"
       :title="t('models.limits.stateFailed')"
@@ -109,7 +187,7 @@ const saveError = computed(
     <p
       v-for="item in blocked"
       :key="item.scene"
-      class="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning"
+      class="rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning tabular"
     >
       {{
         item.until
@@ -120,33 +198,47 @@ const saveError = computed(
           : t('models.limits.blocked', { name: groupLabel(item.scene) })
       }}
     </p>
-    <div class="flex min-w-0 flex-col gap-5 rounded-xl border border-line bg-surface p-5">
-      <Field :label="t('models.limits.daily')" class="max-w-xs">
-        <NumberInput
-          v-model="draft.daily_tokens"
-          :min="1"
-          :steppers="false"
-          unit="tokens"
-          :placeholder="t('models.limits.unlimited')"
-        />
-      </Field>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-semibold">{{ t('models.limits.perGroup') }}</h3>
-        <ul class="flex list-none flex-col divide-y divide-line">
-          <li v-for="scene in scenes" :key="scene" class="py-2">
-            <Field :label="groupLabel(scene)" inline>
-              <div class="w-44">
-                <NumberInput
-                  :model-value="sceneLimit(scene)"
-                  :min="1"
-                  :steppers="false"
-                  unit="tokens"
-                  size="sm"
-                  :placeholder="t('models.limits.followAll')"
-                  @update:model-value="(value) => setSceneLimit(scene, value)"
-                />
-              </div>
-            </Field>
+    <div class="flex min-w-0 max-w-3xl flex-col gap-6">
+      <div class="max-w-xs">
+        <Field :label="t('models.limits.daily')">
+          <NumberInput
+            v-model="draft.daily_tokens"
+            :min="1"
+            :steppers="false"
+            unit="tokens"
+            :placeholder="t('models.limits.unlimited')"
+          />
+        </Field>
+      </div>
+      <div v-if="scenes.length" class="flex flex-col gap-2.5">
+        <h3 class="text-sm font-semibold text-ink">{{ t('models.limits.perGroup') }}</h3>
+        <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+          <li
+            v-for="(scene, index) in scenes"
+            :key="scene"
+            class="flex items-center justify-between gap-4 py-2.5"
+          >
+            <label :for="`${uid}-${index}`" class="min-w-0 flex-1 cursor-pointer">
+              <span class="block truncate text-sm font-medium text-ink">{{ groupLabel(scene) }}</span>
+              <span
+                v-if="sceneSecondaryId(scene)"
+                class="block truncate font-mono text-xs text-muted tabular"
+              >
+                {{ sceneSecondaryId(scene) }}
+              </span>
+            </label>
+            <div class="w-36 shrink-0 sm:w-44">
+              <NumberInput
+                :id="`${uid}-${index}`"
+                :model-value="sceneLimit(scene)"
+                :min="1"
+                :steppers="false"
+                unit="tokens"
+                size="sm"
+                :placeholder="t('models.limits.followAll')"
+                @update:model-value="(value) => setSceneLimit(scene, value)"
+              />
+            </div>
           </li>
         </ul>
       </div>
@@ -155,11 +247,17 @@ const saveError = computed(
       :dirty="dirty || Boolean(conflict)"
       :saving="save.isPending.value"
       :error="saveError"
-      @save="save.mutate()"
+      :raw-error="saveRawError"
+      :invalid="!dirty"
+      :action-label="rejectedDraft ? t('models.limits.reapply') : undefined"
+      @save="dirty && save.mutate()"
+      @action="reapplyRejected"
       @discard="
         () => {
           adopt(snapshot)
           conflict = null
+          rejectedDraft = null
+          save.reset()
         }
       "
     />

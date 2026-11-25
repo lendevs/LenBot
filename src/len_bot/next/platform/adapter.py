@@ -273,7 +273,12 @@ def adapter_for(platform: PlatformAdapter | None, scene_or_name: str) -> Platfor
 
 def _open_onebot(config: SharedConfig, **callbacks) -> PlatformAdapter:
     from .onebot import OneBot
-    return OneBot(config.onebot, bot_id=config.bot_id, **callbacks)
+    return OneBot(
+        config.onebot, bot_id=config.bot_id,
+        fake_ip_networks=config.network.networks(),
+        public_dns_url=config.network.public_dns_url,
+        **callbacks,
+    )
 
 
 def _open_telegram(config: SharedConfig, **callbacks) -> PlatformAdapter:

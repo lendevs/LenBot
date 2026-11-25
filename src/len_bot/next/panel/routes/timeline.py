@@ -1,6 +1,5 @@
 """Typed scene timelines and step-oriented views of retained turn records."""
 
-import asyncio
 import base64
 import json
 from typing import Annotated, Literal
@@ -204,13 +203,7 @@ def message_record(store: Store, row) -> dict:
 
 def known_name(store: Store, scene: str, uid: str | None) -> str | None:
     """The group card or nickname this account last spoke with here."""
-    if uid is None:
-        return None
-    row = store.db.execute(
-        "SELECT COALESCE(NULLIF(json_extract(body,'$.sender.card'),''),json_extract(body,'$.sender.nickname')) "
-        "FROM messages WHERE scene=? AND json_extract(body,'$.sender.uid')=? ORDER BY seq DESC LIMIT 1",
-        (scene, uid)).fetchone()
-    return None if row is None else row[0]
+    return store.known_name(scene, uid)
 
 
 def notice_record(store: Store, row) -> dict:
@@ -310,7 +303,22 @@ def thoughts(call: dict) -> list[str]:
     return parts
 
 
-def read_turn(store: Store, scene: str, turn_id: str) -> dict | None:
+_LARGE_REQUEST_FIELDS = frozenset({'messages', 'tools', 'system'})
+
+
+def _compact_call(call: dict) -> dict:
+    """Keep call metadata for turn inspection while stripping multi-MB prompt/tool/raw arrays."""
+    request = call.get('request')
+    response = call.get('response')
+    compact = dict(call)
+    if isinstance(request, dict):
+        compact['request'] = {key: value for key, value in request.items() if key not in _LARGE_REQUEST_FIELDS}
+    if isinstance(response, dict) and 'raw' in response:
+        compact['response'] = {key: value for key, value in response.items() if key != 'raw'}
+    return compact
+
+
+def read_turn(store: Store, scene: str, turn_id: str, *, include_raw: bool = False) -> dict | None:
     detail = store.turn_detail(scene, turn_id)
     if detail is None:
         return None
@@ -359,7 +367,8 @@ def read_turn(store: Store, scene: str, turn_id: str) -> dict | None:
         steps.append(step)
     if pending:
         steps.append({'step': len(steps) + 1, 'models': pending, 'text': '', 'thoughts': [], 'tools': []})
-    return {**detail, 'recall': recalled if recall_recorded else None, 'steps': steps}
+    calls = detail['calls'] if include_raw else [_compact_call(call) for call in detail['calls']]
+    return {**detail, 'calls': calls, 'recall': recalled if recall_recorded else None, 'steps': steps}
 
 
 def register_host_timeline(app, *, runtime, user) -> None:
@@ -377,18 +386,12 @@ def register_host_timeline(app, *, runtime, user) -> None:
                 int(cursor.key)
         except ValueError as error:
             raise HTTPException(400, '时间线游标无效') from error
-        def read():
-            with Store(runtime.config.database, readonly=True) as records:
-                return read_timeline(records, scene, cursor, limit)
-        return await asyncio.to_thread(read)
+        return await runtime.store.read(read_timeline, runtime.store, scene, cursor, limit)
 
     @app.get('/api/host/scenes/{scene}/turns/{turn_id}', response_model=TurnDetail)
-    async def turn(scene: str, turn_id: str, _: str = Depends(user)):
+    async def turn(scene: str, turn_id: str, include_raw: bool = Query(False), _: str = Depends(user)):
         configured(scene)
-        def read():
-            with Store(runtime.config.database, readonly=True) as records:
-                return read_turn(records, scene, turn_id)
-        result = await asyncio.to_thread(read)
+        result = await runtime.store.read(read_turn, runtime.store, scene, turn_id, include_raw=include_raw)
         if result is None:
             raise HTTPException(404, '当前场景不存在此回合')
         return result

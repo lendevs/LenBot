@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import asdict
+import re
 from typing import Annotated, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
@@ -14,7 +15,7 @@ from .local import LocalMemory, LocalMemorySettings
 from .jobs import MemoryJobs
 from .summary import MemorySummarizer
 from .role_paths import require_bot_path
-from .sections import evidence, excerpt, split_sections
+from .sections import Section, evidence, excerpt, split_sections
 from ..platform.messages import ChatMessage, plain_text, render_message
 from ..models.client import ChatModel
 from ..models.slots import ModelSlots
@@ -149,16 +150,102 @@ EVIDENCE_CHARS = 200
 CUE_SECTIONS = ("我答应的事", "没回答的问题")
 CUE_CHARS = 400
 CUE_HITS = 2
+_ARTIFACT_CUE = re.compile(
+    r"(?:resources/|file_id(?![0-9A-Za-z_])|交付文件|(?<![0-9A-Za-z])#\d+(?![0-9A-Za-z])|"
+    r"[\w\u3400-\u9fff-]+\.(?:md|txt|csv|tsv|xlsx?|pdf|docx?|pptx?|json|html?|png|jpe?g|webp|svg|zip|tar|gz|py|sql)(?![0-9A-Za-z_]))",
+    re.IGNORECASE,
+)
+_RESOURCE_INTENT = re.compile(
+    r"(?:资料|文件|报告|报表|表格|文档|附件|产物|交付|清单|手册|汇总表|统计表|"
+    r"上次生成|之前生成|刚生成|上次导出|之前导出|上次做的|之前做的|"
+    r"resources/|file_id(?![0-9A-Za-z_])|(?<![0-9A-Za-z])#\d+(?![0-9A-Za-z])|"
+    r"[\w\u3400-\u9fff-]+\.(?:md|txt|csv|tsv|xlsx?|pdf|docx?|pptx?|json|html?|png|jpe?g|webp|svg|zip|tar|gz|py|sql)(?![0-9A-Za-z_]))",
+    re.IGNORECASE,
+)
+_PREFERENCE_HEADING = re.compile(r'^ {0,3}#{1,6}[ \t]+相处偏好')
+_SETEXT_UNDERLINE = re.compile(r'^(?:=+|-+)$')
+_PLACEHOLDER_PREFERENCES = frozenset({
+    "暂无明确记录",
+    "暂无记录",
+    "暂无",
+    "无",
+    "无明确记录",
+    "暂无偏好",
+    "暂无明确偏好",
+    "暂无特别记录",
+    "暂无明确偏好或雷点",
+    "暂无明显偏好",
+    "暂无明显雷点",
+    "暂未发现",
+    "暂未记录",
+    "没有明确记录",
+    "没有记录",
+    "none",
+    "n/a",
+})
+
+
+def _is_placeholder_text(text: str) -> bool:
+    for line in text.splitlines():
+        normalized = line.strip().lstrip("-*•·").strip().rstrip("。.;；，,!！:：").strip()
+        if normalized and normalized.casefold() not in _PLACEHOLDER_PREFERENCES:
+            return False
+    return True
+
+
+def _section_body(content: str, section: Section) -> str:
+    lines = section.text(content).splitlines()
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped or stripped.startswith('#'):
+            index += 1
+            continue
+        if index + 1 < len(lines) and _SETEXT_UNDERLINE.fullmatch(lines[index + 1].strip()):
+            index += 2
+            continue
+        break
+    return '\n'.join(lines[index:]).strip()
+
+
+def _is_placeholder_preference(content: str, section: Section) -> bool:
+    return _is_placeholder_text(_section_body(content, section))
+
+
+def _is_resource_hit(hit: dict) -> bool:
+    return hit["path"].startswith("resources/")
+
+
+def _has_resource_intent(text: str) -> bool:
+    return bool(text and _RESOURCE_INTENT.search(text))
+
+
+def _select_recall_hits(hits: list[dict], limit: int, *, prefer_resource: bool,
+                        require_evidence: bool, match_query: str) -> list[dict]:
+    selected = list(hits[:limit])
+    if not prefer_resource or limit <= 0 or not selected or any(_is_resource_hit(hit) for hit in selected):
+        return selected
+    candidate = next(
+        (hit for hit in hits[limit:]
+         if _is_resource_hit(hit) and (not require_evidence or evidence(hit["preview"], match_query) > 0)),
+        None,
+    )
+    if candidate is not None:
+        selected[-1] = candidate
+    return selected
 
 
 def recall_cues(recap: str | None) -> str:
-    """The recap's promises and unanswered questions, latest last, as extra recall wording."""
-    lines, keep = [], False
+    """The recap's promises, unanswered questions and task/resource clues, latest last."""
+    lines: list[str] = []
+    section: str | None = None
     for line in (recap or "").splitlines():
         if line.startswith("## "):
-            keep = line[3:].strip() in CUE_SECTIONS
-        elif keep and line.strip():
-            lines.append(line.strip().removeprefix("- ").removeprefix("* ").strip())
+            section = line[3:].strip()
+        elif section is not None and line.strip():
+            cleaned = line.strip().removeprefix("- ").removeprefix("* ").strip()
+            if cleaned and (section in CUE_SECTIONS or _ARTIFACT_CUE.search(cleaned)):
+                lines.append(cleaned)
     return "\n".join(lines)[-CUE_CHARS:]
 
 
@@ -318,13 +405,20 @@ class MemoryService:
         # Keep room for the latest topic; source and dates remain in the real file text.
         per_profile = min(900, budget // 2 // len(profiles)) if profiles else 0
         for profile in profiles:
+            if profile.path.endswith('/preferences.md') and _is_placeholder_text(profile.content):
+                continue
             sections = split_sections(profile.content)
-            preferences = [section for section in sections if section.heading
-                           and section.heading[-1].startswith('相处偏好')]
-            if not preferences:
+            all_preferences = [section for section in sections if section.heading
+                               and section.heading[-1].startswith('相处偏好')]
+            has_empty_pref_heading = any(_PREFERENCE_HEADING.match(line) for line in profile.content.splitlines())
+            if not all_preferences and not has_empty_pref_heading:
                 append("scene", profile.path, profile.content, per_profile)
                 continue
-            ordered = preferences + [section for section in sections if section not in preferences]
+            preferences = [section for section in all_preferences
+                           if not _is_placeholder_preference(profile.content, section)]
+            ordered = preferences + [section for section in sections if section not in all_preferences]
+            if not ordered:
+                continue
             remaining, parts = per_profile, []
             for index, section in enumerate(ordered):
                 if remaining <= 0:
@@ -334,33 +428,78 @@ class MemoryService:
                 share = (remaining if index == len(ordered) - 1 else remaining // 2
                          if index < len(preferences) else remaining // (len(ordered) - index))
                 part = section.text(profile.content)[:share].rstrip()
-                parts.append(part)
-                remaining -= len(part) + 2
-            append("scene", profile.path, '\n\n'.join(parts), per_profile, kind='excerpt',
-                   source_chars=len(profile.content))
+                if part:
+                    parts.append(part)
+                    remaining -= len(part) + 2
+            if parts:
+                append("scene", profile.path, '\n\n'.join(parts), per_profile, kind='excerpt',
+                       source_chars=len(profile.content))
         query = "\n".join(queries)[-1200:]
         text_query = "\n".join(plain_text(message) for message in messages
                                if plain_text(message).strip() and message.send_status in {"received", "sent", "simulated"})[-1200:]
-        if query and budget > 0:
-            hits = await self.search(scene, query, self.settings.recall_limit, automatic=True, text_query=text_query,
-                                     persona=self.active_personas.get(scene))
-            for position, hit in enumerate(hits):
-                # Each remaining hit gets an equal share; what a short one leaves goes to the next.
-                share = max(budget // (len(hits) - position), min(budget, 200))
-                if text_only:
-                    # Without vectors the only sign of relevance is the shared wording: a section sharing
-                    # one fragment with the recent chat is shown around that fragment only.
-                    share = min(share, EVIDENCE_CHARS * evidence(hit["preview"], text_query))
-                append(hit["scope"], hit["path"], excerpt(hit["preview"], text_query, share), share,
-                       kind="excerpt",
-                       source_chars=hit["total_chars"], sections=hit["sections"])
         cues = cues.strip()
+        resource_intent = _has_resource_intent(text_query)
+        persona = self.active_personas.get(scene)
+        recall_limit = self.settings.recall_limit
+
+        query_entries: list[tuple[dict, str, bool]] = []
+        if query and budget > 0:
+            fetch_limit = min(100, max(recall_limit * 8, 50)) if resource_intent else recall_limit
+            raw_hits = [hit for hit in await self.search(scene, query, fetch_limit, automatic=True,
+                                                         text_query=text_query, persona=persona)
+                        if (hit["scope"], hit["path"]) not in seen]
+            selected = _select_recall_hits(raw_hits, recall_limit, prefer_resource=resource_intent,
+                                           require_evidence=text_only, match_query=text_query)
+            query_entries = [(hit, text_query, text_only) for hit in selected]
+
+        cue_prefer_resource = resource_intent or _has_resource_intent(cues)
+        need_resource_from_cues = (
+            bool(cues) and budget > 0 and resource_intent
+            and not any(_is_resource_hit(hit) for hit, _, _ in query_entries)
+        )
+        prefetched_cue_hits: list[dict] | None = None
+        if need_resource_from_cues:
+            query_keys = seen | {(hit["scope"], hit["path"]) for hit, _, _ in query_entries}
+            cue_fetch = min(100, max(CUE_HITS * 8, 50))
+            prefetched_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
+                                                                    persona=persona, literal=True)
+                                   if (hit["scope"], hit["path"]) not in query_keys]
+            resource_cue = next(
+                (hit for hit in prefetched_cue_hits
+                 if _is_resource_hit(hit) and evidence(hit["preview"], cues) > 0),
+                None,
+            )
+            if resource_cue is not None:
+                if query_entries and len(query_entries) >= recall_limit:
+                    query_entries[-1] = (resource_cue, cues, True)
+                else:
+                    query_entries.append((resource_cue, cues, True))
+
+        for position, (hit, match_text, evidence_capped) in enumerate(query_entries):
+            # Each remaining hit gets an equal share; what a short one leaves goes to the next.
+            share = max(budget // (len(query_entries) - position), min(budget, 200))
+            if evidence_capped:
+                # Without vectors the only sign of relevance is the shared wording: a section sharing
+                # one fragment with the recent chat is shown around that fragment only.
+                share = min(share, EVIDENCE_CHARS * evidence(hit["preview"], match_text))
+            append(hit["scope"], hit["path"], excerpt(hit["preview"], match_text, share), share,
+                   kind="excerpt",
+                   source_chars=hit["total_chars"], sections=hit["sections"])
+
         if cues and budget > 0:
-            hits = [hit for hit in await self.search(scene, cues, CUE_HITS, automatic=True,
-                                                     persona=self.active_personas.get(scene), literal=True)
-                    if (hit["scope"], hit["path"]) not in seen]
-            for position, hit in enumerate(hits):
-                share = min(budget // (len(hits) - position), EVIDENCE_CHARS * evidence(hit["preview"], cues))
+            has_resource = any(_is_resource_hit(item) for item in items)
+            if prefetched_cue_hits is None:
+                cue_fetch = min(100, max(CUE_HITS * 8, 50)) if (cue_prefer_resource and not has_resource) else CUE_HITS
+                raw_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
+                                                                 persona=persona, literal=True)
+                                if (hit["scope"], hit["path"]) not in seen]
+            else:
+                raw_cue_hits = [hit for hit in prefetched_cue_hits if (hit["scope"], hit["path"]) not in seen]
+            cue_hits = _select_recall_hits(raw_cue_hits, CUE_HITS,
+                                           prefer_resource=cue_prefer_resource and not has_resource,
+                                           require_evidence=True, match_query=cues)
+            for position, hit in enumerate(cue_hits):
+                share = min(budget // (len(cue_hits) - position), EVIDENCE_CHARS * evidence(hit["preview"], cues))
                 append(hit["scope"], hit["path"], excerpt(hit["preview"], cues, share), share, kind="excerpt",
                        source_chars=hit["total_chars"], sections=hit["sections"])
         return {"backend": self.settings.backend, "query": query, "cues": cues, "items": items,

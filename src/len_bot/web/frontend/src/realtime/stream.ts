@@ -138,7 +138,12 @@ function throttle(run: () => void, wait: number): () => void {
 }
 
 const refreshState = throttle(() => void queryClient.invalidateQueries({ queryKey: keys.host.state() }), 250)
-const refreshHost = throttle(() => void queryClient.invalidateQueries({ queryKey: keys.host.all() }), 1000)
+const refreshHost = throttle(() => {
+  void queryClient.invalidateQueries({ queryKey: keys.host.all() })
+  void queryClient.invalidateQueries({ queryKey: keys.plugins.all() })
+  void queryClient.invalidateQueries({ queryKey: keys.memory.state() })
+  void queryClient.invalidateQueries({ queryKey: keys.memory.ingest() })
+}, 1000)
 
 /** Cache rules that hold on every page: which queries an event makes stale. */
 function cacheRules(event: HostEvent) {

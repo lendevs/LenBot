@@ -1,7 +1,9 @@
 """Text-context estimates and complete native tool-group compaction boundaries."""
 
 from dataclasses import dataclass
+import json
 from math import ceil
+import re
 from string import Template
 
 from ..storage.store import encode
@@ -9,6 +11,7 @@ from ..prompt_files import read_prompt
 
 
 Entry = tuple[int, dict]
+_TASK_NOTICE = re.compile(r"^\[任务(执行结束|提问|操作确认)\]\s*#(\d+)(?:；请求人\s+([^；\n]+))?(?:；(.*))?$")
 
 
 class ContextBudgetError(ValueError):
@@ -78,12 +81,18 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
                     recap: str | None, summary_template: str, window_tokens: int,
                     source_entries: list[Entry] | None = None,
                     token_scale: float = 1.0, include_latest: bool = False,
-                    reasoning_reserve_tokens: int = 0) -> CompactionPlan:
+                    reasoning_reserve_tokens: int = 0,
+                    allow_oversized_source: bool = False,
+                    protect_from_seq: int | None = None) -> CompactionPlan:
     """``include_latest`` may fold every entry into the recap, as a role handover does."""
     summary_text_tokens = summary_output_tokens - reasoning_reserve_tokens
     if summary_text_tokens <= 0:
         raise ContextBudgetError("回想输出额度需要大于思考预留，请调大回想最大长度或调小思考额度")
-    boundaries = [cut for cut in complete_boundaries(entries) if cut < len(entries) or include_latest]
+    boundaries = [
+        cut for cut in complete_boundaries(entries)
+        if (cut < len(entries) or include_latest)
+        and (protect_from_seq is None or entries[cut - 1][0] < protect_from_seq)
+    ]
     if not boundaries:
         required = estimate_request([system] + project_history(recap, entries) + [state], tools, 0)
         raise ContextBudgetError(
@@ -117,15 +126,25 @@ def plan_compaction(entries: list[Entry], *, system: dict, state: dict,
     budget = summary_text_tokens
     prompt = Template(summary_template).substitute(summary_budget_tokens=budget)
 
-    source = entries[:cut] if source_entries is None else [
-        entry for entry in source_entries if entry[0] <= entries[cut - 1][0]]
-    request = [{"role": "system", "content": prompt},
-               {"role": "user", "content": recap_source(recap, source)}]
+    def build_request_for(boundary: int) -> list[dict]:
+        source = entries[:boundary] if source_entries is None else [
+            entry for entry in source_entries if entry[0] <= entries[boundary - 1][0]]
+        return [{"role": "system", "content": prompt},
+                {"role": "user", "content": recap_source(recap, source)}]
+
+    request = build_request_for(cut)
     required = estimate_request(request, [], summary_output_tokens)
     if required > window_tokens:
-        raise ContextBudgetError(
-            f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
-            "请调大窗口或调小回想最大长度")
+        for earlier in reversed([b for b in boundaries if b < cut]):
+            earlier_request = build_request_for(earlier)
+            if estimate_request(earlier_request, [], summary_output_tokens) <= window_tokens:
+                cut, request = earlier, earlier_request
+                break
+        else:
+            if not allow_oversized_source:
+                raise ContextBudgetError(
+                    f"待压缩段的回想请求估算 {required} token，超过配置窗口 {window_tokens}，"
+                    "请调大窗口或调小回想最大长度")
     return CompactionPlan(entries[cut - 1][0], budget, request, entries[cut - 1][1],
                           entries[cut][1] if cut < len(entries) else None)
 
@@ -153,6 +172,69 @@ def _excerpt(message: dict, *, tail: bool) -> str:
     return f"[{message['role']}] {text}"
 
 
+def extract_ticket_anchors(entries: list[Entry]) -> list[dict]:
+    """Extract task IDs, registered delivery file IDs/names, and pending question IDs from task notices."""
+    anchors: dict[int, dict] = {}
+    for _, message in entries:
+        if message.get("role") != "user" or not isinstance(message.get("content"), str):
+            continue
+        first, _, rest = message["content"].partition("\n")
+        match = _TASK_NOTICE.match(first.strip())
+        if match is None:
+            continue
+        kind, raw_id, requester, goal = match.groups()
+        task_id = int(raw_id)
+        payload = None
+        goal_extra: list[str] = []
+        for raw_line in rest.splitlines():
+            candidate = raw_line.strip()
+            if not candidate:
+                continue
+            if candidate.startswith("{"):
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        payload = parsed
+                        break
+                except ValueError:
+                    pass
+            if payload is None:
+                goal_extra.append(candidate)
+        anchor = anchors.setdefault(task_id, {"task_id": task_id})
+        if requester:
+            anchor["requester"] = requester.strip()
+        if goal:
+            full_goal = " ".join([goal.strip(), *goal_extra]).strip()
+            anchor["goal"] = full_goal
+        if kind == "执行结束":
+            anchor.pop("question_id", None)
+            anchor.pop("question_title", None)
+            if payload is not None:
+                if payload.get("status") is not None:
+                    anchor["status"] = payload["status"]
+                if isinstance(payload.get("can_continue"), bool):
+                    anchor["can_continue"] = payload["can_continue"]
+                files_raw = payload.get("files")
+                if isinstance(files_raw, list):
+                    existing = list(anchor.get("files") or [])
+                    seen = {(item["id"], item["name"]) for item in existing}
+                    for item in files_raw:
+                        if isinstance(item, dict) and "id" in item and isinstance(item.get("name"), str):
+                            key = (item["id"], item["name"])
+                            if key not in seen:
+                                seen.add(key)
+                                existing.append({"id": item["id"], "name": item["name"]})
+                    if existing:
+                        anchor["files"] = existing
+        else:
+            if payload is not None:
+                if isinstance(payload.get("id"), str) and payload["id"]:
+                    anchor["question_id"] = payload["id"]
+                if isinstance(payload.get("title"), str) and payload["title"]:
+                    anchor["question_title"] = payload["title"]
+    return list(anchors.values())
+
+
 def recap_source(recap: str | None, entries: list[Entry]) -> str:
     """Project readable facts; opaque provider continuation fields are not facts."""
     transcript = []
@@ -167,4 +249,8 @@ def recap_source(recap: str | None, entries: list[Entry]) -> str:
         elif message["role"] == "tool":
             item["tool_call_id"] = message["tool_call_id"]
         transcript.append(item)
-    return encode({"已有回想": recap, "新增旧会话": transcript})
+    payload: dict[str, object] = {"已有回想": recap, "新增旧会话": transcript}
+    anchors = extract_ticket_anchors(entries)
+    if anchors:
+        payload["涉及工单与交付标识"] = anchors
+    return encode(payload)

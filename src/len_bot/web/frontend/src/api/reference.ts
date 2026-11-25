@@ -3,6 +3,15 @@ import { http, request } from './client'
 /** Types of panel/routes/reference.py. */
 
 export type ReferenceStatus = 'processing' | 'indexed' | 'failed'
+export type ReferenceScope = 'all' | 'scene' | 'persona'
+
+export interface ReferenceHit {
+  scope: string
+  path: string
+  section: string | null
+  preview: string
+  score: number | null
+}
 
 export interface ReferenceFile {
   filename: string
@@ -77,5 +86,11 @@ export const referenceApi = {
       file_id: file.file_id,
       busid: file.busid,
       name: file.name,
+    }),
+  search: (scene: string, query: string, scope: ReferenceScope = 'all', limit = 8, signal?: AbortSignal) =>
+    request<{ hits: ReferenceHit[] }>(`${base(scene)}/search`, {
+      method: 'POST',
+      body: { query, scope, limit },
+      signal,
     }),
 }

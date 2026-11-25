@@ -26,7 +26,6 @@ export const keys = {
     modelProtocols: () => ['host', 'model-protocols'] as const,
     usage: (period: string) => ['host', 'usage', period] as const,
     mcp: () => ['host', 'mcp'] as const,
-    browser: () => ['host', 'browser'] as const,
   },
   /** Outside `host`: the cleanup preview counts tables, and update state asks the update controller or GitHub. */
   system: {

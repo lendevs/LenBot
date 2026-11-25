@@ -2,13 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
-import { FolderOpen } from '@lucide/vue'
+import { CircleAlert, FolderOpen, TriangleAlert } from '@lucide/vue'
 import { keys } from '../../../api/query'
 import { tasksApi, type TaskAction, type TaskService } from '../../../api/tasks'
 import { developerDetails } from '../../../composables/useDeveloperMode'
-import { formatDateTime } from '../../../i18n/format'
+import { formatCompact, formatDateTime, formatNumber } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
+import Collapsible from '../../../ui/Collapsible.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import MarkdownText from '../../../ui/MarkdownText.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
@@ -68,6 +69,13 @@ const canCancel = computed(
 const canAnswer = computed(
   () => props.service.accepting && task.value?.status === 'waiting_input' && Boolean(task.value.question),
 )
+const questionDisabledReason = computed(() => {
+  if (canAnswer.value || !task.value?.question) return null
+  if (task.value.status !== 'waiting_input') return t('groups.tasks.question.notWaiting')
+  if (!props.service.configured) return t('groups.tasks.notConfigured')
+  return t('groups.tasks.question.notAccepting')
+})
+const waitingQuestion = computed(() => task.value?.status === 'waiting_input' && Boolean(task.value.question))
 
 const append = ref('')
 const followUp = ref('')
@@ -117,11 +125,55 @@ const facts = computed(() => {
     [
       ['deliverable', value.deliverable],
       ['context', value.context],
-      ['materials', value.materials.join('、')],
+      ['materials', value.materials.join(t('groups.tasks.schedules.cadence.separator'))],
       ['summary', value.summary],
     ] as const
   ).filter(([, text]) => text)
 })
+const budget = computed(() => {
+  const value = first.value?.budget
+  const status = task.value?.status
+  if (!value) return null
+  const totalCalls = value.tokens.known_calls + value.tokens.unknown_calls
+  if (value.calls <= 0 && totalCalls <= 0 && status !== 'running' && status !== 'waiting_input') return null
+  const totalTokens = value.tokens.input + value.tokens.output
+  const cachedTokens = value.tokens.cached
+  const callsRatio =
+    value.max_calls && value.max_calls > 0
+      ? Math.min(100, Math.round((value.calls / value.max_calls) * 100))
+      : null
+  const tokensRatio =
+    value.max_tokens && value.max_tokens > 0
+      ? Math.min(100, Math.round((totalTokens / value.max_tokens) * 100))
+      : null
+  return {
+    callsText:
+      value.max_calls !== null
+        ? t('groups.tasks.budget.calls', {
+            used: formatNumber(value.calls),
+            limit: formatNumber(value.max_calls),
+          })
+        : t('groups.tasks.budget.callsNoLimit', { used: formatNumber(value.calls) }),
+    tokensText:
+      value.max_tokens !== null
+        ? t('groups.tasks.budget.tokens', {
+            used: formatCompact(totalTokens),
+            limit: formatCompact(value.max_tokens),
+          })
+        : t('groups.tasks.budget.tokensNoLimit', { used: formatCompact(totalTokens) }),
+    cachedText:
+      cachedTokens > 0 ? t('groups.tasks.budget.cached', { cached: formatCompact(cachedTokens) }) : null,
+    callsRatio,
+    tokensRatio,
+  }
+})
+const watchdogEvents = computed(() => first.value?.watchdog ?? [])
+const recentWatchdog = computed(() =>
+  watchdogEvents.value.length > 2 ? watchdogEvents.value.slice(-2) : watchdogEvents.value,
+)
+const earlierWatchdog = computed(() =>
+  watchdogEvents.value.length > 2 ? watchdogEvents.value.slice(0, -2) : [],
+)
 </script>
 
 <template>
@@ -132,19 +184,21 @@ const facts = computed(() => {
     :error="detail.error.value"
     :retry="detail.refetch"
   />
-  <article v-else-if="task && first" class="flex min-w-0 flex-col gap-6">
+  <article v-else-if="task && first" class="flex min-w-0 flex-col gap-5">
     <header class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
-        <h2 class="min-w-0 flex-1 text-lg font-semibold break-words whitespace-pre-wrap text-ink">
+        <h2
+          class="min-w-0 flex-1 text-lg leading-snug font-semibold break-words whitespace-pre-wrap text-ink"
+        >
           {{ task.goal }}
         </h2>
-        <Badge :tone="statusTone[task.status]" dot class="mt-1">
+        <Badge :tone="statusTone[task.status]" dot :pulse="task.status === 'running'" class="mt-0.5">
           {{ t(`groups.tasks.status.${task.status}`) }}
         </Badge>
       </div>
-      <p class="flex flex-wrap items-center gap-x-2 text-sm text-muted">
+      <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
         <span class="tabular">#{{ task.id }}</span>
-        <span>
+        <span class="tabular">
           {{ t('groups.tasks.meta', { who: task.requester, time: at(task.created) })
           }}{{ task.ended ? ` · ${t('groups.tasks.ended', { time: at(task.ended) })}` : '' }}
         </span>
@@ -159,33 +213,179 @@ const facts = computed(() => {
           {{ t('groups.tasks.cancel.action') }}
         </Button>
       </p>
-      <dl v-if="facts.length" class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
+
+      <TaskQuestion
+        v-if="waitingQuestion && task.question"
+        :question="task.question"
+        :can-answer="canAnswer"
+        :busy="act.isPending.value"
+        :timeout-seconds="task.active_timeout_seconds"
+        :disabled-reason="questionDisabledReason"
+        urgent
+        @answer="(body) => act.mutate({ action: 'answer', ...body })"
+        @dirty="(value: boolean) => (answerDirty = value)"
+      />
+
+      <div
+        v-if="budget"
+        class="flex flex-col gap-2.5 rounded-lg border border-line bg-fill px-3.5 py-3 text-xs"
+      >
+        <span class="font-medium text-ink-2">{{ t('groups.tasks.budget.title') }}</span>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="flex min-w-0 flex-col gap-1.5">
+            <div class="flex items-baseline justify-between gap-2">
+              <span class="tabular text-ink">{{ budget.callsText }}</span>
+              <span v-if="budget.callsRatio !== null" class="text-muted tabular">
+                {{ budget.callsRatio }}%
+              </span>
+            </div>
+            <div v-if="budget.callsRatio !== null" class="h-1.5 overflow-hidden rounded-full bg-track">
+              <div
+                class="h-full rounded-full transition-all duration-300"
+                :class="
+                  budget.callsRatio >= 90 ? 'bg-error' : budget.callsRatio >= 75 ? 'bg-warning' : 'bg-info'
+                "
+                :style="{ width: `${budget.callsRatio}%` }"
+              />
+            </div>
+          </div>
+          <div class="flex min-w-0 flex-col gap-1.5">
+            <div class="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+              <span class="flex flex-wrap items-baseline gap-x-2">
+                <span class="tabular text-ink">{{ budget.tokensText }}</span>
+                <span v-if="budget.cachedText" class="tabular text-muted">{{ budget.cachedText }}</span>
+              </span>
+              <span v-if="budget.tokensRatio !== null" class="text-muted tabular">
+                {{ budget.tokensRatio }}%
+              </span>
+            </div>
+            <div v-if="budget.tokensRatio !== null" class="h-1.5 overflow-hidden rounded-full bg-track">
+              <div
+                class="h-full rounded-full transition-all duration-300"
+                :class="
+                  budget.tokensRatio >= 90 ? 'bg-error' : budget.tokensRatio >= 75 ? 'bg-warning' : 'bg-info'
+                "
+                :style="{ width: `${budget.tokensRatio}%` }"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="watchdogEvents.length" class="flex flex-col gap-2">
+        <Collapsible
+          v-if="earlierWatchdog.length"
+          variant="inline"
+          :title="t('groups.tasks.watchdog.earlier', { n: earlierWatchdog.length })"
+          :count="earlierWatchdog.length"
+        >
+          <ul class="flex list-none flex-col gap-2">
+            <li
+              v-for="entry in earlierWatchdog"
+              :key="entry.id"
+              class="flex items-start gap-2.5 rounded-lg px-3.5 py-2.5 text-sm"
+              :class="entry.action === 'stop' ? 'bg-error-bg text-error' : 'bg-warning-bg text-warning'"
+            >
+              <CircleAlert
+                v-if="entry.action === 'stop'"
+                :size="16"
+                class="mt-0.5 shrink-0"
+                aria-hidden="true"
+              />
+              <TriangleAlert v-else :size="16" class="mt-0.5 shrink-0" aria-hidden="true" />
+              <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span class="font-medium">
+                    {{
+                      t(
+                        entry.action === 'stop'
+                          ? 'groups.tasks.watchdog.stopped'
+                          : 'groups.tasks.watchdog.steered',
+                      )
+                    }}
+                  </span>
+                  <span v-if="entry.reason" class="text-xs font-medium opacity-85">{{ entry.reason }}</span>
+                  <span class="text-xs text-muted tabular">
+                    {{ formatDateTime(entry.created, { timeZone, withSeconds: true }) }}
+                  </span>
+                </div>
+                <p v-if="entry.detail" class="text-xs break-words whitespace-pre-wrap text-ink-2">
+                  {{ entry.detail }}
+                </p>
+              </div>
+            </li>
+          </ul>
+        </Collapsible>
+        <ul class="flex list-none flex-col gap-2">
+          <li
+            v-for="entry in recentWatchdog"
+            :key="entry.id"
+            class="flex items-start gap-2.5 rounded-lg px-3.5 py-2.5 text-sm"
+            :class="entry.action === 'stop' ? 'bg-error-bg text-error' : 'bg-warning-bg text-warning'"
+          >
+            <CircleAlert
+              v-if="entry.action === 'stop'"
+              :size="16"
+              class="mt-0.5 shrink-0"
+              aria-hidden="true"
+            />
+            <TriangleAlert v-else :size="16" class="mt-0.5 shrink-0" aria-hidden="true" />
+            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span class="font-medium">
+                  {{
+                    t(
+                      entry.action === 'stop'
+                        ? 'groups.tasks.watchdog.stopped'
+                        : 'groups.tasks.watchdog.steered',
+                    )
+                  }}
+                </span>
+                <span v-if="entry.reason" class="text-xs font-medium opacity-85">{{ entry.reason }}</span>
+                <span class="text-xs text-muted tabular">
+                  {{ formatDateTime(entry.created, { timeZone, withSeconds: true }) }}
+                </span>
+              </div>
+              <p v-if="entry.detail" class="text-xs break-words whitespace-pre-wrap text-ink-2">
+                {{ entry.detail }}
+              </p>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <dl
+        v-if="facts.length"
+        class="grid items-baseline gap-x-6 gap-y-2 border-t border-line pt-3 text-sm sm:grid-cols-[auto_minmax(0,1fr)]"
+      >
         <template v-for="[key, text] in facts" :key="key">
           <dt class="text-muted">{{ t(`groups.tasks.facts.${key}`) }}</dt>
-          <dd v-if="key === 'summary'" class="text-ink"><MarkdownText :text="text ?? ''" /></dd>
-          <dd v-else class="break-words whitespace-pre-wrap text-ink">{{ text }}</dd>
+          <dd v-if="key === 'summary'" class="min-w-0 text-ink"><MarkdownText :text="text ?? ''" /></dd>
+          <dd v-else class="min-w-0 break-words whitespace-pre-wrap text-ink">{{ text }}</dd>
         </template>
       </dl>
       <ErrorNote v-if="task.error" :title="t('groups.tasks.failed')" :error="task.error" />
       <RawRecord
         v-if="developerDetails"
         :label="t('groups.tasks.raw')"
-        :code="{ ...task, network: first.network }"
+        :code="{ ...task, network: first.network, budget: first.budget, watchdog: first.watchdog }"
       />
     </header>
 
     <LivePreview v-if="running && service.configured" :id="id" :scene="scene" />
 
     <TaskQuestion
-      v-if="task.question"
+      v-if="task.question && !waitingQuestion"
       :question="task.question"
       :can-answer="canAnswer"
       :busy="act.isPending.value"
+      :timeout-seconds="task.active_timeout_seconds"
+      :disabled-reason="questionDisabledReason"
       @answer="(body) => act.mutate({ action: 'answer', ...body })"
       @dirty="(value: boolean) => (answerDirty = value)"
     />
 
-    <section v-if="canAppend || canContinue" class="flex flex-col gap-2">
+    <section v-if="canAppend || canContinue" class="flex flex-col gap-2 border-t border-line pt-5">
       <template v-if="canAppend">
         <label class="text-sm font-medium text-ink" :for="`append-${id}`">
           {{ t('groups.tasks.append.label') }}
@@ -238,10 +438,12 @@ const facts = computed(() => {
       @files="showFiles('out/browser')"
     />
     <template v-if="service.configured">
-      <TaskSpace :scene="scene" :task-id="id" :time-zone="timeZone" @changed="changed" />
-      <section class="flex flex-col gap-2">
+      <div class="border-t border-line pt-5">
+        <TaskSpace :scene="scene" :task-id="id" :time-zone="timeZone" @changed="changed" />
+      </div>
+      <section class="flex flex-col gap-2 border-t border-line pt-5">
         <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
-          <FolderOpen :size="16" class="text-subtle" aria-hidden="true" />
+          <FolderOpen :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           {{ t('groups.tasks.space.files') }}
           <Button size="sm" variant="ghost" class="ml-auto" @click="filesAt = filesAt === null ? '' : null">
             {{ t(filesAt === null ? 'common.expand' : 'common.collapse') }}

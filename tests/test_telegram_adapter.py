@@ -67,7 +67,7 @@ class BotAPI:
             except TimeoutError:
                 return self._ok([])
             return self._ok([first])
-        if method in {"sendMessage", "sendPhoto", "sendDocument"}:
+        if method in {"sendMessage", "sendPhoto", "sendAnimation", "sendDocument"}:
             self.next_id += 1
             result = {"message_id": self.next_id, "date": int(time.time()), "chat": {"id": GROUP, "type": "supergroup"}}
             topic = params.get("message_thread_id") or self.topics.get(params.get("reply_parameters", {}).get("message_id"))
@@ -371,3 +371,51 @@ async def test_a_group_does_not_start_unless_every_platform_starts(api):
     with pytest.raises(PlatformCallError, match="bad: getMe did not confirm"):
         await group.start()
     assert not started[0].connected
+
+
+@pytest.mark.asyncio
+async def test_gif_uses_send_animation_and_multipart_failures_track_sent_and_unsent(api):
+    adapter = Telegram(_settings(), on_event=lambda raw: None, on_error=lambda text: None)
+    await adapter.start()
+    try:
+        scene = f"telegram:group:{GROUP}"
+
+        def outgoing(*segments: Segment) -> ChatMessage:
+            return ChatMessage(id="out", platform="telegram", bot_id=f"telegram:{BOT}", scene=scene,
+                               platform_message_id=None, sender=Sender(f"telegram:{BOT}", None, None, None),
+                               time=time.time(), segments=list(segments), reply_to=None, mentions_bot=False,
+                               is_self=True, send_status="sent")
+
+        gif_result = await adapter.send_message(outgoing(Segment("image", {"sub_type": 1})),
+                                                image_bytes=b"GIF89a-animated-sticker")
+        assert gif_result.status == "sent"
+        assert api.calls[-1][0] == "sendAnimation"
+        assert b"GIF89a-animated-sticker" in api.calls[-1][1]["multipart"]
+        assert b"image/gif" in api.calls[-1][1]["multipart"]
+
+        png_result = await adapter.send_message(outgoing(Segment("image", {"sub_type": 1})),
+                                                image_bytes=b"\x89PNG-static")
+        assert png_result.status == "sent" and api.calls[-1][0] == "sendPhoto"
+
+        # 3-part message: part 1 fails (400) -> status=failed, parts 1..3 unsent, no follow-up calls.
+        long_3_parts = "甲" * 4000 + "\n" + "乙" * 4000 + "\n" + "丙" * 100
+        api.calls.clear()
+        api.failures["sendMessage"] = [httpx.Response(400, json={"ok": False, "error_code": 400, "description": "Bad1"})]
+        first_fail = await adapter.send_message(outgoing(Segment("text", {"text": long_3_parts})))
+        assert first_fail.status == "failed" and first_fail.platform_message_id is None
+        assert "part 1 of 3 failed" in first_fail.error and "unsent parts 1..3" in first_fail.error
+        assert [m for m, _ in api.calls if m == "sendMessage"] == ["sendMessage"]
+
+        # 3-part message: part 1 sent, part 2 fails (400) -> status=unconfirmed, reports sent part 1 & unsent parts 2..3.
+        api.calls.clear()
+        api.failures["sendMessage"] = [
+            api._ok({"message_id": 910, "date": int(time.time()), "chat": {"id": GROUP, "type": "supergroup"}}),
+            httpx.Response(400, json={"ok": False, "error_code": 400, "description": "Bad2"}),
+        ]
+        mid_fail = await adapter.send_message(outgoing(Segment("text", {"text": long_3_parts})))
+        assert mid_fail.status == "unconfirmed" and mid_fail.platform_message_id == "910"
+        assert "sent parts 1 (message_ids=910)" in mid_fail.error
+        assert "part 2 of 3 failed (unsent parts 2..3)" in mid_fail.error
+        assert [m for m, _ in api.calls if m == "sendMessage"] == ["sendMessage", "sendMessage"]
+    finally:
+        await adapter.close()

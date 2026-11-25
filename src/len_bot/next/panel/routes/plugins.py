@@ -32,6 +32,27 @@ class PluginChange(BaseModel):
     enabled: bool
     # Secret fields may be null to keep the saved value unchanged.
     config: dict[str, object] = Field(default_factory=dict)
+    apply_candidate: bool = False
+    disabled_rules: list[str] | None = None
+
+    @field_validator("disabled_rules")
+    @classmethod
+    def valid_disabled_rules(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and (not all(value) or len(set(value)) != len(value)):
+            raise ValueError("disabled_rules 须为不重复的非空规则")
+        return value
+
+
+class PluginScenes(BaseModel):
+    model_config = STRICT
+    scenes: list[str]
+
+    @field_validator("scenes")
+    @classmethod
+    def distinct(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("场景名不能重复")
+        return value
 
 
 class ScenePlugins(BaseModel):
@@ -112,7 +133,8 @@ def _masked(manifest: Manifest | None, values: dict, *, installed: Sequence[Mani
 def _entry(directory: Path) -> dict:
     try:
         manifest = read_manifest(directory)
-        return {"directory": str(directory), "error": None, "version": manifest.version,
+        return {"directory": str(directory), "error": None, "title": manifest.title,
+                "version": manifest.version, "data_version": manifest.data_version,
                 "description": manifest.description, "authors": manifest.authors,
                 "license": manifest.license,
                 "repository": None if manifest.repository is None else str(manifest.repository),
@@ -153,6 +175,41 @@ def configured_values(change: PluginChange, manifest: Manifest, previous: dict, 
     return values
 
 
+def _resolved_values(change: PluginChange, manifest: Manifest, previous: dict, scenes) -> dict:
+    if "config" in change.model_fields_set:
+        return configured_values(change, manifest, previous, scenes)
+    try:
+        manifest.values_model(scenes).model_validate(previous)
+    except ValidationError as error:
+        raise ValueError(redact_values(f'plugins.{manifest.name}: {error}', manifest, previous)) from None
+    return previous
+
+
+def _set_disabled_rules(plugins: dict, name: str, rules: list[str]) -> None:
+    table = dict(plugins.get('disabled_rules', {}))
+    if rules:
+        table[name] = list(rules)
+    else:
+        table.pop(name, None)
+    if table:
+        plugins['disabled_rules'] = table
+    else:
+        plugins.pop('disabled_rules', None)
+
+
+def _installed_manifest_info(manifest: Manifest | None) -> dict | None:
+    if manifest is None:
+        return None
+    return {
+        "version": manifest.version,
+        "data_version": manifest.data_version,
+        "permissions": (None if manifest.permissions is None else
+                        [{"name": name, "title": PERMISSION_TITLES[name]} for name in manifest.permissions]),
+        "chat_platforms": manifest.chat_platforms,
+        "dependencies": manifest.dependencies,
+    }
+
+
 def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, running: HostConfig,
                           user: Callable[[Request], str], write_lock: asyncio.Lock
                           ) -> tuple[PluginCatalog, Callable[[], Awaitable[list[dict] | None]]]:
@@ -173,7 +230,17 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                             if entry['error'] is None] for name, entries in available.items()}
         pending = manager.installer.pending()
         for record in pending:
-            available[record.name] = [_entry(manager.installer.candidates / record.name)]
+            entry = _entry(manager.installer.candidates / record.name)
+            inst = installed[record.name][0] if installed.get(record.name) else None
+            if inst is None and record.installed is not None:
+                installed_dir = manager.installer.directory / record.name
+                if (installed_dir / "plugin.toml").is_file():
+                    try:
+                        inst = read_manifest(installed_dir)
+                    except (OSError, ValueError):
+                        inst = None
+            entry['installed_manifest'] = _installed_manifest_info(inst)
+            available[record.name] = [entry]
         for name, entries in available.items():
             for entry in entries:
                 entry['managed'] = (manager.installer.records / (name + '.json')).is_file()
@@ -198,6 +265,8 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
             "saved": {"paths": raw_plugins.get("paths", ["plugins"]),
                       "data_directory": raw_plugins.get("data_directory", "plugins/.data"),
                       "disabled": disabled,
+                      "disabled_rules": {key: list(value) for key, value in (
+                          saved.plugins.disabled_rules.items() if saved.plugins is not None else ())},
                       "plugins": {name: _masked(manifests[name], values, installed=installed.get(name, []))
                                   for name, values in configured.items()}},
             "retained_data": ([] if saved.plugins is None or not saved.plugins.data_directory.is_dir() else
@@ -219,8 +288,13 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
     async def snapshot() -> dict:
         plugin_state = ({"plugins": [], "discovery_errors": []} if runtime.plugins is None
                         else runtime.plugins.state())
-        for item in plugin_state["plugins"]:
-            item["model_calls"] = PluginStore(runtime.store).plugin_calls(item["name"])
+        if plugin_state["plugins"]:
+            def read_calls():
+                store = PluginStore(runtime.store)
+                return {item["name"]: store.plugin_calls(item["name"]) for item in plugin_state["plugins"]}
+            calls = await runtime.store.read(read_calls)
+            for item in plugin_state["plugins"]:
+                item["model_calls"] = calls[item["name"]]
         result = await asyncio.to_thread(state, plugin_state)
         for name, entries in result['available'].items():
             for entry in entries:
@@ -230,7 +304,17 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                         entry['source'] = await manager.installer.details(name)
                     except (ValueError, OSError, RuntimeError) as error:
                         entry['error'] = f"{entry['error'] or ''}\n{type(error).__name__}: {error}".strip()
+        saved = await asyncio.to_thread(_read_saved, root)
         result['updates'] = [item.model_dump() for item in await pending_updates()]
+        result['catalog_entries'] = {
+            entry.name: {
+                'title': entry.title,
+                'category': entry.category,
+                'usage': list(entry.usage),
+                'capabilities': list(entry.capabilities),
+            }
+            for entry in catalog.view(saved.plugin_catalog).entries
+        }
         return result
 
     def updatable_versions(saved: HostConfig) -> dict[str, str | None]:
@@ -467,16 +551,30 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                 saved = await asyncio.to_thread(_read_saved, root)
                 manifest = plugin_manifest(saved, name, manager.installer)
                 staged = manager.installer.candidate_values(name)
-                previous = saved.plugins.configured[name] if staged is None else staged.values
-                values = configured_values(change, manifest, previous, saved.scenes) if change.enabled else previous
+                previous = (({} if saved.plugins is None else saved.plugins.configured.get(name, {}))
+                            if staged is None else staged.values)
+                values = (_resolved_values(change, manifest, previous, saved.scenes)
+                          if (change.enabled or change.apply_candidate) else previous)
                 await asyncio.to_thread(manager.installer.save_candidate_values, name, values, change.enabled)
-                if not change.enabled:
-                    def disable(source, _):
-                        disabled = source['plugins'].setdefault('disabled', [])
-                        if name not in disabled:
-                            disabled.append(name)
-                    saved = await manager.save(disable)
-                    await manager.apply(name, saved)
+                if not change.enabled or change.disabled_rules is not None:
+                    def update_root(source, previous_saved):
+                        if previous_saved.plugins is None:
+                            source['plugins'] = {}
+                        plugins = source['plugins']
+                        if not change.enabled:
+                            if name not in plugins:
+                                plugins[name] = previous
+                            disabled = plugins.setdefault('disabled', [])
+                            if name not in disabled:
+                                disabled.append(name)
+                        if change.disabled_rules is not None:
+                            _set_disabled_rules(plugins, name, change.disabled_rules)
+                    saved = await manager.save(update_root)
+                    if not change.enabled and not change.apply_candidate:
+                        await manager.apply(name, saved)
+                if change.apply_candidate:
+                    applied = await manager.apply_candidate(name)
+                    return {**applied, 'candidate_config_saved': True}
                 return {'name': name, 'candidate_config_saved': True}
             return await operate(stage_values)
 
@@ -490,12 +588,54 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                 disabled = plugins.setdefault('disabled', [])
                 if name not in disabled:
                     disabled.append(name)
+                if change.disabled_rules is not None:
+                    _set_disabled_rules(plugins, name, change.disabled_rules)
                 return
             manifest = plugin_manifest(saved, name, manager.installer)
             previous = plugins.get(name, {})
-            values = configured_values(change, manifest, previous, saved.scenes)
+            values = _resolved_values(change, manifest, previous, saved.scenes)
             plugins[name] = values
             plugins['disabled'] = [item for item in plugins.get('disabled', []) if item != name]
+            if change.disabled_rules is not None:
+                _set_disabled_rules(plugins, name, change.disabled_rules)
+
+        return await save(edit, [name])
+
+    @app.put("/api/host/plugins/{name}/scenes", response_model=responses.PluginSnapshot, response_model_exclude_unset=True)
+    async def put_plugin_scenes(name: str, request: Request, _: str = Depends(user)):
+        require_name(name)
+        change: PluginScenes = await _body(request, PluginScenes)
+        unknown = [scene for scene in change.scenes if scene not in running.scenes]
+        if unknown:
+            raise HTTPException(422, f"当前宿主未配置场景：{', '.join(unknown)}")
+
+        def edit(source: dict, saved: HostConfig) -> None:
+            if saved.plugins is None or name not in saved.plugins.configured:
+                raise ValueError(f"插件 {name} 尚未配置，请先启用并保存配置")
+            record_path = manager.installer.records / (name + '.json')
+            if record_path.is_file() and manager.installer.read(name).installed is None:
+                raise ValueError(f"插件 {name} 尚未应用源码，请先完成安装")
+            if change.scenes:
+                manifest = plugin_manifest(saved, name)
+                if unsupported := manifest.unsupported_scenes(change.scenes):
+                    raise ValueError(
+                        f"插件 {name} 只支持 {'、'.join(manifest.chat_platforms)} 平台，不能在 {'、'.join(unsupported)} 启用"
+                    )
+            missing_saved = [scene for scene in change.scenes if scene not in source["scenes"]]
+            if missing_saved:
+                raise ValueError(f"根配置已不包含场景：{', '.join(missing_saved)}")
+            selected = set(change.scenes)
+            for scene, target in source["scenes"].items():
+                current = list(target.get("plugins", []))
+                if scene in selected:
+                    if name not in current:
+                        current.append(name)
+                    target["plugins"] = current
+                elif name in current or any(target.get(key) == name for key in MEMORY_KEYS):
+                    target["plugins"] = [item for item in current if item != name]
+                    for key in MEMORY_KEYS:
+                        if target.get(key) == name:
+                            target.pop(key, None)
 
         return await save(edit, [name])
 

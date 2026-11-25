@@ -3,7 +3,7 @@ import { http, queryString, request, requestBlob, socketUrl } from './client'
 /** Types of panel/routes/tasks.py, materials.py, skills.py and task_storage.py as one task uses them. */
 
 export type TaskStatus = 'queued' | 'running' | 'waiting_input' | 'done' | 'failed' | 'cancelled'
-export type TaskFilter = 'active' | 'all' | 'done' | 'failed' | 'cancelled'
+export type TaskFilter = 'active' | 'waiting_input' | 'all' | 'done' | 'failed' | 'cancelled'
 
 /** A question from the task (`extension_ui_request`). */
 export interface TaskQuestion {
@@ -68,6 +68,27 @@ export interface TaskEvent {
   [field: string]: unknown
 }
 
+export interface TaskBudget {
+  calls: number
+  max_calls: number | null
+  tokens: {
+    input: number
+    output: number
+    cached: number
+    known_calls: number
+    unknown_calls: number
+  }
+  max_tokens: number | null
+}
+
+export interface WatchdogEvent {
+  id: number
+  created: number
+  action: string
+  reason: string
+  detail: string
+}
+
 export interface TaskDetail {
   task: Task & { workspace_discard_requested: boolean; active_timeout_seconds: number | null }
   events: TaskEventPreview[]
@@ -75,6 +96,8 @@ export interface TaskDetail {
   browser: { public_enabled: boolean; output_count: number }
   next_after: number
   files: RegisteredFile[]
+  budget?: TaskBudget | null
+  watchdog?: WatchdogEvent[]
 }
 
 /** GET /api/host/tasks/state */

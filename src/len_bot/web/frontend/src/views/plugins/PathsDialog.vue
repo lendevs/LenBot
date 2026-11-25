@@ -17,6 +17,7 @@ const { t } = useI18n()
 const state = usePluginsState()
 const paths = ref(props.paths.join('\n'))
 const data = ref(props.dataDirectory)
+const touched = ref(false)
 const error = ref<unknown>(null)
 const list = computed(() =>
   paths.value
@@ -24,10 +25,15 @@ const list = computed(() =>
     .map((item) => item.trim())
     .filter(Boolean),
 )
+const dataError = computed(() =>
+  (touched.value || data.value !== props.dataDirectory) && !data.value.trim()
+    ? t('plugins.paths.dataRequired')
+    : null,
+)
 const dirty = computed(
   () => list.value.join('\n') !== props.paths.join('\n') || data.value.trim() !== props.dataDirectory,
 )
-const saving = computed(() => state.busy.value === 'paths')
+const saving = computed(() => state.isBusy('paths'))
 const open = computed({
   get: () => true,
   set: (value: boolean) => {
@@ -35,6 +41,7 @@ const open = computed({
   },
 })
 async function submit() {
+  touched.value = true
   if (!dirty.value || !data.value.trim()) return
   error.value = null
   try {
@@ -55,8 +62,8 @@ async function submit() {
       <Field :label="t('plugins.paths.paths')">
         <Textarea v-model="paths" :rows="3" mono placeholder="plugins" />
       </Field>
-      <Field :label="t('plugins.paths.data')" required>
-        <Input v-model="data" mono />
+      <Field :label="t('plugins.paths.data')" :error="dataError" required>
+        <Input v-model="data" mono @blur="touched = true" />
       </Field>
       <ErrorNote v-if="error" :title="t('plugins.paths.failed')" :error="error" />
     </form>
@@ -67,7 +74,7 @@ async function submit() {
         type="submit"
         form="plugin-paths"
         :loading="saving"
-        :disabled="!dirty || !data.trim()"
+        :disabled="!dirty || Boolean(dataError)"
       >
         {{ t('common.save') }}
       </Button>

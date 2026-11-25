@@ -1,13 +1,17 @@
 """OneBot Universal WebSocket and explicitly selected HTTP action transport."""
 
 from __future__ import annotations
-import hmac
 
 import asyncio
 import base64
+import binascii
+import hmac
 import json
+import logging
+from pathlib import Path
 import re
 import socket
+import time
 from collections.abc import Callable
 from http import HTTPStatus
 from urllib.parse import parse_qs, quote, urlsplit
@@ -19,18 +23,72 @@ from websockets.exceptions import ConnectionClosed, InvalidMessage, InvalidStatu
 from websockets.http11 import Request, Response
 
 from ..configuration.onebot import OneBotForward, OneBotReverse
-from ..runtime.logs import REDACTED
+from ..runtime.logs import REDACTED, log_event
+from ..tools.http_read import fetch_public
 from ...image_assets import sticker_bytes
 from .adapter import PlatformCallError
+from .onebot_audio import file_uri_to_path
 from .onebot_messages import parse_event
 from .messages import ChatMessage, SendResult, UploadResult
 from .onebot_messages import parse_send_result, parse_upload_result
 
 
+logger = logging.getLogger(__name__)
+
 # A dropped forward connection is dialed again; each attempt doubles the next wait up to the maximum,
 # and a connection that then stays up at least the maximum starts the next series from the initial wait.
 RECONNECT_INITIAL_SECONDS = 1.0
 RECONNECT_MAX_SECONDS = 30.0
+# Actions carrying image/file payloads or uploads need extra time for protocol-side transcoding and transfer.
+MEDIA_ACTION_TIMEOUT_SECONDS = 30.0
+# Timed-out request echoes that arrive within this window are logged as late receipts rather than platform errors.
+LATE_ECHO_TTL_SECONDS = 120.0
+
+
+def _is_heavy_action(action: str, params: dict) -> bool:
+    if action in {"upload_group_file", "upload_private_file"}:
+        return True
+    if action in {"send_group_msg", "send_private_msg"}:
+        segments = params.get("message")
+        if isinstance(segments, list):
+            for segment in segments:
+                if not isinstance(segment, dict):
+                    continue
+                if segment.get("type") in {"image", "file"}:
+                    return True
+                data = segment.get("data")
+                if isinstance(data, dict) and any(
+                    isinstance(value, str) and value.startswith("base64://")
+                    for value in data.values()
+                ):
+                    return True
+    return False
+
+
+def _decode_base64_capped(encoded: str, max_bytes: int) -> bytes:
+    if len(encoded) > 4 * ((max_bytes + 2) // 3):
+        raise ValueError(f"download exceeds {max_bytes} bytes")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError(f"get_image base64 decode failed: {error}") from error
+    if len(raw) > max_bytes:
+        raise ValueError(f"download exceeds {max_bytes} bytes")
+    if not raw:
+        raise ValueError("get_image returned empty base64 data")
+    return raw
+
+
+def _read_local_capped(path: Path, max_bytes: int) -> bytes:
+    if path.stat().st_size > max_bytes:
+        raise ValueError(f"download exceeds {max_bytes} bytes")
+    with path.open("rb") as handle:
+        data = handle.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(f"download exceeds {max_bytes} bytes")
+    if not data:
+        raise ValueError(f"get_image local file is empty: {path}")
+    return data
 
 
 def _non_json_number(value: str) -> None:
@@ -63,10 +121,13 @@ class OneBot:
 
     def __init__(self, settings: OneBotForward | OneBotReverse, *, bot_id: str | None,
                  on_event: Callable[[dict], None], on_error: Callable[[str], None],
-                 on_connection_change: Callable[[], None] | None = None):
+                 on_connection_change: Callable[[], None] | None = None,
+                 fake_ip_networks: tuple = (), public_dns_url: str | None = None):
         self.settings, self.bot_id = settings, None if bot_id is None else bot_id.split(":", 1)[1]
         self.on_event, self.on_error = on_event, on_error
         self.on_connection_change = on_connection_change
+        self._fake_ip_networks = fake_ip_networks
+        self._public_dns_url = public_dns_url
         self._running = False
         self._ws: ClientConnection | ServerConnection | None = None
         self._server: Server | None = None
@@ -74,11 +135,28 @@ class OneBot:
         self._http: httpx.AsyncClient | None = None
         self._connection_changed = asyncio.Event()
         self._pending: dict[str, asyncio.Future[dict]] = {}
+        self._late_echoes: dict[str, float] = {}
         self._sequence = 0
         self._verified_ws: ClientConnection | ServerConnection | None = None
         self._identity_lock = asyncio.Lock()
         self._closing = asyncio.Event()
         self._dial: dict | None = None
+
+    def _action_timeout(self, action: str, params: dict) -> float:
+        timeout = self.settings.request_timeout_seconds
+        if _is_heavy_action(action, params):
+            return max(timeout, MEDIA_ACTION_TIMEOUT_SECONDS)
+        return timeout
+
+    def _prune_late_echoes(self, now: float) -> None:
+        expired = [echo for echo, deadline in self._late_echoes.items() if deadline <= now]
+        for echo in expired:
+            self._late_echoes.pop(echo, None)
+
+    def _record_late_echo(self, echo: str) -> None:
+        now = time.monotonic()
+        self._prune_late_echoes(now)
+        self._late_echoes[echo] = now + LATE_ECHO_TTL_SECONDS
 
     def _safe(self, text: str) -> str:
         text = re.sub(r"base64://[A-Za-z0-9+/=]+", "base64://[media omitted]", text)
@@ -144,6 +222,7 @@ class OneBot:
     async def close(self) -> None:
         self._running = False
         self._verified_ws = None
+        self._late_echoes.clear()
         self._closing.set()
         self._connection_changed.set()
         if self._server is not None:
@@ -315,6 +394,16 @@ class OneBot:
                             raise ValueError("OneBot reply echo does not match the sent string echo")
                         future = self._pending.get(echo)
                         if future is None or future.done():
+                            now = time.monotonic()
+                            self._prune_late_echoes(now)
+                            if echo in self._late_echoes:
+                                self._late_echoes.pop(echo, None)
+                                log_event(
+                                    logger, "onebot_late_echo", "收到已超时 OneBot 请求的迟到回执",
+                                    level=logging.WARNING, echo=echo,
+                                    status=packet.get("status"), retcode=packet.get("retcode"),
+                                )
+                                continue
                             raise ValueError(f"OneBot reply has no active request: {echo}")
                         future.set_result(packet)
                     elif packet.get("post_type") in {"message", "message_sent", "notice", "request", "meta_event"}:
@@ -346,7 +435,41 @@ class OneBot:
         return await scene_title(scene, self.call)
 
     async def download(self, data: dict, max_bytes: int) -> bytes:
-        raise ValueError("OneBot media is read from the url in its segment")
+        file = data.get("file")
+        if not isinstance(file, str) or not file.strip():
+            raise ValueError(f"OneBot media segment has no file locator: {repr(data)[:200]}")
+        raw = await self.call("get_image", {"file": file.strip()})
+        if not isinstance(raw, dict) or raw.get("status") != "ok" or raw.get("retcode") != 0:
+            raise OneBotCallError(self._safe(f"get_image failed: {repr(raw)[:500]}"), submitted=False)
+        info = raw.get("data")
+        if not isinstance(info, dict):
+            raise ValueError(f"get_image data must be an object; raw={self._safe(repr(raw))[:500]}")
+        encoded = info.get("base64")
+        if isinstance(encoded, str) and encoded:
+            return _decode_base64_capped(encoded, max_bytes)
+        url: str | None = None
+        returned_file = info.get("file")
+        if isinstance(returned_file, str) and returned_file.strip():
+            candidate = returned_file.strip()
+            if candidate.startswith("base64://"):
+                return _decode_base64_capped(candidate.removeprefix("base64://"), max_bytes)
+            if candidate.startswith(("http://", "https://")):
+                url = candidate
+            else:
+                local_path = file_uri_to_path(candidate) if candidate.startswith("file://") else Path(candidate)
+                if local_path is not None and local_path.is_file():
+                    return await asyncio.to_thread(_read_local_capped, local_path, max_bytes)
+        info_url = info.get("url")
+        if url is None and isinstance(info_url, str) and info_url.strip().startswith(("http://", "https://")):
+            url = info_url.strip()
+        if url is not None:
+            timeout = max(self.settings.request_timeout_seconds, MEDIA_ACTION_TIMEOUT_SECONDS)
+            _, _, body = await fetch_public(
+                url, timeout, lambda _type, _prefix: max_bytes,
+                fake_ip_networks=self._fake_ip_networks, public_dns_url=self._public_dns_url,
+            )
+            return body
+        raise ValueError(f"get_image returned no readable image source; raw={self._safe(repr(raw))[:500]}")
 
     async def call(self, action: str, params: dict) -> dict:
         if not self._running:
@@ -371,16 +494,27 @@ class OneBot:
             raise OneBotCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=False) from None
         future = asyncio.get_running_loop().create_future()
         self._pending[echo] = future
+        timeout = self._action_timeout(action, params)
+        sent = False
+        timed_out = False
         try:
-            async with asyncio.timeout(self.settings.request_timeout_seconds):
+            async with asyncio.timeout(timeout):
                 await websocket.send(payload)
+                sent = True
                 return await future
-        except OneBotCallError:
+        except OneBotCallError as error:
+            if not sent:
+                raise OneBotCallError(str(error), submitted=False) from None
             raise
+        except TimeoutError as error:
+            timed_out = sent
+            raise OneBotCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=sent) from None
         except Exception as error:
-            raise OneBotCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=True) from None
+            raise OneBotCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=sent) from None
         finally:
-            self._pending.pop(echo)
+            self._pending.pop(echo, None)
+            if timed_out:
+                self._record_late_echo(echo)
             if not future.done():
                 future.cancel()
             elif not future.cancelled():
@@ -398,17 +532,18 @@ class OneBot:
                              f"{self.bot_id}; raw={raw!r}")
         self.bot_id = str(user_id)
 
-    async def identify(self) -> str:
+    async def identify(self, *, force: bool = False) -> str:
         await self.wait_connected(self.settings.request_timeout_seconds)
-        await self._verify_identity(self._ws)
+        await self._verify_identity(self._ws, force=force)
         return "onebot:" + self.bot_id
 
-    async def _verify_identity(self, websocket: ClientConnection | ServerConnection) -> None:
+    async def _verify_identity(self, websocket: ClientConnection | ServerConnection,
+                               *, force: bool = False) -> None:
         async with self._identity_lock:
             if not self._running or self._ws is not websocket:
                 raise OneBotCallError("OneBot WebSocket changed during identity check; message was not sent",
                                       submitted=False)
-            if self._verified_ws is websocket:
+            if not force and self._verified_ws is websocket:
                 return
             ws_info = await self._call_ws_on(websocket, "get_login_info", {})
             self._check_login_info(ws_info, "WebSocket")
@@ -510,12 +645,13 @@ class OneBot:
 
     async def _call_http(self, action: str, params: dict) -> dict:
         url = self.settings.http_url.rstrip("/") + "/" + quote(action, safe="")
+        timeout = self._action_timeout(action, params)
         try:
-            request = self._http.build_request("POST", url, json=params)
+            request = self._http.build_request("POST", url, json=params, timeout=timeout)
         except Exception as error:
             raise OneBotCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=False) from None
         try:
-            async with asyncio.timeout(self.settings.request_timeout_seconds):
+            async with asyncio.timeout(timeout):
                 response = await self._http.send(request)
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as error:
             raise OneBotCallError(self._safe(f"{type(error).__name__}: {error}"), submitted=False) from None

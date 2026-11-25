@@ -53,3 +53,5 @@ class TaskDetail(BaseModel):
     next_after: int
     files: list[RegisteredFile]
     browser: TaskBrowserView
+    budget: dict[str, JsonValue] | None = None
+    watchdog: list[dict[str, JsonValue]] = []

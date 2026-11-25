@@ -9,7 +9,7 @@ withDefaults(defineProps<{ tone?: Tone | 'idle'; pulse?: boolean; label?: string
 const tones: Record<Tone | 'idle', string> = {
   neutral: 'bg-subtle text-subtle',
   idle: 'bg-idle text-idle',
-  brand: 'bg-brand text-brand',
+  brand: 'bg-ink-2 text-ink-2',
   success: 'bg-success text-success',
   warning: 'bg-warning text-warning',
   error: 'bg-error text-error',

@@ -21,43 +21,65 @@ QUOTED = re.compile(QUOTED_SPAN)
 # A quoted span ending in 。！？ stays inside its sentence.
 SENTENCE = re.compile(rf"(?:{QUOTED_SPAN}|[^。！!？?；;\n])+[。！!？?；;]*")
 CLAUSE = re.compile(r"[，,、：:（）()\s]+")
-# A prohibition written anywhere in a sentence.
-FORBIDDING = re.compile(r"不要|不准|不许|禁止|避免|切勿")
+# A prohibition written anywhere in a sentence (excluding 不要紧 / 要不要 / 不准确 / 不准时).
+FORBIDDING = re.compile(r"(?<!要)不要(?!紧)|不准(?!确|时)|不许|禁止|避免|切勿")
 SUBJECTS = ("她", "他", "你", "我", "它")
 ADVERBS = re.compile(r"^(?:也|都|就|从来|从|绝对|一律|永远)")
+CONCESSION = re.compile(r"^(?:不管|不论|无论)")
 # Words that start with 不 or 别 without negating an action.
 WORDS = (
     "不是", "不开心", "不高兴", "不好意思", "不仅", "不但", "不只", "不光", "不小心", "不久", "不错",
     "不得不", "不愧", "不少", "不论", "不管", "不如", "不然", "不过", "不同", "不必", "不一定",
-    "不知道", "不知不觉", "不一会", "不太", "不算", "不会的", "不禁", "不由得", "不妨", "不停", "不断", "不止",
+    "不知道", "不知不觉", "不一会", "不太", "不怎么", "不算", "不会的", "不禁", "不由得", "不妨",
+    "不停", "不断", "不止",
     "别扭", "别致", "别的", "别人", "别处",
 )
 # A 不 clause that goes on like this is the condition of the sentence, as in 不同意就直说 or
 # 不开心的时候会撒娇; a time phrase before the negated action itself, as in 不在人难过时开玩笑, is not.
 # A 别 clause is an imperative and is never a condition.
 CONDITION = re.compile(r"(?:的时候|时|的话)(?:$|会|就|也|都|要|总|还|才|先|再|可以)|就|起来")
+TEMPORAL_CONDITION = re.compile(r"的时候|时|的话")
 # Words containing 时 or 就 that do not mark a condition; removed before looking for one.
 NOT_CONDITION = re.compile(
     r"时间|时刻|时常|时事|时政|时期|时代|时机|时光|时髦|时尚|时不时|按时|及时|准时|同时|平时|随时|当时|临时|暂时|小时"
     r"|成就|就业|就算|将就|迁就|造就")
 
 
-def _negates_an_action(clause: str, subjects: tuple[str, ...]) -> bool:
+def _strip_subject(clause: str, subjects: tuple[str, ...]) -> str:
     for subject in sorted(subjects, key=len, reverse=True):
         if subject and clause.startswith(subject):
-            clause = clause[len(subject):]
-            break
-    clause = ADVERBS.sub("", clause)
+            return clause[len(subject):]
+    return clause
+
+
+def _negates_an_action(clause: str, subjects: tuple[str, ...], *, in_concession: bool = False) -> bool:
+    clause = ADVERBS.sub("", _strip_subject(clause, subjects))
     if not clause.startswith(("不", "别")) or clause.startswith(WORDS):
         return False
-    return clause.startswith("别") or CONDITION.search(NOT_CONDITION.sub("", clause), 1) is None
+    if clause.startswith("别"):
+        return True
+    if in_concession:
+        return False
+    cleaned = NOT_CONDITION.sub("", clause)
+    if CONDITION.search(cleaned, 1) is not None:
+        return False
+    return clause.startswith("不在") or TEMPORAL_CONDITION.search(cleaned, 1) is None
 
 
 def _counts(sentence: str, subjects: tuple[str, ...]) -> bool:
     unquoted = QUOTED.sub("，", sentence)
     if FORBIDDING.search(unquoted):
         return True
-    return any(_negates_an_action(clause, subjects) for clause in CLAUSE.split(unquoted) if clause)
+    in_concession = False
+    for clause in CLAUSE.split(unquoted):
+        if not clause:
+            continue
+        if CONCESSION.match(_strip_subject(clause, subjects)):
+            in_concession = True
+            continue
+        if _negates_an_action(clause, subjects, in_concession=in_concession):
+            return True
+    return False
 
 
 def avoidances(persona: Persona) -> list[str]:

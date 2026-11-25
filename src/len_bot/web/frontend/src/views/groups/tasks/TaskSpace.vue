@@ -110,7 +110,7 @@ async function closeEnvironment() {
         </template>
         <template v-if="value.last_cleanup">
           <dt class="text-muted">{{ t('groups.tasks.space.lastCleanup') }}</dt>
-          <dd class="text-ink">
+          <dd class="text-ink tabular">
             {{ formatDateTime(value.last_cleanup.created, { timeZone }) }} ·
             {{
               t(

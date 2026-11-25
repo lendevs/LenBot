@@ -2,30 +2,59 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
-import { AtSign, ListTree, Pencil, Plus, Reply, SendHorizontal, Users, X } from '@lucide/vue'
+import { useEventListener, usePreferredReducedMotion } from '@vueuse/core'
+import { ToggleGroupItem, ToggleGroupRoot } from 'reka-ui'
+import {
+  ArrowDown,
+  AtSign,
+  ListTree,
+  Pencil,
+  Plus,
+  Reply,
+  SendHorizontal,
+  Square,
+  Users,
+  X,
+} from '@lucide/vue'
 import { chatApi, type ChatMessage, type ChatSource, type MessageReceipt } from '../../../api/trials'
 import { formatDateTime } from '../../../i18n/format'
-import { groupLabel } from '../../../layouts/shell/scenes'
+import { groupLabel, groupSecondaryId } from '../../../layouts/shell/scenes'
 import Avatar from '../../../ui/Avatar.vue'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
+import CodeBlock from '../../../ui/CodeBlock.vue'
+import Collapsible from '../../../ui/Collapsible.vue'
 import DropdownMenu, { type MenuEntry } from '../../../ui/DropdownMenu.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import IconButton from '../../../ui/IconButton.vue'
 import Textarea from '../../../ui/Textarea.vue'
 import VerdictMark from '../../groups/live/VerdictMark.vue'
 import MemberDialog from './MemberDialog.vue'
-import { useMembers, type Member } from './members'
+import { useMembers, type Member, type MemberRole } from './members'
 import { SCENARIOS, useScenarios, type ScenarioKey } from './scenarios'
 import type { Chat } from './useChat'
 
-const props = defineProps<{ source: ChatSource; chat: Chat; turnsOpen: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    source: ChatSource
+    chat: Chat
+    turnsOpen: boolean
+    context?: string[]
+    embedded?: boolean
+    activeTurnId?: string | null
+    messageTurnIds?: Map<number, string>
+  }>(),
+  { context: undefined, embedded: false, activeTurnId: null, messageTurnIds: undefined },
+)
 const emit = defineEmits<{ toggleTurns: []; openTurn: [message: ChatMessage] }>()
 
 const { t } = useI18n()
+const reducedMotion = usePreferredReducedMotion()
+const scrollBehavior = (): ScrollBehavior => (reducedMotion.value === 'reduce' ? 'auto' : 'smooth')
+
 const view = computed(() => props.chat.data.value!)
 const scene = computed(() => props.chat.data.value?.scene)
-const { members, current, speaker, nextUid, save, remove } = useMembers(scene, props.chat.isPrivate)
+const { members, current, speaker, platform, nextUid, save, remove } = useMembers(scene, props.chat.isPrivate)
 const roleTone = { owner: 'warning', admin: 'success' } as const
 const scenarios = useScenarios(props.source, props.chat, members)
 const scenarioItems = computed<MenuEntry[]>(() =>
@@ -104,38 +133,184 @@ function pieces(message: ChatMessage): Piece[] {
 }
 
 const list = ref<HTMLElement>()
+const BOTTOM_THRESHOLD = 48
+const atBottom = ref(true)
+const unreadCount = ref(0)
+function onScroll() {
+  const element = list.value
+  if (!element) return
+  atBottom.value = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_THRESHOLD
+  if (atBottom.value) unreadCount.value = 0
+}
+async function scrollToBottom(force = false, smooth = false) {
+  if (!force && !atBottom.value) return
+  await nextTick()
+  if (list.value) {
+    if (smooth) list.value.scrollTo({ top: list.value.scrollHeight, behavior: scrollBehavior() })
+    else list.value.scrollTop = list.value.scrollHeight
+    atBottom.value = true
+    unreadCount.value = 0
+  }
+}
 function jump(message: ChatMessage) {
   const element = list.value?.querySelector<HTMLElement>(`[data-seq="${message.seq}"]`)
-  element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  element?.animate([{ backgroundColor: 'var(--selected)' }, { backgroundColor: 'transparent' }], {
-    duration: 1200,
-  })
+  if (!element) return
+  element.scrollIntoView({ behavior: scrollBehavior(), block: 'center' })
+  if (reducedMotion.value !== 'reduce') {
+    element.animate([{ backgroundColor: 'var(--selected)' }, { backgroundColor: 'transparent' }], {
+      duration: 1200,
+    })
+  }
 }
 watch(
-  () => props.chat.messages.value.length,
-  async () => {
-    await nextTick()
-    if (list.value) list.value.scrollTop = list.value.scrollHeight
+  [() => props.chat.messages.value.length, () => props.chat.thinking.value],
+  ([length], prev) => {
+    const prevLength = prev?.[0] ?? 0
+    const initial = prev === undefined || prevLength === 0
+    if (initial || atBottom.value) {
+      unreadCount.value = 0
+      void scrollToBottom(true)
+    } else if (length > prevLength) {
+      unreadCount.value += length - prevLength
+    }
   },
   { immediate: true },
 )
+
+const isHighlightedMessage = (message: ChatMessage) =>
+  Boolean(
+    message.is_self && props.activeTurnId && props.messageTurnIds?.get(message.seq) === props.activeTurnId,
+  )
 
 // Composer.
 const text = ref('')
 const mentions = ref<string[]>([])
 const replyTo = ref<ChatMessage | null>(null)
 const input = ref<InstanceType<typeof Textarea>>()
-const mentionItems = computed<MenuEntry[]>(() =>
-  [
-    { uid: view.value.bot_id, label: props.chat.botName.value },
+const speakerGroup = ref<InstanceType<typeof ToggleGroupRoot>>()
+
+interface MentionCandidate {
+  uid: string
+  label: string
+  kind: MemberRole | 'bot' | 'all'
+}
+const mentionCandidates = computed<MentionCandidate[]>(() => {
+  if (props.chat.isPrivate.value) return []
+  return [
+    { uid: view.value.bot_id, label: props.chat.botName.value, kind: 'bot' as const },
     ...members.value
       .filter((member) => member.uid !== speaker.value?.uid)
-      .map((member) => ({ uid: member.uid, label: member.nickname })),
-    { uid: 'all', label: t('playground.everyone') },
-  ]
-    .filter((item) => !mentions.value.includes(item.uid))
-    .map((item) => ({ label: item.label, select: () => (mentions.value = [...mentions.value, item.uid]) })),
+      .map((member) => ({ uid: member.uid, label: member.nickname, kind: member.role })),
+    { uid: 'all', label: t('playground.everyone'), kind: 'all' as const },
+  ].filter((item) => !mentions.value.includes(item.uid))
+})
+const mentionItems = computed<MenuEntry[]>(() =>
+  mentionCandidates.value.map((item) => ({
+    label: item.label,
+    select: () => (mentions.value = [...mentions.value, item.uid]),
+  })),
 )
+
+// Inline @ mention popup driven by typing `@` in the textarea.
+const mentionTrigger = ref<{ start: number; end: number; query: string } | null>(null)
+const mentionIndex = ref(0)
+const filteredMentions = computed(() => {
+  const trigger = mentionTrigger.value
+  if (!trigger) return []
+  const needle = trigger.query.trim().toLowerCase()
+  if (!needle) return mentionCandidates.value
+  return mentionCandidates.value.filter(
+    (item) => item.label.toLowerCase().includes(needle) || item.uid.toLowerCase().includes(needle),
+  )
+})
+const mentionMenuOpen = computed(() => mentionTrigger.value !== null && mentionCandidates.value.length > 0)
+
+function textareaElement(): HTMLTextAreaElement | null {
+  const el = input.value?.$el
+  return el instanceof HTMLTextAreaElement ? el : null
+}
+function syncMentionTrigger() {
+  if (props.chat.isPrivate.value) {
+    mentionTrigger.value = null
+    return
+  }
+  const el = textareaElement()
+  if (!el) return
+  const pos = el.selectionStart ?? text.value.length
+  const before = text.value.slice(0, pos)
+  const at = before.lastIndexOf('@')
+  if (at === -1) {
+    mentionTrigger.value = null
+    return
+  }
+  if (at > 0 && /[a-zA-Z0-9._-]/.test(before[at - 1]!)) {
+    mentionTrigger.value = null
+    return
+  }
+  const query = before.slice(at + 1)
+  if (/\s/.test(query)) {
+    mentionTrigger.value = null
+    return
+  }
+  mentionTrigger.value = { start: at, end: pos, query }
+  mentionIndex.value = 0
+}
+function pickMention(candidate: MentionCandidate) {
+  const trigger = mentionTrigger.value
+  if (!mentions.value.includes(candidate.uid)) {
+    mentions.value = [...mentions.value, candidate.uid]
+  }
+  mentionTrigger.value = null
+  if (trigger) {
+    text.value = text.value.slice(0, trigger.start) + text.value.slice(trigger.end)
+    void nextTick(() => {
+      const el = textareaElement()
+      if (el) {
+        el.focus()
+        el.setSelectionRange(trigger.start, trigger.start)
+      }
+    })
+  } else {
+    input.value?.focus?.()
+  }
+}
+function quickMentionBot() {
+  if (!mentions.value.includes(view.value.bot_id)) {
+    mentions.value = [...mentions.value, view.value.bot_id]
+  }
+  input.value?.focus?.()
+}
+
+watch(
+  () => speaker.value?.uid,
+  (uid) => {
+    if (uid && mentions.value.includes(uid)) {
+      mentions.value = mentions.value.filter((item) => item !== uid)
+    }
+    void nextTick(() => {
+      const container = speakerGroup.value?.$el as HTMLElement | undefined
+      const active = container?.querySelector<HTMLElement>('[data-state="on"]')
+      active?.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest', inline: 'nearest' })
+    })
+  },
+)
+
+// Alt+1..9 switches the speaking member quickly without leaving the keyboard.
+useEventListener(window, 'keydown', (event: KeyboardEvent) => {
+  if (event.defaultPrevented || !view.value.running || props.chat.isPrivate.value) return
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  const match = /^Digit([1-9])$/.exec(event.code)
+  if (!match) return
+  const hasDialog = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).some(
+    (element) => !element.hasAttribute('hidden') && element.getAttribute('data-state') !== 'closed',
+  )
+  if (hasDialog) return
+  const target = members.value[Number(match[1]) - 1]
+  if (!target) return
+  event.preventDefault()
+  current.value = target.uid
+})
+
 function reply(message: ChatMessage) {
   replyTo.value = message
   input.value?.focus?.()
@@ -145,7 +320,18 @@ function focusInput(event: Event) {
   event.preventDefault()
   input.value?.focus?.()
 }
+
 const receipt = ref<MessageReceipt | null>(null)
+watch(text, (value) => {
+  if (value && receipt.value) receipt.value = null
+})
+watch(
+  () => props.chat.thinking.value,
+  (thinking) => {
+    if (thinking && receipt.value) receipt.value = null
+  },
+)
+
 const send = useMutation({
   mutationFn: () =>
     chatApi.send(props.source, {
@@ -156,12 +342,17 @@ const send = useMutation({
       mentions: props.chat.isPrivate.value ? [] : mentions.value,
       reply_to: replyTo.value?.platform_message_id ?? null,
     }),
+  onMutate: () => {
+    receipt.value = null
+  },
   onSuccess: (result) => {
     receipt.value = result
     if (['queued', 'stored'].includes(result.status)) {
       text.value = ''
       mentions.value = []
       replyTo.value = null
+      mentionTrigger.value = null
+      void scrollToBottom(true)
     }
     void props.chat.state.refetch()
   },
@@ -172,8 +363,49 @@ const ready = computed(
 function submit() {
   if (ready.value) send.mutate()
 }
+function onKeyup(event: KeyboardEvent) {
+  if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(event.key)) return
+  syncMentionTrigger()
+}
 function keydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+  if (mentionMenuOpen.value) {
+    if (event.key === 'ArrowDown' && filteredMentions.value.length) {
+      event.preventDefault()
+      mentionIndex.value = (mentionIndex.value + 1) % filteredMentions.value.length
+      return
+    }
+    if (event.key === 'ArrowUp' && filteredMentions.value.length) {
+      event.preventDefault()
+      mentionIndex.value =
+        (mentionIndex.value - 1 + filteredMentions.value.length) % filteredMentions.value.length
+      return
+    }
+    if ((event.key === 'Enter' || event.key === 'Tab') && !event.isComposing) {
+      const candidate = filteredMentions.value[mentionIndex.value]
+      if (candidate) {
+        event.preventDefault()
+        pickMention(candidate)
+        return
+      }
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      mentionTrigger.value = null
+      return
+    }
+  }
+  if (event.key === 'Escape') {
+    if (replyTo.value) {
+      event.preventDefault()
+      replyTo.value = null
+    }
+    return
+  }
+  if (
+    event.key === 'Enter' &&
+    !event.isComposing &&
+    ((!event.shiftKey && !event.altKey) || event.metaKey || event.ctrlKey)
+  ) {
     event.preventDefault()
     submit()
   }
@@ -203,6 +435,21 @@ const addMember = () =>
     },
     adding: true,
   })
+function saveMember(member: Member) {
+  const adding = editing.value?.adding ?? false
+  const prevUid = editing.value?.member.uid
+  save(member, adding, prevUid)
+  if (!adding && prevUid && prevUid !== member.uid) {
+    mentions.value = mentions.value
+      .map((uid) => (uid === prevUid ? member.uid : uid))
+      .filter((uid) => uid !== speaker.value?.uid)
+  }
+}
+function removeMember(uid: string) {
+  remove(uid)
+  mentions.value = mentions.value.filter((item) => item !== uid)
+}
+
 const liveTone = computed(() =>
   props.chat.live.value === 'connected'
     ? 'success'
@@ -214,14 +461,30 @@ const liveTone = computed(() =>
 
 <template>
   <section
-    class="flex h-[min(calc(100dvh-240px),820px)] min-h-[420px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface"
+    class="flex min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-surface"
+    :class="
+      embedded
+        ? 'h-[clamp(360px,calc(100dvh-300px),620px)] lg:h-[min(calc(100dvh-280px),680px)]'
+        : 'h-[clamp(380px,calc(100dvh-260px),680px)] lg:h-[min(calc(100dvh-230px),780px)]'
+    "
   >
-    <header class="flex items-center gap-3 border-b border-line px-4 py-2.5">
+    <header class="flex items-center gap-3 border-b border-line bg-surface px-4 py-2.5">
       <div class="flex min-w-0 flex-1 flex-col">
-        <strong class="truncate text-sm font-semibold text-ink">
-          {{ chat.isPrivate.value ? chat.botName.value : groupLabel(view.scene) }}
-        </strong>
-        <span class="text-xs text-muted">
+        <div class="flex min-w-0 items-baseline gap-2">
+          <strong
+            class="truncate text-sm font-semibold text-ink"
+            :class="!chat.isPrivate.value && !groupSecondaryId(view.scene) && 'tabular'"
+          >
+            {{ chat.isPrivate.value ? chat.botName.value : groupLabel(view.scene) }}
+          </strong>
+          <span
+            v-if="!chat.isPrivate.value && groupSecondaryId(view.scene)"
+            class="shrink-0 font-mono text-xs text-subtle tabular"
+          >
+            {{ groupSecondaryId(view.scene) }}
+          </span>
+        </div>
+        <span class="text-xs text-muted tabular">
           {{
             chat.isPrivate.value
               ? t('playground.private')
@@ -254,165 +517,244 @@ const liveTone = computed(() =>
       />
     </header>
 
-    <ol
-      ref="list"
-      class="flex min-h-0 flex-1 list-none flex-col gap-3 overflow-y-auto bg-hover px-4 py-4 scrollbar-thin"
-    >
-      <li v-if="!chat.messages.value.length" class="self-center py-8 text-sm text-muted">
-        {{ t('playground.noMessages') }}
-      </li>
-      <li
-        v-for="message in chat.messages.value"
-        :key="message.seq"
-        :data-seq="message.seq"
-        class="group flex max-w-[85%] items-start gap-2 rounded-lg"
-        :class="message.is_self ? 'self-start' : 'flex-row-reverse self-end'"
+    <div class="relative flex min-h-0 flex-1 flex-col">
+      <ol
+        ref="list"
+        class="flex min-h-0 flex-1 list-none flex-col gap-3 overflow-y-auto bg-sidebar px-3.5 py-4 scrollbar-thin sm:px-4"
+        @scroll="onScroll"
       >
-        <Avatar
-          :name="senderName(message)"
-          :src="message.is_self ? chatApi.avatar(source) : null"
-          :size="34"
-        />
-        <div class="flex min-w-0 flex-col gap-1" :class="!message.is_self && 'items-end'">
-          <div
-            class="flex min-h-5 items-center gap-1.5 text-xs text-muted"
-            :class="!message.is_self && 'flex-row-reverse'"
-          >
-            <Badge
-              v-if="message.sender.role === 'owner' || message.sender.role === 'admin'"
-              :tone="roleTone[message.sender.role]"
+        <li v-if="context?.length" class="flex flex-col gap-2">
+          <div class="rounded-lg border border-line bg-surface/80 px-3 py-2 dark:bg-surface-raised/80">
+            <Collapsible
+              variant="inline"
+              :title="t('playground.contextSummary', { n: context.length }, context.length)"
             >
-              {{ t(`playground.roles.${message.sender.role}`) }}
-            </Badge>
-            <span>{{ senderName(message) }}</span>
-            <span class="opacity-70 tabular">
-              {{ formatDateTime(message.time, { timeZone: view.timezone }) }}
-            </span>
-            <VerdictMark v-if="message.verdict && !message.is_self" :verdict="message.verdict" />
-            <Badge
-              v-if="message.is_self && ['failed', 'unconfirmed'].includes(message.send_status)"
-              tone="error"
-            >
-              {{ t(`groups.live.sendStatus.${message.send_status}`) }}
-            </Badge>
-            <button
-              v-if="view.running && message.platform_message_id"
-              type="button"
-              class="inline-flex cursor-pointer items-center gap-1 rounded-sm px-1 text-muted opacity-0 group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring"
-              @click="reply(message)"
-            >
-              <Reply :size="12" aria-hidden="true" />
-              {{ t('playground.reply') }}
-            </button>
+              <CodeBlock :code="context.join('\n\n')" :max-lines="12" />
+            </Collapsible>
           </div>
-          <component
-            :is="message.is_self ? 'button' : 'div'"
-            :type="message.is_self ? 'button' : undefined"
-            class="max-w-full rounded-xl px-3 py-2 text-left text-sm break-words whitespace-pre-wrap text-ink"
-            :class="[
-              message.is_self
-                ? 'cursor-pointer bg-surface hover:ring-1 hover:ring-line-strong focus-visible:focus-ring'
-                : 'bg-primary-bg',
-              message.recalled && 'opacity-60 line-through',
-            ]"
-            :title="message.is_self ? t('playground.showTurn') : undefined"
-            @click="message.is_self && emit('openTurn', message)"
-          >
-            <span
-              v-if="quoted(message)"
-              role="button"
-              tabindex="0"
-              class="mb-1.5 block truncate rounded-sm border-l-[3px] border-line-strong bg-hover px-2 py-1 text-xs text-muted"
-              @click.stop="quoted(message)!.message && jump(quoted(message)!.message!)"
-              @keydown.enter.stop="quoted(message)!.message && jump(quoted(message)!.message!)"
+          <div class="flex items-center gap-3 py-0.5 text-2xs text-subtle" role="separator">
+            <span class="h-px flex-1 bg-line" aria-hidden="true" />
+            <span>{{ t('playground.sessionStart') }}</span>
+            <span class="h-px flex-1 bg-line" aria-hidden="true" />
+          </div>
+        </li>
+        <li v-if="!chat.messages.value.length" class="my-auto self-center py-8 text-sm text-muted">
+          {{ context?.length ? t('playground.readyWithContext') : t('playground.noMessages') }}
+        </li>
+        <li
+          v-for="message in chat.messages.value"
+          :key="message.seq"
+          :data-seq="message.seq"
+          class="group flex max-w-[88%] items-start gap-2.5 rounded-lg sm:max-w-[82%]"
+          :class="message.is_self ? 'self-start' : 'flex-row-reverse self-end'"
+        >
+          <span class="flex shrink-0 pt-0.5">
+            <Avatar
+              :name="senderName(message)"
+              :src="message.is_self ? chat.botAvatar.value : null"
+              :size="32"
+            />
+          </span>
+          <div class="flex min-w-0 flex-col gap-1" :class="!message.is_self && 'items-end'">
+            <div
+              class="flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted"
+              :class="!message.is_self && 'flex-row-reverse'"
             >
-              <template v-if="quoted(message)!.message">
-                <strong class="font-medium">{{ senderName(quoted(message)!.message!) }}：</strong>
-                {{ excerpt(quoted(message)!.message!) }}
+              <Badge
+                v-if="message.sender.role === 'owner' || message.sender.role === 'admin'"
+                :tone="roleTone[message.sender.role]"
+              >
+                {{ t(`playground.roles.${message.sender.role}`) }}
+              </Badge>
+              <span class="font-medium text-ink-2">{{ senderName(message) }}</span>
+              <time class="text-subtle tabular" :datetime="new Date(message.time * 1000).toISOString()">
+                {{ formatDateTime(message.time, { timeZone: view.timezone }) }}
+              </time>
+              <VerdictMark v-if="message.verdict && !message.is_self" :verdict="message.verdict" />
+              <Badge
+                v-if="message.is_self && ['failed', 'unconfirmed'].includes(message.send_status)"
+                tone="error"
+              >
+                {{ t(`groups.live.sendStatus.${message.send_status}`) }}
+              </Badge>
+              <button
+                v-if="message.is_self && messageTurnIds?.has(message.seq)"
+                type="button"
+                class="inline-flex cursor-pointer items-center gap-1 rounded-sm px-1 transition-colors hover:text-ink focus-visible:focus-ring"
+                :class="
+                  isHighlightedMessage(message)
+                    ? 'font-medium text-primary'
+                    : 'text-muted opacity-80 hover:opacity-100'
+                "
+                :aria-pressed="isHighlightedMessage(message)"
+                :title="t('playground.showTurn')"
+                @click="emit('openTurn', message)"
+              >
+                <ListTree :size="12" aria-hidden="true" />
+                {{ t('playground.viewTurn') }}
+              </button>
+              <button
+                v-if="view.running && message.platform_message_id"
+                type="button"
+                class="inline-flex cursor-pointer items-center gap-1 rounded-sm px-1 text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 focus-visible:focus-ring pointer-coarse:opacity-100"
+                @click="reply(message)"
+              >
+                <Reply :size="12" aria-hidden="true" />
+                {{ t('playground.reply') }}
+              </button>
+            </div>
+            <div
+              class="max-w-full px-3.5 py-2 text-left text-sm break-words whitespace-pre-wrap text-ink"
+              :class="[
+                message.is_self
+                  ? [
+                      'rounded-xl rounded-tl-sm border bg-surface shadow-card transition-colors dark:bg-surface-raised',
+                      isHighlightedMessage(message)
+                        ? 'border-primary/60 ring-2 ring-primary/15'
+                        : 'border-line',
+                    ]
+                  : 'rounded-xl rounded-tr-sm border border-line-strong bg-fill',
+                message.recalled && 'opacity-60 line-through',
+              ]"
+            >
+              <template v-if="quoted(message)">
+                <button
+                  v-if="quoted(message)!.message"
+                  type="button"
+                  class="mb-1.5 block w-full cursor-pointer truncate rounded-sm border-l-2 border-line-strong bg-hover/70 px-2.5 py-1 text-left text-xs text-muted hover:bg-hover focus-visible:focus-ring"
+                  @click="jump(quoted(message)!.message!)"
+                >
+                  <strong class="font-medium text-ink-2">
+                    {{ t('playground.replyTo', { name: senderName(quoted(message)!.message!) }) }}
+                  </strong>
+                  {{ excerpt(quoted(message)!.message!) }}
+                </button>
+                <span
+                  v-else
+                  class="mb-1.5 block truncate rounded-sm border-l-2 border-line-strong bg-hover/70 px-2.5 py-1 text-xs text-muted"
+                >
+                  {{ t('playground.quoteMissing') }}
+                </span>
               </template>
-              <template v-else>{{ t('playground.quoteMissing') }}</template>
-            </span>
-            <template v-for="(piece, index) in pieces(message)" :key="index">
-              <span v-if="piece.kind === 'mention'" class="font-semibold text-primary">{{ piece.text }}</span>
-              <img
-                v-else-if="piece.kind === 'image'"
-                class="my-1 block max-h-36 max-w-36 rounded-md"
-                :src="piece.src"
-                :alt="piece.alt"
-                :title="piece.alt"
-                loading="lazy"
-              />
-              <span v-else-if="piece.kind === 'other'" class="text-muted">{{ piece.text }}</span>
-              <span v-else>{{ piece.text }}</span>
-            </template>
-          </component>
-        </div>
-      </li>
-      <li v-if="chat.thinking.value" class="pl-11 text-xs text-muted">
-        {{ t('playground.typing', { name: chat.botName.value }) }}
-      </li>
-    </ol>
+              <div class="block w-full text-left">
+                <template v-for="(piece, index) in pieces(message)" :key="index">
+                  <span v-if="piece.kind === 'mention'" class="rounded-xs bg-hover px-1 font-medium text-ink">
+                    {{ piece.text }}
+                  </span>
+                  <img
+                    v-else-if="piece.kind === 'image'"
+                    class="my-1 block max-h-36 max-w-36 rounded-md border border-line"
+                    :src="piece.src"
+                    :alt="piece.alt"
+                    :title="piece.alt"
+                    loading="lazy"
+                  />
+                  <span v-else-if="piece.kind === 'other'" class="text-muted">{{ piece.text }}</span>
+                  <span v-else>{{ piece.text }}</span>
+                </template>
+              </div>
+            </div>
+          </div>
+        </li>
+        <li v-if="chat.thinking.value" class="flex items-center gap-2 pl-10.5 text-xs text-muted">
+          <span class="size-1.5 animate-pulse-dot rounded-full bg-info" aria-hidden="true" />
+          {{ t('playground.typing', { name: chat.botName.value }) }}
+        </li>
+      </ol>
+      <Transition name="ui-rise">
+        <button
+          v-if="!atBottom && unreadCount > 0"
+          type="button"
+          class="absolute right-4 bottom-3 z-10 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-line-strong bg-surface-raised px-3 text-xs font-medium text-ink shadow-float transition-colors hover:bg-hover focus-visible:focus-ring"
+          @click="void scrollToBottom(true, true)"
+        >
+          <ArrowDown :size="14" aria-hidden="true" />
+          <span>{{ t('playground.backToBottom') }}</span>
+          <span class="rounded-full bg-primary-bg px-1.5 py-0.5 text-2xs font-semibold text-primary tabular">
+            {{ unreadCount }}
+          </span>
+        </button>
+      </Transition>
+    </div>
 
     <form
       v-if="view.running"
-      class="flex flex-col gap-2 border-t border-line px-4 py-3"
+      class="flex flex-col gap-2 border-t border-line bg-surface px-3.5 py-3 sm:px-4"
       @submit.prevent="submit"
     >
-      <div
-        v-if="!chat.isPrivate.value"
-        class="flex flex-wrap items-center gap-1.5"
-        role="radiogroup"
-        :aria-label="t('playground.speakAs')"
-      >
-        <button
-          v-for="member in members"
-          :key="member.uid"
-          type="button"
-          role="radio"
-          :aria-checked="member.uid === speaker?.uid"
-          class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-0.5 text-sm transition-colors focus-visible:focus-ring"
-          :class="
-            member.uid === speaker?.uid
-              ? 'border-primary bg-primary-bg text-ink'
-              : 'border-line bg-surface text-ink-2 hover:bg-hover'
-          "
-          @click="current = member.uid"
+      <div v-if="!chat.isPrivate.value" class="flex min-w-0 items-center gap-1.5">
+        <ToggleGroupRoot
+          ref="speakerGroup"
+          type="single"
+          :model-value="speaker?.uid"
+          :aria-label="t('playground.speakAs')"
+          orientation="horizontal"
+          roving-focus
+          loop
+          class="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-none"
+          @update:model-value="(value) => typeof value === 'string' && value && (current = value)"
         >
-          <Avatar :name="member.nickname" :size="22" />
-          {{ member.nickname }}
-          <span v-if="member.role !== 'member'" class="text-xs text-muted">
-            {{ t(`playground.roles.${member.role}`) }}
-          </span>
-        </button>
-        <IconButton
-          v-if="speaker"
-          :icon="Pencil"
-          :label="t('playground.editMember')"
-          size="sm"
-          @click="editing = { member: speaker, adding: false }"
-        />
-        <IconButton :icon="Plus" :label="t('playground.addMember')" size="sm" @click="addMember" />
+          <ToggleGroupItem
+            v-for="(member, index) in members"
+            :key="member.uid"
+            :value="member.uid"
+            class="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-1 text-sm whitespace-nowrap transition-colors focus-visible:focus-ring pointer-coarse:h-10"
+            :class="
+              member.uid === speaker?.uid
+                ? 'border-line-strong bg-fill font-semibold text-ink shadow-card'
+                : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:bg-hover'
+            "
+            :title="index < 9 ? `${member.nickname} (Alt+${index + 1})` : member.nickname"
+          >
+            <Avatar :name="member.nickname" :size="22" />
+            <span>{{ member.nickname }}</span>
+            <span v-if="member.role !== 'member'" class="text-xs font-normal text-muted">
+              {{ t(`playground.roles.${member.role}`) }}
+            </span>
+          </ToggleGroupItem>
+        </ToggleGroupRoot>
+        <div class="flex shrink-0 items-center gap-1">
+          <IconButton
+            v-if="speaker"
+            :icon="Pencil"
+            :label="t('playground.editMember')"
+            size="sm"
+            @click="editing = { member: speaker, adding: false }"
+          />
+          <IconButton :icon="Plus" :label="t('playground.addMember')" size="sm" @click="addMember" />
+        </div>
       </div>
       <div
         v-if="replyTo"
-        class="flex items-center gap-2 rounded-md bg-hover py-1 pr-1 pl-2.5 text-sm text-muted"
+        class="flex items-center gap-2 rounded-md border border-line bg-fill py-1 pr-1 pl-2.5 text-sm text-muted"
       >
         <span class="min-w-0 flex-1 truncate">
-          <strong class="font-medium">{{ t('playground.replyTo', { name: senderName(replyTo) }) }}</strong>
+          <strong class="font-medium text-ink-2">
+            {{ t('playground.replyTo', { name: senderName(replyTo) }) }}
+          </strong>
           {{ excerpt(replyTo) }}
         </span>
         <IconButton :icon="X" :label="t('playground.cancelReply')" size="sm" @click="replyTo = null" />
       </div>
-      <div v-if="mentions.length" class="flex flex-wrap gap-1.5">
+      <div v-if="!chat.isPrivate.value" class="flex flex-wrap items-center gap-1.5">
+        <button
+          v-if="!mentions.includes(view.bot_id)"
+          type="button"
+          class="inline-flex h-6 cursor-pointer items-center gap-1 rounded-full border border-dashed border-line-strong bg-surface px-2.5 text-xs font-medium text-muted transition-colors hover:border-primary/60 hover:bg-selected hover:text-ink focus-visible:focus-ring"
+          :aria-label="t('playground.quickMentionBot', { name: chat.botName.value })"
+          @click="quickMentionBot"
+        >
+          @{{ chat.botName.value }}
+        </button>
         <span
           v-for="uid in mentions"
           :key="uid"
-          class="inline-flex h-6 items-center gap-1 rounded-full bg-primary-bg pr-0.5 pl-2 text-xs text-primary"
+          class="inline-flex h-6 items-center gap-1 rounded-full border border-line bg-fill pr-0.5 pl-2.5 text-xs font-medium text-ink-2"
         >
           @{{ nameOf(uid) }}
           <button
             type="button"
-            class="inline-flex size-5 cursor-pointer items-center justify-center rounded-full hover:bg-hover focus-visible:focus-ring"
+            class="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-subtle hover:bg-hover hover:text-ink focus-visible:focus-ring"
             :aria-label="t('playground.removeMention', { name: nameOf(uid) })"
             @click="mentions = mentions.filter((item) => item !== uid)"
           >
@@ -430,16 +772,60 @@ const liveTone = computed(() =>
         >
           <IconButton :icon="AtSign" :label="t('playground.mention')" :disabled="!mentionItems.length" />
         </DropdownMenu>
-        <Textarea
-          ref="input"
-          v-model="text"
-          :rows="1"
-          :max-rows="6"
-          class="min-w-0 flex-1"
-          :placeholder="speaker ? t('playground.speakAsName', { name: speaker.nickname }) : ''"
-          :aria-label="t('playground.message')"
-          @keydown="keydown"
-        />
+        <div class="relative min-w-0 flex-1">
+          <div
+            v-if="mentionMenuOpen"
+            role="listbox"
+            :aria-label="t('playground.mentionMenu')"
+            class="absolute right-0 bottom-full left-0 z-(--z-popover) mb-1.5 max-h-52 overflow-y-auto rounded-lg border border-line bg-surface-raised p-1 shadow-float scrollbar-thin"
+          >
+            <template v-if="filteredMentions.length">
+              <button
+                v-for="(candidate, index) in filteredMentions"
+                :key="candidate.uid"
+                type="button"
+                role="option"
+                :aria-selected="index === mentionIndex"
+                class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
+                :class="index === mentionIndex ? 'bg-selected text-ink' : 'text-ink-2 hover:bg-hover'"
+                @mouseenter="mentionIndex = index"
+                @mousedown.prevent
+                @click="pickMention(candidate)"
+              >
+                <Avatar
+                  v-if="candidate.kind !== 'all'"
+                  :name="candidate.label"
+                  :src="candidate.kind === 'bot' ? chat.botAvatar.value : null"
+                  :size="20"
+                />
+                <span class="min-w-0 flex-1 truncate font-medium text-ink">{{ candidate.label }}</span>
+                <span
+                  v-if="candidate.kind === 'owner' || candidate.kind === 'admin'"
+                  class="shrink-0 text-xs text-muted"
+                >
+                  {{ t(`playground.roles.${candidate.kind}`) }}
+                </span>
+                <span v-else-if="candidate.kind !== 'all'" class="shrink-0 font-mono text-2xs text-subtle">
+                  {{ candidate.uid }}
+                </span>
+              </button>
+            </template>
+            <p v-else class="px-2.5 py-1.5 text-xs text-muted">{{ t('playground.mentionEmpty') }}</p>
+          </div>
+          <Textarea
+            ref="input"
+            v-model="text"
+            :rows="1"
+            :max-rows="6"
+            :placeholder="speaker ? t('playground.speakAsName', { name: speaker.nickname }) : ''"
+            :aria-label="t('playground.message')"
+            @input="syncMentionTrigger"
+            @click="syncMentionTrigger"
+            @keyup="onKeyup"
+            @blur="mentionTrigger = null"
+            @keydown="keydown"
+          />
+        </div>
         <Button
           type="submit"
           variant="primary"
@@ -451,9 +837,12 @@ const liveTone = computed(() =>
         </Button>
       </div>
       <ErrorNote v-if="send.isError.value" :title="t('playground.sendFailed')" :error="send.error.value" />
-      <p v-if="scenarios.playing.value" class="text-xs text-muted">
-        {{ t('playground.scenarios.playing') }}
-      </p>
+      <div v-if="scenarios.playing.value" class="flex items-center justify-between gap-2 text-xs text-muted">
+        <span>{{ t('playground.scenarios.playing') }}</span>
+        <Button size="xs" variant="ghost" :icon="Square" @click="scenarios.stop()">
+          {{ t('playground.scenarios.stop') }}
+        </Button>
+      </div>
       <ErrorNote
         v-if="scenarios.error.value"
         :title="t('playground.scenarios.failed')"
@@ -467,8 +856,11 @@ const liveTone = computed(() =>
       :member="editing?.member ?? null"
       :adding="editing?.adding ?? false"
       :removable="members.length > 1"
-      @save="(member) => save(member, editing?.adding ?? false)"
-      @remove="remove"
+      :existing-uids="members.map((item) => item.uid)"
+      :bot-id="view.bot_id"
+      :platform="platform"
+      @save="saveMember"
+      @remove="removeMember"
     />
   </section>
 </template>

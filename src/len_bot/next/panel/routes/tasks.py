@@ -18,6 +18,7 @@ from len_bot.web.errors import validation_detail
 
 from .. import responses
 from ...configuration.types import STRICT
+from ...models.tokens import token_summary
 from ..task_models import TaskDetail, TaskPage
 from ...runtime.network import NetworkRuntime
 from ...work.files import file_info
@@ -83,13 +84,16 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
     @app.get("/api/host/tasks/state", response_model=responses.TaskState, response_model_exclude_unset=True)
     async def state(_: str = Depends(user)):
         service = runtime.tasks
+        scenes = await runtime.store.read(lambda: [
+            {"scene": scene, "timezone": chat.config.timezone, **chat.config.tasks.model_dump(mode="json"),
+             "network_today": None if service is None else service.egress.status(scene)}
+            for scene, chat in runtime.chats.items()
+        ])
         return {"configured": service is not None,
                 "timezone": runtime.config.timezone,
                 "accepting": service is not None and service.accepting,
                 "error": None if service is None else service.error,
-                "scenes": [{"scene": scene, "timezone": chat.config.timezone, **chat.config.tasks.model_dump(mode="json"),
-                            "network_today": None if service is None else service.egress.status(scene)}
-                           for scene, chat in runtime.chats.items()],
+                "scenes": scenes,
                 "public_network": service is not None and service.settings.egress.enabled,
                 "group_files": runtime.config.onebot is not None,
                 "file_upload": runtime.config.delivery == "live" and service is not None}
@@ -99,7 +103,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
                       limit: int = Query(20, ge=1, le=20), _: str = Depends(user)):
         scene_exists(scene)
         try:
-            items = records.list(scene, status=status, offset=offset, limit=limit + 1)
+            items = await runtime.store.read(records.list, scene, status=status, offset=offset, limit=limit + 1)
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         return {"items": [asdict(item) for item in items[:limit]],
@@ -109,16 +113,30 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
     async def detail(id: int, scene: str, after: int = Query(0, ge=0),
                      limit: int = Query(100, ge=1, le=100), _: str = Depends(user)):
         scene_exists(scene)
-        try:
+
+        def read_detail():
             item = records.get(scene, id)
             events = records.event_previews(scene, id, after=after, limit=limit)
+            token_records = records.call_tokens(scene, id)
+            current_calls = records.execution_call_count(scene, id)
             return {"task": {**asdict(item), "workspace_discard_requested": records.workspace_discarded(scene, id),
-                            "active_timeout_seconds": None if runtime.tasks is None else runtime.tasks.active_timeout(item)}, "events": events,
+                             "active_timeout_seconds": None if runtime.tasks is None else runtime.tasks.active_timeout(item)},
+                    "events": events,
                     "network": None if runtime.tasks is None else runtime.tasks.egress.status(scene, id),
                     "browser": {"public_enabled": runtime.config.worker is not None and runtime.config.worker.public_browser,
                                 "output_count": len(records.browser_file_sources(scene, id))},
                     "next_after": events[-1]["id"] if events else after,
-                    "files": [file_info(file, records) for file in records.list_files(scene, id)]}
+                    "files": [file_info(file, records) for file in records.list_files(scene, id)],
+                    "budget": {
+                        "calls": current_calls,
+                        "max_calls": None if runtime.config.worker is None else runtime.config.worker.max_calls,
+                        "tokens": token_summary(token_records),
+                        "max_tokens": None if runtime.config.worker is None else runtime.config.worker.max_tokens,
+                    },
+                    "watchdog": records.watchdog_events(scene, id)}
+
+        try:
+            return await runtime.store.read(read_detail)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
 
@@ -126,7 +144,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
     async def event(id: int, event_id: int, scene: str, _: str = Depends(user)):
         scene_exists(scene)
         try:
-            return records.event(scene, id, event_id)
+            return await runtime.store.read(records.event, scene, id, event_id)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
 
@@ -151,7 +169,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
     async def download(id: int, file_id: int, scene: str, _: str = Depends(user)):
         scene_exists(scene)
         try:
-            records.get_file(scene, id, file_id)
+            await runtime.store.read(records.get_file, scene, id, file_id)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         if runtime.config.worker is None:
@@ -169,7 +187,7 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
     async def session(id: int, scene: str, _: str = Depends(user)):
         scene_exists(scene)
         try:
-            item = records.get(scene, id)
+            item = await runtime.store.read(records.get, scene, id)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
         if item.status not in TERMINAL or item.container is not None:
@@ -255,8 +273,11 @@ def register_host_tasks(app: FastAPI, *, runtime: NetworkRuntime,
         if runtime.tasks is None:
             raise HTTPException(409, "尚未配置任务执行器")
         platform, kind, target = scene.split(":", 2)
-        fetch = (group_file_fetch(partial(runtime.platform_call, scene=scene), target)
-                 if runtime.config.onebot is not None and platform == "onebot" and kind == "group" else None)
+        fetch = (group_file_fetch(
+            partial(runtime.platform_call, scene=scene), target,
+            fake_ip_networks=runtime.config.network.networks(),
+            public_dns_url=runtime.config.network.public_dns_url,
+        ) if runtime.config.onebot is not None and platform == "onebot" and kind == "group" else None)
         try:
             downloads = await group_file_inputs(body.group_files, fetch, runtime.tasks.settings.max_file_bytes)
         except (PlatformCallError, httpx.HTTPError) as error:

@@ -1,6 +1,6 @@
 /**
- * A Markdown subset for model-written text and release notes: headings, lists, rules, tables, code blocks,
- * `code`, **bold** and [links](https://…). Links other than http(s) stay text.
+ * A Markdown subset for model-written text and release notes: headings, blockquotes, lists, rules, tables,
+ * code blocks, `code`, **bold** and [links](https://…). Links other than http(s) stay text.
  */
 
 export type Span =
@@ -9,7 +9,8 @@ export type Span =
   | { kind: 'strong'; children: Span[] }
 export type Item = { depth: number; marker: string; spans: Span[] }
 export type Block =
-  | { kind: 'heading'; spans: Span[] }
+  | { kind: 'heading'; level: number; spans: Span[] }
+  | { kind: 'quote'; lines: Span[][] }
   | { kind: 'paragraph'; lines: Span[][] }
   | { kind: 'code'; text: string }
   | { kind: 'rule' }
@@ -18,7 +19,8 @@ export type Block =
 
 const CODE = /(`[^`]+`)/
 const STRONG = /(\*\*[^*]+\*\*)/
-const HEADING = /^#{1,6}\s+(.*)$/
+const HEADING = /^(#{1,6})\s+(.*)$/
+const QUOTE = /^\s*>\s?(.*)$/
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/
 const LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/
 const LINK = /(\[[^\]]+\]\(https?:\/\/[^)\s]+\))/
@@ -96,10 +98,15 @@ export function blocks(text: string): Block[] {
       continue
     }
     const heading = HEADING.exec(line)
+    const quote = QUOTE.exec(line)
     const rule = RULE.test(line)
     const item = rule ? null : LIST.exec(line)
-    if (heading) result.push({ kind: 'heading', spans: spans(heading[1]!) })
-    else if (rule) result.push({ kind: 'rule' })
+    if (heading) result.push({ kind: 'heading', level: heading[1]!.length, spans: spans(heading[2]!) })
+    else if (quote) {
+      const content = spans(quote[1]!.trim())
+      if (!blank && last?.kind === 'quote') last.lines.push(content)
+      else result.push({ kind: 'quote', lines: [content] })
+    } else if (rule) result.push({ kind: 'rule' })
     else if (item) {
       const entry = {
         depth: Math.floor(item[1]!.replace(/\t/g, '  ').length / 2),

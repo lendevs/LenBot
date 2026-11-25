@@ -17,9 +17,12 @@ const values = defineModel<Draft>({ required: true })
 const props = defineProps<{
   fields: ConfigField[]
   sceneChoices: string[]
+  enabledScenes?: string[]
   /** Secrets that already have a saved value. */
   configured: Record<string, boolean>
   problems: Record<string, string>
+  onEnablePicked?: (scenes: string[]) => void | Promise<void>
+  enablingPicked?: boolean
 }>()
 
 const { t } = useI18n()
@@ -58,6 +61,18 @@ const undeclared = computed(() =>
 const set = (key: string, value: DraftValue) => (values.value = { ...values.value, [key]: value })
 const rows = (key: string) => values.value[key] as Row[]
 
+const problemKeys = computed(() => Object.keys(props.problems))
+function fieldHasError(field: ConfigField): boolean {
+  if (props.problems[field.key]) return true
+  if (hasRows(field)) {
+    const start = `${field.key}.`
+    return problemKeys.value.some((key) => key.startsWith(start))
+  }
+  return false
+}
+const sectionHasError = (section: Section) =>
+  section.list ? fieldHasError(section.list) : section.fields.some(fieldHasError)
+
 // The index only pays off on long forms.
 const indexed = computed(() => sections.value.length >= 4)
 const current = ref('')
@@ -88,29 +103,32 @@ function jump(id: string) {
 </script>
 
 <template>
-  <div class="grid min-w-0 items-start gap-5" :class="indexed && 'xl:grid-cols-[168px_minmax(0,1fr)]'">
+  <div class="grid min-w-0 items-start gap-8" :class="indexed && 'xl:grid-cols-[10.5rem_minmax(0,1fr)]'">
     <nav v-if="indexed" class="sticky top-20 hidden flex-col xl:flex" :aria-label="t('plugins.form.index')">
       <button
         v-for="section in sections"
         :key="section.id"
         type="button"
-        class="h-8 cursor-pointer truncate border-l-2 px-3 text-left text-sm transition-colors"
+        class="flex h-8 cursor-pointer items-center gap-1.5 border-l-2 px-3 text-left text-sm transition-colors focus-visible:focus-ring"
         :class="
-          current === section.id
-            ? 'border-brand font-medium text-ink'
-            : 'border-line text-muted hover:text-ink'
+          current === section.id ? 'border-ink font-medium text-ink' : 'border-line text-muted hover:text-ink'
         "
         @click="jump(section.id)"
       >
-        {{ section.title || t('plugins.form.general') }}
+        <span class="min-w-0 truncate">{{ section.title || t('plugins.form.general') }}</span>
+        <span
+          v-if="sectionHasError(section)"
+          class="size-1.5 shrink-0 rounded-full bg-error"
+          aria-hidden="true"
+        />
       </button>
     </nav>
-    <div class="flex min-w-0 flex-col gap-4">
+    <div class="flex min-w-0 max-w-3xl flex-col divide-y divide-line">
       <section
         v-for="section in sections"
         :id="section.id"
         :key="section.id"
-        class="flex min-w-0 scroll-mt-20 flex-col gap-4 rounded-xl border border-line bg-surface p-5 max-sm:p-4"
+        class="flex min-w-0 scroll-mt-20 flex-col gap-4 py-6 first:pt-1 last:pb-0"
       >
         <header v-if="section.title" class="flex items-center gap-1.5">
           <h3 class="text-base font-semibold text-ink">{{ section.title }}</h3>
@@ -123,17 +141,22 @@ function jump(id: string) {
               <Info :size="14" aria-hidden="true" />
             </button>
           </Tooltip>
-          <Badge v-if="section.list">{{ rows(section.list.key).length }}</Badge>
+          <span v-if="section.list" class="inline-flex tabular">
+            <Badge>{{ rows(section.list.key).length }}</Badge>
+          </span>
         </header>
         <SchemaRows
           v-if="section.list"
           :model-value="rows(section.list.key)"
           :field="section.list"
           :scene-choices="sceneChoices"
+          :enabled-scenes="enabledScenes"
           :problems="problems"
+          :on-enable-picked="onEnablePicked"
+          :enabling-picked="enablingPicked"
           @update:model-value="(value) => set(section.list!.key, value)"
         />
-        <div v-else class="grid items-end gap-x-5 gap-y-5 sm:grid-cols-2">
+        <div v-else class="grid items-start gap-x-5 gap-y-5 sm:grid-cols-2">
           <template v-for="field in section.fields" :key="field.key">
             <div v-if="hasRows(field)" class="flex min-w-0 flex-col gap-2 sm:col-span-2">
               <div class="flex items-center gap-1.5">
@@ -152,7 +175,10 @@ function jump(id: string) {
                 :model-value="rows(field.key)"
                 :field="field"
                 :scene-choices="sceneChoices"
+                :enabled-scenes="enabledScenes"
                 :problems="problems"
+                :on-enable-picked="onEnablePicked"
+                :enabling-picked="enablingPicked"
                 @update:model-value="(value) => set(field.key, value)"
               />
             </div>
@@ -161,14 +187,17 @@ function jump(id: string) {
               :model-value="values[field.key]"
               :field="field"
               :scene-choices="sceneChoices"
+              :enabled-scenes="enabledScenes"
               :configured="Boolean(configured[field.key])"
               :error="problems[field.key]"
+              :on-enable-picked="onEnablePicked"
+              :enabling-picked="enablingPicked"
               @update:model-value="(value) => set(field.key, value)"
             />
           </template>
         </div>
       </section>
-      <p v-if="undeclared.length" class="text-xs text-muted">
+      <p v-if="undeclared.length" class="pt-3 text-xs text-muted">
         {{
           t('plugins.form.undeclared', { names: undeclared.map(fieldLabel).join(t('personas.separator')) })
         }}

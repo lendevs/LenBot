@@ -408,7 +408,7 @@ class DockerSandbox:
             "--ipc", "private", "--init", "--user", f"{self.settings.uid}:{self.settings.gid}",
             "--pids-limit", str(self.settings.pids_limit),
             "--memory", self.settings.memory, "--cpus", str(self.settings.cpus),
-            "--tmpfs", f"/tmp:rw,noexec,nosuid,size={self.settings.tmpfs_size}",
+            "--tmpfs", f"/tmp:rw,noexec,nosuid,nodev,size={self.settings.tmpfs_size}",
             "--env", "HOME=/home/agent", "--env", "PI_CODING_AGENT_DIR=/home/agent/.pi/agent",
             "--workdir", "/workspace", *mounts, self.settings.image, "sleep", "infinity",
         ]

@@ -28,19 +28,28 @@ const config = useQuery({
 
 const draft = ref<LearningSettings | null>(null)
 const saved = computed(() => config.data.value?.saved ?? null)
-const reset = () => (draft.value = saved.value && JSON.parse(JSON.stringify(saved.value)))
-watch(saved, reset, { immediate: true })
-watch(open, (value) => value && reset())
-const dirty = computed(
-  () => Boolean(config.data.value) && JSON.stringify(draft.value) !== JSON.stringify(saved.value),
-)
-watch(dirty, (value) => emit('dirty', value), { immediate: true })
+const baseJson = ref<string | null>(null)
+const remoteUpdated = ref(false)
+const cloneSaved = (value: LearningSettings | null): LearningSettings | null =>
+  value ? (JSON.parse(JSON.stringify(value)) as LearningSettings) : null
+const reset = () => {
+  draft.value = cloneSaved(saved.value)
+  baseJson.value = config.data.value ? JSON.stringify(saved.value) : null
+  remoteUpdated.value = false
+  save.reset()
+}
+const dirty = computed(() => baseJson.value !== null && JSON.stringify(draft.value) !== baseJson.value)
 
 const enabled = computed({
   get: () => draft.value !== null,
-  set: (value: boolean) =>
-    (draft.value = value
-      ? {
+  set: (value: boolean) => {
+    if (!value) {
+      draft.value = null
+      return
+    }
+    draft.value = saved.value
+      ? cloneSaved(saved.value)
+      : {
           extract: true,
           jargon_extract: false,
           collect_stickers: false,
@@ -50,22 +59,27 @@ const enabled = computed({
           idle_seconds: 300,
           max_age_seconds: 1800,
           auto_adopt: false,
-          embedding: saved.value?.embedding ?? null,
+          embedding: null,
         }
-      : null),
+  },
 })
 const switches = ['extract', 'jargon_extract', 'collect_stickers', 'reply_effects', 'auto_adopt'] as const
 const numbers = [
-  { key: 'min_messages', min: 1, max: 100 },
-  { key: 'batch_size', min: 1, max: 100 },
-  { key: 'idle_seconds', min: 1, seconds: true },
-  { key: 'max_age_seconds', min: 1, seconds: true },
+  { key: 'min_messages', min: 1, max: 100, unit: 'messages' },
+  { key: 'batch_size', min: 1, max: 100, unit: 'messages' },
+  { key: 'idle_seconds', min: 1, unit: 'seconds' },
+  { key: 'max_age_seconds', min: 1, unit: 'seconds' },
 ] as const
 const errors = computed<Record<string, string>>(() => {
   const value = draft.value
   const found: Record<string, string> = {}
   if (!value) return found
-  for (const { key } of numbers) if (typeof value[key] !== 'number') found[key] = t('common.required')
+  if (!value.extract && !value.jargon_extract && !value.collect_stickers && !value.reply_effects) {
+    found.modules = t('groups.learning.settings.needOneModule')
+  }
+  for (const { key } of numbers) {
+    if (typeof value[key] !== 'number' || Number.isNaN(value[key])) found[key] = t('common.required')
+  }
   if ((value.batch_size ?? 0) < (value.min_messages ?? 0))
     found.batch_size = t('groups.learning.settings.batchTooSmall')
   if ((value.max_age_seconds ?? 0) < (value.idle_seconds ?? 0))
@@ -77,13 +91,52 @@ const save = useMutation({
   mutationFn: () => learningApi.putConfig(props.scene, draft.value),
   onSuccess: (value) => {
     client.setQueryData(keys.scene.learning(props.scene, 'config'), value)
+    reset()
     void client.invalidateQueries({ queryKey: keys.scene.learningAll(props.scene) })
     void client.invalidateQueries({ queryKey: keys.host.settings() })
     void readPendingRestart()
-    toast.success(t('common.saved'))
+    toast.success(value.restart_required ? t('groups.learning.settings.savedRestart') : t('common.saved'))
     open.value = false
   },
 })
+
+watch(
+  draft,
+  () => {
+    if (save.isError.value) save.reset()
+  },
+  { deep: true },
+)
+watch(
+  () => props.scene,
+  () => reset(),
+)
+watch(
+  () => config.data.value,
+  (next) => {
+    if (!next) return
+    const nextJson = JSON.stringify(next.saved ?? null)
+    if (baseJson.value === null) {
+      reset()
+      return
+    }
+    if (nextJson === baseJson.value) {
+      remoteUpdated.value = false
+      return
+    }
+    if (!dirty.value) {
+      reset()
+      return
+    }
+    remoteUpdated.value = true
+  },
+  { immediate: true },
+)
+watch(open, (value) => {
+  if (value && !dirty.value) reset()
+})
+watch(dirty, (value) => emit('dirty', value), { immediate: true })
+
 async function close() {
   if (dirty.value && !(await confirm({ title: t('common.unsaved'), confirmLabel: t('common.discard') })))
     return
@@ -96,6 +149,7 @@ async function close() {
   <Sheet
     :open="open"
     :title="t('groups.learning.settings.title')"
+    :busy="save.isPending.value"
     @update:open="(value: boolean) => (value ? (open = true) : close())"
   >
     <Skeleton v-if="config.isPending.value" :lines="6" />
@@ -106,13 +160,28 @@ async function close() {
       :retry="config.refetch"
     />
     <div v-else class="flex flex-col gap-5">
+      <div
+        v-if="remoteUpdated"
+        role="status"
+        class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+      >
+        <span class="min-w-0 flex-1">{{ t('ui.draft.remoteUpdated') }}</span>
+        <Button size="sm" variant="ghost" @click="reset">
+          {{ t('ui.draft.reloadRemote') }}
+        </Button>
+      </div>
       <Field :label="t('groups.learning.settings.enabled')" inline>
         <Switch v-model="enabled" />
       </Field>
       <template v-if="draft">
-        <Field v-for="key in switches" :key="key" :label="t(`groups.learning.settings.${key}`)" inline>
-          <Switch v-model="draft[key]" />
-        </Field>
+        <div class="flex flex-col gap-4">
+          <Field v-for="key in switches" :key="key" :label="t(`groups.learning.settings.${key}`)" inline>
+            <Switch v-model="draft[key]" />
+          </Field>
+          <p v-if="errors.modules" role="alert" class="text-xs font-medium text-error">
+            {{ errors.modules }}
+          </p>
+        </div>
         <div class="grid gap-4 border-t border-line pt-5 sm:grid-cols-2">
           <Field
             v-for="item in numbers"
@@ -124,7 +193,11 @@ async function close() {
               v-model="draft[item.key]"
               :min="item.min"
               :max="'max' in item ? item.max : undefined"
-              :unit="'seconds' in item ? t('groups.settings.seconds') : undefined"
+              :unit="
+                item.unit === 'seconds'
+                  ? t('groups.settings.seconds')
+                  : t('groups.learning.settings.messagesUnit')
+              "
             />
           </Field>
         </div>

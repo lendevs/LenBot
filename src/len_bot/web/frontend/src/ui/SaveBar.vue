@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, ref } from 'vue'
+import { computed, onActivated, onDeactivated, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useEventListener } from '@vueuse/core'
+import { ChevronRight } from '@lucide/vue'
 import Button from './Button.vue'
+import CodeBlock from './CodeBlock.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -10,26 +12,46 @@ const props = withDefaults(
     saving?: boolean
     /** Error text of the last failed save, kept until the next attempt. */
     error?: string | null
+    /** Optional full error body shown when expanded. */
+    rawError?: string | null
     /** Blocks saving, such as when a required field is empty. */
     invalid?: boolean
-    /** Text of the save button when saving also does something else, such as 保存并启用. */
+    /** Text of the save button when saving also performs another step. */
     saveLabel?: string
+    /** Compact action shown beside the error message, such as jumping to the invalid field. */
+    actionLabel?: string
+    /** Keep the bar visible for an explicit error even before the form becomes dirty. */
+    visible?: boolean
   }>(),
-  { error: null, saveLabel: undefined },
+  { error: null, rawError: null, saveLabel: undefined, actionLabel: undefined, visible: false },
 )
-const emit = defineEmits<{ save: []; discard: [] }>()
+const emit = defineEmits<{ save: []; discard: []; action: [] }>()
 
 const { t } = useI18n()
 const mac = /Mac|iPhone|iPad/.test(navigator.platform)
-const canSave = computed(() => props.dirty && !props.saving && !props.invalid)
+const bar = ref<HTMLElement>()
+const canSave = computed(() => (props.dirty || Boolean(props.visible)) && !props.saving && !props.invalid)
+const hasRaw = computed(() =>
+  Boolean(props.error && props.rawError && props.rawError.trim() && props.rawError !== props.error),
+)
+const showRaw = ref(false)
+watch([() => props.error, () => props.rawError], () => (showRaw.value = false))
 // A bar inside a hidden KeepAlive page keeps its draft but must not answer the shortcut.
 const active = ref(true)
 onActivated(() => (active.value = true))
 onDeactivated(() => (active.value = false))
 
 useEventListener(window, 'keydown', (event: KeyboardEvent) => {
+  if (event.defaultPrevented) return
   if (event.key.toLowerCase() !== 's' || !(mac ? event.metaKey : event.ctrlKey)) return
   if (!props.dirty || !active.value) return
+  const openDialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).filter(
+    (element) => !element.hasAttribute('hidden') && element.getAttribute('data-state') !== 'closed',
+  )
+  if (openDialogs.length > 0) {
+    const hostDialog = bar.value?.closest('[role="dialog"], [role="alertdialog"]')
+    if (!hostDialog || openDialogs[openDialogs.length - 1] !== hostDialog) return
+  }
   event.preventDefault()
   if (canSave.value) emit('save')
 })
@@ -38,33 +60,72 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
 <template>
   <Transition name="ui-rise">
     <div
-      v-if="dirty || saving"
-      class="sticky bottom-4 z-(--z-top) mx-auto mt-6 flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-lg border border-line bg-surface-raised py-2.5 pr-2.5 pl-4 shadow-float"
+      v-if="dirty || saving || Boolean(visible && error)"
+      ref="bar"
+      class="sticky bottom-3 z-(--z-top) mx-auto mt-6 flex w-full max-w-3xl flex-col rounded-lg border border-line-strong bg-surface-raised pt-2.5 pr-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] pl-3.5 shadow-float sm:bottom-4"
       role="region"
       :aria-label="t('common.unsaved')"
     >
-      <span
-        class="size-2 shrink-0 rounded-full"
-        :class="error ? 'bg-error' : 'bg-warning'"
-        aria-hidden="true"
-      />
-      <p
-        class="min-w-0 flex-1 truncate text-sm"
-        :class="error ? 'text-error' : 'text-ink-2'"
-        :title="error ?? undefined"
-      >
-        {{ error ?? t('common.unsaved') }}
-      </p>
-      <div class="flex items-center gap-2">
-        <Button variant="ghost" size="sm" :disabled="saving" @click="emit('discard')">
-          {{ t('common.discard') }}
-        </Button>
-        <Button variant="primary" size="sm" :loading="saving" :disabled="!canSave" @click="emit('save')">
-          {{ saving ? t('common.saving') : (saveLabel ?? t('common.save')) }}
-          <span v-if="!saving" class="ml-0.5 text-[11px] font-medium opacity-70 max-sm:hidden">
-            {{ mac ? '⌘S' : 'Ctrl S' }}
-          </span>
-        </Button>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div class="flex min-w-36 flex-1 items-center gap-2.5">
+          <span
+            class="size-2 shrink-0 rounded-full"
+            :class="error ? 'bg-error' : 'bg-warning'"
+            aria-hidden="true"
+          />
+          <div class="min-w-0 flex-1">
+            <div class="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+              <p
+                class="min-w-0 text-sm"
+                :class="error ? 'line-clamp-2 font-medium text-error' : 'truncate text-ink-2'"
+                :title="error ?? undefined"
+              >
+                {{ error ?? t('common.unsaved') }}
+              </p>
+              <button
+                v-if="error && actionLabel"
+                type="button"
+                class="shrink-0 cursor-pointer rounded-sm text-xs font-medium text-primary transition-colors hover:text-primary-hover hover:underline focus-visible:focus-ring"
+                @click="emit('action')"
+              >
+                {{ actionLabel }}
+              </button>
+            </div>
+            <button
+              v-if="hasRaw"
+              type="button"
+              class="mt-0.5 inline-flex cursor-pointer items-center gap-0.5 rounded-sm text-xs font-medium text-muted transition-colors hover:text-ink focus-visible:focus-ring"
+              :aria-expanded="showRaw"
+              @click="showRaw = !showRaw"
+            >
+              <ChevronRight
+                :size="13"
+                class="transition-transform duration-(--dur-1)"
+                :class="showRaw && 'rotate-90'"
+                aria-hidden="true"
+              />
+              {{ t('common.rawError') }}
+            </button>
+          </div>
+        </div>
+        <div class="ml-auto flex shrink-0 items-center gap-2">
+          <Button variant="ghost" size="sm" :disabled="saving" @click="emit('discard')">
+            {{ t('common.discard') }}
+          </Button>
+          <Button variant="primary" size="sm" :loading="saving" :disabled="!canSave" @click="emit('save')">
+            {{ saving ? t('common.saving') : (saveLabel ?? t('common.save')) }}
+            <span v-if="!saving" class="ml-0.5 text-2xs font-medium opacity-75 max-sm:hidden">
+              {{ mac ? '⌘S' : 'Ctrl S' }}
+            </span>
+          </Button>
+        </div>
+      </div>
+      <div v-if="hasRaw" class="ui-grid-collapse" :data-open="showRaw ? 'true' : 'false'" :inert="!showRaw">
+        <div>
+          <div class="pt-2.5">
+            <CodeBlock :code="rawError!" :max-lines="10" />
+          </div>
+        </div>
       </div>
     </div>
   </Transition>

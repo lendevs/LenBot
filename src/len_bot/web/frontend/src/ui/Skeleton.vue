@@ -1,7 +1,7 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
-    /** Several text lines; the last one is shorter. */
+    /** Several text lines with staggered widths; the last one is shorter. */
     lines?: number
     width?: string
     height?: string
@@ -9,18 +9,23 @@ withDefaults(
   }>(),
   { lines: 0, width: '100%', height: '14px', rounded: 'rounded-sm' },
 )
-const shimmer =
-  'block animate-shimmer bg-[linear-gradient(90deg,var(--track)_30%,var(--fill)_50%,var(--track)_70%)] bg-size-[200%_100%]'
+const bar = 'block animate-skeleton bg-track/85'
+const lineWidths = ['100%', '88%', '94%', '82%']
+function lineWidth(line: number, total: number): string {
+  if (total <= 1) return '100%'
+  if (line === total) return '64%'
+  return lineWidths[(line - 1) % lineWidths.length] as string
+}
 </script>
 
 <template>
-  <span v-if="lines" class="flex flex-col gap-2" aria-hidden="true">
+  <span v-if="lines" class="flex flex-col gap-2" :style="{ width }" aria-hidden="true">
     <span
       v-for="line in lines"
       :key="line"
-      :class="[shimmer, rounded]"
-      :style="{ height, width: line === lines && lines > 1 ? '62%' : width }"
+      :class="[bar, rounded]"
+      :style="{ height, width: lineWidth(line, lines) }"
     />
   </span>
-  <span v-else :class="[shimmer, rounded]" :style="{ width, height }" aria-hidden="true" />
+  <span v-else :class="[bar, rounded]" :style="{ width, height }" aria-hidden="true" />
 </template>

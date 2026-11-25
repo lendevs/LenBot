@@ -17,6 +17,7 @@ from len_bot.next.panel.setup import create_setup_app
 from len_bot.next.persona.profile import load_persona
 from len_bot.next.runtime.network import NetworkRuntime
 from len_bot.next.storage.store import Store
+from len_bot.next.work.store import TaskStore
 from test_next_panel_acts_as_owner import SCENE, write_instance
 
 
@@ -34,7 +35,7 @@ async def panel(root):
     plugin.mkdir(parents=True)
     (plugin / '__init__.py').write_text('')
     (plugin / 'plugin.toml').write_text('\n'.join([
-        'name = "linked"', 'version = "1.0.0"', 'interface = 1', 'requires_lenbot = ">=0.2,<1"',
+        'name = "linked"', 'title = "已链接示例"', 'version = "1.0.0"', 'interface = 1', 'requires_lenbot = ">=0.2,<1"',
         'requires_python = ">=3.13"', 'platforms = ["linux", "darwin", "win32"]', 'reload = "plugin"',
         'authors = ["LEN5010"]', 'license = "MIT"', 'description = "带仓库地址的样本。"',
         'repository = "https://example.com/plugins/linked"', 'homepage = "https://example.com/linked"']))
@@ -95,9 +96,14 @@ def test_host_read_responses_keep_the_unfiltered_json(tmp_path):
                                   '/api/host/plugins', '/api/host/mcp', '/api/host/memory/browse'}:
                     assert before.json() == after.json(), path
             assert len(checked) >= 50
-            linked = (await client.get('/api/host/plugins')).json()['available']['linked'][0]
+            plugins_body = (await client.get('/api/host/plugins')).json()
+            linked = plugins_body['available']['linked'][0]
+            assert (linked['title'], linked['data_version']) == ('已链接示例', 1)
             assert (linked['repository'], linked['homepage']) == ('https://example.com/plugins/linked',
                                                                   'https://example.com/linked')
+            assert 'group_digest' in plugins_body['catalog_entries']
+            assert set(plugins_body['catalog_entries']['group_digest']) == {'title', 'category', 'usage', 'capabilities'}
+            assert plugins_body['saved']['disabled_rules'] == {}
     asyncio.run(run())
 
 
@@ -119,10 +125,34 @@ def test_write_responses_keep_the_unfiltered_json(tmp_path):
                 ('PUT', f'/api/host/scenes/{SCENE}/control/open', {'enabled': False}),
                 ('PUT', f'/api/host/scenes/{SCENE}/control/open', {'enabled': True}),
                 ('POST', f'/api/host/schedules?scene={SCENE}', {'when': '2099-01-01T08:00:00+00:00', 'note': '看展', 'for': 'self'}),
+                ('POST', f'/api/host/scenes/{SCENE}/reference/search', {'query': '说明', 'scope': 'scene', 'limit': 5}),
             ]
+            # Upload a scene reference document so reference/search returns a real hit item.
+            uploaded = await client.post(f'/api/host/scenes/{SCENE}/reference', files={
+                'file': ('背景.md', '# 群规\n\n这是背景说明。\n'.encode()),
+            })
+            assert uploaded.status_code == 200, uploaded.text
+            operations.append(('POST', f'/api/host/scenes/{SCENE}/reference/search',
+                               {'query': '背景 说明', 'scope': 'all', 'limit': 5}))
+            # Enable linked plugin, toggle disabled_rules and scenes via the new plugin endpoints.
+            (tmp_path / 'plugins' / 'linked' / '__init__.py').write_text(
+                'from len_bot.plugin import Plugin, command\n'
+                'class Linked(Plugin):\n'
+                '    @command("演示", "演示命令")\n'
+                '    async def demo(self, ctx, args):\n'
+                '        return "ok"\n',
+                encoding='utf-8',
+            )
+            operations.extend([
+                ('PUT', '/api/host/plugins/linked', {'enabled': True, 'config': {}, 'disabled_rules': ['/演示']}),
+                ('PUT', '/api/host/plugins/linked/scenes', {'scenes': [SCENE]}),
+                ('PUT', '/api/host/plugins/linked/scenes', {'scenes': []}),
+            ])
             for method, path, body in operations:
                 response = await raw.request(method, path, json=body)
                 assert response.status_code == 200, (path, response.text)
+                if path.endswith('/reference/search') and body['scope'] == 'all':
+                    assert len(response.json()['hits']) == 1
                 scope = {'type': 'http', 'path': path.split('?')[0], 'method': method, 'root_path': ''}
                 route = next(route for route in app.routes if isinstance(route, APIRoute)
                              and route.matches(scope)[0].name == 'FULL')
@@ -139,4 +169,86 @@ def test_setup_responses_keep_the_unfiltered_json(tmp_path):
                 assert response.status_code == 200
                 route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == path)
                 assert_unchanged(route, response.json())
+    asyncio.run(run())
+
+
+def test_overview_waiting_tasks_and_task_detail_budget_watchdog(tmp_path):
+    from types import SimpleNamespace
+
+    async def run():
+        async with panel(tmp_path) as (app, client, raw):
+            with Store(tmp_path / 'host.sqlite3') as store:
+                tasks = TaskStore(store)
+                waiting = tasks.create(SCENE, 'onebot:70001', '整理季度数据', '报告.md', '', '请生成报告')
+                tasks.start(SCENE, waiting.id)
+                call_id = tasks.start_call(SCENE, waiting.id, {'provider': 'synthetic', 'model': 'm1'})
+                tasks.finish_call(call_id, {'tokens': {'input': 120, 'output': 45, 'cached': 30}})
+                tasks.add_watchdog_event(
+                    SCENE,
+                    waiting.id,
+                    SimpleNamespace(action='steer', reason='repeat_tool', detail='连续重复调用工具，已提示调整策略'),
+                )
+                tasks.set_question(
+                    SCENE,
+                    waiting.id,
+                    {'id': 'q-1', 'method': 'input', 'title': '需要确认导出格式'},
+                )
+                tasks.create(SCENE, 'onebot:70001', '排队中的任务', '结果.txt', '', '待执行')
+
+            overview_route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == '/api/host/overview')
+            raw_overview = await raw.get('/api/host/overview')
+            assert raw_overview.status_code == 200, raw_overview.text
+            assert_unchanged(overview_route, raw_overview.json())
+            overview = (await client.get('/api/host/overview')).json()
+            assert overview['active_tasks'] == 2
+            assert len(overview['waiting_tasks']) == 1
+            assert overview['waiting_tasks'][0]['id'] == waiting.id
+            assert overview['waiting_tasks'][0]['scene'] == SCENE
+            assert overview['waiting_tasks'][0]['goal'] == '整理季度数据'
+            assert overview['waiting_tasks'][0]['requester'] == 'onebot:70001'
+            assert overview['waiting_tasks'][0]['question_title'] == '需要确认导出格式'
+
+            list_route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == '/api/host/tasks')
+            raw_waiting = await raw.get('/api/host/tasks', params={'scene': SCENE, 'status': 'waiting_input'})
+            assert raw_waiting.status_code == 200, raw_waiting.text
+            assert_unchanged(list_route, raw_waiting.json())
+            assert [item['id'] for item in raw_waiting.json()['items']] == [waiting.id]
+
+            detail_route = next(r for r in app.routes if isinstance(r, APIRoute) and r.path == '/api/host/tasks/{id}')
+            raw_detail = await raw.get(f'/api/host/tasks/{waiting.id}', params={'scene': SCENE})
+            assert raw_detail.status_code == 200, raw_detail.text
+            assert_unchanged(detail_route, raw_detail.json())
+            detail = (await client.get(f'/api/host/tasks/{waiting.id}', params={'scene': SCENE})).json()
+            assert detail['budget'] == {
+                'calls': 1,
+                'max_calls': None,
+                'tokens': {'input': 120, 'output': 45, 'cached': 30, 'known_calls': 1, 'unknown_calls': 0},
+                'max_tokens': None,
+            }
+            assert len(detail['watchdog']) == 1
+            assert detail['watchdog'][0]['action'] == 'steer'
+            assert detail['watchdog'][0]['reason'] == 'repeat_tool'
+            assert detail['watchdog'][0]['detail'] == '连续重复调用工具，已提示调整策略'
+            assert isinstance(detail['watchdog'][0]['id'], int)
+            assert isinstance(detail['watchdog'][0]['created'], float)
+
+            # After finish + continue requeue, calls resets to current execution while tokens stay cumulative.
+            with Store(tmp_path / 'host.sqlite3') as store:
+                tasks = TaskStore(store)
+                tasks.set_question(SCENE, waiting.id, None)
+                tasks.finish(SCENE, waiting.id, 'done', '首轮完成', None)
+                tasks.requeue(SCENE, waiting.id, '补充第二章图表', requester='onebot:70001')
+                tasks.start(SCENE, waiting.id)
+                call_id_2 = tasks.start_call(SCENE, waiting.id, {'provider': 'synthetic', 'model': 'm1'})
+                tasks.finish_call(call_id_2, {'tokens': {'input': 80, 'output': 20, 'cached': 10}})
+
+            continued_detail = (await client.get(f'/api/host/tasks/{waiting.id}', params={'scene': SCENE})).json()
+            assert_unchanged(detail_route, continued_detail)
+            assert continued_detail['budget'] == {
+                'calls': 1,
+                'max_calls': None,
+                'tokens': {'input': 200, 'output': 65, 'cached': 40, 'known_calls': 2, 'unknown_calls': 0},
+                'max_tokens': None,
+            }
+
     asyncio.run(run())

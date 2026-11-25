@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQueryClient } from '@tanstack/vue-query'
 import { ApiError } from '../../api/client'
 import { keys } from '../../api/query'
 import type { SettingsSnapshot } from '../../api/settings'
 import { systemApi, systemOf, type SpeechLimits } from '../../api/system'
+import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
@@ -18,6 +19,8 @@ import { confirm } from '../../ui/confirm'
 import { toast } from '../../ui/toast'
 import { copy, same, useSettingsDraft } from './draft'
 
+const emit = defineEmits<{ dirty: [value: boolean] }>()
+
 interface Draft {
   speech: SpeechLimits
   groupManagers: boolean
@@ -25,6 +28,11 @@ interface Draft {
 
 const { t } = useI18n()
 const client = useQueryClient()
+const stashed = ref<{ attempted: Draft; forkedFrom: Draft } | null>(null)
+const baseline = ref<Draft | null>(null)
+const noticeTouched = ref(false)
+let syncingConflict = false
+
 const pick = (snapshot: SettingsSnapshot): Draft => {
   const saved = systemOf(snapshot)
   const { messages_per_hour, direct_reserve, speech_notice_text } = saved.limits
@@ -36,9 +44,30 @@ const pick = (snapshot: SettingsSnapshot): Draft => {
 const versionOf = (snapshot: SettingsSnapshot) =>
   (snapshot.versions as { limits?: string } | undefined)?.limits
 
+function mergeChatDelta(latest: Draft, attempted: Draft, forkedFrom: Draft): Draft {
+  const next = copy(latest)
+  if (attempted.speech.messages_per_hour !== forkedFrom.speech.messages_per_hour) {
+    next.speech.messages_per_hour = attempted.speech.messages_per_hour
+  }
+  if (attempted.speech.direct_reserve !== forkedFrom.speech.direct_reserve) {
+    next.speech.direct_reserve = attempted.speech.direct_reserve
+  }
+  if (attempted.speech.speech_notice_text !== forkedFrom.speech.speech_notice_text) {
+    next.speech.speech_notice_text = attempted.speech.speech_notice_text
+  }
+  if (attempted.groupManagers !== forkedFrom.groupManagers) {
+    next.groupManagers = attempted.groupManagers
+  }
+  return next
+}
+
 const form = useSettingsDraft<Draft>({
   pick,
   section: 'limits',
+  reset: () => {
+    stashed.value = null
+    noticeTouched.value = false
+  },
   save: async (value): Promise<SettingsSnapshot> => {
     let snapshot: SettingsSnapshot = form.settings.data.value!
     const saved = pick(snapshot)
@@ -51,10 +80,19 @@ const form = useSettingsDraft<Draft>({
             ? (error.data as { snapshot?: SettingsSnapshot } | undefined)?.snapshot
             : undefined
         if (!latest) throw error
-        // Someone saved the limits first: show what is saved now instead of overwriting it.
+        // Someone saved the limits first: keep the user's delta aside so they can reapply on top of latest.
+        const latestDraft = pick(latest)
+        const forkedFrom = copy(baseline.value ?? saved)
+        const preview = mergeChatDelta(latestDraft, value, forkedFrom)
+        stashed.value = same(preview, latestDraft) ? null : { attempted: copy(value), forkedFrom }
         client.setQueryData(keys.host.settings(), latest)
-        form.draft.value = copy(pick(latest))
-        // The form now matches what is saved, so the save bar closes; say why in a toast instead.
+        syncingConflict = true
+        form.draft.value = copy(latestDraft)
+        baseline.value = copy(latestDraft)
+        void nextTick(() => {
+          syncingConflict = false
+        })
+        noticeTouched.value = false
         toast.error(t('system.chat.conflict'), { duration: 12000 })
         throw error
       }
@@ -75,27 +113,66 @@ const form = useSettingsDraft<Draft>({
   },
 })
 const { settings, draft } = form
-/** The limits version the draft started from; snapshots refreshed by events while editing do not move it. */
+watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
+
+/** The limits version and baseline the draft started from; snapshots refreshed by events while editing do not move it. */
 const base = ref<string | undefined>()
 watch(
   () => [settings.data.value, form.dirty.value] as const,
   ([snapshot, dirty]) => {
-    if (snapshot && !dirty) base.value = versionOf(snapshot)
+    if (snapshot && !dirty) {
+      base.value = versionOf(snapshot)
+      baseline.value = copy(pick(snapshot))
+    }
   },
   { immediate: true },
 )
 const speech = computed(() => draft.value!.speech)
 
+function toggleNotice(on: boolean) {
+  if (!draft.value) return
+  noticeTouched.value = false
+  draft.value.speech.speech_notice_text = on ? '' : null
+}
+
+watch(
+  draft,
+  () => {
+    if (!syncingConflict && stashed.value) stashed.value = null
+  },
+  { deep: true },
+)
+
+function reapplyStashed() {
+  if (!stashed.value || !settings.data.value) return
+  const latest = pick(settings.data.value)
+  syncingConflict = true
+  baseline.value = copy(latest)
+  draft.value = mergeChatDelta(latest, stashed.value.attempted, stashed.value.forkedFrom)
+  stashed.value = null
+  noticeTouched.value = false
+  void nextTick(() => {
+    syncingConflict = false
+  })
+}
+
+const noticeEmpty = computed(() =>
+  Boolean(
+    draft.value &&
+    draft.value.speech.messages_per_hour !== null &&
+    draft.value.speech.speech_notice_text !== null &&
+    !draft.value.speech.speech_notice_text.trim(),
+  ),
+)
 const errors = computed(() => {
   const result: Record<string, string> = {}
   const value = draft.value?.speech
   if (!value) return result
   if (value.messages_per_hour !== null && value.direct_reserve === null) result.reserve = t('system.required')
-  if (value.speech_notice_text !== null && !value.speech_notice_text.trim())
-    result.notice = t('system.required')
+  if (noticeEmpty.value && noticeTouched.value) result.notice = t('system.required')
   return result
 })
-const invalid = computed(() => Object.keys(errors.value).length > 0)
+const invalid = computed(() => Object.keys(errors.value).length > 0 || noticeEmpty.value)
 </script>
 
 <template>
@@ -106,8 +183,18 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
     :error="settings.error.value"
     :retry="settings.refetch"
   />
-  <div v-else-if="draft" class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div v-else-if="draft" class="flex min-w-0 max-w-3xl flex-col gap-4">
+    <div
+      v-if="stashed"
+      role="status"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+    >
+      <span class="min-w-0 flex-1">{{ t('system.chat.conflict') }}</span>
+      <Button size="sm" variant="ghost" @click="reapplyStashed">
+        {{ t('system.chat.reapply') }}
+      </Button>
+    </div>
+    <div class="flex min-w-0 flex-col gap-6">
       <FormSection :title="t('system.chat.speech')">
         <Field :label="t('system.chat.limitOn')" inline wide>
           <Switch
@@ -123,10 +210,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
             <NumberInput v-model="speech.direct_reserve" :min="0" />
           </Field>
           <Field :label="t('system.chat.noticeOn')" inline wide>
-            <Switch
-              :model-value="speech.speech_notice_text !== null"
-              @update:model-value="(on: boolean) => (speech.speech_notice_text = on ? '' : null)"
-            />
+            <Switch :model-value="speech.speech_notice_text !== null" @update:model-value="toggleNotice" />
           </Field>
           <Field
             v-if="speech.speech_notice_text !== null"
@@ -134,7 +218,12 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
             :error="errors.notice"
             wide
           >
-            <Input v-model="speech.speech_notice_text" :maxlength="200" />
+            <Input
+              v-model="speech.speech_notice_text"
+              :maxlength="200"
+              @update:model-value="noticeTouched = true"
+              @blur="noticeTouched = true"
+            />
           </Field>
         </template>
       </FormSection>
@@ -146,11 +235,15 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
     </div>
     <SaveBar
       :dirty="form.dirty.value"
+      :visible="Boolean(stashed)"
       :saving="form.saving.value"
-      :error="form.saveError.value"
+      :error="form.saveError.value ?? (stashed ? t('system.chat.conflict') : null)"
+      :raw-error="form.saveRawError.value"
       :invalid="invalid"
+      :action-label="stashed ? t('system.chat.reapply') : undefined"
       @save="form.submit"
       @discard="form.discard"
+      @action="reapplyStashed"
     />
   </div>
 </template>

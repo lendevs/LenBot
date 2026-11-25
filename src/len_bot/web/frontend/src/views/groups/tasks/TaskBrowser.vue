@@ -15,9 +15,12 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <section class="flex flex-col gap-2">
+  <section
+    v-if="browser.public_enabled || Boolean(task.container) || (configured && browser.output_count > 0)"
+    class="flex flex-col gap-2 border-t border-line pt-5"
+  >
     <h3 class="flex items-center gap-2 text-sm font-medium text-ink">
-      <Globe :size="16" class="text-subtle" aria-hidden="true" />
+      <Globe :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
       {{ t('groups.tasks.browser.public') }}
     </h3>
     <p class="text-sm text-ink-2">

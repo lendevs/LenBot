@@ -8,7 +8,7 @@ import { capabilitiesApi, type SkillInfo, type SkillSource } from '../../api/cap
 import { personasApi } from '../../api/personas'
 import { keys } from '../../api/query'
 import { host } from '../../api/hostStore'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import EmptyState from '../../ui/EmptyState.vue'
@@ -66,31 +66,37 @@ const allowance = computed(() => {
 })
 
 const inspected = ref<SkillInfo | null>(null)
-const inspecting = computed({
-  get: () => inspected.value !== null,
-  set: (value: boolean) => {
-    if (!value) inspected.value = null
-  },
+const inspecting = ref(false)
+function inspect(skill: SkillInfo) {
+  inspected.value = skill
+  inspecting.value = true
+}
+watch(scene, () => {
+  inspecting.value = false
 })
-watch(scene, () => (inspected.value = null))
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
+  <div class="flex min-w-0 max-w-4xl flex-col gap-5">
     <div class="flex flex-wrap items-end gap-3">
-      <Field :label="t('capabilities.skills.group')" class="w-full sm:w-64">
-        <Select
-          v-model="scene"
-          :options="options"
-          :placeholder="t('capabilities.skills.noGroups')"
-          :disabled="!options.length"
-        />
-      </Field>
+      <div class="w-full sm:w-64">
+        <Field :label="t('capabilities.skills.group')">
+          <Select
+            v-model="scene"
+            :options="options"
+            :placeholder="t('capabilities.skills.noGroups')"
+            :disabled="!options.length"
+          />
+        </Field>
+      </div>
       <p
         v-if="data"
-        class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 pb-2 text-sm text-muted"
+        class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 pb-1.5 text-sm text-muted"
       >
-        <span>
+        <span v-if="scene && sceneSecondaryId(scene)" class="font-mono text-xs text-muted tabular">
+          {{ sceneSecondaryId(scene) }}
+        </span>
+        <span class="tabular">
           {{ t('capabilities.skills.role', { name: data.role_skills.persona.name }) }} · {{ allowance }}
         </span>
         <Badge v-if="data.role_skills.restart_required" tone="warning">
@@ -117,7 +123,7 @@ watch(scene, () => (inspected.value = null))
       :retry="skills.refetch"
     />
     <template v-else-if="data">
-      <p v-if="data.directory" class="font-mono text-xs text-subtle">{{ data.directory }}</p>
+      <p v-if="data.directory" class="font-mono text-xs break-all text-subtle">{{ data.directory }}</p>
       <EmptyState
         v-if="!sections.length"
         :icon="BookOpen"
@@ -131,15 +137,13 @@ watch(scene, () => (inspected.value = null))
       <section v-for="section in sections" :key="section.source" class="flex flex-col gap-2">
         <h3 class="text-sm font-semibold text-ink-2">
           {{ t(`capabilities.skills.sources.${section.source}`) }}
-          <span class="font-normal text-muted tabular">{{ section.items.length }}</span>
+          <span class="ml-1 font-normal text-muted tabular">{{ section.items.length }}</span>
         </h3>
-        <ul
-          class="flex list-none flex-col divide-y divide-line rounded-xl border border-line bg-surface px-4"
-        >
-          <li v-for="skill in section.items" :key="skill.name" class="flex items-center gap-3 py-2.5">
+        <ul class="flex list-none flex-col divide-y divide-line border-y border-line">
+          <li v-for="skill in section.items" :key="skill.name" class="flex items-center gap-3 py-3">
             <div class="min-w-0 flex-1">
               <p class="flex flex-wrap items-center gap-2">
-                <code class="font-mono text-sm text-ink">{{ skill.name }}</code>
+                <code class="font-mono text-sm font-medium text-ink">{{ skill.name }}</code>
                 <Badge v-if="skill.selected" tone="success">{{ t('capabilities.skills.allowed') }}</Badge>
                 <Badge v-if="running.has(`${skill.source}:${skill.name}`)" tone="info">
                   {{ t('capabilities.skills.loaded') }}
@@ -148,9 +152,11 @@ watch(scene, () => (inspected.value = null))
                   {{ t('capabilities.skills.manualOnly') }}
                 </Badge>
               </p>
-              <p v-if="skill.description" class="line-clamp-2 text-xs text-muted">{{ skill.description }}</p>
+              <p v-if="skill.description" class="mt-0.5 line-clamp-2 text-xs text-muted">
+                {{ skill.description }}
+              </p>
             </div>
-            <Button size="sm" variant="ghost" :icon="FileSearch" @click="inspected = skill">
+            <Button size="sm" variant="ghost" :icon="FileSearch" @click="inspect(skill)">
               {{ t('capabilities.skills.files') }}
             </Button>
           </li>

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 import json
 from string import Template
+import time
 import traceback
 from typing import Literal, TYPE_CHECKING
 
@@ -31,6 +32,7 @@ from .materials import finish_file_operation
 from ..storage.pool import worker_pool_usage
 from .store import Task, TaskStore
 from .task_routes import DATA_ROUTES
+from .watchdog import TaskWatchdog, WatchdogDecision
 from .worker_model import Limits, WorkerModelProxy
 from .worker_session import WorkerSession, worker_session
 from ..prompt_files import read_prompt
@@ -44,6 +46,32 @@ if TYPE_CHECKING:
 
 
 _DATA_PATHS = {path: name for name, path in DATA_ROUTES.items()}
+PROGRESS_NOTICE_INTERVAL = 180.0
+
+
+class WatchdogStoppedError(RuntimeError):
+    """A task worker was stopped by the deterministic task watchdog."""
+
+
+def _final_failure(final: dict) -> str:
+    """Summarize an abnormal Pi final assistant message concisely via stopReason/errorMessage."""
+    stop_reason = final.get("stopReason")
+    error_message = final.get("errorMessage")
+    parts: list[str] = []
+    if isinstance(stop_reason, str) and stop_reason.strip():
+        parts.append(f"stopReason={stop_reason.strip()}")
+    if isinstance(error_message, str) and error_message.strip():
+        parts.append(error_message.strip()[:500])
+    else:
+        text = "\n".join(
+            part["text"].strip() for part in final.get("content", ())
+            if isinstance(part, dict) and part.get("type") == "text"
+            and isinstance(part.get("text"), str) and part["text"].strip()
+        ).strip()
+        if text:
+            parts.append(text[:500])
+    detail = "；".join(parts) if parts else json.dumps(final, ensure_ascii=False)[:500]
+    return f"Pi 未正常完成：{detail}"
 
 
 class TaskMCPCall(BaseModel):
@@ -89,7 +117,11 @@ class TaskExecution:
         self.cancelled = False
         self.stop_reason: str | None = None
         self._last_progress: str | None = None
-        self._next_progress = 300.0
+        self._last_progress_notice_at: float | None = None
+        self._last_event_at = 0.0
+        self._watchdog = TaskWatchdog(hang_timeout_seconds=max(180.0, self.settings.command_timeout_seconds * 6))
+        self._watchdog_steers: set[asyncio.Task[None]] = set()
+        self._steer_error: BaseException | None = None
         self._live_text = TaskLiveText()
         self._skills: tuple[Skill, ...] = ()
         self._mcp_tools: dict[str, ExternalTool] = {}
@@ -113,6 +145,8 @@ class TaskExecution:
         if self._session is None:
             raise ValueError("任务容器仍在启动，请稍后追加")
         await self._session.pi.command("steer", message=text)
+        self._watchdog.reset_intervention()
+        self._last_event_at = asyncio.get_running_loop().time()
 
     @property
     def answer_received(self) -> bool:
@@ -145,6 +179,9 @@ class TaskExecution:
                 self._mcp_tools = {tool.name: tool for tool in self.mcp.tools_for(item.scene)
                                    if allowed == 'all' or tool.name in allowed}
             self.active_limit = self._active_timeout(item)
+            self._watchdog.hang_timeout_seconds = max(
+                1.0, min(self.active_limit, max(180.0, self.settings.command_timeout_seconds * 6))
+            )
             async with asyncio.timeout(self.active_limit) as timer:
                 self._timer = timer
                 self._skills = self.catalog[item.scene]
@@ -282,56 +319,132 @@ class TaskExecution:
         # Pi 0.87.1 acknowledges prompt preflight with success:true and no data.
         # Completion is reported by the event stream, not by this response.
         await session.pi.command("prompt", message=request)
+        loop = asyncio.get_running_loop()
+        self._last_event_at = loop.time()
+        self._steer_error = None
         final: dict | None = None
-        while True:
-            deadline = self._timer.when()
-            if deadline is not None:
-                elapsed = self.active_limit - max(0, deadline - asyncio.get_running_loop().time())
-                if elapsed >= self._next_progress:
-                    self._progress(self._last_progress or "任务仍在执行，尚未报告阶段说明")
-                    self._next_progress = elapsed + 600
-            try:
-                record = await asyncio.wait_for(session.pi.next_event(), timeout=60)
-            except TimeoutError:
-                continue
-            body = record.body
-            if record.type == "message_update":
-                if self._live_text.update(body["assistantMessageEvent"]):
-                    self._notify_live(item.id)
-                continue
-            if record.type in {"tool_execution_update", "bash_execution_update"}:
-                continue
-            self.records.add_event(item.scene, item.id, "native", session.proxy.recorded(body))
-            self.on_update(item.scene)
-            if record.type == "message_start":
-                if self._live_text.start(body["message"]):
-                    self._notify_live(item.id)
-            elif record.type == "message_end" and body["message"]["role"] == "assistant":
-                if self._live_text.finish(body["message"]):
-                    self._notify_live(item.id)
-                final = body["message"]
-            elif record.type == "entry_appended":
-                entry = body["entry"]
-                if entry.get("customType") == "lenbot_progress":
-                    self._progress(entry["data"]["text"])
-            elif record.type == "extension_ui_request" and body["method"] in {"input", "confirm", "select", "editor"}:
-                await self._question(body)
-            elif record.type in {"auto_retry_start", "summarization_retry_scheduled"}:
-                raise RuntimeError(f"Pi 发起了未启用的重试：{body!r}")
-            elif record.type == "agent_settled":
-                if final is None:
-                    raise RuntimeError("Pi 停止但没有最终助手消息")
-                if final["stopReason"] != "stop":
-                    raise RuntimeError(f"Pi 未正常完成：{json.dumps(final, ensure_ascii=False)}")
-                return "\n".join(part["text"] for part in final["content"] if part["type"] == "text")
+        result = ""
+        try:
+            while True:
+                if self._steer_error is not None:
+                    raise self._steer_error
+                last_active = max(self._last_event_at, getattr(session.proxy, "last_active_at", 0.0))
+                decision = self._watchdog.check_idle(
+                    loop.time() - last_active,
+                    model_busy=session.proxy.busy,
+                    waiting_input=self._timer is not None and self._timer.when() is None,
+                )
+                if decision is not None:
+                    await self._handle_watchdog(decision)
+                try:
+                    record = await asyncio.wait_for(
+                        session.pi.next_event(),
+                        timeout=min(60.0, self._watchdog.hang_timeout_seconds),
+                    )
+                except TimeoutError:
+                    continue
+                if record.type != "queue_update":
+                    self._last_event_at = loop.time()
+                    self._watchdog.on_activity()
+                body = record.body
+                if record.type == "message_update":
+                    if self._live_text.update(body["assistantMessageEvent"]):
+                        self._notify_live(item.id)
+                    continue
+                if record.type in {"tool_execution_update", "bash_execution_update"}:
+                    continue
+                self.records.add_event(item.scene, item.id, "native", session.proxy.recorded(body))
+                self.on_update(item.scene)
+                if record.type == "tool_execution_start":
+                    decision = self._watchdog.on_tool_start(body["toolCallId"], body["toolName"], body["args"])
+                    if decision is not None:
+                        await self._handle_watchdog(decision)
+                elif record.type == "tool_execution_end":
+                    decision = self._watchdog.on_tool_end(body["toolCallId"], body["toolName"], is_error=body["isError"])
+                    if decision is not None:
+                        await self._handle_watchdog(decision)
+                elif record.type == "message_start":
+                    if self._live_text.start(body["message"]):
+                        self._notify_live(item.id)
+                elif record.type == "message_end" and body["message"]["role"] == "assistant":
+                    if self._live_text.finish(body["message"]):
+                        self._notify_live(item.id)
+                    final = body["message"]
+                elif record.type == "entry_appended":
+                    entry = body["entry"]
+                    if entry.get("customType") == "lenbot_progress":
+                        self._progress(entry["data"]["text"])
+                elif record.type == "extension_ui_request" and body["method"] in {"input", "confirm", "select", "editor"}:
+                    await self._question(body)
+                elif record.type == "agent_end":
+                    if final is None:
+                        for message in reversed(body["messages"]):
+                            if isinstance(message, dict) and message.get("role") == "assistant":
+                                final = message
+                                break
+                elif record.type in {"auto_retry_start", "summarization_retry_scheduled"}:
+                    error_message = body.get("errorMessage", "").strip()
+                    detail = error_message[:500] if error_message else repr(body)
+                    raise RuntimeError(f"Pi 发起了未启用的重试（{record.type}）：{detail}")
+                elif record.type == "agent_settled":
+                    if self._steer_error is not None:
+                        raise self._steer_error
+                    if final is None:
+                        raise RuntimeError("Pi 停止但没有最终助手消息")
+                    if final["stopReason"] != "stop":
+                        raise RuntimeError(_final_failure(final))
+                    result = "\n".join(part["text"] for part in final["content"] if part["type"] == "text")
+                    break
+        finally:
+            pending = list(self._watchdog_steers)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        if self._steer_error is not None:
+            raise self._steer_error
+        return result
+
+    async def _handle_watchdog(self, decision: WatchdogDecision) -> None:
+        item = self.item
+        self.records.add_watchdog_event(item.scene, item.id, decision)
+        self.on_update(item.scene)
+        if decision.action == "steer" and decision.steer_message:
+            message = decision.steer_message
+
+            async def _send() -> None:
+                try:
+                    await self._session.pi.command("steer", message=message)
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as error:
+                    if self._steer_error is None:
+                        self._steer_error = error
+
+            task = asyncio.create_task(_send())
+            self._watchdog_steers.add(task)
+            task.add_done_callback(self._watchdog_steers.discard)
+            await asyncio.sleep(0)
 
     def _progress(self, text: str) -> None:
-        text = self._proxy.recorded(text)
+        text = self.recorded(text).strip()
+        if not text or text == self._last_progress:
+            return
         self._last_progress = text
         item = self.item
-        self.records.add_event(item.scene, item.id, "progress", {"text": text},
-                               notice=f"[任务进度] #{item.id}；{item.goal}\n{text}")
-        self._notify(item.scene)
+        now = time.monotonic()
+        if (self._last_progress_notice_at is None
+                or now - self._last_progress_notice_at >= PROGRESS_NOTICE_INTERVAL):
+            goal_line = " ".join(item.goal.splitlines())
+            notice = f"[任务进度] #{item.id}；{goal_line}\n{text}"
+            self._last_progress_notice_at = now
+        else:
+            notice = None
+        self.records.add_event(item.scene, item.id, "progress", {"text": text}, notice=notice)
+        if notice is not None:
+            self._notify(item.scene)
+        else:
+            self.on_update(item.scene)
 
     def _pause_input(self, question: dict) -> None:
         loop = asyncio.get_running_loop()
@@ -380,6 +493,8 @@ class TaskExecution:
             self.records.add_event(item.scene, item.id, "answer_timeout", response)
         await self._resume_input()
         await self._session.pi.respond_ui(body["id"], **response)
+        self._watchdog.reset_intervention()
+        self._last_event_at = asyncio.get_running_loop().time()
         self._notify(item.scene)
 
     async def _host_tool(self, name: str, arguments: dict) -> str:

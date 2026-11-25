@@ -65,7 +65,7 @@ async function choose(key: string | undefined) {
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.role.section')" :columns="1">
+  <FormSection id="role" :title="t('groups.settings.role.section')" :columns="1">
     <ErrorNote
       v-if="library.isError.value"
       :title="t('groups.settings.role.readFailed')"
@@ -76,14 +76,16 @@ async function choose(key: string | undefined) {
       <span v-if="current" class="flex pb-0.5" aria-hidden="true">
         <Avatar :name="roleLabel(current)" :src="personaAvatar(current)" :size="36" />
       </span>
-      <Field :label="t('groups.settings.role.label')" class="min-w-0 flex-1 sm:max-w-80">
-        <Select
-          v-model="selected"
-          :options="options"
-          :disabled="sending(scene) || Boolean(waiting) || library.isPending.value"
-          :placeholder="library.isPending.value ? t('common.loading') : undefined"
-        />
-      </Field>
+      <div class="min-w-48 flex-1 sm:max-w-80">
+        <Field :label="t('groups.settings.role.label')">
+          <Select
+            v-model="selected"
+            :options="options"
+            :disabled="sending(scene) || Boolean(waiting) || library.isPending.value"
+            :placeholder="library.isPending.value ? t('common.loading') : undefined"
+          />
+        </Field>
+      </div>
       <Button
         v-if="current"
         variant="ghost"

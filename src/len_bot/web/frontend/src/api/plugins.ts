@@ -66,7 +66,9 @@ export interface AvailableEntry {
   error: string | null
   managed: boolean
   source: SourceDetails | null
+  title?: string | null
   version?: string
+  data_version?: number
   description?: string
   authors?: string[]
   license?: string
@@ -83,6 +85,13 @@ export interface AvailableEntry {
   isolation?: 'inline' | 'process'
   /** Chat platforms whose groups may enable the plugin; null: every platform. */
   chat_platforms?: string[] | null
+  installed_manifest?: {
+    version: string
+    data_version: number
+    permissions: Permission[] | null
+    chat_platforms: string[] | null
+    dependencies: string[]
+  } | null
 }
 
 export interface Health {
@@ -114,6 +123,7 @@ export interface PluginCall {
 /** A loaded plugin as the plugin host reports it. */
 export interface RunningPlugin {
   name: string
+  title?: string | null
   status: 'running' | 'failed' | 'stopped' | string
   error: string | null
   health: Health
@@ -124,10 +134,18 @@ export interface RunningPlugin {
   permissions: Permission[] | null
   chat_platforms: string[] | null
   scenes: string[]
-  commands: { name: string; description: string }[]
-  rules: { kind: 'fullmatch' | 'regex'; pattern: string; description: string; priority?: number }[]
+  commands: { name: string; description: string; disabled?: boolean }[]
+  rules: {
+    kind: 'fullmatch' | 'regex'
+    pattern: string
+    description: string
+    priority?: number
+    disabled?: boolean
+  }[]
+  disabled_rules?: string[]
   notices: string[]
   tools: PluginTool[]
+  unavailable_tools?: Record<string, string>
   instructions: string | null
   /** Entries a group may choose this plugin for as its memory or recap. */
   memory_entries: ('recall' | 'memory_tool' | 'compact')[]
@@ -172,8 +190,14 @@ export interface PluginsSnapshot {
     paths: string[]
     data_directory: string
     disabled: string[]
+    disabled_rules?: Record<string, string[]>
     plugins: Record<string, Record<string, SavedValue>>
   }
+  /** Catalog metadata for installed plugins when available. */
+  catalog_entries?: Record<
+    string,
+    { title: string; category: string; usage: string[]; capabilities: string[] }
+  >
   /** Data directories of plugins no longer configured. */
   retained_data: { name: string; directory: string }[]
   /** Groups in the saved configuration, the choices of scene fields. */
@@ -278,13 +302,45 @@ const name = (value: string) => encodeURIComponent(value)
 
 export type PluginAction = 'apply' | 'cancel' | 'rollback' | 'reload'
 
+/** Key format expected by backend `plugins.disabled_rules[plugin]` (`host.py`). */
+export function commandRuleKey(commandName: string): string {
+  return commandName.startsWith('/') ? commandName : `/${commandName}`
+}
+
+export function matchRuleKey(kind: 'fullmatch' | 'regex', pattern: string): string {
+  return `${kind}:${pattern}`
+}
+
+export function pluginTitle(snapshot: PluginsSnapshot | null | undefined, pluginName: string): string {
+  if (!snapshot) return pluginName
+  const running = snapshot.running.plugins.find((item) => item.name === pluginName)
+  return (
+    running?.title ||
+    snapshot.available[pluginName]?.[0]?.title ||
+    snapshot.catalog_entries?.[pluginName]?.title ||
+    pluginName
+  )
+}
+
 export const pluginsApi = {
   read: (signal?: AbortSignal) => http.get<PluginsSnapshot>('/api/host/plugins', undefined, signal),
   /** name, status, error, version and health of every loaded plugin, without reading the disk. */
   health: (signal?: AbortSignal) => http.get<PluginHealth>('/api/host/plugins/health', undefined, signal),
   /** Saving parameters also enables the plugin; secrets left null keep their saved value. */
-  save: (plugin: string, enabled: boolean, config: Record<string, FieldValue> = {}) =>
-    http.put<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}`, { enabled, config }),
+  save: (
+    plugin: string,
+    enabled: boolean,
+    config?: Record<string, FieldValue>,
+    options?: { applyCandidate?: boolean; disabledRules?: string[] },
+  ) =>
+    http.put<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}`, {
+      enabled,
+      ...(config !== undefined ? { config } : {}),
+      ...(options?.applyCandidate !== undefined ? { apply_candidate: options.applyCandidate } : {}),
+      ...(options?.disabledRules !== undefined ? { disabled_rules: options.disabledRules } : {}),
+    }),
+  putPluginScenes: (plugin: string, scenes: string[]) =>
+    http.put<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}/scenes`, { scenes }),
   putScene: (scene: string, plugins: string[], memory: SceneMemory) =>
     http.put<PluginsSnapshot>(`/api/host/scenes/${name(scene)}/plugins`, { plugins, ...memory }),
   putPaths: (paths: string[], dataDirectory: string) =>

@@ -109,7 +109,7 @@ uv run --no-sync ruff check src/len_bot scripts deploy/package tests
 |---|---|---|
 | 插件接口版本 | `1` | `src/len_bot/plugin.py` 的 `INTERFACE` |
 | 根配置格式 | `6` | `src/len_bot/next/config.py` 的 `CONFIG_VERSION` |
-| 业务数据库 | `3` | `src/len_bot/next/storage/store.py` 的 `FORMAT_VERSION` |
+| 业务数据库 | `4` | `src/len_bot/next/storage/store.py` 的 `FORMAT_VERSION` |
 | 记忆处理库 | `1` | `src/len_bot/next/memory/jobs.py` 的 `FORMAT_VERSION` |
 | 本地记忆索引 | `1` | `src/len_bot/next/memory/local.py` 的 `FORMAT_VERSION` |
 | 插件键值存储 | `1` | `src/len_bot/next/plugins/kv.py` 的 `FORMAT_VERSION` |
@@ -117,6 +117,8 @@ uv run --no-sync ruff check src/len_bot scripts deploy/package tests
 业务数据库格式 `2` 增加黑话结构化判定与最后评估位置。更新代码后，停止实例并执行 `uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot`，迁移保留原有词条、样本、人工固定和禁用决定；旧自动解释在新判定完成后恢复使用。
 
 业务数据库格式 `3` 为 `model_calls` 增加 `model_call_mind_usage` 索引，聊天请求查询本群最近一次聊天调用的用量时不再扫描整张表。升级时由同一条 `upgrade` 命令建立索引；数据库较大时首次建立要读取大部分文件，可能需要数分钟。
+
+业务数据库格式 `4` 为 `image_cache` 增加 `frames` 列（默认 `1`，用于区分动图多帧网格与旧单帧缓存），并为 `messages`、`notices`、`model_calls`、`turns` 和 `plugin_events` 补齐按场景序号、接收时间、群禁言通知、未过期请求快照、插件调用与轮次开始时间查询的索引，消除大体量生产库上的全场景排序与全表扫描。升级同样由 `upgrade` 命令补齐该列与缺失索引；磁盘空间紧张的大库可在升级前先停机运行 `uv run --no-sync python -m len_bot.next.maintenance.compact` 回收空闲页。
 
 上述四个 SQLite 数据库通过 `PRAGMA application_id` 标识文件类型，通过 `PRAGMA user_version` 记录格式编号；宿主只打开这两个值与当前代码一致的数据库文件。资料检索索引库（`reference/library.py`）仅保存可由源文档重建的派生数据，表结构变化时自动重建。
 

@@ -18,6 +18,7 @@ CREATE TABLE plugin_events (
     content TEXT NOT NULL, created REAL NOT NULL, delivered_at REAL
 );
 CREATE INDEX plugin_events_pending ON plugin_events(scene,id) WHERE delivered_at IS NULL;
+CREATE INDEX plugin_events_scene ON plugin_events(scene,id);
 CREATE TABLE plugin_memory_progress (
     scene TEXT NOT NULL, plugin TEXT NOT NULL, through_seq INTEGER NOT NULL, updated REAL NOT NULL,
     PRIMARY KEY(scene, plugin)
@@ -29,17 +30,27 @@ class PluginStore:
     def __init__(self, store: Store):
         self.db, self.now = store.db, store.now
 
-    def add_plugin_event(self, scene: str, plugin: str, kind: Literal["event", "reply"], content: str) -> int:
+    def add_plugin_event(self, scene: str, plugin: str, kind: Literal["event", "reply"], content: str,
+                         *, delivered: bool = False) -> int:
+        now = self.now()
         with self.db:
             return self.db.execute(
-                "INSERT INTO plugin_events(scene,plugin,kind,content,created) VALUES (?,?,?,?,?)",
-                (scene, plugin, kind, content, self.now()),
+                "INSERT INTO plugin_events(scene,plugin,kind,content,created,delivered_at) VALUES (?,?,?,?,?,?)",
+                (scene, plugin, kind, content, now, now if delivered else None),
             ).lastrowid
 
     def pending_plugin_events(self, scene: str, *, include_events: bool = True) -> list[tuple[int, str]]:
         return [(row[0], row[1]) for row in self.db.execute(
             "SELECT id,content FROM plugin_events WHERE scene=? AND delivered_at IS NULL "
             "AND (? OR kind='reply') ORDER BY id", (scene, include_events))]
+
+    def clear_pending_events(self, scene: str) -> int:
+        """Mark undelivered plugin events of ``scene`` delivered across a paused or closed period."""
+        with self.db:
+            return self.db.execute(
+                "UPDATE plugin_events SET delivered_at=? WHERE scene=? AND delivered_at IS NULL",
+                (self.now(), scene),
+            ).rowcount
 
     def plugin_wake_pending(self, scene: str) -> bool:
         """Only ``event`` rows wake the mind; ``reply`` rows wait for the next turn."""

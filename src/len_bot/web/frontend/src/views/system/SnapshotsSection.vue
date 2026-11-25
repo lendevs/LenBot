@@ -62,20 +62,22 @@ async function askRestore(item: UpdateSnapshot) {
 </script>
 
 <template>
-  <section class="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-surface p-5">
+  <section class="flex min-w-0 flex-col gap-3 border-t border-line pt-6">
     <header class="flex flex-wrap items-center justify-between gap-3">
-      <h3 class="text-base font-semibold">{{ t('system.updates.snapshots.title') }}</h3>
+      <h3 class="text-base font-semibold text-ink">{{ t('system.updates.snapshots.title') }}</h3>
       <span v-if="items.length" class="text-sm text-muted tabular">
         {{ t('system.updates.snapshots.total', { n: items.length, size: formatBytes(total) }) }}
       </span>
     </header>
     <p v-if="!items.length" class="text-sm text-muted">{{ t('system.updates.snapshots.none') }}</p>
-    <ol v-else class="flex list-none flex-col divide-y divide-line">
-      <li v-for="item in items" :key="item.name" class="flex items-center gap-3 py-3 first:pt-1 last:pb-0">
+    <ol v-else class="flex list-none flex-col divide-y divide-line border-y border-line">
+      <li v-for="item in items" :key="item.name" class="flex items-center gap-3 py-3">
         <div class="flex min-w-0 flex-1 flex-col gap-0.5">
           <span class="flex flex-wrap items-center gap-2 text-sm font-medium text-ink tabular">
             {{ formatDateTime(item.created_at) }}
-            <Badge>v{{ item.version }}</Badge>
+            <span class="inline-flex tabular">
+              <Badge>v{{ item.version }}</Badge>
+            </span>
           </span>
           <span class="text-xs text-muted tabular">{{ formatBytes(item.bytes) }}</span>
         </div>

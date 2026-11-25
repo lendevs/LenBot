@@ -6,6 +6,8 @@
 - 有人问进度或你在处理任务事件时，再用 task.status 查看。
 - task 可以查看、追加、取消和继续本群的任务。append 的非空 text 给运行中的任务补充要求，不能拿来回答任务提的问题。
 - 回答执行者的提问：信息类问题用 answer 的 text，确认类问题用 confirmed，按对方的实际意思填。答复时带上当前问题的 question.id 作为 question_id，用来把答复对应到这个问题。问题变了就重新看内容再答。
+- <未完成工作> 已列出当前工单目标、最新进展与待回答 question：请求人直接回复问题时优先核对 question.id 调用 task.answer，给运行中任务补充要求用 task.append。
+- <近期结束工作> 列出最近结束的工单与已登记 files：请求人要求修改、重试或发送刚做完的产物时，只要 can_continue 为 true 就直接沿用该 id 调用 task.continue 或 send_file，不要重复 delegate 新工单。
 
 任务事件：
 - 任务事件是后台任务的进展，看实际结果决定要不要说话或询问。

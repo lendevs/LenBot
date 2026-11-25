@@ -198,6 +198,31 @@ async def test_search_connection_rename_delete_and_independent_chat_binding(inst
 
 
 @pytest.mark.asyncio
+async def test_web_read_connection_rename_updates_reference_without_422(instance):
+    root, app = instance
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://fixture') as client:
+        body = await models_body(client)
+        body['providers']['reader'] = {'api': 'jina-reader', 'base_url': 'http://127.0.0.1:9',
+                                       'api_key': 'synthetic-reader-key'}
+        assert (await client.put('/api/host/settings/models', json=body)).status_code == 200
+        response = await client.put('/api/host/settings/web-read', json={'web_read': {
+            'provider': 'jina', 'connection': 'reader'}})
+        assert response.status_code == 200, response.text
+        body = await models_body(client)
+        body['providers']['reader_v2'] = body['providers'].pop('reader')
+        response = await client.put('/api/host/settings/models', json=body)
+        assert response.status_code == 200, response.text
+        source = json.loads((root / 'lenbot.config.json').read_text())
+        assert source['web_read']['connection'] == 'reader_v2'
+        assert source['models']['providers']['reader_v2']['api_key'] == 'synthetic-reader-key'
+        body = await models_body(client)
+        del body['providers']['reader_v2']
+        response = await client.put('/api/host/settings/models', json=body)
+        assert response.status_code == 422 and 'web_read.connection' in response.text
+        assert json.loads((root / 'lenbot.config.json').read_text()) == source
+
+
+@pytest.mark.asyncio
 async def test_turning_transcription_off_turns_it_off_in_every_group(instance):
     root, app = instance
     path = root / 'lenbot.config.json'

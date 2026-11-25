@@ -1,7 +1,14 @@
 import type { AvailableEntry, Health, Permission, PluginsSnapshot, RunningPlugin } from '../../api/plugins'
+import { groupLabel } from '../../layouts/shell/scenes'
 import type { Tone } from '../../ui/Badge.vue'
 
 /** Read-only views over the plugins snapshot, shared by the list and the detail page. */
+
+/** Group ID without the platform prefix, omitted when `groupLabel` already falls back to it. */
+export function sceneSecondaryId(scene: string): string {
+  const id = scene.split(':').slice(2).join(':') || scene
+  return groupLabel(scene) === id ? '' : id
+}
 
 export const pluginNames = (snapshot: PluginsSnapshot) =>
   [
@@ -70,11 +77,16 @@ export function statusOf(snapshot: PluginsSnapshot, name: string, health: Health
 }
 
 /** Filter buckets of the installed list. */
-export type Bucket = 'on' | 'attention' | 'disabled' | 'idle'
+export type Bucket = 'running' | 'disabled' | 'attention'
 export function bucketOf(status: PluginStatus): Bucket {
-  if (status === 'disabled') return 'disabled'
-  if (status === 'idle') return 'idle'
-  return status === 'failed' || status === 'degraded' ? 'attention' : 'on'
+  if (status === 'failed' || status === 'degraded') return 'attention'
+  if (status === 'disabled' || status === 'idle' || status === 'stopped') return 'disabled'
+  return 'running'
+}
+
+export function hasManifestIssue(snapshot: PluginsSnapshot, name: string): boolean {
+  const entries = snapshot.available[name] ?? []
+  return entries.length > 1 || entries.some((entry) => Boolean(entry.error))
 }
 
 const permissionKey = (list: Permission[] | null | undefined) =>

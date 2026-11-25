@@ -137,6 +137,8 @@ export interface SystemSettings {
   processing: Processing
 }
 export const systemOf = (snapshot: SettingsSnapshot) => snapshot.saved as unknown as SystemSettings
+export const runningSystemOf = (snapshot: SettingsSnapshot) =>
+  (snapshot as { running?: unknown }).running as SystemSettings | undefined
 
 export interface PromptSummary {
   version: string
@@ -233,9 +235,10 @@ export const systemApi = {
       feishu_secret?: string | null
     },
   ) => http.put<SettingsSnapshot>('/api/host/settings/connection', body),
-  /** Checks typed Telegram or Feishu settings without saving; empty secrets use the saved ones. */
+  /** Checks typed OneBot, Telegram or Feishu settings without saving; empty secrets use the saved ones. */
   testConnection: (
     body:
+      | { platform: 'onebot'; onebot: OneBot; access_token: string | null }
       | { platform: 'telegram'; telegram: TelegramLink; telegram_token: string | null }
       | { platform: 'feishu'; feishu: FeishuLink; feishu_secret: string | null },
   ) => http.post<{ bot_id: string; name: string }>('/api/host/settings/connection/test', body),

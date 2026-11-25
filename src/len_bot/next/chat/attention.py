@@ -5,6 +5,7 @@ import copy
 import logging
 import math
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, fields
@@ -35,6 +36,7 @@ from ..prompt_files import read_prompt
 from ..persona.profile import Persona
 from ..tools.external_tools import ExternalTool
 from ..tools.skills import Skill
+from ..work.store import TaskStore
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,10 @@ EFFECT_FLOOR = 0.5
 EFFECT_CEILING = 1.25
 PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
+# Segments that carry no verbal text on their own; pure sticker/image turns without text do not consume focus.
+STICKER_SEGMENTS = frozenset({"image", "face", "mface", "marketface", "sticker", "text"})
+# Short meaningless backchannels that should not consume a focus follow-up window when not addressing the bot.
+FOCUS_FILLERS = frozenset({"嗯", "哦", "噢", "啊", "呃", "额", "哈", "呵", "哇", "草", "艹", "6", "啧", "哈哈", "哈哈哈", "笑死"})
 # The follow-up an interjection that answered no one opens: the next message from anyone.
 ANYONE = "*"
 # After the host was down or chat turns failed at the model, joining in looks only at this much recent chat.
@@ -162,11 +168,22 @@ def open_for_ambient(state: AttentionState) -> bool:
     return state.pending is None or state.pending.channel == 'explore'
 
 
+def is_focus_noise(message: ChatMessage) -> bool:
+    """Pure stickers/images without effective text, or trivial fillers not addressing the bot."""
+    if is_direct(message):
+        return False
+    text = plain_text(message).strip()
+    effective = re.sub(r"\[表情\]", "", text).strip(" \t\r\n?？!！。~～….,，、")
+    if not effective:
+        return all(segment.type in STICKER_SEGMENTS for segment in message.segments)
+    return effective in FOCUS_FILLERS
+
+
 def worth_joining(message: ChatMessage, config: Attention, bot_id: str) -> bool:
     """Something to join in on: text beyond a bare reaction, from a member, not addressed to someone else."""
     return (not message.is_self and message.sender.uid not in config.other_bot_ids
             and not addressed_to_others(message, bot_id)
-            and plain_text(message).strip().strip(" ?？!！。~") not in REACTIONS)
+            and re.sub(r"\[表情\]", "", plain_text(message)).strip().strip(" ?？!！。~") not in REACTIONS)
 
 
 class SceneRunner:
@@ -236,8 +253,11 @@ class SceneRunner:
             self.state = restored
         else:
             self.save_state(restored)
+        if self.state.paused or self.state.closed:
+            PluginStore(self.store).clear_pending_events(self.config.scene)
 
         self.chat.toolset.scene_control = self.control
+        self.chat.quiet_state = self.quiet_state
         if self.state.declared is not None:
             self.chat.toolset.attention = self.declare
         self.chat.set_external_tools(list(self.chat.toolset.external.values()))
@@ -310,6 +330,28 @@ class SceneRunner:
         if temporary is not None and temporary.started <= now < temporary.until and temporary.direct == 'defer':
             return 'defer'
         return mode
+
+    def quiet_state(self) -> dict:
+        """Live temporary quiet and configured daily quiet_hours state for the model's turn context."""
+        now = self.now()
+        state: dict = {}
+        temporary = self.state.temporary_quiet
+        if temporary is not None and temporary.started <= now < temporary.until:
+            state['temporary_quiet'] = {
+                'until': temporary.until,
+                'remaining_seconds': max(0, int(temporary.until - now)),
+                'direct': temporary.direct,
+                'requester': temporary.requester,
+            }
+        configured = quiet_period(self.settings.quiet_hours, self.config.timezone, now)
+        if configured is not None:
+            state['quiet_hours'] = {
+                'start': self.settings.quiet_hours.start.strftime('%H:%M'),
+                'end': self.settings.quiet_hours.end.strftime('%H:%M'),
+                'until': configured[1],
+                'direct': self.settings.quiet_hours.direct,
+            }
+        return state
 
     def control_state(self) -> dict:
         now = self.now()
@@ -398,6 +440,11 @@ class SceneRunner:
             return self.control_state()
         return self.set_temporary_quiet(seconds, direct, requester)
 
+    def _save_control_state(self, state: dict | None) -> None:
+        if state is not None:
+            self.store.save_attention(self.config.scene, state)
+        PluginStore(self.store).clear_pending_events(self.config.scene)
+
     async def set_closed(self, closed: bool) -> dict:
         """Close or reopen this scene; the chat switch keeps its value for when it reopens.
         Closing ends a running turn at the step it is in."""
@@ -412,8 +459,7 @@ class SceneRunner:
         if closed:
             self.chat.stop_turn()
         try:
-            if changed:
-                await self.store.call(self.store.save_attention, self.config.scene, persisted(state))
+            await self.store.call(self._save_control_state, persisted(state) if changed else None)
         finally:
             self.changed.set()
             self.chat.notify()
@@ -433,8 +479,7 @@ class SceneRunner:
         if paused:
             self.chat.stop_turn()
         try:
-            if changed:
-                await self.store.call(self.store.save_attention, self.config.scene, persisted(state))
+            await self.store.call(self._save_control_state, persisted(state) if changed else None)
         finally:
             self.changed.set()
             self.chat.notify()
@@ -530,7 +575,8 @@ class SceneRunner:
 
     def followup_of(self, state: AttentionState, message: ChatMessage, at: float) -> str | None:
         """The open follow-up this message takes: its sender's, else the one open to anyone."""
-        if self.settings.focus_seconds <= 0 or addressed_to_others(message, self.config.bot_id):
+        if (self.settings.focus_seconds <= 0 or addressed_to_others(message, self.config.bot_id)
+                or is_focus_noise(message)):
             return None
         for key in (message.sender.uid, ANYONE):
             opened = state.followups.get(key)
@@ -595,7 +641,15 @@ class SceneRunner:
             return offered(PendingWake('direct', at, people=[message.sender.uid]), '直接联系')
         if message.is_self:
             return WakeVerdict(False, None, '自己的消息')
+        reply_to_own = message.reply_to is not None and message.reply_to in self.own_ids
         if self.settings.only_direct:
+            if (reply_to_own and message.sender.uid not in self.settings.other_bot_ids
+                    and not state.off and self.quiet_period(at) is None
+                    and not is_focus_noise(message)
+                    and TaskStore(self.store).has_waiting_input(self.config.scene)):
+                state.followups.pop(message.sender.uid, None)
+                state.interjected_at = None
+                return offered(PendingWake('focus', at, people=[message.sender.uid]), '回答等待中的任务提问')
             return WakeVerdict(False, None, '只回应直接联系')
         if message.sender.uid in self.settings.other_bot_ids:
             return WakeVerdict(False, None, '来自其他 Bot')
@@ -622,6 +676,14 @@ class SceneRunner:
                 state.interjected_at = None
                 return offered(PendingWake('focus', at, people=[message.sender.uid]), '接着说')
             local_blocked = True
+        if not state.off and not is_focus_noise(message):
+            tasks = TaskStore(self.store)
+            if ((reply_to_own and tasks.has_waiting_input(self.config.scene))
+                    or (not addressed_to_others(message, self.config.bot_id)
+                        and message.sender.uid in tasks.waiting_requesters(self.config.scene))):
+                state.followups.pop(message.sender.uid, None)
+                state.interjected_at = None
+                return offered(PendingWake('focus', at, people=[message.sender.uid]), '回答等待中的任务提问')
         factor = None
         if open_for_ambient(state):
             if worth_joining(message, self.settings, self.config.bot_id):
@@ -695,6 +757,7 @@ class SceneRunner:
         seq = self.store.enqueue(
             message, raw, now, attention_state=snapshot, wake_verdict=asdict(verdict),
             plugin_claim=plugin_claim,
+            plugin_claim_delivered=state.paused or state.closed,
             collect_stickers=(not blocked and self.config.learning is not None and self.config.learning.collect_stickers
                               and not message.is_self and message.sender.uid != self.config.bot_id
                               and message.sender.uid not in self.settings.other_bot_ids),

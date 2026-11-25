@@ -104,7 +104,7 @@ class MemorySummarizer:
                                      f"configured window {binding.context_window_tokens}; model was not called")
         run = None
         try:
-            async with (self.slots.slot(direct=False, scene=scene) if self.slots is not None else nullcontext()):
+            async with (self.slots.slot(direct=False, background=True, scene=scene) if self.slots is not None else nullcontext()):
                 run = self.jobs.begin_summary(scene, source, path, request)
                 started = self.store.now()
                 try:

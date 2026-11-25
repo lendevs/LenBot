@@ -47,13 +47,15 @@ def register_host_reply_effects(app: FastAPI, *, runtime: NetworkRuntime,
     async def state(scene: str, days: int = Query(7, ge=1, le=90), _: str = Depends(user)):
         chat = chat_for(scene)
         since = runtime.store.now() - days * 86400
-        return {"scene": scene, "enabled": active(scene), "days": days,
-                "delivery": "simulated" if chat.expression.send_message is None else "live",
-                "settings": None if chat.config.learning is None else {
-                    "reply_effects": chat.config.learning.reply_effects,
-                    "max_age_seconds": chat.config.learning.max_age_seconds},
-                "distribution": records.distribution(scene, since),
-                "service_state": runtime.reply_effects.state(scene) if active(scene) else None}
+        return await runtime.store.read(lambda: {
+            "scene": scene, "enabled": active(scene), "days": days,
+            "delivery": "simulated" if chat.expression.send_message is None else "live",
+            "settings": None if chat.config.learning is None else {
+                "reply_effects": chat.config.learning.reply_effects,
+                "max_age_seconds": chat.config.learning.max_age_seconds},
+            "distribution": records.distribution(scene, since),
+            "service_state": runtime.reply_effects.state(scene) if active(scene) else None,
+        })
 
     @app.get("/api/host/scenes/{scene}/reply-effects/items", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def items(scene: str, state: StateFilter | None = None, channel: ChannelFilter | None = None,
@@ -62,32 +64,40 @@ def register_host_reply_effects(app: FastAPI, *, runtime: NetworkRuntime,
                     _: str = Depends(user)):
         chat_for(scene)
         since = None if days is None else runtime.store.now() - days * 86400
-        return records.page(scene, state=state, channel=channel, since=since, limit=limit, offset=offset)
+        return await runtime.store.read(records.page, scene, state=state, channel=channel, since=since,
+                                        limit=limit, offset=offset)
 
     @app.get("/api/host/scenes/{scene}/reply-effects/items/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def item(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        effect = records.effect(scene, id)
-        if effect is None:
+
+        def read_item():
+            effect = records.effect(scene, id)
+            if effect is None:
+                return None
+            observed = effect["observed_seqs"] or []
+            return {**effect,
+                    "expression": rendered(scene, effect["message_seqs"]),
+                    "before": [{"record": seq, "rendered": chat_for(scene).context.render(message)}
+                               for seq, message in records.before(scene, min(effect["message_seqs"]))],
+                    "followups": rendered(scene, observed, records.arrivals(scene, observed)),
+                    "call": None if effect["call_id"] is None else records.call(scene, effect["call_id"], summary=True)}
+
+        result = await runtime.store.read(read_item)
+        if result is None:
             raise HTTPException(404, "当前场景不存在此回复效果样本")
-        observed = effect["observed_seqs"] or []
-        return {**effect,
-                "expression": rendered(scene, effect["message_seqs"]),
-                "before": [{"record": seq, "rendered": chat_for(scene).context.render(message)}
-                           for seq, message in records.before(scene, min(effect["message_seqs"]))],
-                "followups": rendered(scene, observed, records.arrivals(scene, observed)),
-                "call": None if effect["call_id"] is None else records.call(scene, effect["call_id"], summary=True)}
+        return result
 
     @app.get("/api/host/scenes/{scene}/reply-effects/calls", response_model=responses.RecordPage, response_model_exclude_unset=True)
     async def calls(scene: str, limit: int = Query(20, ge=1, le=20), offset: int = Query(0, ge=0),
                     _: str = Depends(user)):
         chat_for(scene)
-        return records.calls(scene, limit=limit, offset=offset)
+        return await runtime.store.read(records.calls, scene, limit=limit, offset=offset)
 
     @app.get("/api/host/scenes/{scene}/reply-effects/calls/{id}", response_model=responses.JsonObject, response_model_exclude_unset=True)
     async def call(scene: str, id: int, _: str = Depends(user)):
         chat_for(scene)
-        result = records.call(scene, id)
+        result = await runtime.store.read(records.call, scene, id)
         if result is None:
             raise HTTPException(404, "当前场景不存在此回复效果判断")
         return result
@@ -95,7 +105,7 @@ def register_host_reply_effects(app: FastAPI, *, runtime: NetworkRuntime,
     @app.get("/api/host/scenes/{scene}/turns/{turn_id}/reply-effects", response_model=responses.Records, response_model_exclude_unset=True)
     async def turn_effects(scene: str, turn_id: str, _: str = Depends(user)):
         chat_for(scene)
-        return {"items": records.for_turn(scene, turn_id)}
+        return {"items": await runtime.store.read(records.for_turn, scene, turn_id)}
 
     def trigger(scene: str, action: Callable[[], None]) -> dict:
         chat_for(scene)

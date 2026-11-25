@@ -1,10 +1,4 @@
-"""Session upkeep: memory writes and learning taken from the mind's own session.
-
-One request chain per scene continues the chat request's exact system, tools and history, so the
-provider's prefix cache covers them; only the upkeep instruction and the messages missing from that
-history are new input. Results land in the existing memory job and learning tables, and the calls
-are recorded once, as ``upkeep`` model calls of the scene.
-"""
+"""Session upkeep extracts memory and learning from current or archived chat messages."""
 
 from __future__ import annotations
 
@@ -14,7 +8,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from string import Template
 from typing import TYPE_CHECKING
@@ -25,6 +19,11 @@ from ..learning.expression_match import overlap
 from ..learning.jargon_store import JargonStore, contains
 from ..learning.reply_effect_store import REACTIONS, ReplyEffectStore
 from ..learning.store import LearningStore
+from ..memory.role_paths import require_bot_path
+from ..memory.sections import evidence, excerpt
+from ..memory.service import (MEMORY_ARGUMENTS, BrowseMemory, DeleteMemory, ForgetMemory, ReadMemory,
+                              SearchMemory, WriteMemory)
+from .recap import estimate_text_request
 from ..models.client import ChatModel, ModelConnectionError, ModelHTTPError, ModelReply
 from ..models.request import request_model
 from ..models.slots import ModelSlots
@@ -91,6 +90,159 @@ class Begun:
     request: dict = field(default_factory=dict)
 
 
+class MemoryDraft:
+    """Ordered edits and the file view visible to this pass until its final reply is accepted."""
+
+    def __init__(self, memory: MemoryService, scene: str):
+        self.memory, self.scene = memory, scene
+        self.operations: list[dict] = []
+        self.files: dict[str, str | None] = {}
+        self.baselines: dict[str, str | None] = {}
+
+    async def _record_baseline(self, path: str) -> str | None:
+        if path not in self.baselines:
+            try:
+                page = await self.memory.backend.read(self.scene, path)
+            except FileNotFoundError:
+                self.baselines[path] = None
+            else:
+                self.baselines[path] = page.content
+        return self.baselines[path]
+
+    async def execute(self, arguments: dict) -> str:
+        item = MEMORY_ARGUMENTS.validate_python(arguments)
+        if not isinstance(item, SearchMemory):
+            self.memory.own_bot_path(self.scene, item.path)
+        if isinstance(item, (WriteMemory, DeleteMemory, ForgetMemory)):
+            if not item.reason.strip():
+                raise ValueError(f"memory {item.action} reason must not be blank")
+            if isinstance(item, WriteMemory):
+                require_bot_path(item.path, self.memory.known_persona_ids(self.scene))
+            if isinstance(item, ForgetMemory):
+                self.memory.store.check_message_records(self.scene, item.exclude_records)
+            if item.path not in self.files:
+                # The backend read also checks file type, path and symlink boundaries for new targets.
+                baseline = await self._record_baseline(item.path)
+                if baseline is None and isinstance(item, DeleteMemory):
+                    raise FileNotFoundError(item.path)
+            elif isinstance(item, DeleteMemory) and self.files[item.path] is None:
+                raise FileNotFoundError(item.path)
+            if any(path.startswith(item.path + "/") for path, content in self.files.items() if content is not None):
+                raise IsADirectoryError(item.path)
+            if any(item.path.startswith(path + "/") for path, content in self.files.items() if content is not None):
+                raise NotADirectoryError(item.path)
+            self.files[item.path] = item.content if isinstance(item, WriteMemory) else None
+            self.operations.append(arguments)
+            return encode({"action": item.action, "path": item.path, "staged": True})
+        if isinstance(item, ReadMemory) and item.scope == "scene":
+            if item.path in self.files:
+                content = self.files[item.path]
+                if content is None:
+                    raise FileNotFoundError(item.path)
+                return encode({"path": item.path, "content": content})
+            baseline = await self._record_baseline(item.path)
+            if baseline is None:
+                raise FileNotFoundError(item.path)
+            return encode({"path": item.path, "content": baseline})
+        if isinstance(item, BrowseMemory) and item.scope == "scene" and self.files:
+            return await self.browse(item)
+        if isinstance(item, SearchMemory):
+            current = json.loads(await self.memory.execute(self.scene, arguments))["hits"]
+            hits = [{"scope": "scene", "path": path, "preview": excerpt(content, item.query, 500),
+                     "total_chars": len(content), "sections": [], "score": None}
+                    for path, content in self.files.items() if content is not None and
+                    (item.query.casefold() in (path + " " + content).casefold() or evidence(content, item.query))]
+            for hit in current:
+                if hit["scope"] != "scene":
+                    hits.append(hit)
+                elif hit["path"] not in self.files:
+                    baseline = await self._record_baseline(hit["path"])
+                    if baseline is None:
+                        continue
+                    if len(baseline) == hit["total_chars"] and hit["preview"] in baseline:
+                        hits.append(hit)
+                    elif item.query.casefold() in (hit["path"] + " " + baseline).casefold() or evidence(baseline, item.query):
+                        hits.append({
+                            **hit,
+                            "preview": excerpt(baseline, item.query, 500),
+                            "total_chars": len(baseline),
+                            "sections": [],
+                        })
+            return encode({"hits": hits[:item.limit]})
+        return await self.memory.execute(self.scene, arguments)
+
+    async def commit(self) -> list[tuple[dict, dict]]:
+        if not self.operations:
+            return []
+        target_paths = list(dict.fromkeys(operation["path"] for operation in self.operations))
+        committed: list[tuple[dict, dict]] = []
+        async with self.memory.write_lock(self.scene):
+            for path in target_paths:
+                expected = self.baselines[path]
+                try:
+                    current: str | None = (await self.memory.backend.read(self.scene, path)).content
+                except FileNotFoundError:
+                    current = None
+                if current != expected:
+                    raise RuntimeError(f"记忆文件 {path} 在整理期间已被修改，放弃旧草稿等待重整")
+            for operation in self.operations:
+                item = MEMORY_ARGUMENTS.validate_python(operation)
+                self.memory.own_bot_path(self.scene, item.path)
+                if isinstance(item, WriteMemory):
+                    require_bot_path(item.path, self.memory.known_persona_ids(self.scene))
+                    result = asdict(await self.memory.backend.write(self.scene, item.path, item.content, item.reason))
+                elif isinstance(item, DeleteMemory):
+                    result = asdict(await self.memory.backend.delete(self.scene, item.path, item.reason))
+                elif isinstance(item, ForgetMemory):
+                    selected = sorted(set(item.exclude_records))
+                    self.memory.store.check_message_records(self.scene, selected)
+                    added = self.memory.jobs.exclude_records(self.scene, selected)
+                    try:
+                        forgotten = await self.memory.backend.forget(self.scene, item.path)
+                    except Exception as error:
+                        raise RuntimeError(
+                            f"已保存 {len(selected)} 条原话的抽取排除；记忆遗忘未完成：{type(error).__name__}: {error}"
+                        ) from error
+                    result = {**asdict(forgotten), "excluded_records": selected, "new_exclusions": added}
+                else:
+                    raise ValueError(f"Unsupported staged memory operation: {item.action}")
+                committed.append((operation, result))
+        return committed
+
+    async def browse(self, item: BrowseMemory) -> str:
+        prefix = item.path + "/" if item.path else ""
+        nodes = {}
+        offset = 0
+        try:
+            while True:
+                page = await self.memory.backend.browse(self.scene, item.path, offset=offset, limit=100,
+                                                        bot_persona=self.memory.active_personas.get(self.scene))
+                nodes.update((node.name, asdict(node)) for node in page.nodes)
+                if not page.has_more:
+                    break
+                offset += len(page.nodes)
+        except FileNotFoundError:
+            if not any(path.startswith(prefix) and value is not None for path, value in self.files.items()):
+                raise
+        for path, content in self.files.items():
+            if path.startswith(prefix):
+                name, slash, _ = path[len(prefix):].partition("/")
+                if content is not None:
+                    nodes[name] = {"path": prefix + name, "name": name, "is_dir": bool(slash)}
+                elif not slash:
+                    nodes.pop(name, None)
+        ordered = sorted(nodes.values(), key=lambda node: (not node["is_dir"], node["name"]))
+        end = item.offset + item.limit
+        return encode({"nodes": ordered[item.offset:end], "has_more": end < len(ordered)})
+
+
+def _present_ids(plan: Plan, history: list[dict]) -> set[str]:
+    text = "\n".join(content if isinstance(content, str) else "\n".join(block.get("text", "") for block in content)
+                     for message in history if (content := message.get("content")))
+    return {key for _, message, _, _ in plan.rows if (key := message.platform_message_id) is not None
+            and f"id={json.dumps(key, ensure_ascii=False)}" in text}
+
+
 class SessionUpkeep:
     """One worker per scene with any upkeep part enabled; a failed pass waits for an explicit retry."""
 
@@ -103,6 +255,7 @@ class SessionUpkeep:
         self.memory = memory
         self.expression_service = expression_service
         self.slots = slots
+        self._concurrency = asyncio.Semaphore(2)
         # Set by the network runtime.
         self.fork: Fork | None = None
         self.connected_since: Callable[[], float | None] = lambda: None
@@ -181,6 +334,15 @@ class SessionUpkeep:
         self._failed_at.pop(scene, None)
         self._model_stuck.discard(scene)
 
+    async def set_memory_ingest(self, enabled: bool) -> None:
+        """Apply a live memory.ingest toggle across configured scenes without restarting."""
+        for scene, settings in self.scenes.items():
+            if enabled and self.memory_enabled and settings.memory_plugin is None:
+                if scene not in self.parts["memory"]:
+                    self.enable(scene, "memory")
+            elif scene in self.parts["memory"]:
+                await self.disable(scene, "memory")
+
     def _start_scene(self, scene: str) -> None:
         with log_context(scene=scene, job="session_upkeep"):
             self._workers[scene] = asyncio.create_task(self._worker(scene), name=f"session-upkeep:{scene}")
@@ -243,6 +405,16 @@ class SessionUpkeep:
             self._model_stuck.discard(scene)
             self._failures.pop(scene, None)
             self._failed_at.pop(scene, None)
+            if scene in self._wake:
+                self._wake[scene].set()
+
+    def model_rebound(self) -> None:
+        """Model settings changed live: clear failure counters and wake scenes stopped by old model errors."""
+        stuck = set(self._model_stuck) | set(self._failures)
+        self._model_stuck.clear()
+        self._failures.clear()
+        self._failed_at.clear()
+        for scene in stuck:
             if scene in self._wake:
                 self._wake[scene].set()
 
@@ -327,7 +499,20 @@ class SessionUpkeep:
             recent = await self.store.read(self.jargon.for_messages, scene, recent_texts)
             pending = await self.store.read(self.jargon.pending, scene)
             waiting = {item['id']: item for item in [*recent, *pending]}
-            plan.meanings = list(waiting.values())[:MEANING_BATCH]
+            excluded = set(self._exclude_uids(scene))
+            human_texts = [(seq, plain_text(message)) for seq, message, _, _ in jargon_rows
+                           if not message.is_self and message.send_status == "received" and message.sender.uid not in excluded]
+            for term in waiting.values():
+                if term["classification"] == "ordinary":
+                    evaluated = term["last_evaluated_seq"]
+                    samples = {seq for seq in term["sample_seqs"] if seq > evaluated}
+                    samples.update(seq for seq, text in human_texts if seq > evaluated
+                                   and any(contains(form, text) for form in self.jargon.forms(term)))
+                    if len(samples) < 5:
+                        continue
+                plan.meanings.append(term)
+                if len(plan.meanings) == MEANING_BATCH:
+                    break
         if scene in self.parts["effects"]:
             retry_of = self._effect_retry.get(scene)
             if retry_of is not None:
@@ -415,16 +600,17 @@ class SessionUpkeep:
             plan = await self._plan(scene)
         if plan is None or self.fork is None:
             return False
-        fork = await self.fork(scene)
-        if fork is None:
-            # The scene is in a turn; its end wakes this worker again.
-            return False
-        # A request received during planning or the history fork belongs to the next pass.
-        if self._force.get(scene) is requested:
-            self._force.pop(scene, None)
-        self._retry.discard(scene)
-        self._effect_retry.pop(scene, None)
-        await self._run(scene, plan, *fork)
+        async with self._concurrency:
+            fork = await self.fork(scene)
+            if fork is None:
+                # The scene is in a turn; its end wakes this worker again.
+                return False
+            # A request received during planning or the history fork belongs to the next pass.
+            if self._force.get(scene) is requested:
+                self._force.pop(scene, None)
+            self._retry.discard(scene)
+            self._effect_retry.pop(scene, None)
+            await self._run(scene, plan, *fork)
         return True
 
     # One pass
@@ -464,8 +650,8 @@ class SessionUpkeep:
                 examples[row_seq] = (row_seq, message, received)
         return [examples[seq] for seq in sorted(examples)]
 
-    async def _instruction(self, scene: str, plan: Plan, history: list[dict], tools: list[dict]
-                           ) -> tuple[str, dict[str, int], set[str], bool]:
+    async def _instruction(self, scene: str, plan: Plan, history: list[dict], tools: list[dict],
+                           present: set[str] | None = None) -> tuple[str, dict[str, int], set[str], bool]:
         """Returns the instruction, message keys, human message keys and whether memory is in it."""
         tasks, formats = [], {}
         memory = plan.memory_after is not None and plan.rows and any(
@@ -514,16 +700,12 @@ class SessionUpkeep:
             tasks.append(Template(read_prompt("next_upkeep_effects.md")).substitute(samples=encode(samples)).strip())
             formats["effects"] = [{"entry_seq": 1, "reaction": "agree", "reason": "一句依据"}]
         if plan.rows:
-            text = "\n".join(message["content"] if isinstance(message["content"], str)
-                             else "\n".join(block.get("text", "") for block in message["content"])
-                             for message in history if message.get("content"))
-            present = [key for key, seq in keys.items()
-                       if not key.startswith("r") and f"id={json.dumps(key, ensure_ascii=False)}" in text]
+            present = _present_ids(plan, history) if present is None else present
             missing = [self._line(scene, seq, message) for seq, message, _, _ in plan.rows
                        if self._key(message, seq) not in present]
             parts = []
             if present:
-                parts.append("整理范围包括上面对话里 id 为 " + "、".join(present) + " 的消息。")
+                parts.append("整理范围包括上面对话里 id 为 " + "、".join(key for key in keys if key in present) + " 的消息。")
             if missing:
                 parts.append("下面这些消息也在整理范围里，它们不在上面的对话中：\n" + encode(missing))
             messages = "\n".join(parts)
@@ -564,8 +746,32 @@ class SessionUpkeep:
         if begun.effect_call is not None:
             self.effects.fail(begun.effect_call, status, error)
 
+    @asynccontextmanager
+    async def _model_slot(self, scene: str, deadline: asyncio.Timeout):
+        if self.slots is None:
+            yield
+            return
+        # Only admitted work consumes the pass budget. Release the slot between tool rounds.
+        loop = asyncio.get_running_loop()
+        remaining = None if deadline.when() is None else deadline.when() - loop.time()
+        deadline.reschedule(None)
+        async with self.slots.slot(scene=scene, background=True):
+            if remaining is not None:
+                deadline.reschedule(loop.time() + remaining)
+            yield
+
     async def _run(self, scene: str, plan: Plan, history: list[dict], tools: list[dict]) -> None:
-        instruction, keys, humans, memory = await self._instruction(scene, plan, history, tools)
+        ingest = self.config.memory.ingest if self.memory_enabled else None
+        if ingest is None or scene not in self.parts["memory"]:
+            plan.memory_after = None
+        present = _present_ids(plan, history)
+        session_through = await self.store.read(self.store.session_through, scene)
+        archived = bool(plan.rows) and not present and plan.rows[0][0] <= session_through
+        if archived or estimate_text_request(history, [], 0) > self.config.compaction.input_tokens:
+            history = [{"role": "system", "content": "按整理指令处理给出的群聊记录，最后返回 JSON 对象。"}]
+            tools = [tool for tool in tools if plan.memory_after is not None and tool["function"]["name"] == "memory"]
+            present = set()
+        instruction, keys, humans, memory = await self._instruction(scene, plan, history, tools, present)
         if plan.memory_after is not None and plan.rows and not memory:
             raise ValueError(f"{scene} 的角色没有开放 memory 工具，整理不能写记忆；开放后重启或在面板关闭记忆整理")
         conversation = [*history, {"role": "user", "content": instruction}]
@@ -574,7 +780,7 @@ class SessionUpkeep:
         begun = self._begin(scene, plan, summary, memory)
         if self.on_update is not None:
             self.on_update()
-        steps = self.config.memory.ingest.max_steps if memory else 2
+        steps = ingest.max_steps if memory else 2
         texts = {key: plain_text(message) for key, seq in keys.items()
                  if key in humans and (message := self.store.read_message(scene, seq)) is not None}
         # A message removed by retention since the instruction was built can no longer be cited.
@@ -587,16 +793,18 @@ class SessionUpkeep:
             return next((seq for seq, _, _ in self.jargon.context(scene, low, self._exclude_uids(scene))
                          if seq > low), None) == high
 
-        written: list[str] = []
+        draft = MemoryDraft(self.memory, scene) if memory else None
         failed_tools = 0
         # One reminder each when the tool rounds run out and when the final JSON cannot be read.
         out_of_steps = corrected = False
+        cancelled = None
         try:
-            async with asyncio.timeout(self.config.memory.ingest.timeout_seconds if memory else None):
+            async with asyncio.timeout(ingest.timeout_seconds if memory else None) as deadline:
                 rounds = 0
                 while True:
-                    reply = await request_model(self.config, self.store, self.mind, conversation, tools, scene=scene,
-                                                role="upkeep", slots=self.slots, quick=True, notify=self.on_update)
+                    async with self._model_slot(scene, deadline):
+                        reply = await request_model(self.config, self.store, self.mind, conversation, tools, scene=scene,
+                                                    role="upkeep", quick=True, notify=self.on_update)
                     conversation.append(reply.message)
                     if reply.tool_calls:
                         rounds += 1
@@ -606,8 +814,7 @@ class SessionUpkeep:
                             if rounds >= steps:
                                 content = "整理的工具次数用完了，这次没有执行。"
                             else:
-                                content, failed = await self._tool(scene, call.name, call.arguments, memory,
-                                                                   begun, written)
+                                content, failed = await self._tool(call.name, call.arguments, begun, draft)
                                 failed_tools += failed
                             conversation.append({"role": "tool", "tool_call_id": call.id, "content": content})
                         if rounds >= steps:
@@ -632,7 +839,14 @@ class SessionUpkeep:
                         conversation.append({"role": "user", "content": f"上一条回复没法解析：{error}\n只输出整理结果的 JSON 对象。"})
             if dropped:
                 LOG.warning("session upkeep dropped %d result item(s) for %s: %s", len(dropped), scene, dropped)
-            await self._complete(scene, plan, begun, results, dropped, keys, reply, written, failed_tools)
+            # Once validated, finish the commit before a worker shutdown can release its resources.
+            commit = asyncio.create_task(self._complete(scene, plan, begun, results, dropped, keys, reply, draft, failed_tools))
+            while not commit.done():
+                try:
+                    await asyncio.shield(commit)
+                except asyncio.CancelledError as error:
+                    cancelled = error
+            commit.result()
         except asyncio.CancelledError as error:
             self._fail(begun, "interrupted", _error_text(error))
             self._failed(scene)
@@ -654,47 +868,45 @@ class SessionUpkeep:
         if self.on_update is not None:
             self.on_update()
 
+        if cancelled is not None:
+            raise cancelled
+
     def _failed(self, scene: str) -> None:
         self._failures[scene] = self._failures.get(scene, 0) + 1
         self._failed_at[scene] = self.store.now()
 
-    async def _tool(self, scene: str, name: str, arguments: dict, memory: bool, begun: Begun,
-                    written: list[str]) -> tuple[str, int]:
-        job = begun.memory_job
-        if name != "memory" or not memory:
+    async def _tool(self, name: str, arguments: dict, begun: Begun, draft: MemoryDraft | None) -> tuple[str, int]:
+        if name != "memory" or draft is None:
             return f"整理时只能用 memory 工具，{name} 没有执行。", 0
-        try:
-            content = await self.memory.execute(scene, arguments)
-        except Exception as error:
-            content = f"memory 失败：{_error_text(error)}"
-            job["details"]["tools"].append({"name": name, "arguments": arguments, "result": content,
-                                            "error": _error_text(error)})
-            self.memory.jobs.details(job)
-            return content, 1
-        job["details"]["tools"].append({"name": name, "arguments": arguments, "result": content[:2000], "error": None})
+        details = arguments
         if arguments.get("action") == "write":
-            result = json.loads(content)
-            written.append(result["path"])
-            job["details"]["writes"].append({
-                "path": result["path"], "action": result["action"], "changed_at": result["changed_at"],
-                "reason": arguments.get("reason"),
-                "before_chars": None if result.get("before") is None else len(result["before"]),
-                "after_chars": None if result.get("after") is None else len(result["after"])})
+            details = {key: arguments.get(key) for key in ("action", "path", "reason")}
+            content = arguments.get("content")
+            details["content_chars"] = len(content) if isinstance(content, str) else None
+        error_text = None
+        try:
+            content = await draft.execute(arguments)
+        except Exception as error:
+            error_text = _error_text(error)[:500]
+            content = f"memory 失败：{error_text}"
+        job = begun.memory_job
+        job["details"]["tools"].append({"name": name, "arguments": details, "result": content[:500], "error": error_text})
         self.memory.jobs.details(job)
-        return content, 0
-
-    def _same_expression(self, scene: str, situation: str, style: str) -> str:
-        """An adopted or pending expression with the same wording and a close situation absorbs the new one."""
-        for item in self.learning.expressions(scene, status=None, limit=500, offset=0)["items"]:
-            if item["style"] == style and item["status"] != "rejected" and overlap(item["situation"], situation) >= SAME_SITUATION:
-                return item["situation"]
-        return situation
+        return content, int(error_text is not None)
 
     async def _complete(self, scene: str, plan: Plan, begun: Begun, results: dict, dropped: list[str],
-                        keys: dict[str, int], reply: ModelReply, written: list[str], failed_tools: int) -> None:
+                        keys: dict[str, int], reply: ModelReply, draft: MemoryDraft | None, failed_tools: int) -> None:
         response = {"message": reply.message, "finish_reason": reply.finish_reason, "dropped": dropped}
         job = begun.memory_job
-        if job is not None:
+        written = []
+        if draft is not None:
+            for operation, result in await draft.commit():
+                written.append(result["path"])
+                job["details"]["writes"].append({
+                    "path": result["path"], "action": operation["action"], "changed_at": result.get("changed_at"),
+                    "reason": operation["reason"],
+                    "before_chars": None if result.get("before") is None else len(result["before"]),
+                    "after_chars": None if result.get("after") is None else len(result["after"])})
             # Failed memory calls went back to the model as results; the pass still completes.
             job["details"]["result"] = {"summary": reply.text[:2000], "write_count": len(written),
                                         "failed_tools": failed_tools}
@@ -706,9 +918,13 @@ class SessionUpkeep:
             auto_adopt = settings is not None and settings.auto_adopt
             candidates = []
             vectors = self.expression_service is not None and scene in self.expression_service.clients
+            existing = (self.learning.expressions(scene, status=None, limit=500, offset=0)["items"]
+                        if results["expressions"] and not vectors else [])
             for item in results["expressions"]:
                 seqs = [keys[key] for key in item["sources"]]
-                situation = item["situation"] if vectors else self._same_expression(scene, item["situation"], item["style"])
+                situation = next((old["situation"] for old in existing if old["status"] != "rejected"
+                                  and old["style"] == item["style"]
+                                  and overlap(old["situation"], item["situation"]) >= SAME_SITUATION), item["situation"])
                 candidates.append((situation, item["style"], seqs))
             if self.expression_service is None:
                 self.learning.complete(begun.batch, candidates, auto_adopt=auto_adopt)

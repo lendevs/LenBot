@@ -79,8 +79,14 @@ watch(personaOptions, (options) => {
 const manual = computed(() =>
   number.value.trim() ? `${platform.value}:${kind.value}:${number.value.trim()}` : '',
 )
+const manualPlaceholder = computed(() => t(`groups.join.placeholders.${platform.value}.${kind.value}`))
 const target = computed(() => picked.value ?? manual.value)
 const isGroup = computed(() => target.value.split(':')[1] !== 'private')
+const sceneId = (scene: string) => scene.split(':').slice(2).join(':')
+const scenePlatform = (scene: string) => {
+  const prefix = scene.split(':', 1)[0]
+  return prefix === 'onebot' ? '' : t(`chatPlatforms.${prefix}`)
+}
 watch(number, (value) => {
   if (value.trim()) picked.value = null
 })
@@ -131,7 +137,10 @@ watch(open, (value) => {
           :retry="available.refetch"
         />
         <EmptyState v-else-if="!available.data.value?.items.length" :title="t('groups.join.none')" compact />
-        <div v-else class="-mx-1 flex max-h-64 flex-col gap-0.5 overflow-y-auto px-1 scrollbar-thin">
+        <div
+          v-else
+          class="-mx-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto border-y border-line px-1 py-1 scrollbar-thin"
+        >
           <button
             v-for="item in available.data.value.items"
             :key="item.scene"
@@ -140,16 +149,28 @@ watch(open, (value) => {
             :aria-pressed="picked === item.scene"
             @click="pick(item.scene)"
           >
-            <Avatar :name="item.name || item.scene.split(':').pop() || '?'" shape="square" :size="30" />
-            <span class="grid min-w-0 flex-1 leading-snug">
-              <span class="truncate text-base">
-                {{ item.name || item.scene.split(':').slice(2).join(':') }}
+            <Avatar :name="item.name || sceneId(item.scene) || '?'" shape="square" :size="32" />
+            <span class="grid min-w-0 flex-1 gap-0.5 leading-snug">
+              <span class="truncate text-sm font-medium text-ink">
+                {{ item.name || sceneId(item.scene) }}
               </span>
-              <span class="truncate text-xs text-muted tabular">
-                {{ item.scene.split(':').slice(2).join(':') }}
-                <template v-if="item.members">
-                  · {{ t('groups.members', { n: formatNumber(item.members) }) }}
-                </template>
+              <span
+                v-if="
+                  scenePlatform(item.scene) ||
+                  (item.name && item.name !== sceneId(item.scene)) ||
+                  item.members
+                "
+                class="truncate text-xs text-muted tabular"
+              >
+                {{
+                  [
+                    scenePlatform(item.scene),
+                    item.name && item.name !== sceneId(item.scene) ? sceneId(item.scene) : '',
+                    item.members ? t('groups.members', { n: formatNumber(item.members) }, item.members) : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                }}
               </span>
             </span>
             <Check v-if="picked === item.scene" :size="16" class="shrink-0 text-primary" aria-hidden="true" />
@@ -174,21 +195,24 @@ watch(open, (value) => {
             ]"
             :label="t('groups.join.manual')"
           />
-          <Input
-            v-model="number"
-            :inputmode="platform === 'feishu' ? 'text' : 'numeric'"
-            :placeholder="kind === 'group' ? t('groups.join.number') : t('groups.join.account')"
-            :aria-label="kind === 'group' ? t('groups.join.number') : t('groups.join.account')"
-            class="min-w-40 flex-1"
-            mono
-          />
+          <div class="min-w-40 flex-1">
+            <Input
+              v-model="number"
+              :inputmode="platform === 'onebot' ? 'numeric' : 'text'"
+              :placeholder="manualPlaceholder"
+              :aria-label="manualPlaceholder"
+              mono
+            />
+          </div>
         </div>
       </section>
 
-      <Field :label="t('groups.join.persona')" required>
-        <Select v-model="persona" :options="personaOptions" :disabled="personas.isPending.value" />
-      </Field>
-      <NewGroupChoice v-if="isGroup" v-model="participation" v-model:mode="mode" />
+      <div class="grid gap-5 border-t border-line pt-5">
+        <Field :label="t('groups.join.persona')" required>
+          <Select v-model="persona" :options="personaOptions" :disabled="personas.isPending.value" />
+        </Field>
+        <NewGroupChoice v-if="isGroup" v-model="participation" v-model:mode="mode" />
+      </div>
       <ErrorNote v-if="personas.isError.value" :error="personas.error.value" :retry="personas.refetch" />
       <ErrorNote v-if="add.isError.value" :title="t('groups.join.failed')" :error="add.error.value" />
     </div>

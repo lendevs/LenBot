@@ -78,8 +78,30 @@ def _chat_message(message: dict, settings: ModelSettings) -> dict:
     return {k: v for k, v in message.items() if k not in internal and not (k == 'tool_calls' and v is None)}
 
 
+ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
+
+
+def _cache_breakpoint(block: dict) -> dict:
+    return block if block.get('cache_control') is not None else {**block, 'cache_control': {'type': 'ephemeral'}}
+
+
+def _count_cache_breakpoints(system: list[dict], tools: list[dict], contents: list[dict]) -> int:
+    used = sum(1 for block in system if block.get('cache_control') is not None)
+    used += sum(1 for tool in tools if tool.get('cache_control') is not None)
+    for message in contents:
+        for block in message.get('content') or ():
+            if not isinstance(block, dict):
+                continue
+            if block.get('cache_control') is not None:
+                used += 1
+            nested = block.get('content')
+            if isinstance(nested, list):
+                used += sum(1 for sub in nested if isinstance(sub, dict) and sub.get('cache_control') is not None)
+    return used
+
+
 def build_request(settings: ModelSettings, messages: list[dict], tools: list[dict], *,
-                  max_output_tokens: int | None = None) -> tuple[str, dict]:
+                  max_output_tokens: int | None = None, session_id: str | None = None) -> tuple[str, dict]:
     messages = _history(settings, messages)
     output = settings.max_output_tokens if max_output_tokens is None else max_output_tokens
     api = settings.api
@@ -114,6 +136,8 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
                 if content:
                     items.append({'role': message['role'], 'content': content})
         payload.update(input=items, store=False, include=['reasoning.encrypted_content'], max_output_tokens=output, stream=False)
+        if session_id:
+            payload.setdefault('prompt_cache_key', session_id)
         if tools:
             payload['tools'] = [{'type': 'function', **tool['function']} for tool in tools]
         if settings.reasoning_effort is not None:
@@ -124,7 +148,11 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
         for message in messages:
             role = message['role']
             if role in {'system', 'developer'}:
-                system.extend(_parts(message['content']))
+                system.extend(
+                    {'type': 'text', 'text': p['text'],
+                     **({'cache_control': p['cache_control']} if p.get('cache_control') is not None else {})}
+                    for p in _parts(message['content'])
+                )
                 continue
             native = _native(message, settings)
             if native is not None:
@@ -149,6 +177,8 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
                         content.append(_image(part['image_url']['url'], api))
                     else:
                         raise ValueError(f'不支持的内容块：{part["type"]}')
+                    if api == 'anthropic' and part.get('cache_control') is not None:
+                        content[-1]['cache_control'] = part['cache_control']
             native_role = ('assistant' if role == 'assistant' else 'user') if api == 'anthropic' else ('model' if role == 'assistant' else 'user')
             key = 'content' if api == 'anthropic' else 'parts'
             if content:
@@ -158,10 +188,38 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
                     contents.append({'role': native_role, key: content})
         if api == 'anthropic':
             payload.update(messages=contents, max_tokens=output, stream=False)
+            native_tools = [
+                {'name': t['function']['name'], 'description': t['function'].get('description', ''),
+                 'input_schema': t['function']['parameters'],
+                 **({'cache_control': t['cache_control']} if t.get('cache_control') is not None else {})}
+                for t in tools
+            ] if tools else []
+            used = _count_cache_breakpoints(system, native_tools, contents)
             if system:
+                if used < ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+                    for i in reversed(range(len(system))):
+                        if system[i]['type'] == 'text' and system[i].get('text', '').strip():
+                            if system[i].get('cache_control') is None:
+                                system[i] = _cache_breakpoint(system[i])
+                                used += 1
+                            break
                 payload['system'] = system
-            if tools:
-                payload['tools'] = [{'name': t['function']['name'], 'description': t['function'].get('description', ''), 'input_schema': t['function']['parameters']} for t in tools]
+            if native_tools:
+                if used < ANTHROPIC_MAX_CACHE_BREAKPOINTS and native_tools[-1].get('cache_control') is None:
+                    native_tools[-1] = _cache_breakpoint(native_tools[-1])
+                    used += 1
+                payload['tools'] = native_tools
+            if len(contents) >= 2 and used < ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+                blocks = contents[-2]['content']
+                for i in reversed(range(len(blocks))):
+                    if blocks[i]['type'] in {'thinking', 'redacted_thinking'}:
+                        continue
+                    if blocks[i]['type'] == 'text' and not blocks[i].get('text', '').strip():
+                        continue
+                    if blocks[i].get('cache_control') is None:
+                        blocks[i] = _cache_breakpoint(blocks[i])
+                        used += 1
+                    break
             if settings.thinking_budget_tokens is not None:
                 payload['thinking'] = {'type': 'enabled', 'budget_tokens': settings.thinking_budget_tokens}
             elif settings.reasoning_effort is not None:
@@ -207,8 +265,8 @@ def normalized_usage(api: str, usage: dict | None) -> dict | None:
     else:
         prompt, output = count('promptTokenCount'), count('candidatesTokenCount')
         thoughts, cached = count('thoughtsTokenCount'), count('cachedContentTokenCount')
-        if output is not None:
-            output += thoughts or 0
+        if output is not None or thoughts is not None:
+            output = (output or 0) + (thoughts or 0)
     return {**usage, 'prompt_tokens': prompt, 'completion_tokens': output, 'prompt_tokens_details': {'cached_tokens': cached}}
 
 

@@ -28,8 +28,10 @@ from ...configuration.chat import (
 from ...config import HostConfig, _read_root
 from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
+from ...configuration.onebot import ONEBOT_SETTINGS
 from ...platform import feishu as feishu_platform, telegram as telegram_platform
-from ...platform.adapter import PlatformCallError
+from ...platform.adapter import PlatformCallError, adapter_for
+from ...platform.onebot import OneBot
 from ...configuration.models import Roles
 from ...configuration.tasks import suggested_worker
 from ...work.bwrap import check_local_sandbox
@@ -286,11 +288,28 @@ class ConnectionTest(BaseModel):
     """One platform's settings as typed on the connection page; secrets left empty use the saved ones."""
     model_config = STRICT
 
-    platform: Literal["telegram", "feishu"]
+    platform: Literal["onebot", "telegram", "feishu"]
+    onebot: Annotated[ForwardPublic | ReversePublic, Field(discriminator="mode")] | None = None
+    access_token: str | None = Field(default=None, repr=False)
     telegram: TelegramPublic | None = None
     telegram_token: str | None = Field(default=None, repr=False)
     feishu: FeishuPublic | None = None
     feishu_secret: str | None = Field(default=None, repr=False)
+
+
+def _onebot_source(change: ForwardPublic | ReversePublic, access_token: str | None, saved: HostConfig) -> dict:
+    """The saved OneBot section: a new token, or the saved one while the connection address stays the same."""
+    if access_token == "":
+        raise ValueError("access_token replacement must not be empty")
+    onebot = change.model_dump(mode="json")
+    if access_token is None and saved.onebot is not None and saved.onebot.access_token:
+        old = saved.onebot.model_dump(mode="json")
+        if any(old.get(key) != onebot.get(key) for key in ("mode", "ws_url", "http_url")):
+            raise ValueError("OneBot 连接地址改变后需要重新填写访问令牌")
+    onebot["access_token"] = (
+        "" if saved.onebot is None else saved.onebot.access_token
+    ) if access_token is None else access_token
+    return onebot
 
 
 def _telegram_source(change: TelegramPublic, token: str | None, saved: HostConfig) -> dict:
@@ -451,8 +470,8 @@ def _snapshot(running: HostConfig, saved: HostConfig) -> dict:
         "restart_required": {
             "connection": any(
                 getattr(running, name) != getattr(saved, name)
-                for name in ("bot_id", "owners", "onebot", "telegram", "feishu", "timezone", "delivery", "max_steps",
-                             "turn_timeout_seconds", "max_model_requests", "text_delivery")
+                for name in ("bot_id", "owners", "owner_private_chat", "onebot", "telegram", "feishu", "timezone",
+                             "delivery", "max_steps", "turn_timeout_seconds", "max_model_requests", "text_delivery")
             ),
             "limits": running.limits != saved.limits,
             "retention": running.retention != saved.retention,
@@ -664,6 +683,9 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
             search = source.get('web_search')
             if search is not None and search.get('connection') is not None:
                 search['connection'] = renames.get(search['connection'], search['connection'])
+            read = source.get('web_read')
+            if read is not None and read.get('connection') is not None:
+                read['connection'] = renames.get(read['connection'], read['connection'])
             memory = source.get('memory')
             if memory is not None and memory['local'].get('embedding') is not None:
                 binding = memory['local']['embedding']
@@ -882,16 +904,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
         def edit(source: dict, saved: HostConfig) -> None:
             if change.access_token == "":
                 raise ValueError("access_token replacement must not be empty")
-            onebot = None
-            if change.onebot is not None:
-                onebot = change.onebot.model_dump(mode="json")
-                if change.access_token is None and saved.onebot is not None and saved.onebot.access_token:
-                    old = saved.onebot.model_dump(mode='json')
-                    if any(old.get(key) != onebot.get(key) for key in ('mode', 'ws_url', 'http_url')):
-                        raise ValueError('OneBot 连接地址改变后需要重新填写访问令牌')
-                onebot["access_token"] = (
-                    "" if saved.onebot is None else saved.onebot.access_token
-                ) if change.access_token is None else change.access_token
+            onebot = None if change.onebot is None else _onebot_source(change.onebot, change.access_token, saved)
             if change.bot_id is not None and change.bot_id != saved.bot_id:
                 if saved.bot_id.startswith("onebot:"):
                     raise ValueError("QQ Bot 账号由已连接的协议端确定，不能在这里修改")
@@ -923,11 +936,48 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
 
     @app.post("/api/host/settings/connection/test", response_model=responses.ConnectionTest, response_model_exclude_unset=True)
     async def test_connection(request: Request, _: str = Depends(user)):
-        """Check typed Telegram or Feishu credentials without saving; Telegram updates stay with the running host."""
+        """Check typed OneBot, Telegram or Feishu settings without saving; Telegram updates stay with the running host."""
         item: ConnectionTest = await _body(request, ConnectionTest)
         try:
             saved = await asyncio.to_thread(_read_saved, root)
-            if item.platform == "telegram":
+            if item.platform == "onebot":
+                if item.onebot is None:
+                    raise ValueError("缺少 OneBot 设置")
+                onebot_settings = ONEBOT_SETTINGS.validate_python(
+                    _onebot_source(item.onebot, item.access_token, saved))
+                live_onebot = (adapter_for(runtime.platform, "onebot")
+                               if running.delivery == "live" and running.onebot is not None else None)
+                same_listener = (
+                    live_onebot is not None
+                    and onebot_settings.mode == "reverse_ws"
+                    and running.onebot.mode == "reverse_ws"
+                    and (
+                        (onebot_settings.listen_host, onebot_settings.listen_port)
+                        == (running.onebot.listen_host, running.onebot.listen_port)
+                        or (onebot_settings.listen_host, onebot_settings.listen_port)
+                        in getattr(live_onebot, "addresses", ())
+                    )
+                )
+                if same_listener:
+                    if (onebot_settings.access_token != running.onebot.access_token
+                            or onebot_settings.action_transport != running.onebot.action_transport
+                            or (onebot_settings.action_transport == "http"
+                                and onebot_settings.http_url != running.onebot.http_url)):
+                        raise ValueError("反向 WebSocket 当前正在监听该端口；修改访问令牌或通信方式后请先保存并重启宿主")
+                    bot_id = await live_onebot.identify(force=True)
+                else:
+                    errors: list[str] = []
+                    try:
+                        async with OneBot(
+                            onebot_settings, bot_id=None, on_event=lambda _: None, on_error=errors.append
+                        ) as platform:
+                            bot_id = await platform.identify()
+                    except PlatformCallError as error:
+                        if errors:
+                            raise ValueError(f"{error}（{errors[-1]}）") from error
+                        raise
+                result = {"bot_id": bot_id, "name": bot_id.removeprefix("onebot:")}
+            elif item.platform == "telegram":
                 if item.telegram is None:
                     raise ValueError("缺少 Telegram 设置")
                 settings = _telegram_source(item.telegram, item.telegram_token, saved)

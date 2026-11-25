@@ -13,7 +13,6 @@ from ..models.usage import record_usage
 from ..storage.codec import encode
 from .materials import MATERIALS
 from ..memory.embeddings import _reject_constant
-from .worker_model import REJECTED_HTTP_STATUSES
 
 if TYPE_CHECKING:
     from ..storage.store import Store
@@ -176,6 +175,88 @@ class TaskStore:
             "SELECT * FROM tasks WHERE status IN ('running','waiting_input') ORDER BY id"
         ).fetchall()
         return [_task(row) for row in rows]
+
+    def has_waiting_input(self, scene: str) -> bool:
+        return self.db.execute(
+            "SELECT 1 FROM tasks WHERE scene=? AND status='waiting_input' LIMIT 1", (scene,)
+        ).fetchone() is not None
+
+    def waiting_requesters(self, scene: str) -> set[str]:
+        return {row[0] for row in self.db.execute(
+            "SELECT DISTINCT requester FROM tasks WHERE scene=? AND status='waiting_input'", (scene,)
+        )}
+
+    def latest_progress_text(self, scene: str, id: int) -> str | None:
+        row = self.db.execute(
+            "SELECT json_extract(body,'$.text') FROM task_events "
+            "WHERE scene=? AND task_id=? AND kind='progress' ORDER BY id DESC LIMIT 1",
+            (scene, id),
+        ).fetchone()
+        return None if row is None or not isinstance(row[0], str) else row[0]
+
+    def watchdog_events(self, scene: str, id: int) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT id,created,body FROM task_events "
+            "WHERE scene=? AND task_id=? AND kind='watchdog' ORDER BY id",
+            (scene, id),
+        ).fetchall()
+        events = []
+        for row in rows:
+            data = json.loads(row[2])
+            events.append({
+                "id": row[0],
+                "created": row[1],
+                "action": data["action"],
+                "reason": data["reason"],
+                "detail": data["detail"],
+            })
+        return events
+
+    def add_watchdog_event(self, scene: str, id: int, decision) -> int:
+        """Record a watchdog steer or stop without creating a separate pending_notices wake."""
+        return self.add_event(scene, id, "watchdog", {
+            "action": decision.action,
+            "reason": decision.reason,
+            "detail": decision.detail,
+        }, notice=None)
+
+    def router_tickets(self, scene: str, *, recent_since: float,
+                       active_limit: int = 20, recent_limit: int = 3) -> dict:
+        """Compact active and recently ended ticket views for the chat router's turn state."""
+        active_items = self.list(scene, status="active", limit=active_limit + 1)
+        active = []
+        for item in active_items[:active_limit]:
+            entry: dict = {
+                "id": item.id, "requester": item.requester, "status": item.status,
+                "goal": item.goal[:120], "deliverable": item.deliverable[:80],
+            }
+            if item.question is not None:
+                entry["question"] = item.question
+            progress = self.latest_progress_text(scene, item.id)
+            if progress:
+                entry["latest_progress"] = progress[:120]
+            active.append(entry)
+        recent_rows = self.db.execute(
+            "SELECT * FROM tasks WHERE scene=? AND status IN ('done','failed') "
+            "AND ended IS NOT NULL AND ended>=? ORDER BY ended DESC,id DESC LIMIT ?",
+            (scene, recent_since, recent_limit),
+        ).fetchall()
+        recent = []
+        for row in recent_rows:
+            item = _task(row)
+            files = [{"id": f.id, "name": f.name} for f in self.list_files(scene, item.id)]
+            entry = {
+                "id": item.id, "requester": item.requester, "status": item.status,
+                "goal": item.goal[:120], "can_continue": not self.workspace_discarded(scene, item.id),
+            }
+            if files:
+                entry["files"] = files
+            if item.status == "done" and item.summary:
+                entry["summary"] = item.summary[:160]
+            elif item.error:
+                entry["error"] = item.error[:160]
+            recent.append(entry)
+        return {"active": active, "active_overflow": len(active_items) > active_limit, "recent": recent}
 
     def containers(self) -> list[Task]:
         rows = self.db.execute("SELECT * FROM tasks WHERE container IS NOT NULL ORDER BY id").fetchall()
@@ -358,6 +439,17 @@ class TaskStore:
                          provider=body["request"]["provider"], model=body["request"]["model"],
                          tokens=facts.get("tokens"))
 
+    def execution_call_count(self, scene: str, id: int) -> int:
+        """Model calls recorded in the current (or latest) execution, matching per-execution ``max_calls``."""
+        self.get(scene, id)
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM task_events WHERE scene=? AND task_id=? AND kind='model_call' "
+            "AND id > COALESCE((SELECT MAX(id) FROM task_events WHERE scene=? AND task_id=? "
+            "AND kind='input' AND json_extract(body,'$.mode')='continue'), 0)",
+            (scene, id, scene, id),
+        ).fetchone()
+        return int(row[0])
+
     def call_tokens(self, scene: str, id: int, *, for_budget: bool = False) -> list[dict | None]:
         self.get(scene, id)
         rows = self.db.execute(
@@ -367,8 +459,7 @@ class TaskStore:
         records = []
         for row in rows:
             response = None if row[0] is None else json.loads(row[0])
-            if (for_budget and response is not None and response.get('tokens') is None
-                    and response.get('http_status') in REJECTED_HTTP_STATUSES and response.get('error') is not None):
+            if for_budget and response is not None and response.get('tokens') is None and response.get('error') is not None:
                 continue
             records.append(None if response is None else response.get('tokens'))
         return records

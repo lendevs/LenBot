@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowUpRight, ChevronDown } from '@lucide/vue'
+import { ArrowUpRight } from '@lucide/vue'
 import {
   capabilitiesApi,
   capabilitiesOf,
@@ -14,9 +14,9 @@ import {
 import { keys } from '../../api/query'
 import { groupsTarget } from '../groups/route'
 import { settingsApi } from '../../api/settings'
-import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { readPendingRestart } from '../../api/hostStore'
 import Button from '../../ui/Button.vue'
+import Collapsible from '../../ui/Collapsible.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
@@ -32,6 +32,8 @@ import Switch from '../../ui/Switch.vue'
 import TagInput from '../../ui/TagInput.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
+
+const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
@@ -137,24 +139,71 @@ const savedForm = computed(() => (saved.value ? editable(saved.value) : saved.va
 const draft = ref<WorkerForm | null>(null)
 /** The settings kept while the switch is off, so turning it back on restores them. */
 const parked = ref<WorkerForm | null>(null)
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 watch(
   savedForm,
   (next, previous) => {
     if (next === undefined) return
-    if (previous === undefined || same(draft.value, previous)) draft.value = next
+    if (previous === undefined || same(draft.value, previous)) draft.value = next ? clone(next) : null
   },
   { immediate: true },
 )
 /** The draft while the switch is on; the form block only renders then. */
 const form = computed(() => draft.value!)
 const dirty = computed(() => savedForm.value !== undefined && !same(draft.value, savedForm.value))
-useUnsavedChanges(dirty, { keep: ['tab'] })
+watch(dirty, (value) => emit('dirty', value), { immediate: true })
+/** True while the user enabled tasks from scratch before host defaults finished loading. */
+const waitingDefaults = ref(false)
+const DEFAULT_KEYS = [
+  'sandbox',
+  'bwrap_binary',
+  'task_runtime',
+  'docker_binary',
+  'docker_host',
+  'image',
+  'workspace_root',
+  'runtime_root',
+  'delivery_root',
+  'skills_directory',
+  'uid',
+  'gid',
+  'task_volume',
+] as const
+function applyPendingDefaults() {
+  if (!waitingDefaults.value || !draft.value || !defaults.data.value) return
+  const baseline = editable(stored(fresh()))
+  const suggested = editable({ ...stored(fresh()), ...defaults.data.value })
+  for (const key of DEFAULT_KEYS) {
+    if (key in defaults.data.value && same(draft.value[key], baseline[key])) {
+      ;(draft.value as Record<string, unknown>)[key] = suggested[key]
+    }
+  }
+  waitingDefaults.value = false
+}
+watch(
+  () => [defaults.data.value, defaults.isError.value] as const,
+  ([data, failed]) => {
+    if (data) applyPendingDefaults()
+    else if (failed) waitingDefaults.value = false
+  },
+)
 function toggle(on: boolean) {
-  if (on)
-    draft.value = parked.value ?? savedForm.value ?? editable({ ...stored(fresh()), ...defaults.data.value })
-  else {
-    parked.value = draft.value
+  if (on) {
+    if (parked.value ?? savedForm.value) {
+      waitingDefaults.value = false
+      const restored = parked.value ?? savedForm.value ?? null
+      draft.value = restored ? clone(restored) : null
+    } else if (defaults.data.value) {
+      waitingDefaults.value = false
+      draft.value = editable({ ...stored(fresh()), ...defaults.data.value })
+    } else {
+      waitingDefaults.value = defaults.isPending.value
+      draft.value = editable(stored(fresh()))
+    }
+  } else {
+    parked.value = waitingDefaults.value || !draft.value ? null : clone(draft.value)
+    waitingDefaults.value = false
     draft.value = null
   }
 }
@@ -163,36 +212,36 @@ type NumberKey = {
   [K in keyof WorkerForm]-?: WorkerForm[K] extends number | null ? K : never
 }[keyof WorkerForm]
 type EgressKey = { [K in keyof Egress]: Egress[K] extends number | null ? K : never }[keyof Egress]
-const limits: { key: NumberKey; unit?: string; decimals?: boolean }[] = [
+const limits = computed<{ key: NumberKey; unit?: string; decimals?: boolean }[]>(() => [
   { key: 'cpus', decimals: true },
   { key: 'pids_limit' },
-  { key: 'command_timeout_seconds', unit: 's', decimals: true },
+  { key: 'command_timeout_seconds', unit: t('capabilities.seconds'), decimals: true },
   { key: 'max_running' },
   { key: 'max_containers' },
   { key: 'max_scene_containers' },
   { key: 'max_calls' },
   { key: 'max_request_bytes', unit: 'B' },
   { key: 'max_response_bytes', unit: 'B' },
-  { key: 'active_timeout_seconds', unit: 's', decimals: true },
-  { key: 'input_timeout_seconds', unit: 's', decimals: true },
+  { key: 'active_timeout_seconds', unit: t('capabilities.seconds'), decimals: true },
+  { key: 'input_timeout_seconds', unit: t('capabilities.seconds'), decimals: true },
   { key: 'max_file_bytes', unit: 'B' },
   { key: 'max_delivery_bytes', unit: 'B' },
   { key: 'max_workspace_bytes', unit: 'B' },
   { key: 'disk_reserve_bytes', unit: 'B' },
   { key: 'disk_stop_bytes', unit: 'B' },
-  { key: 'workspace_retention_days', decimals: true },
+  { key: 'workspace_retention_days', unit: t('capabilities.days'), decimals: true },
   { key: 'compaction_reserve_tokens', unit: 'tokens' },
   { key: 'compaction_keep_recent_tokens', unit: 'tokens' },
-]
-const egressLimits: { key: EgressKey; unit?: string; decimals?: boolean }[] = [
+])
+const egressLimits = computed<{ key: EgressKey; unit?: string; decimals?: boolean }[]>(() => [
   { key: 'max_task_upload_bytes', unit: 'B' },
   { key: 'max_task_bytes', unit: 'B' },
   { key: 'max_scene_daily_bytes', unit: 'B' },
   { key: 'max_connections' },
   { key: 'bytes_per_second', unit: 'B/s' },
-  { key: 'connect_timeout_seconds', unit: 's', decimals: true },
-  { key: 'header_timeout_seconds', unit: 's', decimals: true },
-]
+  { key: 'connect_timeout_seconds', unit: t('capabilities.seconds'), decimals: true },
+  { key: 'header_timeout_seconds', unit: t('capabilities.seconds'), decimals: true },
+])
 const paths = ['workspace_root', 'runtime_root', 'delivery_root'] as const
 const SIZE = /^[1-9][0-9]*[kmgKMG]$/
 /** POSIX absolute paths and Windows drive or UNC paths; the host checks the path on its own platform. */
@@ -201,6 +250,7 @@ const DOCKER_HOST = /^(unix:\/\/\/.|npipe:\/\/\/\/\.\/pipe\/[A-Za-z0-9_.-]+$)/
 /** Same rule as the host: a lowercase domain, or *. and a domain for its subdomains. */
 const HOST = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
 
+const awaitingDefaults = computed(() => waitingDefaults.value && defaults.isPending.value)
 const errors = computed(() => {
   const value = draft.value
   const result: Record<string, string> = {}
@@ -209,22 +259,23 @@ const errors = computed(() => {
   const sandboxPaths =
     value.sandbox === 'docker' ? (['docker_binary'] as const) : (['bwrap_binary', 'task_runtime'] as const)
   for (const key of [...paths, ...sandboxPaths]) {
-    if (!value[key].trim()) result[key] = required
-    else if (!ABSOLUTE.test(value[key])) result[key] = t('capabilities.worker.absolute')
+    if (!value[key].trim()) {
+      if (!awaitingDefaults.value) result[key] = required
+    } else if (!ABSOLUTE.test(value[key])) result[key] = t('capabilities.worker.absolute')
   }
   if (value.skills_directory && !ABSOLUTE.test(value.skills_directory))
     result.skills_directory = t('capabilities.worker.absolute')
   if (value.sandbox === 'docker') {
-    if (!value.image.trim()) result.image = required
+    if (!value.image.trim() && !awaitingDefaults.value) result.image = required
     if (!DOCKER_HOST.test(value.docker_host)) result.docker_host = t('capabilities.worker.dockerHostRule')
-    if (value.uid === null) result.uid = required
-    if (value.gid === null) result.gid = required
+    if (value.uid === null && !awaitingDefaults.value) result.uid = required
+    if (value.gid === null && !awaitingDefaults.value) result.gid = required
   }
   if (value.model_reasoning === null) result.model_reasoning = t('capabilities.worker.pickReasoning')
   if (!SIZE.test(value.memory)) result.memory = t('capabilities.worker.size')
   if (!SIZE.test(value.tmpfs_size)) result.tmpfs_size = t('capabilities.worker.size')
-  for (const { key } of limits) if (value[key] === null) result[key] = required
-  for (const { key } of egressLimits) if (value.egress[key] === null) result[`egress.${key}`] = required
+  for (const { key } of limits.value) if (value[key] === null) result[key] = required
+  for (const { key } of egressLimits.value) if (value.egress[key] === null) result[`egress.${key}`] = required
   if (value.egress.mode === 'allowlist' && value.egress.allowed_hosts.length === 0)
     result.allowed_hosts = t('capabilities.worker.hostsRequired')
   const badHost = value.egress.allowed_hosts.find((host) => !HOST.test(host))
@@ -237,17 +288,21 @@ const errors = computed(() => {
     result.disk_stop_bytes = t('capabilities.worker.diskOrder')
   return result
 })
-const invalid = computed(() => Object.keys(errors.value).length > 0)
-/** Advanced limits open on their own when one of them needs fixing. */
+const invalid = computed(() => awaitingDefaults.value || Object.keys(errors.value).length > 0)
+const advancedHasError = computed(() =>
+  Object.keys(errors.value).some(
+    (key) => key.startsWith('egress.') || limits.value.some((item) => item.key === key),
+  ),
+)
+/** Advanced limits open on their own when any field inside needs fixing. */
 const advanced = ref(false)
-watch(invalid, () => {
-  if (
-    Object.keys(errors.value).some(
-      (key) => key.startsWith('egress.') || limits.some((item) => item.key === key),
-    )
-  )
-    advanced.value = true
-})
+watch(
+  advancedHasError,
+  (hasError) => {
+    if (hasError) advanced.value = true
+  },
+  { immediate: true },
+)
 
 const save = useMutation({
   mutationFn: () => capabilitiesApi.saveWorker(draft.value && stored(draft.value)),
@@ -255,13 +310,24 @@ const save = useMutation({
     client.setQueryData(keys.host.settings(), snapshot)
     void client.invalidateQueries({ queryKey: keys.host.workerReadiness() })
     const next = capabilitiesOf(snapshot).worker
-    draft.value = next && editable(next)
+    parked.value = null
+    draft.value = next ? clone(editable(next)) : null
     void readPendingRestart()
     toast.success(t('capabilities.savedRestart'))
   },
 })
+watch(
+  draft,
+  () => {
+    if (save.isError.value) save.reset()
+  },
+  { deep: true },
+)
 const saveError = computed(() =>
   save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
+)
+const saveRawError = computed(() =>
+  save.isError.value ? describeError(save.error.value, t('ui.error.network')).raw : null,
 )
 const reasoning = computed(() => [
   { value: 'yes', label: t('capabilities.worker.reasoningYes') },
@@ -341,10 +407,10 @@ function addPackageHosts() {
     :error="settings.error.value"
     :retry="settings.refetch"
   />
-  <div v-else-if="saved !== undefined" class="flex min-w-0 flex-col gap-4">
-    <div class="flex min-w-0 flex-col gap-6 rounded-xl border border-line bg-surface p-5">
+  <div v-else-if="saved !== undefined" class="flex min-w-0 max-w-4xl flex-col gap-4">
+    <div class="flex min-w-0 flex-col gap-6">
       <Field :label="t('capabilities.worker.on')" inline>
-        <Switch :model-value="draft !== null" @update:model-value="toggle" />
+        <Switch :model-value="draft !== null" :loading="awaitingDefaults" @update:model-value="toggle" />
       </Field>
       <template v-if="draft">
         <TaskReadiness :has-model="hasModel" />
@@ -376,6 +442,9 @@ function addPackageHosts() {
           </Field>
         </FormSection>
         <FormSection :title="t('capabilities.worker.abilities')">
+          <Field :label="t('capabilities.worker.mcp')" inline wide>
+            <Switch v-model="form.mcp" :aria-label="t('capabilities.worker.mcp')" />
+          </Field>
           <Field :label="t('capabilities.worker.network')" wide>
             <div>
               <SegmentedControl
@@ -392,15 +461,13 @@ function addPackageHosts() {
             :error="errors.allowed_hosts"
             wide
           >
-            <div class="flex min-w-0 flex-col items-start gap-2">
-              <TagInput
-                v-model="form.egress.allowed_hosts"
-                placeholder="example.com、*.example.org"
-                class="w-full"
-              />
-              <Button size="sm" variant="ghost" @click="addPackageHosts">
-                {{ t('capabilities.worker.packageHosts') }}
-              </Button>
+            <div class="flex min-w-0 flex-col gap-2">
+              <TagInput v-model="form.egress.allowed_hosts" placeholder="example.com, *.example.org" />
+              <div class="-ml-2 flex">
+                <Button size="sm" variant="ghost" @click="addPackageHosts">
+                  {{ t('capabilities.worker.packageHosts') }}
+                </Button>
+              </div>
             </div>
           </Field>
         </FormSection>
@@ -525,22 +592,12 @@ function addPackageHosts() {
             </Button>
           </p>
         </FormSection>
-        <section class="border-t border-line pt-6">
-          <button
-            type="button"
-            class="flex w-full cursor-pointer items-center justify-between gap-3 rounded-sm text-left focus-visible:focus-ring"
-            :aria-expanded="advanced"
-            @click="advanced = !advanced"
-          >
-            <h3 class="text-base font-semibold text-ink">{{ t('capabilities.worker.advanced') }}</h3>
-            <ChevronDown
-              :size="18"
-              class="text-subtle transition-transform"
-              :class="advanced && 'rotate-180'"
-              aria-hidden="true"
-            />
-          </button>
-          <div v-if="advanced" class="mt-4 grid gap-x-5 gap-y-5 sm:grid-cols-2">
+        <Collapsible
+          v-model:open="advanced"
+          :title="t('capabilities.worker.advanced')"
+          :dot="advancedHasError ? 'error' : false"
+        >
+          <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
             <Field
               v-for="item in limits"
               :key="item.key"
@@ -570,16 +627,24 @@ function addPackageHosts() {
               />
             </Field>
           </div>
-        </section>
+        </Collapsible>
       </template>
     </div>
     <SaveBar
       :dirty="dirty"
       :saving="save.isPending.value"
       :error="saveError"
+      :raw-error="saveRawError"
       :invalid="invalid"
       @save="save.mutate()"
-      @discard="draft = savedForm ?? null"
+      @discard="
+        () => {
+          waitingDefaults = false
+          parked = null
+          draft = savedForm ? clone(savedForm) : null
+          if (save.isError.value) save.reset()
+        }
+      "
     />
   </div>
 </template>

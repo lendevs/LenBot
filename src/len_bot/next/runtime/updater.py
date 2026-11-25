@@ -23,6 +23,7 @@ import zipfile
 import httpx
 
 from ..deployment import Deployment, read_json, write_json
+from ..maintenance.snapshot import HEADROOM, _size
 from .logs import log_event
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,7 @@ class Updater:
                 else:
                     names = [f'len_bot-{manifest["version"]}-py3-none-any.whl', 'requirements.txt']
                 total = sum(manifest['files'][name]['bytes'] for name in names)
+                await asyncio.to_thread(self._check_space, total)
                 self.progress = {'done': 0, 'total': total}
                 for name in names:
                     await self._download(client, assets[name], work / name, manifest['files'][name])
@@ -161,6 +163,25 @@ class Updater:
             log_event(logger, 'update_failed', level=logging.ERROR, error=error, target=self.target)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+    def _check_space(self, download_bytes: int) -> None:
+        """Stop before downloading when the release, unpacked runtime, snapshot and headroom do not fit."""
+        deployment = self.deployment
+        install_bytes = download_bytes * 3 if deployment.kind == 'package' else download_bytes + _size(Path(sys.prefix))
+        snapshot_bytes = _size(deployment.instance) if deployment.instance.exists() else 0
+        needed = install_bytes + snapshot_bytes + HEADROOM
+        checked: set[Path] = set()
+        for target in (deployment.updates, deployment.versions, deployment.backups):
+            existing = next(parent for parent in (target, *target.parents) if parent.exists())
+            if existing in checked:
+                continue
+            checked.add(existing)
+            free = shutil.disk_usage(existing).free
+            if free < needed:
+                raise UpdateError(
+                    f'更新需要约 {needed / 2**30:.2f} GiB 磁盘空间（含 {HEADROOM // 2**20} MiB 余量），'
+                    f'{existing} 所在磁盘仅剩 {free / 2**30:.2f} GiB；请清理空间后再更新'
+                )
 
     async def _download(self, client: httpx.AsyncClient, url: str, destination: Path, expected: dict) -> None:
         digest = hashlib.sha256()

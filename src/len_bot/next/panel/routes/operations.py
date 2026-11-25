@@ -1,9 +1,10 @@
 """Authenticated notice, usage, log and diagnostic views of existing records."""
 import asyncio
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 import logging
+from pathlib import Path
 import sqlite3
 import os
 import stat
@@ -15,7 +16,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...runtime.logs import log_event, log_files, read_records
+from ...runtime.logs import LOG_NAME, log_event, log_files, read_records
 from ...work.storage import temporary_paths
 from ...runtime.operations import diagnostic_zip
 from ...work.store import TaskStore
@@ -50,6 +51,35 @@ def stderr_tail(path):
 logger = logging.getLogger(__name__)
 
 
+def turn_log_files(directory: Path, started: float, ended: float | None, now: float, *, tz_name: str = 'UTC') -> list[Path]:
+    """Select rotated log files within ±1 day of the turn's UTC/local dates instead of scanning the entire log archive."""
+    end = now if ended is None else max(started, ended)
+    local_zone = ZoneInfo(tz_name)
+    first = min(
+        datetime.fromtimestamp(started, timezone.utc).date(),
+        datetime.fromtimestamp(started, local_zone).date(),
+    ) - timedelta(days=1)
+    last = max(
+        datetime.fromtimestamp(end, timezone.utc).date(),
+        datetime.fromtimestamp(end, local_zone).date(),
+    ) + timedelta(days=1)
+    today = datetime.fromtimestamp(now, timezone.utc).date()
+    selected: list[Path] = []
+    for path in log_files(directory):
+        suffix = path.name.removeprefix(LOG_NAME)
+        if not suffix:
+            if ended is None or first <= today <= last:
+                selected.append(path)
+            continue
+        try:
+            day = date.fromisoformat(suffix.removeprefix('.'))
+        except ValueError:
+            continue
+        if first <= day <= last:
+            selected.append(path)
+    return selected
+
+
 def register_host_operations(app, *, runtime, user):
     config, store = runtime.config, runtime.store
     def scene_exists(scene):
@@ -76,7 +106,7 @@ def register_host_operations(app, *, runtime, user):
         if runner.execution.locked() or runtime.status in {'stopping', 'stopped'}:
             raise HTTPException(409, '场景正在执行或宿主正在停止，请稍后重试')
         async with runner.execution:
-            if store.db.execute('SELECT 1 FROM turns WHERE scene=? AND ended IS NULL LIMIT 1', (scene,)).fetchone():
+            if await store.read(store.has_open_turn, scene):
                 raise HTTPException(409, '场景有未结束或等待恢复的回合，请在结束后重试')
             if action == 'new-context':
                 through = store.new_context(scene)
@@ -170,13 +200,16 @@ def register_host_operations(app, *, runtime, user):
     @app.get('/api/host/scenes/{scene}/turns/{turn_id}/export', response_class=Response)
     async def turn_export(scene: str, turn_id: str, _: str = Depends(user)):
         scene_exists(scene)
-        def read():
-            with Store(config.database, readonly=True) as records:
-                return records.turn_detail(scene, turn_id)
-        detail = await asyncio.to_thread(read)
+        detail = await store.read(store.turn_detail, scene, turn_id)
         if detail is None:
             raise HTTPException(404, '当前场景不存在此回合')
-        logs = await asyncio.to_thread(read_records, config.logging.directory, limit=2000, match={'turn_id': turn_id})
+        turn = detail['turn']
+        files = await asyncio.to_thread(
+            turn_log_files, config.logging.directory, turn['started'], turn['ended'], store.now(),
+            tz_name=config.scene_timezone(scene),
+        )
+        logs = await asyncio.to_thread(read_records, config.logging.directory, limit=2000,
+                                       match={'turn_id': turn_id}, files=files)
         return await archive({'turn': detail, 'log': list(reversed(logs)),
                         'scope': '实际轮次与调用，以及同一轮 ID 的运行日志；输入原话见保存的请求'})
 
@@ -184,24 +217,28 @@ def register_host_operations(app, *, runtime, user):
     async def task_export(task_id: int, scene: str, _: str = Depends(user)):
         scene_exists(scene)
         tasks = TaskStore(store)
-        try:
+
+        def read_task():
             task = tasks.get(scene, task_id)
+            events = [dict(row) for row in store.db.execute(
+                'SELECT * FROM task_events WHERE scene=? AND task_id=? ORDER BY id', (scene, task_id))]
+            for event in events:
+                event['body'] = json.loads(event['body'])
+            files = [dict(row) for row in store.db.execute(
+                'SELECT name,size,note,created FROM task_files WHERE scene=? AND task_id=?', (scene, task_id))]
+            return task, events, files
+
+        try:
+            task, events, files = await store.read(read_task)
         except ValueError as error:
             raise HTTPException(404, str(error)) from error
-        events = [dict(row) for row in store.db.execute(
-            'SELECT * FROM task_events WHERE scene=? AND task_id=? ORDER BY id', (scene, task_id))]
-        for event in events:
-            event['body'] = json.loads(event['body'])
         logs = await asyncio.to_thread(read_records, config.logging.directory, limit=2000,
                                        match={'scene': scene, 'task_id': str(task_id)})
         stderr = {} if config.worker is None else {
             str(path.name): await asyncio.to_thread(stderr_tail, path)
             for path, kind in temporary_paths(config.worker, scene, task_id)
             if kind == 'file' and path.name.endswith('.stderr') and path.is_file()}
-        return await archive({'task': asdict(task), 'events': events,
-                        'files': [dict(row) for row in store.db.execute(
-                            'SELECT name,size,note,created FROM task_files WHERE scene=? AND task_id=?',
-                            (scene, task_id))],
+        return await archive({'task': asdict(task), 'events': events, 'files': files,
                         'log': list(reversed(logs)), 'container_stderr_tail': stderr,
                         'scope': '已保存任务事件、文件清单、同一任务的运行日志和容器进程 stderr 末尾 64 KiB'})
 
@@ -279,13 +316,12 @@ def register_host_operations(app, *, runtime, user):
             end = start + timedelta(days=1)
         def read():
             selected = None if scene is None else [scene]
-            with Store(config.database, readonly=True) as source:
-                rows = usage_rows(source.db, selected, start.timestamp(), end.timestamp())
-                return {"timezone": zone, "period": period, "since": start.timestamp(), "until": end.timestamp(),
-                        **summarize(rows, zone),
-                        'wakes': wake_usage(source, selected, start.timestamp(), end.timestamp(), zone)}
+            rows = usage_rows(store.db, selected, start.timestamp(), end.timestamp())
+            return {"timezone": zone, "period": period, "since": start.timestamp(), "until": end.timestamp(),
+                    **summarize(rows, zone),
+                    'wakes': wake_usage(store, selected, start.timestamp(), end.timestamp(), zone)}
         try:
-            return await asyncio.to_thread(read)
+            return await store.read(read)
         except (OSError, ValueError, sqlite3.Error) as error:
             raise HTTPException(422 if isinstance(error, ValueError) else 500,
                                 f'{type(error).__name__}: {error}') from error
