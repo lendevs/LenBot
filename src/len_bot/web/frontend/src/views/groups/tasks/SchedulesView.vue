@@ -46,7 +46,7 @@ const roleKey = computed(() => {
 
 const filter = ref<ScheduleFilter>('active')
 const filters = computed(() =>
-  (['active', 'all', 'delivered', 'cancelled'] as const).map((value) => ({
+  (['active', 'blocked', 'all', 'delivered', 'cancelled'] as const).map((value) => ({
     value,
     label: t(`groups.tasks.schedules.filters.${value}`),
   })),
@@ -138,7 +138,7 @@ function added() {
       <span class="min-w-0 flex-1">
         {{ t(!settings.enabled ? 'groups.tasks.schedules.off' : 'groups.tasks.schedules.noTool') }}
       </span>
-      <Button v-if="!settings.enabled" size="sm" :to="groupsTarget(scene, 'settings')">
+      <Button v-if="!settings.enabled" size="sm" :to="groupsTarget(scene, 'settings', { section: 'tasks' })">
         {{ t('groups.tasks.toSettings') }}
       </Button>
       <Button

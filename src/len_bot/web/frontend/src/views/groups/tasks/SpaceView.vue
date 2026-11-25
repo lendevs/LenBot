@@ -40,7 +40,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const client = useQueryClient()
-const wide = useMediaQuery('(min-width: 1280px)')
+const wide = useMediaQuery('(min-width: 1024px)')
 
 const service = useQuery({ queryKey: keys.tasks.state(), queryFn: ({ signal }) => tasksApi.state(signal) })
 const accepting = computed(() => {
@@ -68,12 +68,33 @@ const environments = computed(() =>
     label: t(`groups.tasks.space.environments.${value}`),
   })),
 )
-/** Start of a picked day in the browser's zone; `until` includes its whole day. */
+/** Minutes the group's zone is ahead of UTC at an instant. */
+function zoneOffsetMinutes(instant: number, timeZone: string): number {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+      .formatToParts(instant)
+      .map((part) => [part.type, Number(part.value)]),
+  )
+  const local = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
+  return Math.round((local - instant) / 60000)
+}
+/** Start of a picked day in the group's time zone; `until` includes its whole day. */
 const day = (value: string, next = false) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
-  const date = new Date(`${value}T00:00:00`)
-  if (next) date.setDate(date.getDate() + 1)
-  return date.getTime() / 1000
+  const [y, m, d] = value.split('-').map(Number)
+  const guess = Date.UTC(y, m - 1, d + (next ? 1 : 0), 0, 0, 0)
+  const firstOffset = zoneOffsetMinutes(guess, props.timeZone)
+  const offset = zoneOffsetMinutes(guess - firstOffset * 60000, props.timeZone)
+  return (guess - offset * 60000) / 1000
 }
 const query = computed(() => ({
   status: status.value,
@@ -246,7 +267,10 @@ const poolBarTone = computed(() =>
       </span>
     </div>
 
-    <div class="grid min-w-0 items-start gap-6" :class="wide && 'grid-cols-[340px_minmax(0,1fr)]'">
+    <div
+      class="grid min-w-0 items-start gap-6"
+      :class="wide && 'grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)]'"
+    >
       <section
         v-if="wide || !opened"
         class="flex min-w-0 flex-col gap-3"
@@ -271,7 +295,8 @@ const poolBarTone = computed(() =>
             "
             aria-hidden="true"
           />
-          <span class="truncate">{{ t('groups.tasks.space.shared') }}</span>
+          <span class="min-w-0 flex-1 truncate">{{ t('groups.tasks.space.shared') }}</span>
+          <ChevronRight v-if="!wide" :size="15" class="shrink-0 text-subtle" aria-hidden="true" />
         </button>
         <div class="grid grid-cols-2 gap-2">
           <Select v-model="status" :options="statuses" size="sm" />
@@ -377,30 +402,32 @@ const poolBarTone = computed(() =>
         >
           {{ t('groups.tasks.more') }}
         </Button>
-        <div
-          v-if="checked.length"
-          class="sticky bottom-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-raised px-3 py-2 shadow-float"
-        >
-          <span class="text-sm text-ink tabular">
-            {{ t('groups.tasks.space.checked', { n: checked.length }) }}
-            <span v-if="checked.length > 100" class="text-warning">
-              · {{ t('groups.tasks.space.tooManyChecked') }}
+        <Transition name="ui-rise">
+          <div
+            v-if="checked.length"
+            class="sticky bottom-3 z-(--z-top) flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-raised px-3 py-2 shadow-float"
+          >
+            <span class="text-sm text-ink tabular">
+              {{ t('groups.tasks.space.checked', { n: checked.length }) }}
+              <span v-if="checked.length > 100" class="text-warning">
+                · {{ t('groups.tasks.space.tooManyChecked') }}
+              </span>
             </span>
-          </span>
-          <div class="ml-auto flex flex-wrap gap-1">
-            <Button size="sm" :disabled="checked.length > 100" @click="cleaning = 'temporary'">
-              {{ t('groups.tasks.space.cleanup.temporary') }}
-            </Button>
-            <Button
-              size="sm"
-              variant="danger-ghost"
-              :disabled="checked.length > 100"
-              @click="cleaning = 'environment'"
-            >
-              {{ t('groups.tasks.space.cleanup.environment') }}
-            </Button>
+            <div class="ml-auto flex flex-wrap gap-1">
+              <Button size="sm" :disabled="checked.length > 100" @click="cleaning = 'temporary'">
+                {{ t('groups.tasks.space.cleanup.temporary') }}
+              </Button>
+              <Button
+                size="sm"
+                variant="danger-ghost"
+                :disabled="checked.length > 100"
+                @click="cleaning = 'environment'"
+              >
+                {{ t('groups.tasks.space.cleanup.environment') }}
+              </Button>
+            </div>
           </div>
-        </div>
+        </Transition>
       </section>
 
       <section v-if="wide || opened" class="flex min-w-0 flex-col gap-5">

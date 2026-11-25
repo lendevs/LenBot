@@ -19,6 +19,23 @@ export function usePagedList<T, F extends string>(
     placeholderData: keepPreviousData,
   })
   const page = computed(() => query.data.value)
+  // When the last item on the current page is reviewed away, fall back to the previous valid page.
+  watch(
+    () => [query.data.value, query.isPlaceholderData.value] as const,
+    ([data, placeholder]) => {
+      if (
+        !data ||
+        placeholder ||
+        data.offset !== offset.value ||
+        data.items.length > 0 ||
+        data.total <= 0 ||
+        offset.value <= 0
+      )
+        return
+      const lastValid = Math.max(0, Math.floor((data.total - 1) / data.limit) * data.limit)
+      offset.value = Math.min(lastValid, Math.max(0, offset.value - data.limit))
+    },
+  )
   function choose(value: F) {
     filter.value = value
     offset.value = 0

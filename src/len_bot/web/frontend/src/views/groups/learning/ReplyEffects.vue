@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery } from '@tanstack/vue-query'
-import { ChevronDown } from '@lucide/vue'
-import { learningApi, type EffectState, type ReplyEffect } from '../../../api/learning'
+import { ChevronDown, X } from '@lucide/vue'
+import { learningApi, type EffectState, type Reaction, type ReplyEffect } from '../../../api/learning'
 import { keys } from '../../../api/query'
 import { formatDateTime, formatNumber } from '../../../i18n/format'
 import Badge, { type Tone } from '../../../ui/Badge.vue'
+import Button from '../../../ui/Button.vue'
 import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
@@ -20,9 +21,16 @@ const props = defineProps<{ scene: string; timeZone: string }>()
 
 const { t } = useI18n()
 const labels = useLiveLabels()
+const days = ref<'7' | '30'>('7')
+const dayCount = computed(() => Number(days.value))
+const dayOptions = computed(() => [
+  { value: '7' as const, label: t('groups.learning.effects.days7') },
+  { value: '30' as const, label: t('groups.learning.effects.days30') },
+])
+
 const summary = useQuery({
-  queryKey: computed(() => keys.scene.learning(props.scene, 'effects')),
-  queryFn: ({ signal }) => learningApi.effects(props.scene, signal),
+  queryKey: computed(() => keys.scene.learning(props.scene, 'effects', dayCount.value)),
+  queryFn: ({ signal }) => learningApi.effects(props.scene, dayCount.value, signal),
 })
 const reactions = ['agree', 'continue', 'correct', 'negative', 'unrelated', 'uncertain'] as const
 const tones: Record<EffectState, Tone> = {
@@ -38,19 +46,36 @@ const tones: Record<EffectState, Tone> = {
   failed: 'error',
 }
 
-type Filter = 'all' | 'attention'
+type Filter = 'all' | 'attention' | Reaction
 const list = usePagedList<ReplyEffect, Filter>(
-  (filter, offset) => keys.scene.learning(props.scene, 'effect-items', filter, offset),
+  (filter, offset) => keys.scene.learning(props.scene, 'effect-items', dayCount.value, filter, offset),
   (filter, offset, signal) =>
-    learningApi.effectItems(props.scene, filter === 'all' ? undefined : filter, offset, signal),
+    learningApi.effectItems(
+      props.scene,
+      filter === 'all' ? undefined : filter,
+      offset,
+      dayCount.value,
+      signal,
+    ),
   'all',
 )
-const filters = computed(() =>
+watch(days, () => {
+  list.offset.value = 0
+  open.value = null
+})
+const filters = computed<{ value: Filter; label: string }[]>(() =>
   (['all', 'attention'] as const).map((value) => ({
     value,
     label: t(`groups.learning.effects.filters.${value}`),
   })),
 )
+const activeReaction = computed<Reaction | null>(() =>
+  (reactions as readonly string[]).includes(list.filter.value) ? (list.filter.value as Reaction) : null,
+)
+function toggleReaction(reaction: Reaction) {
+  list.choose(list.filter.value === reaction ? 'all' : reaction)
+}
+
 const open = ref<number | null>(null)
 const detail = useQuery({
   queryKey: computed(() => keys.scene.learning(props.scene, 'effect', open.value)),
@@ -69,18 +94,46 @@ const detail = useQuery({
       :retry="summary.refetch"
     />
     <div v-else-if="summary.data.value" class="flex flex-col gap-3 border-b border-line pb-5">
-      <p v-if="!summary.data.value.enabled" class="text-sm text-muted">
-        {{ t('groups.learning.effects.off') }}
-      </p>
-      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <StatTile
-          v-for="reaction in reactions"
-          :key="reaction"
-          :label="t(`groups.learning.effects.states.${reaction}`)"
-          :value="summary.data.value.distribution.states[reaction]"
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <p v-if="!summary.data.value.enabled" class="text-sm text-muted">
+          {{ t('groups.learning.effects.off') }}
+        </p>
+        <p v-else class="text-xs text-subtle tabular">
+          {{
+            t('groups.learning.effects.samples', {
+              n: formatNumber(summary.data.value.distribution.samples),
+              days: formatNumber(summary.data.value.days),
+            })
+          }}
+        </p>
+        <SegmentedControl
+          v-model="days"
+          :options="dayOptions"
+          size="sm"
+          :label="t('groups.learning.effects.range')"
         />
       </div>
-      <p class="text-xs text-subtle tabular">
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <button
+          v-for="reaction in reactions"
+          :key="reaction"
+          type="button"
+          class="cursor-pointer rounded-lg border px-3 py-2.5 text-left transition-colors focus-visible:focus-ring"
+          :class="
+            list.filter.value === reaction
+              ? 'border-primary bg-selected'
+              : 'border-line bg-surface hover:border-line-strong hover:bg-hover'
+          "
+          :aria-pressed="list.filter.value === reaction"
+          @click="toggleReaction(reaction)"
+        >
+          <StatTile
+            :label="t(`groups.learning.effects.states.${reaction}`)"
+            :value="summary.data.value.distribution.states[reaction]"
+          />
+        </button>
+      </div>
+      <p v-if="!summary.data.value.enabled" class="text-xs text-subtle tabular">
         {{
           t('groups.learning.effects.samples', {
             n: formatNumber(summary.data.value.distribution.samples),
@@ -90,14 +143,19 @@ const detail = useQuery({
       </p>
     </div>
 
-    <SegmentedControl
-      :model-value="list.filter.value"
-      :options="filters"
-      size="sm"
-      :label="t('groups.learning.kinds.effects')"
-      class="self-start"
-      @update:model-value="(value: Filter) => list.choose(value)"
-    />
+    <div class="flex flex-wrap items-center gap-2">
+      <SegmentedControl
+        :model-value="list.filter.value"
+        :options="filters"
+        size="sm"
+        :label="t('groups.learning.kinds.effects')"
+        @update:model-value="(value: Filter) => list.choose(value)"
+      />
+      <Button v-if="activeReaction" size="sm" variant="secondary" :icon-right="X" @click="list.choose('all')">
+        {{ t(`groups.learning.effects.states.${activeReaction}`) }}
+      </Button>
+    </div>
+
     <Skeleton v-if="list.query.isPending.value" :lines="4" />
     <ErrorNote
       v-else-if="list.query.isError.value"
@@ -130,6 +188,15 @@ const detail = useQuery({
             />
           </button>
           <div v-if="open === item.id" class="flex flex-col gap-3 px-2 pb-4 text-sm">
+            <div v-if="item.turn_id" class="flex justify-end">
+              <Button
+                size="sm"
+                variant="ghost"
+                :to="{ name: 'host-logs', query: { scene, turn: item.turn_id } }"
+              >
+                {{ t('groups.learning.effects.turn') }}
+              </Button>
+            </div>
             <Skeleton v-if="detail.isPending.value" :lines="3" />
             <ErrorNote
               v-else-if="detail.isError.value"

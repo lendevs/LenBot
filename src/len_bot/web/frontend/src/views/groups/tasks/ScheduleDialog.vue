@@ -21,6 +21,7 @@ const { t } = useI18n()
 const ACCOUNT = /^[a-z][a-z0-9_-]*:[^:\s/\\]+$/
 const note = ref('')
 const when = ref('')
+const pickerDirty = ref(false)
 const target = ref<'self' | 'other'>('self')
 const account = ref('')
 const targets = computed(() =>
@@ -39,7 +40,9 @@ const ready = computed(
     Boolean(note.value.trim() && when.value) &&
     (target.value === 'self' || (Boolean(account.value.trim()) && !accountError.value)),
 )
-const dirty = computed(() => Boolean(note.value.trim() || account.value.trim()))
+const dirty = computed(() =>
+  Boolean(note.value.trim() || account.value.trim() || target.value !== 'self' || pickerDirty.value),
+)
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
 const create = useMutation({
@@ -77,11 +80,19 @@ async function close() {
     size="md"
     :busy="create.isPending.value"
   >
-    <form id="new-schedule" class="flex flex-col gap-4" @submit.prevent="ready && create.mutate()">
+    <form
+      id="new-schedule"
+      class="flex flex-col gap-4"
+      @submit.prevent="ready && !create.isPending.value && create.mutate()"
+    >
       <Field :label="t('groups.tasks.schedules.dialog.note')" required>
         <Textarea v-model="note" :rows="2" :max-rows="6" />
       </Field>
-      <SchedulePicker v-model="when" :timezone="timezone" />
+      <SchedulePicker
+        v-model="when"
+        :timezone="timezone"
+        @dirty="(value: boolean) => (pickerDirty = value)"
+      />
       <Field :label="t('groups.tasks.schedules.dialog.target')">
         <SegmentedControl v-model="target" :options="targets" size="sm" class="self-start" />
       </Field>

@@ -37,7 +37,13 @@ const mode = computed({
   set: (value: SpeechMode) =>
     (form.draft.speech = {
       mode: value,
-      value: value === 'custom' ? (form.draft.speech.value ?? global.value ?? 60) : null,
+      value:
+        value === 'custom'
+          ? (form.draft.speech.value ??
+            (form.saved?.speech.mode === 'custom' ? form.saved.speech.value : null) ??
+            global.value ??
+            60)
+          : null,
     }),
 })
 
@@ -82,7 +88,7 @@ const reset = useMutation({
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.speech.section')">
+  <FormSection id="speech" :title="t('groups.settings.speech.section')">
     <Field :label="t('groups.settings.speech.mode')" wide>
       <div>
         <SegmentedControl v-model="mode" :options="modes" :label="t('groups.settings.speech.mode')" />

@@ -43,7 +43,7 @@ async function ask() {
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.remove.section')" :columns="1">
+  <FormSection id="danger" :title="t('groups.settings.remove.section')" :columns="1">
     <div>
       <Button variant="danger-ghost" :icon="Trash2" :loading="remove.isPending.value" @click="ask">
         {{ t('groups.settings.remove.action') }}
