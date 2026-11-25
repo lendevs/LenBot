@@ -9,7 +9,7 @@ import { logsApi, type LogFilter, type LogRecord } from '../../../api/logs'
 import { keys } from '../../../api/query'
 import { timelineApi } from '../../../api/timeline'
 import { host } from '../../../api/hostStore'
-import { formatBytes } from '../../../i18n/format'
+import { formatBytes, formatNumber } from '../../../i18n/format'
 import { groupLabel } from '../../../layouts/shell/scenes'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import Badge from '../../../ui/Badge.vue'
@@ -104,6 +104,7 @@ const filter = computed<LogFilter>(() => ({
   ...(level.value !== ALL ? { level: level.value as LogFilter['level'] } : {}),
   ...(scene.value !== ALL ? { scene: scene.value } : {}),
   ...(source.value !== ALL ? { source: source.value } : {}),
+  ...(kind.value && kind.value !== '_other' ? { event: kind.value } : {}),
   ...(text('plugin') ? { plugin: text('plugin') } : {}),
   ...(text('task') ? { task_id: text('task') } : {}),
   ...(turn.value ? { turn_id: turn.value } : {}),
@@ -181,6 +182,11 @@ const kinds = computed(() => {
   for (const row of indexed.value) counts.set(row.kind, (counts.get(row.kind) ?? 0) + 1)
   return [...counts].sort((a, b) => b[1] - a[1])
 })
+const kindChips = computed<[string, number][]>(() => {
+  if (!kind.value) return kinds.value
+  if (kinds.value.some(([key]) => key === kind.value)) return kinds.value
+  return [[kind.value, 0], ...kinds.value]
+})
 const shown = computed(() => {
   const words = text('q').toLowerCase().split(/\s+/).filter(Boolean)
   return indexed.value.filter(
@@ -210,9 +216,13 @@ watch(indexed, (rows) => {
 const more = computed(() => items.value.length >= limit.value && limit.value < LIMITS[LIMITS.length - 1]!)
 const timeZone = computed(() => host.state?.timezone as string | undefined)
 
-function onFilter(key: 'turn' | 'plugin' | 'task' | 'scene', value: string) {
+function onFilter(key: 'turn' | 'plugin' | 'task' | 'scene', value: string, itemScene?: string) {
   if (key === 'plugin') plugin.value = value
   if (key === 'task') task.value = String(value)
+  if (key === 'turn' && itemScene) {
+    setQuery({ turn: value, scene: itemScene })
+    return
+  }
   setQuery({ [key]: value })
 }
 
@@ -299,7 +309,7 @@ function exportShown() {
             {{ t('logs.refresh') }}
           </Button>
           <Button size="sm" variant="ghost" :icon="Download" :disabled="!shown.length" @click="exportShown">
-            {{ t('logs.export', { n: shown.length }, shown.length) }}
+            {{ t('logs.export', { n: formatNumber(shown.length) }, shown.length) }}
           </Button>
         </div>
       </div>
@@ -309,7 +319,12 @@ function exportShown() {
           {{ t('logs.allTurns') }}
         </Button>
       </div>
-      <div v-if="kinds.length > 1" class="flex flex-wrap gap-1.5" role="group" :aria-label="t('logs.kinds')">
+      <div
+        v-if="kinds.length > 1 || Boolean(kind)"
+        class="flex flex-wrap items-center gap-1.5"
+        role="group"
+        :aria-label="t('logs.kinds')"
+      >
         <button
           type="button"
           class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
@@ -322,10 +337,10 @@ function exportShown() {
           @click="setQuery({ event: undefined })"
         >
           {{ t('logs.allKinds') }}
-          <span class="tabular opacity-75">{{ items.length }}</span>
+          <span v-if="!kind" class="tabular opacity-75">{{ formatNumber(items.length) }}</span>
         </button>
         <button
-          v-for="[key, count] in kinds"
+          v-for="[key, count] in kindChips"
           :key="key"
           type="button"
           class="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors focus-visible:focus-ring"
@@ -335,10 +350,12 @@ function exportShown() {
               : 'border-line bg-surface text-muted hover:bg-hover hover:text-ink'
           "
           :aria-pressed="kind === key"
+          :title="kind === key ? t('logs.clearEvent') : undefined"
           @click="setQuery({ event: kind === key ? undefined : key })"
         >
           {{ key === '_other' ? labels.event(undefined) : labels.event(key) }}
-          <span class="tabular opacity-75">{{ count }}</span>
+          <span class="tabular opacity-75">{{ formatNumber(count) }}</span>
+          <X v-if="kind === key" :size="12" class="text-muted" aria-hidden="true" />
         </button>
       </div>
     </section>
@@ -356,7 +373,7 @@ function exportShown() {
       <ErrorNote
         v-else-if="callDetail.isError.value"
         :error="callDetail.error.value"
-        :title="t('logs.turnFailed')"
+        :title="t('logs.callFailed')"
         :retry="callDetail.refetch"
       />
       <ErrorNote
@@ -398,7 +415,9 @@ function exportShown() {
       <div
         class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-fill px-4 py-2 text-xs text-muted"
       >
-        <span class="tabular">{{ t('logs.count', { shown: shown.length, read: items.length }) }}</span>
+        <span class="tabular">
+          {{ t('logs.count', { shown: formatNumber(shown.length), read: formatNumber(items.length) }) }}
+        </span>
         <Button
           v-if="more"
           size="sm"
@@ -406,7 +425,7 @@ function exportShown() {
           :loading="logs.isFetching.value"
           @click="limit = LIMITS[LIMITS.indexOf(limit) + 1]!"
         >
-          {{ t('logs.more', { n: LIMITS[LIMITS.indexOf(limit) + 1] }) }}
+          {{ t('logs.more', { n: formatNumber(LIMITS[LIMITS.indexOf(limit) + 1]!) }) }}
         </Button>
       </div>
       <VirtualList

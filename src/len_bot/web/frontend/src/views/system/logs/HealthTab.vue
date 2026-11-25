@@ -7,7 +7,8 @@ import { logsApi } from '../../../api/logs'
 import { overviewApi } from '../../../api/overview'
 import { keys } from '../../../api/query'
 import { host } from '../../../api/hostStore'
-import { formatDateTime, formatNumber, formatRelative } from '../../../i18n/format'
+import { developerDetails } from '../../../composables/useDeveloperMode'
+import { formatDateTime, formatDuration, formatNumber, formatRelative } from '../../../i18n/format'
 import Badge, { type Tone } from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import CodeBlock from '../../../ui/CodeBlock.vue'
@@ -65,20 +66,20 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
             <StatTile :label="t('logs.health.stalls')" :value="data.stalls" />
           </div>
           <div class="min-w-0 sm:px-5">
-            <StatTile :label="t('logs.health.longest')" :value="data.max_lag_ms" unit="ms" />
+            <StatTile :label="t('logs.health.longest')" :value="formatDuration(data.max_lag_ms)" />
           </div>
           <div class="min-w-0 sm:px-5">
-            <StatTile :label="t('logs.health.total')" :value="data.stalled_ms_total" unit="ms" />
+            <StatTile :label="t('logs.health.total')" :value="formatDuration(data.stalled_ms_total)" />
           </div>
           <div class="min-w-0 sm:pl-5">
             <StatTile :label="t('logs.health.pauses')" :value="data.pauses" />
           </div>
         </div>
-        <p class="text-xs text-muted tabular">
+        <p v-if="developerDetails" class="text-xs text-muted tabular">
           {{
             t('logs.health.probe', {
-              interval: data.interval_ms,
-              threshold: data.threshold_ms,
+              interval: formatNumber(data.interval_ms),
+              threshold: formatNumber(data.threshold_ms),
               n: formatNumber(data.probes),
             })
           }}
@@ -105,7 +106,7 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
                 class="flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-sm text-sm select-none focus-visible:focus-ring [&::-webkit-details-marker]:hidden"
               >
                 <strong class="font-semibold text-warning tabular">
-                  {{ formatNumber(stall.lag_ms) }} ms
+                  {{ formatDuration(stall.lag_ms) }}
                 </strong>
                 <span class="min-w-0 font-mono break-all text-ink-2">
                   {{ stall.task ?? t('common.unknown') }}
@@ -152,7 +153,7 @@ const verdict = computed<{ text: string; tone: Tone }>(() => {
             {{ formatDateTime(seconds(item), { withSeconds: true, timeZone }) }}
           </span>
           <span class="text-muted tabular">
-            {{ t('logs.health.pausedFor', { n: formatNumber(Math.round(Number(item.lag_ms ?? 0) / 1000)) }) }}
+            {{ t('logs.health.pausedDuration', { duration: formatDuration(Number(item.lag_ms ?? 0)) }) }}
           </span>
         </li>
       </ul>

@@ -4,18 +4,19 @@ import { useI18n } from 'vue-i18n'
 import { ArrowUpRight, ChevronDown, Copy } from '@lucide/vue'
 import type { LogRecord } from '../../../api/logs'
 import { formatDateTime } from '../../../i18n/format'
-import { groupLabel } from '../../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../../layouts/shell/scenes'
 import Badge from '../../../ui/Badge.vue'
 import Button from '../../../ui/Button.vue'
 import CodeBlock from '../../../ui/CodeBlock.vue'
 import IconButton from '../../../ui/IconButton.vue'
 import { toast } from '../../../ui/toast'
-import { sceneSecondaryId } from '../draft'
 import { idFields, seconds, severity, useLogLabels } from './labels'
 
 const props = defineProps<{ item: LogRecord; timeZone?: string; turn?: string }>()
 const open = defineModel<boolean>('open', { default: false })
-const emit = defineEmits<{ filter: [key: 'turn' | 'plugin' | 'task' | 'scene', value: string] }>()
+const emit = defineEmits<{
+  filter: [key: 'turn' | 'plugin' | 'task' | 'scene', value: string, scene?: string]
+}>()
 
 const { t } = useI18n()
 const labels = useLogLabels()
@@ -56,55 +57,49 @@ async function copy() {
 
 <template>
   <div
-    class="group relative flex min-w-0 flex-col gap-1 border-b border-l-2 border-b-line py-2.5 pr-2.5 pl-3 transition-colors hover:bg-hover/40"
+    class="group relative flex min-w-0 flex-col gap-1 border-b border-l-2 border-b-line py-2.5 pr-2.5 pl-3 transition-colors"
     :class="
       tone === 'error'
-        ? 'border-l-error bg-error-bg/35'
+        ? 'border-l-error bg-error-bg/35 hover:bg-error-bg/55 dark:bg-error-bg/70 dark:hover:bg-error-bg/85'
         : tone === 'warning'
-          ? 'border-l-warning bg-warning-bg/25'
-          : 'border-l-transparent'
+          ? 'border-l-warning bg-warning-bg/25 hover:bg-warning-bg/45 dark:bg-warning-bg/60 dark:hover:bg-warning-bg/75'
+          : 'border-l-transparent hover:bg-hover/40'
     "
   >
     <div class="flex min-w-0 items-start gap-1.5">
       <button
         type="button"
-        class="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 rounded-sm text-left focus-visible:focus-ring"
+        class="flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-sm text-left focus-visible:focus-ring"
         :aria-expanded="open"
         @click="open = !open"
       >
-        <span class="shrink-0 font-mono text-xs text-muted tabular">
-          {{ formatDateTime(seconds(item), { withSeconds: true, timeZone }) }}
+        <span class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+          <span class="shrink-0 font-mono text-xs text-muted tabular">
+            {{ formatDateTime(seconds(item), { withSeconds: true, timeZone }) }}
+          </span>
+          <Badge v-if="tone === 'error' || tone === 'warning'" :tone="tone">
+            {{ item.level || (tone === 'error' ? 'ERROR' : 'WARNING') }}
+          </Badge>
+          <strong
+            class="min-w-0 truncate text-sm font-medium"
+            :class="tone === 'error' ? 'text-error' : 'text-ink'"
+          >
+            {{ title }}
+          </strong>
+          <span class="min-w-0 truncate font-mono text-xs text-subtle">{{ item.source }}</span>
         </span>
-        <Badge v-if="tone === 'error' || tone === 'warning'" :tone="tone">
-          {{ item.level || (tone === 'error' ? 'ERROR' : 'WARNING') }}
-        </Badge>
-        <strong
-          class="min-w-0 truncate text-sm font-medium"
-          :class="tone === 'error' ? 'text-error' : 'text-ink'"
-        >
-          {{ title }}
-        </strong>
-        <span class="min-w-0 truncate font-mono text-xs text-subtle">{{ item.source }}</span>
+        <ChevronDown
+          :size="15"
+          class="mt-0.5 shrink-0 text-subtle transition-transform"
+          :class="open && 'rotate-180'"
+          aria-hidden="true"
+        />
       </button>
       <span
         class="inline-flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100"
       >
         <IconButton :icon="Copy" :label="t('logs.copy')" size="sm" variant="ghost" @click="copy" />
       </span>
-      <button
-        type="button"
-        class="mt-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-subtle transition-colors hover:bg-hover hover:text-ink focus-visible:focus-ring"
-        :aria-expanded="open"
-        :aria-label="open ? t('common.collapse') : t('common.expand')"
-        @click="open = !open"
-      >
-        <ChevronDown
-          :size="15"
-          class="transition-transform"
-          :class="open && 'rotate-180'"
-          aria-hidden="true"
-        />
-      </button>
     </div>
     <p v-if="detail" class="min-w-0 text-sm break-words text-ink-2" :class="!open && 'line-clamp-2'">
       {{ detail }}
@@ -126,7 +121,14 @@ async function copy() {
           v-if="key in filterOf && !(key === 'turn_id' && value === turn)"
           type="button"
           class="cursor-pointer rounded-sm font-mono tabular hover:text-ink focus-visible:focus-ring"
-          @click="emit('filter', filterOf[key as keyof typeof filterOf], value)"
+          @click="
+            emit(
+              'filter',
+              filterOf[key as keyof typeof filterOf],
+              value,
+              key === 'turn_id' ? item.scene : undefined,
+            )
+          "
         >
           {{ t(`logs.ids.${key}`) }} {{ key === 'turn_id' ? value.slice(0, 8) : value }}
         </button>

@@ -18,6 +18,10 @@ import Switch from '../../ui/Switch.vue'
 import PluginUpdatesSection from '../plugins/PluginUpdatesSection.vue'
 import SnapshotsSection from './SnapshotsSection.vue'
 
+/** Status codes returned by a reverse proxy while the host stops and starts again. */
+const RESTART_STATUSES = new Set([0, 502, 503, 504])
+const RESTART_TIMEOUT_MS = 180_000
+
 const { t } = useI18n()
 const queryClient = useQueryClient()
 const current = useQuery({
@@ -27,25 +31,47 @@ const current = useQuery({
 const data = computed(() => current.data.value)
 const check = computed(() => data.value?.check)
 const operation = computed(() => data.value?.operation)
-const offered = computed(() =>
+const prerelease = ref(false)
+const stableOffered = computed(() =>
   Boolean(data.value?.managed && check.value?.update_available && check.value.latest),
 )
-// Asks GitHub: on request, or at once when a newer version is known.
+// Asks GitHub: on request, when a newer version is known, or when prereleases are shown.
 const releases = useQuery({
   queryKey: keys.system.releases(),
   queryFn: ({ signal }) => systemApi.releases(signal),
-  enabled: offered,
+  enabled: computed(() => stableOffered.value || prerelease.value),
   staleTime: Infinity,
 })
-const prerelease = ref(false)
 const visible = computed(() =>
   (releases.data.value ?? []).filter((item) => prerelease.value || !item.prerelease),
 )
 // Notes open with "# LenBot <version>", which the version heading already shows.
 const notesBody = (notes: string) => notes.replace(/^#\s[^\n]*\n+/, '')
-const target = computed(
-  () => releases.data.value?.find((item) => item.version === check.value?.latest) ?? null,
+const prereleaseTarget = computed(() =>
+  prerelease.value && data.value?.managed
+    ? (visible.value.find((item) => item.newer && item.prerelease) ?? null)
+    : null,
 )
+const topTarget = computed(() => {
+  if (!data.value?.managed) return null
+  if (check.value?.update_available && check.value.latest) {
+    const listed = releases.data.value?.find((item) => item.version === check.value?.latest) ?? null
+    return {
+      tag: listed?.tag ?? `v${check.value.latest}`,
+      version: check.value.latest,
+      notes: listed?.notes ?? null,
+    }
+  }
+  if (prereleaseTarget.value) {
+    return {
+      tag: prereleaseTarget.value.tag,
+      version: prereleaseTarget.value.version,
+      notes: prereleaseTarget.value.notes,
+    }
+  }
+  return null
+})
+const offered = computed(() => Boolean(topTarget.value))
 const summary = computed(() => {
   const value = check.value
   if (!value) return ''
@@ -65,6 +91,8 @@ async function checkNow() {
 /** The steps of one update; the host downloads and installs, the launcher does the rest while it restarts. */
 const STEPS = ['download', 'install', 'restart'] as const
 const restarting = ref(false)
+const restartState = ref<'idle' | 'failed' | 'timeout'>('idle')
+const followError = ref<unknown>(null)
 const busy = computed(
   () => restarting.value || ['download', 'install', 'restart'].includes(operation.value?.stage ?? ''),
 )
@@ -83,16 +111,20 @@ let stopped = false
 onBeforeUnmount(() => (stopped = true))
 
 /** The host stops while the launcher switches; its public readiness answers again once a version runs. */
-async function hostReady(): Promise<boolean> {
+async function hostReady(): Promise<'ready' | 'failed' | 'waiting'> {
   try {
     const response = await fetch('/api/host/ready', {
       cache: 'no-store',
       credentials: 'omit',
       signal: AbortSignal.timeout(3000),
     })
-    return response.ok && (await response.json()).ready
+    if (!response.ok) return 'waiting'
+    const body = (await response.json()) as { ready?: boolean; status?: string }
+    if (body.ready) return 'ready'
+    if (body.status === 'failed') return 'failed'
+    return 'waiting'
   } catch {
-    return false
+    return 'waiting'
   }
 }
 
@@ -100,13 +132,29 @@ let following = false
 async function follow() {
   if (following) return
   following = true
+  restartState.value = 'idle'
+  followError.value = null
+  let restartSince = restarting.value ? Date.now() : 0
   try {
     while (!stopped) {
       await sleep(restarting.value ? 2000 : 800)
+      if (stopped) return
       if (restarting.value) {
-        if (await hostReady()) {
+        if (!restartSince) restartSince = Date.now()
+        const state = await hostReady()
+        if (state === 'ready') {
           // The new version, or the previous one after a rollback; the reloaded page shows which.
           location.reload()
+          return
+        }
+        if (state === 'failed') {
+          restarting.value = false
+          restartState.value = 'failed'
+          return
+        }
+        if (Date.now() - restartSince >= RESTART_TIMEOUT_MS) {
+          restarting.value = false
+          restartState.value = 'timeout'
           return
         }
         continue
@@ -115,13 +163,21 @@ async function follow() {
       try {
         value = await systemApi.updates()
       } catch (error) {
-        if (error instanceof ApiError && error.status === 0) restarting.value = true
-        else throw error
-        continue
+        if (error instanceof ApiError && RESTART_STATUSES.has(error.status)) {
+          restarting.value = true
+          if (!restartSince) restartSince = Date.now()
+          continue
+        }
+        followError.value = error
+        return
       }
       queryClient.setQueryData(keys.system.updates(), value)
-      if (value.operation.stage === 'restart') restarting.value = true
-      else if (!['download', 'install'].includes(value.operation.stage)) return
+      if (value.operation.stage === 'restart') {
+        restarting.value = true
+        if (!restartSince) restartSince = Date.now()
+      } else if (!['download', 'install'].includes(value.operation.stage)) {
+        return
+      }
     }
   } finally {
     following = false
@@ -132,6 +188,8 @@ const withPlugins = ref(true)
 const start = useMutation({
   mutationFn: (tag: string) => systemApi.startUpdate(tag, withPlugins.value),
   onSuccess: (value) => {
+    restartState.value = 'idle'
+    followError.value = null
     queryClient.setQueryData(keys.system.updates(), value)
     void follow()
   },
@@ -145,6 +203,8 @@ watch(
   { immediate: true },
 )
 function restartingNow() {
+  restartState.value = 'idle'
+  followError.value = null
   restarting.value = true
   void follow()
 }
@@ -168,7 +228,9 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
     <section
       class="flex min-w-0 flex-col gap-4"
       :class="
-        offered || busy ? 'rounded-xl border border-line-strong bg-fill p-5' : 'border-b border-line pb-6'
+        offered || busy
+          ? 'rounded-xl border border-line-strong bg-surface p-5 shadow-card'
+          : 'border-b border-line pb-6'
       "
     >
       <div class="flex flex-wrap items-center justify-between gap-4">
@@ -176,17 +238,18 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
           <span class="text-sm text-muted">{{ t('system.updates.current') }}</span>
           <strong class="text-2xl font-semibold text-ink tabular">v{{ data.version }}</strong>
         </div>
-        <div v-if="offered && !busy" class="flex flex-wrap items-center gap-4">
+        <div v-if="topTarget && !busy" class="flex flex-wrap items-center gap-4">
           <Field :label="t('system.updates.withPlugins')" inline>
             <Switch v-model="withPlugins" />
           </Field>
           <Button
             variant="primary"
             :icon="ArrowUpCircle"
-            :loading="start.isPending.value"
-            @click="start.mutate(`v${check!.latest}`)"
+            :loading="start.isPending.value && start.variables.value === topTarget.tag"
+            :disabled="start.isPending.value"
+            @click="start.mutate(topTarget.tag)"
           >
-            {{ t('system.updates.updateTo', { version: check!.latest }) }}
+            {{ t('system.updates.updateTo', { version: topTarget.version }) }}
           </Button>
         </div>
         <div v-else-if="!busy" class="flex flex-wrap items-center gap-3 text-sm text-ink-2">
@@ -226,7 +289,7 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
               aria-hidden="true"
             />
             <span v-else class="mx-1 size-2 rounded-full bg-subtle" aria-hidden="true" />
-            {{ t(`system.updates.stages.${step}`, { version: operation?.target ?? check?.latest }) }}
+            {{ t(`system.updates.stages.${step}`, { version: operation?.target ?? topTarget?.version }) }}
             <span
               v-if="step === 'download' && stepState(step) === 'active' && operation?.progress"
               class="font-normal text-muted tabular"
@@ -237,7 +300,7 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
           </span>
           <span
             v-if="step === 'download' && stepState(step) === 'active'"
-            class="ml-6.5 h-1.5 overflow-hidden rounded-full bg-track"
+            class="ml-6.5 h-1.5 overflow-hidden rounded-full bg-track ring-1 ring-inset ring-line-strong/50"
             role="progressbar"
             :aria-valuenow="percent"
             aria-valuemin="0"
@@ -251,6 +314,24 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
         </li>
       </ol>
 
+      <ErrorNote
+        v-if="restartState === 'failed'"
+        :title="t('system.updates.failed', { version: operation?.target ?? topTarget?.version ?? '' })"
+        :error="t('system.updates.restartFailed')"
+        :retry="() => current.refetch()"
+      />
+      <ErrorNote
+        v-else-if="restartState === 'timeout'"
+        :title="t('system.updates.failed', { version: operation?.target ?? topTarget?.version ?? '' })"
+        :error="t('system.updates.restartTimeout')"
+        :retry="restartingNow"
+      />
+      <ErrorNote
+        v-if="followError && !busy"
+        :title="t('system.updates.followFailed')"
+        :error="followError"
+        :retry="follow"
+      />
       <ErrorNote
         v-if="operation?.stage === 'failed' && operation.error && !busy"
         :title="t('system.updates.failed', { version: operation.target })"
@@ -305,8 +386,11 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
         />
       </template>
 
-      <div v-if="offered && !busy && target" class="border-t border-line pt-4 text-sm text-ink-2">
-        <MarkdownText :text="notesBody(target.notes)" />
+      <div
+        v-if="topTarget?.notes && !busy"
+        class="border-t border-line pt-4 text-sm text-ink-2 dark:[&_code]:border-line-strong dark:[&_code]:bg-fill dark:[&_code]:text-ink"
+      >
+        <MarkdownText :text="notesBody(topTarget.notes)" />
       </div>
       <p v-if="!data.managed" class="text-sm text-ink-2">{{ t('system.updates.source') }}</p>
     </section>
@@ -336,13 +420,28 @@ const pluginFailures = computed(() => pluginResults.value.filter((item) => item.
       </p>
       <ol v-if="visible.length" class="flex list-none flex-col divide-y divide-line">
         <li v-for="item in visible" :key="item.tag" class="flex flex-col gap-2 py-4 first:pt-1">
-          <h4 class="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink tabular">
-            {{ item.tag }}
-            <Badge v-if="item.newer" tone="info">{{ t('system.updates.newer') }}</Badge>
-            <Badge v-if="item.version === data.version">{{ t('system.updates.installed') }}</Badge>
-            <Badge v-if="item.prerelease" tone="warning">{{ t('system.updates.pre') }}</Badge>
-          </h4>
-          <div class="text-sm text-ink-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h4 class="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink tabular">
+              {{ item.tag }}
+              <Badge v-if="item.newer" tone="info">{{ t('system.updates.newer') }}</Badge>
+              <Badge v-if="item.version === data.version">{{ t('system.updates.installed') }}</Badge>
+              <Badge v-if="item.prerelease" tone="warning">{{ t('system.updates.pre') }}</Badge>
+            </h4>
+            <Button
+              v-if="data.managed && item.newer && !busy"
+              size="sm"
+              :variant="item.prerelease ? 'secondary' : 'primary'"
+              :icon="ArrowUpCircle"
+              :loading="start.isPending.value && start.variables.value === item.tag"
+              :disabled="start.isPending.value"
+              @click="start.mutate(item.tag)"
+            >
+              {{ t('system.updates.updateTo', { version: item.version }) }}
+            </Button>
+          </div>
+          <div
+            class="text-sm text-ink-2 dark:[&_code]:border-line-strong dark:[&_code]:bg-fill dark:[&_code]:text-ink"
+          >
             <MarkdownText :text="notesBody(item.notes)" />
           </div>
         </li>

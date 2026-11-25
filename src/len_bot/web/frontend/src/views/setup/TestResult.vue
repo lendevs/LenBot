@@ -10,10 +10,10 @@ defineProps<{ passed?: string | null; error?: unknown; failedTitle: string }>()
   <p
     v-if="passed"
     role="status"
-    class="flex animate-fade items-start gap-2.5 rounded-lg border border-line bg-success-bg px-3.5 py-2.5 text-sm text-success tabular"
+    class="flex animate-fade items-start gap-2.5 rounded-lg border border-success/25 bg-success-bg px-3.5 py-2.5 text-sm text-success tabular"
   >
     <CircleCheck :size="16" class="mt-0.5 shrink-0" aria-hidden="true" />
-    <span class="min-w-0 break-words text-ink">{{ passed }}</span>
+    <span class="min-w-0 font-medium break-words">{{ passed }}</span>
   </p>
   <ErrorNote v-else-if="error" :title="failedTitle" :error="error" />
 </template>

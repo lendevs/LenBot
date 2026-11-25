@@ -307,3 +307,41 @@ async def test_available_groups_come_from_every_connected_platform(tmp_path):
         assert listed.json()['items'] == [{'scene': 'telegram:group:-100123', 'name': '合成群', 'members': None}]
         state = (await client.get('/api/host/state')).json()
         assert state['connection']['platforms'] == {'onebot': False, 'telegram': True, 'feishu': False}
+
+
+@pytest.mark.asyncio
+async def test_connection_test_supports_onebot_with_saved_or_new_token(tmp_path):
+    from websockets.asyncio.server import serve
+
+    seen_auth: list[str | None] = []
+
+    async def handler(websocket):
+        seen_auth.append(websocket.request.headers.get('Authorization'))
+        raw = await websocket.recv()
+        req = json.loads(raw)
+        assert req['action'] == 'get_login_info'
+        await websocket.send(json.dumps({
+            'status': 'ok',
+            'retcode': 0,
+            'data': {'user_id': 90001, 'nickname': 'TestBot'},
+            'echo': req['echo'],
+        }))
+
+    async with serve(handler, '127.0.0.1', 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        ws_url = f'ws://127.0.0.1:{port}'
+        async with panel(tmp_path) as (client, _):
+            snapshot = (await client.get('/api/host/settings')).json()
+            onebot = {key: value for key, value in snapshot['saved']['connection']['onebot'].items()
+                      if key != 'access_token_configured'}
+            # Moving address without re-entering token is rejected.
+            moved = {**onebot, 'ws_url': ws_url}
+            refused = await client.post('/api/host/settings/connection/test', json={
+                'platform': 'onebot', 'onebot': moved, 'access_token': None})
+            assert refused.status_code == 422 and '重新填写访问令牌' in refused.text
+            # Testing with an explicit token succeeds and sends the token.
+            tested = await client.post('/api/host/settings/connection/test', json={
+                'platform': 'onebot', 'onebot': moved, 'access_token': 'probe-secret'})
+            assert tested.status_code == 200, tested.text
+            assert tested.json() == {'bot_id': 'onebot:90001', 'name': '90001'}
+            assert seen_auth == ['Bearer probe-secret']

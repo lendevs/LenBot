@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, useId } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery } from '@tanstack/vue-query'
 import { Eraser } from '@lucide/vue'
+import { host } from '../../api/hostStore'
 import { keys } from '../../api/query'
 import { systemApi, systemOf, type Retention, type RetentionCounts } from '../../api/system'
 import { developerDetails } from '../../composables/useDeveloperMode'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
@@ -19,10 +20,13 @@ import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 import RawRecord from '../groups/tasks/RawRecord.vue'
-import { copy, sceneSecondaryId, useSettingsDraft } from './draft'
+import { copy, useSettingsDraft } from './draft'
+
+const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
 const uid = useId()
+const stashed = ref<Retention | null>(null)
 const status = useQuery({
   queryKey: keys.system.retention(),
   queryFn: ({ signal }) => systemApi.retention(signal),
@@ -30,18 +34,26 @@ const status = useQuery({
 const form = useSettingsDraft<Retention | null>({
   pick: (snapshot) => systemOf(snapshot).retention,
   section: 'retention',
+  reset: () => (stashed.value = null),
   save: (value) => systemApi.saveRetention(value),
   onSaved: () => void status.refetch(),
 })
 const { settings, draft } = form
+watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
+
 const scenes = computed(() => (settings.data.value ? Object.keys(settings.data.value.saved.scenes) : []))
 
 function toggle(on: boolean) {
-  draft.value = on
-    ? form.saved.value
+  if (!on) {
+    if (draft.value) stashed.value = copy(draft.value)
+    draft.value = null
+    return
+  }
+  draft.value = stashed.value
+    ? copy(stashed.value)
+    : form.saved.value
       ? copy(form.saved.value)
       : { request_days: 7, timeline_days: 90, message_days: {} }
-    : null
 }
 function setDays(scene: string, days: number | null) {
   if (!draft.value) return
@@ -60,6 +72,17 @@ const errors = computed(() => {
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)
+
+const restartRequired = computed(() =>
+  Boolean(settings.data.value?.restart_required?.retention || host.restart?.sections?.includes('retention')),
+)
+const pruneBlockedReason = computed(() =>
+  form.dirty.value
+    ? t('system.retention.pruneBlockedDirty')
+    : restartRequired.value
+      ? t('system.retention.pruneBlockedRestart')
+      : null,
+)
 
 const kinds = [
   'messages',
@@ -93,6 +116,7 @@ const prune = useMutation({
   },
 })
 async function confirmPrune() {
+  if (pruneBlockedReason.value) return
   const sure = await confirm({
     title: t('system.retention.pruneTitle'),
     message: t('system.retention.pruneMessage', { items: preview.value }),
@@ -159,7 +183,13 @@ async function confirmPrune() {
       </template>
     </div>
 
-    <section v-if="status.data.value?.enabled" class="flex min-w-0 flex-col gap-3 border-t border-line pt-6">
+    <section v-if="status.isPending.value" class="flex min-w-0 flex-col gap-3 border-t border-line pt-6">
+      <Skeleton :lines="3" />
+    </section>
+    <section
+      v-else-if="status.data.value?.enabled"
+      class="flex min-w-0 flex-col gap-3 border-t border-line pt-6"
+    >
       <header class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-base font-semibold text-ink">{{ t('system.retention.now') }}</h3>
         <Button
@@ -167,12 +197,19 @@ async function confirmPrune() {
           variant="danger"
           :icon="Eraser"
           :loading="prune.isPending.value"
-          :disabled="status.data.value.busy || !preview"
+          :disabled="status.data.value.busy || !preview || Boolean(pruneBlockedReason)"
           @click="confirmPrune"
         >
           {{ t('system.retention.prune') }}
         </Button>
       </header>
+      <p
+        v-if="pruneBlockedReason"
+        role="status"
+        class="rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+      >
+        {{ pruneBlockedReason }}
+      </p>
       <ErrorNote
         v-if="status.data.value.error"
         :title="t('system.retention.stopped')"

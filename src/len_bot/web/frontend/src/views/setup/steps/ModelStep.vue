@@ -56,6 +56,25 @@ watch(
   },
 )
 const thinking = computed(() => draft.api === 'anthropic')
+/** Select options cannot be empty; this stands for leaving the effort to the provider. */
+const UNSET = '*'
+const efforts = computed(() => {
+  const known = ['minimal', 'low', 'medium', 'high']
+  const current = draft.effort.trim()
+  return [
+    { value: UNSET, label: t('models.roles.effortDefault') },
+    ...[...known, ...(current && !known.includes(current) ? [current] : [])].map((value) => ({
+      value,
+      label: value,
+    })),
+  ]
+})
+const effort = computed({
+  get: () => draft.effort.trim() || UNSET,
+  set: (value: string | undefined) => {
+    draft.effort = !value || value === UNSET ? '' : value
+  },
+})
 const outputFields = [
   { value: 'max_completion_tokens' as const, label: 'max_completion_tokens' },
   { value: 'max_tokens' as const, label: 'max_tokens' },
@@ -159,7 +178,11 @@ const passed = computed(() => {
           </Button>
         </div>
         <TestResult
-          :passed="list.data.value ? t('models.probe.listed', { n: list.data.value.models.length }) : null"
+          :passed="
+            list.data.value
+              ? t('models.probe.listed', { n: list.data.value.models.length }, list.data.value.models.length)
+              : null
+          "
           :error="list.error.value"
           :failed-title="t('models.probe.listFailed')"
         />
@@ -188,12 +211,6 @@ const passed = computed(() => {
       >
         <Select v-model="draft.searchConnection" :options="connectionOptions" />
       </Field>
-      <p
-        v-if="draft.search === 'deepseek' && !wizard.chatIsDeepSeek.value"
-        class="text-sm text-ink-2 sm:col-span-2"
-      >
-        {{ t('setup.model.searchOwnKey') }}
-      </p>
       <template v-if="wizard.searchAlias() === 'search'">
         <Field :label="t('models.providers.url')" :error="error('searchBaseUrl')" required wide>
           <Input v-model="draft.searchBaseUrl" type="url" mono />
@@ -242,7 +259,7 @@ const passed = computed(() => {
         <NumberInput v-model="draft.maxOutput" :min="1" :steppers="false" unit="tokens" />
       </Field>
       <Field :label="t('models.roles.effort')">
-        <Input v-model="draft.effort" mono :placeholder="t('models.roles.effortDefault')" />
+        <Select v-model="effort" :options="efforts" />
       </Field>
       <Field v-if="thinking" :label="t('models.roles.thinking')" :error="error('thinkingBudget')">
         <NumberInput v-model="draft.thinkingBudget" :min="0" :steppers="false" unit="tokens" />
