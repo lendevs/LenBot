@@ -3,10 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { capabilitiesApi, type SkillPlace } from '../../api/capabilities'
+import { readPendingRestart } from '../../api/hostStore'
 import { keys } from '../../api/query'
 import { developerDetails } from '../../composables/useDeveloperMode'
 import { formatBytes } from '../../i18n/format'
-import { groupLabel } from '../../layouts/shell/scenes'
+import { groupLabel, sceneSecondaryId } from '../../layouts/shell/scenes'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 import CodeBlock from '../../ui/CodeBlock.vue'
@@ -16,7 +17,6 @@ import Skeleton from '../../ui/Skeleton.vue'
 import { confirm } from '../../ui/confirm'
 import { toast } from '../../ui/toast'
 import RawRecord from '../groups/tasks/RawRecord.vue'
-import { sceneSecondaryId } from './status'
 
 /** A skill's real files, read page by page, with moving and deleting where its source allows. */
 const props = defineProps<{ place: SkillPlace }>()
@@ -37,10 +37,15 @@ const listing = useQuery({
 const path = ref<string | null>(null)
 const text = ref('')
 const next = ref<number | null>(null)
+let readSeq = 0
 const read = useMutation({
-  mutationFn: ({ file, offset }: { file: string; offset: number }) =>
-    capabilitiesApi.skillText(props.place, file, offset),
-  onSuccess: (page, { file, offset }) => {
+  mutationFn: async ({ file, offset }: { file: string; offset: number }) => {
+    const seq = ++readSeq
+    const page = await capabilitiesApi.skillText(props.place, file, offset)
+    return { page, seq }
+  },
+  onSuccess: ({ page, seq }, { file, offset }) => {
+    if (seq !== readSeq) return
     path.value = file
     text.value = offset ? text.value + page.content : page.content
     next.value = page.next_offset
@@ -49,8 +54,9 @@ const read = useMutation({
 watch(
   () => listing.data.value,
   (value) => {
-    if (value && path.value === null && value.files.some((file) => file.path === 'SKILL.md'))
-      read.mutate({ file: 'SKILL.md', offset: 0 })
+    if (!value || path.value !== null || !value.files.length) return
+    const initial = value.files.find((file) => file.path === 'SKILL.md') ?? value.files[0]
+    if (initial) read.mutate({ file: initial.path, offset: 0 })
   },
   { immediate: true },
 )
@@ -61,6 +67,7 @@ const done = (message: string) => {
   toast.success(message)
   client.removeQueries({ queryKey: key.value })
   void client.invalidateQueries({ queryKey: keys.skills.all() })
+  void readPendingRestart()
   emit('changed')
   open.value = false
 }
@@ -134,6 +141,11 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
           size="sm"
           :variant="file.path === path ? 'secondary' : 'ghost'"
           :aria-pressed="file.path === path"
+          :loading="
+            read.isPending.value &&
+            read.variables.value?.offset === 0 &&
+            read.variables.value?.file === file.path
+          "
           :title="formatBytes(file.size)"
           @click="read.mutate({ file: file.path, offset: 0 })"
         >
@@ -145,6 +157,7 @@ const actionError = computed(() => move.error.value ?? remove.error.value)
         :title="t('capabilities.skills.readFile')"
         :error="read.error.value"
       />
+      <Skeleton v-else-if="!path && read.isPending.value" :lines="6" />
       <CodeBlock
         v-if="path"
         :code="text || t('capabilities.skills.emptyFile')"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, onActivated, onDeactivated, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
@@ -15,6 +15,8 @@ import ErrorNote from '../../ui/ErrorNote.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import McpEditor from './McpEditor.vue'
 import { mcpTone } from './status'
+
+const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 const { t } = useI18n()
 const route = useRoute()
@@ -33,17 +35,46 @@ const names = computed(() =>
 )
 const running = (name: string) => state.value?.running.find((item) => item.name === name)
 const item = computed(() => (typeof route.query.item === 'string' ? route.query.item : null))
+const active = ref(true)
+const editorDirty = ref(false)
+const frozenSelection = ref<string | null | undefined>(undefined)
 /** The open service; null is adding one, undefined is none. */
 const selected = computed<string | null | undefined>(() => {
+  if (!active.value) return frozenSelection.value
   if (item.value === NEW) return null
   if (item.value && names.value.includes(item.value)) return item.value
   return wide.value ? names.value[0] : undefined
 })
 const select = (value: string | null | undefined) =>
-  void router.replace({ query: { ...route.query, item: value === null ? NEW : (value ?? undefined) } })
+  void router.replace({
+    query: { ...route.query, tab: 'mcp', item: value === null ? NEW : (value ?? undefined) },
+  })
+
+onDeactivated(() => {
+  frozenSelection.value = selected.value
+  active.value = false
+})
+onActivated(() => {
+  if (editorDirty.value && frozenSelection.value !== undefined) {
+    const target = frozenSelection.value === null ? NEW : frozenSelection.value
+    if (route.query.item !== target) {
+      void router.replace({ query: { ...route.query, tab: 'mcp', item: target } }).finally(() => {
+        active.value = true
+      })
+      return
+    }
+  }
+  active.value = true
+})
+watch(
+  () => selected.value !== undefined && editorDirty.value,
+  (value) => emit('dirty', value),
+  { immediate: true },
+)
 watch(
   () => [item.value, names.value.length],
   () => {
+    if (!active.value) return
     if (state.value && item.value && item.value !== NEW && !names.value.includes(item.value))
       select(undefined)
   },
@@ -116,6 +147,7 @@ const subtitle = (name: string) => {
       @back="select(undefined)"
       @saved="(name) => select(name)"
       @removed="select(undefined)"
+      @dirty="(value) => (editorDirty = value)"
     />
   </div>
 </template>

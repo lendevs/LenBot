@@ -8,13 +8,14 @@ import Select from '../../ui/Select.vue'
 import Switch from '../../ui/Switch.vue'
 import ModelName from './ModelName.vue'
 import RoleCard from './RoleCard.vue'
-import { chatRoles, hasKey, useForm } from './form'
+import { chatRoles, hasKey, useForm, type ProblemField } from './form'
 
 const { t } = useI18n()
 const form = useForm()
 const asr = computed(() => form.draft.value!.roles.asr)
 const asrRow = computed(() => form.providerFor(asr.value?.provider))
 const asrErrors = computed(() => form.problems.value.filter((item) => item.place === 'roles.asr'))
+const asrError = (field: ProblemField) => asrErrors.value.find((item) => item.field === field)?.text ?? null
 const asrOn = computed({ get: () => asr.value !== null, set: (on: boolean) => form.toggleAsr(on) })
 const language = computed({
   get: () => asr.value?.language ?? '',
@@ -36,14 +37,14 @@ const language = computed({
         <Switch v-model="asrOn" :aria-label="form.roleTitle('asr')" />
       </header>
       <div v-if="asr" class="grid gap-x-5 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">
-        <Field :label="t('models.roles.provider')">
+        <Field :label="t('models.roles.provider')" :error="asrError('provider')">
           <Select
             v-model="asr.provider"
             :options="form.optionsFor('asr')"
             :placeholder="t('models.roles.noProvider')"
           />
         </Field>
-        <Field :label="t('models.roles.model')">
+        <Field :label="t('models.roles.model')" :error="asrError('model')">
           <ModelName
             v-model="asr.model"
             :models="form.catalog.value[asr.provider]"
@@ -54,10 +55,10 @@ const language = computed({
             @refresh="asrRow && form.loadCatalog(asrRow.id)"
           />
         </Field>
-        <Field :label="t('models.roles.language')">
+        <Field :label="t('models.roles.language')" :error="asrError('language')">
           <Input v-model="language" mono :placeholder="t('models.roles.autoLanguage')" />
         </Field>
-        <Field :label="t('models.roles.timeout')">
+        <Field :label="t('models.roles.timeout')" :error="asrError('timeout')">
           <NumberInput
             v-model="asr.timeout_seconds"
             :min="1"
@@ -66,9 +67,6 @@ const language = computed({
           />
         </Field>
       </div>
-      <ul v-if="asrErrors.length" class="flex list-none flex-col gap-1 text-sm text-error">
-        <li v-for="item in asrErrors" :key="item.text">{{ item.text }}</li>
-      </ul>
     </section>
   </div>
 </template>

@@ -13,13 +13,11 @@ import type { SavedProvider } from '../../api/models'
 import { READ_APIS, READ_SERVICES, SEARCH_APIS, SEARCH_SERVICES } from '../../api/webServices'
 import { keys } from '../../api/query'
 import { settingsApi, type SettingsSnapshot } from '../../api/settings'
-import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
 import { readPendingRestart } from '../../api/hostStore'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
 import Button from '../../ui/Button.vue'
-import { useRouter } from 'vue-router'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
@@ -30,8 +28,9 @@ import Textarea from '../../ui/Textarea.vue'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
+const emit = defineEmits<{ dirty: [value: boolean] }>()
+
 const { t } = useI18n()
-const router = useRouter()
 const client = useQueryClient()
 const settings = useQuery({
   queryKey: keys.host.settings(),
@@ -107,7 +106,19 @@ watch(readConnections, (options) => {
   if (read && !options.some((item) => item.value === read.connection)) read.connection = null
 })
 const dirty = computed(() => Object.values(changed.value).some(Boolean))
-useUnsavedChanges(dirty, { keep: ['tab'] })
+watch(dirty, (value) => emit('dirty', value), { immediate: true })
+const readConnectionError = computed(() => {
+  if (!draft.value?.read || !readKeyed.value) return null
+  if (!readConnections.value.length) return t('capabilities.web.noConnection')
+  if (!draft.value.read.connection) return t('capabilities.web.pickConnection')
+  return null
+})
+const searchConnectionError = computed(() => {
+  if (!draft.value?.search || !searchKeyed.value) return null
+  if (!searchConnections.value.length) return t('capabilities.web.noConnection')
+  if (!draft.value.search.connection) return t('capabilities.web.pickConnection')
+  return null
+})
 const networks = computed(() =>
   (draft.value?.fakeIp ?? '')
     .split('\n')
@@ -128,10 +139,12 @@ const invalid = computed(() => {
 
 const saving = ref(false)
 const saveError = ref<string | null>(null)
+const saveRawError = ref<string | null>(null)
 async function save() {
   const value = draft.value!
   saving.value = true
   saveError.value = null
+  saveRawError.value = null
   try {
     let snapshot: SettingsSnapshot | null = null
     if (changed.value.read) snapshot = await capabilitiesApi.saveWebRead(value.read)
@@ -145,12 +158,14 @@ async function save() {
       client.setQueryData(keys.host.settings(), snapshot)
       draft.value = pick(snapshot)
     }
-    void readPendingRestart()
     toast.success(t('common.saved'))
   } catch (error) {
-    saveError.value = describeError(error, t('ui.error.network')).message
+    const described = describeError(error, t('ui.error.network'))
+    saveError.value = described.message
+    saveRawError.value = described.raw
     void settings.refetch()
   } finally {
+    void readPendingRestart()
     saving.value = false
   }
 }
@@ -179,16 +194,22 @@ async function save() {
         <Field v-if="draft.read" :label="t('capabilities.web.readProvider')">
           <Select v-model="draft.read.provider" :options="readers" />
         </Field>
-        <Field v-if="draft.read && readKeyed" :label="t('capabilities.web.readConnection')" required>
+        <Field
+          v-if="draft.read && readKeyed"
+          :label="t('capabilities.web.readConnection')"
+          required
+          :error="readConnectionError"
+        >
           <div class="flex flex-wrap items-center gap-2 sm:flex-nowrap">
             <div class="min-w-44 flex-1">
               <Select
                 :model-value="draft.read.connection ?? undefined"
                 :options="readConnections"
+                :disabled="!readConnections.length"
                 @update:model-value="(value) => (draft!.read!.connection = value ?? null)"
               />
             </div>
-            <Button variant="ghost" size="sm" @click="router.push('/models?tab=providers')">
+            <Button variant="ghost" size="sm" :to="{ name: 'host-models', query: { tab: 'providers' } }">
               {{ t('capabilities.web.manageConnections') }}
             </Button>
           </div>
@@ -223,16 +244,22 @@ async function save() {
           <Field :label="t('capabilities.web.provider')">
             <Select v-model="draft.search.provider" :options="providers" />
           </Field>
-          <Field v-if="searchKeyed" :label="t('capabilities.web.connection')" required>
+          <Field
+            v-if="searchKeyed"
+            :label="t('capabilities.web.connection')"
+            required
+            :error="searchConnectionError"
+          >
             <div class="flex flex-wrap items-center gap-2 sm:flex-nowrap">
               <div class="min-w-44 flex-1">
                 <Select
                   :model-value="draft.search.connection ?? undefined"
                   :options="searchConnections"
+                  :disabled="!searchConnections.length"
                   @update:model-value="(value) => (draft!.search!.connection = value ?? null)"
                 />
               </div>
-              <Button variant="ghost" size="sm" @click="router.push('/models?tab=providers')">
+              <Button variant="ghost" size="sm" :to="{ name: 'host-models', query: { tab: 'providers' } }">
                 {{ t('capabilities.web.manageConnections') }}
               </Button>
             </div>
@@ -273,9 +300,16 @@ async function save() {
       :dirty="dirty"
       :saving="saving"
       :error="saveError"
+      :raw-error="saveRawError"
       :invalid="invalid"
       @save="save"
-      @discard="draft = initial && copy(initial)"
+      @discard="
+        () => {
+          draft = initial && copy(initial)
+          saveError = null
+          saveRawError = null
+        }
+      "
     />
   </div>
 </template>
