@@ -9,7 +9,7 @@ import IconButton from '../../../ui/IconButton.vue'
 import Input from '../../../ui/Input.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import Textarea from '../../../ui/Textarea.vue'
-import { useForm } from './form'
+import { createRelationship, useForm } from './form'
 
 const { t } = useI18n()
 const form = useForm()
@@ -20,7 +20,7 @@ const addendum = computed({
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.persona.section')" :columns="1">
+  <FormSection id="persona" :title="t('groups.settings.persona.section')" :columns="1">
     <Field :label="t('groups.settings.persona.aliases')" :error="form.errors.aliases">
       <TagInput v-model="form.draft.scene.persona_aliases" />
     </Field>
@@ -32,7 +32,7 @@ const addendum = computed({
         >
           <div
             v-for="(row, index) in form.draft.relationships"
-            :key="index"
+            :key="row.id"
             class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 py-3 first:pt-0 last:pb-0 sm:grid-cols-[180px_minmax(0,1fr)_auto] sm:py-0"
           >
             <div class="min-w-0">
@@ -65,7 +65,7 @@ const addendum = computed({
             size="sm"
             variant="ghost"
             :icon="Plus"
-            @click="form.draft.relationships.push({ account: '', text: '' })"
+            @click="form.draft.relationships.push(createRelationship())"
           >
             {{ t('groups.settings.persona.add') }}
           </Button>

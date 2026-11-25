@@ -65,7 +65,7 @@ async function choose(key: string | undefined) {
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.role.section')" :columns="1">
+  <FormSection id="role" :title="t('groups.settings.role.section')" :columns="1">
     <ErrorNote
       v-if="library.isError.value"
       :title="t('groups.settings.role.readFailed')"

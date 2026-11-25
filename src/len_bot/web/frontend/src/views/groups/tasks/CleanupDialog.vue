@@ -28,6 +28,15 @@ const storage = useQuery({
   queryFn: ({ signal }) => storageApi.task(props.scene, viewing.value, signal),
 })
 const temporary = computed(() => storage.data.value?.temporary.filter((item) => item.exists) ?? [])
+const nothingToClean = computed(() => {
+  if (targets.length === 0) return true
+  if (targets.length === 1) {
+    if (storage.isPending.value || storage.isError.value || !storage.data.value) return true
+    if (!storage.data.value.cleanable) return true
+    if (props.operation === 'temporary' && temporary.value.length === 0) return true
+  }
+  return false
+})
 
 const clean = useMutation({
   mutationFn: () => storageApi.cleanup(props.scene, targets, props.operation),
@@ -126,7 +135,13 @@ const open = computed({
       <Button variant="ghost" :disabled="clean.isPending.value" @click="emit('close')">
         {{ t(results ? 'common.close' : 'common.cancel') }}
       </Button>
-      <Button v-if="!results" variant="danger" :loading="clean.isPending.value" @click="clean.mutate()">
+      <Button
+        v-if="!results"
+        variant="danger"
+        :loading="clean.isPending.value"
+        :disabled="nothingToClean"
+        @click="clean.mutate()"
+      >
         {{ t(`groups.tasks.space.cleanup.${operation}`) }}
       </Button>
     </template>

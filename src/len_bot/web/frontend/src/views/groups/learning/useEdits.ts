@@ -12,6 +12,12 @@ export function useEdits<T extends { id: number }, D>(fresh: (item: T) => D) {
     const entry = drafts.get(id)
     return Boolean(entry) && JSON.stringify(entry!.draft) !== JSON.stringify(fresh(entry!.item))
   }
+  function prune(visibleIds: Iterable<number>) {
+    const keep = new Set(visibleIds)
+    for (const id of [...drafts.keys()]) {
+      if (!keep.has(id)) drafts.delete(id)
+    }
+  }
   return {
     drafts,
     editing: (id: number) => drafts.has(id),
@@ -19,6 +25,7 @@ export function useEdits<T extends { id: number }, D>(fresh: (item: T) => D) {
     start: (item: T) => void drafts.set(item.id, { item, draft: fresh(item) }),
     stop: (id: number) => void drafts.delete(id),
     clear: () => drafts.clear(),
+    prune,
     changed,
     dirty: computed(() => [...drafts.keys()].some(changed)),
   }

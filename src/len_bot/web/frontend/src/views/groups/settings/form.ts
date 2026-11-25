@@ -15,9 +15,28 @@ import type { SceneMemory } from '../../../api/plugins'
 import { describeError } from '../../../ui/errors'
 
 export interface Relationship {
+  id: number
   account: string
   text: string
 }
+
+let nextRelationshipId = 1
+export function createRelationship(account = '', text = ''): Relationship {
+  return { id: nextRelationshipId++, account, text }
+}
+
+export type SettingsSectionId =
+  | 'role'
+  | 'participation'
+  | 'focus'
+  | 'quiet'
+  | 'speech'
+  | 'proactive'
+  | 'persona'
+  | 'tasks'
+  | 'plugins'
+  | 'permissions'
+  | 'danger'
 
 /** Everything the save bar saves; each part goes to its own endpoint. */
 export interface Draft {
@@ -33,10 +52,41 @@ export interface Draft {
 const ACCOUNT = /^[a-z][a-z0-9_-]*:[^:\s/\\]+$/
 const CLOCK = /^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$/
 
-const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+export const cloneValue = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 /** Saved clocks come back as HH:MM:SS; whole minutes are edited as HH:MM. */
 const minutes = (clock: string) => clock.replace(/^(\d\d:\d\d):00$/, '$1')
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
+const participationSlice = (draft: Draft) => {
+  const { attention, timezone, transcribe_audio } = draft.scene
+  return {
+    only_direct: attention.only_direct,
+    keywords: attention.keywords,
+    other_bot_ids: attention.other_bot_ids,
+    timezone,
+    transcribe_audio,
+    direct_idle_seconds: attention.direct_idle_seconds,
+    direct_max_seconds: attention.direct_max_seconds,
+    named_idle_seconds: attention.named_idle_seconds,
+    named_max_seconds: attention.named_max_seconds,
+    keyword_cooldown_seconds: attention.keyword_cooldown_seconds,
+    focus_seconds: attention.focus_seconds,
+    focus_idle_seconds: attention.focus_idle_seconds,
+    focus_max_seconds: attention.focus_max_seconds,
+    ambient_min_interval_seconds: attention.ambient_min_interval_seconds,
+    ambient_max_interval_seconds: attention.ambient_max_interval_seconds,
+    speech_burst: attention.speech_burst,
+    speech_interval_seconds: attention.speech_interval_seconds,
+    explore_probability: attention.explore_probability,
+    max_extensions: attention.max_extensions,
+  }
+}
+
+const relationshipsComparable = (rows: Relationship[]) => rows.map(({ account, text }) => [account, text])
+
+const sceneComparable = (draft: Draft) => [draft.scene, relationshipsComparable(draft.relationships)]
 
 function sceneOf(
   snapshot: SettingsSnapshot,
@@ -55,7 +105,7 @@ function sceneOf(
   } = saved.tasks
   const quiet = saved.attention.quiet_hours
   const proactive = saved.proactive
-  return copy({
+  return cloneValue({
     scene: {
       timezone: saved.timezone,
       voice_mode: saved.voice_mode,
@@ -73,10 +123,9 @@ function sceneOf(
       persona_aliases: saved.scene_persona.persona_aliases,
       behavior_addendum: saved.scene_persona.behavior_addendum,
     },
-    relationships: Object.entries(saved.scene_persona.relationships).map(([account, text]) => ({
-      account,
-      text,
-    })),
+    relationships: Object.entries(saved.scene_persona.relationships).map(([account, text]) =>
+      createRelationship(account, text),
+    ),
     tasks: {
       enabled,
       max_running,
@@ -91,6 +140,18 @@ function sceneOf(
         ? { mode: 'unlimited', value: null }
         : { mode: 'custom', value: table[scene] },
   })
+}
+
+export function errorSection(key: string): SettingsSectionId {
+  if (key.startsWith('attention.declarations.') || key.startsWith('attention.disposition.')) return 'focus'
+  if (key.startsWith('attention.') || key === 'otherBots') return 'participation'
+  if (key.startsWith('quiet.')) return 'quiet'
+  if (key === 'speech') return 'speech'
+  if (key.startsWith('proactive.')) return 'proactive'
+  if (key === 'aliases' || key.startsWith('relationships.')) return 'persona'
+  if (key === 'maxPending' || key.startsWith('tasks.')) return 'tasks'
+  if (key.startsWith('permissions.')) return 'permissions'
+  return 'participation'
 }
 
 export function useSettingsForm(scene: Ref<string>) {
@@ -117,23 +178,19 @@ export function useSettingsForm(scene: Ref<string>) {
     const entry = plugins.data.value?.scenes[scene.value]
     return {
       ...base,
-      plugins: copy(entry?.saved ?? []),
+      plugins: cloneValue(entry?.saved ?? []),
       memory: {
         memory_plugin: entry?.memory_plugin.saved ?? null,
         recap_plugin: entry?.recap_plugin.saved ?? null,
       },
-      permissions: permissions.data.value ? copy(permissions.data.value.saved) : null,
+      permissions: permissions.data.value ? cloneValue(permissions.data.value.saved) : null,
     }
   })
   const draft = ref<Draft | null>(null)
   const parts = ['scene', 'tasks', 'speech', 'plugins', 'memory', 'permissions'] as const
   const changed = (part: (typeof parts)[number]) => {
     if (!draft.value || !saved.value) return false
-    if (part === 'scene')
-      return !same(
-        [draft.value.scene, draft.value.relationships],
-        [saved.value.scene, saved.value.relationships],
-      )
+    if (part === 'scene') return !same(sceneComparable(draft.value), sceneComparable(saved.value))
     return !same(draft.value[part], saved.value[part])
   }
   const dirty = computed(() => parts.some(changed))
@@ -143,8 +200,24 @@ export function useSettingsForm(scene: Ref<string>) {
       !!draft.value && !!saved.value && draft.value.memory.memory_plugin !== saved.value.memory.memory_plugin,
   )
 
+  const expanded = reactive({
+    participationDetails: false,
+    focusDetails: false,
+    tasksTraffic: false,
+    permissionsScoped: false,
+  })
+
+  const saving = ref(false)
+  const saveError = ref<string | null>(null)
+  const saveRawError = ref<string | null>(null)
+  function clearSaveError() {
+    saveError.value = null
+    saveRawError.value = null
+  }
+
   function adopt() {
-    draft.value = saved.value && copy(saved.value)
+    draft.value = saved.value && cloneValue(saved.value)
+    clearSaveError()
   }
   // A part read later (permissions, plugins) or saved elsewhere joins the draft when that part is unchanged.
   // Immediate: returning to the tab finds the settings already cached, so `saved` does not change again.
@@ -155,14 +228,12 @@ export function useSettingsForm(scene: Ref<string>) {
       if (!draft.value || !previous) return adopt()
       for (const part of parts) {
         if (part === 'scene') {
-          if (
-            same([draft.value.scene, draft.value.relationships], [previous.scene, previous.relationships])
-          ) {
-            draft.value.scene = copy(value.scene)
-            draft.value.relationships = copy(value.relationships)
+          if (same(sceneComparable(draft.value), sceneComparable(previous))) {
+            draft.value.scene = cloneValue(value.scene)
+            draft.value.relationships = cloneValue(value.relationships)
           }
         } else if (same(draft.value[part], previous[part])) {
-          ;(draft.value as unknown as Record<string, unknown>)[part] = copy(value[part])
+          ;(draft.value as unknown as Record<string, unknown>)[part] = cloneValue(value[part])
         }
       }
     },
@@ -170,6 +241,13 @@ export function useSettingsForm(scene: Ref<string>) {
   )
   // Another group starts from its own saved settings, whichever of the two watchers runs first.
   watch(scene, adopt)
+  watch(
+    draft,
+    () => {
+      if (saveError.value || saveRawError.value) clearSaveError()
+    },
+    { deep: true },
+  )
 
   /** Field errors by a dotted path such as `quiet.start`. */
   const errors = computed<Record<string, string>>(() => {
@@ -177,6 +255,10 @@ export function useSettingsForm(scene: Ref<string>) {
     const found: Record<string, string> = {}
     if (!value) return found
     const required = t('common.required')
+    const positive = t('groups.settings.errors.positive')
+    const atLeastOne = t('groups.settings.errors.atLeastOne')
+    const nonNegativeInt = t('groups.settings.errors.nonNegativeInt')
+    const accountErr = t('groups.settings.errors.account')
     const attention = value.scene.attention
     const clock = (key: string, text: string | undefined) => {
       if (!text) found[key] = required
@@ -196,7 +278,8 @@ export function useSettingsForm(scene: Ref<string>) {
       clock('proactive.end', proactive.end)
       if (!found['proactive.end'] && proactive.start === proactive.end)
         found['proactive.end'] = t('groups.settings.errors.samePeriod')
-      if (!(proactive.idle_seconds >= 600)) found['proactive.idle'] = t('groups.settings.errors.idle')
+      if (!isFiniteNumber(proactive.idle_seconds) || !(proactive.idle_seconds >= 600))
+        found['proactive.idle'] = t('groups.settings.errors.idle')
     }
     if (
       value.speech.mode === 'custom' &&
@@ -206,23 +289,41 @@ export function useSettingsForm(scene: Ref<string>) {
     const seen = new Set<string>()
     value.relationships.forEach((row, index) => {
       const account = row.account.trim()
-      if (!ACCOUNT.test(account))
-        found[`relationships.${index}.account`] = t('groups.settings.errors.account')
+      if (!ACCOUNT.test(account)) found[`relationships.${index}.account`] = accountErr
       else if (seen.has(account))
         found[`relationships.${index}.account`] = t('groups.settings.errors.repeated')
       seen.add(account)
       if (!row.text.trim()) found[`relationships.${index}.text`] = required
     })
     if (value.scene.persona_aliases.some((alias) => !alias.trim())) found.aliases = required
-    if (attention.other_bot_ids.some((id) => !ACCOUNT.test(id)))
-      found.otherBots = t('groups.settings.errors.account')
+    if (attention.other_bot_ids.some((id) => !ACCOUNT.test(id))) found.otherBots = accountErr
+
+    const positiveSeconds = new Set([
+      'direct_max_seconds',
+      'named_max_seconds',
+      'focus_max_seconds',
+      'ambient_min_interval_seconds',
+      'ambient_max_interval_seconds',
+    ])
     for (const [key, number] of Object.entries(attention)) {
-      if (
-        typeof number !== 'number' &&
-        (key.endsWith('_seconds') || key === 'speech_burst' || key === 'max_extensions')
-      )
-        found[`attention.${key}`] = required
+      if (key.endsWith('_seconds')) {
+        if (!isFiniteNumber(number)) found[`attention.${key}`] = required
+        else if (positiveSeconds.has(key) && number <= 0) found[`attention.${key}`] = positive
+        else if (number < 0) found[`attention.${key}`] = nonNegativeInt
+      }
     }
+    if (!isFiniteNumber(attention.speech_burst)) found['attention.speech_burst'] = required
+    else if (!Number.isInteger(attention.speech_burst) || attention.speech_burst < 1)
+      found['attention.speech_burst'] = atLeastOne
+
+    if (!isFiniteNumber(attention.max_extensions)) found['attention.max_extensions'] = required
+    else if (!Number.isInteger(attention.max_extensions) || attention.max_extensions < 0)
+      found['attention.max_extensions'] = nonNegativeInt
+
+    if (!isFiniteNumber(attention.explore_probability)) found['attention.explore_probability'] = required
+    else if (attention.explore_probability < 0 || attention.explore_probability > 1)
+      found['attention.explore_probability'] = t('groups.settings.errors.probability')
+
     const pairs = [
       ['direct_idle_seconds', 'direct_max_seconds'],
       ['named_idle_seconds', 'named_max_seconds'],
@@ -230,24 +331,131 @@ export function useSettingsForm(scene: Ref<string>) {
       ['ambient_min_interval_seconds', 'ambient_max_interval_seconds'],
     ] as const
     for (const [low, high] of pairs) {
-      if (attention[low] > attention[high]) found[`attention.${low}`] = t('groups.settings.errors.notAbove')
+      if (
+        isFiniteNumber(attention[low]) &&
+        isFiniteNumber(attention[high]) &&
+        attention[low] > attention[high]
+      )
+        found[`attention.${low}`] = t('groups.settings.errors.notAbove')
     }
-    if (typeof value.scene.schedules.max_pending !== 'number') found.maxPending = required
+
+    if (attention.declarations) {
+      const dec = attention.declarations
+      if (!isFiniteNumber(dec.max_minutes)) found['attention.declarations.max_minutes'] = required
+      else if (dec.max_minutes <= 0) found['attention.declarations.max_minutes'] = positive
+      for (const key of ['max_intents', 'max_conditions', 'max_people', 'max_keywords'] as const) {
+        if (!isFiniteNumber(dec[key])) found[`attention.declarations.${key}`] = required
+        else if (!Number.isInteger(dec[key]) || dec[key] < 1)
+          found[`attention.declarations.${key}`] = atLeastOne
+      }
+    }
+
+    if (attention.disposition) {
+      const disp = attention.disposition
+      if (!isFiniteNumber(disp.max_minutes)) found['attention.disposition.max_minutes'] = required
+      else if (disp.max_minutes <= 0) found['attention.disposition.max_minutes'] = positive
+      if (!isFiniteNumber(disp.max_people)) found['attention.disposition.max_people'] = required
+      else if (!Number.isInteger(disp.max_people) || disp.max_people < 1)
+        found['attention.disposition.max_people'] = atLeastOne
+    }
+
+    if (!isFiniteNumber(value.scene.schedules.max_pending)) found.maxPending = required
+    else if (!Number.isInteger(value.scene.schedules.max_pending) || value.scene.schedules.max_pending < 1)
+      found.maxPending = atLeastOne
+
     for (const key of ['max_running', 'max_daily_tasks'] as const) {
-      if (typeof value.tasks[key] !== 'number') found[`tasks.${key}`] = required
+      const current = value.tasks[key]
+      if (!isFiniteNumber(current)) found[`tasks.${key}`] = required
+      else if (!Number.isInteger(current) || current < 1) found[`tasks.${key}`] = atLeastOne
     }
+
+    if (value.permissions) {
+      const perms = value.permissions
+      if (perms.scene_identities) {
+        for (const list of ['admins', 'whitelist', 'blacklist'] as const) {
+          if (perms.scene_identities[list].some((id) => !ACCOUNT.test(id)))
+            found[`permissions.scene.${list}`] = accountErr
+        }
+      }
+      for (const scope of ['task_identities', 'schedule_identities'] as const) {
+        const scoped = perms[scope]
+        if (scoped.owner && !ACCOUNT.test(scoped.owner)) found[`permissions.${scope}.owner`] = accountErr
+        for (const list of ['admins', 'whitelist'] as const) {
+          if (scoped[list].some((id) => !ACCOUNT.test(id))) found[`permissions.${scope}.${list}`] = accountErr
+        }
+      }
+    }
+
     return found
   })
   const invalid = computed(() => Object.keys(errors.value).length > 0)
 
-  const saving = ref(false)
-  const saveError = ref<string | null>(null)
-  async function save(): Promise<boolean> {
+  const sectionDirty = computed<Record<SettingsSectionId, boolean>>(() => {
+    const d = draft.value
+    const s = saved.value
+    if (!d || !s) {
+      return {
+        role: false,
+        participation: false,
+        focus: false,
+        quiet: false,
+        speech: false,
+        proactive: false,
+        persona: false,
+        tasks: false,
+        plugins: false,
+        permissions: false,
+        danger: false,
+      }
+    }
+    return {
+      role: false,
+      participation: !same(participationSlice(d), participationSlice(s)),
+      focus: !same(
+        [d.scene.attention.declarations, d.scene.attention.disposition],
+        [s.scene.attention.declarations, s.scene.attention.disposition],
+      ),
+      quiet: !same(d.scene.attention.quiet_hours, s.scene.attention.quiet_hours),
+      speech: changed('speech'),
+      proactive: !same(d.scene.proactive, s.scene.proactive),
+      persona: !same(
+        [d.scene.persona_aliases, d.scene.behavior_addendum, relationshipsComparable(d.relationships)],
+        [s.scene.persona_aliases, s.scene.behavior_addendum, relationshipsComparable(s.relationships)],
+      ),
+      tasks: !same(d.scene.schedules, s.scene.schedules) || changed('tasks'),
+      plugins: changed('plugins') || changed('memory'),
+      permissions: changed('permissions'),
+      danger: false,
+    }
+  })
+
+  const sectionErrors = computed<Record<SettingsSectionId, boolean>>(() => {
+    const map: Record<SettingsSectionId, boolean> = {
+      role: false,
+      participation: false,
+      focus: false,
+      quiet: false,
+      speech: false,
+      proactive: false,
+      persona: false,
+      tasks: false,
+      plugins: false,
+      permissions: false,
+      danger: false,
+    }
+    for (const key of Object.keys(errors.value)) {
+      map[errorSection(key)] = true
+    }
+    return map
+  })
+
+  async function save(): Promise<'saved' | 'restart' | false> {
     const value = draft.value
     if (!value || invalid.value) return false
     saving.value = true
-    saveError.value = null
+    clearSaveError()
     const name = scene.value
+    let restartRequired = false
     try {
       if (changed('scene')) {
         const body: SceneChange = {
@@ -258,28 +466,37 @@ export function useSettingsForm(scene: Ref<string>) {
             value.relationships.map((row) => [row.account.trim(), row.text.trim()]),
           ),
         }
-        client.setQueryData(keys.host.settings(), await settingsApi.putScene(name, body))
+        const snapshot = await settingsApi.putScene(name, body)
+        client.setQueryData(keys.host.settings(), snapshot)
+        if (snapshot.restart_required.scenes?.[name]) restartRequired = true
       }
-      if (changed('tasks'))
-        client.setQueryData(keys.host.settings(), await settingsApi.putTasks(name, value.tasks))
+      if (changed('tasks')) {
+        const snapshot = await settingsApi.putTasks(name, value.tasks)
+        client.setQueryData(keys.host.settings(), snapshot)
+        if (snapshot.restart_required.scenes?.[name]) restartRequired = true
+      }
       if (changed('speech')) {
-        client.setQueryData(keys.host.settings(), await settingsApi.putSpeech(name, value.speech))
+        const snapshot = await settingsApi.putSpeech(name, value.speech)
+        client.setQueryData(keys.host.settings(), snapshot)
+        if (snapshot.restart_required.scenes?.[name]) restartRequired = true
         void client.invalidateQueries({ queryKey: keys.host.limits() })
       }
-      if (changed('plugins') || changed('memory'))
-        client.setQueryData(
-          keys.plugins.all(),
-          await settingsApi.putScenePlugins(name, value.plugins, value.memory),
-        )
-      if (changed('permissions') && value.permissions)
-        client.setQueryData(
-          keys.scene.permissions(name),
-          await settingsApi.putPermissions(name, value.permissions),
-        )
+      if (changed('plugins') || changed('memory')) {
+        const snapshot = await settingsApi.putScenePlugins(name, value.plugins, value.memory)
+        client.setQueryData(keys.plugins.all(), snapshot)
+        if (snapshot.restart_required) restartRequired = true
+      }
+      if (changed('permissions') && value.permissions) {
+        const snapshot = await settingsApi.putPermissions(name, value.permissions)
+        client.setQueryData(keys.scene.permissions(name), snapshot)
+        if (snapshot.restart_required) restartRequired = true
+      }
       adopt()
-      return true
+      return restartRequired ? 'restart' : 'saved'
     } catch (error) {
-      saveError.value = describeError(error, t('ui.error.network')).message
+      const described = describeError(error, t('ui.error.network'))
+      saveError.value = described.message
+      saveRawError.value = described.raw
       // Parts saved before the failure are kept; read again so the draft compares with what is saved now.
       void client.invalidateQueries({ queryKey: keys.host.settings() })
       return false
@@ -301,8 +518,12 @@ export function useSettingsForm(scene: Ref<string>) {
     memoryChanged,
     errors,
     invalid,
+    sectionDirty,
+    sectionErrors,
+    expanded,
     saving,
     saveError,
+    saveRawError,
     save,
     adopt,
   })
@@ -311,7 +532,7 @@ export function useSettingsForm(scene: Ref<string>) {
 /** An account typed as the bare number gets the platform of the scene it is configured in. */
 export function withPlatform(scene: string, account: string): string {
   const value = account.trim()
-  return value.includes(':') ? value : `${scene.split(':', 1)[0]}:${value}`
+  return !value || value.includes(':') ? value : `${scene.split(':', 1)[0]}:${value}`
 }
 
 export type SettingsForm = ReturnType<typeof useSettingsForm>

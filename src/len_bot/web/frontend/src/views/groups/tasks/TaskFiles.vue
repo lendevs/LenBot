@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { Download, FileText, FolderInput } from '@lucide/vue'
 import { keys } from '../../../api/query'
+import type { ResourceEntry } from '../../../api/resources'
 import { tasksApi, type RegisteredFile } from '../../../api/tasks'
 import { formatBytes } from '../../../i18n/format'
 import Badge from '../../../ui/Badge.vue'
@@ -15,12 +16,81 @@ import IconButton from '../../../ui/IconButton.vue'
 import Input from '../../../ui/Input.vue'
 import { describeError } from '../../../ui/errors'
 import { toast } from '../../../ui/toast'
+import FilePreview from './FilePreview.vue'
 import { uploadTone } from './labels'
 
 const props = defineProps<{ scene: string; taskId: number; files: RegisteredFile[]; canKeep: boolean }>()
 
 const { t } = useI18n()
 const client = useQueryClient()
+
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'])
+const TEXT_EXTS = new Set([
+  '.txt',
+  '.md',
+  '.markdown',
+  '.json',
+  '.jsonl',
+  '.xml',
+  '.svg',
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.ts',
+  '.tsx',
+  '.jsx',
+  '.vue',
+  '.css',
+  '.html',
+  '.htm',
+  '.csv',
+  '.tsv',
+  '.py',
+  '.toml',
+  '.yaml',
+  '.yml',
+  '.log',
+  '.ini',
+  '.cfg',
+  '.conf',
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.sql',
+  '.rs',
+  '.go',
+  '.java',
+  '.c',
+  '.h',
+  '.cpp',
+  '.hpp',
+  '.rb',
+  '.php',
+])
+const TEXT_NAMES = new Set(['Dockerfile', 'Makefile', '.gitignore', '.env'])
+
+function previewKind(filename: string): ResourceEntry['preview'] {
+  if (TEXT_NAMES.has(filename)) return 'text'
+  const dot = filename.lastIndexOf('.')
+  const ext = dot >= 0 ? filename.slice(dot).toLowerCase() : ''
+  if (IMAGE_EXTS.has(ext)) return 'image'
+  if (ext === '.pdf') return 'pdf'
+  if (TEXT_EXTS.has(ext)) return 'text'
+  return 'download'
+}
+
+type PreviewTarget = Pick<ResourceEntry, 'name' | 'preview' | 'reference'>
+const previewing = ref<PreviewTarget | null>(null)
+function canPreview(file: RegisteredFile): boolean {
+  return props.canKeep && file.exists && previewKind(file.name) !== 'download'
+}
+function openPreview(file: RegisteredFile) {
+  previewing.value = {
+    name: file.name,
+    preview: previewKind(file.name),
+    reference: { scope: 'deliveries', task_id: props.taskId, path: '', file_id: file.id },
+  }
+}
 
 const download = useMutation({
   mutationFn: (file: RegisteredFile) => tasksApi.download(props.scene, props.taskId, file.id),
@@ -70,6 +140,7 @@ const keep = useMutation({
     void client.invalidateQueries({ queryKey: keys.tasks.materials(props.scene) })
   },
 })
+const canKeepSubmit = computed(() => Boolean(name.value.trim()) && !keep.isPending.value)
 </script>
 
 <template>
@@ -80,7 +151,15 @@ const keep = useMutation({
         <div class="flex min-w-0 items-center gap-2.5">
           <FileText :size="16" class="shrink-0 text-subtle" aria-hidden="true" />
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm font-medium text-ink">{{ file.name }}</p>
+            <button
+              v-if="canPreview(file)"
+              type="button"
+              class="max-w-full cursor-pointer truncate rounded-sm text-left text-sm font-medium text-ink transition-colors hover:text-primary hover:underline focus-visible:focus-ring"
+              @click="openPreview(file)"
+            >
+              {{ file.name }}
+            </button>
+            <p v-else class="truncate text-sm font-medium text-ink">{{ file.name }}</p>
             <p class="text-xs text-muted">
               <span class="tabular">{{ formatBytes(file.size) }}</span>
               <template v-if="file.note">· {{ file.note }}</template>
@@ -115,13 +194,15 @@ const keep = useMutation({
       </li>
     </ul>
 
+    <FilePreview v-if="previewing" :scene="scene" :entry="previewing" @close="previewing = null" />
+
     <Dialog
       v-model:open="keepOpen"
       :title="t('groups.tasks.files.keepTitle')"
       size="sm"
       :busy="keep.isPending.value"
     >
-      <form id="keep-file" class="flex flex-col gap-3" @submit.prevent="keep.mutate()">
+      <form id="keep-file" class="flex flex-col gap-3" @submit.prevent="canKeepSubmit && keep.mutate()">
         <Field :label="t('groups.tasks.files.keepName')">
           <Input v-model="name" />
         </Field>
@@ -140,7 +221,7 @@ const keep = useMutation({
           type="submit"
           form="keep-file"
           :loading="keep.isPending.value"
-          :disabled="!name.trim()"
+          :disabled="!canKeepSubmit"
         >
           {{ t('common.save') }}
         </Button>

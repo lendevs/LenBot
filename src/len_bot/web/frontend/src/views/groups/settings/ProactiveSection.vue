@@ -6,15 +6,23 @@ import FormSection from '../../../ui/FormSection.vue'
 import Input from '../../../ui/Input.vue'
 import NumberInput from '../../../ui/NumberInput.vue'
 import Switch from '../../../ui/Switch.vue'
-import { useForm } from './form'
+import { cloneValue, useForm } from './form'
 
 const { t } = useI18n()
 const form = useForm()
 const proactive = computed(() => form.draft.scene.proactive)
 const enabled = computed({
   get: () => proactive.value !== null,
-  set: (value: boolean) =>
-    (form.draft.scene.proactive = value ? { idle_seconds: 10800, start: '10:00', end: '22:00' } : null),
+  set: (value: boolean) => {
+    if (!value) {
+      form.draft.scene.proactive = null
+      return
+    }
+    const saved = form.saved?.scene.proactive
+    form.draft.scene.proactive = saved
+      ? cloneValue(saved)
+      : { idle_seconds: 10800, start: '10:00', end: '22:00' }
+  },
 })
 /** Edited in hours, saved in seconds. */
 const hours = computed({
@@ -27,7 +35,7 @@ const hours = computed({
 </script>
 
 <template>
-  <FormSection :title="t('groups.settings.proactive.section')">
+  <FormSection id="proactive" :title="t('groups.settings.proactive.section')">
     <template #actions>
       <Switch v-model="enabled" :aria-label="t('groups.settings.proactive.section')" />
     </template>

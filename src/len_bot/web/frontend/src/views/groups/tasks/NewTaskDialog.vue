@@ -81,6 +81,9 @@ const create = useMutation({
     emit('created', task)
   },
 })
+const canSubmit = computed(
+  () => Boolean(goal.value.trim() && deliverable.value.trim() && !problem.value) && !create.isPending.value,
+)
 
 const open = computed({
   get: () => true,
@@ -101,7 +104,7 @@ async function close() {
 
 <template>
   <Dialog v-model:open="open" :title="t('groups.tasks.new.title')" size="md" :busy="create.isPending.value">
-    <form id="new-task" class="flex flex-col gap-4" @submit.prevent="create.mutate()">
+    <form id="new-task" class="flex flex-col gap-4" @submit.prevent="canSubmit && create.mutate()">
       <Field :label="t('groups.tasks.new.goal')" required>
         <Textarea v-model="goal" :rows="3" :max-rows="8" />
       </Field>
@@ -182,7 +185,7 @@ async function close() {
         type="submit"
         form="new-task"
         :loading="create.isPending.value"
-        :disabled="!goal.trim() || !deliverable.trim() || Boolean(problem)"
+        :disabled="!canSubmit"
       >
         {{ t('groups.tasks.new.start') }}
       </Button>

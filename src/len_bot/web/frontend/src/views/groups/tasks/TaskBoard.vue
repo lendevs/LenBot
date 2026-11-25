@@ -23,10 +23,14 @@ import { statusTone } from './labels'
 const props = defineProps<{ scene: string; timeZone: string }>()
 const emit = defineEmits<{ dirty: [value: boolean] }>()
 
+const VALID_FILTERS = ['active', 'waiting_input', 'all', 'done', 'failed', 'cancelled'] as const
+const isTaskFilter = (value: unknown): value is TaskFilter =>
+  typeof value === 'string' && (VALID_FILTERS as readonly string[]).includes(value)
+
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const wide = useMediaQuery('(min-width: 1280px)')
+const wide = useMediaQuery('(min-width: 1024px)')
 
 const service = useQuery({ queryKey: keys.tasks.state(), queryFn: ({ signal }) => tasksApi.state(signal) })
 const sceneTasks = computed(
@@ -36,16 +40,52 @@ const accepting = computed(() =>
   Boolean(service.data.value?.configured && service.data.value.accepting && sceneTasks.value?.enabled),
 )
 
-const filter = ref<TaskFilter>('active')
+const filter = ref<TaskFilter>(isTaskFilter(route.query.filter) ? route.query.filter : 'active')
+const autoFallbackDone = ref(isTaskFilter(route.query.filter))
+
+watch(
+  () => props.scene,
+  () => {
+    const queryFilter = route.query.filter
+    autoFallbackDone.value = isTaskFilter(queryFilter)
+    filter.value = isTaskFilter(queryFilter) ? queryFilter : 'active'
+  },
+)
+watch(
+  () => route.query.filter,
+  (value) => {
+    if (isTaskFilter(value)) {
+      autoFallbackDone.value = true
+      if (filter.value !== value) filter.value = value
+    } else if (!autoFallbackDone.value) {
+      filter.value = 'active'
+    }
+  },
+)
 watch(
   () => service.data.value && !accepting.value,
   (inactive) => {
-    if (inactive && filter.value === 'active') filter.value = 'all'
+    if (inactive && !isTaskFilter(route.query.filter) && filter.value === 'active') {
+      autoFallbackDone.value = true
+      filter.value = 'all'
+    }
   },
   { immediate: true },
 )
+
+const selectedFilter = computed<TaskFilter>({
+  get: () => filter.value,
+  set: (value: TaskFilter) => {
+    autoFallbackDone.value = true
+    filter.value = value
+    const next = { ...route.query }
+    next.filter = value
+    void router.replace({ query: next })
+  },
+})
+
 const filters = computed(() =>
-  (['active', 'waiting_input', 'all', 'done', 'failed', 'cancelled'] as const).map((value) => ({
+  VALID_FILTERS.map((value) => ({
     value,
     label: t(`groups.tasks.filters.${value}`),
   })),
@@ -57,6 +97,25 @@ const list = useInfiniteQuery({
   getNextPageParam: (page) => page.next_offset ?? undefined,
 })
 const rows = computed(() => list.data.value?.pages.flatMap((page) => page.items) ?? [])
+
+// On initial entry without an explicit URL filter, fall back from empty 'active' to 'all'.
+watch(
+  () => [list.isSuccess.value, list.isFetching.value, rows.value.length] as const,
+  ([success, fetching, count]) => {
+    if (
+      !autoFallbackDone.value &&
+      !isTaskFilter(route.query.filter) &&
+      filter.value === 'active' &&
+      success &&
+      !fetching &&
+      count === 0
+    ) {
+      autoFallbackDone.value = true
+      filter.value = 'all'
+    }
+  },
+  { immediate: true },
+)
 
 const selected = computed(() => {
   const value = route.query.id
@@ -132,7 +191,9 @@ const split = computed(() => wide.value && (rows.value.length > 0 || selected.va
         >
           <TriangleAlert :size="16" class="shrink-0" aria-hidden="true" />
           <span class="min-w-0 flex-1">{{ t('groups.tasks.sceneOff') }}</span>
-          <Button size="sm" :to="groupsTarget(scene, 'settings')">{{ t('groups.tasks.toSettings') }}</Button>
+          <Button size="sm" :to="groupsTarget(scene, 'settings', { section: 'tasks' })">
+            {{ t('groups.tasks.toSettings') }}
+          </Button>
         </div>
         <ErrorNote
           v-if="service.data.value.error"
@@ -141,7 +202,10 @@ const split = computed(() => wide.value && (rows.value.length > 0 || selected.va
         />
       </template>
 
-      <div class="grid min-w-0 items-start gap-6" :class="split && 'grid-cols-[320px_minmax(0,1fr)]'">
+      <div
+        class="grid min-w-0 items-start gap-6"
+        :class="split && 'grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)]'"
+      >
         <section
           v-if="wide || selected === null"
           class="flex min-w-0 flex-col gap-3"
@@ -149,7 +213,7 @@ const split = computed(() => wide.value && (rows.value.length > 0 || selected.va
           :aria-label="t('groups.tasks.views.tasks')"
         >
           <div v-if="showToolbar" class="flex flex-wrap items-center gap-2">
-            <div class="w-36"><Select v-model="filter" :options="filters" size="sm" /></div>
+            <div class="w-36"><Select v-model="selectedFilter" :options="filters" size="sm" /></div>
             <Button
               v-if="accepting"
               size="sm"
