@@ -2,9 +2,10 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
-import { ChevronDown, Eye, EyeOff, PlugZap } from '@lucide/vue'
+import { PlugZap } from '@lucide/vue'
 import type { SettingsSnapshot } from '../../api/settings'
 import {
+  runningSystemOf,
   systemApi,
   systemOf,
   type ChatPlatform,
@@ -12,16 +13,18 @@ import {
   type FeishuLink,
   type OneBot,
   type OneBotCommon,
+  type SavedOneBot,
+  type SavedTelegram,
   type TelegramLink,
 } from '../../api/system'
 import { host } from '../../api/hostStore'
 import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
-import ErrorNote from '../../ui/ErrorNote.vue'
+import Collapsible from '../../ui/Collapsible.vue'
 import Combobox from '../../ui/Combobox.vue'
+import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
-import IconButton from '../../ui/IconButton.vue'
 import Input from '../../ui/Input.vue'
 import NumberInput from '../../ui/NumberInput.vue'
 import SaveBar from '../../ui/SaveBar.vue'
@@ -30,7 +33,9 @@ import Select from '../../ui/Select.vue'
 import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
 import TestResult from '../setup/TestResult.vue'
-import { useSettingsDraft } from './draft'
+import { same, useSettingsDraft } from './draft'
+
+const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 type Draft = Omit<Connection, 'owners' | 'bot_id' | 'delivery' | 'onebot' | 'telegram'> & {
   onebot: OneBot | null
@@ -48,13 +53,38 @@ const TELEGRAM_DEFAULTS: TelegramLink = {
 }
 const FEISHU_DEFAULTS: FeishuLink = { bot_id: '', app_id: '', domain: 'feishu', request_timeout_seconds: 15 }
 
+function normalizedOnebot(item: OneBot): OneBot {
+  const http_url = item.action_transport === 'http' ? item.http_url?.trim() || null : null
+  return item.mode === 'forward_ws'
+    ? { ...item, ws_url: item.ws_url.trim(), http_url }
+    : { ...item, listen_host: item.listen_host.trim(), http_url }
+}
+
+function stripOnebot(item: SavedOneBot | OneBot | null | undefined): OneBot | null {
+  if (!item) return null
+  const { access_token_configured: _configured, ...rest } = item as SavedOneBot
+  return normalizedOnebot(rest as OneBot)
+}
+
+function normalizedTelegram(item: SavedTelegram | TelegramLink | null | undefined): TelegramLink | null {
+  if (!item) return null
+  const { bot_id: _bot, ...rest } = item as SavedTelegram
+  return {
+    ...rest,
+    api_url: rest.api_url.trim().replace(/\/+$/, ''),
+    proxy: rest.proxy?.trim() || null,
+  }
+}
+
+function normalizedFeishu(item: FeishuLink | null | undefined): FeishuLink | null {
+  if (!item) return null
+  return { ...item, app_id: item.app_id.trim() }
+}
+
 const { t } = useI18n()
 const token = ref('')
 const telegramToken = ref('')
 const feishuSecret = ref('')
-const showToken = ref(false)
-const showTelegramToken = ref(false)
-const showFeishuSecret = ref(false)
 const pick = (snapshot: SettingsSnapshot): Draft => {
   const { owners: _owners, bot_id: _bot, onebot, telegram, ...rest } = systemOf(snapshot).connection
   const { bot_id: _telegramBot, ...telegramLink } = telegram ?? { bot_id: '' }
@@ -71,9 +101,7 @@ const form = useSettingsDraft<Draft>({
     token.value = ''
     telegramToken.value = ''
     feishuSecret.value = ''
-    showToken.value = false
-    showTelegramToken.value = false
-    showFeishuSecret.value = false
+    onebotTest.reset()
     telegramTest.reset()
     feishuTest.reset()
   },
@@ -81,12 +109,14 @@ const form = useSettingsDraft<Draft>({
     const { qq, ...rest } = value
     return systemApi.saveConnection({
       ...rest,
-      onebot: value.onebot && {
-        ...value.onebot,
-        http_url: value.onebot.action_transport === 'http' ? value.onebot.http_url : null,
-      },
+      onebot: value.onebot && normalizedOnebot(value.onebot),
       ...(value.onebot && needsQq.value ? { bot_id: `onebot:${qq.trim()}` } : {}),
-      telegram: value.telegram && { ...value.telegram, proxy: value.telegram.proxy?.trim() || null },
+      telegram: value.telegram && {
+        ...value.telegram,
+        api_url: value.telegram.api_url.trim(),
+        proxy: value.telegram.proxy?.trim() || null,
+      },
+      feishu: value.feishu && normalizedFeishu(value.feishu),
       owners: connection.value!.owners,
       access_token: token.value || null,
       telegram_token: telegramToken.value.trim() || null,
@@ -95,8 +125,14 @@ const form = useSettingsDraft<Draft>({
   },
 })
 const { settings, draft } = form
+watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
+watch([token, telegramToken, feishuSecret], () => form.clearError())
+
 const connection = computed<Connection | undefined>(() =>
   settings.data.value ? systemOf(settings.data.value).connection : undefined,
+)
+const runningConnection = computed<Connection | undefined>(() =>
+  settings.data.value ? runningSystemOf(settings.data.value)?.connection : undefined,
 )
 const value = computed(() => draft.value!)
 const link = computed(() => draft.value?.onebot ?? null)
@@ -188,17 +224,32 @@ watch(
     const saved = connection.value?.feishu
     const current = feishu.value
     if (!current) return
-    const same = saved && saved.app_id === current.app_id && saved.domain === current.domain
-    if (!same && current.bot_id === saved?.bot_id) current.bot_id = ''
-    if (same && !current.bot_id) current.bot_id = saved.bot_id
+    const matches = saved && saved.app_id === current.app_id && saved.domain === current.domain
+    if (!matches && current.bot_id === saved?.bot_id) current.bot_id = ''
+    if (matches && !current.bot_id) current.bot_id = saved.bot_id
   },
 )
 
+const onebotTest = useMutation({
+  mutationFn: () =>
+    systemApi.testConnection({
+      platform: 'onebot',
+      onebot: normalizedOnebot(link.value!),
+      access_token: token.value || null,
+    }),
+  onSuccess: (result) => {
+    if (needsQq.value && draft.value && !draft.value.qq.trim()) draft.value.qq = result.name
+  },
+})
 const telegramTest = useMutation({
   mutationFn: () =>
     systemApi.testConnection({
       platform: 'telegram',
-      telegram: { ...telegram.value!, proxy: telegram.value!.proxy?.trim() || null },
+      telegram: {
+        ...telegram.value!,
+        api_url: telegram.value!.api_url.trim(),
+        proxy: telegram.value!.proxy?.trim() || null,
+      },
       telegram_token: telegramToken.value.trim() || null,
     }),
 })
@@ -206,33 +257,84 @@ const feishuTest = useMutation({
   mutationFn: () =>
     systemApi.testConnection({
       platform: 'feishu',
-      feishu: feishu.value!,
+      feishu: normalizedFeishu(feishu.value!)!,
       feishu_secret: feishuSecret.value || null,
     }),
   onSuccess: (result) => {
     if (feishu.value) feishu.value.bot_id = result.bot_id
   },
 })
+watch([link, token], () => onebotTest.reset(), { deep: true })
 watch([telegram, telegramToken], () => telegramTest.reset(), { deep: true })
 watch(
-  () => [feishu.value?.app_id, feishu.value?.domain, feishuSecret.value],
+  () => [
+    feishu.value?.app_id,
+    feishu.value?.domain,
+    feishu.value?.request_timeout_seconds,
+    feishuSecret.value,
+  ],
   () => feishuTest.reset(),
 )
 
-/** The running host's own connection for each platform it runs. */
+function runningActive(name: ChatPlatform): boolean | null {
+  const state = host.state?.connection
+  if (!state) return null
+  if (state.platforms) return name in state.platforms
+  return name === 'onebot' ? state.mode !== 'simulated' : false
+}
+
+/** The running host's real connection state for each platform, independent of unsaved draft toggles. */
 function status(name: ChatPlatform): { tone: 'success' | 'warning' | 'neutral'; label: string } | null {
-  const on = name === 'onebot' ? Boolean(link.value) : name === 'telegram' ? telegramOn.value : feishuOn.value
-  if (!on) return { tone: 'neutral', label: t('system.connection.status.off') }
-  const running = host.state?.connection.platforms
-  if (!running || !(name in running)) return null
-  return running[name]
+  const state = host.state?.connection
+  if (!state) return null
+  if (state.platforms) {
+    if (!(name in state.platforms)) return { tone: 'neutral', label: t('system.connection.status.off') }
+    return state.platforms[name]
+      ? { tone: 'success', label: t('system.connection.status.connected') }
+      : { tone: 'warning', label: t('system.connection.status.disconnected') }
+  }
+  if (name !== 'onebot' || state.mode === 'simulated')
+    return { tone: 'neutral', label: t('system.connection.status.off') }
+  return state.connected
     ? { tone: 'success', label: t('system.connection.status.connected') }
     : { tone: 'warning', label: t('system.connection.status.disconnected') }
 }
 
+/** Whether saved settings or the current draft for this platform differ from the running host. */
+function pendingRestart(name: ChatPlatform): boolean {
+  const active = runningActive(name)
+  const run = runningConnection.value
+  const saved = connection.value
+  if (name === 'onebot') {
+    if (active !== null && (active !== Boolean(saved?.onebot) || active !== Boolean(link.value))) return true
+    if (token.value) return true
+    if (!run) return false
+    const runningVal = stripOnebot(run.onebot)
+    return !same(runningVal, stripOnebot(saved?.onebot)) || !same(runningVal, stripOnebot(link.value))
+  }
+  if (name === 'telegram') {
+    if (active !== null && (active !== Boolean(saved?.telegram) || active !== Boolean(telegram.value)))
+      return true
+    if (telegramToken.value.trim()) return true
+    if (!run) return false
+    const runningVal = normalizedTelegram(run.telegram)
+    return (
+      !same(runningVal, normalizedTelegram(saved?.telegram)) ||
+      !same(runningVal, normalizedTelegram(telegram.value))
+    )
+  }
+  if (active !== null && (active !== Boolean(saved?.feishu) || active !== Boolean(feishu.value))) return true
+  if (feishuSecret.value) return true
+  if (!run) return false
+  const runningVal = normalizedFeishu(run.feishu)
+  return (
+    !same(runningVal, normalizedFeishu(saved?.feishu)) || !same(runningVal, normalizedFeishu(feishu.value))
+  )
+}
+
 const transports = [
-  { value: 'websocket', label: 'WebSocket' },
-  { value: 'http', label: 'HTTP' },
+  { value: 'websocket' as const, label: 'WebSocket' },
+  { value: 'http' as const, label: 'HTTP' },
 ]
 const zones = (() => {
   try {
@@ -253,10 +355,10 @@ const addressChanged = computed(() => {
   const before = connection.value?.onebot
   const after = draft.value?.onebot
   if (!before || !after) return false
-  const at = (link: OneBot) => [
-    link.mode,
-    link.mode === 'forward_ws' ? link.ws_url : null,
-    link.action_transport === 'http' ? link.http_url : null,
+  const at = (item: OneBot) => [
+    item.mode,
+    item.mode === 'forward_ws' ? item.ws_url.trim() : null,
+    item.action_transport === 'http' ? item.http_url?.trim() || null : null,
   ]
   return JSON.stringify(at(before)) !== JSON.stringify(at(after))
 })
@@ -264,13 +366,14 @@ const telegramSaved = computed(() => connection.value?.telegram ?? null)
 const telegramMoved = computed(
   () =>
     Boolean(telegramSaved.value && telegram.value) &&
-    telegramSaved.value!.api_url.replace(/\/+$/, '') !== telegram.value!.api_url.trim().replace(/\/+$/, ''),
+    telegramSaved.value!.api_url.trim().replace(/\/+$/, '') !==
+      telegram.value!.api_url.trim().replace(/\/+$/, ''),
 )
 const feishuSaved = computed(() => connection.value?.feishu ?? null)
 const feishuMoved = computed(
   () =>
     Boolean(feishuSaved.value && feishu.value) &&
-    (feishuSaved.value!.app_id !== feishu.value!.app_id ||
+    (feishuSaved.value!.app_id.trim() !== feishu.value!.app_id.trim() ||
       feishuSaved.value!.domain !== feishu.value!.domain),
 )
 
@@ -304,60 +407,74 @@ const errors = computed(() => {
   const { min_interval_seconds: min, max_interval_seconds: max } = current.text_delivery
   if (min !== null && max !== null && min > max)
     result.max_interval_seconds = t('system.connection.intervalOrder')
-  const link = current.onebot
-  if (link) {
-    for (const [key] of linkNumbers) if (link[key] === null) result[key] = required
-    if (link.mode === 'forward_ws' && !/^wss?:\/\/[^/]+/.test(link.ws_url.trim()))
+  const onebot = current.onebot
+  if (onebot) {
+    for (const [key] of linkNumbers) if (onebot[key] === null) result[key] = required
+    if (onebot.mode === 'forward_ws' && !/^wss?:\/\/[^/]+/.test(onebot.ws_url.trim()))
       result.ws_url = t('system.connection.wsRule')
-    if (link.mode === 'reverse_ws') {
-      if (!link.listen_host.trim()) result.listen_host = required
-      if (link.listen_port === null) result.listen_port = required
+    if (onebot.mode === 'reverse_ws') {
+      if (!onebot.listen_host.trim()) result.listen_host = required
+      if (onebot.listen_port === null) result.listen_port = required
     }
-    if (link.action_transport === 'http' && !httpUrl(link.http_url ?? ''))
+    if (onebot.action_transport === 'http' && !httpUrl(onebot.http_url ?? ''))
       result.http_url = t('system.connection.httpRule')
     if (addressChanged.value && tokenConfigured.value && !token.value)
       result.token = t('system.connection.tokenAgain')
     if (needsQq.value && !/^[1-9][0-9]*$/.test(current.qq.trim())) result.qq = t('system.connection.qqRule')
   }
-  const telegram = current.telegram
-  if (telegram) {
+  const tg = current.telegram
+  if (tg) {
     const typed = telegramToken.value.trim()
     if (typed && !TELEGRAM_TOKEN.test(typed)) result.telegramToken = t('system.connection.telegram.tokenRule')
     else if (!typed && !telegramSaved.value) result.telegramToken = required
     else if (!typed && telegramMoved.value) result.telegramToken = t('system.connection.telegram.tokenAgain')
-    if (!httpUrl(telegram.api_url)) result.telegramApi = t('system.connection.httpRule')
-    if (telegram.proxy?.trim() && !httpUrl(telegram.proxy))
-      result.telegramProxy = t('system.connection.httpRule')
-    if (telegram.request_timeout_seconds === null) result.telegramTimeout = required
-    if (telegram.poll_timeout_seconds === null) result.telegramPoll = required
+    if (!httpUrl(tg.api_url)) result.telegramApi = t('system.connection.httpRule')
+    if (tg.proxy?.trim() && !httpUrl(tg.proxy)) result.telegramProxy = t('system.connection.httpRule')
+    if (tg.request_timeout_seconds === null) result.telegramTimeout = required
+    if (tg.poll_timeout_seconds === null) result.telegramPoll = required
   }
-  const feishu = current.feishu
-  if (feishu) {
-    if (!/^cli_[A-Za-z0-9]+$/.test(feishu.app_id.trim()))
-      result.feishuApp = t('system.connection.feishu.appRule')
+  const fs = current.feishu
+  if (fs) {
+    if (!/^cli_[A-Za-z0-9]+$/.test(fs.app_id.trim())) result.feishuApp = t('system.connection.feishu.appRule')
     if (!feishuSecret.value && (!feishuSaved.value || feishuMoved.value))
       result.feishuSecret = feishuSaved.value ? t('system.connection.feishu.secretAgain') : required
-    if (!result.feishuApp && !result.feishuSecret && !feishu.bot_id)
+    if (!result.feishuApp && !result.feishuSecret && !fs.bot_id)
       result.feishuBot = t('system.connection.feishu.testFirst')
-    if (feishu.request_timeout_seconds === null) result.feishuTimeout = required
+    if (fs.request_timeout_seconds === null) result.feishuTimeout = required
   }
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)
-const advanced = ref(false)
-const advancedKeys = new Set<string>([
-  ...numbers.map(([key]) => key),
-  ...deliveryNumbers.map(([key]) => key),
-  ...linkNumbers.map(([key]) => key),
-  'http_url',
-  'telegramApi',
-  'telegramTimeout',
-  'telegramPoll',
-  'feishuTimeout',
-])
-watch(invalid, () => {
-  if (Object.keys(errors.value).some((key) => advancedKeys.has(key))) advanced.value = true
-})
+
+const onebotAdvancedKeys = ['http_url', ...linkNumbers.map(([key]) => key)]
+const telegramAdvancedKeys = ['telegramApi', 'telegramTimeout', 'telegramPoll']
+const feishuAdvancedKeys = ['feishuTimeout']
+const generalAdvancedKeys = [...numbers.map(([key]) => key), ...deliveryNumbers.map(([key]) => key)]
+
+const onebotAdvanced = ref(false)
+const telegramAdvanced = ref(false)
+const feishuAdvanced = ref(false)
+const generalAdvanced = ref(false)
+
+const onebotAdvancedError = computed(() => onebotAdvancedKeys.some((key) => Boolean(errors.value[key])))
+const telegramAdvancedError = computed(() => telegramAdvancedKeys.some((key) => Boolean(errors.value[key])))
+const feishuAdvancedError = computed(() => feishuAdvancedKeys.some((key) => Boolean(errors.value[key])))
+const generalAdvancedError = computed(() => generalAdvancedKeys.some((key) => Boolean(errors.value[key])))
+
+watch(onebotAdvancedError, (has) => has && (onebotAdvanced.value = true))
+watch(telegramAdvancedError, (has) => has && (telegramAdvanced.value = true))
+watch(feishuAdvancedError, (has) => has && (feishuAdvanced.value = true))
+watch(generalAdvancedError, (has) => has && (generalAdvanced.value = true))
+
+const onebotTestDisabled = computed(() =>
+  Boolean(
+    errors.value.ws_url ||
+    errors.value.listen_host ||
+    errors.value.listen_port ||
+    errors.value.token ||
+    onebotAdvancedError.value,
+  ),
+)
 </script>
 
 <template>
@@ -374,6 +491,9 @@ watch(invalid, () => {
         <template #actions>
           <Badge v-if="status('onebot')" :tone="status('onebot')!.tone" dot>
             {{ status('onebot')!.label }}
+          </Badge>
+          <Badge v-if="pendingRestart('onebot')" tone="warning">
+            {{ t('system.connection.status.pendingRestart') }}
           </Badge>
         </template>
         <Field v-if="!needsQq" :label="t('system.connection.bot')">
@@ -411,195 +531,59 @@ watch(invalid, () => {
           <Field :label="t('system.connection.token')" :error="errors.token" wide>
             <Input
               v-model="token"
-              :type="showToken ? 'text' : 'password'"
+              type="password"
               autocomplete="new-password"
               :placeholder="
                 tokenConfigured ? t('system.connection.tokenKept') : t('system.connection.tokenNone')
               "
-            >
-              <template #suffix>
-                <span class="-mr-2 inline-flex">
-                  <IconButton
-                    :icon="showToken ? EyeOff : Eye"
-                    :label="showToken ? t('ui.secret.hide') : t('ui.secret.show')"
-                    variant="ghost"
-                    size="sm"
-                    @click="showToken = !showToken"
-                  />
-                </span>
-              </template>
-            </Input>
-          </Field>
-        </template>
-      </FormSection>
-
-      <FormSection :title="t('chatPlatforms.telegram')">
-        <template #actions>
-          <Badge v-if="status('telegram')" :tone="status('telegram')!.tone" dot>
-            {{ status('telegram')!.label }}
-          </Badge>
-          <Switch v-model="telegramOn" :aria-label="t('chatPlatforms.telegram')" />
-        </template>
-        <template v-if="telegram">
-          <Field v-if="telegramSaved" :label="t('system.connection.bot')">
-            <Input :model-value="telegramSaved.bot_id" mono readonly />
-          </Field>
-          <Field :label="t('system.connection.telegram.token')" :error="errors.telegramToken" required wide>
-            <Input
-              v-model="telegramToken"
-              :type="showTelegramToken ? 'text' : 'password'"
-              autocomplete="new-password"
-              mono
-              :placeholder="telegramSaved ? t('system.connection.tokenKept') : undefined"
-            >
-              <template #suffix>
-                <span class="-mr-2 inline-flex">
-                  <IconButton
-                    :icon="showTelegramToken ? EyeOff : Eye"
-                    :label="showTelegramToken ? t('ui.secret.hide') : t('ui.secret.show')"
-                    variant="ghost"
-                    size="sm"
-                    @click="showTelegramToken = !showTelegramToken"
-                  />
-                </span>
-              </template>
-            </Input>
-          </Field>
-          <Field :label="t('system.connection.telegram.proxy')" :error="errors.telegramProxy" wide>
-            <Input
-              :model-value="telegram!.proxy ?? ''"
-              type="url"
-              mono
-              placeholder="http://127.0.0.1:7890"
-              @update:model-value="(text: string) => (telegram!.proxy = text.trim() ? text : null)"
             />
           </Field>
           <div class="flex flex-col gap-3 sm:col-span-2">
             <div>
               <Button
                 :icon="PlugZap"
-                :loading="telegramTest.isPending.value"
-                :disabled="Boolean(errors.telegramToken || errors.telegramApi || errors.telegramProxy)"
-                @click="telegramTest.mutate()"
+                :loading="onebotTest.isPending.value"
+                :disabled="onebotTestDisabled"
+                @click="onebotTest.mutate()"
               >
                 {{ t('system.connection.test') }}
               </Button>
             </div>
             <TestResult
               :passed="
-                telegramTest.data.value
-                  ? t('system.connection.testPassed', { name: telegramTest.data.value.name })
+                onebotTest.data.value
+                  ? t('system.connection.testPassed', { name: onebotTest.data.value.name })
                   : null
               "
-              :error="telegramTest.error.value"
+              :error="onebotTest.error.value"
               :failed-title="t('system.connection.testFailed')"
             />
           </div>
-        </template>
-      </FormSection>
-
-      <FormSection :title="t('chatPlatforms.feishu')">
-        <template #actions>
-          <Badge v-if="status('feishu')" :tone="status('feishu')!.tone" dot>
-            {{ status('feishu')!.label }}
-          </Badge>
-          <Switch v-model="feishuOn" :aria-label="t('chatPlatforms.feishu')" />
-        </template>
-        <template v-if="feishu">
-          <Field :label="t('system.connection.feishu.appId')" :error="errors.feishuApp" required>
-            <Input v-model="feishu.app_id" mono placeholder="cli_" />
-          </Field>
-          <Field :label="t('system.connection.feishu.secret')" :error="errors.feishuSecret" required>
-            <Input
-              v-model="feishuSecret"
-              :type="showFeishuSecret ? 'text' : 'password'"
-              autocomplete="new-password"
-              mono
-              :placeholder="feishuSaved && !feishuMoved ? t('system.connection.tokenKept') : undefined"
-            >
-              <template #suffix>
-                <span class="-mr-2 inline-flex">
-                  <IconButton
-                    :icon="showFeishuSecret ? EyeOff : Eye"
-                    :label="showFeishuSecret ? t('ui.secret.hide') : t('ui.secret.show')"
-                    variant="ghost"
-                    size="sm"
-                    @click="showFeishuSecret = !showFeishuSecret"
-                  />
-                </span>
-              </template>
-            </Input>
-          </Field>
-          <Field :label="t('system.connection.feishu.domain')">
-            <Select v-model="feishu.domain" :options="domains" />
-          </Field>
-          <Field :label="t('system.connection.bot')" :error="errors.feishuBot">
-            <Input :model-value="feishu.bot_id" mono readonly />
-          </Field>
-          <div class="flex flex-col gap-3 sm:col-span-2">
-            <div>
-              <Button
-                :icon="PlugZap"
-                :loading="feishuTest.isPending.value"
-                :disabled="Boolean(errors.feishuApp || errors.feishuSecret)"
-                @click="feishuTest.mutate()"
-              >
-                {{ t('system.connection.test') }}
-              </Button>
-            </div>
-            <TestResult
-              :passed="
-                feishuTest.data.value
-                  ? t('system.connection.testPassed', { name: feishuTest.data.value.name })
-                  : null
-              "
-              :error="feishuTest.error.value"
-              :failed-title="t('system.connection.testFailed')"
-            />
-          </div>
-        </template>
-      </FormSection>
-
-      <FormSection :title="t('system.connection.general')">
-        <Field :label="t('system.connection.timezone')" :error="errors.timezone">
-          <Combobox v-model="value.timezone" :options="zoneOptions" placeholder="Asia/Shanghai" />
-        </Field>
-      </FormSection>
-
-      <section class="border-t border-line pt-6">
-        <button
-          type="button"
-          class="flex w-full cursor-pointer items-center justify-between gap-3 rounded-sm text-left focus-visible:focus-ring"
-          :aria-expanded="advanced"
-          @click="advanced = !advanced"
-        >
-          <h3 class="text-base font-semibold text-ink">{{ t('system.connection.advanced') }}</h3>
-          <ChevronDown
-            :size="18"
-            class="text-subtle transition-transform"
-            :class="advanced && 'rotate-180'"
-            aria-hidden="true"
-          />
-        </button>
-        <div v-if="advanced" class="mt-4 flex flex-col gap-6">
-          <div v-if="link" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+          <Collapsible
+            v-model:open="onebotAdvanced"
+            :title="t('system.connection.advanced')"
+            :dot="onebotAdvancedError ? 'error' : false"
+            class="sm:col-span-2"
+            content-class="grid gap-x-5 gap-y-5 sm:grid-cols-2"
+          >
             <Field :label="t('system.connection.transport')">
               <div>
                 <SegmentedControl
-                  v-model="link.action_transport"
+                  :model-value="link!.action_transport"
                   :options="transports"
                   :label="t('system.connection.transport')"
+                  @update:model-value="(next) => (link!.action_transport = next)"
                 />
               </div>
             </Field>
             <Field
-              v-if="link.action_transport === 'http'"
+              v-if="link!.action_transport === 'http'"
               :label="t('system.connection.httpUrl')"
               :error="errors.http_url"
               required
             >
               <Input
-                :model-value="link.http_url ?? ''"
+                :model-value="link!.http_url ?? ''"
                 mono
                 placeholder="http://127.0.0.1:3000"
                 @update:model-value="(text: string) => (link!.http_url = text.trim() ? text : null)"
@@ -620,8 +604,77 @@ watch(invalid, () => {
                 @update:model-value="(number: number | null) => (link![key] = number)"
               />
             </Field>
+          </Collapsible>
+        </template>
+      </FormSection>
+
+      <FormSection :title="t('chatPlatforms.telegram')">
+        <template #actions>
+          <Badge v-if="status('telegram')" :tone="status('telegram')!.tone" dot>
+            {{ status('telegram')!.label }}
+          </Badge>
+          <Badge v-if="pendingRestart('telegram')" tone="warning">
+            {{ t('system.connection.status.pendingRestart') }}
+          </Badge>
+          <Switch v-model="telegramOn" :aria-label="t('chatPlatforms.telegram')" />
+        </template>
+        <template v-if="telegram">
+          <Field v-if="telegramSaved" :label="t('system.connection.bot')">
+            <Input :model-value="telegramSaved.bot_id" mono readonly />
+          </Field>
+          <Field :label="t('system.connection.telegram.token')" :error="errors.telegramToken" required wide>
+            <Input
+              v-model="telegramToken"
+              type="password"
+              autocomplete="new-password"
+              mono
+              :placeholder="telegramSaved ? t('system.connection.tokenKept') : undefined"
+            />
+          </Field>
+          <Field :label="t('system.connection.telegram.proxy')" :error="errors.telegramProxy" wide>
+            <Input
+              :model-value="telegram!.proxy ?? ''"
+              type="url"
+              mono
+              placeholder="http://127.0.0.1:7890"
+              @update:model-value="(text: string) => (telegram!.proxy = text.trim() ? text : null)"
+            />
+          </Field>
+          <div class="flex flex-col gap-3 sm:col-span-2">
+            <div>
+              <Button
+                :icon="PlugZap"
+                :loading="telegramTest.isPending.value"
+                :disabled="
+                  Boolean(
+                    errors.telegramToken ||
+                    errors.telegramApi ||
+                    errors.telegramProxy ||
+                    errors.telegramTimeout,
+                  )
+                "
+                @click="telegramTest.mutate()"
+              >
+                {{ t('system.connection.test') }}
+              </Button>
+            </div>
+            <TestResult
+              :passed="
+                telegramTest.data.value
+                  ? t('system.connection.testPassed', { name: telegramTest.data.value.name })
+                  : null
+              "
+              :error="telegramTest.error.value"
+              :failed-title="t('system.connection.testFailed')"
+            />
           </div>
-          <div v-if="telegram" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+          <Collapsible
+            v-model:open="telegramAdvanced"
+            :title="t('system.connection.advanced')"
+            :dot="telegramAdvancedError ? 'error' : false"
+            class="sm:col-span-2"
+            content-class="grid gap-x-5 gap-y-5 sm:grid-cols-2"
+          >
             <Field :label="t('system.connection.telegram.apiUrl')" :error="errors.telegramApi" required wide>
               <Input
                 :model-value="telegram!.api_url"
@@ -650,55 +703,127 @@ watch(invalid, () => {
                 @update:model-value="(number: number | null) => (telegram!.request_timeout_seconds = number)"
               />
             </Field>
+          </Collapsible>
+        </template>
+      </FormSection>
+
+      <FormSection :title="t('chatPlatforms.feishu')">
+        <template #actions>
+          <Badge v-if="status('feishu')" :tone="status('feishu')!.tone" dot>
+            {{ status('feishu')!.label }}
+          </Badge>
+          <Badge v-if="pendingRestart('feishu')" tone="warning">
+            {{ t('system.connection.status.pendingRestart') }}
+          </Badge>
+          <Switch v-model="feishuOn" :aria-label="t('chatPlatforms.feishu')" />
+        </template>
+        <template v-if="feishu">
+          <Field :label="t('system.connection.feishu.appId')" :error="errors.feishuApp" required>
+            <Input v-model="feishu.app_id" mono placeholder="cli_" />
+          </Field>
+          <Field :label="t('system.connection.feishu.secret')" :error="errors.feishuSecret" required>
+            <Input
+              v-model="feishuSecret"
+              type="password"
+              autocomplete="new-password"
+              mono
+              :placeholder="feishuSaved && !feishuMoved ? t('system.connection.tokenKept') : undefined"
+            />
+          </Field>
+          <Field :label="t('system.connection.feishu.domain')">
+            <Select v-model="feishu.domain" :options="domains" />
+          </Field>
+          <Field :label="t('system.connection.bot')" :error="errors.feishuBot">
+            <Input :model-value="feishu.bot_id" mono readonly />
+          </Field>
+          <div class="flex flex-col gap-3 sm:col-span-2">
+            <div>
+              <Button
+                :icon="PlugZap"
+                :loading="feishuTest.isPending.value"
+                :disabled="Boolean(errors.feishuApp || errors.feishuSecret || errors.feishuTimeout)"
+                @click="feishuTest.mutate()"
+              >
+                {{ t('system.connection.test') }}
+              </Button>
+            </div>
+            <TestResult
+              :passed="
+                feishuTest.data.value
+                  ? t('system.connection.testPassed', { name: feishuTest.data.value.name })
+                  : null
+              "
+              :error="feishuTest.error.value"
+              :failed-title="t('system.connection.testFailed')"
+            />
           </div>
-          <div v-if="feishu" class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
+          <Collapsible
+            v-model:open="feishuAdvanced"
+            :title="t('system.connection.advanced')"
+            :dot="feishuAdvancedError ? 'error' : false"
+            class="sm:col-span-2"
+            content-class="grid gap-x-5 gap-y-5 sm:grid-cols-2"
+          >
             <Field :label="t('system.connection.feishu.timeout')" :error="errors.feishuTimeout">
               <NumberInput
-                v-model="feishu.request_timeout_seconds"
+                :model-value="feishu!.request_timeout_seconds"
                 :min="0.1"
                 :steppers="false"
                 :unit="t('system.seconds')"
+                @update:model-value="(number: number | null) => (feishu!.request_timeout_seconds = number)"
               />
             </Field>
-          </div>
-          <div class="grid gap-x-5 gap-y-5 sm:grid-cols-2">
-            <Field
-              v-for="[key, min, decimals] in numbers"
-              :key="key"
-              :label="t(`system.connection.fields.${key}`)"
-              :error="errors[key]"
-            >
-              <NumberInput
-                v-model="value[key]"
-                :min="min"
-                :snap="!decimals"
-                :steppers="false"
-                :unit="key === 'turn_timeout_seconds' ? t('system.seconds') : undefined"
-              />
-            </Field>
-            <Field
-              v-for="[key, min, decimals] in deliveryNumbers"
-              :key="key"
-              :label="t(`system.connection.fields.${key}`)"
-              :error="errors[key]"
-            >
-              <NumberInput
-                v-model="value.text_delivery[key]"
-                :min="min"
-                :snap="!decimals"
-                :steppers="false"
-                :unit="
-                  key === 'max_chars'
-                    ? undefined
-                    : key === 'chars_per_second'
-                      ? t('system.connection.perSecond')
-                      : t('system.seconds')
-                "
-              />
-            </Field>
-          </div>
-        </div>
-      </section>
+          </Collapsible>
+        </template>
+      </FormSection>
+
+      <FormSection :title="t('system.connection.general')">
+        <Field :label="t('system.connection.timezone')" :error="errors.timezone">
+          <Combobox v-model="value.timezone" :options="zoneOptions" placeholder="Asia/Shanghai" />
+        </Field>
+        <Collapsible
+          v-model:open="generalAdvanced"
+          :title="t('system.connection.advanced')"
+          :dot="generalAdvancedError ? 'error' : false"
+          class="sm:col-span-2"
+          content-class="grid gap-x-5 gap-y-5 sm:grid-cols-2"
+        >
+          <Field
+            v-for="[key, min, decimals] in numbers"
+            :key="key"
+            :label="t(`system.connection.fields.${key}`)"
+            :error="errors[key]"
+          >
+            <NumberInput
+              v-model="value[key]"
+              :min="min"
+              :snap="!decimals"
+              :steppers="false"
+              :unit="key === 'turn_timeout_seconds' ? t('system.seconds') : undefined"
+            />
+          </Field>
+          <Field
+            v-for="[key, min, decimals] in deliveryNumbers"
+            :key="key"
+            :label="t(`system.connection.fields.${key}`)"
+            :error="errors[key]"
+          >
+            <NumberInput
+              v-model="value.text_delivery[key]"
+              :min="min"
+              :snap="!decimals"
+              :steppers="false"
+              :unit="
+                key === 'max_chars'
+                  ? undefined
+                  : key === 'chars_per_second'
+                    ? t('system.connection.perSecond')
+                    : t('system.seconds')
+              "
+            />
+          </Field>
+        </Collapsible>
+      </FormSection>
     </div>
     <SaveBar
       :dirty="form.dirty.value"

@@ -89,6 +89,8 @@ export interface SetupPlugin {
   version: string
   repository: string
   capabilities: string[]
+  permissions?: string[] | null
+  chat_platforms?: string[] | null
   installed: boolean
   prepared: boolean
   /** The error of the last failed installation. */

@@ -6,6 +6,7 @@ import { ApiError } from '../../api/client'
 import { keys } from '../../api/query'
 import type { SettingsSnapshot } from '../../api/settings'
 import { systemApi, systemOf, type SpeechLimits } from '../../api/system'
+import Button from '../../ui/Button.vue'
 import ErrorNote from '../../ui/ErrorNote.vue'
 import Field from '../../ui/Field.vue'
 import FormSection from '../../ui/FormSection.vue'
@@ -18,6 +19,8 @@ import { confirm } from '../../ui/confirm'
 import { toast } from '../../ui/toast'
 import { copy, same, useSettingsDraft } from './draft'
 
+const emit = defineEmits<{ dirty: [value: boolean] }>()
+
 interface Draft {
   speech: SpeechLimits
   groupManagers: boolean
@@ -25,6 +28,9 @@ interface Draft {
 
 const { t } = useI18n()
 const client = useQueryClient()
+const stashed = ref<Draft | null>(null)
+const noticeTouched = ref(false)
+
 const pick = (snapshot: SettingsSnapshot): Draft => {
   const saved = systemOf(snapshot)
   const { messages_per_hour, direct_reserve, speech_notice_text } = saved.limits
@@ -39,6 +45,10 @@ const versionOf = (snapshot: SettingsSnapshot) =>
 const form = useSettingsDraft<Draft>({
   pick,
   section: 'limits',
+  reset: () => {
+    stashed.value = null
+    noticeTouched.value = false
+  },
   save: async (value): Promise<SettingsSnapshot> => {
     let snapshot: SettingsSnapshot = form.settings.data.value!
     const saved = pick(snapshot)
@@ -51,10 +61,11 @@ const form = useSettingsDraft<Draft>({
             ? (error.data as { snapshot?: SettingsSnapshot } | undefined)?.snapshot
             : undefined
         if (!latest) throw error
-        // Someone saved the limits first: show what is saved now instead of overwriting it.
+        // Someone saved the limits first: keep the user's edits aside so they can reapply on top of latest.
+        stashed.value = copy(value)
         client.setQueryData(keys.host.settings(), latest)
         form.draft.value = copy(pick(latest))
-        // The form now matches what is saved, so the save bar closes; say why in a toast instead.
+        noticeTouched.value = false
         toast.error(t('system.chat.conflict'), { duration: 12000 })
         throw error
       }
@@ -75,6 +86,8 @@ const form = useSettingsDraft<Draft>({
   },
 })
 const { settings, draft } = form
+watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
+
 /** The limits version the draft started from; snapshots refreshed by events while editing do not move it. */
 const base = ref<string | undefined>()
 watch(
@@ -86,16 +99,36 @@ watch(
 )
 const speech = computed(() => draft.value!.speech)
 
+function toggleNotice(on: boolean) {
+  if (!draft.value) return
+  noticeTouched.value = false
+  draft.value.speech.speech_notice_text = on ? '' : null
+}
+
+function reapplyStashed() {
+  if (!stashed.value) return
+  draft.value = copy(stashed.value)
+  stashed.value = null
+  noticeTouched.value = false
+}
+
+const noticeEmpty = computed(() =>
+  Boolean(
+    draft.value &&
+    draft.value.speech.messages_per_hour !== null &&
+    draft.value.speech.speech_notice_text !== null &&
+    !draft.value.speech.speech_notice_text.trim(),
+  ),
+)
 const errors = computed(() => {
   const result: Record<string, string> = {}
   const value = draft.value?.speech
   if (!value) return result
   if (value.messages_per_hour !== null && value.direct_reserve === null) result.reserve = t('system.required')
-  if (value.speech_notice_text !== null && !value.speech_notice_text.trim())
-    result.notice = t('system.required')
+  if (noticeEmpty.value && noticeTouched.value) result.notice = t('system.required')
   return result
 })
-const invalid = computed(() => Object.keys(errors.value).length > 0)
+const invalid = computed(() => Object.keys(errors.value).length > 0 || noticeEmpty.value)
 </script>
 
 <template>
@@ -107,6 +140,16 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
     :retry="settings.refetch"
   />
   <div v-else-if="draft" class="flex min-w-0 max-w-3xl flex-col gap-4">
+    <div
+      v-if="stashed"
+      role="status"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warning-bg px-3.5 py-2.5 text-sm text-warning"
+    >
+      <span class="min-w-0 flex-1">{{ t('system.chat.conflict') }}</span>
+      <Button size="sm" variant="ghost" @click="reapplyStashed">
+        {{ t('system.chat.reapply') }}
+      </Button>
+    </div>
     <div class="flex min-w-0 flex-col gap-6">
       <FormSection :title="t('system.chat.speech')">
         <Field :label="t('system.chat.limitOn')" inline wide>
@@ -123,10 +166,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
             <NumberInput v-model="speech.direct_reserve" :min="0" />
           </Field>
           <Field :label="t('system.chat.noticeOn')" inline wide>
-            <Switch
-              :model-value="speech.speech_notice_text !== null"
-              @update:model-value="(on: boolean) => (speech.speech_notice_text = on ? '' : null)"
-            />
+            <Switch :model-value="speech.speech_notice_text !== null" @update:model-value="toggleNotice" />
           </Field>
           <Field
             v-if="speech.speech_notice_text !== null"
@@ -134,7 +174,12 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
             :error="errors.notice"
             wide
           >
-            <Input v-model="speech.speech_notice_text" :maxlength="200" />
+            <Input
+              v-model="speech.speech_notice_text"
+              :maxlength="200"
+              @update:model-value="noticeTouched = true"
+              @blur="noticeTouched = true"
+            />
           </Field>
         </template>
       </FormSection>
@@ -149,8 +194,10 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
       :saving="form.saving.value"
       :error="form.saveError.value"
       :invalid="invalid"
+      :action-label="stashed ? t('system.chat.reapply') : undefined"
       @save="form.submit"
       @discard="form.discard"
+      @action="reapplyStashed"
     />
   </div>
 </template>

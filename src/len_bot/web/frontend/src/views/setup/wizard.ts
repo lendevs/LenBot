@@ -118,7 +118,9 @@ const SECRETS = [
  * thousand tokens, so a much smaller threshold leaves no room for the recap.
  */
 function compactionBudget(window: number, output: number): number {
-  return Math.min(60000, Math.floor((window - output) * 0.75))
+  const room = window - output
+  if (room <= 1) return 1
+  return Math.max(1, Math.min(60000, Math.floor(room * 0.75)))
 }
 
 function initial(): Draft {
@@ -492,7 +494,7 @@ export function createWizard() {
     () => [draft.contextWindow, draft.maxOutput] as const,
     ([window, output], previous) => {
       if (!previous || window === null || output === null) return
-      if (window > output + 1024) draft.inputBudget = compactionBudget(window, output)
+      if (window > output) draft.inputBudget = compactionBudget(window, output)
     },
   )
 
@@ -550,7 +552,20 @@ export function createWizard() {
       need('model', Boolean(draft.model.trim()))
       need('contextWindow', draft.contextWindow !== null && draft.contextWindow >= 2048, 'contextWindow')
       need('maxOutput', draft.maxOutput !== null && draft.maxOutput >= 1)
+      need(
+        'maxOutput',
+        draft.contextWindow === null || draft.maxOutput === null || draft.maxOutput < draft.contextWindow,
+        'maxOutputWindow',
+      )
       need('inputBudget', draft.inputBudget !== null && draft.inputBudget >= 1)
+      need(
+        'inputBudget',
+        draft.contextWindow === null ||
+          draft.maxOutput === null ||
+          draft.inputBudget === null ||
+          draft.inputBudget + draft.maxOutput <= draft.contextWindow,
+        'inputBudgetWindow',
+      )
       need('thinkingBudget', !(draft.effort.trim() && draft.thinkingBudget !== null), 'bothThinking')
       need('maxSteps', draft.maxSteps !== null && draft.maxSteps > 0)
       if (searchAlias() === 'search') {

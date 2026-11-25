@@ -34,30 +34,44 @@ const login = (panel: URL) => {
   return page.href
 }
 
+function parseAddress(): URL | null {
+  try {
+    const url = new URL(address.value.trim())
+    return ['http:', 'https:'].includes(url.protocol) ? url : null
+  } catch {
+    return null
+  }
+}
+
 let stopped = false
 async function wait() {
-  const panel = new URL(address.value)
   const begin = Date.now()
   while (!stopped && Date.now() - begin < 300_000) {
-    try {
-      const response = await fetch(new URL('/api/host/ready', panel), {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(3000),
-      })
-      if (response.ok) {
-        const ready = (await response.json()) as { ready?: boolean; status?: string }
-        if (ready.ready) {
-          state.value = 'ready'
-          setTimeout(() => !stopped && location.assign(login(panel)), 600)
-          return
+    const panel = parseAddress()
+    if (panel) {
+      try {
+        const response = await fetch(new URL('/api/host/ready', panel), {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(3000),
+        })
+        if (response.ok) {
+          const ready = (await response.json()) as { ready?: boolean; status?: string }
+          if (ready.ready) {
+            state.value = 'ready'
+            setTimeout(() => {
+              if (stopped) return
+              location.assign(login(parseAddress() ?? panel))
+            }, 600)
+            return
+          }
+          if (ready.status === 'failed') {
+            state.value = 'failed'
+            return
+          }
         }
-        if (ready.status === 'failed') {
-          state.value = 'failed'
-          return
-        }
+      } catch {
+        // The panel is not listening yet.
       }
-    } catch {
-      // The panel is not listening yet.
     }
     if (Date.now() - begin > 30_000 && state.value === 'starting') state.value = 'slow'
     await new Promise((resolve) => setTimeout(resolve, 500))
@@ -68,14 +82,8 @@ onMounted(wait)
 onBeforeUnmount(() => (stopped = true))
 
 function open() {
-  let panel: URL
-  try {
-    panel = new URL(address.value)
-  } catch {
-    addressError.value = t('setup.problems.httpUrl')
-    return
-  }
-  if (!['http:', 'https:'].includes(panel.protocol)) {
+  const panel = parseAddress()
+  if (!panel) {
     addressError.value = t('setup.problems.httpUrl')
     return
   }

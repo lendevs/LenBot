@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQueryClient } from '@tanstack/vue-query'
 import { keys } from '../../api/query'
@@ -13,6 +13,8 @@ import Skeleton from '../../ui/Skeleton.vue'
 import Switch from '../../ui/Switch.vue'
 import TagInput from '../../ui/TagInput.vue'
 import { same, useSettingsDraft } from './draft'
+
+const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 interface Draft extends Identities {
   owners: string[]
@@ -60,7 +62,15 @@ const form = useSettingsDraft<Draft>({
     }),
 })
 const { settings, draft } = form
-const bot = computed(() => (settings.data.value ? systemOf(settings.data.value).connection.bot_id : ''))
+watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
+
+const botIds = computed(() => {
+  const conn = settings.data.value ? systemOf(settings.data.value).connection : null
+  if (!conn) return new Set<string>()
+  return new Set(
+    [conn.bot_id, conn.telegram?.bot_id, conn.feishu?.bot_id].filter((id): id is string => Boolean(id)),
+  )
+})
 
 const errors = computed(() => {
   const result: Record<string, string> = {}
@@ -70,7 +80,7 @@ const errors = computed(() => {
     const wrong = value[list].filter((item) => !IDENTITY.test(item))
     if (wrong.length) result[list] = t('system.permissions.format', { items: wrong.join(', ') })
   }
-  if (value.owners.includes(bot.value)) result.owners = t('system.permissions.ownerIsBot')
+  if (value.owners.some((item) => botIds.value.has(item))) result.owners = t('system.permissions.ownerIsBot')
   return result
 })
 const invalid = computed(() => Object.keys(errors.value).length > 0)

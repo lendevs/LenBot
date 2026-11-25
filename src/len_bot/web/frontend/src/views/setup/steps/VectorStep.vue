@@ -56,7 +56,6 @@ const passed = computed(() => {
 
 <template>
   <div class="flex flex-col gap-5">
-    <p class="text-sm text-ink-2">{{ t('setup.vectors.purpose') }}</p>
     <Field :label="t('setup.vectors.mode')">
       <div class="min-w-0">
         <SegmentedControl v-model="draft.vectorMode" :options="modes" :label="t('setup.vectors.mode')" />
@@ -86,7 +85,11 @@ const passed = computed(() => {
           </Button>
         </div>
         <TestResult
-          :passed="list.data.value ? t('models.probe.listed', { n: list.data.value.models.length }) : null"
+          :passed="
+            list.data.value
+              ? t('models.probe.listed', { n: list.data.value.models.length }, list.data.value.models.length)
+              : null
+          "
           :error="list.error.value"
           :failed-title="t('models.probe.listFailed')"
         />
