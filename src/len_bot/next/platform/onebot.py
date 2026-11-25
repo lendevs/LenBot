@@ -532,17 +532,18 @@ class OneBot:
                              f"{self.bot_id}; raw={raw!r}")
         self.bot_id = str(user_id)
 
-    async def identify(self) -> str:
+    async def identify(self, *, force: bool = False) -> str:
         await self.wait_connected(self.settings.request_timeout_seconds)
-        await self._verify_identity(self._ws)
+        await self._verify_identity(self._ws, force=force)
         return "onebot:" + self.bot_id
 
-    async def _verify_identity(self, websocket: ClientConnection | ServerConnection) -> None:
+    async def _verify_identity(self, websocket: ClientConnection | ServerConnection,
+                               *, force: bool = False) -> None:
         async with self._identity_lock:
             if not self._running or self._ws is not websocket:
                 raise OneBotCallError("OneBot WebSocket changed during identity check; message was not sent",
                                       submitted=False)
-            if self._verified_ws is websocket:
+            if not force and self._verified_ws is websocket:
                 return
             ws_info = await self._call_ws_on(websocket, "get_login_info", {})
             self._check_login_info(ws_info, "WebSocket")

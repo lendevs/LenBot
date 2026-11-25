@@ -2,7 +2,7 @@
 import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { hostApi, type SceneControl } from '../../api/host'
+import { hostApi } from '../../api/host'
 import { keys } from '../../api/query'
 import { currentLocale } from '../../i18n'
 import { formatDateTime } from '../../i18n/format'
@@ -38,15 +38,20 @@ const durations = computed(() => [
 ])
 
 const quiet = useMutation({
-  mutationFn: () => hostApi.quiet(props.scene, Number(minutes.value) * 60, direct.value),
-  onSuccess: (control: SceneControl) => {
-    client.setQueryData(keys.scene.control(props.scene), control)
+  mutationFn: ({ targetScene, targetZone }: { targetScene: string; targetZone: string }) =>
+    hostApi.quiet(targetScene, Number(minutes.value) * 60, direct.value).then((control) => ({
+      control,
+      targetScene,
+      targetZone,
+    })),
+  onSuccess: ({ control, targetScene, targetZone }) => {
+    client.setQueryData(keys.scene.control(control.scene || targetScene), control)
     void readHostState()
-    open.value = false
+    if (props.scene === targetScene) open.value = false
     const until = control.temporary_quiet?.until
     toast.success(
       until
-        ? t('groups.quiet.started', { time: formatDateTime(until, { timeZone: props.timeZone }) })
+        ? t('groups.quiet.started', { time: formatDateTime(until, { timeZone: targetZone }) })
         : t('common.saved'),
     )
   },
@@ -80,7 +85,11 @@ watch(open, (value) => {
       <Button variant="ghost" :disabled="quiet.isPending.value" @click="open = false">
         {{ t('common.cancel') }}
       </Button>
-      <Button variant="primary" :loading="quiet.isPending.value" @click="quiet.mutate()">
+      <Button
+        variant="primary"
+        :loading="quiet.isPending.value"
+        @click="quiet.mutate({ targetScene: props.scene, targetZone: props.timeZone })"
+      >
         {{ t('groups.quiet.start') }}
       </Button>
     </template>

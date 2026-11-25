@@ -13,7 +13,6 @@ import EmptyState from '../../../ui/EmptyState.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import Switch from '../../../ui/Switch.vue'
 import RawRecord from '../../groups/tasks/RawRecord.vue'
-import { configBody, initialDraft } from '../schema/config'
 import { usePluginsState } from '../state'
 import { enabledIn, isolationOf, manifestOf, permissionsOf, runningOf, sceneSecondaryId } from '../view'
 
@@ -43,21 +42,40 @@ const rules = computed(() =>
 const disabledRules = computed(
   () => props.snapshot.saved.disabled_rules?.[props.name] ?? running.value?.disabled_rules ?? [],
 )
-const isRuleDisabled = (key: string, runningDisabled?: boolean) =>
-  props.snapshot.saved.disabled_rules ? disabledRules.value.includes(key) : Boolean(runningDisabled)
+const isCommandDisabled = (name: string, runningDisabled?: boolean) => {
+  const key = commandRuleKey(name)
+  return props.snapshot.saved.disabled_rules ? disabledRules.value.includes(key) : Boolean(runningDisabled)
+}
+const isMatchRuleDisabled = (kind: 'fullmatch' | 'regex', pattern: string, runningDisabled?: boolean) => {
+  if (!props.snapshot.saved.disabled_rules) return Boolean(runningDisabled)
+  return disabledRules.value.includes(matchRuleKey(kind, pattern)) || disabledRules.value.includes(pattern)
+}
+
+function normalizedDisabledRules(): string[] {
+  const expanded: string[] = []
+  for (const entry of disabledRules.value) {
+    if (entry.startsWith('/') || entry.startsWith('fullmatch:') || entry.startsWith('regex:')) {
+      expanded.push(entry)
+      continue
+    }
+    const matching = rules.value.filter((rule) => rule.pattern === entry)
+    if (matching.length) {
+      for (const rule of matching) expanded.push(matchRuleKey(rule.kind, rule.pattern))
+    } else {
+      expanded.push(entry)
+    }
+  }
+  return [...new Set(expanded)]
+}
 
 async function toggleRule(key: string, on: boolean) {
   if (!manifest.value || isFirstInstallCandidate.value) return
-  const nextDisabled = on
-    ? disabledRules.value.filter((item) => item !== key)
-    : [...new Set([...disabledRules.value, key])]
-  const fields = manifest.value.fields ?? []
-  const saved = props.snapshot.saved.plugins[props.name]
-  const payload = configBody(fields, initialDraft(fields, saved), saved, t)
+  const base = normalizedDisabledRules()
+  const nextDisabled = on ? base.filter((item) => item !== key) : [...new Set([...base, key])]
   const success = manifest.value.reload === 'host' ? t('plugins.tools.ruleRestart') : t('common.saved')
   await state.run(
     `rule:${key}`,
-    () => pluginsApi.save(props.name, enabled.value, payload, { disabledRules: nextDisabled }),
+    () => pluginsApi.save(props.name, enabled.value, undefined, { disabledRules: nextDisabled }),
     { success },
   )
 }
@@ -130,7 +148,7 @@ const empty = computed(() => {
           >
             <div
               class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1"
-              :class="isRuleDisabled(commandRuleKey(item.name), item.disabled) && 'opacity-60'"
+              :class="isCommandDisabled(item.name, item.disabled) && 'opacity-60'"
             >
               <code class="rounded-sm bg-fill px-1.5 py-0.5 font-mono text-sm text-ink">
                 /{{ item.name }}
@@ -139,7 +157,7 @@ const empty = computed(() => {
             </div>
             <Switch
               size="sm"
-              :model-value="!isRuleDisabled(commandRuleKey(item.name), item.disabled)"
+              :model-value="!isCommandDisabled(item.name, item.disabled)"
               :loading="state.busy.value === `rule:${commandRuleKey(item.name)}`"
               :disabled="
                 !manifest ||
@@ -157,7 +175,7 @@ const empty = computed(() => {
           >
             <div
               class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1"
-              :class="isRuleDisabled(matchRuleKey(item.pattern), item.disabled) && 'opacity-60'"
+              :class="isMatchRuleDisabled(item.kind, item.pattern, item.disabled) && 'opacity-60'"
             >
               <Badge>{{ t(`plugins.tools.rule.${item.kind}`) }}</Badge>
               <code class="min-w-0 rounded-sm bg-fill px-1.5 py-0.5 font-mono text-sm break-all text-ink">
@@ -167,15 +185,18 @@ const empty = computed(() => {
             </div>
             <Switch
               size="sm"
-              :model-value="!isRuleDisabled(matchRuleKey(item.pattern), item.disabled)"
-              :loading="state.busy.value === `rule:${matchRuleKey(item.pattern)}`"
+              :model-value="!isMatchRuleDisabled(item.kind, item.pattern, item.disabled)"
+              :loading="state.busy.value === `rule:${matchRuleKey(item.kind, item.pattern)}`"
               :disabled="
                 !manifest ||
                 isFirstInstallCandidate ||
-                (state.busy.value !== null && state.busy.value !== `rule:${matchRuleKey(item.pattern)}`)
+                (state.busy.value !== null &&
+                  state.busy.value !== `rule:${matchRuleKey(item.kind, item.pattern)}`)
               "
               :aria-label="t('plugins.tools.toggleRule', { name: item.pattern })"
-              @update:model-value="(value: boolean) => toggleRule(matchRuleKey(item.pattern), value)"
+              @update:model-value="
+                (value: boolean) => toggleRule(matchRuleKey(item.kind, item.pattern), value)
+              "
             />
           </li>
         </ul>

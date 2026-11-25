@@ -28,7 +28,8 @@ interface Draft {
 
 const { t } = useI18n()
 const client = useQueryClient()
-const stashed = ref<Draft | null>(null)
+const stashed = ref<{ attempted: Draft; forkedFrom: Draft } | null>(null)
+const baseline = ref<Draft | null>(null)
 const noticeTouched = ref(false)
 let syncingConflict = false
 
@@ -42,6 +43,23 @@ const pick = (snapshot: SettingsSnapshot): Draft => {
 }
 const versionOf = (snapshot: SettingsSnapshot) =>
   (snapshot.versions as { limits?: string } | undefined)?.limits
+
+function mergeChatDelta(latest: Draft, attempted: Draft, forkedFrom: Draft): Draft {
+  const next = copy(latest)
+  if (attempted.speech.messages_per_hour !== forkedFrom.speech.messages_per_hour) {
+    next.speech.messages_per_hour = attempted.speech.messages_per_hour
+  }
+  if (attempted.speech.direct_reserve !== forkedFrom.speech.direct_reserve) {
+    next.speech.direct_reserve = attempted.speech.direct_reserve
+  }
+  if (attempted.speech.speech_notice_text !== forkedFrom.speech.speech_notice_text) {
+    next.speech.speech_notice_text = attempted.speech.speech_notice_text
+  }
+  if (attempted.groupManagers !== forkedFrom.groupManagers) {
+    next.groupManagers = attempted.groupManagers
+  }
+  return next
+}
 
 const form = useSettingsDraft<Draft>({
   pick,
@@ -62,11 +80,15 @@ const form = useSettingsDraft<Draft>({
             ? (error.data as { snapshot?: SettingsSnapshot } | undefined)?.snapshot
             : undefined
         if (!latest) throw error
-        // Someone saved the limits first: keep the user's edits aside so they can reapply on top of latest.
-        stashed.value = copy(value)
+        // Someone saved the limits first: keep the user's delta aside so they can reapply on top of latest.
+        const latestDraft = pick(latest)
+        const forkedFrom = copy(baseline.value ?? saved)
+        const preview = mergeChatDelta(latestDraft, value, forkedFrom)
+        stashed.value = same(preview, latestDraft) ? null : { attempted: copy(value), forkedFrom }
         client.setQueryData(keys.host.settings(), latest)
         syncingConflict = true
-        form.draft.value = copy(pick(latest))
+        form.draft.value = copy(latestDraft)
+        baseline.value = copy(latestDraft)
         void nextTick(() => {
           syncingConflict = false
         })
@@ -93,12 +115,15 @@ const form = useSettingsDraft<Draft>({
 const { settings, draft } = form
 watch(form.dirty, (dirty) => emit('dirty', dirty), { immediate: true })
 
-/** The limits version the draft started from; snapshots refreshed by events while editing do not move it. */
+/** The limits version and baseline the draft started from; snapshots refreshed by events while editing do not move it. */
 const base = ref<string | undefined>()
 watch(
   () => [settings.data.value, form.dirty.value] as const,
   ([snapshot, dirty]) => {
-    if (snapshot && !dirty) base.value = versionOf(snapshot)
+    if (snapshot && !dirty) {
+      base.value = versionOf(snapshot)
+      baseline.value = copy(pick(snapshot))
+    }
   },
   { immediate: true },
 )
@@ -119,9 +144,11 @@ watch(
 )
 
 function reapplyStashed() {
-  if (!stashed.value) return
+  if (!stashed.value || !settings.data.value) return
+  const latest = pick(settings.data.value)
   syncingConflict = true
-  draft.value = copy(stashed.value)
+  baseline.value = copy(latest)
+  draft.value = mergeChatDelta(latest, stashed.value.attempted, stashed.value.forkedFrom)
   stashed.value = null
   noticeTouched.value = false
   void nextTick(() => {

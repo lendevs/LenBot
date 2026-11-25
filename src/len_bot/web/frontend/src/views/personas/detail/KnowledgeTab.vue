@@ -184,22 +184,35 @@ function adopt(result: KnowledgeListing, changedFilenames?: ReadonlySet<string>,
   client.setQueryData(listingKey.value, mergeListing(result, changedFilenames))
   writes.done(result, ['knowledge'], message)
 }
+let saveSnapshot: { targetPersona: string; submittedText: string } | null = null
 const save = useMutation({
-  mutationFn: () =>
-    personasApi.writeDocument(
-      props.persona,
+  mutationFn: () => {
+    const targetPersona = props.persona
+    const submittedText = text.value
+    saveSnapshot = { targetPersona, submittedText }
+    return personasApi.writeDocument(
+      targetPersona,
       open.value!.filename === null,
       directory.value,
       target.value,
-      text.value,
-    ),
+      submittedText,
+    )
+  },
   onSuccess: (result) => {
+    const snapshot = saveSnapshot
+    saveSnapshot = null
+    if (snapshot && props.persona !== snapshot.targetPersona) {
+      void client.invalidateQueries({ queryKey: keys.personas.part(snapshot.targetPersona, 'knowledge') })
+      return
+    }
     const saved = result.document
     const changedName = saved?.filename ?? target.value
     adopt(result, new Set([changedName]))
     if (saved) {
       open.value = { filename: saved.filename, content: saved.content }
-      text.value = saved.content
+      if (!snapshot || text.value === snapshot.submittedText) {
+        text.value = saved.content
+      }
     }
   },
 })
@@ -247,24 +260,59 @@ const dragging = ref(false)
 let dragDepth = 0
 
 const importing = useMutation({
-  mutationFn: async (items: { filename: string; content: string; exists: boolean }[]) => {
+  mutationFn: async (payload: {
+    entries: { filename: string; content: string; exists: boolean }[]
+    openFilename: string | null
+    openText: string
+  }) => {
+    const targetPersona = props.persona
+    const targetDirectory = directory.value
     let latest: KnowledgeListing | null = null
     const changed = new Set<string>()
-    for (const item of items) {
+    const written = new Map<string, { filename: string; content: string }>()
+    for (const item of payload.entries) {
       latest = await personasApi.writeDocument(
-        props.persona,
+        targetPersona,
         !item.exists,
-        directory.value,
+        targetDirectory,
         item.filename,
         item.content,
       )
       changed.add(item.filename)
+      const doc = latest.document ?? { filename: item.filename, content: item.content }
+      written.set(doc.filename, { filename: doc.filename, content: doc.content })
     }
-    return { latest, changed, count: items.length }
+    return {
+      targetPersona,
+      latest,
+      changed,
+      written,
+      count: payload.entries.length,
+      openFilename: payload.openFilename,
+      openText: payload.openText,
+    }
   },
-  onSuccess: ({ latest, changed, count }) => {
+  onSuccess: ({ targetPersona, latest, changed, written, count, openFilename, openText }) => {
     if (!latest) return
+    if (props.persona !== targetPersona) {
+      void client.invalidateQueries({ queryKey: keys.personas.part(targetPersona, 'knowledge') })
+      return
+    }
+    if (loadingFile.value && written.has(loadingFile.value)) {
+      cancelRead()
+    }
     adopt(latest, changed, t('personas.detail.knowledge.imported', { n: count }, count))
+    const currentFilename = open.value?.filename ?? null
+    if (currentFilename && written.has(currentFilename)) {
+      const updated = written.get(currentFilename)!
+      const untouchedDuringImport = currentFilename === openFilename && text.value === openText
+      open.value = { filename: updated.filename, content: updated.content }
+      if (untouchedDuringImport || !dirty.value) {
+        text.value = updated.content
+        save.reset()
+      }
+      return
+    }
     if (count === 1 && !dirty.value && latest.document) {
       open.value = { filename: latest.document.filename, content: latest.document.content }
       text.value = latest.document.content
@@ -299,6 +347,10 @@ async function handleImportFiles(picked: File[]) {
       exists: existingNames.has(cleanName),
     })
   }
+  const overwritesOpenDirty =
+    dirty.value &&
+    Boolean(open.value?.filename && entries.some((item) => item.filename === open.value?.filename))
+  if (overwritesOpenDirty && !(await leave())) return
   const collisions = entries.filter((item) => item.exists)
   if (collisions.length) {
     const sure = await confirm({
@@ -309,7 +361,11 @@ async function handleImportFiles(picked: File[]) {
     })
     if (!sure) return
   }
-  importing.mutate(entries)
+  importing.mutate({
+    entries,
+    openFilename: open.value?.filename ?? null,
+    openText: text.value,
+  })
 }
 
 function mdChosen(event: Event) {

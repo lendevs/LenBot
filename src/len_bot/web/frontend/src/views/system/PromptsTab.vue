@@ -23,91 +23,15 @@ import { confirm } from '../../ui/confirm'
 import { describeError } from '../../ui/errors'
 import { toast } from '../../ui/toast'
 
-const emit = defineEmits<{ dirty: [value: boolean] }>()
+import { computeLineDiff, type DiffLine } from '../../ui/lineDiff'
 
-interface DiffLine {
-  kind: 'same' | 'add' | 'del'
-  oldLine: number | null
-  newLine: number | null
-  text: string
-}
+const emit = defineEmits<{ dirty: [value: boolean] }>()
 
 /** Single-column line-level diff between bundled default text and the current draft. */
 function diffLines(beforeText: string, afterText: string): DiffLine[] {
   const before = beforeText === '' ? [] : beforeText.split('\n')
   const after = afterText === '' ? [] : afterText.split('\n')
-  let prefix = 0
-  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1
-  let suffix = 0
-  while (
-    suffix < before.length - prefix &&
-    suffix < after.length - prefix &&
-    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
-  )
-    suffix += 1
-
-  const result: DiffLine[] = []
-  for (let i = 0; i < prefix; i += 1)
-    result.push({ kind: 'same', oldLine: i + 1, newLine: i + 1, text: before[i]! })
-
-  const midA = before.slice(prefix, before.length - suffix)
-  const midB = after.slice(prefix, after.length - suffix)
-  const m = midA.length
-  const n = midB.length
-
-  if (m === 0) {
-    for (let j = 0; j < n; j += 1)
-      result.push({ kind: 'add', oldLine: null, newLine: prefix + j + 1, text: midB[j]! })
-  } else if (n === 0) {
-    for (let i = 0; i < m; i += 1)
-      result.push({ kind: 'del', oldLine: prefix + i + 1, newLine: null, text: midA[i]! })
-  } else if (m * n > 400_000) {
-    for (let i = 0; i < m; i += 1)
-      result.push({ kind: 'del', oldLine: prefix + i + 1, newLine: null, text: midA[i]! })
-    for (let j = 0; j < n; j += 1)
-      result.push({ kind: 'add', oldLine: null, newLine: prefix + j + 1, text: midB[j]! })
-  } else {
-    const stride = n + 1
-    const dp = new Uint32Array((m + 1) * stride)
-    for (let i = m - 1; i >= 0; i -= 1) {
-      for (let j = n - 1; j >= 0; j -= 1) {
-        dp[i * stride + j] =
-          midA[i] === midB[j]
-            ? dp[(i + 1) * stride + (j + 1)]! + 1
-            : Math.max(dp[(i + 1) * stride + j]!, dp[i * stride + (j + 1)]!)
-      }
-    }
-    let i = 0
-    let j = 0
-    while (i < m && j < n) {
-      if (midA[i] === midB[j]) {
-        result.push({ kind: 'same', oldLine: prefix + i + 1, newLine: prefix + j + 1, text: midA[i]! })
-        i += 1
-        j += 1
-      } else if (dp[(i + 1) * stride + j]! >= dp[i * stride + (j + 1)]!) {
-        result.push({ kind: 'del', oldLine: prefix + i + 1, newLine: null, text: midA[i]! })
-        i += 1
-      } else {
-        result.push({ kind: 'add', oldLine: null, newLine: prefix + j + 1, text: midB[j]! })
-        j += 1
-      }
-    }
-    while (i < m) {
-      result.push({ kind: 'del', oldLine: prefix + i + 1, newLine: null, text: midA[i]! })
-      i += 1
-    }
-    while (j < n) {
-      result.push({ kind: 'add', oldLine: null, newLine: prefix + j + 1, text: midB[j]! })
-      j += 1
-    }
-  }
-
-  for (let k = 0; k < suffix; k += 1) {
-    const oldIndex = before.length - suffix + k
-    const newIndex = after.length - suffix + k
-    result.push({ kind: 'same', oldLine: oldIndex + 1, newLine: newIndex + 1, text: before[oldIndex]! })
-  }
-  return result
+  return computeLineDiff(before, after)
 }
 
 /** Matches Python string.Template placeholders while ignoring even-count `$` escapes such as `$$key`. */

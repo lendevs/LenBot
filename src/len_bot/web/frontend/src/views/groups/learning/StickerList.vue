@@ -218,48 +218,73 @@ function editSaveDisabled(item: Sticker): boolean {
   return !edits.changed(item.id)
 }
 
+const currentViewKey = () => `${props.scene}\0${list.filter.value}\0${list.offset.value}`
+
 const batch = useMutation({
   mutationFn: async (review: 'adopted' | 'rejected') => {
+    const targetScene = props.scene
+    const startedView = currentViewKey()
     batchError.value = null
     const chosen = items.value.filter((item) => selectedIds.value.includes(item.id))
     const skipped: Sticker[] = []
-    const toProcess: Sticker[] = []
+    const requests: {
+      id: number
+      body: {
+        description: string | null
+        text: string | null
+        emotions: string[]
+        tags: string[]
+        review: 'adopted' | 'rejected'
+      }
+    }[] = []
     for (const item of chosen) {
       const value = edits.editing(item.id) ? edits.draft(item.id) : fresh(item)
       if (review === 'adopted' && !value.description.trim()) {
         skipped.push(item)
       } else {
-        toProcess.push(item)
+        requests.push({
+          id: item.id,
+          body: {
+            description: value.description.trim() || null,
+            text: value.text.trim() || null,
+            emotions: [...value.emotions],
+            tags: [...value.tags],
+            review,
+          },
+        })
       }
     }
     let ok = 0
     const failedIds: number[] = []
+    const failedErrors = new Map<number, unknown>()
     let firstError: unknown = null
-    for (const item of toProcess) {
-      const value = edits.editing(item.id) ? edits.draft(item.id) : fresh(item)
+    for (const req of requests) {
       try {
-        await learningApi.putSticker(props.scene, item.id, {
-          description: value.description.trim() || null,
-          text: value.text.trim() || null,
-          emotions: value.emotions,
-          tags: value.tags,
-          review,
-        })
-        edits.stop(item.id)
-        delete rowErrors[item.id]
+        await learningApi.putSticker(targetScene, req.id, req.body)
+        if (currentViewKey() === startedView) {
+          edits.stop(req.id)
+          delete rowErrors[req.id]
+        }
         ok += 1
       } catch (error) {
-        failedIds.push(item.id)
-        rowErrors[item.id] = error
+        failedIds.push(req.id)
+        failedErrors.set(req.id, error)
+        if (currentViewKey() === startedView) {
+          rowErrors[req.id] = error
+        }
         if (!firstError) firstError = error
       }
     }
-    return { review, ok, failedIds, skipped, firstError }
+    return { targetScene, startedView, review, ok, failedIds, failedErrors, skipped, firstError }
   },
-  onSuccess: ({ review, ok, failedIds, skipped, firstError }) => {
-    selectedIds.value = [...failedIds, ...skipped.map((item) => item.id)]
+  onSuccess: ({ startedView, review, ok, failedIds, failedErrors, skipped, firstError }) => {
+    const sameView = currentViewKey() === startedView
+    if (sameView) {
+      selectedIds.value = [...failedIds, ...skipped.map((item) => item.id)]
+      for (const [id, error] of failedErrors) rowErrors[id] = error
+      if (failedIds.length) batchError.value = firstError
+    }
     if (failedIds.length) {
-      batchError.value = firstError
       toast.error(t('groups.learning.batchFailed', { ok, fail: failedIds.length }))
     } else if (ok > 0) {
       toast.success(
@@ -268,10 +293,11 @@ const batch = useMutation({
     }
     if (skipped.length) {
       toast.warning(t('groups.learning.sticker.batchSkippedNoDesc', { n: skipped.length }))
-      void promptDescription(skipped[0]!)
+      if (sameView) void promptDescription(skipped[0]!)
     }
   },
-  onSettled: () => client.invalidateQueries({ queryKey: keys.scene.learningAll(props.scene) }),
+  onSettled: (data) =>
+    client.invalidateQueries({ queryKey: keys.scene.learningAll(data?.targetScene ?? props.scene) }),
 })
 
 const previewing = ref<Sticker | null>(null)

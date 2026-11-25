@@ -68,8 +68,8 @@ const environments = computed(() =>
     label: t(`groups.tasks.space.environments.${value}`),
   })),
 )
-/** Minutes the group's zone is ahead of UTC at an instant. */
-function zoneOffsetMinutes(instant: number, timeZone: string): number {
+/** Local calendar date and UTC offset (minutes ahead of UTC) at an instant in `timeZone`. */
+function localInstantInfo(instant: number, timeZone: string): { ymd: number; offsetMinutes: number } {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-US', {
       timeZone,
@@ -84,17 +84,44 @@ function zoneOffsetMinutes(instant: number, timeZone: string): number {
       .formatToParts(instant)
       .map((part) => [part.type, Number(part.value)]),
   )
-  const local = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
-  return Math.round((local - instant) / 60000)
+  const local = Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!, parts.second!)
+  return {
+    ymd: parts.year! * 10000 + parts.month! * 100 + parts.day!,
+    offsetMinutes: Math.round((local - instant) / 60000),
+  }
 }
-/** Start of a picked day in the group's time zone; `until` includes its whole day. */
+/** Earliest valid instant of a picked day in the group's time zone; `until` uses the next day's start. */
 const day = (value: string, next = false) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
   const [y, m, d] = value.split('-').map(Number)
-  const guess = Date.UTC(y, m - 1, d + (next ? 1 : 0), 0, 0, 0)
-  const firstOffset = zoneOffsetMinutes(guess, props.timeZone)
-  const offset = zoneOffsetMinutes(guess - firstOffset * 60000, props.timeZone)
-  return (guess - offset * 60000) / 1000
+  const guess = Date.UTC(y!, m! - 1, d! + (next ? 1 : 0), 0, 0, 0)
+  const targetDate = new Date(guess)
+  const targetYmd =
+    targetDate.getUTCFullYear() * 10000 + (targetDate.getUTCMonth() + 1) * 100 + targetDate.getUTCDate()
+
+  const first = localInstantInfo(guess, props.timeZone)
+  const candidate1 = guess - first.offsetMinutes * 60000
+  const second = localInstantInfo(candidate1, props.timeZone)
+  const candidate2 = guess - second.offsetMinutes * 60000
+
+  for (const candidate of [candidate1, candidate2].sort((a, b) => a - b)) {
+    if (
+      localInstantInfo(candidate, props.timeZone).ymd >= targetYmd &&
+      localInstantInfo(candidate - 1000, props.timeZone).ymd < targetYmd
+    ) {
+      return Math.floor(candidate / 1000)
+    }
+  }
+
+  // Fallback bisection (exact to 1s) when a DST gap crosses midnight at a non-00:00 wall time.
+  let lo = Math.floor((guess - 15 * 3600_000) / 1000)
+  let hi = Math.ceil((guess + 15 * 3600_000) / 1000)
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    if (localInstantInfo(mid * 1000, props.timeZone).ymd >= targetYmd) hi = mid
+    else lo = mid + 1
+  }
+  return lo
 }
 const query = computed(() => ({
   status: status.value,

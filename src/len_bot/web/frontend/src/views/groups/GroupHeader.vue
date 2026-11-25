@@ -103,18 +103,26 @@ const failed = (title: string) => (error: unknown) =>
   toast.error(title, { detail: describeError(error, t('ui.error.network')).message })
 
 const chat = useMutation({
-  mutationFn: (enabled: boolean) => hostApi.setChat(scene.value, enabled),
-  onSuccess: (value, enabled) => {
-    client.setQueryData(keys.scene.control(scene.value), value)
-    toast.success(t(enabled ? 'groups.chatOn' : 'groups.chatOff', { name: name.value }))
+  mutationFn: ({ targetScene, enabled }: { targetScene: string; targetName: string; enabled: boolean }) =>
+    hostApi.setChat(targetScene, enabled),
+  onSuccess: (value, { targetScene, targetName, enabled }) => {
+    client.setQueryData(keys.scene.control(value.scene || targetScene), value)
+    toast.success(t(enabled ? 'groups.chatOn' : 'groups.chatOff', { name: targetName }))
   },
   onError: failed(t('groups.chatFailed')),
   onSettled: () => readHostState(),
 })
 const mode = computed({
   get: () =>
-    (chat.isPending.value ? Boolean(chat.variables.value) : props.item.chat_enabled) ? 'chat' : 'plugins',
-  set: (value: 'chat' | 'plugins') => chat.mutate(value === 'chat'),
+    (
+      chat.isPending.value && chat.variables.value?.targetScene === scene.value
+        ? Boolean(chat.variables.value.enabled)
+        : props.item.chat_enabled
+    )
+      ? 'chat'
+      : 'plugins',
+  set: (value: 'chat' | 'plugins') =>
+    chat.mutate({ targetScene: scene.value, targetName: name.value, enabled: value === 'chat' }),
 })
 const modes = computed(() => [
   { value: 'chat' as const, label: t('overview.groups.modeChat') },
@@ -122,23 +130,27 @@ const modes = computed(() => [
 ])
 
 const open = useMutation({
-  mutationFn: (enabled: boolean) => hostApi.setOpen(scene.value, enabled),
-  onSuccess: (value, enabled) => {
-    client.setQueryData(keys.scene.control(scene.value), value)
-    toast.success(t(enabled ? 'groups.opened' : 'groups.closed', { name: name.value }))
+  mutationFn: ({ targetScene, enabled }: { targetScene: string; targetName: string; enabled: boolean }) =>
+    hostApi.setOpen(targetScene, enabled),
+  onSuccess: (value, { targetScene, targetName, enabled }) => {
+    client.setQueryData(keys.scene.control(value.scene || targetScene), value)
+    toast.success(t(enabled ? 'groups.opened' : 'groups.closed', { name: targetName }))
   },
   onError: failed(t('groups.openFailed')),
   onSettled: () => readHostState(),
 })
 const opened = computed({
-  get: () => (open.isPending.value ? Boolean(open.variables.value) : props.item.scene_open),
-  set: (value: boolean) => open.mutate(value),
+  get: () =>
+    open.isPending.value && open.variables.value?.targetScene === scene.value
+      ? Boolean(open.variables.value.enabled)
+      : props.item.scene_open,
+  set: (value: boolean) => open.mutate({ targetScene: scene.value, targetName: name.value, enabled: value }),
 })
 
 const resume = useMutation({
-  mutationFn: () => hostApi.resume(scene.value),
-  onSuccess: (value) => {
-    client.setQueryData(keys.scene.control(scene.value), value)
+  mutationFn: (targetScene: string) => hostApi.resume(targetScene),
+  onSuccess: (value, targetScene) => {
+    client.setQueryData(keys.scene.control(value.scene || targetScene), value)
     toast.success(t('groups.quiet.resumed'))
   },
   onError: failed(t('groups.quiet.failed')),
@@ -189,13 +201,21 @@ async function choose(role: (typeof usable.value)[number]) {
   switchRole(scene.value, role)
 }
 
+const resumePendingHere = computed(() => resume.isPending.value && resume.variables.value === scene.value)
+const chatPendingHere = computed(
+  () => chat.isPending.value && chat.variables.value?.targetScene === scene.value,
+)
+const openPendingHere = computed(
+  () => open.isPending.value && open.variables.value?.targetScene === scene.value,
+)
+
 const actions = computed<MenuEntry[]>(() => [
   temporaryQuiet.value
     ? {
         label: t('groups.quiet.resume'),
         icon: Sun,
-        disabled: !accepting.value || resume.isPending.value,
-        select: () => resume.mutate(),
+        disabled: !accepting.value || resumePendingHere.value,
+        select: () => resume.mutate(scene.value),
       }
     : {
         label: t('groups.quiet.action'),
@@ -255,9 +275,9 @@ const actions = computed<MenuEntry[]>(() => [
               size="xs"
               variant="ghost"
               :icon="Sun"
-              :loading="resume.isPending.value"
+              :loading="resumePendingHere"
               :disabled="!accepting"
-              @click="resume.mutate()"
+              @click="resume.mutate(scene)"
             >
               {{ t('groups.quiet.resume') }}
             </Button>
@@ -298,7 +318,7 @@ const actions = computed<MenuEntry[]>(() => [
           v-model="mode"
           :options="modes"
           size="sm"
-          :disabled="!accepting || chat.isPending.value || !opened"
+          :disabled="!accepting || chatPendingHere || !opened"
           :label="t('overview.groups.chat', { name })"
         />
         <div class="inline-flex items-center gap-2">
@@ -312,8 +332,8 @@ const actions = computed<MenuEntry[]>(() => [
           <Switch
             :id="openId"
             v-model="opened"
-            :loading="open.isPending.value"
-            :disabled="!accepting || open.isPending.value"
+            :loading="openPendingHere"
+            :disabled="!accepting || openPendingHere"
           />
         </div>
       </div>

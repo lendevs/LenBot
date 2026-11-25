@@ -366,7 +366,10 @@ async def test_connection_test_reuses_running_reverse_ws_and_collects_handshake_
             onebot_adapter = runtime.platform.member('onebot')
             listen_host, listen_port = onebot_adapter.addresses[0][:2]
 
+            login_info_calls = 0
+
             async def reverse_peer():
+                nonlocal login_info_calls
                 async with connect(
                     f'ws://{listen_host}:{listen_port}',
                     additional_headers={
@@ -378,6 +381,7 @@ async def test_connection_test_reuses_running_reverse_ws_and_collects_handshake_
                     async for raw in ws:
                         req = json.loads(raw)
                         if req.get('action') == 'get_login_info':
+                            login_info_calls += 1
                             await ws.send(json.dumps({
                                 'status': 'ok',
                                 'retcode': 0,
@@ -399,11 +403,17 @@ async def test_connection_test_reuses_running_reverse_ws_and_collects_handshake_
                     'ping_timeout_seconds': 20.0,
                     'max_frame_bytes': 1048576,
                 }
-                # Testing the active reverse_ws listener reuses the running adapter instead of failing EADDRINUSE.
+                # Testing the active reverse_ws listener reuses the running adapter AND re-runs get_login_info each time.
                 tested = await client.post('/api/host/settings/connection/test', json={
                     'platform': 'onebot', 'onebot': active_payload, 'access_token': 'reverse-secret'})
                 assert tested.status_code == 200, tested.text
                 assert tested.json() == {'bot_id': 'onebot:90001', 'name': '90001'}
+                assert login_info_calls == 1
+
+                tested_again = await client.post('/api/host/settings/connection/test', json={
+                    'platform': 'onebot', 'onebot': active_payload, 'access_token': 'reverse-secret'})
+                assert tested_again.status_code == 200, tested_again.text
+                assert login_info_calls == 2
 
                 # Changing token on the active port asks for save + restart instead of colliding on bind.
                 changed_token = await client.post('/api/host/settings/connection/test', json={

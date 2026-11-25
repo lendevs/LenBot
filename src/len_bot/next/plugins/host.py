@@ -283,17 +283,21 @@ class PluginHost:
         else:
             cls = self._import(directory, record.name)
         record.disabled_rules = tuple(disabled_rules)
-        unused = set(disabled_rules)
+        disabled_set = set(disabled_rules)
+        matched_rules: set[str] = set()
         for attribute in dir(cls):
             mark = getattr(getattr(cls, attribute), MARK, None)
             if mark is None:
                 continue
             if not inspect.iscoroutinefunction(getattr(cls, attribute)):
                 raise ValueError(f"{attribute} 必须是 async 函数")
-            rule = ("/" + mark[1] if mark[0] == "command" else mark[1] if mark[0] == "fullmatch"
-                    else mark[1].pattern if mark[0] == "regex" else None)
-            if rule is not None and rule in unused:
-                unused.discard(rule)
+            rule_keys = (("/" + mark[1],) if mark[0] == "command"
+                         else (f"fullmatch:{mark[1]}", mark[1]) if mark[0] == "fullmatch"
+                         else (f"regex:{mark[1].pattern}", mark[1].pattern) if mark[0] == "regex"
+                         else ())
+            matched = [key for key in rule_keys if key in disabled_set]
+            if matched:
+                matched_rules.update(matched)
                 if mark[0] == "command":
                     record.disabled_commands[mark[1]] = mark[2]
                 elif mark[0] == "fullmatch":
@@ -340,6 +344,7 @@ class PluginHost:
                     _arguments(mark[1], getattr(cls, attribute), needs_source=mark[4]), attribute, mark[4])
             else:
                 record.backgrounds.append(Background(attribute, mark[1]))
+        unused = disabled_set - matched_rules
         if unused:
             logger.warning("插件 %s 不存在以下规则，plugins.disabled_rules 中的条目未生效：%s",
                            record.name, "、".join(sorted(unused)))
@@ -752,7 +757,7 @@ class PluginHost:
         task.add_done_callback(finished)
         return task
 
-    def _unavailable_tools(self, record: Loaded, scene: str) -> dict[str, str]:
+    def _unavailable_tools(self, record: Loaded, scene: str, *, record_error: bool = True) -> dict[str, str]:
         if record.instance is None or not record.tools:
             return {}
         try:
@@ -761,8 +766,9 @@ class PluginHost:
                 raise TypeError(f"unavailable_tools 须返回映射，实际为 {type(result).__name__}")
             return {str(name): self.redact(record.name, str(reason)) for name, reason in result.items()}
         except Exception as error:
-            reason = f"插件可用性检查失败：{self._record(record, '工具可用性检查', error)}"
-            return dict.fromkeys(record.tools, reason)
+            detail = (self._record(record, '工具可用性检查', error) if record_error
+                      else redact_values(error_text(error), record.manifest, record.values))
+            return dict.fromkeys(record.tools, f"插件可用性检查失败：{detail}")
 
     def tools_for(self, scene: str, *, preparing: bool = False) -> list[ExternalTool]:
         tools = []
@@ -784,7 +790,7 @@ class PluginHost:
         """All configured plugin tools, including reasons they cannot be discovered."""
         previews = []
         for record in self.plugins.values():
-            unavailable = self._unavailable_tools(record, scene)
+            unavailable = self._unavailable_tools(record, scene, record_error=False)
             for name, entry in record.tools.items():
                 tool = self._external_tool(record, name, entry)
                 reasons = []
@@ -1190,7 +1196,7 @@ class PluginHost:
     def _state_unavailable_tools(self, record: Loaded) -> dict[str, str]:
         reasons = dict(record.unavailable_tools)
         if record.status == "running" and record.instance is not None and record.tools and record.scenes:
-            per_scene = [self._unavailable_tools(record, scene) for scene in record.scenes]
+            per_scene = [self._unavailable_tools(record, scene, record_error=False) for scene in record.scenes]
             for name in record.tools:
                 if name not in reasons and all(name in item for item in per_scene):
                     reasons[name] = per_scene[0][name]

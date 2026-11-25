@@ -110,22 +110,55 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 let stopped = false
 onBeforeUnmount(() => (stopped = true))
 
+interface HostProcess {
+  pid: number
+  startedAt: number
+}
+interface ReadyCheck {
+  state: 'ready' | 'failed' | 'waiting'
+  process: HostProcess | null
+}
+
+let initialProcess: HostProcess | null = null
+
 /** The host stops while the launcher switches; its public readiness answers again once a version runs. */
-async function hostReady(): Promise<'ready' | 'failed' | 'waiting'> {
+async function hostReady(): Promise<ReadyCheck> {
   try {
     const response = await fetch('/api/host/ready', {
       cache: 'no-store',
       credentials: 'omit',
       signal: AbortSignal.timeout(3000),
     })
-    if (!response.ok) return 'waiting'
-    const body = (await response.json()) as { ready?: boolean; status?: string }
-    if (body.ready) return 'ready'
-    if (body.status === 'failed') return 'failed'
-    return 'waiting'
+    if (!response.ok) return { state: 'waiting', process: null }
+    const body = (await response.json()) as {
+      ready?: boolean
+      status?: string
+      pid?: number
+      started_at?: number
+    }
+    const process =
+      typeof body.pid === 'number' && typeof body.started_at === 'number'
+        ? { pid: body.pid, startedAt: body.started_at }
+        : null
+    if (body.ready) return { state: 'ready', process }
+    if (body.status === 'failed') return { state: 'failed', process }
+    return { state: 'waiting', process }
   } catch {
-    return 'waiting'
+    return { state: 'waiting', process: null }
   }
+}
+
+void hostReady().then(({ process }) => {
+  if (!initialProcess && process) initialProcess = process
+})
+
+function isInitialProcess(process: HostProcess | null): boolean {
+  return Boolean(
+    initialProcess &&
+    process &&
+    process.pid === initialProcess.pid &&
+    process.startedAt === initialProcess.startedAt,
+  )
 }
 
 let following = false
@@ -134,6 +167,10 @@ async function follow() {
   following = true
   restartState.value = 'idle'
   followError.value = null
+  if (!initialProcess && !restarting.value) {
+    const { process } = await hostReady()
+    if (process) initialProcess = process
+  }
   let restartSince = restarting.value ? Date.now() : 0
   try {
     while (!stopped) {
@@ -141,13 +178,41 @@ async function follow() {
       if (stopped) return
       if (restarting.value) {
         if (!restartSince) restartSince = Date.now()
-        const state = await hostReady()
+        const { state, process } = await hostReady()
         if (state === 'ready') {
+          if (isInitialProcess(process)) {
+            // Transient gateway error during download/install or old host still shutting down: verify stage.
+            try {
+              const value = await systemApi.updates()
+              queryClient.setQueryData(keys.system.updates(), value)
+              if (value.operation.stage === 'download' || value.operation.stage === 'install') {
+                restarting.value = false
+                restartSince = 0
+                continue
+              }
+              if (value.operation.stage !== 'restart') {
+                restarting.value = false
+                return
+              }
+            } catch (error) {
+              if (!(error instanceof ApiError && RESTART_STATUSES.has(error.status))) {
+                restarting.value = false
+                followError.value = error
+                return
+              }
+            }
+            if (Date.now() - restartSince >= RESTART_TIMEOUT_MS) {
+              restarting.value = false
+              restartState.value = 'timeout'
+              return
+            }
+            continue
+          }
           // The new version, or the previous one after a rollback; the reloaded page shows which.
           location.reload()
           return
         }
-        if (state === 'failed') {
+        if (state === 'failed' && !isInitialProcess(process)) {
           restarting.value = false
           restartState.value = 'failed'
           return
@@ -186,7 +251,13 @@ async function follow() {
 
 const withPlugins = ref(true)
 const start = useMutation({
-  mutationFn: (tag: string) => systemApi.startUpdate(tag, withPlugins.value),
+  mutationFn: async (tag: string) => {
+    if (!initialProcess) {
+      const { process } = await hostReady()
+      if (process) initialProcess = process
+    }
+    return systemApi.startUpdate(tag, withPlugins.value)
+  },
   onSuccess: (value) => {
     restartState.value = 'idle'
     followError.value = null

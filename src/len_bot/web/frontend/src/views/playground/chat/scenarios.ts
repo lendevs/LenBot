@@ -67,6 +67,7 @@ export function useScenarios(source: ChatSource, chat: Chat, members: Ref<Member
   function stop() {
     controller?.abort()
     controller = null
+    playing.value = null
   }
   onScopeDispose(stop)
 

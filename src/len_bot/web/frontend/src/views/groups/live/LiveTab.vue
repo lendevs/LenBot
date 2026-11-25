@@ -96,7 +96,7 @@ const latestLabel = computed(() => {
 })
 
 function older() {
-  if (query.hasNextPage.value && !query.isFetchingNextPage.value) void query.fetchNextPage()
+  if (!jumping.value && query.hasNextPage.value && !query.isFetchingNextPage.value) void query.fetchNextPage()
 }
 async function toLatest() {
   if (hasNewerGap.value) {

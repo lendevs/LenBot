@@ -37,6 +37,57 @@ function splitFrontmatter(content: string): { span: FrontmatterSpan | null; uncl
   }
 }
 
+function stripYamlComment(raw: string): string {
+  let quote: '"' | "'" | null = null
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!
+    if (quote) {
+      if (quote === '"' && ch === '\\' && i + 1 < raw.length) {
+        i += 1
+      } else if (quote === "'" && ch === "'" && raw[i + 1] === "'") {
+        i += 1
+      } else if (ch === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (ch === '#' && (i === 0 || /\s/.test(raw[i - 1]!))) {
+      return raw.slice(0, i).trimEnd()
+    }
+  }
+  return raw
+}
+
+function flowBracketDelta(raw: string): number {
+  let quote: '"' | "'" | null = null
+  let delta = 0
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!
+    if (quote) {
+      if (quote === '"' && ch === '\\' && i + 1 < raw.length) {
+        i += 1
+      } else if (quote === "'" && ch === "'" && raw[i + 1] === "'") {
+        i += 1
+      } else if (ch === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === '[') {
+      delta += 1
+    } else if (ch === ']') {
+      delta -= 1
+    }
+  }
+  return delta
+}
+
 function unquoteYamlScalar(raw: string): string {
   const trimmed = raw.trim()
   if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
@@ -88,23 +139,42 @@ function parseFlowSequence(raw: string): string[] {
   return result
 }
 
-function findTagsRange(headerLines: string[]): { start: number; end: number; inline: string } | null {
+function findTagsRange(
+  headerLines: string[],
+): { start: number; end: number; flow: string | null; inline: string } | null {
   for (let i = 0; i < headerLines.length; i++) {
     const match = headerLines[i]!.match(/^tags\s*:(.*)$/)
     if (!match) continue
-    const inline = match[1]!.trim()
+    const inline = stripYamlComment(match[1]!).trim()
     let end = i + 1
+    if (inline.startsWith('[')) {
+      const parts = [inline]
+      let depth = flowBracketDelta(inline)
+      while (depth > 0 && end < headerLines.length) {
+        const cleaned = stripYamlComment(headerLines[end]!).trim()
+        parts.push(cleaned)
+        depth += flowBracketDelta(cleaned)
+        end += 1
+      }
+      const joined = parts.join(' ').trim()
+      return {
+        start: i,
+        end,
+        flow: depth === 0 && joined.endsWith(']') ? joined : null,
+        inline,
+      }
+    }
     if (!inline) {
       while (end < headerLines.length) {
         const line = headerLines[end]!
-        if (line.trim() === '' || /^\s*#/.test(line) || /^\s*-\s+/.test(line) || /^\s+/.test(line)) {
+        if (line.trim() === '' || /^\s*#/.test(line) || /^\s*-(?:\s+.*)?$/.test(line) || /^\s+/.test(line)) {
           end += 1
         } else {
           break
         }
       }
     }
-    return { start: i, end, inline }
+    return { start: i, end, flow: null, inline }
   }
   return null
 }
@@ -130,17 +200,15 @@ export function parseFrontmatterTags(content: string): string[] {
   if (!span) return []
   const range = findTagsRange(span.headerLines)
   if (!range) return []
-  if (range.inline) {
-    if (range.inline.startsWith('[') && range.inline.endsWith(']')) {
-      return parseFlowSequence(range.inline)
-    }
-    return []
+  if (range.flow !== null) {
+    return parseFlowSequence(range.flow)
   }
+  if (range.inline) return []
   const tags: string[] = []
   for (let i = range.start + 1; i < range.end; i++) {
     const match = span.headerLines[i]!.match(/^\s*-\s+(.*)$/)
     if (!match) continue
-    const value = unquoteYamlScalar(match[1]!)
+    const value = unquoteYamlScalar(stripYamlComment(match[1]!))
     if (value) tags.push(value)
   }
   return tags

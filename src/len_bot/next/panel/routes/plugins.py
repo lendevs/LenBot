@@ -553,7 +553,8 @@ def register_host_plugins(app: FastAPI, *, root: Path, runtime: NetworkRuntime, 
                 staged = manager.installer.candidate_values(name)
                 previous = (({} if saved.plugins is None else saved.plugins.configured.get(name, {}))
                             if staged is None else staged.values)
-                values = _resolved_values(change, manifest, previous, saved.scenes) if change.enabled else previous
+                values = (_resolved_values(change, manifest, previous, saved.scenes)
+                          if (change.enabled or change.apply_candidate) else previous)
                 await asyncio.to_thread(manager.installer.save_candidate_values, name, values, change.enabled)
                 if not change.enabled or change.disabled_rules is not None:
                     def update_root(source, previous_saved):

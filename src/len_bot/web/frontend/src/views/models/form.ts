@@ -304,7 +304,11 @@ export function useModelsForm() {
   function usedBy(id: string): string[] {
     const value = draft.value
     if (!value) return []
-    const originalAlias = providerFor(id)?.originalAlias
+    const resolveWeb = (connection: string | null | undefined) =>
+      connection
+        ? (value.providers.find((item) => item.originalAlias === connection) ??
+          value.providers.find((item) => item.alias.trim() === connection))
+        : undefined
     return [
       ...Object.entries(value.roles)
         .filter(([, item]) => item?.provider === id)
@@ -312,9 +316,9 @@ export function useModelsForm() {
       ...(['web_search', 'web_read'] as const)
         .filter(
           (name) =>
-            Boolean(originalAlias) &&
-            (settings.data.value?.saved[name] as { connection?: string | null } | null)?.connection ===
-              originalAlias,
+            resolveWeb(
+              (settings.data.value?.saved[name] as { connection?: string | null } | null)?.connection,
+            )?.id === id,
         )
         .map((name) => t(name === 'web_search' ? 'capabilities.web.search' : 'capabilities.web.read')),
       ...(value.memory_embedding?.provider === id ? [t('models.vectors.memory')] : []),
@@ -471,7 +475,7 @@ export function useModelsForm() {
       const service = t(name === 'web_search' ? 'capabilities.web.search' : 'capabilities.web.read')
       const row =
         value.providers.find((item) => item.originalAlias === connection) ??
-        value.providers.find((item) => item.originalAlias === null && item.alias.trim() === connection)
+        value.providers.find((item) => item.alias.trim() === connection)
       if (!row) {
         found.push({
           tab: 'providers',

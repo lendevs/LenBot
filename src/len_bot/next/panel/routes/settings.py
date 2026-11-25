@@ -964,7 +964,7 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                             or (onebot_settings.action_transport == "http"
                                 and onebot_settings.http_url != running.onebot.http_url)):
                         raise ValueError("反向 WebSocket 当前正在监听该端口；修改访问令牌或通信方式后请先保存并重启宿主")
-                    bot_id = await live_onebot.identify()
+                    bot_id = await live_onebot.identify(force=True)
                 else:
                     errors: list[str] = []
                     try:

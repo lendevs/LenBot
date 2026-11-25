@@ -31,9 +31,49 @@ export function useProfileForm(key: Ref<string>) {
   /** Baseline per field that the current draft forked from, for field-level merges and conflict detection. */
   const base = ref<PersonaProfile | null>(null)
 
+  let savingSnapshot: { targetKey: string; submitted: Partial<PersonaProfile> } | null = null
+
+  const saving = useMutation({
+    mutationFn: (part: ProfilePart) => {
+      const current = saved.data.value!
+      const targetKey = key.value
+      const submitted = copy(pick(draft.value!, part))
+      savingSnapshot = { targetKey, submitted }
+      return personasApi.saveProfile(targetKey, current.directory, {
+        ...current.profile,
+        ...submitted,
+      })
+    },
+    onSuccess: (result, part) => {
+      const snapshot = savingSnapshot
+      savingSnapshot = null
+      const targetKey = snapshot?.targetKey ?? key.value
+      if (key.value === targetKey && draft.value && base.value) {
+        const currentDraft = draft.value as Record<string, unknown>
+        const currentBase = base.value as Record<string, unknown>
+        for (const field of fields[part]) {
+          const nextValue = copy(result.profile[field])
+          if (!snapshot || same(draft.value[field], snapshot.submitted[field])) {
+            currentDraft[field] = copy(nextValue)
+          }
+          currentBase[field] = nextValue
+        }
+      }
+      client.setQueryData(keys.personas.part(targetKey, 'profile'), result)
+      if (key.value === targetKey) {
+        writes.done(result, ['files'])
+      } else {
+        void client.invalidateQueries({ queryKey: keys.personas.all() })
+        void client.invalidateQueries({ queryKey: keys.personas.part(targetKey, 'files') })
+        void client.invalidateQueries({ queryKey: keys.personas.part(targetKey, 'preview') })
+      }
+    },
+  })
+
   watch(key, () => {
     draft.value = null
     base.value = null
+    saving.reset()
   })
 
   // Field-level merge: remote changes (from FilesTab or another session) merge into untouched fields,
@@ -103,24 +143,6 @@ export function useProfileForm(key: Ref<string>) {
     return null
   }
 
-  const saving = useMutation({
-    mutationFn: (part: ProfilePart) => {
-      const current = saved.data.value!
-      return personasApi.saveProfile(key.value, current.directory, {
-        ...current.profile,
-        ...pick(draft.value!, part),
-      })
-    },
-    onSuccess: (result, part) => {
-      if (draft.value && base.value) {
-        const savedPart = copy(pick(result.profile, part))
-        Object.assign(draft.value, savedPart)
-        Object.assign(base.value, copy(savedPart))
-      }
-      client.setQueryData(keys.personas.part(key.value, 'profile'), result)
-      writes.done(result, ['files'])
-    },
-  })
   const save = (part: ProfilePart) => {
     if (changed(part) && !problem(part) && !saving.isPending.value) saving.mutate(part)
   }

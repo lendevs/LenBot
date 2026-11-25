@@ -48,12 +48,14 @@ const versionOf = (snapshot: SettingsSnapshot) =>
   (snapshot.versions as { limits?: string } | undefined)?.limits
 const draft = ref<Limits>(pick(props.snapshot))
 const adopted = ref<Limits>(cloneLimits(draft.value))
+const baseline = ref<Limits>(cloneLimits(draft.value))
 /** The version the draft started from; a save against a newer one is refused instead of overwriting it. */
 const base = ref(versionOf(props.snapshot))
 function adopt(snapshot: SettingsSnapshot) {
   const next = pick(snapshot)
   draft.value = next
   adopted.value = cloneLimits(next)
+  baseline.value = cloneLimits(next)
   base.value = versionOf(snapshot)
 }
 const same = (a: Limits, b: Limits) =>
@@ -66,6 +68,37 @@ watch(saved, (_, previous) => {
 })
 watch(dirty, (value) => emit('dirty', value), { immediate: true })
 
+function mergeLimitsDelta(
+  latest: Limits,
+  attempted: Limits,
+  forkedFrom: Limits,
+  validScenes?: Set<string>,
+): Limits {
+  const daily_tokens =
+    attempted.daily_tokens !== forkedFrom.daily_tokens ? attempted.daily_tokens : latest.daily_tokens
+  const nextScenes: Record<string, number> = { ...latest.scene_daily_tokens }
+  const touchedScenes = new Set([
+    ...Object.keys(forkedFrom.scene_daily_tokens),
+    ...Object.keys(attempted.scene_daily_tokens),
+  ])
+  for (const scene of touchedScenes) {
+    const before = forkedFrom.scene_daily_tokens[scene]
+    const after = attempted.scene_daily_tokens[scene]
+    if (after === before) continue
+    if (after === undefined) {
+      delete nextScenes[scene]
+    } else if (!validScenes || validScenes.has(scene)) {
+      nextScenes[scene] = after
+    }
+  }
+  if (validScenes) {
+    for (const scene of Object.keys(nextScenes)) {
+      if (!validScenes.has(scene)) delete nextScenes[scene]
+    }
+  }
+  return { daily_tokens, scene_daily_tokens: nextScenes }
+}
+
 /** A group's own limit; empty follows the overall one. */
 const sceneLimit = (scene: string) => draft.value.scene_daily_tokens[scene] ?? null
 function setSceneLimit(scene: string, value: number | null) {
@@ -76,7 +109,7 @@ function setSceneLimit(scene: string, value: number | null) {
 }
 
 const conflict = ref<string | null>(null)
-const rejectedDraft = ref<Limits | null>(null)
+const rejectedDraft = ref<{ attempted: Limits; forkedFrom: Limits } | null>(null)
 const save = useMutation({
   mutationFn: () => modelsApi.saveLimits({ ...draft.value, version: base.value }),
   onMutate: () => {
@@ -92,15 +125,17 @@ const save = useMutation({
     toast.success(t('common.saved'))
   },
   onError: (error) => {
-    // Changed in another tab first: stash the user's draft and load the latest version so reapplying works cleanly.
+    // Changed in another tab first: stash the user's delta and load the latest version so reapplying merges cleanly.
     const data =
       error instanceof ApiError && error.code === 'limits_conflict'
         ? (error.data as { snapshot?: SettingsSnapshot })
         : null
     if (!data?.snapshot) return
     const attempted = cloneLimits(draft.value)
+    const forkedFrom = cloneLimits(baseline.value)
     const latest = pick(data.snapshot)
-    rejectedDraft.value = same(attempted, latest) ? null : attempted
+    const preview = mergeLimitsDelta(latest, attempted, forkedFrom)
+    rejectedDraft.value = same(preview, latest) ? null : { attempted, forkedFrom }
     client.setQueryData(keys.host.settings(), data.snapshot)
     adopt(data.snapshot)
     conflict.value = t('models.limits.conflict')
@@ -109,12 +144,12 @@ const save = useMutation({
 function reapplyRejected() {
   if (!rejectedDraft.value) return
   const validScenes = new Set(scenes.value)
-  draft.value = {
-    daily_tokens: rejectedDraft.value.daily_tokens,
-    scene_daily_tokens: Object.fromEntries(
-      Object.entries(rejectedDraft.value.scene_daily_tokens).filter(([scene]) => validScenes.has(scene)),
-    ),
-  }
+  draft.value = mergeLimitsDelta(
+    saved.value,
+    rejectedDraft.value.attempted,
+    rejectedDraft.value.forkedFrom,
+    validScenes,
+  )
   rejectedDraft.value = null
   conflict.value = null
   if (save.isError.value) save.reset()

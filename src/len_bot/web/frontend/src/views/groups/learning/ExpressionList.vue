@@ -166,38 +166,57 @@ function stopEdit(id: number) {
   edits.stop(id)
 }
 
+const currentViewKey = () => `${props.scene}\0${list.filter.value}\0${list.offset.value}`
+
 const batch = useMutation({
   mutationFn: async (status: 'adopted' | 'rejected') => {
+    const targetScene = props.scene
+    const startedView = currentViewKey()
     batchError.value = null
     const chosen = items.value.filter((item) => selectedIds.value.includes(item.id))
-    let ok = 0
-    const failedIds: number[] = []
-    let firstError: unknown = null
-    for (const item of chosen) {
+    const requests = chosen.map((item) => {
       const text = edits.editing(item.id)
         ? edits.draft(item.id)
         : { situation: item.situation, style: item.style }
-      try {
-        await learningApi.putExpression(props.scene, item.id, {
+      return {
+        id: item.id,
+        body: {
           situation: text.situation.trim() || item.situation,
           style: text.style.trim() || item.style,
           status,
-        })
-        edits.stop(item.id)
-        delete rowErrors[item.id]
+        },
+      }
+    })
+    let ok = 0
+    const failedIds: number[] = []
+    const failedErrors = new Map<number, unknown>()
+    let firstError: unknown = null
+    for (const req of requests) {
+      try {
+        await learningApi.putExpression(targetScene, req.id, req.body)
+        if (currentViewKey() === startedView) {
+          edits.stop(req.id)
+          delete rowErrors[req.id]
+        }
         ok += 1
       } catch (error) {
-        failedIds.push(item.id)
-        rowErrors[item.id] = error
+        failedIds.push(req.id)
+        failedErrors.set(req.id, error)
+        if (currentViewKey() === startedView) {
+          rowErrors[req.id] = error
+        }
         if (!firstError) firstError = error
       }
     }
-    return { status, ok, failedIds, firstError }
+    return { targetScene, startedView, status, ok, failedIds, failedErrors, firstError }
   },
-  onSuccess: ({ status, ok, failedIds, firstError }) => {
-    selectedIds.value = failedIds
+  onSuccess: ({ startedView, status, ok, failedIds, failedErrors, firstError }) => {
+    if (currentViewKey() === startedView) {
+      selectedIds.value = failedIds
+      for (const [id, error] of failedErrors) rowErrors[id] = error
+      if (failedIds.length) batchError.value = firstError
+    }
     if (failedIds.length) {
-      batchError.value = firstError
       toast.error(t('groups.learning.batchFailed', { ok, fail: failedIds.length }))
     } else if (ok > 0) {
       toast.success(
@@ -205,7 +224,8 @@ const batch = useMutation({
       )
     }
   },
-  onSettled: () => client.invalidateQueries({ queryKey: keys.scene.learningAll(props.scene) }),
+  onSettled: (data) =>
+    client.invalidateQueries({ queryKey: keys.scene.learningAll(data?.targetScene ?? props.scene) }),
 })
 
 /** Adding an adopted expression to the persona's examples; the text can be adjusted first. */

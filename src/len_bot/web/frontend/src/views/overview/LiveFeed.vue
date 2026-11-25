@@ -34,7 +34,6 @@ const props = defineProps<{ overview: Overview | null }>()
 const { t } = useI18n()
 const labels = useLiveLabels()
 const LIMIT = 30
-const RECENT_TURN_WINDOW_S = 20
 
 // Relative times move on without new events, and never read as later than now.
 const now = ref(Date.now() / 1000)
@@ -44,6 +43,7 @@ useIntervalFn(() => (now.value = Date.now() / 1000), 30_000)
 const live = ref<Entry[]>([])
 /** Reply summaries received for turns that started before the page opened and live in `overview.activity`. */
 const turnSummaries = reactive(new Map<string, string>())
+const turnSpoke = reactive(new Set<string>())
 
 function appendSummary(existing: string | undefined, summary: string): string {
   if (!summary) return existing ?? ''
@@ -56,7 +56,11 @@ function put(entry: Entry) {
   const index = live.value.findIndex((item) => item.key === entry.key)
   if (index === -1) {
     const cached = entry.kind === 'turn' ? turnSummaries.get(entry.key) : undefined
-    live.value = [{ ...entry, text: entry.text ?? cached }, ...live.value].slice(0, LIMIT)
+    const cachedSpoke = entry.kind === 'turn' && turnSpoke.has(entry.key) ? true : undefined
+    live.value = [
+      { ...entry, text: entry.text ?? cached, spoke: entry.spoke ?? cachedSpoke },
+      ...live.value,
+    ].slice(0, LIMIT)
   } else {
     const prev = live.value[index]!
     live.value[index] = {
@@ -111,16 +115,9 @@ useHostEvent('message.sent', (event) => {
   }
   now.value = Math.max(Date.now() / 1000, event.at)
   const turnId = typeof event.turn_id === 'string' && event.turn_id ? event.turn_id : null
-  const turnKey = turnId ? `turn:${turnId}` : null
-  let index = turnKey ? live.value.findIndex((item) => item.key === turnKey) : -1
-  if (index === -1) {
-    index = live.value.findIndex(
-      (item) =>
-        item.kind === 'turn' &&
-        item.scene === scene &&
-        (item.status === 'running' || Math.abs(event.at - (item.endedAt ?? item.at)) <= RECENT_TURN_WINDOW_S),
-    )
-  }
+  if (!turnId) return
+  const turnKey = `turn:${turnId}`
+  const index = live.value.findIndex((item) => item.key === turnKey)
   if (index !== -1) {
     const target = live.value[index]!
     live.value[index] = {
@@ -130,7 +127,8 @@ useHostEvent('message.sent', (event) => {
     }
     return
   }
-  if (turnKey && summary) {
+  turnSpoke.add(turnKey)
+  if (summary) {
     turnSummaries.set(turnKey, appendSummary(turnSummaries.get(turnKey), summary))
   }
 })
@@ -148,7 +146,7 @@ const entries = computed(() => {
       status: item.status,
       text: item.kind === 'turn' ? turnSummaries.get(key) : item.goal,
       task: item.kind === 'task' ? Number(item.id) : undefined,
-      spoke: item.spoke,
+      spoke: item.kind === 'turn' ? Boolean(item.spoke || turnSpoke.has(key)) : item.spoke,
     }
   })
   return [...live.value, ...earlier.filter((item) => !seen.has(item.key))]

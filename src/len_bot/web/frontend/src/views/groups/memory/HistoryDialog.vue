@@ -12,13 +12,7 @@ import Dialog from '../../../ui/Dialog.vue'
 import ErrorNote from '../../../ui/ErrorNote.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Skeleton from '../../../ui/Skeleton.vue'
-
-interface DiffLine {
-  kind: 'same' | 'add' | 'del'
-  text: string
-  oldLine: number | null
-  newLine: number | null
-}
+import { computeLineDiff, type DiffLine } from '../../../ui/lineDiff'
 
 type DiffChunk = { kind: 'lines'; lines: DiffLine[] } | { kind: 'collapsed'; id: string; lines: DiffLine[] }
 
@@ -69,74 +63,7 @@ const splitLines = (value: string | null): string[] =>
   value === null || value === '' ? [] : value.replace(/\r\n/g, '\n').split('\n')
 
 function diffLines(before: string | null, after: string | null): DiffLine[] {
-  const a = splitLines(before)
-  const b = splitLines(after)
-  let start = 0
-  while (start < a.length && start < b.length && a[start] === b[start]) start += 1
-  let endA = a.length
-  let endB = b.length
-  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
-    endA -= 1
-    endB -= 1
-  }
-
-  const lines: DiffLine[] = []
-  for (let i = 0; i < start; i++) {
-    lines.push({ kind: 'same', text: a[i]!, oldLine: i + 1, newLine: i + 1 })
-  }
-
-  const midA = a.slice(start, endA)
-  const midB = b.slice(start, endB)
-  const m = midA.length
-  const n = midB.length
-
-  if (m > 0 && n > 0 && m * n <= 250_000) {
-    const width = n + 1
-    const dp = new Int32Array((m + 1) * width)
-    for (let i = m - 1; i >= 0; i--) {
-      const row = i * width
-      const nextRow = (i + 1) * width
-      for (let j = n - 1; j >= 0; j--) {
-        if (midA[i] === midB[j]) dp[row + j] = dp[nextRow + j + 1]! + 1
-        else dp[row + j] = Math.max(dp[nextRow + j]!, dp[row + j + 1]!)
-      }
-    }
-    let i = 0
-    let j = 0
-    while (i < m && j < n) {
-      if (midA[i] === midB[j]) {
-        lines.push({ kind: 'same', text: midA[i]!, oldLine: start + i + 1, newLine: start + j + 1 })
-        i += 1
-        j += 1
-      } else if (dp[(i + 1) * width + j]! >= dp[i * width + (j + 1)]!) {
-        lines.push({ kind: 'del', text: midA[i]!, oldLine: start + i + 1, newLine: null })
-        i += 1
-      } else {
-        lines.push({ kind: 'add', text: midB[j]!, oldLine: null, newLine: start + j + 1 })
-        j += 1
-      }
-    }
-    while (i < m) {
-      lines.push({ kind: 'del', text: midA[i]!, oldLine: start + i + 1, newLine: null })
-      i += 1
-    }
-    while (j < n) {
-      lines.push({ kind: 'add', text: midB[j]!, oldLine: null, newLine: start + j + 1 })
-      j += 1
-    }
-  } else {
-    for (let i = 0; i < m; i++) {
-      lines.push({ kind: 'del', text: midA[i]!, oldLine: start + i + 1, newLine: null })
-    }
-    for (let j = 0; j < n; j++) {
-      lines.push({ kind: 'add', text: midB[j]!, oldLine: null, newLine: start + j + 1 })
-    }
-  }
-
-  for (let k = 0; k < a.length - endA; k++) {
-    lines.push({ kind: 'same', text: a[endA + k]!, oldLine: endA + k + 1, newLine: endB + k + 1 })
-  }
-  return lines
+  return computeLineDiff(splitLines(before), splitLines(after))
 }
 
 function buildDiff(changeIndex: number, before: string | null, after: string | null): ChangeDiff {

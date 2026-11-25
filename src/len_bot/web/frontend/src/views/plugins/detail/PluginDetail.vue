@@ -192,10 +192,12 @@ async function save(options: { applyCandidate?: boolean } = {}) {
     return
   }
   const wasOn = enabled.value
+  const nextEnabled = shouldApply && !isFirstInstallCandidate.value ? enabled.value : true
   try {
     const result = await state.run(
       props.name,
-      () => pluginsApi.save(props.name, true, config, shouldApply ? { applyCandidate: true } : undefined),
+      () =>
+        pluginsApi.save(props.name, nextEnabled, config, shouldApply ? { applyCandidate: true } : undefined),
       { quiet: true },
     )
     if (result) {

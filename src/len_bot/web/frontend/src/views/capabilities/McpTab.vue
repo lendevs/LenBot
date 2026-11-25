@@ -35,23 +35,30 @@ const names = computed(() =>
 )
 const running = (name: string) => state.value?.running.find((item) => item.name === name)
 const item = computed(() => (typeof route.query.item === 'string' ? route.query.item : null))
+const isMcpRoute = computed(() => !route.query.tab || route.query.tab === 'mcp')
 const active = ref(true)
 const editorDirty = ref(false)
 const frozenSelection = ref<string | null | undefined>(undefined)
 /** The open service; null is adding one, undefined is none. */
 const selected = computed<string | null | undefined>(() => {
-  if (!active.value) return frozenSelection.value
+  if (!active.value || !isMcpRoute.value) return frozenSelection.value
   if (item.value === NEW) return null
   if (item.value && names.value.includes(item.value)) return item.value
   return wide.value ? names.value[0] : undefined
 })
+watch(
+  selected,
+  (value) => {
+    if (active.value && isMcpRoute.value) frozenSelection.value = value
+  },
+  { immediate: true },
+)
 const select = (value: string | null | undefined) =>
   void router.replace({
     query: { ...route.query, tab: 'mcp', item: value === null ? NEW : (value ?? undefined) },
   })
 
 onDeactivated(() => {
-  frozenSelection.value = selected.value
   active.value = false
 })
 onActivated(() => {

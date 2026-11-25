@@ -115,6 +115,7 @@ export function useTimeline(
   const unreadCount = ref(0)
   const hasNewerGap = ref(false)
   const jumping = ref(false)
+  let epoch = 0
 
   let reading = false
   let again = false
@@ -129,9 +130,10 @@ export function useTimeline(
       do {
         again = false
         const key = queryKey.value
+        const startedEpoch = epoch
         if (!client.getQueryData<Data>(key)) return
         const fresh = await timelineApi.page(scene.value)
-        if (key !== queryKey.value) return
+        if (key !== queryKey.value || startedEpoch !== epoch) return
         const pinned = options.pinnedToEnd?.value ?? true
         const mergeOpts: MergeNewestOptions = { pinnedToEnd: pinned, maxItems: options.maxItems }
         let outcome: MergeResult | null = null
@@ -170,11 +172,17 @@ export function useTimeline(
     if (jumping.value) return
     clearTimeout(timer)
     timer = undefined
+    epoch += 1
+    const jumpEpoch = epoch
     jumping.value = true
     try {
       const key = queryKey.value
-      const fresh = await timelineApi.page(scene.value)
-      if (key !== queryKey.value) return
+      const targetScene = scene.value
+      await client.cancelQueries({ queryKey: key })
+      const fresh = await timelineApi.page(targetScene)
+      if (key !== queryKey.value || jumpEpoch !== epoch) return
+      await client.cancelQueries({ queryKey: key })
+      if (key !== queryKey.value || jumpEpoch !== epoch) return
       client.setQueryData<Data>(key, { pages: [fresh], pageParams: [undefined] })
       hasNewerGap.value = false
       unreadCount.value = 0

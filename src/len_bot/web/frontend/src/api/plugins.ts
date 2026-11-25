@@ -302,13 +302,13 @@ const name = (value: string) => encodeURIComponent(value)
 
 export type PluginAction = 'apply' | 'cancel' | 'rollback' | 'reload'
 
-/** Key format expected by backend `plugins.disabled_rules[plugin]` (`host.py:293`). */
+/** Key format expected by backend `plugins.disabled_rules[plugin]` (`host.py`). */
 export function commandRuleKey(commandName: string): string {
   return commandName.startsWith('/') ? commandName : `/${commandName}`
 }
 
-export function matchRuleKey(pattern: string): string {
-  return pattern
+export function matchRuleKey(kind: 'fullmatch' | 'regex', pattern: string): string {
+  return `${kind}:${pattern}`
 }
 
 export function pluginTitle(snapshot: PluginsSnapshot | null | undefined, pluginName: string): string {
@@ -330,12 +330,12 @@ export const pluginsApi = {
   save: (
     plugin: string,
     enabled: boolean,
-    config: Record<string, FieldValue> = {},
+    config?: Record<string, FieldValue>,
     options?: { applyCandidate?: boolean; disabledRules?: string[] },
   ) =>
     http.put<PluginsSnapshot>(`/api/host/plugins/${name(plugin)}`, {
       enabled,
-      config,
+      ...(config !== undefined ? { config } : {}),
       ...(options?.applyCandidate !== undefined ? { apply_candidate: options.applyCandidate } : {}),
       ...(options?.disabledRules !== undefined ? { disabled_rules: options.disabledRules } : {}),
     }),

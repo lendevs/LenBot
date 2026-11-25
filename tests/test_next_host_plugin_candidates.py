@@ -367,6 +367,20 @@ class Sample(Plugin):
                         'chat_platforms': ['onebot'],
                         'dependencies': [],
                     }
+
+                    # 7. Applying a candidate with edited config on a disabled plugin preserves disabled state.
+                    disabled_res = await client.put('/api/host/plugins/sample', json={'enabled': False})
+                    assert disabled_res.status_code == 200, disabled_res.text
+                    assert 'sample' in disabled_res.json()['saved']['disabled']
+
+                    applied_disabled = await client.put('/api/host/plugins/sample', json={
+                        'enabled': False, 'config': {'show_details': False}, 'apply_candidate': True,
+                    })
+                    assert applied_disabled.status_code == 200, applied_disabled.text
+                    snap_disabled = applied_disabled.json()
+                    assert 'sample' in snap_disabled['saved']['disabled']
+                    assert load_host_config(tmp_path).plugins.configured['sample'] == {'show_details': False}
+                    assert snap_disabled['available']['sample'][0]['version'] == '2.0.0'
                 if runtime.plugins is not None:
                     await runtime.plugins.close()
 
