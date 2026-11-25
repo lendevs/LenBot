@@ -156,7 +156,11 @@ const levelOf = (item: HostState['scenes'][number]): WakeLevel | '' =>
                         statusLabel(item.chat_status, item.timezone),
                         members(item.scene) === undefined
                           ? ''
-                          : t('groups.members', { n: formatNumber(members(item.scene)!) }),
+                          : t(
+                              'groups.members',
+                              { n: formatNumber(members(item.scene)!) },
+                              members(item.scene)!,
+                            ),
                         item.persona.name,
                       ]
                         .filter(Boolean)

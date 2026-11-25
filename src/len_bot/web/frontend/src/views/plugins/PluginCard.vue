@@ -116,7 +116,7 @@ async function reload() {
         <Avatar :name="name" shape="square" :size="40" />
       </span>
       <div class="min-w-0 flex-1">
-        <div class="flex min-w-0 items-baseline gap-1.5">
+        <div class="flex min-w-0 items-center gap-1.5">
           <!-- The stretched button makes the whole card open the plugin. -->
           <button
             type="button"
@@ -126,12 +126,11 @@ async function reload() {
           >
             {{ title }}
           </button>
-          <span v-if="title !== name" class="min-w-0 shrink truncate font-mono text-xs text-subtle">
-            {{ name }}
-          </span>
         </div>
-        <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-subtle tabular">
-          <span v-if="version">v{{ version }}</span>
+        <div class="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-subtle tabular">
+          <span v-if="title !== name" class="max-w-full truncate font-mono">{{ name }}</span>
+          <span v-if="title !== name && version" aria-hidden="true">·</span>
+          <span v-if="version" class="shrink-0">v{{ version }}</span>
           <Badge :tone="statusTone(status)" dot>{{ t(`plugins.status.${status}`) }}</Badge>
           <Badge v-if="candidate" tone="info">
             {{ t('plugins.card.candidate', { version: candidate.version }) }}

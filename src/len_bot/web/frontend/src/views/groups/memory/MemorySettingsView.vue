@@ -62,8 +62,6 @@ const providers = computed(() =>
       candidate: item.api_key_configured ? savedCandidate(alias, item) : null,
     })),
 )
-const noMemoryModel = computed(() => Boolean(models.value) && !models.value!.roles.memory)
-
 const draft = ref<MemoryConfig | null>(null)
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const adopt = () => (draft.value = saved.value && copy(saved.value))
@@ -151,11 +149,8 @@ const errors = computed<Record<string, string>>(() => {
   if (embedding && !embedding.model.trim()) found.embeddingModel = required
   return found
 })
-const problem = computed(() => {
-  if (Object.values(errors.value)[0]) return Object.values(errors.value)[0]
-  if (draft.value?.summaries && noMemoryModel.value) return t('groups.memory.settings.noModel')
-  return null
-})
+const invalid = computed(() => Object.keys(errors.value).length > 0)
+const problem = computed(() => Object.values(errors.value)[0] ?? null)
 
 const save = useMutation({
   mutationFn: () => http.put<SettingsSnapshot>('/api/host/settings/memory', { memory: draft.value }),
@@ -166,6 +161,17 @@ const save = useMutation({
     toast.success(t('common.saved'))
   },
 })
+function discard() {
+  adopt()
+  if (save.isError.value) save.reset()
+}
+watch(
+  draft,
+  () => {
+    if (save.isError.value) save.reset()
+  },
+  { deep: true },
+)
 const saveDescribed = computed(() =>
   save.isError.value ? describeError(save.error.value, t('ui.error.network')) : null,
 )
@@ -186,11 +192,7 @@ const saveRawError = computed(() => {
       :error="settings.error.value"
       :retry="settings.refetch"
     />
-    <form
-      v-else
-      class="flex flex-col gap-8 pb-6"
-      @submit.prevent="dirty && Object.keys(errors).length === 0 && save.mutate()"
-    >
+    <form v-else class="flex flex-col gap-8 pb-6" @submit.prevent="dirty && !invalid && save.mutate()">
       <FormSection :title="t('groups.memory.settings.section')">
         <Field :label="t('groups.memory.settings.enabled')" inline wide>
           <Switch v-model="enabled" />
@@ -252,9 +254,9 @@ const saveRawError = computed(() => {
         :saving="save.isPending.value"
         :error="saveError"
         :raw-error="saveRawError"
-        :invalid="Object.keys(errors).length > 0"
+        :invalid="invalid"
         @save="save.mutate()"
-        @discard="adopt"
+        @discard="discard"
       />
     </form>
   </div>

@@ -139,12 +139,13 @@ const savedForm = computed(() => (saved.value ? editable(saved.value) : saved.va
 const draft = ref<WorkerForm | null>(null)
 /** The settings kept while the switch is off, so turning it back on restores them. */
 const parked = ref<WorkerForm | null>(null)
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 watch(
   savedForm,
   (next, previous) => {
     if (next === undefined) return
-    if (previous === undefined || same(draft.value, previous)) draft.value = next
+    if (previous === undefined || same(draft.value, previous)) draft.value = next ? clone(next) : null
   },
   { immediate: true },
 )
@@ -191,7 +192,8 @@ function toggle(on: boolean) {
   if (on) {
     if (parked.value ?? savedForm.value) {
       waitingDefaults.value = false
-      draft.value = parked.value ?? savedForm.value ?? null
+      const restored = parked.value ?? savedForm.value ?? null
+      draft.value = restored ? clone(restored) : null
     } else if (defaults.data.value) {
       waitingDefaults.value = false
       draft.value = editable({ ...stored(fresh()), ...defaults.data.value })
@@ -200,7 +202,7 @@ function toggle(on: boolean) {
       draft.value = editable(stored(fresh()))
     }
   } else {
-    parked.value = waitingDefaults.value ? null : draft.value
+    parked.value = waitingDefaults.value || !draft.value ? null : clone(draft.value)
     waitingDefaults.value = false
     draft.value = null
   }
@@ -308,11 +310,19 @@ const save = useMutation({
     client.setQueryData(keys.host.settings(), snapshot)
     void client.invalidateQueries({ queryKey: keys.host.workerReadiness() })
     const next = capabilitiesOf(snapshot).worker
-    draft.value = next && editable(next)
+    parked.value = null
+    draft.value = next ? clone(editable(next)) : null
     void readPendingRestart()
     toast.success(t('capabilities.savedRestart'))
   },
 })
+watch(
+  draft,
+  () => {
+    if (save.isError.value) save.reset()
+  },
+  { deep: true },
+)
 const saveError = computed(() =>
   save.isError.value ? describeError(save.error.value, t('ui.error.network')).message : null,
 )
@@ -630,7 +640,9 @@ function addPackageHosts() {
       @discard="
         () => {
           waitingDefaults = false
-          draft = savedForm ?? null
+          parked = null
+          draft = savedForm ? clone(savedForm) : null
+          if (save.isError.value) save.reset()
         }
       "
     />

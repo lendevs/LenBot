@@ -114,6 +114,7 @@ const invalid = computed(() => Object.keys(errors.value).length > 0)
       :dirty="form.dirty.value"
       :saving="form.saving.value"
       :error="form.saveError.value"
+      :raw-error="form.saveRawError.value"
       :invalid="invalid"
       @save="form.submit"
       @discard="form.discard"

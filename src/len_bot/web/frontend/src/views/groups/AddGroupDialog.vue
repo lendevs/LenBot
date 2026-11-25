@@ -166,7 +166,7 @@ watch(open, (value) => {
                   [
                     scenePlatform(item.scene),
                     item.name && item.name !== sceneId(item.scene) ? sceneId(item.scene) : '',
-                    item.members ? t('groups.members', { n: formatNumber(item.members) }) : '',
+                    item.members ? t('groups.members', { n: formatNumber(item.members) }, item.members) : '',
                   ]
                     .filter(Boolean)
                     .join(' · ')

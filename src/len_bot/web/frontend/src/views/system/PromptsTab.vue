@@ -142,13 +142,37 @@ const overview = useQuery({
 })
 const items = computed(() => overview.data.value?.items ?? [])
 const onlyEdited = ref(false)
-const name = computed({
-  get: () => {
-    const value = route.query.item
-    return typeof value === 'string' && items.value.some((item) => item.name === value) ? value : undefined
-  },
-  set: (value: string | undefined) => void router.replace({ query: { ...route.query, item: value } }),
-})
+const selectedName = ref<string | undefined>(undefined)
+const name = computed(() =>
+  selectedName.value && items.value.some((item) => item.name === selectedName.value)
+    ? selectedName.value
+    : undefined,
+)
+function syncQueryItem(target: string | undefined) {
+  if (!active.value || route.query.tab !== 'prompts') return
+  if (route.query.item === target) return
+  void router.replace({ query: { ...route.query, tab: 'prompts', item: target } })
+}
+function ensureSelected() {
+  if (!active.value || route.query.tab !== 'prompts') return
+  const fromQuery =
+    typeof route.query.item === 'string' && items.value.some((item) => item.name === route.query.item)
+      ? route.query.item
+      : undefined
+  if (fromQuery) {
+    selectedName.value = fromQuery
+    return
+  }
+  if (selectedName.value && items.value.some((item) => item.name === selectedName.value)) {
+    syncQueryItem(selectedName.value)
+    return
+  }
+  if (!items.value.length) return
+  const picked = items.value.find((item) => item.edited) ?? items.value[0]!
+  selectedName.value = picked.name
+  syncQueryItem(picked.name)
+}
+watch(() => [route.query.tab, route.query.item, items.value] as const, ensureSelected, { immediate: true })
 const options = computed(() =>
   items.value
     .filter((item) => !onlyEdited.value || item.edited || item.name === name.value)
@@ -158,14 +182,6 @@ const options = computed(() =>
       meta: item.edited ? t('system.prompts.edited') : undefined,
     })),
 )
-
-function ensureSelected() {
-  if (!active.value || route.query.tab !== 'prompts') return
-  if (!items.value.length || name.value) return
-  const picked = items.value.find((item) => item.edited) ?? items.value[0]!
-  name.value = picked.name
-}
-watch(items, ensureSelected, { immediate: true })
 
 const document = useQuery({
   queryKey: computed(() => keys.system.prompt(name.value ?? '')),
@@ -194,8 +210,26 @@ watch(onlyEdited, (on) => {
   const current = items.value.find((item) => item.name === name.value)
   if (current?.edited) return
   const firstEdited = items.value.find((item) => item.edited)
-  if (firstEdited) name.value = firstEdited.name
+  if (firstEdited) {
+    selectedName.value = firstEdited.name
+    syncQueryItem(firstEdited.name)
+  }
 })
+
+async function selectPrompt(next: string | string[] | undefined) {
+  if (typeof next !== 'string' || !next || next === selectedName.value) return
+  if (dirty.value) {
+    const leave = await confirm({
+      title: t('ui.unsaved.title'),
+      message: t('ui.unsaved.message'),
+      confirmLabel: t('common.discard'),
+      tone: 'danger',
+    })
+    if (!leave) return
+  }
+  selectedName.value = next
+  syncQueryItem(next)
+}
 
 function reloadRemote() {
   const next = document.data.value
@@ -239,7 +273,7 @@ watch(
   },
   { immediate: true },
 )
-useUnsavedChanges(dirty, { keep: ['tab'] })
+useUnsavedChanges(dirty, { keep: ['tab', 'item'] })
 
 const outdated = computed(() => {
   const value = overview.data.value
@@ -391,7 +425,12 @@ const saveRawError = computed(() => {
       <div class="flex flex-wrap items-end justify-between gap-4">
         <div class="w-full sm:w-96">
           <Field :label="t('system.prompts.file')">
-            <Combobox v-model="name" :options="options" :placeholder="t('system.prompts.pick')" />
+            <Combobox
+              :model-value="name"
+              :options="options"
+              :placeholder="t('system.prompts.pick')"
+              @update:model-value="selectPrompt"
+            />
           </Field>
         </div>
         <div class="flex flex-wrap items-center gap-4 pb-1">

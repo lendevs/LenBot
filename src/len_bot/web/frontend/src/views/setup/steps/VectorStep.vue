@@ -50,7 +50,9 @@ watch(
 )
 const passed = computed(() => {
   const answer = probe.data.value
-  return answer ? t('setup.vectors.passed', { model: answer.model, n: answer.dimensions ?? '?' }) : null
+  return answer
+    ? t('setup.vectors.passed', { model: answer.model, n: answer.dimensions ?? '?' }, answer.dimensions ?? 2)
+    : null
 })
 </script>
 

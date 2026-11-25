@@ -58,7 +58,7 @@ const platform = computed(() => {
 })
 const members = computed(() => (host.members as Record<string, number>)[scene.value])
 const memberText = computed(() =>
-  members.value === undefined ? '' : t('groups.members', { n: formatNumber(members.value) }),
+  members.value === undefined ? '' : t('groups.members', { n: formatNumber(members.value) }, members.value),
 )
 const accepting = computed(() => Boolean(host.state?.connection.accepting))
 

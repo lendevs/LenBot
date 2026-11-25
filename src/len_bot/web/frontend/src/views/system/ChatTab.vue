@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQueryClient } from '@tanstack/vue-query'
 import { ApiError } from '../../api/client'
@@ -30,6 +30,7 @@ const { t } = useI18n()
 const client = useQueryClient()
 const stashed = ref<Draft | null>(null)
 const noticeTouched = ref(false)
+let syncingConflict = false
 
 const pick = (snapshot: SettingsSnapshot): Draft => {
   const saved = systemOf(snapshot)
@@ -64,7 +65,11 @@ const form = useSettingsDraft<Draft>({
         // Someone saved the limits first: keep the user's edits aside so they can reapply on top of latest.
         stashed.value = copy(value)
         client.setQueryData(keys.host.settings(), latest)
+        syncingConflict = true
         form.draft.value = copy(pick(latest))
+        void nextTick(() => {
+          syncingConflict = false
+        })
         noticeTouched.value = false
         toast.error(t('system.chat.conflict'), { duration: 12000 })
         throw error
@@ -105,11 +110,23 @@ function toggleNotice(on: boolean) {
   draft.value.speech.speech_notice_text = on ? '' : null
 }
 
+watch(
+  draft,
+  () => {
+    if (!syncingConflict && stashed.value) stashed.value = null
+  },
+  { deep: true },
+)
+
 function reapplyStashed() {
   if (!stashed.value) return
+  syncingConflict = true
   draft.value = copy(stashed.value)
   stashed.value = null
   noticeTouched.value = false
+  void nextTick(() => {
+    syncingConflict = false
+  })
 }
 
 const noticeEmpty = computed(() =>
@@ -191,8 +208,10 @@ const invalid = computed(() => Object.keys(errors.value).length > 0 || noticeEmp
     </div>
     <SaveBar
       :dirty="form.dirty.value"
+      :visible="Boolean(stashed)"
       :saving="form.saving.value"
-      :error="form.saveError.value"
+      :error="form.saveError.value ?? (stashed ? t('system.chat.conflict') : null)"
+      :raw-error="form.saveRawError.value"
       :invalid="invalid"
       :action-label="stashed ? t('system.chat.reapply') : undefined"
       @save="form.submit"

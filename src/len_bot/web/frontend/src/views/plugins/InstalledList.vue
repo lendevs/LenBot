@@ -152,7 +152,7 @@ async function removeData(name: string) {
       <Button variant="primary" :icon="Store" @click="emit('discover')">{{ t('plugins.goDiscover') }}</Button>
     </EmptyState>
     <EmptyState v-else-if="!shown.length" :icon="Search" :title="t('common.noResults')" compact />
-    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-4">
+    <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,21rem),1fr))] gap-4">
       <PluginCard
         v-for="name in shown"
         :key="name"

@@ -30,7 +30,7 @@ from ...configuration.editing import _read_saved, restart_summary, save_config
 from ...configuration.learning import LearningSettings
 from ...configuration.onebot import ONEBOT_SETTINGS
 from ...platform import feishu as feishu_platform, telegram as telegram_platform
-from ...platform.adapter import PlatformCallError
+from ...platform.adapter import PlatformCallError, adapter_for
 from ...platform.onebot import OneBot
 from ...configuration.models import Roles
 from ...configuration.tasks import suggested_worker
@@ -945,12 +945,37 @@ def register_host_settings(app: FastAPI, *, root: Path, running: HostConfig,
                     raise ValueError("缺少 OneBot 设置")
                 onebot_settings = ONEBOT_SETTINGS.validate_python(
                     _onebot_source(item.onebot, item.access_token, saved))
-
-                def failed(error: str) -> None:
-                    raise ValueError(error)
-
-                async with OneBot(onebot_settings, bot_id=None, on_event=lambda _: None, on_error=failed) as platform:
-                    bot_id = await platform.identify()
+                live_onebot = (adapter_for(runtime.platform, "onebot")
+                               if running.delivery == "live" and running.onebot is not None else None)
+                same_listener = (
+                    live_onebot is not None
+                    and onebot_settings.mode == "reverse_ws"
+                    and running.onebot.mode == "reverse_ws"
+                    and (
+                        (onebot_settings.listen_host, onebot_settings.listen_port)
+                        == (running.onebot.listen_host, running.onebot.listen_port)
+                        or (onebot_settings.listen_host, onebot_settings.listen_port)
+                        in getattr(live_onebot, "addresses", ())
+                    )
+                )
+                if same_listener:
+                    if (onebot_settings.access_token != running.onebot.access_token
+                            or onebot_settings.action_transport != running.onebot.action_transport
+                            or (onebot_settings.action_transport == "http"
+                                and onebot_settings.http_url != running.onebot.http_url)):
+                        raise ValueError("反向 WebSocket 当前正在监听该端口；修改访问令牌或通信方式后请先保存并重启宿主")
+                    bot_id = await live_onebot.identify()
+                else:
+                    errors: list[str] = []
+                    try:
+                        async with OneBot(
+                            onebot_settings, bot_id=None, on_event=lambda _: None, on_error=errors.append
+                        ) as platform:
+                            bot_id = await platform.identify()
+                    except PlatformCallError as error:
+                        if errors:
+                            raise ValueError(f"{error}（{errors[-1]}）") from error
+                        raise
                 result = {"bot_id": bot_id, "name": bot_id.removeprefix("onebot:")}
             elif item.platform == "telegram":
                 if item.telegram is None:
