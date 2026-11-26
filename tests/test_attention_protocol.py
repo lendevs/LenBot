@@ -690,3 +690,16 @@ async def test_focus_ignores_pure_stickers_and_trivial_fillers_without_consuming
         real = live.receive(message(70001, 15, '然后呢'))['wake_verdict']
         assert real['woke'] and real['channel'] == 'focus'
         assert 'onebot:70001' not in live.state.followups
+
+
+def test_focus_wake_reason_states_when_to_keep_listening(tmp_path):
+    config, persona = config_for(tmp_path)
+    config.attention.focus_seconds = 600
+    with Store(config.database, now=lambda: START) as store:
+        live = SceneRunner(Chat(config, persona, store, None, now=lambda: START), lambda _: None)
+        live.state.followups['onebot:70001'] = START
+        live.receive(message(70001, 1, '然后呢'))
+        assert live.state.pending.channel == 'focus'
+        reason = live.wake_reason()
+        assert reason.startswith('[对话继续：') and reason.endswith(']')
+        assert reason == '[对话继续：仅当对方仍在接着你的话跟你聊时回应；已转去和群友聊别的事就直接结束本轮继续旁听]'
