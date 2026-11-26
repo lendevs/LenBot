@@ -126,6 +126,7 @@ function applyDeepSeekTune() {
   binding.value.quick_reasoning_effort = null
   binding.value.thinking_budget_tokens = null
   if (binding.value.thinking === 'disabled') binding.value.thinking = null
+  if (api.value === 'anthropic') binding.value.temperature = null
 }
 const enabled = computed({
   get: () => binding.value !== null,

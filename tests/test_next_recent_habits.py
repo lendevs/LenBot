@@ -179,6 +179,10 @@ def test_rhetorical_tails_are_counted_across_different_endings():
     text = recent_habits(_history(*(_say(line) for line in [*lines[:3], *VARIED[:5]])))
     assert "都在句末反问" not in (text or "")
 
+    declarative = ["窗户还是开着呀", "他们排练还是周五啊", "外头风还是好大呀", "今天人还是这么多啊", "这猫还是爱睡沙发呀"]
+    text = recent_habits(_history(*(_say(line) for line in [*declarative, *VARIED[:3]])))
+    assert "都在句末反问" not in (text or "")
+
 
 def test_space_separated_clauses_are_named_when_frequent():
     lines = [

@@ -397,7 +397,9 @@ def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str
     if echo_openings >= enough:
         shapes.append(f"{echo_openings} 条用「短词+问号」复读起头")
 
-    rhetorical_tail = re.compile(r"(?:吗|是吧|对吧|不是吗|对不对|是不是|行不行|好不好|还是[^，,。！？!?\s]{1,8}[呀啊吗])[？?~～！!。.\s]*$")
+    rhetorical_tail = re.compile(
+        r"(?:(?:吗|是吧|对吧|不是吗|对不对|是不是|行不行|好不好)[？?~～！!。.\s]*$|还是[^，,。！？!?\s]{1,8}[呀啊吗]?[？?][~～！!\s]*$)"
+    )
     rhetorical_tails = sum(rhetorical_tail.search(text.rstrip()) is not None for text in texts)
     if rhetorical_tails >= max(4, math.ceil(len(texts) * 0.6)):
         shapes.append(f"{rhetorical_tails} 条都在句末反问")

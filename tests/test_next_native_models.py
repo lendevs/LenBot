@@ -367,3 +367,17 @@ async def test_chat_probe_reports_whether_reasoning_was_observed(message_fields,
                                    Binding(provider='fixture', model='fixture', context_window_tokens=8192))
     assert result['reasoning_observed'] is reasoning_observed
     TypeAdapter(responses.ModelProbe).validate_python(result)
+
+
+def test_empty_native_thinking_blocks_do_not_count_as_observed_reasoning():
+    from len_bot.next.models.client import ModelReply
+    from len_bot.next.panel.model_access import _reply_has_reasoning
+
+    for raw in (
+        {'output': [{'type': 'reasoning', 'summary': []}]},
+        {'content': [{'type': 'thinking', 'thinking': '   '}, {'type': 'redacted_thinking', 'data': ''}]},
+        {'candidates': [{'content': {'parts': [{'thought': True, 'text': ''}]}}]},
+    ):
+        reply = ModelReply({'role': 'assistant', 'content': 'ok'}, 'ok', [], 'stop',
+                           {'prompt_tokens': 5, 'completion_tokens': 2}, None, raw)
+        assert _reply_has_reasoning(reply) is False

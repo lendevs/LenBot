@@ -75,11 +75,31 @@ def _reply_has_reasoning(reply: ModelReply) -> bool:
     if not isinstance(response, dict):
         return False
     output = response.get('output')
-    if isinstance(output, list) and any(isinstance(item, dict) and item.get('type') == 'reasoning' for item in output):
+    if isinstance(output, list) and any(
+        isinstance(item, dict)
+        and item.get('type') == 'reasoning'
+        and (
+            (isinstance(item.get('encrypted_content'), str) and bool(item['encrypted_content'].strip()))
+            or (isinstance(item.get('summary'), list) and any(
+                isinstance(s, dict) and isinstance(s.get('text'), str) and bool(s['text'].strip())
+                for s in item['summary']
+            ))
+            or (isinstance(item.get('content'), list) and any(
+                isinstance(c, dict) and isinstance(c.get('text'), str) and bool(c['text'].strip())
+                for c in item['content']
+            ))
+        )
+        for item in output
+    ):
         return True
     blocks = response.get('content')
     if isinstance(blocks, list) and any(
-        isinstance(item, dict) and item.get('type') in ('thinking', 'redacted_thinking') for item in blocks
+        isinstance(item, dict)
+        and (
+            (item.get('type') == 'thinking' and isinstance(item.get('thinking'), str) and bool(item['thinking'].strip()))
+            or (item.get('type') == 'redacted_thinking' and isinstance(item.get('data'), str) and bool(item['data'].strip()))
+        )
+        for item in blocks
     ):
         return True
     candidates = response.get('candidates')
@@ -89,7 +109,15 @@ def _reply_has_reasoning(reply: ModelReply) -> bool:
     if not isinstance(content, dict):
         return False
     parts = content.get('parts')
-    return isinstance(parts, list) and any(isinstance(part, dict) and part.get('thought') is True for part in parts)
+    return isinstance(parts, list) and any(
+        isinstance(part, dict)
+        and part.get('thought') is True
+        and (
+            (isinstance(part.get('text'), str) and bool(part['text'].strip()))
+            or (isinstance(part.get('thoughtSignature'), str) and bool(part['thoughtSignature'].strip()))
+        )
+        for part in parts
+    )
 
 
 async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, kind: str = 'text') -> dict:
