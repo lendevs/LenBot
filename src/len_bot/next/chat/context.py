@@ -301,14 +301,16 @@ def _templates(texts: Sequence[str], enough: int, taken: Sequence[str], others: 
     return chosen
 
 
-def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()) -> str | None:
+def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = (), *,
+                  has_stickers: bool = False) -> str | None:
     """Name what the latest own expressions in the history keep repeating, for the next one to vary.
 
     The model reads its earlier lines as the strongest example of how it talks, so a phrase or a
     sentence shape that slipped in a few times tends to stay. Words, the opening and ending of each
     line, the opening of its last clause and two-piece templates are counted; ``heard`` is what
     others said recently, and words they use belong to the topic and are not named. Ordinary
-    single-character sentence-final punctuation is ignored, and high sticker frequency is gently noted.
+    single-character sentence-final punctuation is ignored, and extreme sticker streaks (almost every
+    turn, or a pure-text rut when stickers are available) are gently noted.
     """
     expressions = _expressions(entries)
     if len(expressions) < 5:
@@ -340,7 +342,7 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
     with_sticker = 0
     for name, arguments in expressions:
         choice = arguments.get("sticker") if name == "say" else arguments
-        if name == "react" or isinstance(choice, dict):
+        if name == "react" or isinstance(choice, dict) or (isinstance(choice, str) and bool(choice.strip())):
             with_sticker += 1
         if isinstance(choice, dict) and isinstance(choice.get("file"), str):
             files[choice["file"]] += 1
@@ -348,6 +350,11 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
         habits.append(f"同一张图用了 {uses} 次")
     if with_sticker >= 6:
         habits.append(f"{with_sticker} 次附带了表情包（可以适当纯文字回复，不必每句都配图）")
+    elif has_stickers and with_sticker == 0 and len(expressions) >= 6:
+        habits.append(
+            f"连续 {len(expressions)} 次都是纯文字、没发表情包"
+            "（遇到打趣、接梗、打招呼或明显情绪反应时，可以顺手在 say 里配张 sticker 或直接用 react 发图）"
+        )
     if not habits:
         return None
     return Template(read_prompt("next_recent_habits.md")).substitute(
@@ -568,7 +575,8 @@ class ChatContext:
             references.append(describe_group_voice(self.group_voice))
         heard = [plain_text(message) for message in self.store.recent_context_messages(self.config.scene, limit=50)
                  if not message.is_self]
-        references.append(recent_habits(entries, heard))
+        has_stickers = any(tool["function"]["name"] == "react" for tool in getattr(self, "allowed", ()))
+        references.append(recent_habits(entries, heard, has_stickers=has_stickers))
         references.append(reply_feedback(self.config, self.store))
         if self.config.models.roles.mind.anti_bagu:
             references.append(read_prompt("next_anti_bagu.md").strip())

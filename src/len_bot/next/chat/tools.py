@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -68,8 +69,11 @@ if TYPE_CHECKING:
 
 
 STICKER_CANDIDATES = 9
-STICKER_COMPACT_LIMIT = 30
-STICKER_REPRESENTATIVES = 10
+STICKER_INLINE_FULL_LIMIT = 30
+STICKER_COMPACT_LIMIT = 200
+STICKER_REPRESENTATIVES = 12
+_SUITABLE_SUFFIX = re.compile(r"[。；;]?\s*适合[：:].*$")
+_GENERIC_STICKER_TAGS = frozenset({"表情包", "表情", "图片", "动图", "静态"})
 
 
 def sticker_aliases(persona: Persona) -> dict[str, str]:
@@ -78,8 +82,15 @@ def sticker_aliases(persona: Persona) -> dict[str, str]:
     return {f"s{index}": sticker.file for index, sticker in enumerate(ordered, start=1)}
 
 
-def _format_sticker_entry(alias: str, description: str, emotions: tuple[str, ...]) -> str:
-    return f"{alias}: {description}（{'/'.join(emotions)}）" if emotions else f"{alias}: {description}"
+def _format_sticker_entry(alias: str, description: str, emotions: tuple[str, ...], *, concise: bool = False) -> str:
+    desc = description.strip()
+    emos = emotions
+    if concise:
+        desc = _SUITABLE_SUFFIX.sub("", desc).strip()
+        if len(desc) > 44:
+            desc = desc[:43].rstrip("，、。；;：: ") + "…"
+        emos = emotions[:3]
+    return f"{alias}: {desc}（{'/'.join(emos)}）" if emos else f"{alias}: {desc}"
 
 
 def _sticker_catalog_text(persona: Persona) -> str:
@@ -87,11 +98,18 @@ def _sticker_catalog_text(persona: Persona) -> str:
     if not ordered:
         return "\n当前角色暂无自带素材，可按 emotion/query 使用本群已采用表情，或用 preview 浏览候选。"
     if len(ordered) <= STICKER_COMPACT_LIMIT:
-        lines = [_format_sticker_entry(f"s{index}", sticker.description, sticker.emotions)
+        concise = len(ordered) > STICKER_INLINE_FULL_LIMIT
+        lines = [_format_sticker_entry(f"s{index}", sticker.description, sticker.emotions, concise=concise)
                  for index, sticker in enumerate(ordered, start=1)]
-        return "\n当前角色素材目录（file 填短编号如 s1，或原文件名）：\n" + "\n".join(lines)
+        return "\n当前角色素材目录（file 填短编号如 s1，或用 query/emotion 检索）：\n" + "\n".join(lines)
     emotion_counts = Counter(emotion for sticker in ordered for emotion in sticker.emotions)
-    tag_counts = Counter(tag for sticker in ordered for tag in sticker.tags)
+    raw_tag_counts = Counter(tag for sticker in ordered for tag in sticker.tags)
+    persona_names = {persona.name.casefold(), *(a.casefold() for a in persona.aliases)}
+    filtered_tags = {
+        tag: count for tag, count in raw_tag_counts.items()
+        if tag not in _GENERIC_STICKER_TAGS and tag.casefold() not in persona_names and count < len(ordered) * 0.7
+    }
+    tag_counts = filtered_tags or raw_tag_counts
     seen_emotions: set[str] = set()
     representatives: list[tuple[str, object]] = []
     fallback: list[tuple[str, object]] = []
@@ -106,7 +124,7 @@ def _sticker_catalog_text(persona: Persona) -> str:
     if len(representatives) < STICKER_REPRESENTATIVES:
         representatives.extend(fallback[:STICKER_REPRESENTATIVES - len(representatives)])
     lines = [
-        f"当前角色共有 {len(ordered)} 张素材（短编号 s1..s{len(ordered)}）。素材较多，请优先用 query 或 emotion 按语义/情绪挑选（如 sticker: {{\"query\": \"...\"}}），或用 preview 看候选；也支持 file 传短编号或原文件名。",
+        f"当前角色共有 {len(ordered)} 张素材（短编号 s1..s{len(ordered)}）。素材较多，请优先用 query 或 emotion 按关键词/情绪挑选（如 sticker: {{\"query\": \"...\"}}），或用 preview 看候选；看中下方代表素材也可直接填短编号。",
     ]
     if emotion_counts:
         top_emotions = "、".join(f"{name}({count})" for name, count in sorted(
@@ -117,7 +135,8 @@ def _sticker_catalog_text(persona: Persona) -> str:
             tag_counts.items(), key=lambda item: (-item[1], item[0]))[:20])
         lines.append(f"常见标签：{top_tags}")
     lines.append("代表素材：")
-    lines.extend(_format_sticker_entry(alias, sticker.description, sticker.emotions) for alias, sticker in representatives)
+    lines.extend(_format_sticker_entry(alias, sticker.description, sticker.emotions, concise=True)
+                 for alias, sticker in representatives)
     return "\n" + "\n".join(lines)
 
 
@@ -202,7 +221,7 @@ SAY_TOOL = {"type": "function", "function": {
 REACT_TOOL = {"type": "function", "function": {
     "name": "react", "description": "在当前场景单独发一张表情包图片，不带文字，这张图就是一条完整的回复；"
         "角色素材优先，其次是启用的本群已采用表情；"
-        "file 直接选择目录中的角色素材，emotion 精确匹配情绪标签，query 按描述、标签字面检索，"
+        "file 直接选择目录中的角色素材，emotion 按情绪匹配，query 按描述或标签检索，"
         "candidate 发送本轮预览候选中的编号，四选一；结果返回实际来源与发送状态。"
         "描述不足以分辨哪张贴合时，可以先用 preview 看候选再选。",
     "parameters": ReactArguments.model_json_schema(),
@@ -343,7 +362,8 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
                     description += (' 一句话带一张表情包图片时设置 sticker（优先用 {"query": "..."} 或 {"emotion": "..."} 挑选，'
                                     '也支持短编号 s1..sN 或原文件名）；只发图、不说话时用 react。')
                 else:
-                    description += ' 一句话带一张表情包图片时设置 sticker（file 可填短编号如 s1 或原文件名）；只发图、不说话时用 react。'
+                    description += (' 一句话带一张表情包图片时设置 sticker（file 可直接填短编号如 s1，'
+                                    '或用 {"query": "..."} / {"emotion": "..."} 挑选）；只发图、不说话时用 react。')
             else:
                 parameters['properties'].pop('sticker')
                 parameters.pop('$defs')
@@ -356,8 +376,8 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
         elif function["name"] == "react":
             parameters = ReactArguments.model_json_schema()
             allowed[index] = {**tool, "function": {**function, "description": function["description"]
-                              + " 先按眼前情境选择图像，使用 file（填短编号如 s1 或真实文件名）可以直接发送目录里这一张。"
-                              + " query 是字面检索，不理解近义词；emotion 只填写已知的实际标签。"
+                              + " 先按眼前情境选择图像：看中目录里的素材可直接用 file（填短编号如 s1 或真实文件名）发送，"
+                              + " 也可用 query 或 emotion 按关键词/情绪匹配。"
                               + " 素材描述说明图片内容，不预设文字态度。" + _sticker_catalog_text(persona),
                               "parameters": model_schema(parameters)}}
     if config.attention.disposition is not None:

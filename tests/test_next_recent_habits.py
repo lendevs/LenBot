@@ -77,6 +77,14 @@ def test_frequent_stickers_across_recent_expressions_get_a_gentle_reminder():
     # Sticker preview calls do not count as sent stickers.
     with_previews = [_call("react", {"preview": True}) for _ in range(3)] + five
     assert recent_habits(_history(*with_previews)) is None
+    # Six or more plain-text turns when stickers are available gently break the pure-text rut.
+    plain_rut = [_say(line) for line in lines]
+    assert recent_habits(_history(*plain_rut), has_stickers=False) is None
+    rut_text = recent_habits(_history(*plain_rut), has_stickers=True)
+    assert rut_text is not None and "连续 8 次都是纯文字、没发表情包" in rut_text
+    # Having even one sticker in the window keeps it quiet.
+    one_sticker = [_say(lines[0], "1.webp"), *(_say(line) for line in lines[1:])]
+    assert recent_habits(_history(*one_sticker), has_stickers=True) is None
 
 
 # Fictional lines, each sharing one sentence shape in half of the last eight and varied otherwise.
