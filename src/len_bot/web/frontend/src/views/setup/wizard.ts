@@ -152,7 +152,7 @@ function compactionBounds(
 function compactionBudget(
   window: number,
   output: number,
-  quickEffort = 'low',
+  quickEffort = '',
   effort = '',
   thinkingBudget: number | null = null,
 ): number {
@@ -196,9 +196,9 @@ function initial(): Draft {
     readBaseUrl: '',
     readKey: '',
     readProxy: '',
-    quickEffort: 'low',
+    quickEffort: '',
     imageInput: true,
-    antiBagu: false,
+    antiBagu: true,
     maxSteps: 16,
     api: 'openai-chat',
     baseUrl: 'https://api.deepseek.com/v1',
@@ -206,7 +206,7 @@ function initial(): Draft {
     proxy: '',
     model: 'deepseek-flash',
     contextWindow: 1000000,
-    inputBudget: compactionBudget(1000000, 8192),
+    inputBudget: compactionBudget(1000000, 8192, '', 'high'),
     maxOutput: 8192,
     effort: 'high',
     thinkingBudget: null,
@@ -471,9 +471,10 @@ export function createWizard() {
         model: 'deepseek-flash',
         contextWindow: 1000000,
         effort: 'high',
-        quickEffort: 'low',
+        quickEffort: '',
         outputField: 'max_tokens',
         imageInput: true,
+        antiBagu: true,
         search: 'deepseek',
         searchConnection: 'primary',
       })
@@ -489,7 +490,7 @@ export function createWizard() {
     const native = api !== 'openai-chat'
     Object.assign(draft, {
       effort: native ? 'high' : '',
-      quickEffort: native ? 'low' : '',
+      quickEffort: '',
       thinkingBudget: null,
       imageInput: native,
       outputField: 'max_completion_tokens',
