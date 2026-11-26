@@ -570,5 +570,7 @@ class ChatContext:
                  if not message.is_self]
         references.append(recent_habits(entries, heard))
         references.append(reply_feedback(self.config, self.store))
+        if self.config.models.roles.mind.anti_bagu:
+            references.append(read_prompt("next_anti_bagu.md").strip())
         references.append(avoidance_text(self.persona))
         return [text for text in references if text is not None]

@@ -68,6 +68,7 @@ export interface SetupBinding {
   temperature: number | null
   quick_reasoning_effort: string | null
   image_input: boolean
+  anti_bagu: boolean
   thinking: 'enabled' | 'disabled' | null
   reasoning_effort: string | null
   thinking_budget_tokens: number | null

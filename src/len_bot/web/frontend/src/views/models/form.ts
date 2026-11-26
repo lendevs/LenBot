@@ -83,11 +83,15 @@ export function newBinding(
     quick_reasoning_effort: null,
     thinking_budget_tokens: null,
     image_input: role === 'vision',
+    anti_bagu: false,
     output_token_field: 'max_completion_tokens',
     history_policy: 'native',
     retry_delays_seconds: [2, 5],
   }
 }
+
+export const isDeepSeekModel = (model: string | null | undefined, baseUrl?: string | null): boolean =>
+  /deepseek/i.test(model ?? '') || /deepseek/i.test(baseUrl ?? '')
 
 /** Protocol-specific fields the host refuses for other protocols. */
 export function fitProtocol(binding: ChatBinding, api: string | undefined) {

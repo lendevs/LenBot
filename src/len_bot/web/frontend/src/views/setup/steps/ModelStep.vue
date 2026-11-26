@@ -12,6 +12,8 @@ import VectorStep from './VectorStep.vue'
 import NumberInput from '../../../ui/NumberInput.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Select from '../../../ui/Select.vue'
+import DeepSeekAntiBaguCard from '../../models/DeepSeekAntiBaguCard.vue'
+import { isDeepSeekModel } from '../../models/form'
 import ModelName from '../../models/ModelName.vue'
 import MoreFields from '../MoreFields.vue'
 import TestResult from '../TestResult.vue'
@@ -40,6 +42,9 @@ const quickReply = computed({
   get: () => draft.quickEffort.trim() !== '',
   set: (on: boolean) => (draft.quickEffort = on ? 'low' : ''),
 })
+const showAntiBagu = computed(
+  () => draft.preset === 'deepseek' || isDeepSeekModel(draft.model, draft.baseUrl) || draft.antiBagu,
+)
 const connectionOptions = computed(() => [
   {
     value: 'primary' as const,
@@ -194,6 +199,9 @@ const passed = computed(() => {
           :placeholder="t('setup.model.modelPlaceholder')"
         />
       </Field>
+      <Transition name="ui-rise">
+        <DeepSeekAntiBaguCard v-if="showAntiBagu" v-model="draft.antiBagu" class="sm:col-span-2" />
+      </Transition>
       <Field :label="t('models.roles.quickReply')" inline wide><Switch v-model="quickReply" /></Field>
     </div>
     <div class="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">

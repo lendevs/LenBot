@@ -1983,6 +1983,17 @@ export default {
       thinkingDisabled: '关',
       quickEffortSame: '与思考强度相同',
       quickReply: '首轮请求使用低档思考（推荐）',
+      antiBagu: {
+        title: '去鱼八股模式',
+        recommendedBadge: '建议开启',
+        activeBadge: '已启用',
+        recommendedHint:
+          '已识别 DeepSeek 模型：开启后自动抑制「先复述原话再空行锐评」「不是……而是……」「这话接住了」等高频八股套话，并强化发言工具调用，还原自然口语。',
+        activeHint:
+          '已在每轮生成前附加反八股与口语约束：禁止复述加空行点评、工整对仗与客服认领腔，确保通过发言工具自然接话。',
+        turnOn: '开启去鱼八股',
+        turnOff: '已开启 · 点击关闭',
+      },
       followsMind: '跟随聊天模型',
       imageInput: '支持图片输入',
       mindSees: '聊天模型直接看图',

@@ -241,3 +241,43 @@ async def test_turning_transcription_off_turns_it_off_in_every_group(instance):
     saved = json.loads(path.read_text())
     assert saved['models']['roles']['asr'] is None
     assert saved['scenes'][SCENE]['transcribe_audio'] is False
+
+
+@pytest.mark.asyncio
+async def test_anti_bagu_switch_applies_live_to_turn_tail_without_changing_prefix(instance):
+    from len_bot.next.chat.context import turn_state
+
+    root, app = instance
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://fixture') as client:
+        initial = (await client.get('/api/host/settings')).json()
+        assert initial['saved']['models']['roles']['mind']['anti_bagu'] is False
+
+        body = await models_body(client)
+        body['roles']['mind']['model'] = 'deepseek-v4.1-flash'
+        body['roles']['mind']['anti_bagu'] = True
+        response = await client.put('/api/host/settings/models', json=body)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload['restart_required']['models'] is False
+        assert payload['running']['models']['roles']['mind']['anti_bagu'] is True
+
+        saved = load_host_config(root)
+        assert saved.models.roles.mind.anti_bagu is True
+        persona = load_persona(saved.scenes[SCENE].persona)
+        with Store(saved.database) as store:
+            from len_bot.next.chat.context import ChatContext
+
+            on_ctx = ChatContext(saved.scene_config(SCENE), persona, store, platform=False, memory=None)
+            on_ctx.configure_tools([], [], skills=())
+            state = turn_state(saved.scene_config(SCENE), store, now=1_700_000_000.0)
+            on_messages = await on_ctx.project(None, [], state)
+            assert '<去鱼八股与口语表达要求>' in on_messages[-1]['content']
+            assert '<去鱼八股与口语表达要求>' not in on_messages[0]['content']
+
+            off_cfg = saved.scene_config(SCENE)
+            off_cfg.models.roles.mind.anti_bagu = False
+            off_ctx = ChatContext(off_cfg, persona, store, platform=False, memory=None)
+            off_ctx.configure_tools([], [], skills=())
+            off_messages = await off_ctx.project(None, [], state)
+            assert '<去鱼八股与口语表达要求>' not in off_messages[-1]['content']
+            assert on_messages[:-1] == off_messages[:-1]
