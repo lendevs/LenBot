@@ -65,7 +65,7 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
             result = await client.embed(['向量连接测试'])
         return {'model': binding.model, 'kind': kind, 'calls': 1,
                 'text': f'向量接口连接成功，返回 {result.dimensions} 维向量。', 'dimensions': result.dimensions,
-                'usage': [result.usage], 'scope': '验证一次 embeddings 请求'}
+                'usage': [result.usage], 'scope': '验证一次 embeddings 请求', 'reasoning_observed': None}
     # A probe reports the first failure as it is; retries belong to real requests.
     settings = ModelSettings.from_binding(provider, binding).model_copy(update={'retry_delays_seconds': ()})
     messages = [{'role': 'user', 'content': '请回复连接成功。' if kind == 'text' else '请调用 connection_check 工具完成连接测试。不要自行假设工具结果。'}]
@@ -87,4 +87,5 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
             raise ValueError('模型返回了空正文或工具调用，测试需要一段文本回复；请检查模型用途和输出上限')
     return {'model': binding.model, 'text': reply.text, 'kind': kind, 'calls': len(replies),
             'usage': [item.usage for item in replies],
-            'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接'}
+            'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接',
+            'reasoning_observed': None}

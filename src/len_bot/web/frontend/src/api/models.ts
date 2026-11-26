@@ -75,6 +75,7 @@ export interface ProbeResult {
   kind: 'text' | 'tools' | 'embedding'
   text: string
   usage?: unknown
+  reasoning_observed?: boolean | null
 }
 
 /** PUT /api/host/settings/models */

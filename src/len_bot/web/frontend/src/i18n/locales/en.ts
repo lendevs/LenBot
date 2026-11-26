@@ -2007,6 +2007,8 @@ export default {
         tools: '{model} called the tool',
         embedding: '{model} returned embeddings',
       },
+      noReasoningWarning:
+        'Reasoning is configured, but this test observed no reasoning tokens or thinking content (the upstream route may be serving a non-thinking model).',
       usage: 'Usage reported by the provider',
     },
     roles: {
@@ -2033,17 +2035,22 @@ export default {
       thinkingEnabled: 'On',
       thinkingDisabled: 'Off',
       quickEffortSame: 'Same as reasoning effort',
-      quickReply: 'Use low effort for the first request (recommended)',
+      quickReply: 'Lower reasoning effort on the first request',
       antiBagu: {
-        title: 'Anti-cliche mode (DeepSeek)',
-        recommendedBadge: 'Recommended',
-        activeBadge: 'Enabled',
+        title: 'DeepSeek chat tuning',
+        recommendedBadge: 'Tuning suggested',
+        partialBadge: 'Low reasoning',
+        activeBadge: 'Tuned',
         recommendedHint:
-          'DeepSeek model detected: suppresses two-paragraph recap-and-quips, formulaic antitheses and stock acknowledgements, while keeping replies on the speech tool.',
+          'DeepSeek model detected: enable anti-cliche rules and keep full high reasoning effort (with first-request downgrade off) to avoid robotic echo questions and stock service replies.',
+        thinkingWarnHint:
+          'Anti-cliche is on, but reasoning effort is below high, thinking is disabled, or first-request downgrade is active; low reasoning causes literal replies, missed lookups and repetitive echo openings.',
         activeHint:
-          'Appends anti-cliche and casual speech rules at the end of each chat turn so replies stay natural and go through the speech tool.',
-        turnOn: 'Enable mode',
-        turnOff: 'Enabled · Turn off',
+          'Anti-cliche rules and full high reasoning are active: stays quiet when members talk among themselves and suppresses echo-question openings and three-clause service replies.',
+        applyTune: 'Apply tuning (High + Anti-cliche)',
+        fixThinking: 'Use full High effort',
+        turnOn: 'Enable anti-cliche',
+        turnOff: 'Anti-cliche on · Turn off',
       },
       followsMind: 'Uses the chat model',
       imageInput: 'Accepts images',

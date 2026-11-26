@@ -168,6 +168,8 @@ export interface ProbeAnswer {
   text: string
   kind: string
   dimensions?: number | null
+  usage?: unknown
+  reasoning_observed?: boolean | null
 }
 
 /** A model from the provider's list; some providers also report the context window. */

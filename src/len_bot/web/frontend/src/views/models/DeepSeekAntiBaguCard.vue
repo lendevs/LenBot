@@ -5,6 +5,21 @@ import Badge from '../../ui/Badge.vue'
 import Button from '../../ui/Button.vue'
 
 const enabled = defineModel<boolean>({ required: true })
+withDefaults(
+  defineProps<{
+    effort?: string | null
+    quickEffort?: string | null
+    thinking?: 'enabled' | 'disabled' | null
+  }>(),
+  {
+    effort: null,
+    quickEffort: null,
+    thinking: null,
+  },
+)
+defineEmits<{
+  tune: []
+}>()
 const { t } = useI18n()
 </script>
 

@@ -1956,6 +1956,8 @@ export default {
         tools: '{model} 工具调用正常',
         embedding: '{model} 向量接口正常',
       },
+      noReasoningWarning:
+        '当前已配置思考强度或开启思考，但本次测试未观测到任何思考链或推理用量（上游网关可能路由到了非思考渠道）。',
       usage: '服务商报告的用量',
     },
     roles: {
@@ -1982,17 +1984,22 @@ export default {
       thinkingEnabled: '开',
       thinkingDisabled: '关',
       quickEffortSame: '与思考强度相同',
-      quickReply: '首轮请求使用低档思考（推荐）',
+      quickReply: '首轮请求单独降低思考强度',
       antiBagu: {
-        title: '去鱼八股模式',
-        recommendedBadge: '建议开启',
-        activeBadge: '已启用',
+        title: 'DeepSeek 群聊特调',
+        recommendedBadge: '建议特调',
+        partialBadge: '思考档位偏低',
+        activeBadge: '已特调',
         recommendedHint:
-          '已识别 DeepSeek 模型：开启后自动抑制「先复述原话再空行锐评」「不是……而是……」「这话接住了」等高频八股套话，并强化发言工具调用，还原自然口语。',
+          '已识别 DeepSeek 模型：建议开启去鱼八股并将思考强度保持在 high（关闭首轮降档），抑制问号复读起手、三分句客服闭环与八股套话。',
+        thinkingWarnHint:
+          '已开启去鱼八股，但当前思考强度低于 high、关闭了思考或启用了首轮降档思考；低思考下极易漏查资料、误读反讽并退化为机械复读。',
         activeHint:
-          '已在每轮生成前附加反八股与口语约束：禁止复述加空行点评、工整对仗与客服认领腔，确保通过发言工具自然接话。',
+          '已启用去鱼八股与全程高档思考：优先判断非对话旁听闭嘴，抑制问号复读起手、三分句客服解释闭环与工整对仗套话。',
+        applyTune: '一键特调（High + 去八股）',
+        fixThinking: '切为全程 High 思考',
         turnOn: '开启去鱼八股',
-        turnOff: '已开启 · 点击关闭',
+        turnOff: '去八股已开 · 点击关闭',
       },
       followsMind: '跟随聊天模型',
       imageInput: '支持图片输入',
