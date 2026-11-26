@@ -167,16 +167,24 @@ async def test_sticker_short_aliases_compact_catalog_and_string_coercion(tmp_pat
     for filename in small_files:
         assert filename not in react_desc
 
-    # > 30 stickers: overview + representatives instead of dumping all entries.
-    large_config, large_persona, large_files = _hashed_role(tmp_path / 'large', 45)
-    large_tools = {t['function']['name']: t['function'] for t in build_tools(large_config, large_persona, platform=True)}
-    large_desc = large_tools['react']['description']
-    assert '共有 45 张素材' in large_desc
-    assert '常见情绪：' in large_desc and '常见标签：' in large_desc
-    assert 'query' in large_tools['say']['description']
-    assert len(large_desc) < 2500
-    for filename in large_files:
-        assert filename not in large_desc
+    # 31..200 stickers (typical full persona pack like 144 items): concise s1..sN catalog, no SHA256 filenames.
+    medium_config, medium_persona, medium_files = _hashed_role(tmp_path / 'medium', 45)
+    medium_tools = {t['function']['name']: t['function'] for t in build_tools(medium_config, medium_persona, platform=True)}
+    medium_desc = medium_tools['react']['description']
+    assert 's1: 测试表情' in medium_desc and 's45: 测试表情' in medium_desc
+    assert 'query' in medium_tools['say']['description']
+    for filename in medium_files:
+        assert filename not in medium_desc
+
+    # > 200 stickers: overview + filtered tags + representatives instead of dumping all entries.
+    huge_config, huge_persona, huge_files = _hashed_role(tmp_path / 'huge', 205)
+    huge_tools = {t['function']['name']: t['function'] for t in build_tools(huge_config, huge_persona, platform=True)}
+    huge_desc = huge_tools['react']['description']
+    assert '共有 205 张素材' in huge_desc
+    assert '常见情绪：' in huge_desc and '常见标签：' in huge_desc
+    assert len(huge_desc) < 2500
+    for filename in huge_files:
+        assert filename not in huge_desc
 
     ordered = sorted(small_files)
     unique_file = next(name for name in ordered if not name.startswith('deadbeef'))
@@ -209,6 +217,46 @@ async def test_sticker_short_aliases_compact_catalog_and_string_coercion(tmp_pat
             restricted = Chat(small_config, no_react, store, mind)
             with pytest.raises(ValueError, match='没有开放表情能力'):
                 await _call(restricted, 'say', {'content': 'hi', 'sticker': 's1'})
+
+
+@pytest.mark.asyncio
+async def test_fuzzy_emotion_and_query_fallback_prevents_spurious_sticker_failures(tmp_path):
+    config, _ = _instance(tmp_path)
+    directory = tmp_path / 'role' / 'stickers'
+    directory.mkdir()
+    entries = [
+        {
+            'file': 'nerd.png',
+            'description': 'Nerd形态：Q版角色戴圆框眼镜，竖起食指。 适合：认真解释、补充知识。',
+            'emotions': ['认真解释', '一本正经的趣味感'],
+            'tags': ['表情包', '眼镜', '食指'],
+        },
+        {
+            'file': 'pout.png',
+            'description': '阴沉着脸抿嘴微笑',
+            'emotions': ['轻微恼火', '闹小脾气'],
+            'tags': ['表情包', '抿嘴'],
+        },
+    ]
+    for item in entries:
+        (directory / item['file']).write_bytes(png('cyan' if item['file'] == 'nerd.png' else 'pink'))
+    (directory / 'index.yaml').write_text(json.dumps(entries, ensure_ascii=False))
+    persona = load_persona(tmp_path / 'role')
+
+    with Store(config.database) as store:
+        async with ChatModel(config.model_settings('mind')) as mind:
+            chat = Chat(config, persona, store, mind)
+            # Partial emotion "恼火" matches "轻微恼火" instead of raising ValueError
+            _, sent_emo, _ = await _call(chat, 'react', {'emotion': '恼火', 'end_turn': True})
+            assert sent_emo.sticker.file == 'pout.png'
+
+            # Multi-concept query "戴眼镜认真解释" (not a contiguous substring) matches nerd.png
+            _, said_fuzzy, _ = await _call(chat, 'say', {'content': '听我分析', 'sticker': {'query': '戴眼镜认真解释'}})
+            assert said_fuzzy.sticker.file == 'nerd.png'
+
+            # Completely unrelated gibberish still raises ValueError cleanly
+            with pytest.raises(ValueError, match='无匹配'):
+                await _call(chat, 'react', {'query': 'zzzz_nonexistent_999'})
 
 
 @pytest.mark.asyncio

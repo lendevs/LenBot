@@ -8,6 +8,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from random import choice
+import re
 from string import Template
 from typing import Protocol
 from uuid import uuid4
@@ -33,6 +34,70 @@ from ..runtime.logs import log_event
 from ..prompt_files import read_prompt
 
 logger = logging.getLogger(__name__)
+_STICKER_TOKEN_RE = re.compile(r"[\u4e00-\u9fff]+|[a-z0-9]+")
+_STICKER_NOISE_WORDS = frozenset({"表情包", "表情", "图片", "动图", "静态", "一张", "一个", "有点", "非常", "特别"})
+
+
+def _sticker_query_terms(raw: str, *, ignore: Sequence[str] = ()) -> tuple[list[str], list[str]]:
+    """Extract full tokens and 2-char CJK bigrams for tolerant sticker fallback matching."""
+    noise = _STICKER_NOISE_WORDS | {item.strip().casefold() for item in ignore if item and item.strip()}
+    chunks: list[str] = []
+    bigrams: list[str] = []
+    for match in _STICKER_TOKEN_RE.finditer(raw.casefold()):
+        piece = match.group(0)
+        if piece in noise:
+            continue
+        if len(piece) >= 2:
+            chunks.append(piece)
+        elif piece.isascii():
+            continue
+        if "\u4e00" <= piece[0] <= "\u9fff" and len(piece) >= 3:
+            for idx in range(len(piece) - 1):
+                bg = piece[idx:idx + 2]
+                if bg not in noise and bg not in bigrams:
+                    bigrams.append(bg)
+    return chunks, bigrams
+
+
+def _sticker_fuzzy_score(
+    needle: str,
+    emotions: Sequence[str],
+    tags: Sequence[str],
+    description: str,
+    *,
+    ignore: Sequence[str] = (),
+) -> int:
+    folded = needle.strip().casefold()
+    if not folded:
+        return 0
+    emo_list = [e.casefold() for e in emotions]
+    tag_list = [t.casefold() for t in tags]
+    desc_folded = description.casefold()
+    score = 0
+    for emo in emo_list:
+        if folded in emo or (len(emo) >= 2 and emo in folded):
+            score += 20
+    for tag in tag_list:
+        if tag not in _STICKER_NOISE_WORDS and (folded in tag or (len(tag) >= 2 and tag in folded)):
+            score += 14
+    if folded in desc_folded:
+        score += 12
+    chunks, bigrams = _sticker_query_terms(folded, ignore=ignore)
+    for chunk in chunks:
+        if any(chunk in emo for emo in emo_list):
+            score += 10
+        if any(chunk in tag for tag in tag_list):
+            score += 7
+        if chunk in desc_folded:
+            score += 5
+    for bg in bigrams:
+        if any(bg in emo for emo in emo_list):
+            score += 4
+        elif any(bg in tag for tag in tag_list):
+            score += 3
+        elif bg in desc_folded:
+            score += 2
+    return score
 
 
 def log_sent(seq: int, part: ChatMessage, error: str | None, *, index: int, parts: int, plugin: str | None = None) -> None:
@@ -127,19 +192,30 @@ class ChatExpression:
         """Number up to STICKER_CANDIDATES of the role's stickers and this group's adopted ones as this
         turn's candidates: those matching ``emotion`` or ``query`` first, then the less used. Returns
         their entries, a numbered sheet of first frames and whether anything matched the filter."""
-        def relevant(emotions: Sequence[str], values: Sequence[str]) -> bool:
+        ignore_names = (self.persona.name, *self.persona.aliases)
+
+        def match_tier(emotions: Sequence[str], tags: Sequence[str], description: str) -> tuple[int, int]:
+            values = (description, *emotions, *tags)
             if arguments.emotion is not None:
-                return arguments.emotion.casefold() in {value.casefold() for value in emotions}
-            return arguments.query is not None and any(arguments.query.casefold() in value.casefold()
-                                                       for value in values)
+                if arguments.emotion.casefold() in {value.casefold() for value in emotions}:
+                    return (0, 0)
+                fuzzy = _sticker_fuzzy_score(arguments.emotion, emotions, tags, description, ignore=ignore_names)
+                return (1, -fuzzy) if fuzzy > 0 else (2, 0)
+            if arguments.query is not None:
+                if any(arguments.query.casefold() in value.casefold() for value in values):
+                    return (0, 0)
+                fuzzy = _sticker_fuzzy_score(arguments.query, emotions, tags, description, ignore=ignore_names)
+                return (1, -fuzzy) if fuzzy > 0 else (2, 0)
+            return (2, 0)
+
         usage = self.store.sticker_usage(self.config.scene, self.persona.id)
         ranked: list[tuple[tuple, PersonaSticker | int]] = [
-            ((not relevant(sticker.emotions, (sticker.description, *sticker.emotions, *sticker.tags)),
+            ((*match_tier(sticker.emotions, sticker.tags, sticker.description),
               usage.get(sticker.file, 0), 0, sticker.file), sticker)
             for sticker in self.persona.stickers.values()]
         records = StickerStore(self.store)
         if self.config.learning is not None and self.config.learning.collect_stickers:
-            ranked += [((not relevant(item["emotions"], (item["description"], *item["emotions"], *item["tags"])),
+            ranked += [((*match_tier(item["emotions"], item["tags"], item["description"]),
                          item["uses"], 1, item["id"]), item["id"])
                        for item in records.matches(self.config.scene, emotion=None, query=None)]
         if not ranked:
@@ -166,13 +242,14 @@ class ChatExpression:
             # A few recent candidate sets; previews in a turn usually repeat the same one.
             self._sheets = {**dict(list(self._sheets.items())[-7:]), tuple(key): sheet}
         filtered = arguments.emotion is not None or arguments.query is not None
-        return entries, sheet, (not chosen[0][0][0]) if filtered else None
+        return entries, sheet, (chosen[0][0][0] < 2) if filtered else None
 
     def react(self, arguments: ReactArguments) -> Expression:
         self.check_send_available()
         if arguments.reply_to is not None and self.store.find_message(self.config.scene, arguments.reply_to) is None:
             raise ValueError(f"当前场景没有平台消息 {arguments.reply_to}")
         collected_id = None
+        needle_for_fuzzy: str | None = None
         if arguments.candidate is not None:
             if arguments.candidate > len(self.sticker_candidates):
                 raise ValueError(f"本轮预览的表情候选中没有编号 {arguments.candidate}")
@@ -187,26 +264,50 @@ class ChatExpression:
                 raise ValueError(f"当前角色没有表情文件：{arguments.file}")
             matches = [sticker]
         elif arguments.emotion is not None:
+            needle_for_fuzzy = arguments.emotion
             matches = [sticker for sticker in self.persona.stickers.values()
                        if arguments.emotion.casefold() in {value.casefold() for value in sticker.emotions}]
         else:
+            needle_for_fuzzy = arguments.query
             query = arguments.query.casefold()
             matches = [sticker for sticker in self.persona.stickers.values()
                        if any(query in value.casefold() for value in
                               (sticker.description, *sticker.emotions, *sticker.tags))]
+        collect_enabled = self.config.learning is not None and self.config.learning.collect_stickers
+        records = StickerStore(self.store) if (collected_id is not None or collect_enabled) else None
+        exact_collected = (records.matches(self.config.scene, emotion=arguments.emotion, query=arguments.query)
+                           if not matches and collected_id is None and records is not None else [])
+        # Tolerant fallback when literal emotion/query missed both role and collected stickers.
+        if not matches and collected_id is None and not exact_collected and needle_for_fuzzy is not None:
+            ignore_names = (self.persona.name, *self.persona.aliases)
+            scored_role = [
+                (_sticker_fuzzy_score(needle_for_fuzzy, st.emotions, st.tags, st.description, ignore=ignore_names), st)
+                for st in self.persona.stickers.values()
+            ]
+            best_role = max((sc for sc, _ in scored_role), default=0)
+            if best_role > 0:
+                matches = [st for sc, st in scored_role if sc == best_role]
+            elif records is not None:
+                all_collected = records.matches(self.config.scene, emotion=None, query=None)
+                scored_col = [
+                    (_sticker_fuzzy_score(needle_for_fuzzy, item["emotions"], item["tags"], item["description"],
+                                          ignore=ignore_names), item)
+                    for item in all_collected
+                ]
+                best_col = max((sc for sc, _ in scored_col), default=0)
+                if best_col > 0:
+                    exact_collected = [item for sc, item in scored_col if sc == best_col]
         if matches:
             usage = self.store.sticker_usage(self.config.scene, self.persona.id)
             least = min(usage.get(sticker.file, 0) for sticker in matches)
             sticker = choice([sticker for sticker in matches if usage.get(sticker.file, 0) == least])
             summary = f"角色表情 {sticker.file}：{sticker.description}"
-        elif collected_id is not None or (self.config.learning is not None and self.config.learning.collect_stickers):
-            records = StickerStore(self.store)
+        elif collected_id is not None or records is not None:
             if collected_id is None:
-                collected = records.matches(self.config.scene, emotion=arguments.emotion, query=arguments.query)
-                if not collected:
+                if not exact_collected:
                     raise ValueError(f"角色及本群已采用表情无匹配：{encode(arguments.model_dump(exclude_none=True))}")
-                least = min(item["uses"] for item in collected)
-                collected_id = choice([item for item in collected if item["uses"] == least])["id"]
+                least = min(item["uses"] for item in exact_collected)
+                collected_id = choice([item for item in exact_collected if item["uses"] == least])["id"]
             sticker = records.asset(self.config.scene, collected_id)
             source = self.store.read_message(self.config.scene, sticker.source_message_seq)
             summary = (f"本群表情，来源平台消息 {source.platform_message_id} 第{sticker.source_image_index}张："
