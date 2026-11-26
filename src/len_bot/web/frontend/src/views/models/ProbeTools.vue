@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
-import { Zap } from '@lucide/vue'
+import { TriangleAlert, Zap } from '@lucide/vue'
 import { modelsApi, type ChatBinding } from '../../api/models'
 import { developerDetails } from '../../composables/useDeveloperMode'
 import Button from '../../ui/Button.vue'
@@ -11,6 +11,7 @@ import Field from '../../ui/Field.vue'
 import SegmentedControl from '../../ui/SegmentedControl.vue'
 import RawRecord from '../groups/tasks/RawRecord.vue'
 import ModelName from './ModelName.vue'
+import { expectsReasoning } from './deepseek'
 import { candidateOf, chatRoles, hasKey, newBinding, useForm, type ProviderRow } from './form'
 
 /** Read a provider's models and send a test request; with `binding`, the test uses that role's settings. */
@@ -91,6 +92,19 @@ watch(
   () => JSON.stringify([candidateOf(props.row), props.binding, testModel.value, kind.value]),
   () => probe.reset(),
 )
+const noReasoningWarning = computed(() =>
+  Boolean(
+    props.binding &&
+    probe.data.value &&
+    probe.data.value.kind !== 'embedding' &&
+    probe.data.value.reasoning_observed === false &&
+    expectsReasoning({
+      thinking: props.binding.thinking,
+      effort: props.binding.reasoning_effort,
+      thinkingBudget: props.binding.thinking_budget_tokens,
+    }),
+  ),
+)
 </script>
 
 <template>
@@ -139,6 +153,14 @@ watch(
         {{ t(`models.probe.passed.${probe.data.value.kind}`, { model: probe.data.value.model ?? model }) }}
       </span>
       <span class="min-w-0 break-words whitespace-pre-wrap text-ink-2">{{ probe.data.value.text }}</span>
+    </div>
+    <div
+      v-if="noReasoningWarning"
+      role="status"
+      class="flex animate-fade items-start gap-2.5 rounded-lg border border-warning/40 bg-warning-bg px-3.5 py-2.5 text-xs leading-relaxed text-warning"
+    >
+      <TriangleAlert :size="15" class="mt-0.5 shrink-0" aria-hidden="true" />
+      <span>{{ t('models.probe.noReasoningWarning') }}</span>
     </div>
     <RawRecord
       v-if="developerDetails && probe.data.value?.usage"
