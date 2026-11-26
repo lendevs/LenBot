@@ -8,7 +8,7 @@ from pydantic import model_validator
 
 from ..configuration.models import Binding, Provider
 from ..configuration.types import STRICT
-from ..models.client import ChatModel, ModelSettings, ModelHTTPError, ModelProtocolError
+from ..models.client import ChatModel, ModelSettings, ModelHTTPError, ModelProtocolError, ModelReply
 from ..models.providers import ProviderAPI
 from ..memory.embeddings import EmbeddingBinding, EmbeddingClient, EmbeddingSettings
 
@@ -55,6 +55,43 @@ class ModelCandidate(ProviderCandidate):
         return self
 
 
+def _reply_has_reasoning(reply: ModelReply) -> bool:
+    reasoning_content = reply.message.get('reasoning_content')
+    if isinstance(reasoning_content, str) and reasoning_content.strip():
+        return True
+
+    usage = reply.usage
+    if isinstance(usage, dict):
+        for field in ('completion_tokens_details', 'output_tokens_details'):
+            details = usage.get(field)
+            tokens = details.get('reasoning_tokens') if isinstance(details, dict) else None
+            if type(tokens) is int and tokens > 0:
+                return True
+        thoughts = usage.get('thoughtsTokenCount')
+        if type(thoughts) is int and thoughts > 0:
+            return True
+
+    response = reply.response
+    if not isinstance(response, dict):
+        return False
+    output = response.get('output')
+    if isinstance(output, list) and any(isinstance(item, dict) and item.get('type') == 'reasoning' for item in output):
+        return True
+    blocks = response.get('content')
+    if isinstance(blocks, list) and any(
+        isinstance(item, dict) and item.get('type') in ('thinking', 'redacted_thinking') for item in blocks
+    ):
+        return True
+    candidates = response.get('candidates')
+    if not isinstance(candidates, list) or not candidates or not isinstance(candidates[0], dict):
+        return False
+    content = candidates[0].get('content')
+    if not isinstance(content, dict):
+        return False
+    parts = content.get('parts')
+    return isinstance(parts, list) and any(isinstance(part, dict) and part.get('thought') is True for part in parts)
+
+
 async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, kind: str = 'text') -> dict:
     if kind == 'embedding':
         if provider.api not in {'openai-chat', 'openai-embeddings'}:
@@ -88,4 +125,4 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
     return {'model': binding.model, 'text': reply.text, 'kind': kind, 'calls': len(replies),
             'usage': [item.usage for item in replies],
             'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接',
-            'reasoning_observed': None}
+            'reasoning_observed': any(_reply_has_reasoning(item) for item in replies)}

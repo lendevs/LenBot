@@ -9,12 +9,14 @@ import json
 
 import httpx
 import pytest
+from pydantic import TypeAdapter
 
 from len_bot.next.configuration.models import Binding, Provider
 from len_bot.next.models.client import ChatModel, ModelSettings, ModelProtocolError
 from len_bot.next.models.protocols import build_request, parse_reply
 from len_bot.next.models.providers import list_models
 from len_bot.next.memory.embeddings import EmbeddingBinding
+from len_bot.next.panel import responses
 from len_bot.next.panel.model_access import probe_model
 from len_bot.next.work.worker_model import WorkerModelProxy, Limits
 
@@ -88,6 +90,7 @@ async def test_native_tool_probe_preserves_ids_signatures_and_real_usage(api):
         result = await probe_model(Provider(api=api, base_url=endpoint, api_key='fixture-key'),
                                    Binding(provider='fixture', model='fixture', context_window_tokens=8192), 'tools')
     assert result['calls'] == 2 and result['text'] == '连接成功'
+    assert result['reasoning_observed'] is True
     assert all(u['prompt_tokens'] == 20 and u['completion_tokens'] == 7 and u['prompt_tokens_details']['cached_tokens'] == 10 for u in result['usage'])
     second = received[1][2]
     if api == 'openai-responses':
@@ -159,6 +162,7 @@ async def test_embedding_probe_uses_embedding_protocol_and_checks_actual_dimensi
         result = await probe_model(Provider(api='openai-embeddings', base_url=endpoint, api_key=key),
                                    EmbeddingBinding(provider='fixture', model='fixture-vector', dimensions=4), 'embedding')
     assert result['calls'] == 1 and result['dimensions'] == 4 and result['model'] == 'fixture-vector'
+    assert result['reasoning_observed'] is None
     assert received[0][0] == 'POST /v1/embeddings HTTP/1.1'
     assert received[0][2]['dimensions'] == 4 and 'messages' not in received[0][2]
     assert result['usage'] == [body['usage']]
@@ -344,3 +348,22 @@ async def test_invalid_json_number_is_a_protocol_error_with_a_recordable_raw_fra
                 await model.complete([{'role': 'user', 'content': '测试'}], [])
     assert number in encode(failure.value.response)
     assert len(received) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('message_fields', 'usage_fields', 'reasoning_observed'), [
+    ({}, {'completion_tokens_details': {'reasoning_tokens': 0}}, False),
+    ({}, {'completion_tokens': 135, 'completion_tokens_details': {'reasoning_tokens': 128}}, True),
+    ({'reasoning_content': 'private analysis'}, {}, True),
+])
+async def test_chat_probe_reports_whether_reasoning_was_observed(message_fields, usage_fields, reasoning_observed):
+    message = {'role': 'assistant', 'content': '连接成功', **message_fields}
+    body = {'choices': [{'message': message, 'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': 20, 'completion_tokens': 7, **usage_fields}}
+    server = await peer_server([(200, 'application/json', json.dumps(body).encode())], [])
+    async with server:
+        endpoint = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        result = await probe_model(Provider(api='openai-chat', base_url=endpoint, api_key='fixture-key'),
+                                   Binding(provider='fixture', model='fixture', context_window_tokens=8192))
+    assert result['reasoning_observed'] is reasoning_observed
+    TypeAdapter(responses.ModelProbe).validate_python(result)
