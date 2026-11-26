@@ -307,10 +307,11 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
 
     The model reads its earlier lines as the strongest example of how it talks, so a phrase or a
     sentence shape that slipped in a few times tends to stay. Words, the opening and ending of each
-    line, the opening of its last clause and two-piece templates are counted; ``heard`` is what
-    others said recently, and words they use belong to the topic and are not named. Ordinary
-    single-character sentence-final punctuation is ignored, and extreme sticker streaks (almost every
-    turn, or a pure-text rut when stickers are available) are gently noted.
+    line, the opening of its last clause, two-piece templates, short question openers, rhetorical
+    endings and space-separated clauses are counted. ``heard`` is what others said recently, and
+    words they use belong to the topic and are not named. Ordinary single-character sentence-final
+    punctuation is ignored, and extreme sticker streaks (almost every turn, or a pure-text rut when
+    stickers are available) are gently noted.
     """
     expressions = _expressions(entries)
     if len(expressions) < 5:
@@ -362,7 +363,7 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
 
 
 def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str]:
-    """Sentence shapes shared by half of the texts: how they open, end and close, and templates."""
+    """Name recurring openings, endings, clause shapes and templates."""
     enough = max(4, math.ceil(len(texts) / 2))
     taken = list(words)
     shapes = []
@@ -390,6 +391,27 @@ def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str
         shapes.append(f"{closing[1]} 条最后一句都用「{closing[0]}」起头")
         taken.append(closing[0])
     shapes.extend(f"{count} 条用了「{template}」这样的句式" for template, count in _templates(texts, enough, taken, others))
+
+    echo_opening = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9]{1,6}[？?]\s*\S")
+    echo_openings = sum(echo_opening.match(text.lstrip()) is not None for text in texts)
+    if echo_openings >= enough:
+        shapes.append(f"{echo_openings} 条用「短词+问号」复读起头")
+
+    rhetorical_tail = re.compile(r"(?:吗|是吧|对吧|不是吗|对不对|是不是|行不行|好不好|还是[^，,。！？!?\s]{1,8}[呀啊吗])[？?~～！!。.\s]*$")
+    rhetorical_tails = sum(rhetorical_tail.search(text.rstrip()) is not None for text in texts)
+    if rhetorical_tails >= max(4, math.ceil(len(texts) * 0.6)):
+        shapes.append(f"{rhetorical_tails} 条都在句末反问")
+
+    spaced_clauses = 0
+    for text in texts:
+        text = text.strip()
+        if re.search(r"[，,。！？!?；;：:\n]", text):
+            continue
+        parts = re.split(r"[ \t\u3000]+", text)
+        if 3 <= len(parts) <= 5 and all(HAN.search(part) for part in parts) and len(HAN.findall(text)) >= 12:
+            spaced_clauses += 1
+    if spaced_clauses >= max(5, math.ceil(len(texts) * 0.65)):
+        shapes.append(f"{spaced_clauses} 条都是空格切分的三四段式长句")
     return shapes
 
 

@@ -1147,7 +1147,7 @@ class SceneRunner:
         if wake.channel == "named":
             return "[点名：" + "、".join(wake.keywords) + "]"
         if wake.channel == "focus":
-            return "[对话继续]"
+            return "[对话继续：仅当对方仍在接着你的话跟你聊时回应；已转去和群友聊别的事就直接结束本轮继续旁听]"
         if wake.channel in {'ambient', 'explore'}:
             return '[群里在聊]'
         if wake.channel == 'attention':
