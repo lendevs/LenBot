@@ -54,6 +54,8 @@ class Binding(BaseModel):
     thinking_budget_tokens: int | None = Field(default=None, ge=0)
     # A mind model with image input sees pixels directly, including when vision is configured.
     image_input: bool = True
+    # Appends anti-cliché rules at the end of each chat turn for DeepSeek-style comment habits.
+    anti_bagu: bool = False
     output_token_field: Literal["max_completion_tokens", "max_tokens"] = "max_completion_tokens"
     history_policy: Literal["native", "omit-reasoning"] = "native"
     # Waits before resending the same request after HTTP 429, 5xx or a dropped connection; empty means no retry.

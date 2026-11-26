@@ -40,6 +40,7 @@ export interface ChatBinding {
   quick_reasoning_effort: string | null
   thinking_budget_tokens: number | null
   image_input: boolean
+  anti_bagu: boolean
   output_token_field: 'max_completion_tokens' | 'max_tokens'
   history_policy: 'native' | 'omit-reasoning'
   retry_delays_seconds: number[]

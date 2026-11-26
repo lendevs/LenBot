@@ -82,7 +82,20 @@ def _format_5_to_6(source: dict) -> dict:
     return source
 
 
-STEPS = {1: _format_1_to_2, 2: _format_2_to_3, 3: _format_3_to_4, 4: _format_4_to_5, 5: _format_5_to_6}
+def _format_6_to_7(source: dict) -> dict:
+    # Format 7 adds Binding.anti_bagu with default False.
+    source["config_version"] = 7
+    return source
+
+
+STEPS = {
+    1: _format_1_to_2,
+    2: _format_2_to_3,
+    3: _format_3_to_4,
+    4: _format_4_to_5,
+    5: _format_5_to_6,
+    6: _format_6_to_7,
+}
 
 
 def migrate_source(source: dict, target: int) -> dict:

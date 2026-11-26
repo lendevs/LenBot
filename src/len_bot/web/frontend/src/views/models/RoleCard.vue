@@ -10,8 +10,9 @@ import NumberInput from '../../ui/NumberInput.vue'
 import Select from '../../ui/Select.vue'
 import Switch from '../../ui/Switch.vue'
 import ModelName from './ModelName.vue'
+import DeepSeekAntiBaguCard from './DeepSeekAntiBaguCard.vue'
 import ProbeTools from './ProbeTools.vue'
-import { hasKey, useForm, type ProblemField } from './form'
+import { hasKey, isDeepSeekModel, useForm, type ProblemField } from './form'
 
 const props = defineProps<{ role: ChatRole }>()
 
@@ -110,6 +111,13 @@ const unlisted = computed(() => {
   )
 })
 
+const showAntiBagu = computed(() =>
+  Boolean(
+    props.role === 'mind' &&
+    binding.value &&
+    (isDeepSeekModel(binding.value.model, row.value?.base_url) || binding.value.anti_bagu),
+  ),
+)
 const enabled = computed({
   get: () => binding.value !== null,
   set: (on: boolean) => props.role !== 'mind' && form.toggleRole(props.role, on),
@@ -276,13 +284,20 @@ watch(retries, (text) => {
             @refresh="row && form.loadCatalog(row.id)"
           />
         </Field>
-        <Field :label="t('models.roles.context')" :error="fieldError('context')">
+        <Transition name="ui-rise">
+          <DeepSeekAntiBaguCard
+            v-if="showAntiBagu"
+            v-model="binding.anti_bagu"
+            class="sm:col-span-2 lg:order-4 lg:col-span-3"
+          />
+        </Transition>
+        <Field :label="t('models.roles.context')" :error="fieldError('context')" class="lg:order-3">
           <NumberInput v-model="binding.context_window_tokens" :min="1" :steppers="false" unit="tokens" />
         </Field>
-        <Field :label="t('models.roles.maxOutput')" :error="fieldError('maxOutput')">
+        <Field :label="t('models.roles.maxOutput')" :error="fieldError('maxOutput')" class="lg:order-5">
           <NumberInput v-model="binding.max_output_tokens" :min="1" :steppers="false" unit="tokens" />
         </Field>
-        <Field :label="t('models.roles.effort')">
+        <Field :label="t('models.roles.effort')" class="lg:order-5">
           <Select
             :model-value="binding.reasoning_effort ?? UNSET"
             :options="efforts"
@@ -291,7 +306,7 @@ watch(retries, (text) => {
             "
           />
         </Field>
-        <Field v-if="api === 'openai-chat'" :label="t('models.roles.thinkingSwitch')">
+        <Field v-if="api === 'openai-chat'" :label="t('models.roles.thinkingSwitch')" class="lg:order-5">
           <Select
             :model-value="binding.thinking ?? UNSET"
             :options="thinkingOptions"

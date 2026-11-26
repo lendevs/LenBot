@@ -2034,6 +2034,17 @@ export default {
       thinkingDisabled: 'Off',
       quickEffortSame: 'Same as reasoning effort',
       quickReply: 'Use low effort for the first request (recommended)',
+      antiBagu: {
+        title: 'Anti-cliche mode (DeepSeek)',
+        recommendedBadge: 'Recommended',
+        activeBadge: 'Enabled',
+        recommendedHint:
+          'DeepSeek model detected: suppresses two-paragraph recap-and-quips, formulaic antitheses and stock acknowledgements, while keeping replies on the speech tool.',
+        activeHint:
+          'Appends anti-cliche and casual speech rules at the end of each chat turn so replies stay natural and go through the speech tool.',
+        turnOn: 'Enable mode',
+        turnOff: 'Enabled · Turn off',
+      },
       followsMind: 'Uses the chat model',
       imageInput: 'Accepts images',
       mindSees: 'The chat model reads images directly',

@@ -62,6 +62,7 @@ export interface Draft {
   readProxy: string
   quickEffort: string
   imageInput: boolean
+  antiBagu: boolean
   maxSteps: number | null
   api: string
   baseUrl: string
@@ -197,6 +198,7 @@ function initial(): Draft {
     readProxy: '',
     quickEffort: 'low',
     imageInput: true,
+    antiBagu: false,
     maxSteps: 16,
     api: 'openai-chat',
     baseUrl: 'https://api.deepseek.com/v1',
@@ -380,6 +382,7 @@ export function createWizard() {
       thinking: null,
       quick_reasoning_effort: draft.quickEffort.trim() || null,
       image_input: draft.imageInput,
+      anti_bagu: draft.antiBagu,
       reasoning_effort: draft.effort.trim() || null,
       thinking_budget_tokens: draft.thinkingBudget,
       output_token_field: draft.api === 'openai-chat' ? draft.outputField : 'max_completion_tokens',
@@ -458,6 +461,7 @@ export function createWizard() {
       quickEffort: '',
       outputField: 'max_completion_tokens',
       imageInput: false,
+      antiBagu: false,
       search: 'yahoo',
       searchConnection: 'separate',
     })
