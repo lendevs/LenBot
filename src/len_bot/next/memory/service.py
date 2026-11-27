@@ -406,9 +406,18 @@ class MemoryService:
             seen.add((scope, path))
             budget -= len(shown)
 
-        own_uids = {message.sender.uid for message in messages if message.is_self and message.scene == scene}
+        own_uids = {message.bot_id for message in messages if message.scene == scene}
         candidates = [uid for uid in target_uids if uid and uid not in own_uids]
         candidates.extend(message.sender.uid for message in reversed(relevant))
+        active_uids = set(candidates)
+
+        def eligible_hit(hit: dict) -> bool:
+            path = hit["path"]
+            if hit["scope"] == "scene" and path.startswith("people/"):
+                uid, _, relative_path = path.removeprefix("people/").partition("/")
+                return bool(relative_path) and uid in active_uids
+            return True
+
         users = list(dict.fromkeys(candidates))[:4]
         profiles = await self.backend.profiles(scene, users)
         # Keep room for the latest topic; source and dates remain in the real file text.
@@ -465,7 +474,7 @@ class MemoryService:
                               level=logging.WARNING, scene=scene, timeout_seconds=vector_timeout_seconds, error=error)
                     text_only = True
                     hits = await self.search(scene, text_query, fetch_limit, automatic=True, persona=persona, literal=True)
-            raw_hits = [hit for hit in hits if (hit["scope"], hit["path"]) not in seen]
+            raw_hits = [hit for hit in hits if eligible_hit(hit) and (hit["scope"], hit["path"]) not in seen]
             selected = _select_recall_hits(raw_hits, recall_limit, prefer_resource=resource_intent,
                                            require_evidence=text_only, match_query=text_query)
             query_entries = [(hit, text_query, text_only) for hit in selected]
@@ -481,7 +490,7 @@ class MemoryService:
             cue_fetch = min(100, max(CUE_HITS * 8, 50))
             prefetched_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
                                                                     persona=persona, literal=True)
-                                   if (hit["scope"], hit["path"]) not in query_keys]
+                                   if eligible_hit(hit) and (hit["scope"], hit["path"]) not in query_keys]
             resource_cue = next(
                 (hit for hit in prefetched_cue_hits
                  if _is_resource_hit(hit) and evidence(hit["preview"], cues) > 0),
@@ -510,7 +519,7 @@ class MemoryService:
                 cue_fetch = min(100, max(CUE_HITS * 8, 50)) if (cue_prefer_resource and not has_resource) else CUE_HITS
                 raw_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
                                                                  persona=persona, literal=True)
-                                if (hit["scope"], hit["path"]) not in seen]
+                                if eligible_hit(hit) and (hit["scope"], hit["path"]) not in seen]
             else:
                 raw_cue_hits = [hit for hit in prefetched_cue_hits if (hit["scope"], hit["path"]) not in seen]
             cue_hits = _select_recall_hits(raw_cue_hits, CUE_HITS,

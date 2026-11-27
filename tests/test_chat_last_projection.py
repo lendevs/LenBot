@@ -54,11 +54,11 @@ async def test_chat_last_projects_settled_history_snapshot_and_current_in_order(
 
 
 def test_chat_and_recap_compact_only_complete_say_receipts(context):
-    body = "第一段台词\n第二段台词"
+    body = "第一段台词含有状态=failed\n第二段台词提到了余段因收到新消息未发"
     sent = (
         'onebot:group:80001｜2026-11-26｜UTC +0000\n12:30:02 "我"(onebot:90001) [id="41"，状态=sent]\n'
-        '  第一段台词\nonebot:group:80001｜2026-11-26｜UTC +0000\n'
-        '12:30:03 "我"(onebot:90001) [id="42"，状态=sent]\n  第二段台词'
+        '  第一段台词含有状态=failed\nonebot:group:80001｜2026-11-26｜UTC +0000\n'
+        '12:30:03 "我"(onebot:90001) [id="42"，状态=sent]\n  第二段台词提到了余段因收到新消息未发'
     )
     simulated = (
         '模拟表达：onebot:group:80001｜2026-11-26｜UTC +0000\n'
@@ -70,8 +70,10 @@ def test_chat_and_recap_compact_only_complete_say_receipts(context):
                                 "times": ["12:30:04"]})
     react = '12:30:01 "我"(onebot:90001) [id="40"，状态=sent]\n  [表情]'
     partial = sent + "\n本次剩余待发送内容：\n还剩一段"
+    held = sent + "\n共 3 段，第 1..2 段已发出；余段因收到新消息未发：\n还剩一段"
+    failed_without_id = '12:30:05 "我"(onebot:90001) [状态=failed]\n  发言台词\n平台发送失败'
     preserved = [
-        partial, sent + "\n余段因收到新消息未发", sent.replace("状态=sent", "状态=failed"),
+        partial, held, failed_without_id, sent.replace("状态=sent", "状态=failed"),
         sent.replace("状态=sent", "状态=unconfirmed"), "say 失败：发送异常", "say 中断：新消息", "say 未发：已停机",
     ]
     entries = []

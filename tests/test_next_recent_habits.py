@@ -197,7 +197,7 @@ def test_rhetorical_tails_are_counted_across_different_endings():
     assert "都在句末反问" not in (text or "")
 
 
-@pytest.mark.parametrize("ending", ["", "。"])
+@pytest.mark.parametrize("ending", ["", "。", ".", "？", "?"])
 def test_space_separated_clauses_are_named_when_frequent(ending):
     lines = [
         "这杯咖啡好苦 可能豆子烘深了 先加点牛奶吧",
