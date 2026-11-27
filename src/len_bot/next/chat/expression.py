@@ -363,23 +363,38 @@ class ChatExpression:
         # Snapshot now: a later append in this turn does not change why this was said.
         seen = set(channels)
         confirmed: list[tuple[int, float]] = []
+        hold_sync = None if fixed_notice else getattr(hold_expression, "sync", None)
+        hold_async = None if fixed_notice or callable(hold_sync) else hold_expression
+        stored_sticker = (self.persona.id, sticker) if isinstance(sticker, PersonaSticker) else sticker
+
+        def save_held(index: int) -> tuple[str, str]:
+            if index == 0:
+                content = f"{tool_name} 未发：发送前收到新消息，本条共 {len(parts)} 段均未发出（0/{len(parts)}）。"
+                status = "held"
+            else:
+                sent = report_parts(parts[:index], errors, self.context.render)
+                remaining_text = "\n".join(render_body(rest.segments) for rest in parts[index:])
+                content = (f"{prefix}{sent}\n共 {len(parts)} 段，第 1..{index} 段已发出；"
+                           f"余段因收到新消息未发：\n{remaining_text}")
+                status = "partial_held"
+            self._save_held_result(entry_seq, content)
+            return content, status
+
+        def start_part(index: int, part: ChatMessage, content: str) -> int | tuple[str, str]:
+            if callable(hold_sync) and hold_sync(part.semantic_reply_to):
+                return save_held(index)
+            # Commit the send intent under the same write lock as the arbitration.
+            return self.store.start_expression_part(
+                entry_seq, part, prefix + content, persona_id=self.persona.id, turn_id=turn_id, sticker=stored_sticker)
+
         try:
             for index, part in enumerate(parts):
                 if index:
                     delay = min(settings.max_interval_seconds,
                                 max(settings.min_interval_seconds, part_length(part) / settings.chars_per_second))
                     await asyncio.sleep(delay)
-                if not fixed_notice and hold_expression is not None and await hold_expression(part.semantic_reply_to):
-                    if index == 0:
-                        content = f"{tool_name} 未发：发送前收到新消息，本条共 {len(parts)} 段均未发出（0/{len(parts)}）。"
-                        await self.store.call(self._save_held_result, entry_seq, content)
-                        return content, "held"
-                    sent = report_parts(parts[:index], errors, self.context.render)
-                    remaining_text = "\n".join(render_body(rest.segments) for rest in parts[index:])
-                    content = (f"{prefix}{sent}\n共 {len(parts)} 段，第 1..{index} 段已发出；"
-                               f"余段因收到新消息未发：\n{remaining_text}")
-                    await self.store.call(self._save_held_result, entry_seq, content)
-                    return content, "partial_held"
+                if hold_async is not None and await hold_async(part.semantic_reply_to):
+                    return await self.store.call(save_held, index)
                 self.check_send_available()
                 if index == 0 and not fixed_notice:
                     try:
@@ -389,14 +404,11 @@ class ChatExpression:
                         raise
                 part.time = self.now()
                 simulate(part, self.send_message is None)
+                content = report_parts(parts, [*errors, None], self.context.render)
+                message_seq = await self.store.call(start_part, index, part, content)
+                if isinstance(message_seq, tuple):
+                    return message_seq
                 errors.append(None)
-                content = report_parts(parts, errors, self.context.render)
-                # Committed (and synced) before the platform send: the send intent survives a crash.
-                message_seq = await self.store.call(
-                    self.store.start_expression_part, entry_seq, part, prefix + content,
-                    persona_id=self.persona.id, turn_id=turn_id,
-                    sticker=(sticker if isinstance(sticker, CollectedSticker) else None if sticker is None
-                             else (self.persona.id, sticker)))
                 self.notify()
                 if self.send_message is None:
                     log_sent(message_seq, part, None, index=index, parts=len(parts))
