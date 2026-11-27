@@ -268,12 +268,13 @@ async def run_v3(
     step2_latency = round(time.perf_counter() - t2, 3)
     step2_tokens = token_record(map_reply.token_usage)
     action, output_text = _extract_action(map_reply)
+    double_write = bool(map_reply.text.strip()) and any(call.name == "say" for call in map_reply.tool_calls)
     return {
         "mode": "v3",
         "action": action,
         "output_text": output_text,
         "draft_text": draft_text,
-        "double_write": False,
+        "double_write": double_write,
         "tool_calls": _serialize_tool_calls(map_reply),
         "latency_seconds": round(step1_latency + step2_latency, 3),
         "step_latencies": [step1_latency, step2_latency],

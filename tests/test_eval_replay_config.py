@@ -1,6 +1,8 @@
 """Structured replay files and real OneBot ingress validation only."""
 
+import asyncio
 import copy
+import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -11,7 +13,9 @@ from len_bot.eval.cases import (
     AwaitTurnStep, MessageStep, ObserveStep, RestartStep, SocialExpectation, load_cases,
 )
 from len_bot.eval.replay import observed_social, read_report
+from len_bot.next.models.client import ModelReply, ToolCall
 from len_bot.next.panel.routes.timeline import TimelineTurn, TurnDetail, read_turn, turn_record
+from len_bot.next.persona.profile import load_persona
 from len_bot.next.platform.messages import ChatMessage, Segment, Sender
 from len_bot.next.storage.store import Store, encode
 
@@ -354,7 +358,7 @@ def test_timeline_held_receipt_parses_status_and_expression_counts(tmp_path):
             model=('local', 'm'),
             append_to_scene=SCENE,
         )
-        partial_receipt = '第一段\n余段因收到新消息未发：第二段'
+        partial_receipt = '第一段\n共 2 段，第 1..1 段已发出；余段因收到新消息未发：\n第二段'
         entry_seq = store.prepare_expression(SCENE, 'call_held_partial', partial_receipt)
         store.start_expression_part(
             entry_seq, _self_part('msg-part-1', '第一段', send_status='sent'),
@@ -392,7 +396,7 @@ def test_timeline_held_receipt_parses_status_and_expression_counts(tmp_path):
             model=('local', 'm'),
             append_to_scene=SCENE,
         )
-        failed_receipt = '第一段失败\n余段因收到新消息未发：第二段'
+        failed_receipt = '第一段失败\n共 2 段，第 1..1 段已发出；余段因收到新消息未发：\n第二段'
         failed_entry = store.prepare_expression(SCENE, 'call_failed_partial', failed_receipt)
         store.start_expression_part(
             failed_entry, _self_part('msg-part-fail', '第一段失败', send_status='failed'),
@@ -608,3 +612,70 @@ def test_social_replay_counts_message_reaction_and_double_write_calls(tmp_path):
     by_case = {item['case_id']: item for item in report['social']}
     assert by_case['case-a']['double_write_calls'] == 2
     assert by_case['case-b']['reactions'] == social_react['reactions']
+
+
+def test_compare_voice_modes_run_v3_marks_double_write_when_map_reply_has_text_and_say():
+    spec = importlib.util.spec_from_file_location(
+        'compare_voice_modes', Path(__file__).parents[1] / 'scripts/compare_voice_modes.py',
+    )
+    assert spec is not None and spec.loader is not None
+    compare_voice_modes = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compare_voice_modes)
+
+    persona = load_persona(Path(__file__).parents[1] / 'examples/personas/companion')
+    tools = compare_voice_modes.build_voice_tools(persona)
+
+    class _StubModel:
+        def __init__(self, replies: list[ModelReply]) -> None:
+            self._replies = iter(replies)
+
+        async def complete(self, messages, call_tools):
+            return next(self._replies)
+
+    draft_reply = ModelReply(
+        message={'role': 'assistant', 'content': '好的，我来记一下'},
+        text='好的，我来记一下',
+        tool_calls=[],
+        finish_reason='stop',
+        usage=None,
+        token_usage=None,
+    )
+    say_call = ToolCall(id='call_say_1', name='say', arguments={'content': '好的，我来记一下'})
+    double_write_map_reply = ModelReply(
+        message={'role': 'assistant', 'content': '好的，我来记一下'},
+        text='好的，我来记一下',
+        tool_calls=[say_call],
+        finish_reason='tool_calls',
+        usage=None,
+        token_usage=None,
+    )
+    clean_map_reply = ModelReply(
+        message={'role': 'assistant', 'content': '   '},
+        text='   ',
+        tool_calls=[say_call],
+        finish_reason='tool_calls',
+        usage=None,
+        token_usage=None,
+    )
+
+    result_dw = asyncio.run(compare_voice_modes.run_v3(
+        _StubModel([draft_reply, double_write_map_reply]),
+        persona=persona,
+        scene=SCENE,
+        bot_id=BOT,
+        context_text='[群友]: 记得帮我记一下',
+        tools=tools,
+    ))
+    assert result_dw['double_write'] is True
+    assert result_dw['action'] == 'say'
+    assert result_dw['output_text'] == '好的，我来记一下'
+
+    result_clean = asyncio.run(compare_voice_modes.run_v3(
+        _StubModel([draft_reply, clean_map_reply]),
+        persona=persona,
+        scene=SCENE,
+        bot_id=BOT,
+        context_text='[群友]: 记得帮我记一下',
+        tools=tools,
+    ))
+    assert result_clean['double_write'] is False

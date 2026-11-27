@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from len_bot.next.platform.messages import ChatMessage, Segment, Sender
 from len_bot.next.platform.onebot_messages import parse_message, parse_notice
 from len_bot.next.storage.store import Store
 from test_attention_protocol import START, message
@@ -213,5 +214,79 @@ def test_turn_detail_strips_large_raw_payloads_by_default_and_turn_export_filter
         with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
             text = archive.read('diagnostic.txt').decode('utf-8')
         assert 'turn-log-marker' in text
+
+    exercise(tmp_path, check)
+
+
+def test_turn_detail_held_status_only_applies_to_expression_tools_with_host_receipt(tmp_path):
+    write_instance(tmp_path, ['onebot:70001'])
+    with Store(tmp_path / 'host.sqlite3', now=lambda: START) as store:
+        turn_id = store.start_turn(SCENE, wake_channel='ambient')
+        call_id = store.start_call(turn_id, 'mind', {
+            'settings': {'api': 'openai-chat', 'model': 'fixture-model'},
+            'messages': [{'role': 'system', 'content': '合成设定'}],
+        })
+        store.end_call(
+            call_id,
+            {
+                'message': {
+                    'role': 'assistant',
+                    'content': '',
+                    'tool_calls': [
+                        {
+                            'id': 'call_recall_quote',
+                            'type': 'function',
+                            'function': {'name': 'recall_chat', 'arguments': json.dumps({'query': '未发'})},
+                        },
+                        {
+                            'id': 'call_say_partial',
+                            'type': 'function',
+                            'function': {'name': 'say', 'arguments': json.dumps({'content': '第一段\n第二段'})},
+                        },
+                    ],
+                },
+                'finish_reason': 'tool_calls',
+            },
+            None,
+            tokens={'input': 80, 'output': 20, 'cached': 0},
+            model=('local', 'fixture-model'),
+            append_to_scene=SCENE,
+        )
+        store.complete_tool(
+            SCENE,
+            'call_recall_quote',
+            '历史回溯：第一段\n共 2 段，第 1..1 段已发出；余段因收到新消息未发：\n第二段',
+        )
+        partial_receipt = '第一段\n共 2 段，第 1..1 段已发出；余段因收到新消息未发：\n第二段'
+        entry_seq = store.prepare_expression(SCENE, 'call_say_partial', partial_receipt)
+        store.start_expression_part(
+            entry_seq,
+            ChatMessage(
+                id='msg-partial-1',
+                platform='onebot',
+                bot_id='onebot:90001',
+                scene=SCENE,
+                platform_message_id='msg-partial-1',
+                sender=Sender('onebot:90001', '合成角色', None, None),
+                time=START,
+                segments=[Segment('text', {'text': '第一段'})],
+                reply_to=None,
+                mentions_bot=False,
+                is_self=True,
+                send_status='sent',
+            ),
+            partial_receipt,
+            persona_id='synthetic-owner',
+            turn_id=turn_id,
+        )
+        store.end_turn(turn_id, 'settled')
+
+    async def check(client):
+        response = await client.get(f'/api/host/scenes/{SCENE}/turns/{turn_id}')
+        assert response.status_code == 200, response.text
+        tools = {tool['call_id']: tool for tool in response.json()['steps'][0]['tools']}
+        assert tools['call_recall_quote']['status'] == 'complete'
+        assert tools['call_say_partial']['status'] == 'held'
+        assert len(tools['call_say_partial']['messages']) == 1
 
     exercise(tmp_path, check)
