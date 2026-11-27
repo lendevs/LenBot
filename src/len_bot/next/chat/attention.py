@@ -937,6 +937,13 @@ class SceneRunner:
     def pulse_active(self) -> bool:
         return self.settings.pulse.mode == 'active' and self.chat.mind is not None
 
+    def pulse_enabled(self) -> bool:
+        return self.settings.pulse.mode != 'off' and self.chat.mind is not None
+
+    def pulse_next_at(self, now: float) -> float:
+        last = self.state.pulse_last_at
+        return now if last is None else max(now, last + self.settings.pulse.sample_interval_seconds)
+
     def live_watches(self, now: float) -> list[Intent]:
         declared = self.state.declared
         return [] if declared is None else [
@@ -949,7 +956,7 @@ class SceneRunner:
         return [item for item in pending if not item[1].is_self and item[1].sender.uid not in excluded]
 
     def watch_sample_at(self, now: float) -> float | None:
-        if not self.enforcing or not self.pulse_active() or self.settings.only_direct:
+        if not self.enforcing or not self.pulse_enabled() or self.settings.only_direct:
             return None
         watches = self.live_watches(now)
         if not watches:
@@ -958,8 +965,7 @@ class SceneRunner:
         pending = self.store.pending_messages(self.config.scene, since=created)
         if not any(seq > self.state.pulse_through for seq, _, _ in self.pulse_humans(pending)):
             return None
-        last = self.state.pulse_last_at
-        return now if last is None else last + self.settings.pulse.sample_interval_seconds
+        return self.pulse_next_at(now)
 
     def pulse_bypassed(self, scheduled: list[tuple[int, str]], *, baseline: bool) -> bool:
         wake = self.state.pending
@@ -982,6 +988,8 @@ class SceneRunner:
                 or self.quiet_period(now) is not None
                 or (channel is not None and channel not in PULSE_CHANNELS)):
             return None
+        if not self.closing and now < self.pulse_next_at(now):
+            return None
         baseline = wake is not None and (self.closing or self.deadline() <= now)
         if self.pulse_bypassed(scheduled, baseline=baseline):
             return None
@@ -993,7 +1001,7 @@ class SceneRunner:
         if wake is not None and wake.explored:
             channels.add('explore')
         watches = self.live_watches(now)
-        if mode == 'active' and watches and fresh:
+        if watches and fresh:
             channels.add('watch')
         messages, message_by_id = pulse_prompt(self.chat, fresh or humans, watches, channels)
         settings = self.config.model_settings('pulse')
@@ -1040,6 +1048,19 @@ class SceneRunner:
                 if silent and not due and state.pending.channel == 'ambient':
                     state.ambient_last_at = now
                 state.pending = None
+                if silent and not due and not self.settings.only_direct:
+                    for seq, message, at in self.pulse_humans(self.store.pending_messages(self.config.scene)):
+                        if seq <= sample.through or self.quiet_period(at) is not None:
+                            continue
+                        body = plain_text(message).casefold()
+                        words = [word for word in self.keywords if word in body and
+                                 (word not in state.keyword_last
+                                  or at >= state.keyword_last[word] + self.settings.keyword_cooldown_seconds)]
+                        if words:
+                            state.offer(PendingWake('named', at, words, people=[message.sender.uid]))
+                        elif (open_for_ambient(state) and worth_joining(message, self.settings, self.config.bot_id)
+                              and self.local_allows(state, 'ambient', message, at)):
+                            state.offer(PendingWake('ambient', at))
             if due:
                 state.offer(PendingWake('attention', now))
         elif matches:
@@ -1140,6 +1161,8 @@ class SceneRunner:
                 watch_at = self.watch_sample_at(now)
                 if watch_at is not None:
                     deadline = watch_at if deadline is None else min(deadline, watch_at)
+                if not self.closing and self.pulse_active() and wake is not None:
+                    deadline = max(deadline, self.pulse_next_at(now))
             if deadline is None:
                 return None
             if wake is not None and wake.channel != "direct":
@@ -1568,13 +1591,42 @@ class SceneRunner:
                     await self.pulse_model.__aexit__()
                     self.pulse_model = None
 
+    async def sample_until_bypassed(self, pending: list[tuple[int, ChatMessage, float]],
+                                    notice_until: float | None, scheduled: list[tuple[int, str]]) -> PulseSample | None:
+        # EOF may already have queued a final batch to drain.
+        draining = self.closing
+        pulse = asyncio.create_task(self.sample_pulse(pending, notice_until, scheduled))
+        try:
+            while not pulse.done():
+                self.changed.clear()
+                now = self.now()
+                if ((self.closing and not draining) or not self.pulse_enabled() or self.settings.only_direct
+                        or self.pulse_bypassed(self.due_schedules(now), baseline=False)):
+                    return None
+                schedule_at = ScheduleStore(self.store).next_schedule_at(self.config.scene)
+                timeout = None if schedule_at is None else max(0, schedule_at - now)
+                changed = asyncio.create_task(self.changed.wait())
+                try:
+                    await asyncio.wait((pulse, changed), timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    changed.cancel()
+            return pulse.result()
+        finally:
+            if not pulse.done():
+                pulse.cancel()
+                await asyncio.wait((pulse,))
+                try:
+                    pulse.result()
+                except asyncio.CancelledError:
+                    pass
+
     async def _run(self) -> None:
         while True:
             if self.ready_for_turn is not None and not await self.ready_for_turn(True):
                 return
             ready = await self.ready_messages(sample_watch=True)
             if ready is not None:
-                pulse = await self.sample_pulse(*ready)
+                pulse = await self.sample_until_bypassed(*ready) if self.pulse_enabled() else None
                 async with self.execution:
                     # Merging and lock acquisition may both await beyond a disconnect.
                     if self.ready_for_turn is not None and not await self.ready_for_turn(False):
@@ -1591,15 +1643,18 @@ class SceneRunner:
                         await self._quiet_notice(pending, notice_until)
                         continue
                     pulse_target = None
-                    if (pulse is not None and pulse.mode == self.settings.pulse.mode
-                            and not self.pulse_bypassed(scheduled, baseline=baseline)):
+                    if pulse is not None and pulse.mode != self.settings.pulse.mode:
+                        pulse = None
+                    needs_pulse = self.pulse_active() and not self.closing
+                    bypassed = (pulse is not None or needs_pulse) and self.pulse_bypassed(scheduled, baseline=baseline)
+                    if pulse is not None and not bypassed:
                         current = None if self.state.pending is None else self.state.pending.channel
                         if current in PULSE_CHANNELS and current != pulse.channel:
                             continue
                         proceed, pulse_target = self.settle_pulse(pulse, baseline=baseline)
                         if not proceed:
                             continue
-                    elif not baseline:
+                    elif not baseline or (needs_pulse and not bypassed):
                         continue
                     quiet = self.quiet_period(self.now()) is not None
                     notices = (self.chat.tasks.records.pending_notices(self.config.scene)

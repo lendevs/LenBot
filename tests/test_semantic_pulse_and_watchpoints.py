@@ -3,20 +3,23 @@
 import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from string import Template
 
+import httpx
 import pytest
 
 from len_bot.next import prompt_files
 from len_bot.next.chat.attention import SceneRunner
 from len_bot.next.chat.declarations import AttentionArguments, REWAKE_SECONDS
+from len_bot.next.chat.pulse import request_pulse
 from len_bot.next.chat.schedule_store import ScheduleStore
 from len_bot.next.chat.session import Chat
 from len_bot.next.models.client import ChatModel, ModelReply
 from len_bot.next.storage.store import Store
 from test_attention_protocol import START, config_for, message
 from test_native_tool_calls import SCENE
+from test_next_native_models import response
 
 
 @asynccontextmanager
@@ -34,6 +37,23 @@ async def running(config, persona, now, pulse_reply, events):
             model.complete = complete
             runner = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), events.append)
             yield runner, store, calls
+
+
+@asynccontextmanager
+async def live_runner(runner):
+    task = asyncio.create_task(runner.run())
+    try:
+        yield task
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+async def wait_for_sample(runner, through):
+    async with asyncio.timeout(5):
+        while runner.state.pulse_through < through:
+            await asyncio.sleep(0.001)
 
 
 def configured(root, mode='active'):
@@ -142,31 +162,175 @@ async def test_shadow_silence_records_the_verdict_and_opens_the_baseline_turn(tm
 async def test_direct_message_supersedes_an_in_flight_pulse(tmp_path):
     config, persona = configured(tmp_path)
     now, events = [START], []
-    started, finish = asyncio.Event(), asyncio.Event()
+    started, cancelled, turned = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
     async def in_flight():
         assert not runner.execution.locked()
+        started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    def emit(event):
+        events.append(event)
+        if event.get('channel') == 'direct' and event.get('status') == 'settled':
+            turned.set()
+
+    async with running(config, persona, now, in_flight, events) as (runner, store, calls):
+        runner.emit = emit
+        runner.receive(message(70003, 10, '这个队伍还缺两个人'))
+        async with live_runner(runner) as task:
+            await asyncio.wait_for(started.wait(), 5)
+            runner.receive(message(70001, 11, '算上我', direct=True))
+            await asyncio.wait_for(turned.wait(), 5)
+            assert cancelled.is_set()
+            runner.close_input()
+            await asyncio.wait_for(task, 5)
+        assert roles(calls) == ['pulse', 'mind'] and turn_channels(events) == ['direct']
+        saved = store.load_attention(SCENE)
+        assert saved['pulse_through'] == 0 and saved['pulse_last_at'] is None
+        assert '算上我' in json.dumps(calls[-1][1], ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_silent_pulse_keeps_a_new_named_candidate(tmp_path):
+    config, persona = configured(tmp_path)
+    config.attention.pulse.sample_interval_seconds = 120
+    now, events = [START], []
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def in_flight():
         started.set()
         await finish.wait()
         return await silent()
 
     async with running(config, persona, now, in_flight, events) as (runner, store, calls):
-        runner.receive(message(70003, 10, '这个队伍还缺两个人'))
-        runner.close_input()
-        task = asyncio.create_task(runner.run())
-        try:
+        first = runner.receive(message(70001, 10, f'刚才提到{persona.name}'))
+        async with live_runner(runner):
             await asyncio.wait_for(started.wait(), 5)
-            runner.receive(message(70001, 11, '算上我', direct=True))
+            now[0] += 1
+            second = runner.receive(message(70002, 11, f'另一个人在找{persona.name}'))
             finish.set()
-            await asyncio.wait_for(task, 5)
-        finally:
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-        assert roles(calls) == ['pulse', 'mind'] and turn_channels(events) == ['direct']
+            await wait_for_sample(runner, first['message_seq'])
+            saved = store.load_attention(SCENE)
+            assert saved['pulse_through'] == first['message_seq']
+            assert saved['pending']['channel'] == 'named'
+            assert saved['pending']['first_at'] == START + 1
+            assert saved['pending']['people'] == ['onebot:70002']
+            assert roles(calls) == ['pulse']
+            now[0] = saved['pulse_last_at'] + 120
+            runner.changed.set()
+            await wait_for_sample(runner, second['message_seq'])
+            assert roles(calls) == ['pulse', 'pulse'] and turn_channels(events) == []
+            assert '另一个人在找' in calls[-1][1][-1]['content']
+
+
+@pytest.mark.asyncio
+async def test_active_named_wakes_share_the_pulse_interval(tmp_path):
+    config, persona = configured(tmp_path)
+    config.attention.pulse.sample_interval_seconds = 120
+    now, events = [START], []
+
+    async with running(config, persona, now, silent, events) as (runner, _, calls):
+        first = runner.receive(message(70001, 10, f'有人提到{persona.name}'))
+        async with live_runner(runner):
+            await wait_for_sample(runner, first['message_seq'])
+            now[0] = START + 1
+            second = runner.receive(message(70002, 11, f'刚刚有人在找{persona.name}'))
+            assert second['wake_channel'] == 'named'
+            assert await runner.ready_messages(wait=False, sample_watch=True) is None
+            assert roles(calls) == ['pulse'] and turn_channels(events) == []
+            now[0] = START + 120
+            runner.changed.set()
+            await wait_for_sample(runner, second['message_seq'])
+            assert roles(calls) == ['pulse', 'pulse'] and turn_channels(events) == []
+            assert runner.state.pulse_last_at == START + 120
+
+
+@pytest.mark.asyncio
+async def test_shadow_samples_watch_without_opening_mind(tmp_path, caplog):
+    config, persona = configured(tmp_path, 'shadow')
+    config.attention.pulse.sample_interval_seconds = 120
+    now, events = [START], []
+
+    async def matched():
+        return '{"decision":"wake","target_msg_id":"11","matched_watch_ids":["i1"]}'
+
+    async with running(config, persona, now, matched, events) as (runner, store, calls):
+        add_watch(runner, {'type': 'topic', 'watch': '新地图的开服时间'})
+        first = runner.receive(message(70003, 10, '地图时间还没定', reply=1))
+        assert first['wake_channel'] is None
+        async with live_runner(runner):
+            await wait_for_sample(runner, first['message_seq'])
+            now[0] = START + 1
+            second = runner.receive(message(70003, 11, '今晚八点开放', reply=1))
+            assert second['wake_channel'] is None
+            assert await runner.ready_messages(wait=False, sample_watch=True) is None
+            assert roles(calls) == ['pulse']
+            now[0] = START + 120
+            with caplog.at_level(logging.INFO):
+                runner.changed.set()
+                await wait_for_sample(runner, second['message_seq'])
+        assert roles(calls) == ['pulse', 'pulse'] and turn_channels(events) == []
+        assert '候选渠道 watch' in calls[-1][1][-1]['content']
         saved = store.load_attention(SCENE)
-        assert saved['pulse_through'] == 0 and saved['pulse_last_at'] is None
-        assert '算上我' in json.dumps(calls[-1][1], ensure_ascii=False)
+        assert (saved['pulse_through'], saved['pulse_last_at']) == (second['message_seq'], START + 120)
+        assert saved['declared']['matches'] == []
+        [log] = [record.fields for record in caplog.records if getattr(record, 'event', None) == 'semantic_pulse']
+        assert log == {'mode': 'shadow', 'decision': 'wake', 'channel': 'watch',
+                       'matched_watch_ids': ['i1'], 'target_msg_id': '11'}
+
+
+@pytest.mark.asyncio
+async def test_watch_all_checks_the_pulse_target_message(tmp_path):
+    config, persona = configured(tmp_path)
+    now, events = [START], []
+
+    async def matched():
+        return '{"decision":"wake","target_msg_id":"11","matched_watch_ids":["i1"]}'
+
+    async with running(config, persona, now, matched, events) as (runner, store, calls):
+        add_watch(runner, {'type': 'person', 'people': ['onebot:70001']},
+                  {'type': 'topic', 'watch': '新地图的开服时间'})
+        runner.receive(message(70001, 10, '今天外卖到了', reply=1))
+        target = runner.receive(message(70002, 11, '今晚八点开服', reply=1))
+        runner.close_input()
+        await asyncio.wait_for(runner.run(), 5)
+        assert roles(calls) == ['pulse'] and turn_channels(events) == []
+        assert all(body in calls[0][1][-1]['content'] for body in ('今天外卖到了', '今晚八点开服'))
+        saved = store.load_attention(SCENE)
+        assert saved['pulse_through'] == target['message_seq'] and saved['declared']['matches'] == []
+
+
+@pytest.mark.asyncio
+async def test_pulse_uses_the_fallback_anthropic_thinking_budget(tmp_path):
+    config, persona = configured(tmp_path)
+    config.models.providers['synthetic'].api = 'anthropic'
+    binding = config.models.roles.mind
+    binding.temperature = None
+    binding.thinking_budget_tokens = 1024
+    binding.max_output_tokens = 2048
+    body = response('anthropic')
+    body['content'][0]['text'] = '{"decision":"silent"}'
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=body)
+
+    settings = config.model_settings('mind')
+    async with ChatModel(settings) as model:
+        await model._client.aclose()
+        model._client = httpx.AsyncClient(base_url=settings.base_url, transport=httpx.MockTransport(respond))
+        with Store(config.database) as store:
+            chat = Chat(config, persona, store, model)
+            verdict = await request_pulse(chat, model, [{'role': 'user', 'content': '地图今晚开'}])
+    [request] = requests
+    assert request['max_tokens'] == 1184
+    assert request['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
+    assert verdict is not None and verdict.decision == 'silent'
 
 
 @pytest.mark.asyncio
@@ -202,14 +366,14 @@ async def test_watch_matches_and_rewakes_only_after_the_intent_window(tmp_path, 
             assert roles(calls) == ['pulse'] and turn_channels(events) == []
             now[0] += 10
             target = '12'
-            runner.receive(message(70002, 11, '对，时间定了', reply=1))
-            runner.receive(message(70003, 12, '今晚八点开', reply=1))
+            runner.receive(message(70003, 11, '对，时间定了', reply=1))
+            runner.receive(message(70002, 12, '今晚八点开', reply=1))
             await asyncio.wait_for(runner.run(), 5)
             assert roles(calls) == ['pulse', 'pulse', 'mind']
         else:
             assert roles(calls) == ['pulse', 'mind']
         assert turn_channels(events) == ['attention']
-        assert target_uids == [('onebot:70003',)]
+        assert target_uids == [('onebot:70002' if require_person else 'onebot:70003',)]
         first_wake = now[0]
 
         now[0] += 5

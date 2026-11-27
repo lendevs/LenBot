@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 PULSE_CHANNELS = frozenset({'ambient', 'explore', 'named'})
-PULSE_BYPASS = frozenset({'direct', 'focus', 'schedule', 'task', 'plugin', 'audio', 'resume'})
+PULSE_BYPASS = frozenset({'direct', 'focus', 'attention', 'schedule', 'task', 'plugin', 'audio', 'resume'})
 INPUT_TOKENS = 1050
 
 
@@ -90,8 +90,13 @@ def pulse_prompt(chat: Chat, pending: list[tuple[int, ChatMessage, float]],
 
 async def request_pulse(chat: Chat, model: ChatModel | PulseModel, messages: list[dict]) -> PulseVerdict | None:
     try:
+        binding = chat.config.binding('pulse')
+        effort = binding.quick_reasoning_effort
+        effective = model.settings.with_effort(effort) if effort is not None else model.settings
+        budget = effective.thinking_budget_tokens
+        output_tokens = min(binding.max_output_tokens, 160 if budget is None else budget + 160)
         reply = await request_model(chat.config, chat.store, model, messages, [], scene=chat.config.scene,
-                                    role='pulse', slots=chat.slots, direct=False, output_tokens=160, quick=True)
+                                    role='pulse', slots=chat.slots, direct=False, output_tokens=output_tokens, quick=True)
         body = reply.text.strip()
         fence = re.fullmatch(r'```(?:json\b)?\s*(.*?)\s*```', body, flags=re.IGNORECASE | re.DOTALL)
         return PulseVerdict.model_validate_json(fence.group(1) if fence else body)
