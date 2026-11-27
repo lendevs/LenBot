@@ -21,7 +21,7 @@ import tempfile
 import time
 import threading
 from collections.abc import Callable
-from contextlib import AsyncExitStack, closing, contextmanager, asynccontextmanager
+from contextlib import AsyncExitStack, closing, contextmanager, asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Literal, TypeVar
@@ -995,7 +995,7 @@ class LocalMemory:
         with self._db() as db:
             dimensions = self._vector_binding(db)
             if dimensions is None or len(vector) != dimensions:
-                raise ValueError(f"memory query vector dimension {len(vector)} differs from index {dimensions}")
+                raise VectorIndexNeedsRebuild(f"memory query vector dimension {len(vector)} differs from index {dimensions}")
             search = self._automatic_rows if automatic else self._lexical_rows
             lexical = search(db, scene, query, limit, include_public, bot_persona)
             conditions = _eligible(bot_persona)
@@ -1043,32 +1043,35 @@ class LocalMemory:
             raise ValueError("search requires a nonblank query and limit 1..100")
         source = _scene_scope(scene)
         text = query if text_query is None else text_query
-        async with AsyncExitStack() as locks:
-            await locks.enter_async_context(self._lock(source))
-            if include_public:
-                await locks.enter_async_context(self._lock("public"))
+        text_args = (source, text, limit, include_public, automatic, bot_persona)
+        async with self._lock(source), (self._lock("public") if include_public else nullcontext()):
             if self.embedding is None or literal:
-                return await asyncio.to_thread(self._search_sync, source, text, limit,
-                                               include_public, automatic, bot_persona)
+                return await asyncio.to_thread(self._search_sync, *text_args)
             try:
                 dimensions = await asyncio.to_thread(self._vector_preflight)
             except VectorIndexNeedsRebuild as error:
                 log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
-                return await asyncio.to_thread(self._search_sync, source, text, limit,
-                                               include_public, automatic, bot_persona)
+                return await asyncio.to_thread(self._search_sync, *text_args)
             if dimensions is None:
-                return await asyncio.to_thread(self._search_sync, source, text, limit,
-                                               include_public, automatic, bot_persona)
-            try:
-                batch = await self._embedding(source, [query], "query")
-                if batch.dimensions != dimensions:
-                    raise ValueError(f"embedding dimensions {batch.dimensions} differ from memory index {dimensions}")
-            except (ValueError, TimeoutError) as error:
-                log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=error)
-                return await asyncio.to_thread(self._search_sync, source, text, limit,
-                                               include_public, automatic, bot_persona)
-            return await asyncio.to_thread(self._search_hybrid_sync, source, text,
-                                           batch.vectors[0], limit, include_public, automatic, bot_persona)
+                log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', reason='记忆向量索引尚未建立')
+                return await asyncio.to_thread(self._search_sync, *text_args)
+
+        batch = None
+        vector_error: ValueError | TimeoutError | None = None
+        try:
+            batch = await self._embedding(source, [query], "query")
+        except (ValueError, TimeoutError) as error:
+            vector_error = error
+
+        async with self._lock(source), (self._lock("public") if include_public else nullcontext()):
+            if batch is not None:
+                try:
+                    return await asyncio.to_thread(self._search_hybrid_sync, source, text, batch.vectors[0],
+                                                   limit, include_public, automatic, bot_persona)
+                except VectorIndexNeedsRebuild as error:
+                    vector_error = error
+            log_event(logger, 'memory_text_retrieval', '记忆改用全文检索', level=logging.WARNING, error=vector_error)
+            return await asyncio.to_thread(self._search_sync, *text_args)
 
     def _history_sync(self, scope: str, path: str) -> list[LocalMemoryChange]:
         self._target(scope, path, file=True)

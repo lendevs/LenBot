@@ -15,7 +15,8 @@ Entry = tuple[int, dict]
 _TASK_NOTICE = re.compile(r"^\[任务(执行结束|提问|操作确认)\]\s*#(\d+)(?:；请求人\s+([^；\n]+))?(?:；(.*))?$")
 _DELIVERY_PART_HEADER = re.compile(r"^(\d{2}:\d{2}:\d{2}) (.*)$", re.MULTILINE)
 _DELIVERY_MESSAGE_ID = re.compile(r'(?: \[|，)id=("(?:\\.|[^"\\])*")')
-_INCOMPLETE_SAY = ("本次剩余待发送内容：", "余段因收到新消息未发", "状态=failed", "状态=unconfirmed")
+_DELIVERY_INCOMPLETE_STATUS = re.compile(r'(?: \[|，)状态=(?:failed|unconfirmed)(?:，|\])')
+_DELIVERY_HELD_SUMMARY = re.compile(r"(?:^|\n)共 \d+ 段，第 1\.\.\d+ 段已发出；余段因收到新消息未发：\n")
 
 
 class ContextBudgetError(ValueError):
@@ -66,8 +67,10 @@ def compact_say_receipts(entries: Iterable[Entry]) -> Iterator[Entry]:
             pending.remove(message["tool_call_id"])
             content = message["content"]
             if (isinstance(content, str) and not expression_not_sent("say", content)
-                    and not any(marker in content for marker in _INCOMPLETE_SAY)):
-                headers = _DELIVERY_PART_HEADER.findall(content)
+                    and (headers := _DELIVERY_PART_HEADER.findall(content))
+                    and not any(_DELIVERY_INCOMPLETE_STATUS.search(header) for _, header in headers)
+                    and "\n本次剩余待发送内容：\n" not in content
+                    and not _DELIVERY_HELD_SUMMARY.search(content)):
                 message_ids = [json.loads(match[1]) for _, header in headers
                                if (match := _DELIVERY_MESSAGE_ID.search(header)) is not None]
                 message = {**message, "content": encode({

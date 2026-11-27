@@ -22,11 +22,13 @@ from test_native_tool_calls import SCENE, _instance
 def embedding_peer(monkeypatch):
     slow_models = set()
     cancelled_models = []
+    slow_started = asyncio.Event()
 
     async def respond(request):
         body = json.loads(request.content)
         model = body['model']
         if model in slow_models:
+            slow_started.set()
             try:
                 await asyncio.sleep(5)
             except asyncio.CancelledError:
@@ -37,7 +39,7 @@ def embedding_peer(monkeypatch):
         ]})
 
     monkeypatch.setattr(embeddings, '_embedding_client', lambda _: httpx.AsyncClient(transport=httpx.MockTransport(respond)))
-    return slow_models, cancelled_models
+    return slow_models, cancelled_models, slow_started
 
 
 def message(uid, text, *, card='', seq=1):
@@ -51,7 +53,7 @@ def message(uid, text, *, card='', seq=1):
 
 @pytest.mark.asyncio
 async def test_recall_keeps_target_profiles_and_literal_topic_during_vector_timeout(tmp_path, embedding_peer):
-    slow_models, cancelled_models = embedding_peer
+    slow_models, cancelled_models, _ = embedding_peer
     config, _ = _instance(tmp_path)
     config.memory = LocalMemoryConfig(backend='local', local=LocalMemorySettings(
         directory=tmp_path / 'memory', embedding=EmbeddingBinding(provider='synthetic', model='memory', dimensions=2)))
@@ -92,8 +94,52 @@ async def test_recall_keeps_target_profiles_and_literal_topic_during_vector_time
 
 
 @pytest.mark.asyncio
+async def test_recall_excludes_other_members_from_chat_and_cue_hits_during_vector_timeout(tmp_path, embedding_peer):
+    slow_models, _, _ = embedding_peer
+    config, _ = _instance(tmp_path)
+    config.memory = LocalMemoryConfig(backend='local', local=LocalMemorySettings(
+        directory=tmp_path / 'memory', embedding=EmbeddingBinding(provider='synthetic', model='memory', dimensions=2)))
+
+    with Store(config.database) as store:
+        async with open_memory(config, store) as memory:
+            await memory.write(SCENE, 'people/onebot:70001/profile.md', '早安时喜欢被叫阿青。', '合成档案')
+            await memory.write(SCENE, 'people/onebot:70001/preferences.md', '打招呼时喜欢被叫阿青。', '合成偏好')
+            slow_models.add('memory')
+
+            result = await memory.recall(SCENE, [message(70002, '早')], '打招呼', vector_timeout_seconds=0.1)
+
+            assert result['items'] == []
+
+
+@pytest.mark.asyncio
+async def test_recall_reads_local_preferences_while_panel_search_is_waiting(tmp_path, embedding_peer):
+    slow_models, _, slow_started = embedding_peer
+    config, _ = _instance(tmp_path)
+    config.memory = LocalMemoryConfig(backend='local', local=LocalMemorySettings(
+        directory=tmp_path / 'memory', embedding=EmbeddingBinding(provider='synthetic', model='memory', dimensions=2)))
+
+    with Store(config.database) as store:
+        async with open_memory(config, store, slots=ModelSlots(1)) as memory:
+            path = 'people/onebot:70002/preferences.md'
+            await memory.write(SCENE, path, '喜欢被叫老周。', '合成偏好')
+            slow_models.add('memory')
+            panel_search = asyncio.create_task(memory.search(SCENE, '面板搜索', 5))
+            try:
+                await asyncio.wait_for(slow_started.wait(), timeout=0.4)
+                async with asyncio.timeout(0.05):
+                    result = await memory.recall(SCENE, [message(70002, '早')], vector_timeout_seconds=0.01)
+
+                assert not panel_search.done()
+                [preference] = result['items']
+                assert preference['path'] == path and '喜欢被叫老周' in preference['content']
+            finally:
+                panel_search.cancel()
+                await asyncio.gather(panel_search, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_expression_timeout_settles_call_and_releases_scene_lock_and_model_slot(tmp_path, embedding_peer):
-    slow_models, cancelled_models = embedding_peer
+    slow_models, cancelled_models, _ = embedding_peer
     settings = EmbeddingSettings(provider='synthetic', model='expression', dimensions=2,
                                  base_url='http://embeddings.invalid/v1', api_key='synthetic')
     with Store(tmp_path / 'chat.sqlite3') as store:

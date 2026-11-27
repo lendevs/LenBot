@@ -411,9 +411,9 @@ def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str
     spaced_clauses = 0
     for text in texts:
         text = text.strip()
-        if text.endswith(("。", "！", "!")):
+        if len(text) >= 2 and text[-1] in "。！!？?." and text[-2] not in "，,。！？!?；;：:.":
             text = text[:-1]
-        if re.search(r"[，,。！？!?；;：:\n]", text):
+        if re.search(r"[，,。！？!?；;：:.\n]", text):
             continue
         parts = re.split(r"[ \t\u3000]+", text.rstrip())
         if 3 <= len(parts) <= 5 and all(HAN.search(part) for part in parts) and len(HAN.findall(text)) >= 12:
