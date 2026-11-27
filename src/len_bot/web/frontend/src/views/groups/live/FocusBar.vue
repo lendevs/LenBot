@@ -47,15 +47,19 @@ function condition(item: IntentCondition) {
   if (item.type === 'person')
     return t('groups.live.focus.when.person', { who: unitList.value.format(item.people.map(account)) })
   if (item.type === 'thread') return t('groups.live.focus.when.thread', { id: item.message_id })
-  if (item.type === 'open_question')
+  if (item.type === 'open_question') {
+    if (item.watch) return t('groups.live.focus.when.openWatch', { id: item.message_id, watch: item.watch })
     return item.keywords?.length
       ? t('groups.live.focus.when.openKeywords', {
           id: item.message_id,
           words: unitList.value.format(item.keywords),
         })
       : t('groups.live.focus.when.thread', { id: item.message_id })
+  }
   if (item.type === 'topic')
-    return t('groups.live.focus.when.topic', { words: unitList.value.format(item.keywords) })
+    return item.watch
+      ? t('groups.live.focus.when.topicWatch', { watch: item.watch })
+      : t('groups.live.focus.when.topic', { words: unitList.value.format(item.keywords ?? []) })
   return t('groups.live.focus.when.at', { n: item.minutes })
 }
 const conditions = (when: IntentCondition[], match: 'any' | 'all') =>

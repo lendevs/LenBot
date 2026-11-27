@@ -79,6 +79,7 @@ const toolTones: Record<ToolDetail['status'], Tone> = {
   complete: 'success',
   error: 'error',
   interrupted: 'warning',
+  held: 'warning',
 }
 
 const deliveryTones: Record<string, Tone> = {

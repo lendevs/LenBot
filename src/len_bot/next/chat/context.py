@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import math
@@ -477,6 +478,23 @@ def current_attention(config: LabConfig, store: Store, *, quiet: dict | None = N
     return '<当前关注>\n' + text + '\n</当前关注>'
 
 
+@dataclass(frozen=True)
+class ContextProjection:
+    """Explicit 3-part Chat-Last projection: settled history, turn-opening snapshot, and live turn entries."""
+
+    system: dict
+    history: list[dict]
+    snapshot: dict
+    current: list[dict]
+
+    @property
+    def snapshot_index(self) -> int:
+        return 1 + len(self.history)
+
+    def messages(self) -> list[dict]:
+        return [self.system, *self.history, self.snapshot, *self.current]
+
+
 class ChatContext:
     """Scene materials shared by model requests, expression and panel views."""
 
@@ -566,17 +584,18 @@ class ChatContext:
         refs = self.references(entries)
         return discovered, attention, refs
 
-    async def project(
+    async def project_parts(
         self,
         recap: str | None,
         entries: list[tuple[int, dict]],
         state: dict,
         *,
         protect_from_seq: int | None = None,
-    ) -> list[dict]:
-        entries = self.project_entries(entries, protect_from_seq=protect_from_seq)
+        turn_floor_seq: int | None = None,
+    ) -> ContextProjection:
+        projected = self.project_entries(entries, protect_from_seq=protect_from_seq)
         quiet = None if self.quiet_state is None else self.quiet_state()
-        discovered, attention, refs = await self.store.read(self._project_reads, entries, quiet)
+        discovered, attention, refs = await self.store.read(self._project_reads, projected, quiet)
         self.refresh_tools(discovered)
         if self.host_state is not None:
             state = {**state, 'content': state['content'] + '\n<宿主恢复状态>\n' + self.host_state + '\n</宿主恢复状态>'}
@@ -587,7 +606,31 @@ class ChatContext:
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
         state = {**state, 'content': state['content'] + '\n' + attention}
         state = {**state, 'content': '\n'.join([state['content'], *refs])}
-        return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]
+        if turn_floor_seq is None:
+            history_entries, current_entries = projected, []
+        else:
+            history_entries = [item for item in projected if item[0] <= turn_floor_seq]
+            current_entries = [item for item in projected if item[0] > turn_floor_seq]
+        return ContextProjection(
+            system={"role": "system", "content": self.system},
+            history=project_history(recap, history_entries),
+            snapshot=state,
+            current=[message for _, message in current_entries],
+        )
+
+    async def project(
+        self,
+        recap: str | None,
+        entries: list[tuple[int, dict]],
+        state: dict,
+        *,
+        protect_from_seq: int | None = None,
+        turn_floor_seq: int | None = None,
+    ) -> list[dict]:
+        parts = await self.project_parts(
+            recap, entries, state, protect_from_seq=protect_from_seq, turn_floor_seq=turn_floor_seq,
+        )
+        return parts.messages()
 
     def references(self, entries: list[tuple[int, dict]]) -> list[str]:
         """The turn's closing reference material, in order: how members here write, what the own

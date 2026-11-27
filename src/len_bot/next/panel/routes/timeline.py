@@ -107,7 +107,7 @@ class ToolDetail(BaseModel):
     name: str
     arguments: dict
     result: str | None
-    status: Literal['pending', 'complete', 'error', 'interrupted']
+    status: Literal['pending', 'complete', 'error', 'interrupted', 'held']
     messages: list[TimelineMessage]
 
 

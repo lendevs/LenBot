@@ -52,7 +52,7 @@ CREATE TABLE turns (
     id TEXT PRIMARY KEY, scene TEXT NOT NULL, started REAL NOT NULL,
     ended REAL, status TEXT NOT NULL, error TEXT,
     wake_received_at REAL, first_expression_at REAL, first_expression_delivery TEXT,
-    wake_channel TEXT NOT NULL DEFAULT 'unknown'
+    wake_channel TEXT NOT NULL DEFAULT 'unknown', turn_floor_seq INTEGER
 );
 CREATE TABLE model_calls (
     id INTEGER PRIMARY KEY, turn_id TEXT, role TEXT NOT NULL,

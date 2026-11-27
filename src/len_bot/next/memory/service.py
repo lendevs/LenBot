@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import asdict
 import re
@@ -371,7 +372,8 @@ class MemoryService:
             result = {"changes": await self.history(scene, item.path)}
         return encode(result)
 
-    async def recall(self, scene: str, messages: list[ChatMessage], cues: str = "") -> dict:
+    async def recall(self, scene: str, messages: list[ChatMessage], cues: str = "", *,
+                     target_uids: Sequence[str] = (), vector_timeout_seconds: float | None = 0.75) -> dict:
         """Recall from actual chat only; returned text never becomes a native history entry.
 
         ``cues`` (see ``recall_cues``) find what the recent chat does not name; their hits only use the

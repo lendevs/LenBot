@@ -180,6 +180,14 @@ class TurnDisposition(BaseModel):
     max_people: int = Field(default=5, ge=1, strict=True)
 
 
+class SemanticPulse(BaseModel):
+    """Lightweight perception gate on ambiguous group wakes before opening a full Mind turn."""
+    model_config = STRICT
+
+    mode: Literal['off', 'shadow', 'active'] = 'off'
+    sample_interval_seconds: float = Field(default=120.0, ge=0, allow_inf_nan=False)
+
+
 class Attention(BaseModel):
     model_config = STRICT
 
@@ -211,6 +219,7 @@ class Attention(BaseModel):
     # On by default: the model may declare whom or what to keep following; null turns it off.
     declarations: AttentionDeclarations | None = Field(default_factory=AttentionDeclarations)
     disposition: TurnDisposition | None = None
+    pulse: SemanticPulse = Field(default_factory=SemanticPulse)
 
     @field_validator("keywords")
     @classmethod

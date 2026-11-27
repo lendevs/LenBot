@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from dataclasses import dataclass
 from string import Template
@@ -582,7 +582,8 @@ class Chat:
                        plugin_events: list[tuple[int, str]] | None = None,
                        direct: bool = False, wake_received_at: float | None = None,
                        channels: set[str] | None = None,
-                       proactive: tuple[str, str, float] | None = None, channel: str | None = None) -> dict:
+                       proactive: tuple[str, str, float] | None = None, channel: str | None = None,
+                       target_uids: Sequence[str] = ()) -> dict:
         self.direct_request = direct
         self.turn_channel = channel
         self.reserve_revoked = False

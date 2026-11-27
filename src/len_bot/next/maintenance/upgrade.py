@@ -131,7 +131,9 @@ def migrate_business_database(path: Path) -> bool:
                 "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL") if name not in existing]
         image_columns = {row[1] for row in db.execute('PRAGMA table_info("image_cache")')}
         need_frames = 'frames' not in image_columns
-        if version == FORMAT_VERSION and not missing and not need_frames:
+        turn_columns = {row[1] for row in db.execute('PRAGMA table_info("turns")')}
+        need_turn_floor = 'turn_floor_seq' not in turn_columns
+        if version == FORMAT_VERSION and not missing and not need_frames and not need_turn_floor:
             return False
         with db:
             db.execute('BEGIN IMMEDIATE')
@@ -140,6 +142,8 @@ def migrate_business_database(path: Path) -> bool:
                 db.execute('ALTER TABLE jargon ADD COLUMN last_evaluated_seq INTEGER NOT NULL DEFAULT 0')
             if need_frames:
                 db.execute('ALTER TABLE image_cache ADD COLUMN frames INTEGER NOT NULL DEFAULT 1')
+            if need_turn_floor:
+                db.execute('ALTER TABLE turns ADD COLUMN turn_floor_seq INTEGER')
             # Format 3 adds model_call_mind_usage and format 4 adds image_cache.frames plus scene, notice,
             # plugin-call, turn-start and unexpired-snapshot indexes.
             for sql in missing:
