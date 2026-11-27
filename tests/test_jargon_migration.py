@@ -85,6 +85,20 @@ def test_format_3_upgrade_builds_format_4_indexes(tmp_path):
     with Store(path):
         pass
 
+
+def test_format_4_upgrade_adds_turn_floor_seq(tmp_path):
+    path = tmp_path / 'business.db'
+    old = business_script().replace(', turn_floor_seq INTEGER', '')
+    with closing(sqlite3.connect(path)) as db:
+        db.executescript('PRAGMA application_id=1279413809; PRAGMA user_version=4;\n' + old)
+        assert 'turn_floor_seq' not in {row[1] for row in db.execute('PRAGMA table_info(turns)')}
+
+    assert migrate_business_database(path)
+    with Store(path) as store:
+        assert store.db.execute('PRAGMA user_version').fetchone()[0] == FORMAT_VERSION
+        assert 'turn_floor_seq' in {row[1] for row in store.db.execute('PRAGMA table_info(turns)')}
+
+
 def test_jargon_upgrade_preserves_manual_controls_and_queues_old_records(tmp_path):
     path = tmp_path / 'business.db'
     old = business_script().replace('    judgment TEXT, last_evaluated_seq INTEGER NOT NULL DEFAULT 0,\n', '')

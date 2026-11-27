@@ -46,6 +46,19 @@ def test_varied_short_lines_need_no_reminder():
     assert recent_habits(_history(*(_say(line) for line in VARIED))) is None
 
 
+def test_undelivered_say_drafts_do_not_count_as_recent_expressions():
+    messages = [_say(line) for line in VARIED[:6]]
+    for index, result in enumerate(("say 未发：已结束", "say 失败：工具异常", "say 中断：收到新消息")):
+        call_id = f"draft-{index}"
+        draft = _say("等等我也要看看", "draft.webp")
+        draft["tool_calls"][0]["id"] = call_id
+        messages.extend([draft, {"role": "tool", "tool_call_id": call_id, "content": result}])
+
+    text = recent_habits(_history(*messages), has_stickers=True)
+    assert "最近 6 次发言里" in text
+    assert "连续 6 次都是纯文字" in text
+
+
 def test_common_sentence_particles_are_not_habits():
     lines = ["今天去不去吧", "那就这样吧呢", "你说呢啊", "好呀晚点吧", "真的假的啦", "也行嘛哦", "走啊", "来吧"]
     assert recent_habits(_history(*(_say(line) for line in lines))) is None
@@ -184,7 +197,8 @@ def test_rhetorical_tails_are_counted_across_different_endings():
     assert "都在句末反问" not in (text or "")
 
 
-def test_space_separated_clauses_are_named_when_frequent():
+@pytest.mark.parametrize("ending", ["", "。"])
+def test_space_separated_clauses_are_named_when_frequent(ending):
     lines = [
         "这杯咖啡好苦 可能豆子烘深了 先加点牛奶吧",
         "确实有点晃\t大概腿没拧紧\t把扳手递给我",
@@ -193,6 +207,7 @@ def test_space_separated_clauses_are_named_when_frequent():
         "今天队排好长 估计前面在拍照 咱先去旁边坐会",
         "这个饼真硬 估计在火上烤久了 下回点软一点的",
     ]
+    lines = [line + ending for line in lines]
     text = recent_habits(_history(*(_say(line) for line in [*lines, *VARIED[:2]])))
     assert text is not None and "6 条都是空格切分的三四段式长句" in text
 
