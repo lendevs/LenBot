@@ -16,10 +16,12 @@ from zoneinfo import ZoneInfo
 
 from .session import Chat
 from .freshness import topic_freshness
-from .declarations import AttentionArguments, Declared, declare, match_message, next_due, persisted, tick
+from .declarations import AttentionArguments, Declared, Intent, apply_pulse_matches, declare, match_message, next_due, persisted, tick
 from .disposition import Disposition, allows
+from .pulse import PULSE_BYPASS, PULSE_CHANNELS, PulseModel, PulseVerdict, pulse_prompt, request_pulse, shares_connection
 from .recap import estimate_content, estimate_request
 from .scene_control import SceneControlArguments, TemporaryQuiet, require_control
+from ..models.client import ChatModel
 from ..models.limits import BUDGET_CACHE_SECONDS, LimitReached, SpeechLimitReached, speech_quota
 from ..configuration.chat import Attention
 from ..platform.delivery import report_parts, split_expression
@@ -50,14 +52,12 @@ EFFECT_HALF_LIFE_SECONDS = 86400
 EFFECT_FLOOR = 0.5
 # Welcomed interjections shorten the interval by at most a fifth; disliked ones may double it.
 EFFECT_CEILING = 1.25
-PRIORITY = {"direct": 0, "named": 1, "attention": 2, "focus": 3, "ambient": 4, "explore": 5}
+PRIORITY = {"direct": 0, "focus": 1, "named": 2, "attention": 3, "ambient": 4, "explore": 5}
 REACTIONS = {"哈哈", "哈哈哈", "草", "6", "笑死", "啊", "哦", "嗯", ""}
 # Segments that carry no verbal text on their own; pure sticker/image turns without text do not consume focus.
 STICKER_SEGMENTS = frozenset({"image", "face", "mface", "marketface", "sticker", "text"})
 # Short meaningless backchannels that should not consume a focus follow-up window when not addressing the bot.
 FOCUS_FILLERS = frozenset({"嗯", "哦", "噢", "啊", "呃", "额", "哈", "呵", "哇", "草", "艹", "6", "啧", "哈哈", "哈哈哈", "笑死"})
-# The follow-up an interjection that answered no one opens: the next message from anyone.
-ANYONE = "*"
 # After the host was down or chat turns failed at the model, joining in looks only at this much recent chat.
 CATCH_UP_SECONDS = 300
 
@@ -98,12 +98,13 @@ class AttentionState:
     # When the bot last spoke here, and the mind entry of the last expression taken in.
     spoke_at: float | None = None
     spoke_through: int = 0
-    # Open follow-ups: whose next message wakes the bot without an @ (ANYONE after an interjection that
-    # answered no one), keyed to when the bot answered. Each one is used once.
+    # Whose next message wakes the bot without an @, keyed to when the bot answered. Each is used once.
     followups: dict[str, float] = field(default_factory=dict)
     # An interjection still waiting for someone to take it up.
     interjected_at: float | None = None
     ambient_last_at: float | None = None
+    pulse_through: int = 0
+    pulse_last_at: float | None = None
     # Interjections in a row nobody took up and looks at the chat that ended silent; each doubles the interval.
     silence_level: int = 0
     keyword_last: dict[str, float] = field(default_factory=dict)
@@ -149,6 +150,15 @@ class AttentionState:
 
 ATTENTION_FIELDS = {item.name for item in fields(AttentionState)}
 PENDING_FIELDS = {item.name for item in fields(PendingWake)}
+
+
+@dataclass
+class PulseSample:
+    mode: Literal['shadow', 'active']
+    channel: str | None
+    through: int
+    message_by_id: dict[str, ChatMessage]
+    verdict: PulseVerdict | None
 
 
 def is_direct(message: ChatMessage) -> bool:
@@ -205,8 +215,8 @@ class SceneRunner:
         self.own_ids = self.store.own_ids(self.config.scene)
         self.proactive = None if self.config.proactive is None else ProactiveStore(self.store)
         self.keywords = self.wake_words()
-        # People whose messages woke the running turn; the bot answering them opens their follow-ups.
-        self.turn_people: set[str] = set()
+        self.turn_people: list[str] = []
+        self.pulse_model: ChatModel | None = None
         saved = self.store.load_attention(self.config.scene)
         if saved is None:
             self.state = AttentionState()
@@ -224,6 +234,7 @@ class SceneRunner:
                 saved['disposition'] = Disposition(**saved['disposition'])
             self.state = AttentionState(**saved)
         restored = copy.deepcopy(self.state)
+        restored.followups.pop("*", None)
         attention_enabled = self.attention_enabled(chat.persona)
         self.enforcing = attention_enabled and self.settings.declarations.mode == 'enforce'
         restored.declared = restored.declared or Declared() if attention_enabled else None
@@ -551,19 +562,19 @@ class SceneRunner:
                          - math.log2(self.settings.ambient_min_interval_seconds))
 
     def note_own(self, state: AttentionState) -> None:
-        """Take in what the bot said since the last look. Each expression opens one follow-up: for the author of
-        the message it replied to, else for the people whose messages woke this turn, else for anyone."""
+        """Take in new expressions and open a follow-up for the person each one answered."""
         for entry, message in self.store.own_expressions_after(self.config.scene, state.spoke_through):
             state.spoke_through = entry
             state.spoke_at = message.time if state.spoke_at is None else max(state.spoke_at, message.time)
             if self.settings.focus_seconds <= 0:
                 continue
-            replied = (None if message.reply_to is None
-                       else self.store.find_message(self.config.scene, message.reply_to))
-            people = ([replied.sender.uid] if replied is not None and not replied.is_self
-                      else sorted(self.turn_people) or [ANYONE])
-            for person in people:
-                state.followups[person] = message.time
+            target_id = message.semantic_reply_to or message.reply_to
+            if target_id:
+                replied = self.store.find_message(self.config.scene, target_id)
+                if replied is not None and not replied.is_self:
+                    state.followups[replied.sender.uid] = message.time
+            elif self.chat.turn_channels & {'direct', 'focus'} and len(self.turn_people) == 1:
+                state.followups[self.turn_people[0]] = message.time
 
     def settle_followups(self, state: AttentionState, now: float) -> None:
         """Close follow-ups past their window; an interjection nobody took up doubles the next interval."""
@@ -574,14 +585,13 @@ class SceneRunner:
             state.silence_level = min(state.silence_level + 1, self.silence_cap())
 
     def followup_of(self, state: AttentionState, message: ChatMessage, at: float) -> str | None:
-        """The open follow-up this message takes: its sender's, else the one open to anyone."""
+        """The open follow-up for this sender, if the message can take it up."""
         if (self.settings.focus_seconds <= 0 or addressed_to_others(message, self.config.bot_id)
                 or is_focus_noise(message)):
             return None
-        for key in (message.sender.uid, ANYONE):
-            opened = state.followups.get(key)
-            if opened is not None and opened <= at <= opened + self.settings.focus_seconds:
-                return key
+        opened = state.followups.get(message.sender.uid)
+        if opened is not None and opened <= at <= opened + self.settings.focus_seconds:
+            return message.sender.uid
         return None
 
     def catch_followups(self, state: AttentionState) -> None:
@@ -620,7 +630,7 @@ class SceneRunner:
         if (state.declared is not None and settings.mode != 'context' and not message.is_self
                 and message.sender.uid not in self.settings.other_bot_ids and not self.settings.only_direct
                 and self.quiet_period(at) is None):
-            matches = match_message(state.declared, message, at)
+            matches = match_message(state.declared, message, at, pulse_active=self.pulse_active())
             for match in matches:
                 log_event(logger, 'attention_candidate', **match, mode=settings.mode)
 
@@ -655,6 +665,14 @@ class SceneRunner:
             return WakeVerdict(False, None, '来自其他 Bot')
         if self.quiet_period(at) is not None:
             return WakeVerdict(False, None, '群聊已关闭' if state.closed else '群聊已暂停' if state.paused else '安静时段')
+        local_blocked = False
+        followup = self.followup_of(state, message, at)
+        if followup is not None:
+            if self.local_allows(state, 'focus', message, at):
+                del state.followups[followup]
+                state.interjected_at = None
+                return offered(PendingWake('focus', at, people=[message.sender.uid]), '接着说')
+            local_blocked = True
         text = plain_text(message).casefold()
         words = [word for word in self.keywords if word in text and
                  (word not in state.keyword_last or at >= state.keyword_last[word] + self.settings.keyword_cooldown_seconds)]
@@ -668,14 +686,6 @@ class SceneRunner:
             # Held until the intent's rewake window ends; attention_tick then wakes on it.
             log_event(logger, 'attention_candidate_held', intents=[match['intent'] for match in matches],
                       message_id=message.platform_message_id)
-        local_blocked = False
-        followup = self.followup_of(state, message, at)
-        if followup is not None:
-            if self.local_allows(state, 'focus', message, at):
-                del state.followups[followup]
-                state.interjected_at = None
-                return offered(PendingWake('focus', at, people=[message.sender.uid]), '接着说')
-            local_blocked = True
         if not state.off and not is_focus_noise(message):
             tasks = TaskStore(self.store)
             if ((reply_to_own and tasks.has_waiting_input(self.config.scene))
@@ -924,7 +934,127 @@ class SceneRunner:
             pass  # Stop holding the input batch at its configured media deadline.
         return True
 
-    async def ready_messages(self, *, continuing: bool = False, in_turn: bool = False, wait: bool = True
+    def pulse_active(self) -> bool:
+        return self.settings.pulse.mode == 'active' and self.chat.mind is not None
+
+    def live_watches(self, now: float) -> list[Intent]:
+        declared = self.state.declared
+        return [] if declared is None else [
+            intent for intent in declared.intents
+            if intent.until > now and any(condition.get('watch') for condition in intent.conditions)
+        ]
+
+    def pulse_humans(self, pending: list[tuple[int, ChatMessage, float]]) -> list[tuple[int, ChatMessage, float]]:
+        excluded = set(self.settings.other_bot_ids) | set(self.config.permissions.blacklist)
+        return [item for item in pending if not item[1].is_self and item[1].sender.uid not in excluded]
+
+    def watch_sample_at(self, now: float) -> float | None:
+        if not self.enforcing or not self.pulse_active() or self.settings.only_direct:
+            return None
+        watches = self.live_watches(now)
+        if not watches:
+            return None
+        created = min(intent.created for intent in watches)
+        pending = self.store.pending_messages(self.config.scene, since=created)
+        if not any(seq > self.state.pulse_through for seq, _, _ in self.pulse_humans(pending)):
+            return None
+        last = self.state.pulse_last_at
+        return now if last is None else last + self.settings.pulse.sample_interval_seconds
+
+    def pulse_bypassed(self, scheduled: list[tuple[int, str]], *, baseline: bool) -> bool:
+        wake = self.state.pending
+        if (self.resume or scheduled or (wake is not None and wake.channel in PULSE_BYPASS)
+                or (self.chat.tasks is not None and self.chat.tasks.records.pending_notices(self.config.scene))
+                or self.audio_ready()):
+            return True
+        plugins = PluginStore(self.store)
+        return (bool(plugins.pending_plugin_events(self.config.scene)) if baseline
+                else plugins.plugin_wake_pending(self.config.scene))
+
+    async def sample_pulse(self, pending: list[tuple[int, ChatMessage, float]], notice_until: float | None,
+                           scheduled: list[tuple[int, str]]) -> PulseSample | None:
+        mode = self.settings.pulse.mode
+        mind = self.chat.mind
+        wake = self.state.pending
+        channel = None if wake is None else wake.channel
+        now = self.now()
+        if (mode == 'off' or mind is None or notice_until is not None or self.settings.only_direct
+                or self.quiet_period(now) is not None
+                or (channel is not None and channel not in PULSE_CHANNELS)):
+            return None
+        baseline = wake is not None and (self.closing or self.deadline() <= now)
+        if self.pulse_bypassed(scheduled, baseline=baseline):
+            return None
+        humans = self.pulse_humans(pending)
+        if not humans:
+            return None
+        fresh = [item for item in humans if item[0] > self.state.pulse_through]
+        channels = set() if channel is None else {channel}
+        if wake is not None and wake.explored:
+            channels.add('explore')
+        watches = self.live_watches(now)
+        if mode == 'active' and watches and fresh:
+            channels.add('watch')
+        messages, message_by_id = pulse_prompt(self.chat, fresh or humans, watches, channels)
+        settings = self.config.model_settings('pulse')
+        if settings == mind.settings:
+            model = mind
+        elif shares_connection(mind.settings, settings):
+            model = PulseModel(mind, settings)
+        else:
+            if self.pulse_model is None:
+                self.pulse_model = ChatModel(settings)
+            else:
+                await self.pulse_model.rebind(settings)
+            model = self.pulse_model
+        verdict = await request_pulse(self.chat, model, messages)
+        return PulseSample(mode, channel, humans[-1][0], message_by_id, verdict)
+
+    def settle_pulse(self, sample: PulseSample, *, baseline: bool) -> tuple[bool, str | None]:
+        now = self.now()
+        state = copy.deepcopy(self.state)
+        state.pulse_through = max(state.pulse_through, sample.through)
+        state.pulse_last_at = now
+        verdict = sample.verdict
+        log_event(logger, 'semantic_pulse', mode=sample.mode, channel=sample.channel or 'watch',
+                  decision='error' if verdict is None else verdict.decision,
+                  matched_watch_ids=[] if verdict is None else verdict.matched_watch_ids,
+                  target_msg_id=None if verdict is None else verdict.target_msg_id)
+        if sample.mode == 'shadow' or verdict is None:
+            self.save_state(state)
+            return baseline, None
+
+        declared = state.declared
+        matches = []
+        if (verdict.decision == 'wake' and declared is not None and self.enforcing
+                and sample.through > self.state.pulse_through):
+            matches = apply_pulse_matches(declared, verdict.matched_watch_ids, verdict.target_msg_id,
+                                          sample.message_by_id, now)
+            for match in matches:
+                log_event(logger, 'attention_candidate', **match, mode=self.settings.declarations.mode)
+        due = self.enforcing and declared is not None and any(declared.may_wake(match, now) for match in declared.matches)
+        # A semantic match still needs to satisfy the intent's other conditions and rewake window.
+        silent = verdict.decision == 'silent' or (self.enforcing and bool(verdict.matched_watch_ids) and not due)
+        if not baseline or silent:
+            if state.pending is not None and state.pending.channel in PULSE_CHANNELS and (silent or due):
+                if silent and not due and state.pending.channel == 'ambient':
+                    state.ambient_last_at = now
+                state.pending = None
+            if due:
+                state.offer(PendingWake('attention', now))
+        elif matches:
+            wakeable = [match for match in matches if declared.may_wake(match, now)]
+            if wakeable:
+                state.offer(PendingWake('attention', now))
+                if state.pending.channel == 'named':
+                    for match in wakeable:
+                        declared.find(match['intent']).woke_at = now
+        self.save_state(state)
+        target = sample.message_by_id.get(verdict.target_msg_id)
+        return due or (baseline and not silent), None if silent or target is None else target.sender.uid
+
+    async def ready_messages(self, *, continuing: bool = False, in_turn: bool = False, wait: bool = True,
+                             sample_watch: bool = False
                              ) -> tuple[list[tuple[int, ChatMessage, float]], float | None,
                                         list[tuple[int, str]]] | None:
         """Select current work; wait=False rechecks admission without burst/media waits."""
@@ -1004,12 +1134,17 @@ class SceneRunner:
                     continue
                 pending = self.store.pending_messages(self.config.scene)
                 return (pending, None, []) if pending or resuming else None
+            wake = self.state.pending
             deadline = self.deadline()
+            if sample_watch and period is None and (wake is None or wake.channel in PULSE_CHANNELS):
+                watch_at = self.watch_sample_at(now)
+                if watch_at is not None:
+                    deadline = watch_at if deadline is None else min(deadline, watch_at)
             if deadline is None:
                 return None
-            if self.state.pending.channel != "direct":
+            if wake is not None and wake.channel != "direct":
                 quiet_start = next_quiet_start(self.settings.quiet_hours, self.config.timezone,
-                                               self.state.pending.first_at)
+                                               wake.first_at)
                 if quiet_start is not None:
                     deadline = min(deadline, quiet_start)
             schedule_at = self.schedule_deadline(now)
@@ -1028,11 +1163,11 @@ class SceneRunner:
                         return None
                     continue
                 return self.store.pending_messages(self.config.scene), notice_until, []
-            if self.closing:
+            if self.closing and wake is not None:
                 # EOF drains accepted input without waiting for another arrival;
                 # a stopped network host rejects new turns at admission.
                 return self.store.pending_messages(self.config.scene), notice_until, []
-            if not wait:
+            if self.closing or not wait:
                 return None
             try:
                 await asyncio.wait_for(self.changed.wait(), timeout=delay)
@@ -1169,7 +1304,7 @@ class SceneRunner:
         state = self.consumed_state()
         if pending:
             if self.state.pending is not None:
-                self.turn_people.update(self.state.pending.people)
+                self.turn_people = list(dict.fromkeys(self.turn_people + self.state.pending.people))
             if self.state.pending is not None and self.state.pending.channel == "direct":
                 self.chat.reserve_revoked = False
                 self.chat.turn_messages = 0
@@ -1264,7 +1399,7 @@ class SceneRunner:
             self.emit({"type": "limit_notice", "status": "failed", "error": f"{type(failure).__name__}: {failure}"})
 
     async def _quiet_notice(self, pending: list[tuple[int, ChatMessage, float]], until: float) -> None:
-        self.turn_people = set() if self.state.pending is None else set(self.state.pending.people)
+        self.turn_people = []
         state = self.consumed_state()
         parts, note = None, None
         expressions = []
@@ -1304,8 +1439,10 @@ class SceneRunner:
                    "delivery": delivery, "expressions": expressions,
                    "quiet_until": datetime.fromtimestamp(until, ZoneInfo(self.config.timezone)).isoformat()})
 
-    async def _turn(self, channel: str, **turn) -> None:
-        self.turn_people = set() if self.state.pending is None else set(self.state.pending.people)
+    async def _turn(self, channel: str, *, pulse_target: str | None = None, **turn) -> None:
+        self.turn_people = [] if self.state.pending is None else self.state.pending.people.copy()
+        target_uids = (tuple(self.turn_people) if pulse_target is None
+                       else tuple(dict.fromkeys([pulse_target, *self.turn_people])))
         state = self.consumed_state(new_turn=True)
         through = state.spoke_through
         self.state, self.resume = state, False
@@ -1314,7 +1451,7 @@ class SceneRunner:
         with log_context(scene=self.config.scene):
             result = await self.chat.run_turn(append_new=self.append_during_turn, followup=self.followup_waiting,
                                               wait_for_messages=self.wait_for_messages,
-                                              attention_state=persisted(state), channel=channel, **turn)
+                                              attention_state=persisted(state), channel=channel, target_uids=target_uids, **turn)
         state = copy.deepcopy(self.state)
         self.note_own(state)
         channels = set(self.chat.turn_channels)
@@ -1424,25 +1561,45 @@ class SceneRunner:
 
     async def run(self) -> None:
         with log_context(scene=self.config.scene):
-            await self._run()
+            try:
+                await self._run()
+            finally:
+                if self.pulse_model is not None:
+                    await self.pulse_model.__aexit__()
+                    self.pulse_model = None
 
     async def _run(self) -> None:
         while True:
             if self.ready_for_turn is not None and not await self.ready_for_turn(True):
                 return
-            ready = await self.ready_messages()
+            ready = await self.ready_messages(sample_watch=True)
             if ready is not None:
+                pulse = await self.sample_pulse(*ready)
                 async with self.execution:
                     # Merging and lock acquisition may both await beyond a disconnect.
                     if self.ready_for_turn is not None and not await self.ready_for_turn(False):
                         continue
                     # Re-read after acquisition: a lock handoff can suspend even when unlocked.
                     ready = await self.ready_messages(wait=False)
+                    baseline = ready is not None
+                    if ready is None and pulse is not None:
+                        ready = await self.ready_messages(wait=False, sample_watch=True)
                     if ready is None:
                         continue
                     pending, notice_until, scheduled = ready
                     if notice_until is not None:
                         await self._quiet_notice(pending, notice_until)
+                        continue
+                    pulse_target = None
+                    if (pulse is not None and pulse.mode == self.settings.pulse.mode
+                            and not self.pulse_bypassed(scheduled, baseline=baseline)):
+                        current = None if self.state.pending is None else self.state.pending.channel
+                        if current in PULSE_CHANNELS and current != pulse.channel:
+                            continue
+                        proceed, pulse_target = self.settle_pulse(pulse, baseline=baseline)
+                        if not proceed:
+                            continue
+                    elif not baseline:
                         continue
                     quiet = self.quiet_period(self.now()) is not None
                     notices = (self.chat.tasks.records.pending_notices(self.config.scene)
@@ -1480,7 +1637,8 @@ class SceneRunner:
                                         if not scheduled and self.state.pending is not None else None)
                     await self._turn(channel, batch=batch, scheduled=scheduled, task_notices=notices,
                                     plugin_events=events or None,
-                                    direct=direct, wake_received_at=wake_received_at, channels=channels)
+                                    direct=direct, wake_received_at=wake_received_at, channels=channels,
+                                    pulse_target=pulse_target)
                 continue
             if self.closing:
                 return
