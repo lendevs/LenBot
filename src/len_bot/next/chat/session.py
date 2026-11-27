@@ -251,7 +251,8 @@ class Chat:
                       recap_target: CompactionPlan | None = None,
                       expression_ids: list[int] | None = None,
                       input_estimate: tuple[int, str] | None = None,
-                      recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
+                      recall_items: list[dict] | None = None, quick: bool = False,
+                      history_message_count: int | None = None) -> ModelReply:
         model_role = "mind" if role == "recap" else role
         model = getattr(self, model_role)
         def validate(reply: ModelReply) -> None:
@@ -275,6 +276,7 @@ class Chat:
                 validate=validate, append_to_scene=role == "mind",
                 expression_ids=self.expression_ids if role == "mind" else expression_ids,
                 input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
+                history_message_count=history_message_count,
                 trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
         except (ModelHTTPError, ModelConnectionError, TimeoutError) as error:
             # A TimeoutError raised here is the request's own limit; the turn's deadline cancels from outside.
@@ -553,7 +555,7 @@ class Chat:
 
     def causal_competition(self, scene: str, read_through: int, semantic_target_id: str | None,
                            semantic_target_uid: str | None, looked_up: bool, total_holds: int,
-                           weak_holds: int) -> Literal["strong", "weak"] | None:
+                           weak_holds: int, *, allow_weak: bool = True) -> Literal["strong", "weak"] | None:
         if total_holds >= 2:
             return None
         excluded = {*self.config.permissions.blacklist, *self.config.attention.other_bot_ids}
@@ -577,7 +579,8 @@ class Chat:
                 quoted = None if message.reply_to is None else self.store.find_message(scene, message.reply_to)
                 if message.reply_to is None or (quoted is not None and quoted.sender.uid == semantic_target_uid):
                     return "strong"
-            if looked_up and weak_holds < 1 and message.reply_to is None and plain_text(message).strip():
+            if (looked_up and allow_weak and weak_holds < 1 and message.reply_to is None
+                    and (bool(plain_text(message).strip()) or any(segment.type != "text" for segment in message.segments))):
                 weak = True
         return "weak" if weak else None
 
@@ -760,14 +763,16 @@ class Chat:
                 self.expression.sticker_candidates = []
 
                 def competition(semantic_target_id: str | None) -> Literal["strong", "weak"] | None:
+                    if not regular_can_extend and arbitration_bonus_used:
+                        return None
                     target = None if semantic_target_id is None else self.store.find_message(scene, semantic_target_id)
                     return self.causal_competition(scene, read_through, semantic_target_id,
                                                    None if target is None else target.sender.uid, looked_up,
-                                                   total_holds, weak_holds)
+                                                   total_holds, weak_holds, allow_weak=regular_can_extend)
 
-                async def hold_expression(semantic_target_id: str | None) -> bool:
+                def hold_expression_sync(semantic_target_id: str | None) -> bool:
                     nonlocal total_holds, weak_holds
-                    reason = await self.store.read(competition, semantic_target_id)
+                    reason = competition(semantic_target_id)
                     if reason is None:
                         return False
                     total_holds += 1
@@ -775,7 +780,14 @@ class Chat:
                         weak_holds += 1
                     return True
 
-                for step in range(self.config.max_steps):
+                async def hold_expression(semantic_target_id: str | None) -> bool:
+                    return await self.store.read(hold_expression_sync, semantic_target_id)
+
+                hold_expression.sync = hold_expression_sync
+                step = 0
+                step_cap = self.config.max_steps
+                arbitration_bonus_used = False
+                while step < step_cap:
                     self.trace_step = step + 1
                     self._check_stopped()
                     self.check_limits()
@@ -783,15 +795,17 @@ class Chat:
                                                           expression_style=expression_style, recalled=recalled)
                     read_through = await self.store.read(self.store.session_through, scene)
                     messages, tools = prepared.messages, self.toolset.tools
-                    if step + 1 == self.config.max_steps and looked_up and not expressions:
+                    if step + 1 == step_cap and looked_up and not expressions:
                         messages, tools = final_step(messages, tools, snapshot_index=prepared.snapshot_index)
                     if self.toolset.looked:
                         messages = with_images(messages, self.toolset.looked, snapshot_index=prepared.snapshot_index)
                     reply = await self.request(turn_id, "mind", messages, tools,
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method),
-                                               recall_items=recall_items, quick=False)
+                                               recall_items=recall_items, quick=False,
+                                               history_message_count=prepared.snapshot_index - 1)
                     self._check_stopped()
                     looked_up = looked_up or any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
+                    regular_can_extend = step + 1 < step_cap and extensions < self.config.attention.max_extensions
                     end_turn, group_failed, interrupted = False, False, False
                     # Several read-only calls in one reply run together; results are stored in call order.
                     parallel = [call for call in reply.tool_calls if call.name in PARALLEL_TOOLS]
@@ -901,27 +915,33 @@ class Chat:
                         status, error_text = "send_failed", f"连续 {failed_sends} 次发送没有确认送达"
                         break
                     if interrupted:
-                        if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
-                                and await append_new(True, turn_id)):
+                        if regular_can_extend and await append_new(True, turn_id):
                             extensions += 1
+                            step += 1
                             continue
+                        if not regular_can_extend and not arbitration_bonus_used:
+                            arbitration_bonus_used = True
+                            step_cap = max(step_cap, step + 2)
+                            if await append_new(True, turn_id):
+                                step += 1
+                                continue
                         status = "settled"
                         break
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the
                         # model as new input instead of waiting for the next turn. A scene runner decides
                         # who that is; without one, it is anyone in this turn's batch.
-                        if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
+                        if (regular_can_extend
                                 and (self.followup_arrived(talking) if followup is None else followup())
                                 and await append_new(True, turn_id)):
                             extensions += 1
+                            step += 1
                             continue
                         status = "settled"
                         break
-                    if step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions:
-                        if await append_new(bool(reply.tool_calls), turn_id):
-                            extensions += 1
-                            continue
+                    if regular_can_extend and await append_new(bool(reply.tool_calls), turn_id):
+                        extensions += 1
+                    step += 1
         except asyncio.CancelledError:
             self.store.finish_pending_tools(scene, "当前轮被取消")
             self.store.end_turn(turn_id, "cancelled", "CancelledError")

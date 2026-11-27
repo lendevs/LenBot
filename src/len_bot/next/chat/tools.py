@@ -384,7 +384,7 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
     if config.attention.disposition is not None:
         allowed = [with_disposition(tool, config.attention.disposition) for tool in allowed]
         allowed.append(end_turn_tool(config.attention.disposition))
-    elif persona.tools == "all" or "end_turn" in persona.tools or "say" in names:
+    else:
         allowed.append({"type": "function", "function": {
             "name": "end_turn",
             "description": "不需要回应、对方的问题已被他人解答或本轮事项已处理完毕时，静默结束本轮。",
