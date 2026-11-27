@@ -6,9 +6,11 @@ import asyncio
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import asdict
+import logging
 import re
 from typing import Annotated, Literal, TYPE_CHECKING
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 from .embeddings import EmbeddingClient, EmbeddingSettings
@@ -18,8 +20,9 @@ from .summary import MemorySummarizer
 from .role_paths import require_bot_path
 from .sections import Section, evidence, excerpt, split_sections
 from ..platform.messages import ChatMessage, plain_text, render_message
-from ..models.client import ChatModel
+from ..models.client import ChatModel, ModelConnectionError, ModelHTTPError
 from ..models.slots import ModelSlots
+from ..runtime.logs import log_event
 from ..storage.store import Store, encode
 from ..models.tokens import token_record
 from ..models.usage import record_usage
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
     from ..config import SharedConfig
 
 
+logger = logging.getLogger(__name__)
 STRICT = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 Scope = Literal["scene", "public"]
 
@@ -402,7 +406,10 @@ class MemoryService:
             seen.add((scope, path))
             budget -= len(shown)
 
-        users = list(dict.fromkeys(message.sender.uid for message in reversed(relevant)))[:4]
+        own_uids = {message.sender.uid for message in messages if message.is_self and message.scene == scene}
+        candidates = [uid for uid in target_uids if uid and uid not in own_uids]
+        candidates.extend(message.sender.uid for message in reversed(relevant))
+        users = list(dict.fromkeys(candidates))[:4]
         profiles = await self.backend.profiles(scene, users)
         # Keep room for the latest topic; source and dates remain in the real file text.
         per_profile = min(900, budget // 2 // len(profiles)) if profiles else 0
@@ -447,9 +454,18 @@ class MemoryService:
         query_entries: list[tuple[dict, str, bool]] = []
         if query and budget > 0:
             fetch_limit = min(100, max(recall_limit * 8, 50)) if resource_intent else recall_limit
-            raw_hits = [hit for hit in await self.search(scene, query, fetch_limit, automatic=True,
-                                                         text_query=text_query, persona=persona)
-                        if (hit["scope"], hit["path"]) not in seen]
+            search = self.search(scene, query, fetch_limit, automatic=True, text_query=text_query, persona=persona)
+            if text_only or vector_timeout_seconds is None:
+                hits = await search
+            else:
+                try:
+                    hits = await asyncio.wait_for(search, timeout=vector_timeout_seconds)
+                except (OSError, httpx.HTTPError, ModelHTTPError, ModelConnectionError) as error:
+                    log_event(logger, 'memory_recall_vector_degraded', '自动记忆召回改用字面检索',
+                              level=logging.WARNING, scene=scene, timeout_seconds=vector_timeout_seconds, error=error)
+                    text_only = True
+                    hits = await self.search(scene, text_query, fetch_limit, automatic=True, persona=persona, literal=True)
+            raw_hits = [hit for hit in hits if (hit["scope"], hit["path"]) not in seen]
             selected = _select_recall_hits(raw_hits, recall_limit, prefer_resource=resource_intent,
                                            require_evidence=text_only, match_query=text_query)
             query_entries = [(hit, text_query, text_only) for hit in selected]
