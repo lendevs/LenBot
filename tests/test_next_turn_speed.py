@@ -1,4 +1,4 @@
-"""Turn pacing: the last step of a lookup speaks, and requests after expressions think briefly."""
+"""Turn pacing, main reasoning effort and Chat-Last request assembly."""
 
 from __future__ import annotations
 
@@ -66,6 +66,16 @@ async def _unused_wait(_: float) -> str:
     return 'unused'
 
 
+def _snapshot(body: dict) -> str | list[dict]:
+    for message in body['messages']:
+        if message['role'] == 'user':
+            content = message['content']
+            first_text = content if isinstance(content, str) else content[0]['text']
+            if '<当前场景状态与参考>' in first_text:
+                return content
+    raise AssertionError('请求缺少轮次快照')
+
+
 async def _turn(config, persona, replies, later: list[tuple[int, str]] = (), wrap=None, image=False):
     """One direct turn; ``later`` messages arrive after the turn's input was taken."""
     received = []
@@ -101,7 +111,7 @@ async def _turn(config, persona, replies, later: list[tuple[int, str]] = (), wra
 
 
 @pytest.mark.asyncio
-async def test_last_step_after_a_lookup_offers_only_speech(tmp_path):
+async def test_last_step_after_a_lookup_offers_expression_and_silence(tmp_path):
     config, persona = _instance(tmp_path)
     result, bodies = await _turn(config, persona, [
         _calls(('recall_chat', {'action': 'recent'})),
@@ -109,9 +119,13 @@ async def test_last_step_after_a_lookup_offers_only_speech(tmp_path):
     ])
     assert result['status'] == 'settled', result['error']
     first, last = ({tool['function']['name'] for tool in body['tools']} for body in bodies)
-    assert 'recall_chat' in first and last <= {'say', 'react'} and 'say' in last
-    assert '这是本轮最后一步' in bodies[1]['messages'][-1]['content']
-    assert '这是本轮最后一步' not in bodies[0]['messages'][-1]['content']
+    assert 'recall_chat' in first and last <= {'say', 'react', 'message_reaction', 'end_turn'}
+    assert {'say', 'end_turn'} <= last
+    assert '这是本轮最后一步' in _snapshot(bodies[1])
+    assert '还没查到的也说一声' not in _snapshot(bodies[1])
+    assert '这是本轮最后一步' not in _snapshot(bodies[0])
+    assert bodies[1]['messages'][-1]['role'] == 'tool'
+    assert '这是本轮最后一步' not in bodies[1]['messages'][-1]['content']
 
 
 @pytest.mark.asyncio
@@ -123,7 +137,7 @@ async def test_last_step_keeps_all_tools_once_the_turn_has_spoken(tmp_path):
     ])
     assert result['status'] == 'settled', result['error']
     assert 'recall_chat' in {tool['function']['name'] for tool in bodies[1]['tools']}
-    assert '这是本轮最后一步' not in bodies[1]['messages'][-1]['content']
+    assert '这是本轮最后一步' not in _snapshot(bodies[1])
 
 
 @pytest.mark.asyncio
@@ -150,7 +164,7 @@ async def test_other_people_talking_does_not_hold_the_turn_open(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_new_messages_use_the_quick_effort_and_tool_results_the_full_one(tmp_path):
+async def test_new_messages_and_tool_results_use_the_main_reasoning_effort(tmp_path):
     config, persona = _instance(tmp_path, reasoning_effort='high', quick_reasoning_effort='low')
     config.max_steps = 4
     result, bodies = await _turn(config, persona, [
@@ -158,11 +172,11 @@ async def test_new_messages_use_the_quick_effort_and_tool_results_the_full_one(t
         _calls(('say', {'content': '找到了', 'end_turn': True})),
     ])
     assert result['status'] == 'settled', result['error']
-    assert [body['reasoning_effort'] for body in bodies] == ['low', 'high']
+    assert [body['reasoning_effort'] for body in bodies] == ['high', 'high']
     with Store(config.database) as store:
         recorded = [json.loads(row[0])['settings']['reasoning_effort'] for row in
                     store.db.execute("SELECT request FROM model_calls WHERE role='mind' ORDER BY id")]
-    assert recorded == ['low', 'high']
+    assert recorded == ['high', 'high']
 
 
 def test_quick_effort_is_checked_against_the_provider_at_load(tmp_path):
@@ -211,8 +225,8 @@ async def test_without_a_vision_model_the_mind_sees_the_image_for_the_rest_of_th
         _calls(('say', {'content': '看到了', 'end_turn': True})),
     ], image=True)
     assert result['status'] == 'settled', result['error']
-    assert isinstance(bodies[0]['messages'][-1]['content'], str)
-    state = bodies[1]['messages'][-1]['content']
+    assert isinstance(_snapshot(bodies[0]), str)
+    state = _snapshot(bodies[1])
     assert state[1] == {'type': 'text', 'text': '<消息 50001 的第 1 张图片>'}
     assert state[2]['image_url']['url'].startswith('data:image/jpeg;base64,')
     tool = next(message for message in bodies[1]['messages'] if message['role'] == 'tool')

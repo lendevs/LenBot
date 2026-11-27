@@ -56,8 +56,8 @@ class MessageReactionArguments(BaseModel):
 
 
 MESSAGE_REACTION_TOOL = {"type": "function", "function": {
-    "name": "message_reaction", "description": "偶尔给本群某条消息贴一个 QQ 表情回应，适合简短认同或接梗。"
-    "这是低频的独立行动；通常仍使用 say 或 react。通过 NapCat、SnowLuma 的消息表情回应接口执行。",
+    "name": "message_reaction", "description": "给本群某条消息贴一个 QQ 表情回应，适合简短认同、收到或接梗；"
+    "不想打字刷屏时可直接贴表情代替发言。通过 NapCat、SnowLuma 的消息表情回应接口执行。",
     "parameters": MessageReactionArguments.model_json_schema(),
 }}
 
