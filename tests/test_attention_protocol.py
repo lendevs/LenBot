@@ -180,10 +180,13 @@ async def test_disabled_tool_is_not_executable_and_off_state_keeps_original_shap
         live = SceneRunner(Chat(config, persona, store, None), lambda event: None)
         assert 'declared' not in store.load_attention(SCENE)
         assert 'disposition' not in store.load_attention(SCENE)
-        assert not {'attention', 'end_turn'} & live.chat.toolset.tool_names
+        assert 'attention' not in live.chat.toolset.tool_names
+        assert 'end_turn' in live.chat.toolset.tool_names
         turn = store.start_turn(SCENE)
         with pytest.raises(ValueError, match='未开放'):
             await live.chat.toolset.execute(turn, ToolCall('x', 'attention', {'action': 'drop', 'id': 'i1'}), _unused_wait)
+        with pytest.raises(ValueError, match='不接受额外参数'):
+            await live.chat.toolset.execute(turn, ToolCall('x2', 'end_turn', {'disposition': {'state': 'open'}}), _unused_wait)
 
 
 @pytest.mark.asyncio
