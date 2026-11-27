@@ -99,7 +99,7 @@ async def test_restored_chat_requests_keep_host_state_separate_with_unavailable_
     messages = received[0][2]['messages']
     assert not any(isinstance(message.get('content'), str) and message['content'].startswith('宿主启动状态：')
                    for message in messages)
-    assert '在吗' in messages[-2]['content'] and '<宿主恢复状态>' in messages[-1]['content']
+    assert '<宿主恢复状态>' in messages[-2]['content'] and '在吗' in messages[-1]['content']
 
 
 async def _no_new_messages():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
@@ -17,17 +18,25 @@ class Condition(BaseModel):
         description='条件种类。例：{"type":"person","people":["onebot:70001"]} 或 {"type":"at","minutes":5}。')
     people: list[str] | None = Field(default=None, min_length=1)
     message_id: str | None = Field(default=None, min_length=1)
+    watch: str | None = Field(default=None, min_length=1, description="用一句自然语言描述要留意的群内话题或回答内容。")
     keywords: list[str] | None = Field(default=None, min_length=1)
     minutes: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode='after')
     def fields_for_type(self) -> Condition:
         required = {'person': {'people'}, 'thread': {'message_id'}, 'open_question': {'message_id'},
-                    'topic': {'keywords'}, 'at': {'minutes'}}[self.type]
-        allowed = required | ({'keywords'} if self.type == 'open_question' else set())
-        supplied = {key for key in ('people', 'message_id', 'keywords', 'minutes') if getattr(self, key) is not None}
+                    'topic': set(), 'at': {'minutes'}}[self.type]
+        allowed = required | ({'watch', 'keywords'} if self.type in {'topic', 'open_question'} else set())
+        supplied = {key for key in ('people', 'message_id', 'watch', 'keywords', 'minutes')
+                    if getattr(self, key) is not None}
         if not required <= supplied or supplied - allowed:
             raise ValueError(f'{self.type} 需要 {sorted(required)}，只接受 {sorted(allowed)}')
+        if self.type == 'topic' and not supplied:
+            raise ValueError('topic 需要 watch 或 keywords')
+        if self.watch is not None:
+            self.watch = self.watch.strip()
+            if not self.watch:
+                raise ValueError('watch 不能为空白')
         if self.people is not None and any(':' not in person or not person.split(':', 1)[1] for person in self.people):
             raise ValueError('people 必须是平台账号，例如 onebot:70001')
         if self.keywords is not None:
@@ -70,7 +79,8 @@ ATTENTION_TOOL = {'type': 'function', 'function': {
     'name': 'attention',
     'description': '持续关注未来事件或等待补充。intend 创建意图，带 id 修改；keep 保持；resolve 确认已完成；drop 放弃。'
         '意图跨回合保留，与 open/closed 收尾互相独立。person 匹配指定账号，thread 匹配回复链，'
-        'open_question 匹配回复链或关键词，topic 匹配关键词；条件命中后你会醒来，自行判断是否完成。'
+        'open_question 匹配回复链或所等的回答，topic 匹配所等的话题。用一句自然语言填写两者的 watch，描述要等什么；'
+        '条件命中后你会醒来，自行判断是否完成。'
         'at 在指定分钟后检查一次，必须早于意图到期；没有新消息也可触发。'
         'any 是任一条件满足，all 是全部消息条件满足。意图在 resolve、drop 或到期时结束。'
         'end_turn=true 可在操作后结束本轮。',
@@ -200,28 +210,63 @@ def declare(declared: Declared, args: AttentionArguments, settings: AttentionDec
     return {'action': 'intend', 'id': identifier, 'updated': previous is not None}
 
 
-def match_message(declared: Declared, message: ChatMessage, now: float) -> list[dict]:
+WATCH_FILLERS = {"群友", "有人", "讨论", "提到", "关于", "回复", "回答", "消息", "内容", "什么", "怎么", "是否", "有没有"}
+WATCH_WORDS = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff]{2,}|(?:(?![\u3400-\u4dbf\u4e00-\u9fff])[^\W_]){2,}')
+
+
+def matches_text(condition: dict, text: str, *, pulse_active: bool) -> bool:
+    if any(word in text for word in condition.get('keywords', [])):
+        return True
+    watch = condition.get('watch')
+    return not pulse_active and bool(watch) and any(
+        word in text for word in WATCH_WORDS.findall(watch.casefold()) if word not in WATCH_FILLERS)
+
+
+def matches_condition(condition: dict, message: ChatMessage, text: str, *, pulse_active: bool) -> bool:
+    kind = condition['type']
+    if kind == 'person':
+        return message.sender.uid in condition['people']
+    if kind in {'thread', 'open_question'} and message.reply_to in condition['chain']:
+        return True
+    return kind in {'topic', 'open_question'} and matches_text(condition, text, pulse_active=pulse_active)
+
+
+def match_message(declared: Declared, message: ChatMessage, now: float, *, pulse_active: bool = False) -> list[dict]:
     text = plain_text(message).casefold()
     matched = []
     for intent in declared.intents:
         values = []
         for condition in intent.conditions:
-            kind = condition['type']
-            if kind == 'person':
-                value = message.sender.uid in condition['people']
-            elif kind in {'thread', 'open_question'}:
-                value = message.reply_to is not None and message.reply_to in condition['chain']
-                if value and message.platform_message_id is not None:
-                    condition['chain'] = (condition['chain'] + [message.platform_message_id])[-50:]
-                if kind == 'open_question':
-                    value = value or any(word in text for word in condition.get('keywords', []))
-            elif kind == 'topic':
-                value = any(word in text for word in condition['keywords'])
-            else:
-                value = False  # Timers only fire from tick, not from messages.
-            values.append(value)
+            values.append(matches_condition(condition, message, text, pulse_active=pulse_active))
+            if (condition['type'] in {'thread', 'open_question'} and message.reply_to in condition['chain']
+                    and message.platform_message_id is not None):
+                condition['chain'] = (condition['chain'] + [message.platform_message_id])[-50:]
         if (any(values) if intent.match == 'any' else all(values)):
             matched.append(declared.candidate(intent, now, message.platform_message_id))
+    return matched
+
+
+def apply_pulse_matches(declared: Declared, matched_watch_ids: list[str], target_msg_id: str | None,
+                        message_by_id: dict[str, ChatMessage], now: float) -> list[dict]:
+    if not message_by_id:
+        return []
+    message_id = target_msg_id if target_msg_id in message_by_id else next(reversed(message_by_id))
+    target = message_by_id[message_id]
+    target_text = plain_text(target).casefold()
+    matched = []
+    for intent in declared.intents:
+        if intent.until <= now or intent.id not in matched_watch_ids or not any(
+            condition.get('watch') for condition in intent.conditions
+        ):
+            continue
+        if intent.match == 'all' and not all(
+            matches_condition(condition, target, target_text, pulse_active=True)
+            for condition in intent.conditions if not condition.get('watch')
+        ):
+            continue
+        # Keep an already due timer for the same intent; message matches use the normal rewake window.
+        if not any(match['intent'] == intent.id and match['message_id'] is None for match in declared.matches):
+            matched.append(declared.candidate(intent, now, message_id))
     return matched
 
 

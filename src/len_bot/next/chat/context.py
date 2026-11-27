@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import math
@@ -19,7 +20,7 @@ from .group_voice import describe as describe_group_voice
 from .persona_avoid import avoidance_text
 from .quiet import quiet_period
 from .reply_feedback import reply_feedback
-from .recap import project_history
+from .recap import compact_say_receipts, expression_not_sent, project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
 from ..tools.discovery import deferred_names, discovery_view
@@ -225,21 +226,24 @@ TEMPLATE_GRAM = 6
 
 def _expressions(entries: Sequence[tuple[int, dict]]) -> list[tuple[str, dict]]:
     """The latest own ``say`` and ``react`` calls in the history, newest first."""
+    results = {message["tool_call_id"]: message["content"] for _, message in entries
+               if message["role"] == "tool"}
     expressions = []
     for _, message in reversed(entries):
         if message["role"] != "assistant":
             continue
         for call in reversed(message.get("tool_calls") or []):
-            if call["function"]["name"] not in ("say", "react"):
+            name = call["function"]["name"]
+            if name not in ("say", "react") or expression_not_sent(name, results.get(call["id"])):
                 continue
             try:
                 arguments = json.loads(call["function"]["arguments"] or "{}")
             except ValueError:
                 continue
             if isinstance(arguments, dict):
-                if call["function"]["name"] == "react" and arguments.get("preview"):
+                if name == "react" and arguments.get("preview"):
                     continue
-                expressions.append((call["function"]["name"], arguments))
+                expressions.append((name, arguments))
         if len(expressions) >= HABIT_WINDOW:
             break
     return expressions[:HABIT_WINDOW]
@@ -307,10 +311,11 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
 
     The model reads its earlier lines as the strongest example of how it talks, so a phrase or a
     sentence shape that slipped in a few times tends to stay. Words, the opening and ending of each
-    line, the opening of its last clause and two-piece templates are counted; ``heard`` is what
-    others said recently, and words they use belong to the topic and are not named. Ordinary
-    single-character sentence-final punctuation is ignored, and extreme sticker streaks (almost every
-    turn, or a pure-text rut when stickers are available) are gently noted.
+    line, the opening of its last clause, two-piece templates, short question openers, rhetorical
+    endings and space-separated clauses are counted. ``heard`` is what others said recently, and
+    words they use belong to the topic and are not named. Ordinary single-character sentence-final
+    punctuation is ignored, and extreme sticker streaks (almost every turn, or a pure-text rut when
+    stickers are available) are gently noted.
     """
     expressions = _expressions(entries)
     if len(expressions) < 5:
@@ -362,7 +367,7 @@ def recent_habits(entries: Sequence[tuple[int, dict]], heard: Sequence[str] = ()
 
 
 def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str]:
-    """Sentence shapes shared by half of the texts: how they open, end and close, and templates."""
+    """Name recurring openings, endings, clause shapes and templates."""
     enough = max(4, math.ceil(len(texts) / 2))
     taken = list(words)
     shapes = []
@@ -390,6 +395,31 @@ def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str
         shapes.append(f"{closing[1]} 条最后一句都用「{closing[0]}」起头")
         taken.append(closing[0])
     shapes.extend(f"{count} 条用了「{template}」这样的句式" for template, count in _templates(texts, enough, taken, others))
+
+    echo_opening = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9]{1,6}[？?]\s*\S")
+    echo_openings = sum(echo_opening.match(text.lstrip()) is not None for text in texts)
+    if echo_openings >= enough:
+        shapes.append(f"{echo_openings} 条用「短词+问号」复读起头")
+
+    rhetorical_tail = re.compile(
+        r"(?:(?:吗|是吧|对吧|不是吗|对不对|是不是|行不行|好不好)[？?~～！!。.\s]*$|还是[^，,。！？!?\s]{1,8}[呀啊吗]?[？?][~～！!\s]*$)"
+    )
+    rhetorical_tails = sum(rhetorical_tail.search(text.rstrip()) is not None for text in texts)
+    if rhetorical_tails >= max(4, math.ceil(len(texts) * 0.6)):
+        shapes.append(f"{rhetorical_tails} 条都在句末反问")
+
+    spaced_clauses = 0
+    for text in texts:
+        text = text.strip()
+        if len(text) >= 2 and text[-1] in "。！!？?." and text[-2] not in "，,。！？!?；;：:.":
+            text = text[:-1]
+        if re.search(r"[，,。！？!?；;：:.\n]", text):
+            continue
+        parts = re.split(r"[ \t\u3000]+", text.rstrip())
+        if 3 <= len(parts) <= 5 and all(HAN.search(part) for part in parts) and len(HAN.findall(text)) >= 12:
+            spaced_clauses += 1
+    if spaced_clauses >= max(5, math.ceil(len(texts) * 0.65)):
+        shapes.append(f"{spaced_clauses} 条都是空格切分的三四段式长句")
     return shapes
 
 
@@ -451,6 +481,23 @@ def current_attention(config: LabConfig, store: Store, *, quiet: dict | None = N
             text += '\n持续关注：' + encode(declared.view(now))
             text += '\n本轮候选：' + encode(declared.turn_matches)
     return '<当前关注>\n' + text + '\n</当前关注>'
+
+
+@dataclass(frozen=True)
+class ContextProjection:
+    """Explicit 3-part Chat-Last projection: settled history, turn-opening snapshot, and live turn entries."""
+
+    system: dict
+    history: list[dict]
+    snapshot: dict
+    current: list[dict]
+
+    @property
+    def snapshot_index(self) -> int:
+        return 1 + len(self.history)
+
+    def messages(self) -> list[dict]:
+        return [self.system, *self.history, self.snapshot, *self.current]
 
 
 class ChatContext:
@@ -521,11 +568,11 @@ class ChatContext:
         entries = self.conversation_entries(entries)
         thought_template = Template(read_prompt("next_unspoken_thought.md"))
         projected_entries: list[tuple[int, dict]] = []
-        for seq, message in project_old_results(
+        for seq, message in compact_say_receipts(project_old_results(
             entries,
             self.config.compaction.keep_recent_tokens,
             protect_from_seq=protect_from_seq,
-        ):
+        )):
             for projected in project_messages([message], self.config.models.roles.mind.history_policy):
                 if (projected["role"] == "assistant" and not projected.get("tool_calls")
                         and isinstance(projected.get("content"), str) and projected["content"].strip()):
@@ -542,17 +589,18 @@ class ChatContext:
         refs = self.references(entries)
         return discovered, attention, refs
 
-    async def project(
+    async def project_parts(
         self,
         recap: str | None,
         entries: list[tuple[int, dict]],
         state: dict,
         *,
         protect_from_seq: int | None = None,
-    ) -> list[dict]:
-        entries = self.project_entries(entries, protect_from_seq=protect_from_seq)
+        turn_floor_seq: int | None = None,
+    ) -> ContextProjection:
+        projected = self.project_entries(entries, protect_from_seq=protect_from_seq)
         quiet = None if self.quiet_state is None else self.quiet_state()
-        discovered, attention, refs = await self.store.read(self._project_reads, entries, quiet)
+        discovered, attention, refs = await self.store.read(self._project_reads, projected, quiet)
         self.refresh_tools(discovered)
         if self.host_state is not None:
             state = {**state, 'content': state['content'] + '\n<宿主恢复状态>\n' + self.host_state + '\n</宿主恢复状态>'}
@@ -563,7 +611,37 @@ class ChatContext:
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
         state = {**state, 'content': state['content'] + '\n' + attention}
         state = {**state, 'content': '\n'.join([state['content'], *refs])}
-        return [{"role": "system", "content": self.system}] + project_history(recap, entries) + [state]
+        history_entries, current = [], []
+        for seq, message in projected:
+            if turn_floor_seq is not None and seq > turn_floor_seq:
+                current.append(message)
+                continue
+            content = message["content"]
+            if message["role"] == "user" and isinstance(content, str):
+                text, separator, freshness = content.rpartition("\n<话题新鲜度>\n")
+                if separator and freshness.rstrip().endswith("</话题新鲜度>"):
+                    message = {**message, "content": text}
+            history_entries.append((seq, message))
+        return ContextProjection(
+            system={"role": "system", "content": self.system},
+            history=project_history(recap, history_entries),
+            snapshot=state,
+            current=current,
+        )
+
+    async def project(
+        self,
+        recap: str | None,
+        entries: list[tuple[int, dict]],
+        state: dict,
+        *,
+        protect_from_seq: int | None = None,
+        turn_floor_seq: int | None = None,
+    ) -> list[dict]:
+        parts = await self.project_parts(
+            recap, entries, state, protect_from_seq=protect_from_seq, turn_floor_seq=turn_floor_seq,
+        )
+        return parts.messages()
 
     def references(self, entries: list[tuple[int, dict]]) -> list[str]:
         """The turn's closing reference material, in order: how members here write, what the own

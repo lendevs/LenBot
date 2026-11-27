@@ -107,7 +107,7 @@ export interface ToolDetail {
   name: string
   arguments: Record<string, unknown>
   result: string | null
-  status: 'pending' | 'complete' | 'error' | 'interrupted'
+  status: 'pending' | 'complete' | 'error' | 'interrupted' | 'held'
   messages: TimelineMessage[]
 }
 

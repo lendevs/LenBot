@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import asdict
+import logging
 import re
 from typing import Annotated, Literal, TYPE_CHECKING
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 from .embeddings import EmbeddingClient, EmbeddingSettings
@@ -17,8 +20,9 @@ from .summary import MemorySummarizer
 from .role_paths import require_bot_path
 from .sections import Section, evidence, excerpt, split_sections
 from ..platform.messages import ChatMessage, plain_text, render_message
-from ..models.client import ChatModel
+from ..models.client import ChatModel, ModelConnectionError, ModelHTTPError
 from ..models.slots import ModelSlots
+from ..runtime.logs import log_event
 from ..storage.store import Store, encode
 from ..models.tokens import token_record
 from ..models.usage import record_usage
@@ -27,6 +31,7 @@ if TYPE_CHECKING:
     from ..config import SharedConfig
 
 
+logger = logging.getLogger(__name__)
 STRICT = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 Scope = Literal["scene", "public"]
 
@@ -371,7 +376,8 @@ class MemoryService:
             result = {"changes": await self.history(scene, item.path)}
         return encode(result)
 
-    async def recall(self, scene: str, messages: list[ChatMessage], cues: str = "") -> dict:
+    async def recall(self, scene: str, messages: list[ChatMessage], cues: str = "", *,
+                     target_uids: Sequence[str] = (), vector_timeout_seconds: float | None = 0.75) -> dict:
         """Recall from actual chat only; returned text never becomes a native history entry.
 
         ``cues`` (see ``recall_cues``) find what the recent chat does not name; their hits only use the
@@ -400,7 +406,19 @@ class MemoryService:
             seen.add((scope, path))
             budget -= len(shown)
 
-        users = list(dict.fromkeys(message.sender.uid for message in reversed(relevant)))[:4]
+        own_uids = {message.bot_id for message in messages if message.scene == scene}
+        candidates = [uid for uid in target_uids if uid and uid not in own_uids]
+        candidates.extend(message.sender.uid for message in reversed(relevant))
+        active_uids = set(candidates)
+
+        def eligible_hit(hit: dict) -> bool:
+            path = hit["path"]
+            if hit["scope"] == "scene" and path.startswith("people/"):
+                uid, _, relative_path = path.removeprefix("people/").partition("/")
+                return bool(relative_path) and uid in active_uids
+            return True
+
+        users = list(dict.fromkeys(candidates))[:4]
         profiles = await self.backend.profiles(scene, users)
         # Keep room for the latest topic; source and dates remain in the real file text.
         per_profile = min(900, budget // 2 // len(profiles)) if profiles else 0
@@ -445,9 +463,18 @@ class MemoryService:
         query_entries: list[tuple[dict, str, bool]] = []
         if query and budget > 0:
             fetch_limit = min(100, max(recall_limit * 8, 50)) if resource_intent else recall_limit
-            raw_hits = [hit for hit in await self.search(scene, query, fetch_limit, automatic=True,
-                                                         text_query=text_query, persona=persona)
-                        if (hit["scope"], hit["path"]) not in seen]
+            search = self.search(scene, query, fetch_limit, automatic=True, text_query=text_query, persona=persona)
+            if text_only or vector_timeout_seconds is None:
+                hits = await search
+            else:
+                try:
+                    hits = await asyncio.wait_for(search, timeout=vector_timeout_seconds)
+                except (OSError, httpx.HTTPError, ModelHTTPError, ModelConnectionError) as error:
+                    log_event(logger, 'memory_recall_vector_degraded', '自动记忆召回改用字面检索',
+                              level=logging.WARNING, scene=scene, timeout_seconds=vector_timeout_seconds, error=error)
+                    text_only = True
+                    hits = await self.search(scene, text_query, fetch_limit, automatic=True, persona=persona, literal=True)
+            raw_hits = [hit for hit in hits if eligible_hit(hit) and (hit["scope"], hit["path"]) not in seen]
             selected = _select_recall_hits(raw_hits, recall_limit, prefer_resource=resource_intent,
                                            require_evidence=text_only, match_query=text_query)
             query_entries = [(hit, text_query, text_only) for hit in selected]
@@ -463,7 +490,7 @@ class MemoryService:
             cue_fetch = min(100, max(CUE_HITS * 8, 50))
             prefetched_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
                                                                     persona=persona, literal=True)
-                                   if (hit["scope"], hit["path"]) not in query_keys]
+                                   if eligible_hit(hit) and (hit["scope"], hit["path"]) not in query_keys]
             resource_cue = next(
                 (hit for hit in prefetched_cue_hits
                  if _is_resource_hit(hit) and evidence(hit["preview"], cues) > 0),
@@ -492,7 +519,7 @@ class MemoryService:
                 cue_fetch = min(100, max(CUE_HITS * 8, 50)) if (cue_prefer_resource and not has_resource) else CUE_HITS
                 raw_cue_hits = [hit for hit in await self.search(scene, cues, cue_fetch, automatic=True,
                                                                  persona=persona, literal=True)
-                                if (hit["scope"], hit["path"]) not in seen]
+                                if eligible_hit(hit) and (hit["scope"], hit["path"]) not in seen]
             else:
                 raw_cue_hits = [hit for hit in prefetched_cue_hits if (hit["scope"], hit["path"]) not in seen]
             cue_hits = _select_recall_hits(raw_cue_hits, CUE_HITS,

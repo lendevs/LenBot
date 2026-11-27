@@ -40,6 +40,7 @@ class ChatMessage:
     is_self: bool
     send_status: SendStatus
     recalled: bool = False
+    semantic_reply_to: str | None = None
 
 
 @dataclass(frozen=True)

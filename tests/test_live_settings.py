@@ -129,9 +129,10 @@ async def test_settings_apply_to_wake_learning_permissions_and_platform_connecti
                         while (latest := runtime.learning.state(SCENE)['latest']) is None or latest['status'] == 'running':
                             await asyncio.sleep(.01)
                     assert latest['status'] == 'complete'
-                    # The upkeep request continues the chat request: same tools, an instruction appended.
+                    # The upkeep request continues the chat request (without its turn snapshot): same tools, an instruction appended.
                     assert requests[-1]['tools'] == requests[-2]['tools']
-                    chat = requests[-2]['messages'][:-1]
+                    chat = [item for item in requests[-2]['messages']
+                            if not (item['role'] == 'user' and str(item.get('content', '')).startswith('<当前场景状态与参考>'))]
                     assert requests[-1]['messages'][:len(chat)] == chat
                     disabled = await client.put(learning_url, json={'learning': None})
                     assert disabled.status_code == 200 and not disabled.json()['restart_required']

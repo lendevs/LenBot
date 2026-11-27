@@ -22,12 +22,12 @@ def _native(message: dict, settings: ModelSettings):
     return None
 
 
-def _history(settings: ModelSettings, messages: list[dict]) -> list[dict]:
+def _history(settings: ModelSettings, messages: list[dict]) -> list[tuple[int, dict]]:
     """Completed tool groups from another binding become readable historical facts."""
     result = []
     pending = {}
     transcript = []
-    for message in messages:
+    for index, message in enumerate(messages):
         calls = message.get('tool_calls') or []
         foreign = (calls and _native(message, settings) is None
                    and (settings.api != 'openai-chat' or '_continuation' in message or '_binding' in message))
@@ -38,10 +38,10 @@ def _history(settings: ModelSettings, messages: list[dict]) -> list[dict]:
             pending.pop(message['tool_call_id'])
             transcript.append(message)
             if not pending:
-                result.append({'role': 'user', 'content': '此前模型已经执行的工具及实际结果（历史资料）：\n' + json.dumps(transcript, ensure_ascii=False)})
+                result.append((index, {'role': 'user', 'content': '此前模型已经执行的工具及实际结果（历史资料）：\n' + json.dumps(transcript, ensure_ascii=False)}))
                 transcript = []
         else:
-            result.append(message)
+            result.append((index, message))
     if pending:
         raise ValueError('存在尚未完成的工具组，不能跨模型绑定续接')
     return result
@@ -85,6 +85,17 @@ def _cache_breakpoint(block: dict) -> dict:
     return block if block.get('cache_control') is not None else {**block, 'cache_control': {'type': 'ephemeral'}}
 
 
+def _last_cacheable_block(blocks: list[dict]) -> int | None:
+    for index in reversed(range(len(blocks))):
+        block = blocks[index]
+        if block['type'] in {'thinking', 'redacted_thinking'}:
+            continue
+        if block['type'] == 'text' and not block.get('text', '').strip():
+            continue
+        return index
+    return None
+
+
 def _count_cache_breakpoints(system: list[dict], tools: list[dict], contents: list[dict]) -> int:
     used = sum(1 for block in system if block.get('cache_control') is not None)
     used += sum(1 for tool in tools if tool.get('cache_control') is not None)
@@ -101,13 +112,23 @@ def _count_cache_breakpoints(system: list[dict], tools: list[dict], contents: li
 
 
 def build_request(settings: ModelSettings, messages: list[dict], tools: list[dict], *,
-                  max_output_tokens: int | None = None, session_id: str | None = None) -> tuple[str, dict]:
-    messages = _history(settings, messages)
+                  max_output_tokens: int | None = None, session_id: str | None = None,
+                  history_message_count: int | None = None) -> tuple[str, dict]:
+    history_end = None
+    if settings.api == 'anthropic':
+        if history_message_count is not None:
+            history_end = 1 + history_message_count
+        else:
+            history_end = next((index for index, message in enumerate(messages)
+                                if message['role'] == 'user' and any(
+                                    part['type'] == 'text' and '<当前场景状态与参考>' in part['text']
+                                    for part in _parts(message['content']))), None)
+    history = _history(settings, messages)
     output = settings.max_output_tokens if max_output_tokens is None else max_output_tokens
     api = settings.api
     payload = {'model': settings.model}
     if api == 'openai-chat':
-        payload.update(messages=[_chat_message(m, settings) for m in messages],
+        payload.update(messages=[_chat_message(m, settings) for _, m in history],
                        stream=False, **{settings.output_token_field: output})
         if tools:
             payload['tools'] = tools
@@ -118,7 +139,7 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
         path = 'chat/completions'
     elif api == 'openai-responses':
         items = []
-        for message in messages:
+        for _, message in history:
             native = _native(message, settings)
             if native is not None:
                 items.extend(native)
@@ -145,7 +166,8 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
         path = 'responses'
     else:
         system, contents, names = [], [], {}
-        for message in messages:
+        history_block = None
+        for index, message in history:
             role = message['role']
             if role in {'system', 'developer'}:
                 system.extend(
@@ -182,10 +204,15 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
             native_role = ('assistant' if role == 'assistant' else 'user') if api == 'anthropic' else ('model' if role == 'assistant' else 'user')
             key = 'content' if api == 'anthropic' else 'parts'
             if content:
+                offset = 0
                 if contents and contents[-1]['role'] == native_role:
+                    offset = len(contents[-1][key])
                     contents[-1][key].extend(content)
                 else:
                     contents.append({'role': native_role, key: content})
+                if history_end is not None and index < history_end:
+                    if (block := _last_cacheable_block(content)) is not None:
+                        history_block = contents[-1][key], offset + block
         if api == 'anthropic':
             payload.update(messages=contents, max_tokens=output, stream=False)
             native_tools = [
@@ -209,17 +236,14 @@ def build_request(settings: ModelSettings, messages: list[dict], tools: list[dic
                     native_tools[-1] = _cache_breakpoint(native_tools[-1])
                     used += 1
                 payload['tools'] = native_tools
-            if len(contents) >= 2 and used < ANTHROPIC_MAX_CACHE_BREAKPOINTS:
-                blocks = contents[-2]['content']
-                for i in reversed(range(len(blocks))):
-                    if blocks[i]['type'] in {'thinking', 'redacted_thinking'}:
-                        continue
-                    if blocks[i]['type'] == 'text' and not blocks[i].get('text', '').strip():
-                        continue
-                    if blocks[i].get('cache_control') is None:
-                        blocks[i] = _cache_breakpoint(blocks[i])
-                        used += 1
-                    break
+            if used < ANTHROPIC_MAX_CACHE_BREAKPOINTS:
+                if history_end is None and len(contents) >= 2:
+                    blocks = contents[-2]['content']
+                    if (block := _last_cacheable_block(blocks)) is not None:
+                        history_block = blocks, block
+                if history_block is not None:
+                    blocks, block = history_block
+                    blocks[block] = _cache_breakpoint(blocks[block])
             if settings.thinking_budget_tokens is not None:
                 payload['thinking'] = {'type': 'enabled', 'budget_tokens': settings.thinking_budget_tokens}
             elif settings.reasoning_effort is not None:

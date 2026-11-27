@@ -7,6 +7,7 @@ import pytest
 from len_bot.next.chat.context import ChatContext, recent_habits
 from len_bot.next.chat.tools import build_tools
 from len_bot.next.persona.profile import load_persona
+from len_bot.next.prompt_files import bundled
 from len_bot.next.storage.store import Store
 
 
@@ -43,6 +44,19 @@ def test_repeated_words_and_sticker_are_named():
 
 def test_varied_short_lines_need_no_reminder():
     assert recent_habits(_history(*(_say(line) for line in VARIED))) is None
+
+
+def test_undelivered_say_drafts_do_not_count_as_recent_expressions():
+    messages = [_say(line) for line in VARIED[:6]]
+    for index, result in enumerate(("say 未发：已结束", "say 失败：工具异常", "say 中断：收到新消息")):
+        call_id = f"draft-{index}"
+        draft = _say("等等我也要看看", "draft.webp")
+        draft["tool_calls"][0]["id"] = call_id
+        messages.extend([draft, {"role": "tool", "tool_call_id": call_id, "content": result}])
+
+    text = recent_habits(_history(*messages), has_stickers=True)
+    assert "最近 6 次发言里" in text
+    assert "连续 6 次都是纯文字" in text
 
 
 def test_common_sentence_particles_are_not_habits():
@@ -159,3 +173,51 @@ async def test_project_appends_the_reminder_to_the_turn_state(tmp_path):
         varied = await context.project(None, _history(*(_say(line) for line in VARIED)), state)
     assert "<最近的说法>" in locked[-1]["content"] and "8 条用了「草」" in locked[-1]["content"]
     assert "<最近的说法>" not in varied[-1]["content"]
+
+
+def test_short_question_openings_are_counted_across_different_words():
+    lines = ["老婆？你出去", "  妈妈？别乱喊", "人机? 才不是", "宝宝？谁小了", "海螺？咬不动"]
+    text = recent_habits(_history(*(_say(line) for line in [*lines, *VARIED[:3]])))
+    assert text is not None and "5 条用「短词+问号」复读起头" in text
+
+    text = recent_habits(_history(*(_say(line) for line in [*lines[:3], *VARIED[:5]])))
+    assert "复读起头" not in (text or "")
+
+
+def test_rhetorical_tails_are_counted_across_different_endings():
+    lines = ["这就走了吗？", "轮到我了是吧！", "今天你值班对吧", "窗户还开着吗  ", "又忘带伞了是吧~"]
+    text = recent_habits(_history(*(_say(line) for line in [*lines, *VARIED[:3]])))
+    assert text is not None and "5 条都在句末反问" in text
+
+    text = recent_habits(_history(*(_say(line) for line in [*lines[:3], *VARIED[:5]])))
+    assert "都在句末反问" not in (text or "")
+
+    declarative = ["窗户还是开着呀", "他们排练还是周五啊", "外头风还是好大呀", "今天人还是这么多啊", "这猫还是爱睡沙发呀"]
+    text = recent_habits(_history(*(_say(line) for line in [*declarative, *VARIED[:3]])))
+    assert "都在句末反问" not in (text or "")
+
+
+@pytest.mark.parametrize("ending", ["", "。", ".", "？", "?"])
+def test_space_separated_clauses_are_named_when_frequent(ending):
+    lines = [
+        "这杯咖啡好苦 可能豆子烘深了 先加点牛奶吧",
+        "确实有点晃\t大概腿没拧紧\t把扳手递给我",
+        "听着像下雨了　外套还在阳台　我先去收一下",
+        "那边门锁坏了 可能锁舌卡住 等师傅来看看",
+        "今天队排好长 估计前面在拍照 咱先去旁边坐会",
+        "这个饼真硬 估计在火上烤久了 下回点软一点的",
+    ]
+    lines = [line + ending for line in lines]
+    text = recent_habits(_history(*(_say(line) for line in [*lines, *VARIED[:2]])))
+    assert text is not None and "6 条都是空格切分的三四段式长句" in text
+
+    text = recent_habits(_history(*(_say(line) for line in [*lines[:4], *VARIED[:4]])))
+    assert "空格切分的三四段式长句" not in (text or "")
+
+
+def test_anti_bagu_prompt_keeps_its_tag_and_chat_boundaries():
+    prompt = bundled("next_anti_bagu.md").strip()
+    assert prompt.startswith("<去鱼八股与口语表达要求>")
+    assert prompt.endswith("</去鱼八股与口语表达要求>")
+    assert "旁听闭嘴" in prompt and "不调 say 也不调 react" in prompt
+    assert "严禁先截取对方 1 到 6 个字加问号复读起手" in prompt

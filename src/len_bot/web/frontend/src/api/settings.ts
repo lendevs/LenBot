@@ -10,6 +10,11 @@ export interface QuietHours {
   notice_text: string | null
 }
 
+export interface SemanticPulse {
+  mode: 'off' | 'shadow' | 'active'
+  sample_interval_seconds: number
+}
+
 /** `configuration/chat.py` Attention; fields the form does not show are sent back as they were. */
 export interface Attention {
   only_direct: boolean
@@ -32,6 +37,7 @@ export interface Attention {
   quiet_hours: QuietHours | null
   declarations: Declarations | null
   disposition: Disposition | null
+  pulse: SemanticPulse
   [field: string]: unknown
 }
 

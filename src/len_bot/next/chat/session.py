@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from string import Template
 from typing import Literal
 from zoneinfo import ZoneInfo
+
+import httpx
 
 from ..media.audio import AudioService
 from ..media.audio_store import AudioStore
@@ -35,8 +37,10 @@ EXPRESSIONS_SHOWN = 5
 EXPRESSION_POOL = 10
 # Calls that speak, wait or close a turn; any other call means the turn looked something up.
 QUIET_TOOLS = frozenset({"say", "react", "wait", "end_turn", "attention", "message_reaction"})
-FINAL_STEP_TOOLS = frozenset({"say", "react"})
+FINAL_STEP_TOOLS = frozenset({"say", "react", "message_reaction", "end_turn"})
+EXPRESSION_TOOLS = frozenset({"say", "react", "message_reaction"})
 PARALLEL_TOOLS = frozenset({"web_search", "web_read", "recall_chat", "look", "knowledge", "member_info", "group_files"})
+RECALL_VECTOR_TIMEOUT_SECONDS = 0.75
 # Consecutive sends not confirmed as delivered after which the turn ends; rewriting the message again would
 # meet the same platform, and an unconfirmed send may already be in the group.
 SEND_FAILURE_LIMIT = 2
@@ -45,7 +49,7 @@ RECAP_COOLDOWN_SECONDS = 300.0
 from ..memory.service import MemoryService, MemorySettings, recall_cues
 from ..reference.library import ReferenceLibrary
 from ..reference.tool import changes_notice
-from ..platform.messages import UploadResult
+from ..platform.messages import UploadResult, plain_text
 from ..models.client import (ChatModel, ModelConnectionError, ModelHTTPError, ModelOutputLimitError,
                              ModelProtocolError, ModelReply)
 from ..models.request import request_estimate, request_model
@@ -80,15 +84,21 @@ class PreparedContext:
     messages: list[dict]
     input_tokens: int
     estimate_method: str
+    snapshot_index: int = -1
+    history: list[dict] = field(default_factory=list)
 
 
-def with_images(messages: list[dict], looked: list[tuple[str, bytes]]) -> list[dict]:
+def with_images(messages: list[dict], looked: list[tuple[str, bytes]], *, snapshot_index: int = -1) -> list[dict]:
     """Attach the images the mind looked at in this turn to the per-request state message."""
-    state = messages[-1]
+    projected = messages.copy()
+    state = projected[snapshot_index]
+    if state["role"] != "user":
+        raise ValueError("轮次快照必须是 user 消息")
     parts = [{"type": "text", "text": state["content"]}]
     for label, jpeg in looked:
         parts += [{"type": "text", "text": f"<{label}>"}, image_block(jpeg)]
-    return [*messages[:-1], {**state, "content": parts}]
+    projected[snapshot_index] = {**state, "content": parts}
+    return projected
 
 
 def model_failure(error: ModelHTTPError | ModelConnectionError | TimeoutError, at: float) -> dict:
@@ -98,11 +108,14 @@ def model_failure(error: ModelHTTPError | ModelConnectionError | TimeoutError, a
     return {"kind": kind, "at": at, "error": f"{type(error).__name__}: {error}"}
 
 
-def final_step(messages: list[dict], tools: list[dict]) -> tuple[list[dict], list[dict]]:
-    """The last step of a turn that looked something up and has not spoken: only say and react."""
-    state = messages[-1]
-    return ([*messages[:-1], {**state, "content": state["content"] + "\n" + read_prompt("next_last_step.md")}],
-            [tool for tool in tools if tool["function"]["name"] in FINAL_STEP_TOOLS])
+def final_step(messages: list[dict], tools: list[dict], *, snapshot_index: int = -1) -> tuple[list[dict], list[dict]]:
+    """Offer expression or silence on the last step of a lookup that has not responded."""
+    projected = messages.copy()
+    state = projected[snapshot_index]
+    if state["role"] != "user":
+        raise ValueError("轮次快照必须是 user 消息")
+    projected[snapshot_index] = {**state, "content": state["content"] + "\n" + read_prompt("next_last_step.md")}
+    return projected, [tool for tool in tools if tool["function"]["name"] in FINAL_STEP_TOOLS]
 
 
 class Chat:
@@ -187,7 +200,6 @@ class Chat:
             notify=self.notify, on_reply_sample=on_reply_sample, now=now,
             exclude_from_memory=None if memory is None else lambda seq: memory.jobs.exclude_records(config.scene, [seq]))
         self.expression.reserve = lambda: self.speech_reserve
-        self.expression.should_interrupt = self.direct_interrupt_pending
         self.toolset = SceneTools(
             config, persona, store, expression=self.expression, request=self.request, vision=vision,
             memory=memory, tasks=tasks, audio=audio_service, upload_file=upload_file,
@@ -239,7 +251,8 @@ class Chat:
                       recap_target: CompactionPlan | None = None,
                       expression_ids: list[int] | None = None,
                       input_estimate: tuple[int, str] | None = None,
-                      recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
+                      recall_items: list[dict] | None = None, quick: bool = False,
+                      history_message_count: int | None = None) -> ModelReply:
         model_role = "mind" if role == "recap" else role
         model = getattr(self, model_role)
         def validate(reply: ModelReply) -> None:
@@ -263,6 +276,7 @@ class Chat:
                 validate=validate, append_to_scene=role == "mind",
                 expression_ids=self.expression_ids if role == "mind" else expression_ids,
                 input_estimate=input_estimate, notify=self.notify, recall_items=recall_items, quick=quick or role == "recap",
+                history_message_count=history_message_count,
                 trace=None if self.on_trace is None else lambda event: self.trace('turn.step', turn_id, **event))
         except (ModelHTTPError, ModelConnectionError, TimeoutError) as error:
             # A TimeoutError raised here is the request's own limit; the turn's deadline cancels from outside.
@@ -275,12 +289,11 @@ class Chat:
         return reply
 
     async def compact(self, turn_id: str, plan: CompactionPlan, *, strategy: bool = True,
-                      chat: list[dict] | None = None) -> str:
+                      history: list[dict] | None = None) -> str:
         """Run the selected compaction strategy and commit its completed recap.
 
-        With ``chat``, the projected chat request ending in its turn state, the native recap continues
-        that request with the same tools, so the cached prefix covers the history; a continuation
-        beyond the context window uses the standalone request instead."""
+        The native recap can continue the settled chat history with the same tools and reuse its
+        cached prefix. If that prefix exceeds the context window, use the standalone request."""
         plugin = self.config.recap_plugin if strategy else None
         if plugin is not None:
             recap = await self.plugins.compact(plugin, CompactRequest(
@@ -291,8 +304,8 @@ class Chat:
             messages, tools = plan.request_messages, []
             used_continuation = False
             window_tokens = self.config.models.roles.mind.context_window_tokens
-            if chat is not None and plan.kept_first is not None:
-                continued = continuation_request(chat[:-1], plan)
+            if history is not None and plan.kept_first is not None:
+                continued = continuation_request(history, plan)
                 estimated, _ = await self.store.read(
                     request_estimate, self.config, self.store, self.mind, scene=self.config.scene, role="recap",
                     messages=continued, tools=self.toolset.tools, output_tokens=self.config.recap_output_tokens)
@@ -318,8 +331,8 @@ class Chat:
         recap, entries = await self.store.read(self.store.active_history, self.config.scene)
         self.toolset.discovered_tools = set(await self.store.read(self.store.load_discovered_tools, self.config.scene))
         state = await self.store.read(turn_state, self.config, self.store, now=self.now())
-        messages = await self.context.project(recap, entries, state)
-        return messages[:-1], self.toolset.tools
+        parts = await self.context.project_parts(recap, entries, state, turn_floor_seq=None)
+        return [parts.system, *parts.history], self.toolset.tools
 
     async def compact_now(self) -> dict:
         """One explicit operator-requested compaction; caller owns the scene lock."""
@@ -329,14 +342,15 @@ class Chat:
                 recap, entries = self.store.active_history(self.config.scene)
                 binding = self.config.models.roles.mind
                 state = turn_state(self.config, self.store, now=self.now())
-                projection = await self.context.project(recap, entries, state)
+                parts = await self.context.project_parts(recap, entries, state, turn_floor_seq=None)
+                projection = parts.messages()
                 estimated, method = request_estimate(
                     self.config, self.store, self.mind, scene=self.config.scene, role="mind",
                     messages=projection, tools=self.toolset.tools, output_tokens=0)
                 scale = (estimated / estimate_text_request(projection, self.toolset.tools, 0)
                          if method == "usage_assisted" else 1.0)
                 plan = plan_compaction(
-                    self.context.project_entries(entries), system=projection[0], state=projection[-1],
+                    self.context.project_entries(entries), system=parts.system, state=parts.snapshot,
                     tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
                     trigger_tokens=self.config.compaction.input_tokens,
                     keep_recent_tokens=self.config.compaction.keep_recent_tokens,
@@ -348,7 +362,7 @@ class Chat:
                     allow_oversized_source=self.config.recap_plugin is None,
                     protect_from_seq=self._unseen_tool_seq,
                 )
-                recap = await self.compact(turn_id, plan, chat=projection)
+                recap = await self.compact(turn_id, plan, history=[parts.system, *parts.history])
         except BaseException as error:
             self.store.end_turn(turn_id, "error", f"{type(error).__name__}: {error}")
             self.notify()
@@ -379,7 +393,7 @@ class Chat:
             async with asyncio.timeout(self.config.turn_timeout_seconds):
                 if entries:
                     state = turn_state(self.config, self.store, now=self.now())
-                    projection = await self.context.project(recap, entries, state)
+                    parts = await self.context.project_parts(recap, entries, state, turn_floor_seq=None)
                     pending_entries = self.context.project_entries(entries)
                     pending_source = self.context.conversation_entries(entries)
                     current_recap = recap
@@ -388,7 +402,7 @@ class Chat:
                     # last active entry before committing once so no previous-role lines remain raw.
                     while pending_entries:
                         plan = plan_compaction(
-                            pending_entries, system=projection[0], state=projection[-1],
+                            pending_entries, system=parts.system, state=parts.snapshot,
                             tools=self.toolset.core_tools, output_tokens=binding.max_output_tokens,
                             trigger_tokens=self.config.compaction.input_tokens, keep_recent_tokens=0,
                             summary_output_tokens=self.config.recap_output_tokens,
@@ -452,6 +466,7 @@ class Chat:
         token_scale = 1.0
         compacted = False
         await self.announce_reference(observed_at)
+        turn_floor_seq = await self.store.read(self.store.turn_floor, turn_id)
         while True:
             await self.store.call(AudioStore(self.store).append_late, self.config.scene)
             recap, entries = await self.store.read(self.store.active_history, self.config.scene)
@@ -460,7 +475,10 @@ class Chat:
                                                                       self.config.scene))
             state = await self.store.read(turn_state, self.config, self.store, now=observed_at,
                                           expression_style=expression_style, recalled=recalled)
-            messages = await self.context.project(recap, entries, state, protect_from_seq=self._unseen_tool_seq)
+            parts = await self.context.project_parts(
+                recap, entries, state, protect_from_seq=self._unseen_tool_seq, turn_floor_seq=turn_floor_seq,
+            )
+            messages = parts.messages()
             estimated, method = await self.store.read(
                 request_estimate, self.config, self.store, self.mind, scene=self.config.scene,
                 role='mind', messages=messages, tools=self.toolset.tools, output_tokens=0)
@@ -469,20 +487,22 @@ class Chat:
             elif compacted:
                 estimated = round(estimated * token_scale)
                 method = "usage_scaled_after_recap" if token_scale != 1.0 else method
+            prepared = PreparedContext(messages, estimated, method,
+                                       snapshot_index=parts.snapshot_index, history=parts.history)
             if estimated <= trigger:
-                return PreparedContext(messages, estimated, method)
+                return prepared
             hold = self.compaction_held_at
             fits = estimated + binding.max_output_tokens <= binding.context_window_tokens
             fits_cooldown = estimated + binding.max_output_tokens < binding.context_window_tokens
             if hold is not None and fits and estimated < hold + self.config.compaction.keep_recent_tokens:
-                return PreparedContext(messages, estimated, method)
+                return prepared
             if fits_cooldown and self.store.now() < self._recap_cooldown_until:
-                return PreparedContext(messages, estimated, method)
+                return prepared
             scale = token_scale
             try:
                 plan = plan_compaction(
                     self.context.project_entries(entries, protect_from_seq=self._unseen_tool_seq),
-                    system=messages[0], state=messages[-1], tools=self.toolset.core_tools,
+                    system=parts.system, state=parts.snapshot, tools=self.toolset.core_tools,
                     output_tokens=binding.max_output_tokens, trigger_tokens=trigger,
                     keep_recent_tokens=self.config.compaction.keep_recent_tokens,
                     summary_output_tokens=self.config.recap_output_tokens,
@@ -493,7 +513,9 @@ class Chat:
                     allow_oversized_source=self.config.recap_plugin is None,
                     protect_from_seq=self._unseen_tool_seq,
                 )
-                await self.compact(turn_id, plan, chat=messages)
+                # A cut into current entries needs the standalone request containing the full source.
+                history = [parts.system, *parts.history] if turn_floor_seq is None or plan.through <= turn_floor_seq else None
+                await self.compact(turn_id, plan, history=history)
             except (ModelOutputLimitError, ContextBudgetError) as error:
                 # A recap that ran out of its allowance or budget keeps the existing recap and history; the
                 # turn goes on uncompacted while the request still fits the window.
@@ -502,7 +524,7 @@ class Chat:
                 self.compaction_held_at = estimated
                 log_event(logger, 'compaction_held', level=logging.WARNING, error=error, input_tokens=estimated,
                           trigger_tokens=trigger, window_tokens=binding.context_window_tokens)
-                return PreparedContext(messages, estimated, method)
+                return prepared
             except (ModelHTTPError, ModelConnectionError, TimeoutError, ModelProtocolError, ValueError) as error:
                 if (
                     (isinstance(error, (ModelProtocolError, ValueError)) and self.config.recap_plugin is not None)
@@ -515,7 +537,7 @@ class Chat:
                 log_event(logger, 'compaction_cooldown', level=logging.WARNING, error=error, input_tokens=estimated,
                           trigger_tokens=trigger, window_tokens=binding.context_window_tokens,
                           cooldown_until=self._recap_cooldown_until)
-                return PreparedContext(messages, estimated, method)
+                return prepared
             self.compaction_held_at = None
             self._recap_cooldown_until = 0.0
             compacted = True
@@ -531,17 +553,36 @@ class Chat:
             return False
         return self.direct_request or self.reserve_request or self.turn_channel in RESERVE_CHANNELS
 
-    def direct_interrupt_pending(self) -> bool:
-        """A non-blacklisted direct message arrived while this non-direct turn was running."""
-        if self.direct_request:
-            return False
-        private = self.config.scene.split(":", 2)[1] == "private"
-        blacklist = self.config.permissions.blacklist
-        return any(
-            not message.is_self and message.sender.uid not in blacklist
-            and (private or message.mentions_bot)
-            for _, message, _ in self.store.pending_messages(self.config.scene)
-        )
+    def causal_competition(self, scene: str, read_through: int, semantic_target_id: str | None,
+                           semantic_target_uid: str | None, looked_up: bool, total_holds: int,
+                           weak_holds: int, *, allow_weak: bool = True) -> Literal["strong", "weak"] | None:
+        if total_holds >= 2:
+            return None
+        excluded = {*self.config.permissions.blacklist, *self.config.attention.other_bot_ids}
+        unread = [message for _, message, _ in self.store.messages_since_seq(scene, read_through)
+                  if not message.is_self and message.send_status == "received" and message.sender.uid not in excluded]
+        if not unread:
+            return None
+        private = scene.split(":", 2)[1] == "private"
+        own_ids = self.store.own_ids(scene)
+        weak = False
+        for message in unread:
+            if (private or message.mentions_bot or message.reply_to in own_ids
+                    or (semantic_target_id is not None and message.reply_to == semantic_target_id)):
+                return "strong"
+            mentions_others = any(segment.type == "mention" and segment.data["user"] not in {
+                "all", self.config.bot_id, message.sender.uid,
+            } for segment in message.segments)
+            if mentions_others:
+                continue
+            if semantic_target_uid is not None and message.sender.uid == semantic_target_uid:
+                quoted = None if message.reply_to is None else self.store.find_message(scene, message.reply_to)
+                if message.reply_to is None or (quoted is not None and quoted.sender.uid == semantic_target_uid):
+                    return "strong"
+            if (looked_up and allow_weak and weak_holds < 1 and message.reply_to is None
+                    and (bool(plain_text(message).strip()) or any(segment.type != "text" for segment in message.segments))):
+                weak = True
+        return "weak" if weak else None
 
     def followup_arrived(self, talking: set[str]) -> bool:
         """A new message from someone this turn answers, or one that addresses the bot."""
@@ -573,6 +614,31 @@ class Chat:
         if self.turn_stopped:
             raise TimeoutError("turn stopped")
 
+    async def select_learned_expressions(self, turn_id: str, *, direct: bool) -> list[dict]:
+        scene = self.config.scene
+        vectors = self.expression_service is not None and scene in self.expression_service.scenes
+        if not vectors and self.config.learning is None:
+            return []
+        recent = await self.store.call(self.store.recent_context_messages, scene, limit=8)
+        exclude = (self.config.bot_id, *self.config.attention.other_bot_ids)
+        others = [message for message in recent if not message.is_self and message.sender.uid not in exclude]
+        if vectors:
+            query = "\n".join(self.context.render(message) for message in others)
+            if query:
+                try:
+                    async with asyncio.timeout(RECALL_VECTOR_TIMEOUT_SECONDS):
+                        return await self.expression_service.select(
+                            scene, query, turn_id=turn_id, direct=direct, exclude_uids=exclude, limit=EXPRESSION_POOL,
+                        )
+                except (TimeoutError, ValueError, ConnectionError, ModelConnectionError, ModelHTTPError,
+                        httpx.HTTPError) as error:
+                    log_event(logger, 'expression_vector_fallback', level=logging.WARNING, error=error, turn_id=turn_id)
+        text_query = "\n".join(self.context.render_text(message) for message in others)
+        if not text_query.strip():
+            return []
+        adopted = await self.store.call(LearningStore(self.store).adopted, scene, exclude_uids=exclude)
+        return select_by_words(adopted, text_query, limit=EXPRESSION_POOL)
+
     async def run_turn(self, *, batch: tuple[int, list[str]] | None,
                        append_new: Callable[[bool, str], Awaitable[bool]],
                        wait_for_messages: Callable[[float], Awaitable[str]],
@@ -582,7 +648,8 @@ class Chat:
                        plugin_events: list[tuple[int, str]] | None = None,
                        direct: bool = False, wake_received_at: float | None = None,
                        channels: set[str] | None = None,
-                       proactive: tuple[str, str, float] | None = None, channel: str | None = None) -> dict:
+                       proactive: tuple[str, str, float] | None = None, channel: str | None = None,
+                       target_uids: Sequence[str] = ()) -> dict:
         self.direct_request = direct
         self.turn_channel = channel
         self.reserve_revoked = False
@@ -619,6 +686,7 @@ class Chat:
         extensions = 0
         failed_tools = 0
         failed_sends = 0
+        total_holds = weak_holds = 0
         status, error_text = "step_limit", None
         limit_until = limit_kind = None
         phase = None
@@ -630,6 +698,9 @@ class Chat:
                 self.trace('turn.step', turn_id, kind='recall', phase='start')
                 recall_items = []
                 recall_error = None
+                self.expression_ids = None
+                local_recall = (self.config.memory_plugin is None and self.memory is not None
+                                and self.memory.settings.auto_recall)
                 try:
                     if self.config.memory_plugin is not None:
                         phase = '插件自动召回'
@@ -647,11 +718,15 @@ class Chat:
                         if recall_items:
                             recalled = encode({"backend": "plugin:" + self.config.memory_plugin,
                                                "items": recall_items})
-                    elif self.memory is not None and self.memory.settings.auto_recall:
+                    elif local_recall:
                         phase = '记忆自动召回'
-                        recall = await self.memory.recall(
-                            scene, await self.store.call(self.store.recent_context_messages, scene, limit=8),
-                            recall_cues(await self.store.call(self.store.recap, scene)))
+                        recent = await self.store.call(self.store.recent_context_messages, scene, limit=8)
+                        cues = recall_cues(await self.store.call(self.store.recap, scene))
+                        recall, selected = await asyncio.gather(
+                            self.memory.recall(scene, recent, cues, target_uids=target_uids,
+                                               vector_timeout_seconds=RECALL_VECTOR_TIMEOUT_SECONDS),
+                            self.select_learned_expressions(turn_id, direct=direct),
+                        )
                         if recall["items"]:
                             recalled = encode({"backend": recall["backend"], "items": recall["items"]})
                         recall_items = recall['items']
@@ -663,69 +738,74 @@ class Chat:
                         {'scope': item['scope'], 'path': item['path'], 'characters': len(item['content'])}
                         for item in recall_items])
                 phase = None
-                self.expression_ids = None
+                if not local_recall:
+                    selected = await self.select_learned_expressions(turn_id, direct=direct)
                 learned = None
-                vectors = self.expression_service is not None and scene in self.expression_service.scenes
-                if vectors or self.config.learning is not None:
-                    recent = await self.store.call(self.store.recent_context_messages, scene, limit=8)
-                    others = [message for message in recent
-                              if not message.is_self and message.sender.uid not in self.config.attention.other_bot_ids]
-                    exclude = (self.config.bot_id, *self.config.attention.other_bot_ids)
-                    selected = []
-                    if vectors:
-                        query = "\n".join(self.context.render(message) for message in others)
-                        if query:
-                            phase = '群内说法向量检索'
-                            selected = await self.expression_service.select(
-                                scene, query, turn_id=turn_id, direct=direct, exclude_uids=exclude,
-                                limit=EXPRESSION_POOL)
-                    else:
-                        # Without embeddings, rank by the words the recent chat shares with each situation.
-                        query = "\n".join(self.context.render_text(message) for message in others)
-                        if query.strip():
-                            phase = '群内说法检索'
-                            selected = select_by_words(await self.store.call(
-                                LearningStore(self.store).adopted, scene, exclude_uids=exclude), query,
-                                limit=EXPRESSION_POOL)
-                    if selected:
-                        # Ones whose use drew corrections or dislike move behind the rest; their review stays.
-                        disliked = await self.store.call(LearningStore(self.store).disliked, scene,
-                                                         self.now() - DISLIKED_DAYS * 86400)
-                        demoted = [item["id"] for item in selected if disliked.get(item["id"])]
-                        selected = sorted(selected, key=lambda item: bool(disliked.get(item["id"])))[:EXPRESSIONS_SHOWN]
-                        if demoted:
-                            log_event(logger, 'expression_demoted', turn_id=turn_id, demoted=demoted,
-                                      counts={id: disliked[id] for id in demoted},
-                                      shown=[item["id"] for item in selected])
-                        self.expression_ids = [item["id"] for item in selected]
-                        learned = Template(read_prompt("next_learned_expressions.md")).substitute(
-                            expressions=encode([{ "情境": item["situation"], "说法": item["style"] } for item in selected]))
-                phase = None
+                if selected:
+                    # Ones whose use drew corrections or dislike move behind the rest; their review stays.
+                    disliked = await self.store.call(LearningStore(self.store).disliked, scene,
+                                                     self.now() - DISLIKED_DAYS * 86400)
+                    demoted = [item["id"] for item in selected if disliked.get(item["id"])]
+                    selected = sorted(selected, key=lambda item: bool(disliked.get(item["id"])))[:EXPRESSIONS_SHOWN]
+                    if demoted:
+                        log_event(logger, 'expression_demoted', turn_id=turn_id, demoted=demoted,
+                                  counts={id: disliked[id] for id in demoted},
+                                  shown=[item["id"] for item in selected])
+                    self.expression_ids = [item["id"] for item in selected]
+                    learned = Template(read_prompt("next_learned_expressions.md")).substitute(
+                        expressions=encode([{"情境": item["situation"], "说法": item["style"]} for item in selected]))
                 style = select_style(self.persona)
                 expression_style = None if style is None else style_text(style)
                 if learned is not None:
                     expression_style = learned if expression_style is None else expression_style + "\n" + learned
-                looked_up = stepped_lookup = False
+                looked_up = False
                 self.toolset.looked = []
                 self.expression.sticker_candidates = []
-                for step in range(self.config.max_steps):
+
+                def competition(semantic_target_id: str | None) -> Literal["strong", "weak"] | None:
+                    if not regular_can_extend and arbitration_bonus_used:
+                        return None
+                    target = None if semantic_target_id is None else self.store.find_message(scene, semantic_target_id)
+                    return self.causal_competition(scene, read_through, semantic_target_id,
+                                                   None if target is None else target.sender.uid, looked_up,
+                                                   total_holds, weak_holds, allow_weak=regular_can_extend)
+
+                def hold_expression_sync(semantic_target_id: str | None) -> bool:
+                    nonlocal total_holds, weak_holds
+                    reason = competition(semantic_target_id)
+                    if reason is None:
+                        return False
+                    total_holds += 1
+                    if reason == "weak":
+                        weak_holds += 1
+                    return True
+
+                async def hold_expression(semantic_target_id: str | None) -> bool:
+                    return await self.store.read(hold_expression_sync, semantic_target_id)
+
+                hold_expression.sync = hold_expression_sync
+                step = 0
+                step_cap = self.config.max_steps
+                arbitration_bonus_used = False
+                while step < step_cap:
                     self.trace_step = step + 1
                     self._check_stopped()
                     self.check_limits()
                     prepared = await self.prepare_context(turn_id, observed_at=observed_at,
                                                           expression_style=expression_style, recalled=recalled)
+                    read_through = await self.store.read(self.store.session_through, scene)
                     messages, tools = prepared.messages, self.toolset.tools
-                    if step + 1 == self.config.max_steps and looked_up and not expressions:
-                        messages, tools = final_step(messages, tools)
+                    if step + 1 == step_cap and looked_up and not expressions:
+                        messages, tools = final_step(messages, tools, snapshot_index=prepared.snapshot_index)
                     if self.toolset.looked:
-                        messages = with_images(messages, self.toolset.looked)
-                    # Answering new messages thinks briefly; reading tool results uses the full effort.
+                        messages = with_images(messages, self.toolset.looked, snapshot_index=prepared.snapshot_index)
                     reply = await self.request(turn_id, "mind", messages, tools,
                                                input_estimate=(prepared.input_tokens, prepared.estimate_method),
-                                               recall_items=recall_items, quick=not stepped_lookup)
+                                               recall_items=recall_items, quick=False,
+                                               history_message_count=prepared.snapshot_index - 1)
                     self._check_stopped()
-                    stepped_lookup = any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
-                    looked_up = looked_up or stepped_lookup
+                    looked_up = looked_up or any(call.name not in QUIET_TOOLS for call in reply.tool_calls)
+                    regular_can_extend = step + 1 < step_cap and extensions < self.config.attention.max_extensions
                     end_turn, group_failed, interrupted = False, False, False
                     # Several read-only calls in one reply run together; results are stored in call order.
                     parallel = [call for call in reply.tool_calls if call.name in PARALLEL_TOOLS]
@@ -738,6 +818,12 @@ class Chat:
                                        name=call.name, arguments_summary=encode(call.arguments)[:500])
                             tool_status, tool_summary = 'complete', ''
                             try:
+                                if interrupted and call.name in EXPRESSION_TOOLS:
+                                    tool_status = 'held'
+                                    tool_summary = f"{call.name} 未发：前序表达因收到新消息暂停，本条未发。"
+                                    await self.store.call(self.store.complete_tool, scene, call.id, tool_summary)
+                                    self.notify()
+                                    continue
                                 if call.name == "memory":
                                     # A tool may have edited or removed the recalled file, even if
                                     # a later index update failed. Do not reattach an old excerpt.
@@ -747,6 +833,7 @@ class Chat:
                                     started = prefetched.pop(call.id, None)
                                     content, expression, discovered = await (started if started is not None else self.toolset.execute(
                                         turn_id, call, wait_for_messages, expression_style=expression_style, direct=self.direct_request,
+                                        hold_expression=hold_expression,
                                     ))
                                 except Exception as error:
                                     tool_status = 'error'
@@ -760,16 +847,23 @@ class Chat:
                                 else:
                                     if expression is None:
                                         reaction = call.name == 'message_reaction'
+                                        held = reaction and content.startswith('message_reaction 未发：')
                                         await self.store.call(self.store.complete_tool, scene, call.id, content,
                                                               discovered_tools=discovered,
-                                                              response_turn_id=turn_id if reaction else None)
+                                                              response_turn_id=turn_id if reaction and not held else None)
                                         if not reaction and self._unseen_tool_seq is None:
                                             page = await self.store.read(
                                                 self.store.mind_history_page, scene, before=None, limit=1, active_only=False,
                                             )
                                             if page["entries"]:
                                                 self._unseen_tool_seq = page["entries"][-1]["seq"]
-                                        if reaction:
+                                        if held:
+                                            interrupted = True
+                                            failed_sends = 0
+                                            tool_status = 'held'
+                                            self.trace('turn.step', turn_id, kind='expression', phase='end',
+                                                       call_id=call.id, status='held', summary=content[:500])
+                                        elif reaction:
                                             expressions.append(content)
                                             self.turn_expressions += 1
                                             end_turn = end_turn or call.arguments.get('end_turn', True)
@@ -782,17 +876,20 @@ class Chat:
                                     else:
                                         content, delivery_status = await self.expression.deliver_expression(
                                             call.id, expression, turn_id=turn_id, channels=self.turn_channels,
+                                            tool_name=call.name, hold_expression=hold_expression,
                                         )
-                                        expressions.append(content)
-                                        self.turn_expressions += 1
-                                        if delivery_status in {"sent", "simulated", "unconfirmed", "partial"}:
+                                        if delivery_status != "held":
+                                            expressions.append(content)
+                                            self.turn_expressions += 1
+                                        if delivery_status in {"sent", "simulated", "unconfirmed", "partial", "partial_held"}:
                                             self.turn_messages += 1
                                         if delivery_status in {"sent", "simulated"}:
                                             end_turn = end_turn or expression.end_turn
                                             failed_sends = 0
-                                        elif delivery_status == "interrupted":
+                                        elif delivery_status in {"held", "partial_held"}:
                                             interrupted = True
                                             failed_sends = 0
+                                            tool_status = 'held'
                                         else:
                                             group_failed = True
                                             tool_status = 'error'
@@ -818,27 +915,33 @@ class Chat:
                         status, error_text = "send_failed", f"连续 {failed_sends} 次发送没有确认送达"
                         break
                     if interrupted:
-                        if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
-                                and await append_new(True, turn_id)):
+                        if regular_can_extend and await append_new(True, turn_id):
                             extensions += 1
+                            step += 1
                             continue
+                        if not regular_can_extend and not arbitration_bonus_used:
+                            arbitration_bonus_used = True
+                            step_cap = max(step_cap, step + 2)
+                            if await append_new(True, turn_id):
+                                step += 1
+                                continue
                         status = "settled"
                         break
                     if not reply.tool_calls or (end_turn and not group_failed):
                         # Someone in this conversation kept talking while the step ran: they reach the
                         # model as new input instead of waiting for the next turn. A scene runner decides
                         # who that is; without one, it is anyone in this turn's batch.
-                        if (step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions
+                        if (regular_can_extend
                                 and (self.followup_arrived(talking) if followup is None else followup())
                                 and await append_new(True, turn_id)):
                             extensions += 1
+                            step += 1
                             continue
                         status = "settled"
                         break
-                    if step + 1 < self.config.max_steps and extensions < self.config.attention.max_extensions:
-                        if await append_new(bool(reply.tool_calls), turn_id):
-                            extensions += 1
-                            continue
+                    if regular_can_extend and await append_new(bool(reply.tool_calls), turn_id):
+                        extensions += 1
+                    step += 1
         except asyncio.CancelledError:
             self.store.finish_pending_tools(scene, "当前轮被取消")
             self.store.end_turn(turn_id, "cancelled", "CancelledError")

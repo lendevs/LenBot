@@ -88,6 +88,12 @@ def _format_6_to_7(source: dict) -> dict:
     return source
 
 
+def _format_7_to_8(source: dict) -> dict:
+    # Format 8 adds Attention.pulse with default mode="off".
+    source["config_version"] = 8
+    return source
+
+
 STEPS = {
     1: _format_1_to_2,
     2: _format_2_to_3,
@@ -95,6 +101,7 @@ STEPS = {
     4: _format_4_to_5,
     5: _format_5_to_6,
     6: _format_6_to_7,
+    7: _format_7_to_8,
 }
 
 

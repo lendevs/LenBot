@@ -79,6 +79,7 @@ const toolTones: Record<ToolDetail['status'], Tone> = {
   complete: 'success',
   error: 'error',
   interrupted: 'warning',
+  held: 'warning',
 }
 
 const deliveryTones: Record<string, Tone> = {
@@ -264,7 +265,9 @@ const stepFailed = (step: Step) =>
                 ? 'border-error/50'
                 : tool.status === 'pending'
                   ? 'border-info/50'
-                  : 'border-line-strong'
+                  : tool.status === 'held'
+                    ? 'border-warning/50'
+                    : 'border-line-strong'
             "
           >
             <div class="flex flex-wrap items-center gap-2">

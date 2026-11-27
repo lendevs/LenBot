@@ -20,7 +20,7 @@ from ..runtime.logs import log_event
 logger = logging.getLogger(__name__)
 # Panel names of request roles; recap names its own setting.
 ROLE_NAMES = {"mind": "聊天", "upkeep": "整理回合", "vision": "看图", "memory": "记忆摘要",
-              "worker": "后台任务", "learner": "插件生成"}
+              "worker": "后台任务", "learner": "插件生成", "pulse": "语义脉冲"}
 
 
 class ChatRequest(Protocol):
@@ -51,7 +51,6 @@ def request_estimate(config: SharedConfig, store: Store, model: ChatModel, *, sc
         request, usage = previous
         tokens = parse_token_usage(usage)
         prior = project_messages(request['messages'], binding.history_policy)
-        prefix = prior[:-1]
         settings = request['settings']
         same_binding = (request['provider'] == binding.provider
                         and settings.get('api') == model.settings.api
@@ -61,11 +60,15 @@ def request_estimate(config: SharedConfig, store: Store, model: ChatModel, *, sc
         previous_images = any(isinstance(message.get('content'), list) and any(
             block['type'] == 'image_url' for block in message['content']) for message in request['messages'])
         if (tokens is not None and tokens.prompt_tokens is not None and same_binding
-                and not previous_images and request['tools'] == tools
-                and messages[:len(prefix)] == prefix):
-            old_estimate = estimate_text_request(prior, tools, 0)
-            estimated = max(0, tokens.prompt_tokens + estimated - output_tokens - old_estimate) + output_tokens
-            return estimated, 'usage_assisted'
+                and not previous_images and request['tools'] == tools):
+            shared_len = 0
+            for message, previous_message in zip(messages, prior):
+                if message != previous_message:
+                    break
+                shared_len += 1
+            if shared_len >= 2 or (shared_len == 1 and shared_len >= len(prior) - 1):
+                old_estimate = estimate_text_request(prior, tools, 0)
+                return tokens.prompt_tokens + estimated - old_estimate, 'usage_assisted'
     return estimated, 'utf8_bytes_estimate'
 
 
@@ -80,7 +83,8 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         input_estimate: tuple[int, str] | None = None,
                         notify: Callable[[], None] | None = None,
                         trace: Callable[[dict], None] | None = None,
-                        recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
+                        recall_items: list[dict] | None = None, quick: bool = False,
+                        history_message_count: int | None = None) -> ModelReply:
     binding = config.binding(role)
     messages = project_messages(messages, binding.history_policy)
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
@@ -141,7 +145,9 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                 notify()
             reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id,
                                          settings=None if effective is model.settings else effective,
-                                         on_retry=retried)
+                                         on_retry=retried,
+                                         **({"history_message_count": history_message_count}
+                                            if history_message_count is not None else {}))
             if validate is not None:
                 validate(reply)
         except BaseException as error:

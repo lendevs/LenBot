@@ -119,39 +119,43 @@ class ExpressionService:
             return batch
 
     async def select(self, scene: str, query: str, *, turn_id: str, direct: bool, exclude_uids: tuple[str, ...] = (),
-                     limit: int = 5) -> list[dict]:
+                     limit: int = 5, timeout_seconds: float | None = None) -> list[dict]:
         """Return up to ``limit`` ranked candidate facts; the chat model decides relevance and use."""
         if scene in self.rebuilding:
             return []
-        async with self._lock(scene):
-            adopted = self.records.adopted(scene, exclude_uids=exclude_uids)
-            try:
-                dimensions = self._validate_rows(scene, adopted)
-            except ExpressionIndexNeedsRebuild as error:
-                log_event(logger, 'expression_index_unavailable', '群内说法索引需要重建',
-                          level=logging.WARNING, scene=scene, error=error)
-                return []
-            eligible = adopted
-            if not eligible:
-                return []
-            if not query.strip():
-                raise ValueError("expression selection query must be nonblank")
-            batch = await self._embed(scene, [query], purpose="query", turn_id=turn_id,
-                                      direct=direct)
-            if batch.dimensions != dimensions:
-                raise ValueError(f"scene {scene} query embedding dimension {batch.dimensions} differs from "
-                                 f"indexed expression dimension {dimensions}; rebuild the expression index from the learning page")
-            needle = batch.vectors[0]
-            needle_norm = math.sqrt(math.fsum(value * value for value in needle))
-            ranked = []
-            for item in eligible:
-                vector = struct.unpack(f"<{dimensions}f", item["vector"])
-                norm = math.sqrt(math.fsum(value * value for value in vector))
-                similarity = math.fsum(a * b for a, b in zip(needle, vector, strict=True)) / (needle_norm * norm)
-                ranked.append({"id": item["id"], "situation": item["situation"],
-                               "style": item["style"], "similarity": similarity})
-            ranked.sort(key=lambda item: (-item["similarity"], item["id"]))
-            return ranked[:limit]
+        try:
+            async with asyncio.timeout(timeout_seconds), self._lock(scene):
+                adopted = self.records.adopted(scene, exclude_uids=exclude_uids)
+                try:
+                    dimensions = self._validate_rows(scene, adopted)
+                except ExpressionIndexNeedsRebuild as error:
+                    log_event(logger, 'expression_index_unavailable', '群内说法索引需要重建',
+                              level=logging.WARNING, scene=scene, error=error)
+                    return []
+                if not adopted:
+                    return []
+                if not query.strip():
+                    raise ValueError("expression selection query must be nonblank")
+                batch = await self._embed(scene, [query], purpose="query", turn_id=turn_id, direct=direct)
+        except TimeoutError as error:
+            if timeout_seconds is not None:
+                log_event(logger, 'expression_vector_timeout', '群内说法向量检索超时',
+                          level=logging.WARNING, scene=scene, turn_id=turn_id, timeout_seconds=timeout_seconds, error=error)
+            raise
+        if batch.dimensions != dimensions:
+            raise ValueError(f"scene {scene} query embedding dimension {batch.dimensions} differs from "
+                             f"indexed expression dimension {dimensions}; rebuild the expression index from the learning page")
+        needle = batch.vectors[0]
+        needle_norm = math.sqrt(math.fsum(value * value for value in needle))
+        ranked = []
+        for item in adopted:
+            vector = struct.unpack(f"<{dimensions}f", item["vector"])
+            norm = math.sqrt(math.fsum(value * value for value in vector))
+            similarity = math.fsum(a * b for a, b in zip(needle, vector, strict=True)) / (needle_norm * norm)
+            ranked.append({"id": item["id"], "situation": item["situation"],
+                           "style": item["style"], "similarity": similarity})
+        ranked.sort(key=lambda item: (-item["similarity"], item["id"]))
+        return ranked[:limit]
 
     async def update(self, scene: str, id: int, *, situation: str, style: str, status: str) -> dict | None:
         async with self._lock(scene):

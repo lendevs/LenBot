@@ -141,6 +141,11 @@ def replies() -> list[dict]:
     return [first, recorded_text_response()]
 
 
+def snapshot(body: dict) -> str:
+    return next(message['content'] for message in body['messages']
+                if message['role'] == 'user' and '<当前场景状态与参考>' in message['content'])
+
+
 @pytest.mark.asyncio
 async def test_a_plugin_scene_recalls_from_its_plugin_within_the_budget(tmp_path):
     received = []
@@ -152,14 +157,14 @@ async def test_a_plugin_scene_recalls_from_its_plugin_within_the_budget(tmp_path
             SCENE, 'management-fixture', result['turn_id'], None, (), 1500)
         assert [plain_text(message) for message in asked.messages] == [
             plain_text(parse_message(incoming(), own_message_ids=set()))]
-        state = received[0][2]['messages'][-1]['content']
+        state = snapshot(received[0][2])
         recalled = json.loads(state.split('<相关长期记忆>\n')[1].split('\n</相关长期记忆>')[0])
         assert recalled['backend'] == 'plugin:notes'
         assert [(item['scope'], item['path'], item['truncated']) for item in recalled['items']] == [
             ('plugin:notes', '约定', False), ('plugin:notes', '原话', False), ('plugin:notes', '长记录', True)]
         assert sum(len(item['content']) for item in recalled['items']) == 1500
         # Both model requests of the turn carry the same recall.
-        assert received[1][2]['messages'][-1]['content'].count('周六下午三点在东门集合') == 1
+        assert snapshot(received[1][2]).count('周六下午三点在东门集合') == 1
         shown = read_turn(runtime.store, SCENE, result['turn_id'])['recall']
         assert [item['path'] for item in shown] == ['约定', '原话', '长记录']
 
@@ -170,7 +175,7 @@ async def test_a_failing_plugin_recall_is_recorded_and_the_turn_goes_on(tmp_path
     async with running(tmp_path, replies(), received) as runtime:
         runtime.plugins.plugins['notes'].instance.mode = 'fail'
         await turn(runtime)
-        assert '<相关长期记忆>' not in received[0][2]['messages'][-1]['content']
+        assert '<相关长期记忆>' not in snapshot(received[0][2])
         errors = list(runtime.plugins.plugins['notes'].errors)
         assert [(item['where'], item['error']) for item in errors] == [('自动召回', 'RuntimeError: 索引损坏')]
         assert runtime.plugins.plugins['notes'].status == 'running'

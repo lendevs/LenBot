@@ -48,12 +48,12 @@ from .configuration.maintenance import (
     ReplayClockSettings,
 )
 
-CONFIG_VERSION = 7
+CONFIG_VERSION = 8
 
 
 class SharedConfig(BaseModel):
     model_config = STRICT
-    config_version: Literal[7] = 7
+    config_version: Literal[8] = 8
     @property
     def _instance_root(self) -> Path | None:
         # Loader location is not a runtime setting and is not serialized or compared.
@@ -233,13 +233,18 @@ class SharedConfig(BaseModel):
             )
         return self
 
-    def binding(self, role: Literal["mind", "recap", "upkeep", "vision", "memory", "worker", "learner"]) -> Binding:
-        """A role's binding; recap and upkeep continue the mind session, and vision, memory, worker and
-        learner without their own use the mind binding."""
-        binding = None if role in {"recap", "upkeep"} else getattr(self.models.roles, role)
+    def binding(
+        self, role: Literal["mind", "recap", "upkeep", "vision", "memory", "worker", "learner", "pulse"]
+    ) -> Binding:
+        """A role's binding; recap and upkeep continue the mind session, pulse prefers learner, and vision,
+        memory, worker and learner without their own use the mind binding."""
+        binding = (self.models.roles.learner if role == "pulse"
+                   else None if role in {"recap", "upkeep"} else getattr(self.models.roles, role))
         return self.models.roles.mind if binding is None else binding
 
-    def model_settings(self, role: Literal["mind", "vision", "memory", "worker", "learner"]) -> ModelSettings:
+    def model_settings(
+        self, role: Literal["mind", "vision", "memory", "worker", "learner", "pulse"]
+    ) -> ModelSettings:
         binding = self.binding(role)
         provider = self.models.providers[binding.provider]
         return ModelSettings.from_binding(provider, binding)

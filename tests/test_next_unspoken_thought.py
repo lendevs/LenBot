@@ -324,11 +324,11 @@ async def test_non_direct_multipart_send_interrupts_on_new_direct_message(tmp_pa
             assert [row[0] for row in own_rows] == ["sent", "sent"]
             tool_entries = [entry for entry in store.entries(SCENE) if entry["role"] == "tool"]
             assert "第二段旧话题" in tool_entries[0]["content"]
-            assert "停止发送" in tool_entries[0]["content"]
+            assert "余段因收到新消息未发" in tool_entries[0]["content"]
 
 
 @pytest.mark.asyncio
-async def test_non_direct_send_interrupts_before_first_part_and_direct_send_is_not_interrupted(tmp_path):
+async def test_deliver_expression_holds_before_first_part_when_causal_gate_triggers(tmp_path):
     config, persona = _make_context(tmp_path)
     config.text_delivery.max_chars = 6
     config.text_delivery.min_interval_seconds = 0
@@ -348,14 +348,24 @@ async def test_non_direct_send_interrupts_before_first_part_and_direct_send_is_n
 
         turn_id = store.start_turn(SCENE)
         said = await expression.express(turn_id, SayArguments(content="第一段内容。第二段内容。"))
-        content, status = await expression.deliver_expression("c-ambient", said, turn_id=turn_id, channels={"ambient"})
-        assert status == "interrupted" and sent == [] and "停止发送" in content
+
+        async def hold_always(_semantic_reply_to: str | None) -> bool:
+            return True
+
+        content, status = await expression.deliver_expression(
+            "c-held", said, turn_id=turn_id, channels={"ambient"}, hold_expression=hold_always,
+        )
+        assert status == "held" and sent == [] and content.startswith("say 未发：")
         assert store.db.execute("SELECT COUNT(*) FROM messages WHERE json_extract(body,'$.is_self')=1").fetchone()[0] == 0
 
-        # A direct expression is NOT interrupted by pending messages.
-        said_direct = await expression.express(turn_id, SayArguments(content="直接回复"))
-        _, direct_status = await expression.deliver_expression("c-direct", said_direct, turn_id=turn_id, channels={"direct"})
-        assert direct_status == "sent" and sent == ["直接回复"]
+        async def hold_never(_semantic_reply_to: str | None) -> bool:
+            return False
+
+        said_allowed = await expression.express(turn_id, SayArguments(content="直接回复"))
+        _, allowed_status = await expression.deliver_expression(
+            "c-allowed", said_allowed, turn_id=turn_id, channels={"direct"}, hold_expression=hold_never,
+        )
+        assert allowed_status == "sent" and sent == ["直接回复"]
 
 
 @pytest.mark.asyncio

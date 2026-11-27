@@ -26,7 +26,7 @@ async def test_a_burst_of_plugin_cards_leaves_the_bot_free_to_join_in(tmp_path):
     config.compaction.input_tokens = 20000
     config.models.roles.mind.context_window_tokens = 64000
     requests, now = [], [START]
-    server = await peer_server([response('say', {'content': '我也想看', 'end_turn': True}, 'call-0')], requests)
+    server = await peer_server([response('say', {'content': '我也想看', 'reply_to': '1', 'end_turn': True}, 'call-0')], requests)
     async with server:
         config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
         with Store(config.database, now=lambda: now[0]) as store:
@@ -45,7 +45,7 @@ async def test_a_burst_of_plugin_cards_leaves_the_bot_free_to_join_in(tmp_path):
                 await asyncio.wait_for(live.run(), 5)
                 assert speech_quota(store, config).used == 1
                 assert [entry.segments[0].data['text'] for _, entry in store.own_expressions_after(SCENE, 0)] == ['我也想看']
-                assert set(live.state.followups) == {'*'}
+                assert set(live.state.followups) == {'onebot:70001'}
     assert len(requests) == 1
     attention = json.dumps(requests[0], ensure_ascii=False)
     assert '你说了 0 句' in attention

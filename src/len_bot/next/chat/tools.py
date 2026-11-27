@@ -63,7 +63,7 @@ class MemoryPlugins(Protocol):
 
 
 if TYPE_CHECKING:
-    from .expression import ChatExpression
+    from .expression import ChatExpression, HoldExpression
     from ..work.service import WorkTasks
     from ..runtime.management import HostManagement
 
@@ -162,7 +162,8 @@ class SayArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     content: str = Field(min_length=1)
     end_turn: bool = Field(default=False, description="这是本轮最后一次表达，成功后本轮即可结束；还需查看工具结果或继续行动时保持 false。")
-    reply_to: str | None = Field(default=None, description="默认不填，直接接话。群里同时有几个话头、不引用会让人认错你在回哪句时，才填该平台消息 ID。")
+    reply_to: str | None = Field(default=None, description=(
+        "回应具体某条消息时填入该平台消息 ID（宿主会按消息距离自动决定是否展示平台可见引用框）；不针对特定消息时不填。"))
     # Individual accounts of the platforms with an adapter; express() also requires the scene's platform,
     # and build_tools narrows the schema the model sees to it.
     mention: str | None = Field(default=None, pattern="^(?:" + "|".join(account_pattern(name) for name in ACCOUNTS) + ")$",
@@ -383,6 +384,12 @@ def build_tools(config: LabConfig, persona: Persona, *, platform: bool, host_man
     if config.attention.disposition is not None:
         allowed = [with_disposition(tool, config.attention.disposition) for tool in allowed]
         allowed.append(end_turn_tool(config.attention.disposition))
+    else:
+        allowed.append({"type": "function", "function": {
+            "name": "end_turn",
+            "description": "不需要回应、对方的问题已被他人解答或本轮事项已处理完毕时，静默结束本轮。",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        }})
     return allowed
 
 
@@ -521,6 +528,7 @@ class SceneTools:
     async def execute(self, turn_id: str, call: ToolCall,
                       wait_for_messages: Callable[[float], Awaitable[str]], *,
                       expression_style: str | None = None, direct: bool = False,
+                      hold_expression: HoldExpression | None = None,
                       ) -> tuple[str, Expression | None, list[str] | None]:
         """One tool call; records written below carry its turn, call ID and tool name."""
         with log_context(turn_id=turn_id, tool_call_id=call.id, tool=call.name):
@@ -533,7 +541,8 @@ class SceneTools:
                     arguments = {key: value for key, value in call.arguments.items() if key != 'disposition'}
                     call = ToolCall(call.id, call.name, arguments)
                 result = await self._execute(turn_id, call, wait_for_messages,
-                                             expression_style=expression_style, direct=direct)
+                                             expression_style=expression_style, direct=direct,
+                                             hold_expression=hold_expression)
             except Exception as error:
                 log_event(logger, 'tool_failed', level=logging.WARNING, error=error)
                 raise
@@ -600,6 +609,7 @@ class SceneTools:
     async def _execute(self, turn_id: str, call: ToolCall,
                        wait_for_messages: Callable[[float], Awaitable[str]], *,
                        expression_style: str | None, direct: bool,
+                       hold_expression: HoldExpression | None,
                        ) -> tuple[str, Expression | None, list[str] | None]:
         if call.name not in self.tool_names:
             if call.name in self.allowed_tool_names and call.name in self.deferred_names:
@@ -707,6 +717,8 @@ class SceneTools:
             arguments = MessageReactionArguments.model_validate(call.arguments)
             async with self.expression.outlet:
                 self.expression.check_send_available()
+                if hold_expression is not None and await hold_expression(arguments.message):
+                    return "message_reaction 未发：发送前收到新消息，未贴表情。", None, None
                 return await message_reaction(self.store, self.config.scene, arguments, self.platform_call), None, None
         if call.name == "look" and self.config.models.roles.mind.image_input:
             arguments = LookArguments.model_validate(call.arguments)

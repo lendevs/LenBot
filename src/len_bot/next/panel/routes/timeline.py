@@ -2,6 +2,7 @@
 
 import base64
 import json
+import re
 from typing import Annotated, Literal
 from urllib.parse import quote
 
@@ -107,7 +108,7 @@ class ToolDetail(BaseModel):
     name: str
     arguments: dict
     result: str | None
-    status: Literal['pending', 'complete', 'error', 'interrupted']
+    status: Literal['pending', 'complete', 'error', 'interrupted', 'held']
     messages: list[TimelineMessage]
 
 
@@ -239,7 +240,7 @@ def turn_record(store: Store, row) -> dict:
             name = tool['function']['name']
             result = results.get(tool['id'])
             if (name in {'say', 'react', 'message_reaction'} and result is not None
-                    and not result['content'].startswith((name + ' 失败：', name + ' 中断：'))):
+                    and not result['content'].startswith((name + ' 失败：', name + ' 中断：', name + ' 未发：'))):
                 expressions += 1
     return {'type': 'turn', 'at': row['started'], 'turn_id': row['id'], 'status': row['status'],
             'channel': row['wake_channel'], 'started': row['started'], 'ended': row['ended'], 'error': row['error'],
@@ -304,6 +305,8 @@ def thoughts(call: dict) -> list[str]:
 
 
 _LARGE_REQUEST_FIELDS = frozenset({'messages', 'tools', 'system'})
+_EXPRESSION_TOOLS = {'say', 'react', 'message_reaction'}
+_PARTIAL_HELD_LINE = re.compile(r'(?:^|\n)共 \d+ 段，第 1\.\.\d+ 段已发出；余段因收到新消息未发：\n')
 
 
 def _compact_call(call: dict) -> dict:
@@ -360,9 +363,18 @@ def read_turn(store: Store, scene: str, turn_id: str, *, include_raw: bool = Fal
             failed = (result is not None and result.startswith(function['name'] + ' 失败：')
                       or any(part['status'] in {'failed', 'unconfirmed'} for part in parts))
             interrupted = result is not None and result.startswith(function['name'] + ' 中断：')
+            held = (
+                function['name'] in _EXPRESSION_TOOLS
+                and result is not None
+                and (
+                    result.startswith(function['name'] + ' 未发：')
+                    or (bool(parts) and _PARTIAL_HELD_LINE.search(result) is not None)
+                )
+            )
             step['tools'].append({'call_id': tool['id'], 'name': function['name'],
                                   'arguments': json.loads(function['arguments']), 'result': result,
                                   'status': ('interrupted' if interrupted else 'error' if failed else
+                                             'held' if held else
                                              'pending' if result is None else 'complete'), 'messages': parts})
         steps.append(step)
     if pending:

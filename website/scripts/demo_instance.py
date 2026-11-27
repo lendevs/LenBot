@@ -82,10 +82,12 @@ def scripted_model(delay: float) -> FastAPI:
             # Memory filing, compaction and titles: plain text is enough.
             return {'choices': [{'message': {'role': 'assistant', 'content': '整理好了'}, 'finish_reason': 'stop'}],
                     'usage': {'prompt_tokens': 900, 'completion_tokens': 30}}
-        messages = list(body['messages'])
-        # The host state comes last as a user message; the chat that woke the bot is the user message before the steps.
-        if messages[-1]['role'] == 'user' and messages[-2]['role'] != 'system':
-            messages.pop()
+        messages = [
+            message for message in body['messages']
+            if not (message.get('role') == 'user'
+                    and isinstance(message.get('content'), str)
+                    and message['content'].startswith('<当前场景状态与参考>'))
+        ]
         last = max(index for index, message in enumerate(messages) if message['role'] == 'user')
         text = json.dumps(messages[last].get('content'), ensure_ascii=False)
         steps = sum(message['role'] == 'tool' for message in messages[last:])

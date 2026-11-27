@@ -29,7 +29,7 @@ from .schema import business_script, create_database, expected_tables, require_c
 from ..chat.schedule_store import ScheduleStore
 
 
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 FORMAT_UPGRADE = '请停止实例后执行 uv run --no-sync python -m len_bot.next.maintenance.upgrade run --snapshot /path/to/snapshot。'
 MAX_SEARCH_TERMS = 8
 SHORT_QUERY_SCAN_LIMIT = 5000
@@ -812,7 +812,10 @@ class Store:
                     raise ValueError(f"Send receipt conflicts with an existing message: {expression.platform_message_id}")
                 self.db.execute("UPDATE messages SET body=?,persona_id=(SELECT persona_id FROM messages WHERE seq=?),"
                                 "expression_entry_seq=(SELECT expression_entry_seq FROM messages WHERE seq=?) WHERE seq=?",
-                                (encode(asdict(replace(received, send_status="sent"))), message_seq, message_seq, echo[0]))
+                                (encode(asdict(replace(
+                                    received, send_status="sent",
+                                    semantic_reply_to=expression.semantic_reply_to or received.semantic_reply_to,
+                                ))), message_seq, message_seq, echo[0]))
                 self.db.execute("UPDATE message_media SET message_seq=? WHERE message_seq=?",
                                 (echo[0], message_seq))
                 self.db.execute("UPDATE media SET source_message_seq=? WHERE source_message_seq=?",
@@ -843,7 +846,10 @@ class Store:
             if row[2] is not None:
                 return
             self.db.execute("UPDATE messages SET body=?,raw=?,received_at=? WHERE seq=?",
-                            (encode(asdict(replace(message, id=saved.id, send_status="sent", recalled=saved.recalled))),
+                            (encode(asdict(replace(
+                                message, id=saved.id, send_status="sent", recalled=saved.recalled,
+                                semantic_reply_to=saved.semantic_reply_to,
+                            ))),
                              encode(raw), received_at, row[0]))
             self.db.execute("UPDATE message_search SET search_text=? WHERE rowid=?",
                             (plain_text(message).casefold(), row[0]))
@@ -1013,6 +1019,19 @@ class Store:
         """Highest message seq the scene's session has taken in; 0 before the first batch."""
         row = self.db.execute("SELECT last_message_seq FROM mind_sessions WHERE scene=?", (scene,)).fetchone()
         return 0 if row is None or row[0] is None else row[0]
+
+    def turn_floor(self, turn_id: str) -> int | None:
+        """The highest mind_entries seq settled before this turn opened; None for legacy pre-v5 open turns."""
+        row = self.db.execute("SELECT turn_floor_seq FROM turns WHERE id=?", (turn_id,)).fetchone()
+        return None if row is None else row[0]
+
+    def messages_since_seq(self, scene: str, after_seq: int) -> list[tuple[int, ChatMessage, float | None]]:
+        """Messages stored in this scene after ``after_seq``, ordered by ``seq``."""
+        rows = self.db.execute(
+            "SELECT seq,body,received_at FROM messages WHERE scene=? AND seq>? ORDER BY seq",
+            (scene, after_seq),
+        ).fetchall()
+        return [(row[0], decode_message(row[1]), row[2]) for row in rows]
 
     def messages_after(self, scene: str, platform_id: str) -> int:
         """Count actual visible messages after a known reply target in this scene."""
@@ -1237,13 +1256,26 @@ class Store:
         """Start a turn; ``proactive`` is (wake text, scene-local date, idle since)."""
         turn_id = str(uuid4())
         with self.db:
+            previous = self.db.execute(
+                "SELECT status,turn_floor_seq FROM turns WHERE scene=? AND ended IS NULL ORDER BY started DESC LIMIT 1",
+                (scene,),
+            ).fetchone()
+            if previous is not None and previous["status"] in ("queued", "running"):
+                floor_seq = previous["turn_floor_seq"]
+            else:
+                floor_seq = self.db.execute(
+                    "SELECT COALESCE(MAX(seq),0) FROM mind_entries WHERE scene=?", (scene,)
+                ).fetchone()[0]
             self.db.execute(
                 "UPDATE turns SET ended=?,status='interrupted',error=COALESCE(error,?) "
                 "WHERE scene=? AND ended IS NULL",
                 (self.now(), "Previous turn handed off to a resumed turn", scene),
             )
-            self.db.execute("INSERT INTO turns(id,scene,started,status,wake_received_at,wake_channel) VALUES (?,?,?,'queued',?,?)",
-                            (turn_id, scene, self.now(), wake_received_at, wake_channel))
+            self.db.execute(
+                "INSERT INTO turns(id,scene,started,status,wake_received_at,wake_channel,turn_floor_seq) "
+                "VALUES (?,?,?,'queued',?,?,?)",
+                (turn_id, scene, self.now(), wake_received_at, wake_channel, floor_seq),
+            )
             if batch is not None:
                 self._append_batch(scene, batch[0], batch[1])
             if scheduled is not None:

@@ -20,7 +20,7 @@ from ...image_assets import sticker_sheet
 from ..config import LabConfig
 from ..platform.delivery import Expression, part_length, report_parts, split_expression
 from ..models.limits import LimitReached, check_speech, record_speech
-from ..platform.messages import ChatMessage, Segment, Sender, SendResult, plain_text
+from ..platform.messages import ChatMessage, Segment, Sender, SendResult, plain_text, render_body
 from ..persona.profile import Persona
 from ..persona.stickers import PersonaSticker
 from ...plugin import Content, Sent
@@ -120,6 +120,9 @@ class MessageSender(Protocol):
     def __call__(self, message: ChatMessage, *, image_bytes: bytes | None = None) -> Awaitable[SendResult]: ...
 
 
+type HoldExpression = Callable[[str | None], Awaitable[bool]]
+
+
 class ChatExpression:
     """Build and deliver speech without owning the scene's model loop."""
 
@@ -139,8 +142,6 @@ class ChatExpression:
         self.outlet = asyncio.Lock()
         # Whether the current turn may use the direct reserve of the hourly speech limit.
         self.reserve: Callable[[], bool] = lambda: False
-        # Whether a non-direct delivery should stop before sending because a new direct message arrived.
-        self.should_interrupt: Callable[[], bool] | None = None
         # The current turn's numbered react preview: role stickers, or ids of this group's adopted ones.
         self.sticker_candidates: list[PersonaSticker | int] = []
         self._sheets: dict[tuple, bytes] = {}
@@ -185,7 +186,8 @@ class ChatExpression:
             selected = self.react(ReactArguments(**arguments.sticker.model_dump()))
             segments.extend(selected.message.segments)
             sticker = selected.sticker
-        return Expression(self.simulated_message(segments, reply_to=platform_reply), sticker,
+        return Expression(self.simulated_message(segments, reply_to=platform_reply,
+                                                 semantic_reply_to=arguments.reply_to), sticker,
                           end_turn=arguments.end_turn)
 
     async def preview_stickers(self, arguments: ReactArguments) -> tuple[list[dict], bytes, bool | None]:
@@ -318,10 +320,12 @@ class ChatExpression:
         if arguments.reply_to is not None:
             segments.append(Segment("reply", {"id": arguments.reply_to}))
         segments.append(Segment("image", {"summary": summary, "sub_type": 1}))
-        return Expression(self.simulated_message(segments, reply_to=arguments.reply_to), sticker, end_turn=arguments.end_turn)
+        return Expression(self.simulated_message(segments, reply_to=arguments.reply_to,
+                                                 semantic_reply_to=arguments.reply_to), sticker, end_turn=arguments.end_turn)
 
     async def deliver_expression(self, call_id: str, expression: Expression, *,
-                                 turn_id: str, channels: set[str]) -> tuple[str, str]:
+                                 turn_id: str, channels: set[str], tool_name: str = "say",
+                                 hold_expression: HoldExpression | None = None) -> tuple[str, str]:
         parts = ([expression.message] if expression.sticker is not None else
                  split_expression(expression.message, self.config.text_delivery.max_chars))
         entry_seq = await self.store.call(
@@ -330,51 +334,67 @@ class ChatExpression:
         )
         prefix = "模拟表达：" if self.send_message is None else ""
         return await self.send_prepared_expression(entry_seq, parts, prefix=prefix, turn_id=turn_id,
-                                                   sticker=expression.sticker, channels=channels)
+                                                   sticker=expression.sticker, channels=channels,
+                                                   tool_name=tool_name, hold_expression=hold_expression)
 
     async def send_prepared_expression(self, entry_seq: int, parts: list[ChatMessage],
                                        *, prefix: str = "", turn_id: str | None = None,
                                        sticker: PersonaSticker | CollectedSticker | None = None,
-                                       channels: set[str], fixed_notice: bool = False) -> tuple[str, str]:
+                                       channels: set[str], fixed_notice: bool = False,
+                                       tool_name: str = "say", hold_expression: HoldExpression | None = None) -> tuple[str, str]:
         """A fixed host notice is neither limited by nor counted toward the hourly speech limit."""
         async with self.outlet:
             self.check_send_available()
             return await self._send_prepared(entry_seq, parts, prefix=prefix, turn_id=turn_id,
-                                             sticker=sticker, channels=channels, fixed_notice=fixed_notice)
+                                             sticker=sticker, channels=channels, fixed_notice=fixed_notice,
+                                             tool_name=tool_name, hold_expression=hold_expression)
 
-    def _direct_interrupted(self, channels: set[str], fixed_notice: bool) -> bool:
-        if fixed_notice:
-            return False
-        if self.should_interrupt is not None:
-            return self.should_interrupt()
-        if "direct" in channels:
-            return False
-        private = self.config.scene.split(":", 2)[1] == "private"
-        blacklist = self.config.permissions.blacklist
-        return any(
-            not message.is_self and message.sender.uid not in blacklist
-            and (private or message.mentions_bot)
-            for _, message, _ in self.store.pending_messages(self.config.scene)
-        )
+    def _save_held_result(self, entry_seq: int, content: str) -> None:
+        with self.store.db:
+            self.store.db.execute("UPDATE mind_entries SET message=json_set(message,'$.content',?) WHERE seq=?",
+                                  (content, entry_seq))
 
     async def _send_prepared(self, entry_seq: int, parts: list[ChatMessage], *, prefix: str,
                              turn_id: str | None, sticker: PersonaSticker | CollectedSticker | None,
-                             channels: set[str], fixed_notice: bool) -> tuple[str, str]:
+                             channels: set[str], fixed_notice: bool, tool_name: str,
+                             hold_expression: HoldExpression | None) -> tuple[str, str]:
         errors: list[str | None] = []
         settings = self.config.text_delivery
         # Snapshot now: a later append in this turn does not change why this was said.
         seen = set(channels)
         confirmed: list[tuple[int, float]] = []
+        hold_sync = None if fixed_notice else getattr(hold_expression, "sync", None)
+        hold_async = None if fixed_notice or callable(hold_sync) else hold_expression
+        stored_sticker = (self.persona.id, sticker) if isinstance(sticker, PersonaSticker) else sticker
+
+        def save_held(index: int) -> tuple[str, str]:
+            if index == 0:
+                content = f"{tool_name} 未发：发送前收到新消息，本条共 {len(parts)} 段均未发出（0/{len(parts)}）。"
+                status = "held"
+            else:
+                sent = report_parts(parts[:index], errors, self.context.render)
+                remaining_text = "\n".join(render_body(rest.segments) for rest in parts[index:])
+                content = (f"{prefix}{sent}\n共 {len(parts)} 段，第 1..{index} 段已发出；"
+                           f"余段因收到新消息未发：\n{remaining_text}")
+                status = "partial_held"
+            self._save_held_result(entry_seq, content)
+            return content, status
+
+        def start_part(index: int, part: ChatMessage, content: str) -> int | tuple[str, str]:
+            if callable(hold_sync) and hold_sync(part.semantic_reply_to):
+                return save_held(index)
+            # Commit the send intent under the same write lock as the arbitration.
+            return self.store.start_expression_part(
+                entry_seq, part, prefix + content, persona_id=self.persona.id, turn_id=turn_id, sticker=stored_sticker)
+
         try:
             for index, part in enumerate(parts):
                 if index:
                     delay = min(settings.max_interval_seconds,
                                 max(settings.min_interval_seconds, part_length(part) / settings.chars_per_second))
                     await asyncio.sleep(delay)
-                if await self.store.read(self._direct_interrupted, seen, fixed_notice):
-                    content = await self.store.call(
-                        self.store.expression_error, entry_seq, "收到新的直接消息，已停止发送剩余内容。")
-                    return content, "interrupted"
+                if hold_async is not None and await hold_async(part.semantic_reply_to):
+                    return await self.store.call(save_held, index)
                 self.check_send_available()
                 if index == 0 and not fixed_notice:
                     try:
@@ -384,14 +404,11 @@ class ChatExpression:
                         raise
                 part.time = self.now()
                 simulate(part, self.send_message is None)
+                content = report_parts(parts, [*errors, None], self.context.render)
+                message_seq = await self.store.call(start_part, index, part, content)
+                if isinstance(message_seq, tuple):
+                    return message_seq
                 errors.append(None)
-                content = report_parts(parts, errors, self.context.render)
-                # Committed (and synced) before the platform send: the send intent survives a crash.
-                message_seq = await self.store.call(
-                    self.store.start_expression_part, entry_seq, part, prefix + content,
-                    persona_id=self.persona.id, turn_id=turn_id,
-                    sticker=(sticker if isinstance(sticker, CollectedSticker) else None if sticker is None
-                             else (self.persona.id, sticker)))
                 self.notify()
                 if self.send_message is None:
                     log_sent(message_seq, part, None, index=index, parts=len(parts))
@@ -492,10 +509,11 @@ class ChatExpression:
         return Sent(status, report, tuple(part.platform_message_id for part in parts[:len(errors)]
                                          if part.send_status in {"sent", "simulated"}))
 
-    def simulated_message(self, segments: list[Segment], *, reply_to: str | None = None) -> ChatMessage:
+    def simulated_message(self, segments: list[Segment], *, reply_to: str | None = None,
+                          semantic_reply_to: str | None = None) -> ChatMessage:
         return ChatMessage(
             id=str(uuid4()), platform=self.config.bot_id.split(":", 1)[0], bot_id=self.config.bot_id, scene=self.config.scene, platform_message_id=None,
             sender=Sender(self.config.bot_id, self.persona.name, None, None), time=self.now(),
-            segments=segments, reply_to=reply_to, mentions_bot=False,
+            segments=segments, reply_to=reply_to, mentions_bot=False, semantic_reply_to=semantic_reply_to,
             is_self=True, send_status="simulated",
         )

@@ -213,6 +213,7 @@ class ModelProbe(PanelResponse):
     usage: list[JsonValue]
     scope: str
     dimensions: int | None = None
+    reasoning_observed: bool | None = None
 
 
 class MemoryState(PanelResponse):

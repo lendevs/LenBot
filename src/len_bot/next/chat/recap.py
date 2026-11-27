@@ -1,5 +1,6 @@
 """Text-context estimates and complete native tool-group compaction boundaries."""
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 import json
 from math import ceil
@@ -12,6 +13,10 @@ from ..prompt_files import read_prompt
 
 Entry = tuple[int, dict]
 _TASK_NOTICE = re.compile(r"^\[任务(执行结束|提问|操作确认)\]\s*#(\d+)(?:；请求人\s+([^；\n]+))?(?:；(.*))?$")
+_DELIVERY_PART_HEADER = re.compile(r"^(\d{2}:\d{2}:\d{2}) (.*)$", re.MULTILINE)
+_DELIVERY_MESSAGE_ID = re.compile(r'(?: \[|，)id=("(?:\\.|[^"\\])*")')
+_DELIVERY_INCOMPLETE_STATUS = re.compile(r'(?: \[|，)状态=(?:failed|unconfirmed)(?:，|\])')
+_DELIVERY_HELD_SUMMARY = re.compile(r"(?:^|\n)共 \d+ 段，第 1\.\.\d+ 段已发出；余段因收到新消息未发：\n")
 
 
 class ContextBudgetError(ValueError):
@@ -44,6 +49,37 @@ def project_history(recap: str | None, entries: list[Entry]) -> list[dict]:
         read_prompt("next_recap_context.md")
     ).substitute(recap=recap)}]
     return messages + [message for _, message in entries]
+
+
+def expression_not_sent(name: str, content: object) -> bool:
+    return isinstance(content, str) and content.startswith(
+        (f"{name} 失败：", f"{name} 中断：", f"{name} 未发："))
+
+
+def compact_say_receipts(entries: Iterable[Entry]) -> Iterator[Entry]:
+    """Keep delivery metadata for complete say results; the tool call already contains the words."""
+    pending: set[str] = set()
+    for seq, message in entries:
+        if message["role"] == "assistant":
+            pending.update(call["id"] for call in message.get("tool_calls") or ()
+                           if call["function"]["name"] == "say")
+        elif message["role"] == "tool" and message["tool_call_id"] in pending:
+            pending.remove(message["tool_call_id"])
+            content = message["content"]
+            if (isinstance(content, str) and not expression_not_sent("say", content)
+                    and (headers := _DELIVERY_PART_HEADER.findall(content))
+                    and not any(_DELIVERY_INCOMPLETE_STATUS.search(header) for _, header in headers)
+                    and "\n本次剩余待发送内容：\n" not in content
+                    and not _DELIVERY_HELD_SUMMARY.search(content)):
+                message_ids = [json.loads(match[1]) for _, header in headers
+                               if (match := _DELIVERY_MESSAGE_ID.search(header)) is not None]
+                message = {**message, "content": encode({
+                    "status": "simulated" if content.startswith("模拟表达：") else "sent",
+                    "parts": len(headers),
+                    "message_ids": message_ids,
+                    "times": [time for time, _ in headers],
+                })}
+        yield seq, message
 
 
 def complete_boundaries(entries: list[Entry]) -> list[int]:
@@ -238,7 +274,7 @@ def extract_ticket_anchors(entries: list[Entry]) -> list[dict]:
 def recap_source(recap: str | None, entries: list[Entry]) -> str:
     """Project readable facts; opaque provider continuation fields are not facts."""
     transcript = []
-    for _, message in entries:
+    for _, message in compact_say_receipts(entries):
         item = {"role": message["role"], "content": message["content"]}
         if message["role"] == "assistant" and message.get("tool_calls") is not None:
             item["tool_calls"] = [

@@ -6,6 +6,7 @@ import Field from '../../../ui/Field.vue'
 import FormSection from '../../../ui/FormSection.vue'
 import Input from '../../../ui/Input.vue'
 import NumberInput from '../../../ui/NumberInput.vue'
+import Select from '../../../ui/Select.vue'
 import Switch from '../../../ui/Switch.vue'
 import TagInput from '../../../ui/TagInput.vue'
 import ParticipationChoice from '../participation/ParticipationChoice.vue'
@@ -69,19 +70,31 @@ const timing: { key: NumberKey; seconds?: boolean; step?: number; min?: number; 
   { key: 'max_extensions' },
 ]
 
-const hasDetailsError = computed(() => timing.some((item) => Boolean(form.errors[`attention.${item.key}`])))
+const pulseModes = computed(() =>
+  (['off', 'shadow', 'active'] as const).map((value) => ({
+    value,
+    label: t(`groups.settings.participation.pulseModes.${value}`),
+  })),
+)
+
+const hasDetailsError = computed(
+  () =>
+    timing.some((item) => Boolean(form.errors[`attention.${item.key}`])) ||
+    Boolean(form.errors['attention.pulse.sample_interval_seconds']),
+)
 </script>
 
 <template>
   <FormSection id="participation" :title="t('groups.settings.participation.section')">
     <ParticipationChoice v-model="participation" />
-    <Field
-      v-if="!form.draft.scene.attention.only_direct"
-      :label="t('groups.settings.participation.keywords')"
-      wide
-    >
-      <TagInput v-model="form.draft.scene.attention.keywords" />
-    </Field>
+    <template v-if="!form.draft.scene.attention.only_direct">
+      <Field :label="t('groups.settings.participation.keywords')" wide>
+        <TagInput v-model="form.draft.scene.attention.keywords" />
+      </Field>
+      <Field :label="t('groups.settings.participation.pulseMode')">
+        <Select v-model="form.draft.scene.attention.pulse.mode" :options="pulseModes" />
+      </Field>
+    </template>
     <Field :label="t('groups.settings.participation.otherBots')" :error="form.errors.otherBots" wide>
       <TagInput v-model="otherBots" placeholder="onebot:10001" />
     </Field>
@@ -112,6 +125,20 @@ const hasDetailsError = computed(() => timing.some((item) => Boolean(form.errors
           :step="item.step ?? 1"
           :unit="item.seconds ? t('groups.settings.seconds') : undefined"
           @update:model-value="(value) => (form.draft.scene.attention[item.key] = value as number)"
+        />
+      </Field>
+      <Field
+        :label="t('groups.settings.participation.timing.pulse_sample_interval_seconds')"
+        :error="form.errors['attention.pulse.sample_interval_seconds']"
+      >
+        <NumberInput
+          :model-value="form.draft.scene.attention.pulse.sample_interval_seconds"
+          :min="0"
+          :step="10"
+          :unit="t('groups.settings.seconds')"
+          @update:model-value="
+            (value) => (form.draft.scene.attention.pulse.sample_interval_seconds = value as number)
+          "
         />
       </Field>
     </Collapsible>

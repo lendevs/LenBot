@@ -39,8 +39,8 @@ export interface HostScene {
 export type IntentCondition =
   | { type: 'person'; people: string[] }
   | { type: 'thread'; message_id: string }
-  | { type: 'open_question'; message_id: string; keywords?: string[] }
-  | { type: 'topic'; keywords: string[] }
+  | { type: 'open_question'; message_id: string; watch?: string; keywords?: string[] }
+  | { type: 'topic'; watch?: string; keywords?: string[] }
   | { type: 'at'; minutes: number; [field: string]: unknown }
 
 /** GET /api/host/scenes/{scene}/focus */

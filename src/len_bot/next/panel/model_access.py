@@ -8,7 +8,7 @@ from pydantic import model_validator
 
 from ..configuration.models import Binding, Provider
 from ..configuration.types import STRICT
-from ..models.client import ChatModel, ModelSettings, ModelHTTPError, ModelProtocolError
+from ..models.client import ChatModel, ModelSettings, ModelHTTPError, ModelProtocolError, ModelReply
 from ..models.providers import ProviderAPI
 from ..memory.embeddings import EmbeddingBinding, EmbeddingClient, EmbeddingSettings
 
@@ -55,6 +55,71 @@ class ModelCandidate(ProviderCandidate):
         return self
 
 
+def _reply_has_reasoning(reply: ModelReply) -> bool:
+    reasoning_content = reply.message.get('reasoning_content')
+    if isinstance(reasoning_content, str) and reasoning_content.strip():
+        return True
+
+    usage = reply.usage
+    if isinstance(usage, dict):
+        for field in ('completion_tokens_details', 'output_tokens_details'):
+            details = usage.get(field)
+            tokens = details.get('reasoning_tokens') if isinstance(details, dict) else None
+            if type(tokens) is int and tokens > 0:
+                return True
+        thoughts = usage.get('thoughtsTokenCount')
+        if type(thoughts) is int and thoughts > 0:
+            return True
+
+    response = reply.response
+    if not isinstance(response, dict):
+        return False
+    output = response.get('output')
+    if isinstance(output, list) and any(
+        isinstance(item, dict)
+        and item.get('type') == 'reasoning'
+        and (
+            (isinstance(item.get('encrypted_content'), str) and bool(item['encrypted_content'].strip()))
+            or (isinstance(item.get('summary'), list) and any(
+                isinstance(s, dict) and isinstance(s.get('text'), str) and bool(s['text'].strip())
+                for s in item['summary']
+            ))
+            or (isinstance(item.get('content'), list) and any(
+                isinstance(c, dict) and isinstance(c.get('text'), str) and bool(c['text'].strip())
+                for c in item['content']
+            ))
+        )
+        for item in output
+    ):
+        return True
+    blocks = response.get('content')
+    if isinstance(blocks, list) and any(
+        isinstance(item, dict)
+        and (
+            (item.get('type') == 'thinking' and isinstance(item.get('thinking'), str) and bool(item['thinking'].strip()))
+            or (item.get('type') == 'redacted_thinking' and isinstance(item.get('data'), str) and bool(item['data'].strip()))
+        )
+        for item in blocks
+    ):
+        return True
+    candidates = response.get('candidates')
+    if not isinstance(candidates, list) or not candidates or not isinstance(candidates[0], dict):
+        return False
+    content = candidates[0].get('content')
+    if not isinstance(content, dict):
+        return False
+    parts = content.get('parts')
+    return isinstance(parts, list) and any(
+        isinstance(part, dict)
+        and part.get('thought') is True
+        and (
+            (isinstance(part.get('text'), str) and bool(part['text'].strip()))
+            or (isinstance(part.get('thoughtSignature'), str) and bool(part['thoughtSignature'].strip()))
+        )
+        for part in parts
+    )
+
+
 async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, kind: str = 'text') -> dict:
     if kind == 'embedding':
         if provider.api not in {'openai-chat', 'openai-embeddings'}:
@@ -65,7 +130,7 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
             result = await client.embed(['向量连接测试'])
         return {'model': binding.model, 'kind': kind, 'calls': 1,
                 'text': f'向量接口连接成功，返回 {result.dimensions} 维向量。', 'dimensions': result.dimensions,
-                'usage': [result.usage], 'scope': '验证一次 embeddings 请求'}
+                'usage': [result.usage], 'scope': '验证一次 embeddings 请求', 'reasoning_observed': None}
     # A probe reports the first failure as it is; retries belong to real requests.
     settings = ModelSettings.from_binding(provider, binding).model_copy(update={'retry_delays_seconds': ()})
     messages = [{'role': 'user', 'content': '请回复连接成功。' if kind == 'text' else '请调用 connection_check 工具完成连接测试。不要自行假设工具结果。'}]
@@ -87,4 +152,5 @@ async def probe_model(provider: Provider, binding: Binding | EmbeddingBinding, k
             raise ValueError('模型返回了空正文或工具调用，测试需要一段文本回复；请检查模型用途和输出上限')
     return {'model': binding.model, 'text': reply.text, 'kind': kind, 'calls': len(replies),
             'usage': [item.usage for item in replies],
-            'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接'}
+            'scope': '验证一次文本调用' if kind == 'text' else '验证工具调用及结果续接',
+            'reasoning_observed': any(_reply_has_reasoning(item) for item in replies)}

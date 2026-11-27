@@ -12,6 +12,7 @@ import Switch from '../../ui/Switch.vue'
 import ModelName from './ModelName.vue'
 import DeepSeekAntiBaguCard from './DeepSeekAntiBaguCard.vue'
 import ProbeTools from './ProbeTools.vue'
+import { tunedDeepSeekEffort } from './deepseek'
 import { hasKey, isDeepSeekModel, useForm, type ProblemField } from './form'
 
 const props = defineProps<{ role: ChatRole }>()
@@ -118,6 +119,15 @@ const showAntiBagu = computed(() =>
     (isDeepSeekModel(binding.value.model, row.value?.base_url) || binding.value.anti_bagu),
   ),
 )
+function applyDeepSeekTune() {
+  if (!binding.value) return
+  binding.value.anti_bagu = true
+  binding.value.reasoning_effort = tunedDeepSeekEffort(binding.value.reasoning_effort)
+  binding.value.quick_reasoning_effort = null
+  binding.value.thinking_budget_tokens = null
+  if (binding.value.thinking === 'disabled') binding.value.thinking = null
+  if (api.value === 'anthropic') binding.value.temperature = null
+}
 const enabled = computed({
   get: () => binding.value !== null,
   set: (on: boolean) => props.role !== 'mind' && form.toggleRole(props.role, on),
@@ -288,7 +298,11 @@ watch(retries, (text) => {
           <DeepSeekAntiBaguCard
             v-if="showAntiBagu"
             v-model="binding.anti_bagu"
+            :effort="binding.reasoning_effort"
+            :quick-effort="binding.quick_reasoning_effort"
+            :thinking="binding.thinking"
             class="sm:col-span-2 lg:order-4 lg:col-span-3"
+            @tune="applyDeepSeekTune"
           />
         </Transition>
         <Field :label="t('models.roles.context')" :error="fieldError('context')" class="lg:order-3">
@@ -320,9 +334,6 @@ watch(retries, (text) => {
         <Field :label="t('models.roles.imageInput')" inline>
           <Switch v-model="binding.image_input" :aria-label="t('models.roles.imageInput')" />
         </Field>
-        <Field v-if="role === 'mind'" :label="t('models.roles.quickReply')" inline>
-          <Switch v-model="quickReply" :aria-label="t('models.roles.quickReply')" />
-        </Field>
       </div>
       <Collapsible
         v-model:open="advancedOpen"
@@ -338,6 +349,9 @@ watch(retries, (text) => {
               :steppers="false"
               :unit="t('groups.settings.seconds')"
             />
+          </Field>
+          <Field v-if="role === 'mind'" :label="t('models.roles.quickReply')" inline>
+            <Switch v-model="quickReply" :aria-label="t('models.roles.quickReply')" />
           </Field>
           <Field v-if="role === 'mind'" :label="t('models.roles.quickEffort')">
             <Select

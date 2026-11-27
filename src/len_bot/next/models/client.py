@@ -342,14 +342,16 @@ class ChatModel:
     async def complete(self, messages: list[dict], tools: list[dict], *,
                        max_output_tokens: int | None = None, session_id: str | None = None,
                        settings: ModelSettings | None = None,
-                       on_retry: Callable[[], None] | None = None) -> ModelReply:
+                       on_retry: Callable[[], None] | None = None,
+                       history_message_count: int | None = None) -> ModelReply:
         """``settings`` overrides request options for this call only; the client keeps its connection.
         ``on_retry`` runs before each resend of the same request."""
         client, bound = self._client, self.settings
         self._active[client] = self._active.get(client, 0) + 1
         try:
             return await self._complete(client, bound, messages, tools, max_output_tokens=max_output_tokens,
-                                        session_id=session_id, settings=settings, on_retry=on_retry)
+                                        session_id=session_id, settings=settings, on_retry=on_retry,
+                                        history_message_count=history_message_count)
         finally:
             self._active[client] -= 1
             if not self._active[client]:
@@ -361,11 +363,12 @@ class ChatModel:
     async def _complete(self, client: httpx.AsyncClient, bound: ModelSettings,
                         messages: list[dict], tools: list[dict], *, max_output_tokens: int | None,
                         session_id: str | None, settings: ModelSettings | None,
-                        on_retry: Callable[[], None] | None) -> ModelReply:
+                        on_retry: Callable[[], None] | None,
+                        history_message_count: int | None = None) -> ModelReply:
         from .protocols import build_request, parse_reply
         settings = bound if settings is None else settings
         path, payload = build_request(settings, messages, tools, max_output_tokens=max_output_tokens,
-                                      session_id=session_id)
+                                      session_id=session_id, history_message_count=history_message_count)
         for delay in (*settings.retry_delays_seconds, None):
             deadline = asyncio.timeout(settings.timeout_seconds)
             try:

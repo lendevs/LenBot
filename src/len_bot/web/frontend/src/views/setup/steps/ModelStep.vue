@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMutation } from '@tanstack/vue-query'
-import { List, Zap } from '@lucide/vue'
+import { List, TriangleAlert, Zap } from '@lucide/vue'
 import { setupApi } from '../../../api/setup'
 import Button from '../../../ui/Button.vue'
 import Field from '../../../ui/Field.vue'
@@ -13,6 +13,7 @@ import NumberInput from '../../../ui/NumberInput.vue'
 import SegmentedControl from '../../../ui/SegmentedControl.vue'
 import Select from '../../../ui/Select.vue'
 import DeepSeekAntiBaguCard from '../../models/DeepSeekAntiBaguCard.vue'
+import { expectsReasoning, tunedDeepSeekEffort } from '../../models/deepseek'
 import { isDeepSeekModel } from '../../models/form'
 import ModelName from '../../models/ModelName.vue'
 import MoreFields from '../MoreFields.vue'
@@ -45,6 +46,12 @@ const quickReply = computed({
 const showAntiBagu = computed(
   () => draft.preset === 'deepseek' || isDeepSeekModel(draft.model, draft.baseUrl) || draft.antiBagu,
 )
+function applyDeepSeekTune() {
+  draft.antiBagu = true
+  draft.effort = tunedDeepSeekEffort(draft.effort)
+  draft.quickEffort = ''
+  draft.thinkingBudget = null
+}
 const connectionOptions = computed(() => [
   {
     value: 'primary' as const,
@@ -141,7 +148,10 @@ const probe = useMutation({
     const result = await setupApi.model(wizard.provider(), wizard.binding(), draft.probeKind)
     return { signature, result }
   },
-  onSuccess: ({ signature }) => (wizard.modelPassed.value = signature),
+  onSuccess: ({ signature, result }) => {
+    wizard.modelPassed.value = signature
+    wizard.modelReasoningObserved.value = result.reasoning_observed ?? null
+  },
 })
 watch(wizard.modelSignature, () => probe.reset())
 
@@ -151,6 +161,19 @@ const passed = computed(() => {
     return t('setup.model.passed', { model: answer.result.model, text: answer.result.text })
   }
   return wizard.modelReady.value ? t('setup.model.passedBefore') : null
+})
+
+const noReasoningWarning = computed(() => {
+  if (!wizard.modelReady.value) return false
+  const reasoningObserved = probe.data.value?.result.reasoning_observed ?? wizard.modelReasoningObserved.value
+  return (
+    reasoningObserved === false &&
+    expectsReasoning({
+      thinking: null,
+      effort: draft.effort,
+      thinkingBudget: draft.thinkingBudget,
+    })
+  )
 })
 </script>
 
@@ -200,9 +223,16 @@ const passed = computed(() => {
         />
       </Field>
       <Transition name="ui-rise">
-        <DeepSeekAntiBaguCard v-if="showAntiBagu" v-model="draft.antiBagu" class="sm:col-span-2" />
+        <DeepSeekAntiBaguCard
+          v-if="showAntiBagu"
+          v-model="draft.antiBagu"
+          :effort="draft.effort.trim() || null"
+          :quick-effort="draft.quickEffort.trim() || null"
+          :thinking="null"
+          class="sm:col-span-2"
+          @tune="applyDeepSeekTune"
+        />
       </Transition>
-      <Field :label="t('models.roles.quickReply')" inline wide><Switch v-model="quickReply" /></Field>
     </div>
     <div class="grid gap-5 border-t border-line pt-5 sm:grid-cols-2">
       <Field :label="t('capabilities.web.provider')">
@@ -269,6 +299,7 @@ const passed = computed(() => {
       <Field :label="t('models.roles.effort')">
         <Select v-model="effort" :options="efforts" />
       </Field>
+      <Field :label="t('models.roles.quickReply')" inline><Switch v-model="quickReply" /></Field>
       <Field v-if="thinking" :label="t('models.roles.thinking')" :error="error('thinkingBudget')">
         <NumberInput v-model="draft.thinkingBudget" :min="0" :steppers="false" unit="tokens" />
       </Field>
@@ -296,6 +327,14 @@ const passed = computed(() => {
         </Button>
       </div>
       <TestResult :passed="passed" :error="probe.error.value" :failed-title="t('models.probe.failed')" />
+      <div
+        v-if="noReasoningWarning"
+        role="status"
+        class="flex animate-fade items-start gap-2.5 rounded-lg border border-warning/40 bg-warning-bg px-3.5 py-2.5 text-xs leading-relaxed text-warning"
+      >
+        <TriangleAlert :size="15" class="mt-0.5 shrink-0" aria-hidden="true" />
+        <span>{{ t('models.probe.noReasoningWarning') }}</span>
+      </div>
     </div>
   </div>
 </template>

@@ -43,24 +43,51 @@ const drop = useMutation({
 
 const unitList = computed(() => new Intl.ListFormat(currentLocale.value, { type: 'unit', style: 'short' }))
 const account = (uid: string) => props.nameOf?.(uid) ?? uid.split(':').slice(1).join(':')
+const nonEmpty = (values?: string[]) => (values ?? []).map((word) => word.trim()).filter(Boolean)
+
 function condition(item: IntentCondition) {
   if (item.type === 'person')
     return t('groups.live.focus.when.person', { who: unitList.value.format(item.people.map(account)) })
   if (item.type === 'thread') return t('groups.live.focus.when.thread', { id: item.message_id })
-  if (item.type === 'open_question')
-    return item.keywords?.length
-      ? t('groups.live.focus.when.openKeywords', {
-          id: item.message_id,
-          words: unitList.value.format(item.keywords),
-        })
-      : t('groups.live.focus.when.thread', { id: item.message_id })
-  if (item.type === 'topic')
-    return t('groups.live.focus.when.topic', { words: unitList.value.format(item.keywords) })
+  if (item.type === 'open_question') {
+    const watch = item.watch?.trim()
+    const keywords = nonEmpty(item.keywords)
+    if (watch && keywords.length) {
+      return [
+        t('groups.live.focus.when.openWatch', { id: item.message_id, watch }),
+        t('groups.live.focus.when.topic', { words: unitList.value.format(keywords) }),
+      ].join(t('groups.live.focus.join.any'))
+    }
+    if (watch) return t('groups.live.focus.when.openWatch', { id: item.message_id, watch })
+    if (keywords.length) {
+      return t('groups.live.focus.when.openKeywords', {
+        id: item.message_id,
+        words: unitList.value.format(keywords),
+      })
+    }
+    return t('groups.live.focus.when.thread', { id: item.message_id })
+  }
+  if (item.type === 'topic') {
+    const watch = item.watch?.trim()
+    if (watch) return t('groups.live.focus.when.topicWatch', { watch })
+    const keywords = nonEmpty(item.keywords)
+    return keywords.length
+      ? t('groups.live.focus.when.topic', { words: unitList.value.format(keywords) })
+      : ''
+  }
   return t('groups.live.focus.when.at', { n: item.minutes })
 }
 const conditions = (when: IntentCondition[], match: 'any' | 'all') =>
-  when.map(condition).join(t(`groups.live.focus.join.${match}`))
+  when
+    .map(condition)
+    .filter(Boolean)
+    .join(t(`groups.live.focus.join.${match}`))
 const time = (at: number) => formatDateTime(at, { timeZone: props.timeZone })
+const detail = (intent: SceneFocus['intents'][number]) => {
+  const summary = conditions(intent.when, intent.match)
+  const until = t('groups.live.focus.until', { time: time(intent.until) })
+  return summary ? `${summary} · ${until}` : until
+}
 </script>
 
 <template>
@@ -72,10 +99,9 @@ const time = (at: number) => formatDateTime(at, { timeZone: props.timeZone })
     <li v-for="intent in intents" :key="intent.id" class="flex min-w-0 items-start gap-3 px-3 py-2">
       <Eye :size="16" class="mt-0.5 shrink-0 text-info" aria-hidden="true" />
       <div class="min-w-0 flex-1">
-        <p class="truncate text-sm font-medium text-ink">{{ intent.reason }}</p>
-        <p class="text-xs text-muted tabular">
-          {{ conditions(intent.when, intent.match) }} ·
-          {{ t('groups.live.focus.until', { time: time(intent.until) }) }}
+        <p class="truncate text-sm font-medium text-ink" :title="intent.reason">{{ intent.reason }}</p>
+        <p class="line-clamp-2 text-xs break-words text-muted tabular" :title="detail(intent)">
+          {{ detail(intent) }}
         </p>
       </div>
       <IconButton
