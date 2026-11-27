@@ -324,8 +324,8 @@ class ChatExpression:
                                                  semantic_reply_to=arguments.reply_to), sticker, end_turn=arguments.end_turn)
 
     async def deliver_expression(self, call_id: str, expression: Expression, *,
-                                 turn_id: str, channels: set[str], tool_name: str,
-                                 hold_expression: HoldExpression) -> tuple[str, str]:
+                                 turn_id: str, channels: set[str], tool_name: str = "say",
+                                 hold_expression: HoldExpression | None = None) -> tuple[str, str]:
         parts = ([expression.message] if expression.sticker is not None else
                  split_expression(expression.message, self.config.text_delivery.max_chars))
         entry_seq = await self.store.call(
