@@ -83,7 +83,8 @@ async def test_reactions_to_own_lines_reach_the_model_before_the_persona_prohibi
                 now[0] += config.attention.direct_max_seconds
                 await asyncio.wait_for(live.run(), 5)
     assert len(requests) == 1
-    content = requests[0][2]['messages'][-1]['content']
+    assert '新游戏开服了没' in requests[0][2]['messages'][-1]['content']
+    content = requests[0][2]['messages'][-2]['content']
     content = content if isinstance(content, str) else ''.join(block.get('text', '') for block in content)
     block = content[content.index(HEAD):content.index(TAIL)]
     taken, missed = block.split('有人接：')[1].split('没接上：')
