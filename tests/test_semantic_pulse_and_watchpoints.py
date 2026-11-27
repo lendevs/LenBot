@@ -271,6 +271,7 @@ async def test_shadow_samples_watch_without_opening_mind(tmp_path, caplog):
             assert roles(calls) == ['pulse']
             now[0] = START + 120
             with caplog.at_level(logging.INFO):
+                caplog.clear()
                 runner.changed.set()
                 await wait_for_sample(runner, second['message_seq'])
         assert roles(calls) == ['pulse', 'pulse'] and turn_channels(events) == []
