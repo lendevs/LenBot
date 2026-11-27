@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
@@ -536,7 +537,7 @@ async def test_a_followup_wakes_once_and_only_for_the_person_answered(tmp_path):
                 bystander = live.receive(message(70002, 2, '哈哈'))['wake_verdict']
                 assert not bystander['woke'] and not live.followup_waiting()
                 now[0] += 1
-                assert live.receive(message(70001, 3, '然后呢'))['wake_verdict']['channel'] == 'focus'
+                assert live.receive(message(70001, 3, f'{persona.name}，然后呢'))['wake_verdict']['channel'] == 'focus'
                 assert live.state.followups == {} and live.followup_waiting()
                 now[0] += config.attention.focus_max_seconds
                 await asyncio.wait_for(live.run(), 5)
@@ -562,7 +563,7 @@ async def test_an_unanswered_interjection_doubles_the_wait_and_a_reply_resets_it
                 live.receive(message(70001, 1, '你们觉得怎么办？'))
                 assert live.state.pending.channel == 'ambient' and live.deadline() == START
                 await asyncio.wait_for(live.run(), 5)
-                assert set(live.state.followups) == {'*'} and live.state.interjected_at == live.state.spoke_at == START
+                assert live.state.followups == {} and live.state.interjected_at == live.state.spoke_at == START
                 assert live.ambient_interval() == config.attention.ambient_min_interval_seconds
                 now[0] += config.attention.focus_seconds + 1
                 assert await live.ready_messages(wait=False) is None
@@ -573,11 +574,40 @@ async def test_an_unanswered_interjection_doubles_the_wait_and_a_reply_resets_it
                 now[0] = START + interval
                 await asyncio.wait_for(live.run(), 5)
                 now[0] += 10
-                assert live.receive(message(70003, 3, '真的吗'))['wake_verdict']['channel'] == 'focus'
-                now[0] += config.attention.focus_max_seconds
+                assert live.receive(message(70003, 3, '真的吗'))['wake_verdict']['channel'] == 'ambient'
+                assert not live.followup_waiting()
+                live.receive(message(70003, 4, '真的吗', direct=True))
+                now[0] += config.attention.direct_max_seconds
                 await asyncio.wait_for(live.run(), 5)
                 assert live.state.silence_level == 0 and live.state.interjected_at is None
     assert len(requests) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('semantic_target', [None, '2'])
+async def test_multi_person_turn_opens_focus_only_for_a_semantic_reply_target(tmp_path, monkeypatch, semantic_target):
+    config, persona, replies = talking_instance(tmp_path, 1)
+    now = [START]
+    server = await peer_server(replies, [])
+    async with server:
+        config.models.providers['synthetic'].base_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1'
+        with Store(config.database, now=lambda: now[0]) as store:
+            async with ChatModel(config.model_settings('mind')) as model:
+                live = SceneRunner(Chat(config, persona, store, model, now=lambda: now[0]), lambda _: None)
+                simulated = live.chat.expression.simulated_message
+
+                def expressed(*args, **kwargs):
+                    return replace(simulated(*args, **kwargs), semantic_reply_to=semantic_target)
+
+                monkeypatch.setattr(live.chat.expression, 'simulated_message', expressed)
+                live.receive(message(70001, 1, '问你个事', direct=True))
+                live.receive(message(70002, 2, '我也有个问题', direct=True))
+                now[0] += config.attention.direct_max_seconds
+                live.close_input()
+                await asyncio.wait_for(live.run(), 5)
+                _, outgoing = store.own_expressions_after(SCENE, 0)[0]
+                assert outgoing.reply_to is None and outgoing.semantic_reply_to == semantic_target
+                assert set(live.state.followups) == ({'onebot:70002'} if semantic_target else set())
 
 
 def test_the_speech_pace_lets_a_burst_out_then_holds_every_chat_wake(tmp_path):
@@ -609,10 +639,11 @@ async def test_reopening_counts_joining_in_from_now_and_old_saved_fields_are_ign
     config.attention.focus_seconds = 0
     now = [START]
     with Store(config.database, now=lambda: now[0]) as store:
-        store.save_attention(SCENE, {'paused': True, 'silence_level': 1, 'focus_until': START + 60,
+        store.save_attention(SCENE, {'paused': True, 'silence_level': 1, 'focus_until': START + 60, 'followups': {'*': START},
                                      'focus_unanswered': 2})
         live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
         assert live.state.paused and live.state.silence_level == 1
+        assert live.state.followups == store.load_attention(SCENE)['followups'] == {}
         live.state.silence_level = 0
         now[0] += 100
         await live.set_paused(False)
@@ -664,7 +695,6 @@ async def test_focus_ignores_pure_stickers_and_trivial_fillers_without_consuming
     with Store(config.database, now=lambda: now[0]) as store:
         live = SceneRunner(Chat(config, persona, store, None, now=lambda: now[0]), lambda _: None)
         live.state.followups['onebot:70001'] = START
-        live.state.followups['*'] = START
 
         def raw_event(user, ident, segments):
             return {'post_type': 'message', 'message_type': 'group', 'self_id': 90001, 'group_id': 80001,
@@ -683,7 +713,7 @@ async def test_focus_ignores_pure_stickers_and_trivial_fillers_without_consuming
             now[0] += 1
             verdict = live.receive(raw_event(user, ident, segments))['wake_verdict']
             assert not verdict['woke'] and verdict['channel'] is None
-            assert 'onebot:70001' in live.state.followups and '*' in live.state.followups
+            assert set(live.state.followups) == {'onebot:70001'}
 
         # A meaningful text follow-up still wakes on focus and consumes its window.
         now[0] += 1
