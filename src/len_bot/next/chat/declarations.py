@@ -251,6 +251,8 @@ def apply_pulse_matches(declared: Declared, matched_watch_ids: list[str], target
     if not message_by_id:
         return []
     message_id = target_msg_id if target_msg_id in message_by_id else next(reversed(message_by_id))
+    target = message_by_id[message_id]
+    target_text = plain_text(target).casefold()
     matched = []
     for intent in declared.intents:
         if intent.until <= now or intent.id not in matched_watch_ids or not any(
@@ -258,9 +260,8 @@ def apply_pulse_matches(declared: Declared, matched_watch_ids: list[str], target
         ):
             continue
         if intent.match == 'all' and not all(
-            condition.get('watch') or any(matches_condition(condition, message, plain_text(message).casefold(),
-                                                            pulse_active=True) for message in message_by_id.values())
-            for condition in intent.conditions
+            matches_condition(condition, target, target_text, pulse_active=True)
+            for condition in intent.conditions if not condition.get('watch')
         ):
             continue
         # Keep an already due timer for the same intent; message matches use the normal rewake window.
