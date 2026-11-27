@@ -6,6 +6,7 @@ import {
   settingsApi,
   type Permissions,
   type SceneChange,
+  type SemanticPulse,
   type SettingsSnapshot,
   type SpeechChange,
   type TaskChange,
@@ -58,12 +59,14 @@ const minutes = (clock: string) => clock.replace(/^(\d\d:\d\d):00$/, '$1')
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
+const DEFAULT_PULSE: SemanticPulse = { mode: 'off', sample_interval_seconds: 120 }
 
 const participationSlice = (draft: Draft) => {
   const { attention, timezone, transcribe_audio } = draft.scene
   return {
     only_direct: attention.only_direct,
     keywords: attention.keywords,
+    pulse: attention.pulse,
     other_bot_ids: attention.other_bot_ids,
     timezone,
     transcribe_audio,
@@ -104,6 +107,7 @@ function sceneOf(
     egress_bytes_per_second,
   } = saved.tasks
   const quiet = saved.attention.quiet_hours
+  const pulse = saved.attention.pulse
   const proactive = saved.proactive
   return cloneValue({
     scene: {
@@ -112,6 +116,12 @@ function sceneOf(
       attention: {
         ...saved.attention,
         quiet_hours: quiet && { ...quiet, start: minutes(quiet.start), end: minutes(quiet.end) },
+        pulse: pulse
+          ? {
+              mode: pulse.mode ?? DEFAULT_PULSE.mode,
+              sample_interval_seconds: pulse.sample_interval_seconds ?? DEFAULT_PULSE.sample_interval_seconds,
+            }
+          : { ...DEFAULT_PULSE },
       },
       schedules: {
         enabled: saved.schedules.enabled,
@@ -323,6 +333,11 @@ export function useSettingsForm(scene: Ref<string>) {
     if (!isFiniteNumber(attention.explore_probability)) found['attention.explore_probability'] = required
     else if (attention.explore_probability < 0 || attention.explore_probability > 1)
       found['attention.explore_probability'] = t('groups.settings.errors.probability')
+
+    if (!isFiniteNumber(attention.pulse?.sample_interval_seconds))
+      found['attention.pulse.sample_interval_seconds'] = required
+    else if (attention.pulse.sample_interval_seconds < 0)
+      found['attention.pulse.sample_interval_seconds'] = nonNegativeInt
 
     const pairs = [
       ['direct_idle_seconds', 'direct_max_seconds'],
