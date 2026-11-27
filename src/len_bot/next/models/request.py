@@ -83,7 +83,8 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                         input_estimate: tuple[int, str] | None = None,
                         notify: Callable[[], None] | None = None,
                         trace: Callable[[dict], None] | None = None,
-                        recall_items: list[dict] | None = None, quick: bool = False) -> ModelReply:
+                        recall_items: list[dict] | None = None, quick: bool = False,
+                        history_message_count: int | None = None) -> ModelReply:
     binding = config.binding(role)
     messages = project_messages(messages, binding.history_policy)
     tokens = binding.max_output_tokens if output_tokens is None else output_tokens
@@ -144,7 +145,9 @@ async def request_model(config: SharedConfig, store: Store, model: ChatModel,
                 notify()
             reply = await model.complete(messages, tools, max_output_tokens=tokens, session_id=session_id,
                                          settings=None if effective is model.settings else effective,
-                                         on_retry=retried)
+                                         on_retry=retried,
+                                         **({"history_message_count": history_message_count}
+                                            if history_message_count is not None else {}))
             if validate is not None:
                 validate(reply)
         except BaseException as error:
