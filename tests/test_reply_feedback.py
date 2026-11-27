@@ -62,7 +62,7 @@ def fill(store):
            now - 300, 'unrelated', '群友在聊别的游戏')
     judged(store, SCENE, '说不准是不是在接我', now - 250, 'uncertain', '看不出')
     judged(store, SCENE, '这首歌是周三发的', now - 200, 'correct', '群友说是周四')
-    judged(store, SCENE, '哈哈哈对', now - 100, 'agree', '')
+    judged(store, SCENE, '晚饭要不要点披萨', now - 100, 'unrelated', '群友在聊开服')
     judged(store, SCENE, '新游戏开服了吗', now - 50, 'agree', '群友说开了还发了截图')
     judged(store, OTHER, '别的群里的话', now - 10, 'agree', '别的群')
 
@@ -88,13 +88,12 @@ async def test_reactions_to_own_lines_reach_the_model_before_the_persona_prohibi
     block = content[content.index(HEAD):content.index(TAIL)]
     taken, missed = block.split('有人接：')[1].split('没接上：')
     assert taken.strip().splitlines() == [
-        '- 「新游戏开服了吗」附和：群友说开了还发了截图', '- 「哈哈哈对」附和', '- 「周末一起去爬山吧」接着聊：群友接着问几点出发']
+        '- 「新游戏开服了吗」附和：群友说开了还发了截图', '- 「周末一起去爬山吧」接着聊：群友接着问几点出发']
     assert missed.strip().splitlines() == [
         '- 「这首歌是周三发的」被纠正：群友说是周四',
-        # Long lines are cut, so the section stays short.
-        '- 「突然联想到这个像极了小时候在外婆家院子里追着蝴蝶跑一下午最后摔进泥坑里的样子，哈…」没人接这句：群友在聊别的游戏',
-        '- 「快去睡觉啦，不然明天起不来哦~」被嫌弃：群友说别管我']
-    for absent in ('三天前', '挤掉', '说不准', '别的群'):
+        '- 另有 2 句无人接茬（最近原因：群友在聊开服）',
+        '- 另有 1 句引起反感（最近原因：群友说别管我）']
+    for absent in ('三天前', '挤掉', '说不准', '别的群', '突然联想到这个', '晚饭要不要点披萨', '快去睡觉啦'):
         assert absent not in block
     # The persona's own prohibitions still close the material.
     assert content.index(TAIL) < content.index('<角色材料里带否定的原句>')

@@ -20,7 +20,7 @@ from .group_voice import describe as describe_group_voice
 from .persona_avoid import avoidance_text
 from .quiet import quiet_period
 from .reply_feedback import reply_feedback
-from .recap import project_history
+from .recap import compact_say_receipts, expression_not_sent, project_history
 from ..models.limits import speech_quota
 from ..models.projection import project_messages, project_old_results
 from ..tools.discovery import deferred_names, discovery_view
@@ -226,21 +226,24 @@ TEMPLATE_GRAM = 6
 
 def _expressions(entries: Sequence[tuple[int, dict]]) -> list[tuple[str, dict]]:
     """The latest own ``say`` and ``react`` calls in the history, newest first."""
+    results = {message["tool_call_id"]: message["content"] for _, message in entries
+               if message["role"] == "tool"}
     expressions = []
     for _, message in reversed(entries):
         if message["role"] != "assistant":
             continue
         for call in reversed(message.get("tool_calls") or []):
-            if call["function"]["name"] not in ("say", "react"):
+            name = call["function"]["name"]
+            if name not in ("say", "react") or expression_not_sent(name, results.get(call["id"])):
                 continue
             try:
                 arguments = json.loads(call["function"]["arguments"] or "{}")
             except ValueError:
                 continue
             if isinstance(arguments, dict):
-                if call["function"]["name"] == "react" and arguments.get("preview"):
+                if name == "react" and arguments.get("preview"):
                     continue
-                expressions.append((call["function"]["name"], arguments))
+                expressions.append((name, arguments))
         if len(expressions) >= HABIT_WINDOW:
             break
     return expressions[:HABIT_WINDOW]
@@ -408,9 +411,11 @@ def _shapes(texts: Sequence[str], words: Sequence[str], others: str) -> list[str
     spaced_clauses = 0
     for text in texts:
         text = text.strip()
+        if text.endswith(("。", "！", "!")):
+            text = text[:-1]
         if re.search(r"[，,。！？!?；;：:\n]", text):
             continue
-        parts = re.split(r"[ \t\u3000]+", text)
+        parts = re.split(r"[ \t\u3000]+", text.rstrip())
         if 3 <= len(parts) <= 5 and all(HAN.search(part) for part in parts) and len(HAN.findall(text)) >= 12:
             spaced_clauses += 1
     if spaced_clauses >= max(5, math.ceil(len(texts) * 0.65)):
@@ -563,11 +568,11 @@ class ChatContext:
         entries = self.conversation_entries(entries)
         thought_template = Template(read_prompt("next_unspoken_thought.md"))
         projected_entries: list[tuple[int, dict]] = []
-        for seq, message in project_old_results(
+        for seq, message in compact_say_receipts(project_old_results(
             entries,
             self.config.compaction.keep_recent_tokens,
             protect_from_seq=protect_from_seq,
-        ):
+        )):
             for projected in project_messages([message], self.config.models.roles.mind.history_policy):
                 if (projected["role"] == "assistant" and not projected.get("tool_calls")
                         and isinstance(projected.get("content"), str) and projected["content"].strip()):
@@ -606,16 +611,22 @@ class ChatContext:
                 read_prompt("next_group_profile.md")).substitute(profile=profile.strip())}
         state = {**state, 'content': state['content'] + '\n' + attention}
         state = {**state, 'content': '\n'.join([state['content'], *refs])}
-        if turn_floor_seq is None:
-            history_entries, current_entries = projected, []
-        else:
-            history_entries = [item for item in projected if item[0] <= turn_floor_seq]
-            current_entries = [item for item in projected if item[0] > turn_floor_seq]
+        history_entries, current = [], []
+        for seq, message in projected:
+            if turn_floor_seq is not None and seq > turn_floor_seq:
+                current.append(message)
+                continue
+            content = message["content"]
+            if message["role"] == "user" and isinstance(content, str):
+                text, separator, freshness = content.rpartition("\n<话题新鲜度>\n")
+                if separator and freshness.rstrip().endswith("</话题新鲜度>"):
+                    message = {**message, "content": text}
+            history_entries.append((seq, message))
         return ContextProjection(
             system={"role": "system", "content": self.system},
             history=project_history(recap, history_entries),
             snapshot=state,
-            current=[message for _, message in current_entries],
+            current=current,
         )
 
     async def project(
