@@ -148,7 +148,10 @@ const probe = useMutation({
     const result = await setupApi.model(wizard.provider(), wizard.binding(), draft.probeKind)
     return { signature, result }
   },
-  onSuccess: ({ signature }) => (wizard.modelPassed.value = signature),
+  onSuccess: ({ signature, result }) => {
+    wizard.modelPassed.value = signature
+    wizard.modelReasoningObserved.value = result.reasoning_observed ?? null
+  },
 })
 watch(wizard.modelSignature, () => probe.reset())
 
@@ -160,18 +163,18 @@ const passed = computed(() => {
   return wizard.modelReady.value ? t('setup.model.passedBefore') : null
 })
 
-const noReasoningWarning = computed(() =>
-  Boolean(
-    wizard.modelReady.value &&
-    probe.data.value &&
-    probe.data.value.result.reasoning_observed === false &&
+const noReasoningWarning = computed(() => {
+  if (!wizard.modelReady.value) return false
+  const reasoningObserved = probe.data.value?.result.reasoning_observed ?? wizard.modelReasoningObserved.value
+  return (
+    reasoningObserved === false &&
     expectsReasoning({
       thinking: null,
       effort: draft.effort,
       thinkingBudget: draft.thinkingBudget,
-    }),
-  ),
-)
+    })
+  )
+})
 </script>
 
 <template>

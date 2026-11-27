@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
-from .cases import CaseFile, InitialMemory, ReplayCase, load_cases
+from .cases import CaseFile, InitialMemory, ReplayCase, SocialExpectation, load_cases
 from .memory_snapshot import MemoryBaseline, check_memory, freeze_memory, install_memory, observed_memory, same_memory
 from ..next.chat.context import PROMPTS
 from ..next.chat.tools import build_tools
@@ -291,6 +291,105 @@ def observed_database(path: Path, *, scene: str, after_turn: int = 0, after_call
                         "缺失记为未知。初始历史及完整原文在数据库中。"}
 
 
+def _mind_tool_results(db: sqlite3.Connection, scene: str, entry: int | None) -> dict[str, str]:
+    if entry is None:
+        return {}
+    rows = db.execute(
+        "SELECT json_extract(message,'$.tool_call_id') AS call_id,json_extract(message,'$.content') AS content "
+        "FROM mind_entries WHERE scene=? AND seq>? AND seq<COALESCE((SELECT MIN(seq) FROM mind_entries "
+        "WHERE scene=? AND seq>? AND json_extract(message,'$.role')='assistant'),9223372036854775807) "
+        "AND json_extract(message,'$.role')='tool' ORDER BY seq",
+        (scene, entry, scene, entry),
+    ).fetchall()
+    return {row[0]: row[1] for row in rows if isinstance(row[0], str) and isinstance(row[1], str)}
+
+
+def observed_social(
+    path: Path,
+    *,
+    scene: str,
+    expected: SocialExpectation,
+    turns: list[dict],
+    requests: int | None,
+    tokens: dict | None,
+    after_message: int = 0,
+    after_call: int = 0,
+) -> dict:
+    reactions: list[dict] = []
+    double_write_calls = 0
+    with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
+        messages = [json.loads(row[0]) for row in db.execute(
+            "SELECT body FROM messages WHERE scene=? AND seq>? AND json_extract(body,'$.is_self')=1 "
+            "AND json_extract(body,'$.send_status') IN ('sent','simulated') ORDER BY seq",
+            (scene, after_message),
+        )]
+        mind_calls = db.execute(
+            "SELECT mind_entry_seq,response FROM model_calls "
+            "WHERE scene=? AND id>? AND role='mind' AND error IS NULL AND response IS NOT NULL ORDER BY id",
+            (scene, after_call),
+        ).fetchall()
+        for entry_seq, raw_response in mind_calls:
+            response = json.loads(raw_response)
+            assistant = response.get('message') if isinstance(response, dict) else None
+            if not isinstance(assistant, dict):
+                continue
+            tool_calls = assistant.get('tool_calls') or []
+            content = assistant.get('content')
+            has_text = isinstance(content, str) and bool(content.strip())
+            has_say = any(
+                isinstance(tool, dict)
+                and isinstance(tool.get('function'), dict)
+                and tool['function'].get('name') == 'say'
+                for tool in tool_calls
+            )
+            if has_text and has_say:
+                double_write_calls += 1
+            reaction_calls = [
+                tool for tool in tool_calls
+                if isinstance(tool, dict)
+                and isinstance(tool.get('function'), dict)
+                and tool['function'].get('name') == 'message_reaction'
+                and isinstance(tool.get('id'), str)
+            ]
+            if not reaction_calls:
+                continue
+            results = _mind_tool_results(db, scene, entry_seq)
+            for tool in reaction_calls:
+                result_text = results.get(tool['id'])
+                if result_text is None:
+                    continue
+                try:
+                    payload = json.loads(result_text)
+                except ValueError:
+                    continue
+                if (isinstance(payload, dict)
+                        and payload.get('status') in {'sent', 'simulated'}
+                        and 'message' in payload and 'emoji_id' in payload):
+                    reactions.append({'message': payload['message'], 'emoji_id': payload['emoji_id']})
+    text = '\n'.join(segment['data']['text'] for message in messages for segment in message['segments']
+                     if segment['type'] == 'text')
+    stickers = [segment['data'].get('summary', '') for message in messages for segment in message['segments']
+                if segment['type'] == 'image']
+    spoke = bool(messages or reactions)
+    wait = next((turn['first_expression_at'] - turn['wake_received_at'] for turn in turns
+                 if turn['first_expression_at'] is not None and turn['wake_received_at'] is not None), None)
+    return {
+        'category': expected.category, 'spoke': spoke,
+        'false_interruption': spoke and not expected.speak,
+        'missed_reply': expected.speak and not spoke,
+        'answer_correct': all(re.search(pattern, text) is not None for pattern in expected.answer_patterns)
+                          and not any(re.search(pattern, text) for pattern in expected.absent_patterns),
+        'ai_phrases': {phrase: text.count(phrase) for phrase in ASSISTANT_PHRASES if phrase in text},
+        'ai_phrase_count': sum(text.count(phrase) for phrase in ASSISTANT_PHRASES),
+        'sticker_match': (None if not expected.sticker_files else bool(stickers)
+                          and all(any(name in summary for name in expected.sticker_files) for summary in stickers)),
+        'stickers': stickers, 'reactions': reactions,
+        'double_write_calls': double_write_calls,
+        'reply': text, 'first_reply_seconds': wait,
+        'requests': requests, 'tokens': tokens,
+    }
+
+
 async def run_case(directory: Path, config: LabConfig, persona: Persona,
                    case: ReplayCase, voice_mode: str, timeout: float,
                    initial_database: Path | None = None, initial_memory: Path | None = None,
@@ -459,31 +558,16 @@ async def run_case(directory: Path, config: LabConfig, persona: Persona,
                                   after_turn=after_turn, after_call=after_call,
                                   after_embedding_call=after_embedding_call, memory_baseline=memory_baseline)}
     if case.social is not None and result['database'] is not None:
-        with closing(sqlite3.connect((directory / 'chat.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
-            messages = [json.loads(row[0]) for row in db.execute(
-                "SELECT body FROM messages WHERE scene=? AND seq>? AND json_extract(body,'$.is_self')=1 "
-                "AND json_extract(body,'$.send_status') IN ('sent','simulated') ORDER BY seq", (config.scene, after_message))]
-        text = '\n'.join(segment['data']['text'] for message in messages for segment in message['segments']
-                         if segment['type'] == 'text')
-        stickers = [segment['data'].get('summary', '') for message in messages for segment in message['segments']
-                    if segment['type'] == 'image']
-        expected = case.social
-        spoke = bool(messages)
-        wait = next((turn['first_expression_at'] - turn['wake_received_at'] for turn in result['turns']
-                     if turn['first_expression_at'] is not None and turn['wake_received_at'] is not None), None)
-        result['social'] = {
-            'category': expected.category, 'spoke': spoke,
-            'false_interruption': spoke and not expected.speak,
-            'missed_reply': expected.speak and not spoke,
-            'answer_correct': all(re.search(pattern, text) is not None for pattern in expected.answer_patterns)
-                              and not any(re.search(pattern, text) for pattern in expected.absent_patterns),
-            'ai_phrases': {phrase: text.count(phrase) for phrase in ASSISTANT_PHRASES if phrase in text},
-            'ai_phrase_count': sum(text.count(phrase) for phrase in ASSISTANT_PHRASES),
-            'sticker_match': (None if not expected.sticker_files else bool(stickers)
-                              and all(any(name in summary for name in expected.sticker_files) for summary in stickers)),
-            'stickers': stickers, 'reply': text, 'first_reply_seconds': wait,
-            'requests': result['chat_model_calls'], 'tokens': result['tokens'],
-        }
+        result['social'] = observed_social(
+            directory / 'chat.sqlite3',
+            scene=config.scene,
+            expected=case.social,
+            turns=result['turns'],
+            requests=result['chat_model_calls'],
+            tokens=result['tokens'],
+            after_message=after_message,
+            after_call=after_call,
+        )
     write_json(directory / "result.json", result)
     if interruption is not None:
         raise interruption
@@ -599,7 +683,9 @@ def read_report(directory: Path) -> dict:
     social = [{"case_id": item['case_id'], "repeat": item['repeat'], **item['result']['social'],
                'verdict': item['annotation']['verdict'], 'sticker_fit': item['annotation']['sticker_fit']}
               for item in results if item['result'] is not None and 'social' in item['result']]
+    double_write_calls = sum(item.get('double_write_calls', 0) for item in social)
     summary = {"run": metadata, "quality": counts, "scored": scored, "social": social,
+               "double_write_calls": double_write_calls,
                "pass_rate": None if scored == 0 else counts["pass"] / scored,
                "tokens": {**token_summary(token_records), "unobserved_cases": unobserved_cases}, "results": results,
                "notice": "1 倍速开发回放；每例时间轴见结果，未标注的不计通过，完整输出见各实例数据库。"}

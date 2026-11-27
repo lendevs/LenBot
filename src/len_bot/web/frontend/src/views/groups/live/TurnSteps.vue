@@ -265,7 +265,9 @@ const stepFailed = (step: Step) =>
                 ? 'border-error/50'
                 : tool.status === 'pending'
                   ? 'border-info/50'
-                  : 'border-line-strong'
+                  : tool.status === 'held'
+                    ? 'border-warning/50'
+                    : 'border-line-strong'
             "
           >
             <div class="flex flex-wrap items-center gap-2">

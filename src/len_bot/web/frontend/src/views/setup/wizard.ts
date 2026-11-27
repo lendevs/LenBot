@@ -307,6 +307,7 @@ export function createWizard() {
     people: SetupGroup[]
   } | null>(null)
   const modelPassed = ref<string | null>(null)
+  const modelReasoningObserved = ref<boolean | null>(null)
   let keep = true
 
   watch(
@@ -773,6 +774,8 @@ export function createWizard() {
   function clear() {
     keep = false
     Object.assign(draft, initial())
+    modelPassed.value = null
+    modelReasoningObserved.value = null
     try {
       sessionStorage.removeItem(DRAFT_KEY)
     } catch {
@@ -788,6 +791,7 @@ export function createWizard() {
     vectorCatalog,
     platform,
     modelPassed,
+    modelReasoningObserved,
     platformReady,
     connectLater,
     prefix,
