@@ -14,17 +14,20 @@ import { sceneSecondaryId } from '../view'
 
 /** One group (`single` / `multiple: false`) or several, from the groups in the saved configuration. */
 const model = defineModel<string | string[] | null>({ required: true })
-const props = defineProps<{
-  choices: string[]
-  enabledScenes?: string[]
-  single?: boolean
-  multiple?: boolean
-  id?: string
-  invalid?: boolean
-  disabled?: boolean
-  onEnablePicked?: (scenes: string[]) => void | Promise<void>
-  enablingPicked?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    choices: string[]
+    enabledScenes?: string[]
+    single?: boolean
+    multiple?: boolean
+    id?: string
+    invalid?: boolean
+    disabled?: boolean
+    onEnablePicked?: (scenes: string[]) => void | Promise<void>
+    enablingPicked?: boolean
+  }>(),
+  { multiple: undefined },
+)
 
 const { t } = useI18n()
 const field = useFieldControl(props)
